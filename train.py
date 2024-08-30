@@ -57,19 +57,9 @@ train_params = dict(
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
 tokenizer.pad_token = tokenizer.eos_token
 model = AutoModelForCausalLM.from_config(config)
+model.train()
 
 print(model)
-
-model.eval()
-
-# Generate dummy input
-input_text = "Hello, world! This is a test."
-input_ids = tokenizer.encode(input_text, return_tensors="pt")
-
-# Test text generation
-generated = model.generate(input_ids, max_new_tokens=16, num_return_sequences=1)
-generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
-print("Generated Text:", generated_text)
 
 
 class ThornsTrainer(LightningModule):
@@ -81,6 +71,8 @@ class ThornsTrainer(LightningModule):
         super(ThornsTrainer, self).__init__()
 
         self.model, self.optimizer = (model, optimizer)
+        self.prev_avg_loss = 0
+        self.smoothing = 0.01
 
     def forward(self, inputs):
         return self.model(**inputs)
@@ -91,9 +83,12 @@ class ThornsTrainer(LightningModule):
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
+        avg_loss = self.average_loss(float(loss), self.prev_avg_loss, self.smoothing)
+        self.prev_avg_loss = avg_loss
+
         self.log_dict(
             {
-                "loss": loss,
+                "loss": avg_loss,
                 "step": math.floor(batch_idx / hparams["accumulate_grad_batches"]),
             },
             on_step=True,
@@ -105,14 +100,40 @@ class ThornsTrainer(LightningModule):
 
         if batch_idx % 100 == 0:
             # Test text generation
+            model.eval()
             input_ids = tokenizer.encode(" ", return_tensors="pt")
-            generated = model.generate(
-                input_ids, max_new_tokens=16, num_return_sequences=1
+            outputs = model.generate(
+                input_ids,
+                max_new_tokens=16,
+                num_return_sequences=1,
+                # do_sample=True,
+                # temperature=0.7,
             )
-            generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
-            print("Generated Text:", generated_text)
+            # outputs = model.generate(
+            #     input_ids,
+            #     do_sample=True,
+            #     # min_length=1,
+            #     max_new_tokens=16,
+            #     temperature=0.7,
+            #     # eta_cutoff=0.002,
+            #     # penalty_alpha=0.6,
+            #     # top_k=4,
+            #     # repetition_penalty=1.1,
+            #     bos_token_id=tokenizer.bos_token_id,
+            #     eos_token_id=tokenizer.eos_token_id,
+            #     pad_token_id=tokenizer.pad_token_id,
+            # )
+            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            print("Prediction:", generated_text)
+            model.train()
 
         return loss
+
+    def average_loss(self, current_loss, prev_avg_loss, smoothing):
+        if prev_avg_loss is None:
+            return current_loss
+        else:
+            return (smoothing * current_loss) + (1 - smoothing) * prev_avg_loss
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"

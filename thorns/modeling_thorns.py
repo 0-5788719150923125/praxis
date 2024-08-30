@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import (
@@ -132,11 +133,6 @@ class ThornsForCausalLM(ThornsModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        # print(f"ThornsForCausalLM received input_ids of type: {type(input_ids)}")
-        # print(
-        #     f"ThornsForCausalLM input_ids shape: {input_ids.shape if input_ids is not None else 'None'}"
-        # )
-
         transformer_outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -153,6 +149,9 @@ class ThornsForCausalLM(ThornsModel):
 
         lm_logits = self.lm_head(hidden_states)
 
+        # Apply softmax to convert logits to probabilities
+        lm_probs = F.softmax(lm_logits, dim=-1)
+
         loss = None
         if labels is not None:
             shift_logits = lm_logits[..., :-1, :].contiguous()
@@ -163,12 +162,12 @@ class ThornsForCausalLM(ThornsModel):
             )
 
         if not return_dict:
-            output = (lm_logits,)
+            output = (lm_probs,)
             return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,
-            logits=lm_logits,
+            logits=lm_probs,  # Return probabilities instead of raw logits
             past_key_values=None,
             hidden_states=hidden_states,
             attentions=None,
