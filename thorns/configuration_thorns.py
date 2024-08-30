@@ -1,5 +1,6 @@
 from transformers import PretrainedConfig
 
+
 class ThornsConfig(PretrainedConfig):
     model_type = "thorns"
 

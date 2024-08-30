@@ -1,9 +1,13 @@
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
 from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
+
 
 class ThornsModel(PreTrainedModel):
     config_class = ThornsConfig
@@ -14,12 +18,19 @@ class ThornsModel(PreTrainedModel):
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.wpe = nn.Embedding(config.n_positions, config.n_embd)
         self.drop = nn.Dropout(config.embd_pdrop)
-        self.h = nn.ModuleList([nn.TransformerEncoderLayer(config.n_embd, config.n_head, 
-                                                           dim_feedforward=4*config.n_embd, 
-                                                           dropout=config.resid_pdrop,
-                                                           activation=config.activation_function,
-                                                           batch_first=True) 
-                                for _ in range(config.n_layer)])
+        self.h = nn.ModuleList(
+            [
+                nn.TransformerEncoderLayer(
+                    config.n_embd,
+                    config.n_head,
+                    dim_feedforward=4 * config.n_embd,
+                    dropout=config.resid_pdrop,
+                    activation=config.activation_function,
+                    batch_first=True,
+                )
+                for _ in range(config.n_layer)
+            ]
+        )
         self.ln_f = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
 
     def forward(
@@ -31,20 +42,24 @@ class ThornsModel(PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        
+
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
         elif input_ids is not None:
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
-        
+
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
         if position_ids is None:
-            position_ids = torch.arange(input_shape[-1], dtype=torch.long, device=device)
+            position_ids = torch.arange(
+                input_shape[-1], dtype=torch.long, device=device
+            )
             position_ids = position_ids.unsqueeze(0).expand(input_shape)
 
         if inputs_embeds is None:
@@ -63,6 +78,7 @@ class ThornsModel(PreTrainedModel):
             return (hidden_states,)
 
         return BaseModelOutputWithPast(last_hidden_state=hidden_states)
+
 
 class ThornsForCausalLM(ThornsModel):
     _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.masked_bias", r"lm_head\.weight"]
@@ -122,7 +138,9 @@ class ThornsForCausalLM(ThornsModel):
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss_fct(
+                shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+            )
 
         if not return_dict:
             output = (lm_logits,)

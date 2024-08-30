@@ -1,3 +1,3 @@
 # thorns
 
-Tribalistic Human Observation for Reasoning in Natural Scenarios
+Triangulated Human Observation for Reasoning in the Natural Sciences

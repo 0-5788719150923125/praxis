@@ -6,6 +6,7 @@ AutoConfig.register("thorns", ThornsConfig)
 AutoModel.register(ThornsConfig, ThornsModel)
 AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
 
+
 def test_thorns_model():
     # Initialize configuration
     config = ThornsConfig(
@@ -37,6 +38,7 @@ def test_thorns_model():
         print("Number of layers in output:", len(outputs.hidden_states))
     else:
         print("Hidden states not returned")
+
 
 def test_thorns_for_causal_lm():
     # Initialize configuration
@@ -74,6 +76,7 @@ def test_thorns_for_causal_lm():
     generated = model.generate(input_ids, max_length=50, num_return_sequences=1)
     generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
     print("Generated Text:", generated_text)
+
 
 if __name__ == "__main__":
     print("Testing ThornsModel...")
