@@ -9,6 +9,7 @@ from datasets import load_dataset
 from thorns import ThornsConfig, ThornsModel, ThornsForCausalLM
 import numpy as np
 import random
+import math
 
 AutoConfig.register("thorns", ThornsConfig)
 AutoModel.register(ThornsConfig, ThornsModel)
@@ -89,6 +90,18 @@ class ThornsTrainer(LightningModule):
             batch = torch.from_numpy(batch)
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
+
+        self.log_dict(
+            {
+                "loss": loss,
+                "step": math.floor(batch_idx / hparams["accumulate_grad_batches"]),
+            },
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            batch_size=hparams["batch_size"],
+        )
 
         if batch_idx % 100 == 0:
             # Test text generation
