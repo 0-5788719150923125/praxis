@@ -17,10 +17,10 @@ AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
 
 config = ThornsConfig(
     vocab_size=50257,
-    n_positions=256,
-    n_embd=768,
-    n_layer=3,
-    n_head=3,
+    n_positions=512,
+    n_embd=256,
+    n_layer=4,
+    n_head=4,
     device_map="cpu",
 )
 
@@ -30,8 +30,9 @@ hparams = dict(
     eps=1e-8,
     warmup_steps=10,
     batch_size=1,
+    accumulate_grad_batches=64,
     num_steps=10000,
-    block_size=64,
+    block_size=256,
 )
 
 train_params = dict(
@@ -42,7 +43,9 @@ train_params = dict(
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=1,
     precision="32-true",
-    accumulate_grad_batches=4,  # must be 1 for Hivemind training
+    accumulate_grad_batches=hparams[
+        "accumulate_grad_batches"
+    ],  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
@@ -53,6 +56,8 @@ train_params = dict(
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
 tokenizer.pad_token = tokenizer.eos_token
 model = AutoModelForCausalLM.from_config(config)
+
+print(model)
 
 model.eval()
 
@@ -84,6 +89,16 @@ class ThornsTrainer(LightningModule):
             batch = torch.from_numpy(batch)
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
+
+        if batch_idx % 100 == 0:
+            # Test text generation
+            input_ids = tokenizer.encode(" ", return_tensors="pt")
+            generated = model.generate(
+                input_ids, max_new_tokens=16, num_return_sequences=1
+            )
+            generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
+            print("Generated Text:", generated_text)
+
         return loss
 
     def configure_optimizers(self):
@@ -107,7 +122,7 @@ class StreamingDataModule(LightningDataModule):
         )
 
 
-class RefinedWebDataset(IterableDataset):
+class HuggingfaceDataset(IterableDataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.dataset = load_dataset(
@@ -115,43 +130,55 @@ class RefinedWebDataset(IterableDataset):
             split="train",
             streaming=True,
             cache_dir="./tmp/pile",
+            trust_remote_code=True,
         )
+
+        self.cached_text = ""
 
     def __iter__(self):
+
+        buffer_size = 10_000
+        text_cache_size = 10 * buffer_size
+
+        block_size = hparams["block_size"]
+
+        delimiter = "\n"
+
         shuffled = self.dataset.shuffle(
             seed=random.randint(0, 2**31),
-            buffer_size=10000,
+            buffer_size=buffer_size,
         )
 
-        block_size = hparams.get("block_size")
-
-        batch = []
         for document in shuffled:
-            tokenized = self.tokenizer(
-                text="default",
+            text = ""
+            # print(document)
+            text += document.get("content") + self.tokenizer.eos_token
+
+            self.cached_text += text
+            if len(self.cached_text) < text_cache_size:
+                continue
+
+            # print(self.cached_text[4096:])
+
+            tokens = self.tokenizer(
+                text=self.cached_text,
                 max_length=block_size,
-                stride=0,
-                padding=True,
+                stride=64,
+                padding=False,
                 truncation=True,
                 return_overflowing_tokens=True,
                 return_tensors="np",
             )["input_ids"]
-            choice = random.choice(tokenized)
-            if len(choice) == 0:
-                continue
-            elif len(batch) == 0:
-                batch = choice
-            else:
-                np.append(batch, self.tokenizer.eos_token_id)
-                batch = np.concatenate([batch, choice])
-            if len(batch) >= block_size:
-                yield batch[:block_size]
-                batch = []
-            else:
-                continue
+
+            self.cached_text = ""
+
+            for batch in tokens:
+                if len(batch) != block_size:
+                    break
+                yield batch
 
 
-dataset = RefinedWebDataset(tokenizer)
+dataset = HuggingfaceDataset(tokenizer)
 
 
 # set weights as trainable
