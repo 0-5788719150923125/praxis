@@ -29,7 +29,7 @@ def test_vine_model():
 
     # Forward pass
     with torch.no_grad():
-        outputs = model(input_ids, output_hidden_states=True)
+        outputs = model(input_ids, output_hidden_states=True, return_dict=True)
 
     # Check outputs
     print("Model Output Shape:", outputs.last_hidden_state.shape)
@@ -61,7 +61,7 @@ def test_vine_for_causal_lm():
 
     # Forward pass
     with torch.no_grad():
-        outputs = model(input_ids, output_hidden_states=True)
+        outputs = model(input_ids, output_hidden_states=True, return_dict=True)
 
     # Check outputs
     print("Logits Shape:", outputs.logits.shape)
