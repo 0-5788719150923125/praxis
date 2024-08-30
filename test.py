@@ -1,14 +1,14 @@
 import torch
 from transformers import AutoConfig, AutoModel, AutoTokenizer, AutoModelForCausalLM
-from vine import VineConfig, VineModel, VineForCausalLM
+from thorns import ThornsConfig, ThornsModel, ThornsForCausalLM
 
-AutoConfig.register("vine", VineConfig)
-AutoModel.register(VineConfig, VineModel)
-AutoModelForCausalLM.register(VineConfig, VineForCausalLM)
+AutoConfig.register("thorns", ThornsConfig)
+AutoModel.register(ThornsConfig, ThornsModel)
+AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
 
-def test_vine_model():
+def test_thorns_model():
     # Initialize configuration
-    config = VineConfig(
+    config = ThornsConfig(
         vocab_size=50257,
         n_positions=1024,
         n_embd=768,
@@ -20,7 +20,7 @@ def test_vine_model():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     # Initialize model
-    model = VineModel(config)
+    model = ThornsModel(config)
     model.eval()
 
     # Generate dummy input
@@ -38,9 +38,9 @@ def test_vine_model():
     else:
         print("Hidden states not returned")
 
-def test_vine_for_causal_lm():
+def test_thorns_for_causal_lm():
     # Initialize configuration
-    config = VineConfig(
+    config = ThornsConfig(
         vocab_size=50257,
         n_positions=1024,
         n_embd=768,
@@ -52,7 +52,7 @@ def test_vine_for_causal_lm():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     # Initialize model
-    model = VineForCausalLM(config)
+    model = ThornsForCausalLM(config)
     model.eval()
 
     # Generate dummy input
@@ -76,7 +76,7 @@ def test_vine_for_causal_lm():
     print("Generated Text:", generated_text)
 
 if __name__ == "__main__":
-    print("Testing VineModel...")
-    test_vine_model()
-    print("\nTesting VineForCausalLM...")
-    test_vine_for_causal_lm()
+    print("Testing ThornsModel...")
+    test_thorns_model()
+    print("\nTesting ThornsForCausalLM...")
+    test_thorns_for_causal_lm()

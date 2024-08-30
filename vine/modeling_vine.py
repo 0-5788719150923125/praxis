@@ -3,10 +3,10 @@ import torch.nn as nn
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from typing import Optional, Tuple, Union
-from .configuration_vine import VineConfig
+from .configuration_thorns import ThornsConfig
 
-class VineModel(PreTrainedModel):
-    config_class = VineConfig
+class ThornsModel(PreTrainedModel):
+    config_class = ThornsConfig
 
     def __init__(self, config):
         super().__init__(config)
@@ -64,7 +64,7 @@ class VineModel(PreTrainedModel):
 
         return BaseModelOutputWithPast(last_hidden_state=hidden_states)
 
-class VineForCausalLM(VineModel):
+class ThornsForCausalLM(ThornsModel):
     _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.masked_bias", r"lm_head\.weight"]
 
     def __init__(self, config):

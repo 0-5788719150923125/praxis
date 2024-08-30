@@ -1,7 +1,7 @@
 from transformers import PretrainedConfig
 
-class VineConfig(PretrainedConfig):
-    model_type = "vine"
+class ThornsConfig(PretrainedConfig):
+    model_type = "thorns"
 
     def __init__(
         self,
