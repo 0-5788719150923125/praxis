@@ -80,7 +80,9 @@ class ThornsTrainer(LightningModule):
         return self.model(**inputs)
 
     def training_step(self, batch, batch_idx):
-        outputs = self({"input_ids": batch, "labels": batch})
+        if isinstance(batch, np.ndarray):
+            batch = torch.from_numpy(batch)
+        outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
         return loss
 

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -42,6 +43,10 @@ class ThornsModel(PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
+        # print(f"Type of input_ids: {type(input_ids)}")
+        # print(
+        #     f"Shape of input_ids: {input_ids.shape if hasattr(input_ids, 'shape') else 'No shape'}"
+        # )
 
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
@@ -49,18 +54,23 @@ class ThornsModel(PreTrainedModel):
             )
         elif input_ids is not None:
             input_shape = input_ids.size()
+            batch_size = input_shape[0] if len(input_shape) > 1 else 1
+            seq_length = input_shape[-1]
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
+            batch_size = input_shape[0] if len(input_shape) > 1 else 1
+            seq_length = input_shape[-1]
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
         if position_ids is None:
-            position_ids = torch.arange(
-                input_shape[-1], dtype=torch.long, device=device
-            )
-            position_ids = position_ids.unsqueeze(0).expand(input_shape)
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0).expand((batch_size, seq_length))
+
+        if attention_mask is None:
+            attention_mask = torch.ones((batch_size, seq_length), device=device)
 
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
@@ -77,7 +87,12 @@ class ThornsModel(PreTrainedModel):
         if not return_dict:
             return (hidden_states,)
 
-        return BaseModelOutputWithPast(last_hidden_state=hidden_states)
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=None,
+            hidden_states=None,
+            attentions=None,
+        )
 
 
 class ThornsForCausalLM(ThornsModel):
@@ -117,8 +132,13 @@ class ThornsForCausalLM(ThornsModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        # print(f"ThornsForCausalLM received input_ids of type: {type(input_ids)}")
+        # print(
+        #     f"ThornsForCausalLM input_ids shape: {input_ids.shape if input_ids is not None else 'None'}"
+        # )
+
         transformer_outputs = super().forward(
-            input_ids,
+            input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
@@ -126,10 +146,10 @@ class ThornsForCausalLM(ThornsModel):
             return_dict=return_dict,
         )
 
-        hidden_states = transformer_outputs[0]
-
-        if past_key_values is not None:
-            hidden_states = hidden_states[:, -1, :]
+        if isinstance(transformer_outputs, tuple):
+            hidden_states = transformer_outputs[0]
+        else:
+            hidden_states = transformer_outputs.last_hidden_state
 
         lm_logits = self.lm_head(hidden_states)
 
@@ -144,17 +164,13 @@ class ThornsForCausalLM(ThornsModel):
 
         if not return_dict:
             output = (lm_logits,)
-            if use_cache:
-                output += (hidden_states,)
-            if loss is not None:
-                output = (loss,) + output
-            return output
+            return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,
             logits=lm_logits,
             past_key_values=None,
-            hidden_states=transformer_outputs.hidden_states,
+            hidden_states=hidden_states,
             attentions=None,
         )
 
