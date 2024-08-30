@@ -52,6 +52,20 @@ class ThornsModel(PreTrainedModel):
             [SelfAttentionLayer(config) for _ in range(config.n_layer)]
         )
 
+        # Initialize weights
+        self.init_weights()
+
+    def init_weights(self):
+        # Initialize weights using normal distribution
+        for module in self.modules():
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+                if isinstance(module, nn.Linear) and module.bias is not None:
+                    module.bias.data.zero_()
+            elif isinstance(module, nn.LayerNorm):
+                module.bias.data.zero_()
+                module.weight.data.fill_(1.0)
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -165,10 +179,6 @@ class ThornsForCausalLM(ThornsModel):
 
         lm_logits = self.lm_head(hidden_states)
 
-        # Apply softmax to convert logits to probabilities
-        # lm_probs = F.softmax(lm_logits, dim=-1)
-        lm_probs = lm_logits
-
         loss = None
         if labels is not None:
             shift_logits = lm_logits[..., :-1, :].contiguous()
@@ -179,12 +189,12 @@ class ThornsForCausalLM(ThornsModel):
             )
 
         if not return_dict:
-            output = (lm_probs,)
+            output = (lm_logits,)
             return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,
-            logits=lm_probs,  # Return probabilities instead of raw logits
+            logits=lm_logits,
             past_key_values=None,
             hidden_states=hidden_states,
             attentions=None,
