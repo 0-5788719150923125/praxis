@@ -12,6 +12,7 @@ class ThornsConfig(PretrainedConfig):
         n_layer=12,
         n_head=12,
         activation_function="gelu",
+        attn_pdrop=0.1,
         resid_pdrop=0.1,
         embd_pdrop=0.1,
         layer_norm_epsilon=1e-5,
@@ -34,6 +35,7 @@ class ThornsConfig(PretrainedConfig):
         self.n_layer = n_layer
         self.n_head = n_head
         self.activation_function = activation_function
+        self.attn_pdrop = attn_pdrop
         self.resid_pdrop = resid_pdrop
         self.embd_pdrop = embd_pdrop
         self.layer_norm_epsilon = layer_norm_epsilon

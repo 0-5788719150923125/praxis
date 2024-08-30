@@ -11,6 +11,34 @@ from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
 
 
+class SelfAttentionLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=config.n_embd,
+            num_heads=config.n_head,
+            dropout=config.attn_pdrop,
+            batch_first=True,
+        )
+        self.ln_1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Dropout(config.resid_pdrop),
+        )
+        self.ln_2 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
+
+    def forward(self, x, attn_mask=None):
+        x_norm = self.ln_1(x)
+        attn_output, _ = self.self_attn(x_norm, x_norm, x_norm, attn_mask=attn_mask)
+        x = x + attn_output
+        x_norm = self.ln_2(x)
+        mlp_output = self.mlp(x_norm)
+        x = x + mlp_output
+        return x
+
+
 class ThornsModel(PreTrainedModel):
     config_class = ThornsConfig
 
@@ -21,19 +49,8 @@ class ThornsModel(PreTrainedModel):
         self.wpe = nn.Embedding(config.n_positions, config.n_embd)
         self.drop = nn.Dropout(config.embd_pdrop)
         self.h = nn.ModuleList(
-            [
-                nn.TransformerEncoderLayer(
-                    config.n_embd,
-                    config.n_head,
-                    dim_feedforward=4 * config.n_embd,
-                    dropout=config.resid_pdrop,
-                    activation=config.activation_function,
-                    batch_first=True,
-                )
-                for _ in range(config.n_layer)
-            ]
+            [SelfAttentionLayer(config) for _ in range(config.n_layer)]
         )
-        self.ln_f = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
 
     def forward(
         self,
@@ -44,10 +61,6 @@ class ThornsModel(PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        # print(f"Type of input_ids: {type(input_ids)}")
-        # print(
-        #     f"Shape of input_ids: {input_ids.shape if hasattr(input_ids, 'shape') else 'No shape'}"
-        # )
 
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
@@ -80,10 +93,13 @@ class ThornsModel(PreTrainedModel):
         hidden_states = inputs_embeds + position_embeds
         hidden_states = self.drop(hidden_states)
 
-        for block in self.h:
-            hidden_states = block(hidden_states, src_key_padding_mask=attention_mask)
+        # Create the attention mask for masked self-attention
+        attn_mask = torch.tril(
+            torch.ones((seq_length, seq_length), dtype=torch.bool, device=device)
+        )
 
-        hidden_states = self.ln_f(hidden_states)
+        for block in self.h:
+            hidden_states = block(hidden_states, attn_mask=attn_mask)
 
         if not return_dict:
             return (hidden_states,)
@@ -150,7 +166,8 @@ class ThornsForCausalLM(ThornsModel):
         lm_logits = self.lm_head(hidden_states)
 
         # Apply softmax to convert logits to probabilities
-        lm_probs = F.softmax(lm_logits, dim=-1)
+        # lm_probs = F.softmax(lm_logits, dim=-1)
+        lm_probs = lm_logits
 
         loss = None
         if labels is not None:

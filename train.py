@@ -106,8 +106,7 @@ class ThornsTrainer(LightningModule):
                 input_ids,
                 max_new_tokens=16,
                 num_return_sequences=1,
-                # do_sample=True,
-                # temperature=0.7,
+                do_sample=False,
             )
             # outputs = model.generate(
             #     input_ids,
