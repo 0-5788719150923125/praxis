@@ -1,4 +1,6 @@
 *.egg*
+*logs
 __pycache__
 build
 venv
+tmp

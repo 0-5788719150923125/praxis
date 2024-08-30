@@ -18,9 +18,15 @@ class ThornsConfig(PretrainedConfig):
         initializer_range=0.02,
         bos_token_id=50256,
         eos_token_id=50256,
+        pad_token_id=50256,
         **kwargs
     ):
-        super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
+        super().__init__(
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            **kwargs
+        )
 
         self.vocab_size = vocab_size
         self.n_positions = n_positions

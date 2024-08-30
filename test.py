@@ -21,7 +21,7 @@ def test_thorns_model():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     # Initialize model
-    model = ThornsModel(config)
+    model = AutoModelForCausalLM.from_config(config)
     model.eval()
 
     # Generate dummy input
@@ -54,26 +54,15 @@ def test_thorns_for_causal_lm():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     # Initialize model
-    model = ThornsForCausalLM(config)
+    model = AutoModelForCausalLM.from_config(config)
     model.eval()
 
     # Generate dummy input
     input_text = "Hello, world! This is a test."
     input_ids = tokenizer.encode(input_text, return_tensors="pt")
 
-    # Forward pass
-    with torch.no_grad():
-        outputs = model(input_ids, output_hidden_states=True, return_dict=True)
-
-    # Check outputs
-    print("Logits Shape:", outputs.logits.shape)
-    if outputs.hidden_states is not None:
-        print("Number of layers in output:", len(outputs.hidden_states))
-    else:
-        print("Hidden states not returned")
-
     # Test text generation
-    generated = model.generate(input_ids, max_length=50, num_return_sequences=1)
+    generated = model.generate(input_ids, max_new_tokens=16, num_return_sequences=1)
     generated_text = tokenizer.decode(generated[0], skip_special_tokens=True)
     print("Generated Text:", generated_text)
 
