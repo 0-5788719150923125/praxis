@@ -104,24 +104,17 @@ class ThornsTrainer(LightningModule):
             input_ids = tokenizer.encode(" ", return_tensors="pt")
             outputs = model.generate(
                 input_ids,
-                max_new_tokens=16,
-                num_return_sequences=1,
                 do_sample=True,
+                max_new_tokens=16,
+                temperature=0.7,
+                eta_cutoff=0.002,
+                penalty_alpha=0.6,
+                top_k=4,
+                repetition_penalty=1.1,
+                bos_token_id=tokenizer.bos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id,
             )
-            # outputs = model.generate(
-            #     input_ids,
-            #     do_sample=True,
-            #     # min_length=1,
-            #     max_new_tokens=16,
-            #     temperature=0.7,
-            #     # eta_cutoff=0.002,
-            #     # penalty_alpha=0.6,
-            #     # top_k=4,
-            #     # repetition_penalty=1.1,
-            #     bos_token_id=tokenizer.bos_token_id,
-            #     eos_token_id=tokenizer.eos_token_id,
-            #     pad_token_id=tokenizer.pad_token_id,
-            # )
             generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
             print("Prediction:", generated_text)
             model.train()
