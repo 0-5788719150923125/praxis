@@ -78,8 +78,7 @@ class ThornsTrainer(LightningModule):
         return self.model(**inputs)
 
     def training_step(self, batch, batch_idx):
-        if isinstance(batch, np.ndarray):
-            batch = torch.from_numpy(batch)
+
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
@@ -132,22 +131,6 @@ class ThornsTrainer(LightningModule):
         return [self.optimizer]
 
 
-class StreamingDataModule(LightningDataModule):
-    def __init__(self, tokenizer, config):
-        super().__init__()
-        self.tokenizer = tokenizer
-        self.config = config
-        self.train_data = StreamingDataset(self.tokenizer, config)
-
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_data,
-            batch_size=batch_size,
-            pin_memory=True,
-            num_workers=2,
-        )
-
-
 class HuggingfaceDataset(IterableDataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -168,32 +151,25 @@ class HuggingfaceDataset(IterableDataset):
 
         block_size = hparams["block_size"]
 
-        delimiter = "\n"
-
         shuffled = self.dataset.shuffle(
             seed=random.randint(0, 2**31),
             buffer_size=buffer_size,
         )
 
         for document in shuffled:
-            text = ""
-            # print(document)
             text += document.get("content") + self.tokenizer.eos_token
-
             self.cached_text += text
             if len(self.cached_text) < text_cache_size:
                 continue
-
-            # print(self.cached_text[4096:])
 
             tokens = self.tokenizer(
                 text=self.cached_text,
                 max_length=block_size,
                 stride=64,
-                padding=False,
+                padding=True,
                 truncation=True,
                 return_overflowing_tokens=True,
-                return_tensors="np",
+                return_tensors="pt",
             )["input_ids"]
 
             self.cached_text = ""
