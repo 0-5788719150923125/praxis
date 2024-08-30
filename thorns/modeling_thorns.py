@@ -10,7 +10,7 @@ from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
 
 
-class OpenELMRMSNorm(nn.Module):
+class ScaledRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
@@ -22,7 +22,7 @@ class OpenELMRMSNorm(nn.Module):
         return self.weight * x
 
 
-class OpenELMRotaryEmbedding(nn.Module):
+class RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings, base=10000, device=None):
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
@@ -67,7 +67,7 @@ class ThornsAttention(nn.Module):
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
         self.rotary_ndims = self.head_dim
-        self.rotary_emb = OpenELMRotaryEmbedding(self.rotary_ndims, config.n_positions)
+        self.rotary_emb = RotaryEmbedding(self.rotary_ndims, config.n_positions)
         self.query = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
@@ -128,11 +128,11 @@ class ThornsAttention(nn.Module):
 class ThornsBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.input_layernorm = OpenELMRMSNorm(
+        self.input_layernorm = ScaledRMSNorm(
             config.n_embd, eps=config.layer_norm_epsilon
         )
         self.attention = ThornsAttention(config)
-        self.post_attention_layernorm = OpenELMRMSNorm(
+        self.post_attention_layernorm = ScaledRMSNorm(
             config.n_embd, eps=config.layer_norm_epsilon
         )
         self.mlp = nn.Sequential(
@@ -161,7 +161,7 @@ class ThornsModel(PreTrainedModel):
         self.embed_dim = config.n_embd
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.h = nn.ModuleList([ThornsBlock(config) for _ in range(config.n_layer)])
-        self.ln_f = OpenELMRMSNorm(config.n_embd, eps=config.layer_norm_epsilon)
+        self.ln_f = ScaledRMSNorm(config.n_embd, eps=config.layer_norm_epsilon)
         self.register_buffer(
             "causal_mask",
             torch.tril(
