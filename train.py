@@ -50,8 +50,10 @@ train_params = dict(
     callbacks=[],
 )
 
-tokenizer = AutoTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf")
-tokenizer.pad_token = tokenizer.eos_token
+tokenizer = AutoTokenizer.from_pretrained(
+    "NousResearch/Llama-2-7b-hf", cache_dir="./data"
+)
+
 model = AutoModelForCausalLM.from_config(config)
 model.train()
 
@@ -78,7 +80,6 @@ class ThornsTrainer(LightningModule):
         return self.model(**inputs)
 
     def training_step(self, batch, batch_idx):
-
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
@@ -100,7 +101,7 @@ class ThornsTrainer(LightningModule):
         if batch_idx % 100 == 0:
             # Test text generation
             model.eval()
-            input_ids = tokenizer.encode(" ", return_tensors="pt")
+            input_ids = tokenizer.encode("", return_tensors="pt")
             outputs = model.generate(
                 input_ids,
                 do_sample=True,

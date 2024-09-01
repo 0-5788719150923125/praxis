@@ -2,5 +2,6 @@
 *logs
 __pycache__
 build
+data
 venv
 tmp

@@ -10,7 +10,6 @@ AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
 def test_thorns_model():
     # Initialize configuration
     config = ThornsConfig(
-        vocab_size=50257,
         n_positions=1024,
         n_embd=768,
         n_layer=12,
@@ -18,7 +17,7 @@ def test_thorns_model():
     )
 
     # Initialize tokenizer (using GPT-2 tokenizer as a placeholder)
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer = AutoTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf")
 
     # Initialize model
     model = AutoModelForCausalLM.from_config(config)
@@ -43,7 +42,6 @@ def test_thorns_model():
 def test_thorns_for_causal_lm():
     # Initialize configuration
     config = ThornsConfig(
-        vocab_size=50257,
         n_positions=1024,
         n_embd=768,
         n_layer=12,
@@ -51,7 +49,7 @@ def test_thorns_for_causal_lm():
     )
 
     # Initialize tokenizer (using GPT-2 tokenizer as a placeholder)
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer = AutoTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf")
 
     # Initialize model
     model = AutoModelForCausalLM.from_config(config)
