@@ -6,7 +6,7 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from typing import Optional, Tuple, Union
+from typing import Optional, OrderedDict, Tuple, Union
 from .configuration_thorns import ThornsConfig
 
 
@@ -116,7 +116,7 @@ class ThornsAttention(nn.Module):
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
-        self.dense = nn.Linear(
+        self.out = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
         self.register_buffer("m", get_alibi_slope(self.num_heads))
@@ -166,7 +166,7 @@ class ThornsAttention(nn.Module):
         attn_output = attn_output.transpose(1, 2).reshape(
             batch_size, seq_len, self.hidden_size
         )
-        attn_output = self.dense(attn_output)
+        attn_output = self.out(attn_output)
         return attn_output
 
 
@@ -181,9 +181,13 @@ class ThornsBlock(nn.Module):
             config.n_embd, eps=config.layer_norm_epsilon
         )
         self.mlp = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
+            OrderedDict(
+                [
+                    ("in_proj", nn.Linear(config.n_embd, 4 * config.n_embd)),
+                    ("act", nn.Mish()),
+                    ("out_proj", nn.Linear(4 * config.n_embd, config.n_embd)),
+                ]
+            )
         )
 
     def forward(self, x, attention_mask=None):
