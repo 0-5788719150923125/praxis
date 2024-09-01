@@ -72,8 +72,7 @@ class ThornsTrainer(LightningModule):
 
         self.automatic_optimization = True
         self.batch_size = hparams["batch_size"]
-        self.prev_avg_loss = 0
-        self.smoothing = 0.01
+        self.ema = 0
         self.save_hyperparameters(ignore=["model", "optimizer"])
 
     def forward(self, inputs):
@@ -83,8 +82,8 @@ class ThornsTrainer(LightningModule):
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
-        avg_loss = self.average_loss(float(loss), self.prev_avg_loss, self.smoothing)
-        self.prev_avg_loss = avg_loss
+        avg_loss = self.compute_ema(float(loss), self.ema)
+        self.ema = avg_loss
 
         self.log_dict(
             {
@@ -111,9 +110,6 @@ class ThornsTrainer(LightningModule):
                 penalty_alpha=0.6,
                 top_k=4,
                 repetition_penalty=1.1,
-                bos_token_id=tokenizer.bos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                pad_token_id=tokenizer.pad_token_id,
             )
             generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
             print("Prediction:", generated_text)
@@ -121,11 +117,11 @@ class ThornsTrainer(LightningModule):
 
         return loss
 
-    def average_loss(self, current_loss, prev_avg_loss, smoothing):
+    def compute_ema(self, current_loss, prev_avg_loss, alpha=0.01):
         if prev_avg_loss is None:
             return current_loss
         else:
-            return (smoothing * current_loss) + (1 - smoothing) * prev_avg_loss
+            return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"
