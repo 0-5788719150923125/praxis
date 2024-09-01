@@ -58,7 +58,6 @@ class ThornsModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        # Prepare the attention mask (we'll need to add this to the attention scores later)
         attention_mask = self._prepare_attention_mask(
             attention_mask, input_shape, inputs_embeds.dtype
         )
