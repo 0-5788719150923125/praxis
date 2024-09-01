@@ -119,6 +119,8 @@ class ThornsAttention(nn.Module):
         self.dense = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
+        self.register_buffer("m", get_alibi_slope(self.num_heads))
+        self.causal = config.causal
 
     def forward(self, x, attention_mask=None):
         batch_size, seq_len, _ = x.size()
@@ -140,11 +142,16 @@ class ThornsAttention(nn.Module):
 
         scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim**0.5)
 
-        # Create causal mask
-        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).view(
-            1, 1, seq_len, seq_len
-        )
-        scores = scores.masked_fill(causal_mask == 0, float("-inf"))
+        # Apply ALiBi bias
+        bias = (self.m * get_relative_positions(seq_len)).unsqueeze(0)
+        scores = scores - bias
+
+        # Apply the causal mask
+        if self.causal:
+            causal_mask = torch.tril(
+                torch.ones(seq_len, seq_len, device=x.device)
+            ).view(1, 1, seq_len, seq_len)
+            scores = scores.masked_fill(causal_mask == 0, float("-inf"))
 
         if attention_mask is not None:
             # Ensure attention_mask is 4D
@@ -203,8 +210,24 @@ class ScaledRMSNorm(nn.Module):
         return self.weight * x
 
 
+def get_relative_positions(seq_len: int) -> torch.tensor:
+    x = torch.arange(seq_len)[None, :]
+    y = torch.arange(seq_len)[:, None]
+    return x - y
+
+
+def get_alibi_slope(num_heads):
+    x = (2**8) ** (1 / num_heads)
+    return (
+        torch.tensor([1 / x ** (i + 1) for i in range(num_heads)])
+        .unsqueeze(-1)
+        .unsqueeze(-1)
+    )
+
+
 class ThornsForCausalLM(ThornsModel):
     def __init__(self, config):
+        config.causal = True
         super().__init__(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 

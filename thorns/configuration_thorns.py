@@ -18,6 +18,7 @@ class ThornsConfig(PretrainedConfig):
         layer_norm_epsilon=1e-5,
         initializer_range=0.02,
         use_cache=False,
+        causal=False,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -42,3 +43,4 @@ class ThornsConfig(PretrainedConfig):
         self.layer_norm_epsilon = layer_norm_epsilon
         self.initializer_range = initializer_range
         self.use_cache = use_cache
+        self.causal = causal

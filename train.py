@@ -20,7 +20,7 @@ config = ThornsConfig(
     n_positions=512,
     n_embd=256,
     n_layer=6,
-    n_head=4,
+    n_head=8,
     device_map="cpu",
 )
 
