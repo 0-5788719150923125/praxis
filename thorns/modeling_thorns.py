@@ -119,8 +119,21 @@ class ThornsAttention(nn.Module):
         self.out = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
-        self.register_buffer("m", get_alibi_slope(self.num_heads))
+        self.register_buffer("m", self._get_alibi_slope(self.num_heads))
         self.causal = config.causal
+
+    def _get_relative_positions(self, seq_len: int) -> torch.tensor:
+        x = torch.arange(seq_len)[None, :]
+        y = torch.arange(seq_len)[:, None]
+        return x - y
+
+    def _get_alibi_slope(self, num_heads):
+        x = (2**8) ** (1 / num_heads)
+        return (
+            torch.tensor([1 / x ** (i + 1) for i in range(num_heads)])
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+        )
 
     def forward(self, x, attention_mask=None):
         batch_size, seq_len, _ = x.size()
@@ -143,7 +156,7 @@ class ThornsAttention(nn.Module):
         scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim**0.5)
 
         # Apply ALiBi bias
-        bias = (self.m * get_relative_positions(seq_len)).unsqueeze(0)
+        bias = (self.m * self._get_relative_positions(seq_len)).unsqueeze(0)
         scores = scores - bias
 
         # Apply the causal mask
@@ -212,21 +225,6 @@ class ScaledRMSNorm(nn.Module):
         variance = x.to(torch.float32).pow(2).mean(-1, keepdim=True)
         x = x * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * x
-
-
-def get_relative_positions(seq_len: int) -> torch.tensor:
-    x = torch.arange(seq_len)[None, :]
-    y = torch.arange(seq_len)[:, None]
-    return x - y
-
-
-def get_alibi_slope(num_heads):
-    x = (2**8) ** (1 / num_heads)
-    return (
-        torch.tensor([1 / x ** (i + 1) for i in range(num_heads)])
-        .unsqueeze(-1)
-        .unsqueeze(-1)
-    )
 
 
 class ThornsForCausalLM(ThornsModel):
