@@ -10,149 +10,6 @@ from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
 
 
-class ScaledRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, x):
-        variance = x.to(torch.float32).pow(2).mean(-1, keepdim=True)
-        x = x * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * x
-
-
-class RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings, base=10000, device=None):
-        super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
-
-        # Build here to make `torch.jit.trace` work.
-        self.max_seq_len_cached = max_position_embeddings
-        t = torch.arange(
-            self.max_seq_len_cached,
-            device=self.inv_freq.device,
-            dtype=self.inv_freq.dtype,
-        )
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.cos_cached = emb.cos()[None, None, :, :]
-        self.sin_cached = emb.sin()[None, None, :, :]
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-        # This `if` block is unlikely to be run after we build sin/cos in `__init__`. Keep the logic here just in case.
-        if seq_len > self.max_seq_len_cached:
-            self.max_seq_len_cached = seq_len
-            t = torch.arange(
-                self.max_seq_len_cached, device=x.device, dtype=self.inv_freq.dtype
-            )
-            freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-            # Different from paper, but it uses a different permutation in order to obtain the same calculation
-            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
-            self.cos_cached = emb.cos()[None, None, :, :]
-            self.sin_cached = emb.sin()[None, None, :, :]
-        return (
-            self.cos_cached[:, :, :seq_len, ...].to(dtype=x.dtype),
-            self.sin_cached[:, :, :seq_len, ...].to(dtype=x.dtype),
-        )
-
-
-class ThornsAttention(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.hidden_size = config.n_embd
-        self.num_heads = config.n_head
-        self.head_dim = self.hidden_size // self.num_heads
-        self.rotary_ndims = self.head_dim
-        self.rotary_emb = RotaryEmbedding(self.rotary_ndims, config.n_positions)
-        self.query = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
-        )
-        self.key = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
-        )
-        self.value = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
-        )
-        self.dense = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=False
-        )
-
-    def forward(self, x, attention_mask=None):
-        batch_size, seq_len, _ = x.size()
-        head_dim = self.head_dim
-        q = (
-            self.query(x)
-            .view(batch_size, seq_len, self.num_heads, head_dim)
-            .transpose(1, 2)
-        )
-        k = (
-            self.key(x)
-            .view(batch_size, seq_len, self.num_heads, head_dim)
-            .transpose(1, 2)
-        )
-        v = (
-            self.value(x)
-            .view(batch_size, seq_len, self.num_heads, head_dim)
-            .transpose(1, 2)
-        )
-
-        q, k = self.apply_rotary_position_embeddings(q, k, seq_len)
-
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (head_dim**0.5)
-        if attention_mask is not None:
-            scores = scores + attention_mask
-
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
-        attn_output = attn_output.transpose(1, 2).reshape(
-            batch_size, seq_len, self.num_heads * head_dim
-        )
-        attn_output = self.dense(attn_output)
-        return attn_output
-
-    def apply_rotary_position_embeddings(self, q, k, seq_len):
-        cos, sin = self.rotary_emb(q, seq_len=seq_len)
-        q_embed = (q * cos) + (self.rotate_half(q) * sin)
-        k_embed = (k * cos) + (self.rotate_half(k) * sin)
-        return q_embed, k_embed
-
-    def rotate_half(self, x):
-        x1, x2 = x[..., : self.rotary_ndims], x[..., self.rotary_ndims :]
-        return torch.cat((-x2, x1), dim=-1)
-
-
-class ThornsBlock(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.input_layernorm = ScaledRMSNorm(
-            config.n_embd, eps=config.layer_norm_epsilon
-        )
-        self.attention = ThornsAttention(config)
-        self.post_attention_layernorm = ScaledRMSNorm(
-            config.n_embd, eps=config.layer_norm_epsilon
-        )
-        self.mlp = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
-        )
-
-    def forward(self, x, attention_mask=None):
-        residual = x
-        x = self.input_layernorm(x)
-        x = self.attention(x, attention_mask)
-        x = residual + x
-        residual = x
-        x = self.post_attention_layernorm(x)
-        x = self.mlp(x)
-        x = residual + x
-        return x
-
-
 class ThornsModel(PreTrainedModel):
     config_class = ThornsConfig
 
@@ -162,14 +19,6 @@ class ThornsModel(PreTrainedModel):
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.h = nn.ModuleList([ThornsBlock(config) for _ in range(config.n_layer)])
         self.ln_f = ScaledRMSNorm(config.n_embd, eps=config.layer_norm_epsilon)
-        self.register_buffer(
-            "causal_mask",
-            torch.tril(
-                torch.ones(
-                    (config.n_positions, config.n_positions), dtype=torch.float32
-                )
-            ).view(1, 1, config.n_positions, config.n_positions),
-        )
 
     def get_input_embeddings(self):
         return self.wte
@@ -200,16 +49,16 @@ class ThornsModel(PreTrainedModel):
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        if attention_mask is None:
-            attention_mask = torch.ones(
-                input_shape, dtype=torch.bool, device=self.device
-            )
-
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
 
         hidden_states = inputs_embeds
 
+        # Always create an attention mask if it's not provided
+        if attention_mask is None:
+            attention_mask = torch.ones(input_shape, device=hidden_states.device)
+
+        # Prepare the attention mask (we'll need to add this to the attention scores later)
         attention_mask = self._prepare_attention_mask(
             attention_mask, input_shape, inputs_embeds.dtype
         )
@@ -227,28 +76,132 @@ class ThornsModel(PreTrainedModel):
         )
 
     def _prepare_attention_mask(self, attention_mask, input_shape, dtype):
-        if attention_mask.dim() == 4:
-            # Attention mask is already in the correct shape
-            extended_attention_mask = attention_mask
-        elif attention_mask.dim() == 3:
-            # Attention mask has shape [batch_size, 1, seq_length]
-            extended_attention_mask = attention_mask[:, None, :, :]
-        elif attention_mask.dim() == 2:
-            # Attention mask has shape [batch_size, seq_length]
+        # Handle 1D attention mask
+        if attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)  # Add batch dimension
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        if attention_mask.dim() == 2:
             extended_attention_mask = attention_mask[:, None, None, :]
-        elif attention_mask.dim() == 1:
-            # Attention mask has shape [seq_length]
-            extended_attention_mask = attention_mask[None, None, None, :]
+        elif attention_mask.dim() == 3:
+            extended_attention_mask = attention_mask[:, None, :, :]
         else:
             raise ValueError(
                 f"Wrong shape for attention_mask (shape {attention_mask.shape})"
             )
 
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
         extended_attention_mask = extended_attention_mask.to(dtype=dtype)
         extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(
             dtype
         ).min
         return extended_attention_mask
+
+
+class ThornsAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.hidden_size = config.n_embd
+        self.num_heads = config.n_head
+        self.head_dim = self.hidden_size // self.num_heads
+        self.query = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.key = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.value = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.dense = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
+        )
+
+    def forward(self, x, attention_mask=None):
+        batch_size, seq_len, _ = x.size()
+        q = (
+            self.query(x)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        k = (
+            self.key(x)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        v = (
+            self.value(x)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim**0.5)
+
+        # Create causal mask
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).view(
+            1, 1, seq_len, seq_len
+        )
+        scores = scores.masked_fill(causal_mask == 0, float("-inf"))
+
+        if attention_mask is not None:
+            # Ensure attention_mask is 4D
+            if attention_mask.dim() == 3:
+                attention_mask = attention_mask.unsqueeze(1)
+            elif attention_mask.dim() == 2:
+                attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            scores = scores + attention_mask
+
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_output = torch.matmul(attn_weights, v)
+        attn_output = attn_output.transpose(1, 2).reshape(
+            batch_size, seq_len, self.hidden_size
+        )
+        attn_output = self.dense(attn_output)
+        return attn_output
+
+
+class ThornsBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.input_layernorm = ScaledRMSNorm(
+            config.n_embd, eps=config.layer_norm_epsilon
+        )
+        self.attention = ThornsAttention(config)
+        self.post_attention_layernorm = ScaledRMSNorm(
+            config.n_embd, eps=config.layer_norm_epsilon
+        )
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
+        )
+
+    def forward(self, x, attention_mask=None):
+        residual = x
+        x = self.input_layernorm(x)
+        x = self.attention(x, attention_mask)
+        x = residual + x
+        residual = x
+        x = self.post_attention_layernorm(x)
+        x = self.mlp(x)
+        x = residual + x
+        return x
+
+
+class ScaledRMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, x):
+        variance = x.to(torch.float32).pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * x
 
 
 class ThornsForCausalLM(ThornsModel):

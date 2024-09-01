@@ -6,7 +6,7 @@ class ThornsConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size=50257,
+        vocab_size=32000,
         n_positions=1024,
         n_embd=768,
         n_layer=12,
@@ -18,9 +18,9 @@ class ThornsConfig(PretrainedConfig):
         layer_norm_epsilon=1e-5,
         initializer_range=0.02,
         use_cache=False,
-        bos_token_id=50256,
-        eos_token_id=50256,
-        pad_token_id=50256,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
         **kwargs
     ):
         super().__init__(

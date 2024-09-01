@@ -17,10 +17,9 @@ AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
 
 
 config = ThornsConfig(
-    vocab_size=50257,
     n_positions=512,
     n_embd=256,
-    n_layer=4,
+    n_layer=6,
     n_head=4,
     device_map="cpu",
 )
@@ -28,11 +27,8 @@ config = ThornsConfig(
 hparams = dict(
     learning_rate=0.001,
     weight_decay=0.0001,
-    eps=1e-8,
-    warmup_steps=10,
     batch_size=1,
     accumulate_grad_batches=64,
-    num_steps=10000,
     block_size=256,
 )
 
@@ -40,7 +36,7 @@ train_params = dict(
     accelerator="cpu",
     strategy="auto",
     devices="auto",
-    max_steps=hparams.get("num_steps"),
+    max_steps=10000,
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=1,
     precision="32-true",
@@ -54,7 +50,7 @@ train_params = dict(
     callbacks=[],
 )
 
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
+tokenizer = AutoTokenizer.from_pretrained("NousResearch/Llama-2-7b-hf")
 tokenizer.pad_token = tokenizer.eos_token
 model = AutoModelForCausalLM.from_config(config)
 model.train()
@@ -71,8 +67,12 @@ class ThornsTrainer(LightningModule):
         super(ThornsTrainer, self).__init__()
 
         self.model, self.optimizer = (model, optimizer)
+
+        self.automatic_optimization = True
+        self.batch_size = hparams["batch_size"]
         self.prev_avg_loss = 0
         self.smoothing = 0.01
+        self.save_hyperparameters(ignore=["model", "optimizer"])
 
     def forward(self, inputs):
         return self.model(**inputs)
@@ -94,7 +94,7 @@ class ThornsTrainer(LightningModule):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            batch_size=hparams["batch_size"],
+            batch_size=self.batch_size,
         )
 
         if batch_idx % 100 == 0:
@@ -135,12 +135,13 @@ class HuggingfaceDataset(IterableDataset):
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.dataset = load_dataset(
-            "tiiuae/falcon-refinedweb",
+            "HuggingFaceFW/fineweb",
             split="train",
             streaming=True,
             cache_dir="./tmp/pile",
             trust_remote_code=True,
         )
+        self.key = "text"
 
         self.cached_text = ""
 
@@ -157,8 +158,7 @@ class HuggingfaceDataset(IterableDataset):
         )
 
         for document in shuffled:
-            text += document.get("content") + self.tokenizer.eos_token
-            self.cached_text += text
+            self.cached_text += document.get(self.key) + self.tokenizer.eos_token
             if len(self.cached_text) < text_cache_size:
                 continue
 
