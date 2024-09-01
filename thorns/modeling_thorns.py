@@ -166,7 +166,7 @@ class ThornsModel(PreTrainedModel):
             "causal_mask",
             torch.tril(
                 torch.ones(
-                    (config.n_positions, config.n_positions), dtype=torch.float16
+                    (config.n_positions, config.n_positions), dtype=torch.float32
                 )
             ).view(1, 1, config.n_positions, config.n_positions),
         )
