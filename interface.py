@@ -88,11 +88,11 @@ class TerminalDashboard:
                 # Prepare chart data
                 with self.lock:
                     train_chart = self._draw_chart(
-                        self.train_losses, half_width, half_height
-                    )
+                        self.train_losses, half_width, half_height - 1
+                    )  # Reduce height by 1
                     val_chart = self._draw_chart(
-                        self.val_losses, half_width, half_height
-                    )
+                        self.val_losses, half_width, half_height - 1
+                    )  # Reduce height by 1
 
                 # Prepare wrapped text
                 status_lines = self._wrap_text(self.status_text, right_width)
@@ -109,16 +109,19 @@ class TerminalDashboard:
                     elif i == 1:
                         left_content = "─" * half_width
                         right_content = "─" * right_width
-                    elif i < half_height:
+                    elif i < half_height - 1:  # Reduce by 1 to make room for new border
                         if i - 2 < len(train_chart):
                             left_content = self._truncate_to_width(
                                 train_chart[i - 2], half_width
                             ).ljust(half_width)
                         if i - 2 < len(status_lines):
                             right_content = status_lines[i - 2]
+                    elif i == half_height - 1:  # New middle border
+                        left_content = "═" * (half_width)
+                        right_content = "═" * (right_width)
                     elif i == half_height:
                         left_content = "Validation Loss".ljust(half_width)
-                        right_content = "Placeholder".ljust(right_width)
+                        right_content = "Proto".ljust(right_width)
                     elif i == half_height + 1:
                         left_content = "─" * half_width
                         right_content = "─" * right_width
