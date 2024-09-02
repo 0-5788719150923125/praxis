@@ -67,7 +67,7 @@ class ThornsBlock(nn.Module):
         super().__init__()
         self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = ThornsAttention(config)
-        self.mlp = ThornsMLP(config)
+        self.mlp = ThornsMLP(hid_dim=config.n_embd, config=config)
 
     def forward(self, x, attention_mask=None):
         residual = x
