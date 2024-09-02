@@ -11,8 +11,8 @@ from hivemind.moe.server import (
     declare_experts,
     get_experts,
 )
-from ..layers.attention import PraxisAttention
-from ..layers.mlp import PraxisMLP
+from .attention import PraxisAttention
+from .mlp import PraxisMLP
 
 
 # PUBLIC_INITIAL_PEERS = [

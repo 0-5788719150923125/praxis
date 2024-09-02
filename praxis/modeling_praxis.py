@@ -7,7 +7,7 @@ from transformers.modeling_outputs import (
 )
 from typing import Optional, Tuple, Union
 from .configuration_praxis import PraxisConfig
-from .blocks.router import PraxisBlock
+from .modules.block import PraxisBlock
 
 
 class PraxisModel(PreTrainedModel):
