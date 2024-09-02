@@ -36,7 +36,7 @@ def test_thing():
         experts[f"expert.{i}"] = ModuleBackend(
             name=f"expert.{i}",
             module=expert,
-            optimizer=torch.optim.Adam(expert.parameters()),
+            # optimizer=torch.optim.Adam(expert.parameters()),
             args_schema=(BatchTensorDescriptor(HID_DIM),),
             outputs_schema=BatchTensorDescriptor(HID_DIM),
             max_batch_size=16,

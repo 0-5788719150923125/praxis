@@ -12,6 +12,14 @@ from ..layers.attention import ThornsAttention
 from ..layers.mlp import ThornsMLP
 from functools import partial
 from contextlib import ExitStack
+from hivemind.utils import BatchTensorDescriptor, MPFuture, get_dht_time
+from hivemind.moe.server.layers import name_to_block
+from hivemind.moe.server import (
+    ModuleBackend,
+    Server,
+    background_server,
+    declare_experts,
+)
 
 # dht = hivemind.DHT(
 #     # initial_peers=["/ip4/127.0.0.1/tcp/TODO/COPYFULL_ADDRESS/FROM_ONE_OF_THE_SERVERS"],
@@ -37,6 +45,8 @@ from contextlib import ExitStack
 #     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
 # ]
 
+dht = DHT(start=True)
+
 
 class ThornsBlock(nn.Module):
     def __init__(self, config):
@@ -49,7 +59,29 @@ class ThornsBlock(nn.Module):
         self.hid_dim = config.n_embd
         self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = ThornsAttention(config)
-        self.mlp = ThornsMLP(hid_dim=config.n_embd)
+        # self.mlp = ThornsMLP(hid_dim=config.n_embd)
+
+        experts = {}
+        for i in range(4):
+            expert = name_to_block["thorn"](self.hid_dim)
+            experts[f"expert.{i}"] = ModuleBackend(
+                name=f"expert.{i}",
+                module=expert,
+                # optimizer=torch.optim.Adam(expert.parameters()),
+                args_schema=(BatchTensorDescriptor(self.hid_dim),),
+                outputs_schema=BatchTensorDescriptor(self.hid_dim),
+                max_batch_size=16,
+            )
+
+        server = Server(dht, experts, num_connection_handlers=1)
+        server.start()
+        server.ready.wait()
+        self.dht = DHT(initial_peers=dht.get_visible_maddrs(), start=True)
+
+        # expert = experts.get("expert.0")
+        # expert = get_experts(self.dht, ["expert.0"])[0]
+        # print(expert)
+
         # print(config)
         # with background_server(
         #     expert_cls="ffn",
@@ -162,7 +194,8 @@ class ThornsBlock(nn.Module):
         # )
         # batch = torch.randn(1, self.hid_dim)
         # print(self.expert1(batch))
-
-        x = self.mlp(x)
+        expert = get_experts(self.dht, ["expert.0"])[0]
+        x = expert(x)
+        # x = self.mlp(x)
         x = residual + x
         return x
