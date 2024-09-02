@@ -52,6 +52,7 @@ class TerminalDashboard:
         self.original_stderr = sys.stderr
         self.dashboard_output = DashboardOutput(self.original_stdout)
         self.log_capture = LogCapture(self)
+        self.previous_frame = None
 
     def start(self):
         self.running = True
@@ -117,102 +118,110 @@ class TerminalDashboard:
             self._truncate_to_width(line, width).ljust(width) for line in wrapped_lines
         ]
 
-    def _run_dashboard(self):
-        with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
-            while self.running:
-                # Clear the screen
-                print(
-                    self.term.home + self.term.clear, end="", file=self.dashboard_output
-                )
+    def _draw_chart(self, data, width, height):
+        if len(data) > 1:
+            chart = asciichartpy.plot(
+                list(data), {"height": height - 2, "width": width - 2}
+            )
+            return [line.ljust(width) for line in chart.split("\n")]
+        return [" " * width for _ in range(height)]
 
-                # Calculate layout
-                height = self.term.height - 4  # Leave some space for borders
-                width = self.term.width - 3  # Leave space for middle border
-                half_height = height // 2
-                half_width = width // 2
-                right_width = width - half_width - 1
+    def _create_frame(self):
+        height = self.term.height - 4
+        width = self.term.width - 3
+        half_height = height // 2
+        half_width = width // 2
+        right_width = width - half_width - 1
 
-                # Draw top border
-                print(
-                    "╔" + "═" * half_width + "╦" + "═" * right_width + "╗",
-                    file=self.dashboard_output,
-                )
+        frame = []
+        frame.append("╔" + "═" * half_width + "╦" + "═" * right_width + "╗")
 
-                # Prepare chart data
-                with self.lock:
-                    train_chart = self._draw_chart(
-                        self.train_losses, half_width, half_height - 1
-                    )
-                    val_chart = self._draw_chart(
-                        self.val_losses, half_width, half_height - 1
-                    )
+        with self.lock:
+            train_chart = self._draw_chart(
+                self.train_losses, half_width, half_height - 1
+            )
+            val_chart = self._draw_chart(self.val_losses, half_width, half_height - 1)
 
-                # Prepare wrapped text
-                status_lines = self._wrap_text(self.status_text, right_width)
-                log_lines = self._wrap_text(
-                    "\n".join(list(self.log_buffer)[-half_height + 3 :]), right_width
-                )
+        status_lines = self._wrap_text(self.status_text, right_width)
+        log_lines = self._wrap_text(
+            "\n".join(list(self.log_buffer)[-half_height + 3 :]), right_width
+        )
 
-                # Draw content
-                for i in range(height):
-                    left_content = " " * half_width
-                    right_content = " " * right_width
+        status_lines += [" " * right_width] * (half_height - 3 - len(status_lines))
+        log_lines += [" " * right_width] * (half_height - 3 - len(log_lines))
 
-                    if i == 0:
-                        left_content = " Training Loss".ljust(half_width)
-                        right_content = " Feed".ljust(right_width)
-                    elif i == 1:
-                        left_content = "─" * half_width
-                        right_content = "─" * right_width
-                    elif i < half_height - 1:
-                        if i - 2 < len(train_chart):
-                            left_content = self._truncate_to_width(
-                                train_chart[i - 2], half_width
-                            ).ljust(half_width)
-                        if i - 2 < len(status_lines):
-                            right_content = status_lines[i - 2]
-                    elif i == half_height - 1:
-                        left_content = "═" * half_width
-                        right_content = "═" * right_width
-                    elif i == half_height:
-                        left_content = " Validation Loss".ljust(half_width)
-                        right_content = " Logger".ljust(right_width)
-                    elif i == half_height + 1:
-                        left_content = "─" * half_width
-                        right_content = "─" * right_width
-                    elif i > half_height + 1:
-                        chart_index = i - half_height - 2
-                        if chart_index < len(val_chart):
-                            left_content = self._truncate_to_width(
-                                val_chart[chart_index], half_width
-                            ).ljust(half_width)
-                        log_index = i - half_height - 2
-                        if log_index < len(log_lines):
-                            right_content = log_lines[log_index]
+        for i in range(height):
+            left_content = " " * half_width
+            right_content = " " * right_width
 
+            if i == 0:
+                left_content = " Training Loss".ljust(half_width)
+                right_content = " Feed".ljust(right_width)
+            elif i == 1:
+                left_content = "─" * half_width
+                right_content = "─" * right_width
+            elif i < half_height - 1:
+                if i - 2 < len(train_chart):
+                    left_content = train_chart[i - 2]
+                if i - 2 < len(status_lines):
+                    right_content = status_lines[i - 2]
+            elif i == half_height - 1:
+                left_content = "═" * half_width
+                right_content = "═" * right_width
+            elif i == half_height:
+                left_content = " Validation Loss".ljust(half_width)
+                right_content = " Logger".ljust(right_width)
+            elif i == half_height + 1:
+                left_content = "─" * half_width
+                right_content = "─" * right_width
+            elif i > half_height + 1:
+                chart_index = i - half_height - 2
+                if chart_index < len(val_chart):
+                    left_content = val_chart[chart_index]
+                log_index = i - half_height - 2
+                if log_index < len(log_lines):
+                    right_content = log_lines[log_index]
+
+            frame.append(f"║{left_content}║{right_content}║")
+
+        frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
+
+        with self.lock:
+            train_loss = self.train_losses[-1] if self.train_losses else 0
+            val_loss = self.val_losses[-1] if self.val_losses else 0
+            frame.append(
+                f" PRAXIS | Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
+            )
+
+        return frame
+
+    def _update_screen(self, new_frame):
+        if self.previous_frame is None:
+            print(
+                self.term.home + self.term.clear + "\n".join(new_frame),
+                end="",
+                file=self.dashboard_output,
+            )
+        else:
+            for i, (old_line, new_line) in enumerate(
+                zip(self.previous_frame, new_frame)
+            ):
+                if old_line != new_line:
                     print(
-                        f"║{left_content}║{right_content}║", file=self.dashboard_output
-                    )
-
-                # Draw bottom border
-                print(
-                    "╚" + "═" * half_width + "╩" + "═" * right_width + "╝",
-                    file=self.dashboard_output,
-                )
-
-                # Add some information at the bottom
-                with self.lock:
-                    train_loss = self.train_losses[-1] if self.train_losses else 0
-                    val_loss = self.val_losses[-1] if self.val_losses else 0
-                    print(
-                        f" PRAXIS | Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}",
+                        self.term.move(i, 0) + new_line,
+                        end="",
                         file=self.dashboard_output,
                     )
 
-                # Flush the output to ensure it's displayed
-                self.dashboard_output.flush()
+        self.previous_frame = new_frame
+        self.dashboard_output.flush()
 
-                time.sleep(0.1)  # Update every 0.1 seconds
+    def _run_dashboard(self):
+        with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
+            while self.running:
+                new_frame = self._create_frame()
+                self._update_screen(new_frame)
+                time.sleep(0.1)
 
 
 # Example usage

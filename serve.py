@@ -54,6 +54,7 @@ train_params = dict(
     gradient_clip_algorithm="norm",
     benchmark=True,
     enable_progress_bar=False,
+    enable_model_summary=False,
     callbacks=[],
 )
 
