@@ -1,6 +1,8 @@
-# thorns
+# praxis
 
-Triangulated Human Observation for Reasoning in the Natural Sciences
+<!-- Triangulated Human Observation for Reasoning in the Natural Sciences -->
+
+*Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.*
 
 ## what this model aims to be
 

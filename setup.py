@@ -15,7 +15,7 @@ train_requirements = [
 ]
 
 setup(
-    name="thorns",
+    name="praxis",
     packages=find_packages(),
     install_requires=base_requirements,
     extras_require={

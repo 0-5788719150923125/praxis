@@ -11,8 +11,8 @@ from hivemind.moe.server import (
     declare_experts,
     get_experts,
 )
-from ..layers.attention import ThornsAttention
-from ..layers.mlp import ThornsMLP
+from ..layers.attention import PraxisAttention
+from ..layers.mlp import PraxisMLP
 
 
 # PUBLIC_INITIAL_PEERS = [
@@ -32,15 +32,15 @@ dht = DHT(
 )
 
 
-class ThornsBlock(nn.Module):
+class PraxisBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
-        self.attn = ThornsAttention(config)
+        self.attn = PraxisAttention(config)
 
         experts = {}
         for i in range(1):
-            expert = name_to_block["thorn"](config)
+            expert = name_to_block["praxis"](config)
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
                 module=expert,

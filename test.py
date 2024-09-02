@@ -1,15 +1,15 @@
 import torch
 from transformers import AutoConfig, AutoModel, AutoTokenizer, AutoModelForCausalLM
-from thorns import ThornsConfig, ThornsModel, ThornsForCausalLM
+from praxis import PraxisConfig, PraxisModel, PraxisForCausalLM
 
-AutoConfig.register("thorns", ThornsConfig)
-AutoModel.register(ThornsConfig, ThornsModel)
-AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
+AutoConfig.register("praxis", PraxisConfig)
+AutoModel.register(PraxisConfig, PraxisModel)
+AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 
-def test_thorns_model():
+def test_praxis_model():
     # Initialize configuration
-    config = ThornsConfig(
+    config = PraxisConfig(
         n_positions=1024,
         n_embd=768,
         n_layer=12,
@@ -39,9 +39,9 @@ def test_thorns_model():
         print("Hidden states not returned")
 
 
-def test_thorns_for_causal_lm():
+def test_praxis_for_causal_lm():
     # Initialize configuration
-    config = ThornsConfig(
+    config = PraxisConfig(
         n_positions=1024,
         n_embd=768,
         n_layer=12,
@@ -66,7 +66,7 @@ def test_thorns_for_causal_lm():
 
 
 if __name__ == "__main__":
-    print("Testing ThornsModel...")
-    test_thorns_model()
-    print("\nTesting ThornsForCausalLM...")
-    test_thorns_for_causal_lm()
+    print("Testing PraxisModel...")
+    test_praxis_model()
+    print("\nTesting PraxisForCausalLM...")
+    test_praxis_for_causal_lm()

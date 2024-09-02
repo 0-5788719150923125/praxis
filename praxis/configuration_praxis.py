@@ -1,8 +1,8 @@
 from transformers import PretrainedConfig
 
 
-class ThornsConfig(PretrainedConfig):
-    model_type = "thorns"
+class PraxisConfig(PretrainedConfig):
+    model_type = "praxis"
 
     def __init__(
         self,

@@ -6,19 +6,19 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
 )
 from typing import Optional, Tuple, Union
-from .configuration_thorns import ThornsConfig
-from .blocks.thorns import ThornsBlock
+from .configuration_praxis import PraxisConfig
+from .blocks.router import PraxisBlock
 
 
-class ThornsModel(PreTrainedModel):
-    config_class = ThornsConfig
+class PraxisModel(PreTrainedModel):
+    config_class = PraxisConfig
 
     def __init__(self, config):
         super().__init__(config)
         self.embed_dim = config.n_embd
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.blocks = nn.ModuleList(
-            [ThornsBlock(config) for _ in range(config.n_layer)]
+            [PraxisBlock(config) for _ in range(config.n_layer)]
         )
         self.post_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
 
@@ -61,7 +61,7 @@ class ThornsModel(PreTrainedModel):
         )
 
 
-class ThornsForCausalLM(ThornsModel):
+class PraxisForCausalLM(PraxisModel):
     def __init__(self, config):
         config.causal = True
         super().__init__(config)

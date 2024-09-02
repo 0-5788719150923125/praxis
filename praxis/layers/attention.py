@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ThornsAttention(nn.Module):
+class PraxisAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.causal = config.causal

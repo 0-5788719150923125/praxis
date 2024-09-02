@@ -6,17 +6,17 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.optim import AdamW
 from transformers import AutoConfig, AutoModel, AutoTokenizer, AutoModelForCausalLM
 from datasets import load_dataset
-from thorns import ThornsConfig, ThornsModel, ThornsForCausalLM
+from praxis import PraxisConfig, PraxisModel, PraxisForCausalLM
 import numpy as np
 import random
 import math
 
-AutoConfig.register("thorns", ThornsConfig)
-AutoModel.register(ThornsConfig, ThornsModel)
-AutoModelForCausalLM.register(ThornsConfig, ThornsForCausalLM)
+AutoConfig.register("praxis", PraxisConfig)
+AutoModel.register(PraxisConfig, PraxisModel)
+AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 
-config = ThornsConfig(
+config = PraxisConfig(
     n_positions=512,
     n_embd=256,
     n_layer=6,
@@ -60,13 +60,13 @@ model.train()
 print(model)
 
 
-class ThornsTrainer(LightningModule):
+class PraxisTrainer(LightningModule):
     """
-    A training module for Thorns.
+    A training module for Praxis.
     """
 
     def __init__(self, model, optimizer, hparams):
-        super(ThornsTrainer, self).__init__()
+        super(PraxisTrainer, self).__init__()
 
         self.model, self.optimizer = (model, optimizer)
 
@@ -214,7 +214,7 @@ optimizer = AdamW(
 )
 
 # Wrap the model in a pytorch-lightning module
-train_model = ThornsTrainer(model, optimizer, hparams)
+train_model = PraxisTrainer(model, optimizer, hparams)
 
 # fit the trainer and run
 model.train()

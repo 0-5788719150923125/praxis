@@ -8,8 +8,8 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
 
-@register_expert_class("thorn", input_shape)
-class ThornsMLP(nn.Module):
+@register_expert_class("praxis", input_shape)
+class PraxisMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.network = nn.Sequential(
