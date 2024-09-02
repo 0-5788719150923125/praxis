@@ -1,8 +1,6 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers.activations import ACT2FN
-from typing import Optional, OrderedDict, Tuple, Union
+from typing import OrderedDict
 
 
 class ThornsMLP(nn.Module):

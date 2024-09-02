@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from typing import Optional, OrderedDict, Tuple, Union
+from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
 from .layers.attention import ThornsAttention
 from .layers.mlp import ThornsMLP
@@ -19,8 +18,10 @@ class ThornsModel(PreTrainedModel):
         super().__init__(config)
         self.embed_dim = config.n_embd
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
-        self.h = nn.ModuleList([ThornsBlock(config) for _ in range(config.n_layer)])
-        self.rms_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.blocks = nn.ModuleList(
+            [ThornsBlock(config) for _ in range(config.n_layer)]
+        )
+        self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
 
     def get_input_embeddings(self):
         return self.wte
@@ -48,10 +49,10 @@ class ThornsModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        for block in self.h:
+        for block in self.blocks:
             hidden_states = block(hidden_states, attention_mask)
 
-        hidden_states = self.rms_norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states.view(*output_shape),
@@ -64,17 +65,17 @@ class ThornsModel(PreTrainedModel):
 class ThornsBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.rms_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = ThornsAttention(config)
         self.mlp = ThornsMLP(config)
 
     def forward(self, x, attention_mask=None):
         residual = x
-        x = self.rms_norm(x)
+        x = self.norm(x)
         x = self.attn(x, attention_mask)
         x = residual + x
         residual = x
-        x = self.rms_norm(x)
+        x = self.norm(x)
         x = self.mlp(x)
         x = residual + x
         return x
