@@ -18,14 +18,6 @@ class ThornsModel(PreTrainedModel):
         super().__init__(config)
         self.embed_dim = config.n_embd
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
-        # with background_server(
-        #     expert_cls="ffn",
-        #     num_experts=2,
-        #     device="cpu",
-        #     hidden_dim=config.n_embd,
-        #     num_handlers=2,
-        #     # custom_module_path=CUSTOM_EXPERTS_PATH,
-        # ) as server:
         self.blocks = nn.ModuleList(
             [ThornsBlock(config) for _ in range(config.n_layer)]
         )

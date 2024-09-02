@@ -7,20 +7,22 @@ from hivemind.moe import Server
 from hivemind.moe.expert_uid import ExpertInfo
 from hivemind.moe.server.dht_handler import DHTHandlerThread, get_experts
 from hivemind.moe.server import background_server
+from hivemind.moe.server.dht_handler import declare_experts, get_experts
 from ..layers.attention import ThornsAttention
 from ..layers.mlp import ThornsMLP
 from functools import partial
 from contextlib import ExitStack
 
-dht = hivemind.DHT(
-    # initial_peers=["/ip4/127.0.0.1/tcp/TODO/COPYFULL_ADDRESS/FROM_ONE_OF_THE_SERVERS"],
-    initial_peers=None,
-    client_mode=False,
-    use_ipfs=True,
-    use_relay=True,
-    use_auto_relay=True,
-    start=True,
-)
+# dht = hivemind.DHT(
+#     # initial_peers=["/ip4/127.0.0.1/tcp/TODO/COPYFULL_ADDRESS/FROM_ONE_OF_THE_SERVERS"],
+#     initial_peers=None,
+#     client_mode=False,
+#     use_ipfs=True,
+#     use_relay=True,
+#     use_auto_relay=True,
+#     start=False,
+# )
+# dht.run_in_background(await_ready=True)
 
 
 # PUBLIC_INITIAL_PEERS = [
@@ -44,11 +46,20 @@ class ThornsBlock(nn.Module):
         #         print(attr)
         # print(dht.get("initial_peers"))
         # return
+        self.hid_dim = config.n_embd
         self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = ThornsAttention(config)
         self.mlp = ThornsMLP(hid_dim=config.n_embd)
         # print(config)
-
+        # with background_server(
+        #     expert_cls="ffn",
+        #     num_experts=2,
+        #     device="cpu",
+        #     hidden_dim=self.hid_dim,
+        #     num_handlers=2,
+        #     # custom_module_path=CUSTOM_EXPERTS_PATH,
+        # ) as server:
+        #     print(server)
         # dht = DHT(initial_peers=server_peer_info.addrs, start=True)
         # self.expert0, self.expert1 = create_remote_experts(
         #     [
@@ -115,8 +126,9 @@ class ThornsBlock(nn.Module):
         #     use_ipfs=True,
         #     use_relay=True,
         #     use_auto_relay=True,
-        #     start=True,
+        #     start=False,
         # )
+        # self.server.dht.run_in_background(await_ready=True)
         # self.server.run()
         # self.server.join()
         # print(self.server)
@@ -135,19 +147,21 @@ class ThornsBlock(nn.Module):
         #     expert_cls="ffn",
         #     num_experts=2,
         #     device="cpu",
-        #     hidden_dim=config.n_embd,
+        #     hidden_dim=self.hid_dim,
         #     num_handlers=2,
         #     # custom_module_path=CUSTOM_EXPERTS_PATH,
         # ) as server:
         #     print(server)
-        #     dht = DHT(initial_peers=server.addrs, start=True)
-        #     self.expert1, self.expert2 = create_remote_experts(
-        #         [
-        #             ExpertInfo(uid="expert.0", peer_id=server.peer_id),
-        #             ExpertInfo(uid="expert.1", peer_id=server.peer_id),
-        #         ],
-        #         dht=dht,
-        #     )
+        # dht = DHT(initial_peers=server.addrs, start=True)
+        # self.expert1, self.expert2 = create_remote_experts(
+        #     [
+        #         ExpertInfo(uid="expert.0", peer_id=server.peer_id),
+        #         ExpertInfo(uid="expert.1", peer_id=server.peer_id),
+        #     ],
+        #     dht=dht,
+        # )
+        # batch = torch.randn(1, self.hid_dim)
+        # print(self.expert1(batch))
 
         x = self.mlp(x)
         x = residual + x
