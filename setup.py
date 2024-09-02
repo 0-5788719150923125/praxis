@@ -15,6 +15,7 @@ server_requirements = [
     "flask",
     "lightning",
     "numpy",
+    "werkzeug",
 ]
 
 setup(

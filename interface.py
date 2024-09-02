@@ -78,6 +78,10 @@ class TerminalDashboard:
         with self.lock:
             self.status_text = status
 
+    def update_url(self, url):
+        with self.lock:
+            self.url = url
+
     def add_log(self, message):
         with self.lock:
             # Split the message into lines, filter out empty lines, and strip whitespace
@@ -196,7 +200,7 @@ class TerminalDashboard:
         frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
 
         with self.lock:
-            frame.append(f" PRAXIS | Step: {int(self.step)}")
+            frame.append(f" PRAXIS | Step: {int(self.step)}, URL: {self.url}")
 
         return frame
 

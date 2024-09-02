@@ -71,7 +71,10 @@ model.train()
 
 print(model)
 
-# api_server = APIServer(model)
+api_server = APIServer(model)
+api_server.start()
+api_url = api_server.get_url() + "/generate"
+# api_url = "http://localhost:8585/generate"
 
 
 class PraxisTrainer(LightningModule):
@@ -123,6 +126,7 @@ class TerminalInterface(Callback):
         self.max_length = 2048
         self.dashboard = TerminalDashboard(max_data_points)
         self.dashboard.start()
+        self.dashboard.update_url(api_url)
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
