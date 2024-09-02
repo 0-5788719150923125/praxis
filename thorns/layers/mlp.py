@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from transformers.activations import ACT2FN
 from typing import OrderedDict
@@ -9,13 +10,14 @@ ffn_sample_input = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim)
 
 @register_expert_class("thorn", ffn_sample_input)
 class ThornsMLP(nn.Module):
-    def __init__(self, hid_dim, config):
+    def __init__(self, hid_dim):
         super().__init__()
         self.network = nn.Sequential(
             OrderedDict(
                 [
                     ("in_proj", nn.Linear(hid_dim, 4 * hid_dim)),
-                    ("act", ACT2FN[config.activation_function]),
+                    # ("act", ACT2FN[config.activation_function]),
+                    ("act", ACT2FN["mish"]),
                     ("out_proj", nn.Linear(4 * hid_dim, hid_dim)),
                 ]
             )
