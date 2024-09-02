@@ -35,7 +35,7 @@ dht = DHT(
 class ThornsBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.attn_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = ThornsAttention(config)
 
         experts = {}
@@ -60,15 +60,16 @@ class ThornsBlock(nn.Module):
             use_relay=True,
             use_ipfs=True,
         )
+        self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.mlp = get_experts(self.dht, ["expert.0"])[0]
 
     def forward(self, x, attention_mask=None):
         residual = x
-        x = self.norm(x)
+        x = self.attn_norm(x)
         x = self.attn(x, attention_mask)
         x = residual + x
         residual = x
-        x = self.norm(x)
+        x = self.mlp_norm(x)
         x = self.mlp(x)
         x = residual + x
         return x

@@ -20,7 +20,7 @@ class ThornsModel(PreTrainedModel):
         self.blocks = nn.ModuleList(
             [ThornsBlock(config) for _ in range(config.n_layer)]
         )
-        self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.post_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
 
     def get_input_embeddings(self):
         return self.wte
@@ -51,7 +51,7 @@ class ThornsModel(PreTrainedModel):
         for block in self.blocks:
             hidden_states = block(hidden_states, attention_mask)
 
-        hidden_states = self.norm(hidden_states)
+        hidden_states = self.post_norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states.view(*output_shape),
