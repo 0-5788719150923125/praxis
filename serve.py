@@ -10,6 +10,7 @@ from praxis import PraxisConfig, PraxisModel, PraxisForCausalLM
 import numpy as np
 import random
 import math
+from interface import TerminalDashboard
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
@@ -46,7 +47,7 @@ train_params = dict(
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
-    enable_progress_bar=True,
+    enable_progress_bar=False,
     callbacks=[],
 )
 
@@ -58,6 +59,8 @@ model = AutoModelForCausalLM.from_config(config)
 model.train()
 
 print(model)
+
+dashboard = TerminalDashboard()
 
 
 class PraxisTrainer(LightningModule):
@@ -74,6 +77,7 @@ class PraxisTrainer(LightningModule):
         self.batch_size = hparams["batch_size"]
         self.ema = 0
         self.save_hyperparameters(ignore=["model", "optimizer"])
+        dashboard.start()
 
     def forward(self, inputs):
         return self.model(**inputs)
@@ -92,7 +96,7 @@ class PraxisTrainer(LightningModule):
             },
             on_step=True,
             on_epoch=True,
-            prog_bar=True,
+            # prog_bar=False,
             logger=True,
             batch_size=self.batch_size,
         )
@@ -112,8 +116,10 @@ class PraxisTrainer(LightningModule):
                 repetition_penalty=1.2,
             )
             generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            print("Prediction:", generated_text)
+            dashboard.update_status(generated_text)
             model.train()
+
+        dashboard.update_losses(avg_loss, avg_loss)
 
         return loss
 

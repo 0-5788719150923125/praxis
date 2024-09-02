@@ -8,7 +8,9 @@ base_requirements = [
 ]
 
 # Additional requirements for training and orchestration
-train_requirements = [
+server_requirements = [
+    "asciichartpy",
+    "blessed",
     "datasets",
     "lightning",
     "numpy",
@@ -19,7 +21,7 @@ setup(
     packages=find_packages(),
     install_requires=base_requirements,
     extras_require={
-        "train": train_requirements,
-        "all": base_requirements + train_requirements,
+        "serve": server_requirements,
+        "all": base_requirements + server_requirements,
     },
 )
