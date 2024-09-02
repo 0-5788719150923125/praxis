@@ -71,7 +71,30 @@ model.train()
 
 print(model)
 
-api_server = APIServer(model)
+
+class Generator:
+    def __init__(self, model, tokenizer):
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def generate(self, prompt, **kwargs):
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
+        outputs = self.model.generate(
+            input_ids,
+            do_sample=True,
+            max_new_tokens=1,
+            temperature=0.7,
+            eta_cutoff=0.002,
+            penalty_alpha=0.6,
+            top_k=4,
+            repetition_penalty=1.2,
+        )
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+generator = Generator(model, tokenizer)
+
+api_server = APIServer(generator)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 # api_url = "http://localhost:8585/generate"
@@ -145,18 +168,19 @@ class TerminalInterface(Callback):
             return
 
         lm.model.eval()
-        input_ids = tokenizer.encode(self.text, return_tensors="pt")
-        outputs = lm.model.generate(
-            input_ids,
-            do_sample=True,
-            max_new_tokens=1,
-            temperature=0.7,
-            eta_cutoff=0.002,
-            penalty_alpha=0.6,
-            top_k=4,
-            repetition_penalty=1.2,
-        )
-        self.text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # input_ids = tokenizer.encode(self.text, return_tensors="pt")
+        # outputs = lm.model.generate(
+        #     input_ids,
+        #     do_sample=True,
+        #     max_new_tokens=1,
+        #     temperature=0.7,
+        #     eta_cutoff=0.002,
+        #     penalty_alpha=0.6,
+        #     top_k=4,
+        #     repetition_penalty=1.2,
+        # )
+        # self.text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        self.text = generator.generate(self.text)
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]

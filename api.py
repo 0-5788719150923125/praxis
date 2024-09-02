@@ -8,8 +8,8 @@ app = Flask(__name__)
 
 
 class APIServer:
-    def __init__(self, model):
-        self.model = model
+    def __init__(self, generator):
+        self.generator = generator
         self.server_thread = None
         self.server = None
         self.started = Event()
@@ -48,7 +48,10 @@ class APIServer:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            output = loop.run_until_complete(app.config["model"].generate(**kwargs))
+            prompt = kwargs.get("prompt", "")
+            output = loop.run_until_complete(
+                app.config["generator"].generate(prompt, kwargs)
+            )
 
             if not output:
                 raise Exception("Failed to generate an output from this API.")
@@ -57,26 +60,3 @@ class APIServer:
             return jsonify(str(e)), 400
         print("Successfully responded to REST request.")
         return jsonify({"response": output}), 200
-
-
-# Usage
-if __name__ == "__main__":
-
-    class DummyModel:
-        async def generate(self, **kwargs):
-            return "Hello, World!"
-
-    server = APIServer(DummyModel())
-    app.config["model"] = server.model  # Make the model accessible to Flask routes
-    server.start()
-
-    # Your main program continues here
-    import time
-
-    try:
-        while True:
-            print("Main thread is running...")
-            time.sleep(5)
-    except KeyboardInterrupt:
-        print("Stopping server...")
-        server.stop()
