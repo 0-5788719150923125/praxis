@@ -7,8 +7,7 @@ from transformers.modeling_outputs import (
 )
 from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
-from .layers.attention import ThornsAttention
-from .layers.mlp import ThornsMLP
+from .blocks.thorns import ThornsBlock
 
 
 class ThornsModel(PreTrainedModel):
@@ -60,25 +59,6 @@ class ThornsModel(PreTrainedModel):
             hidden_states=None,
             attentions=None,
         )
-
-
-class ThornsBlock(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
-        self.attn = ThornsAttention(config)
-        self.mlp = ThornsMLP(hid_dim=config.n_embd, config=config)
-
-    def forward(self, x, attention_mask=None):
-        residual = x
-        x = self.norm(x)
-        x = self.attn(x, attention_mask)
-        x = residual + x
-        residual = x
-        x = self.norm(x)
-        x = self.mlp(x)
-        x = residual + x
-        return x
 
 
 class ThornsForCausalLM(ThornsModel):
