@@ -52,6 +52,8 @@ train_params = dict(
     callbacks=[],
 )
 
+max_data_points = 1000
+
 tokenizer = AutoTokenizer.from_pretrained(
     "NousResearch/Llama-2-7b-hf", cache_dir="./data"
 )
@@ -108,8 +110,8 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.text = ""
-        self.max_length = 512
-        self.dashboard = TerminalDashboard()
+        self.max_length = 2048
+        self.dashboard = TerminalDashboard(max_data_points)
         self.dashboard.start()
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
@@ -141,6 +143,7 @@ class TerminalInterface(Callback):
             repetition_penalty=1.2,
         )
         self.text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
         self.dashboard.update_status(self.text)
