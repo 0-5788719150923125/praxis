@@ -106,12 +106,16 @@ class TerminalDashboard:
         return text
 
     def _wrap_text(self, text, width):
-        # Wrap the text, preserving whitespace
-        wrapped = textwrap.wrap(
-            text, width=width, replace_whitespace=False, drop_whitespace=False
-        )
-        # Ensure each line is exactly 'width' characters, truncating if necessary
-        return [self._truncate_to_width(line, width).ljust(width) for line in wrapped]
+        wrapped_lines = []
+        for line in text.splitlines():
+            wrapped_lines.extend(
+                textwrap.wrap(
+                    line, width=width, replace_whitespace=False, drop_whitespace=False
+                )
+            )
+        return [
+            self._truncate_to_width(line, width).ljust(width) for line in wrapped_lines
+        ]
 
     def _run_dashboard(self):
         with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
@@ -145,9 +149,9 @@ class TerminalDashboard:
 
                 # Prepare wrapped text
                 status_lines = self._wrap_text(self.status_text, right_width)
-                log_lines = list(self.log_buffer)[
-                    -half_height + 3 :
-                ]  # Display last lines that fit
+                log_lines = self._wrap_text(
+                    "\n".join(list(self.log_buffer)[-half_height + 3 :]), right_width
+                )
 
                 # Draw content
                 for i in range(height):
@@ -155,8 +159,8 @@ class TerminalDashboard:
                     right_content = " " * right_width
 
                     if i == 0:
-                        left_content = "Training Loss".ljust(half_width)
-                        right_content = "Feed".ljust(right_width)
+                        left_content = " Training Loss".ljust(half_width)
+                        right_content = " Feed".ljust(right_width)
                     elif i == 1:
                         left_content = "─" * half_width
                         right_content = "─" * right_width
@@ -171,8 +175,8 @@ class TerminalDashboard:
                         left_content = "═" * half_width
                         right_content = "═" * right_width
                     elif i == half_height:
-                        left_content = "Validation Loss".ljust(half_width)
-                        right_content = "Logger".ljust(right_width)
+                        left_content = " Validation Loss".ljust(half_width)
+                        right_content = " Logger".ljust(right_width)
                     elif i == half_height + 1:
                         left_content = "─" * half_width
                         right_content = "─" * right_width
@@ -184,9 +188,7 @@ class TerminalDashboard:
                             ).ljust(half_width)
                         log_index = i - half_height - 2
                         if log_index < len(log_lines):
-                            right_content = self._truncate_to_width(
-                                log_lines[log_index], right_width
-                            ).ljust(right_width)
+                            right_content = log_lines[log_index]
 
                     print(
                         f"║{left_content}║{right_content}║", file=self.dashboard_output
@@ -203,7 +205,7 @@ class TerminalDashboard:
                     train_loss = self.train_losses[-1] if self.train_losses else 0
                     val_loss = self.val_losses[-1] if self.val_losses else 0
                     print(
-                        f"PRAXIS | Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}",
+                        f" PRAXIS | Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}",
                         file=self.dashboard_output,
                     )
 

@@ -26,6 +26,11 @@ config = PraxisConfig(
     device_map="cpu",
 )
 
+dataset_config = {
+    "repo": "HuggingFaceFW/fineweb",
+    "key": "text",
+}
+
 hparams = dict(
     learning_rate=0.001,
     weight_decay=0.0001,
@@ -51,6 +56,7 @@ train_params = dict(
     enable_progress_bar=False,
     callbacks=[],
 )
+
 
 max_data_points = 1000
 
@@ -117,13 +123,13 @@ class TerminalInterface(Callback):
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
 
-        step = trainer.callback_metrics.get("step", 0)
-        # global_step = trainer.callback_metrics.get("global_step", 0)
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema = self._compute_ema(float(loss), self.ema)
-
-        self.dashboard.update_step(step.item())
         self.dashboard.update_losses(self.ema, random.random() * 0.1)
+
+        step = trainer.callback_metrics.get("step", 0)
+        self.dashboard.update_step(step.item())
+
         self._generate_sample_text(lm, batch_idx)
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
@@ -157,16 +163,16 @@ class TerminalInterface(Callback):
 
 
 class HuggingfaceDataset(IterableDataset):
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer, config):
         self.tokenizer = tokenizer
         self.dataset = load_dataset(
-            "HuggingFaceFW/fineweb",
+            config.get("repo", "HuggingFaceFW/fineweb"),
             split="train",
             streaming=True,
             cache_dir="./tmp/pile",
             trust_remote_code=True,
         )
-        self.key = "text"
+        self.key = config.get("key", "text")
 
         self.cached_text = ""
 
@@ -174,8 +180,6 @@ class HuggingfaceDataset(IterableDataset):
 
         buffer_size = 10_000
         text_cache_size = 10 * buffer_size
-
-        block_size = hparams["block_size"]
 
         shuffled = self.dataset.shuffle(
             seed=random.randint(0, 2**31),
@@ -189,7 +193,7 @@ class HuggingfaceDataset(IterableDataset):
 
             tokens = self.tokenizer(
                 text=self.cached_text,
-                max_length=block_size,
+                max_length=hparams["block_size"],
                 stride=16,
                 padding=True,
                 truncation=True,
@@ -200,17 +204,20 @@ class HuggingfaceDataset(IterableDataset):
             self.cached_text = ""
 
             for batch in tokens:
-                if len(batch) != block_size:
+                if len(batch) != hparams["block_size"]:
                     break
                 yield batch
 
 
-dataset = HuggingfaceDataset(tokenizer)
-
-
 # set weights as trainable
 def set_trainable_parameters(model, hparams):
-    no_decay = ["bias", "LayerNorm.weight"]
+    no_decay = [
+        "bias",
+        "LayerNorm.bias",
+        "LayerNorm.weight",
+        "RMSNorm.weight",
+        "RMSNorm.bias",
+    ]
     grouped_parameters = []
 
     for n, p in model.named_parameters():
@@ -242,6 +249,9 @@ optimizer = AdamW(
     params,
     lr=0.001,
 )
+
+# Load a dataset
+dataset = HuggingfaceDataset(tokenizer, dataset_config)
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, hparams)
@@ -307,109 +317,6 @@ trainer.fit(train_model, dataset)
 #     "block_size": block_size,
 # }
 
-# # initialized and load the model
-# config = AutoConfig.from_pretrained(
-#     "gpt2",
-#     n_embd=block_size,
-#     n_ctx=block_size,
-#     n_layer=2,
-#     n_head=2,
-#     n_positions=block_size,
-#     n_inner=block_size * 4,
-#     resid_pdrop=0.1,
-#     embd_pdrop=0.1,
-#     attn_pdrop=0.1,
-#     summary_first_dropout=0.1,
-#     layer_norm_epsilon=1e-5,
-#     initializer_range=0.05,
-#     summary_type="cls_index",
-#     summary_proj_to_labels=True,
-#     summary_use_proj=True,
-#     torch_dtype=torch.bfloat16,
-# )
-
-
-# print(config)
-
-# model = AutoModelForCausalLM.from_config(config)
-# tokenizer = AutoTokenizer.from_pretrained(
-#     "openai-community/gpt2",
-#     cache_dir="/tmp/tokenizer",
-#     padding="max_length",
-#     padding_side="left",
-#     use_fast=True,
-#     return_overflowing_tokens=True,
-#     truncation=True,
-# )
-# tokenizer.pad_token = tokenizer.eos_token
-
-
-# # create a datamodule to wrap our remote datasets
-# class StreamingDataModule(LightningDataModule):
-#     def __init__(self, tokenizer, config):
-#         super().__init__()
-#         self.tokenizer = tokenizer
-#         self.config = config
-#         self.train_data = StreamingDataset(self.tokenizer, config)
-
-#     def train_dataloader(self):
-#         return DataLoader(
-#             self.train_data,
-#             batch_size=batch_size,
-#             pin_memory=True,
-#             num_workers=2,
-#         )
-
-
-# # create an iterable dataset, which loops over the streaming data
-# class StreamingDataset(IterableDataset):
-#     def __init__(self, tokenizer, config):
-#         self.tokenizer = tokenizer
-#         self.config = config
-#         self.dataset = load_dataset(
-#             self.config.get("dataset", "tiiuae/falcon-refinedweb"),
-#             split=self.config.get("split", "train"),
-#             streaming=True,
-#             cache_dir="/tmp/pile",
-#         )
-
-#     def __iter__(self):
-#         shuffled = self.dataset.shuffle(
-#             seed=random.randint(0, 2**31),
-#             buffer_size=10000,
-#         )
-
-#         block_size = self.config.get("block_size", 512)
-
-#         batch = []
-#         for document in shuffled:
-#             tokenized = self.tokenizer(
-#                 text=document.get(self.config.get("key", "default")),
-#                 max_length=block_size,
-#                 stride=0,
-#                 padding=True,
-#                 truncation=True,
-#                 return_overflowing_tokens=True,
-#                 return_tensors="np",
-#             )["input_ids"]
-#             choice = random.choice(tokenized)
-#             if len(choice) == 0:
-#                 continue
-#             elif len(batch) == 0:
-#                 batch = choice
-#             else:
-#                 np.append(batch, self.tokenizer.eos_token_id)
-#                 batch = np.concatenate([batch, choice])
-#             if len(batch) >= block_size:
-#                 yield batch[:block_size]
-#                 batch = []
-#             else:
-#                 continue
-
-
-# # prepare a dataset for use with training
-# dataset = StreamingDataModule(tokenizer, dataset_config)
-
 
 # # wrap the LightningModule in a custom class
 # class MinerTrainer(LightningModule):
@@ -455,18 +362,6 @@ trainer.fit(train_model, dataset)
 #         "Create optimizer and scheduler"
 #         return [self.optimizer]
 
-
-# # define the model hyperparameters
-# hparams = dict(
-#     learning_rate=0.001,
-#     weight_decay=0.1,
-#     eps=1e-8,
-#     warmup_steps=10,
-#     batch_size=batch_size,
-#     num_steps=num_steps,
-#     block_size=block_size,
-# )
-
 # # define the hivemind strategy
 # strategy = HivemindStrategy(
 #     run_id=f"hiveminer",
@@ -510,99 +405,6 @@ trainer.fit(train_model, dataset)
 # # for peer in list(set(my_ids)):
 # #     print(f"PEER-ID: {peer}")
 
-# # define training params
-# train_params = dict(
-#     accelerator="auto",
-#     strategy=strategy,
-#     devices="auto",
-#     max_steps=num_steps * target_batch_size,
-#     max_epochs=-1,
-#     reload_dataloaders_every_n_epochs=1,
-#     precision="32-true",
-#     accumulate_grad_batches=1,  # must be 1 for Hivemind training
-#     gradient_clip_val=1.0,
-#     gradient_clip_algorithm="norm",
-#     benchmark=True,
-#     enable_progress_bar=False,
-#     callbacks=[],
-# )
-
-
-# # set weights as trainable
-# def set_trainable_parameters(model, hparams):
-#     no_decay = ["bias", "LayerNorm.weight"]
-#     grouped_parameters = []
-
-#     for n, p in model.named_parameters():
-#         if not p.requires_grad:
-#             continue
-
-#         if any(nd in n for nd in no_decay):
-#             weight_decay = 0.0
-#         else:
-#             weight_decay = hparams["weight_decay"]
-
-#         grouped_parameters.append(
-#             {
-#                 "params": [p],
-#                 "weight_decay": weight_decay,
-#             }
-#         )
-
-#     return grouped_parameters
-
-
-# # set model parameters as trainable
-# params = set_trainable_parameters(model, hparams)
-
-# # create the optimizer
-# optimizer = AdamW(
-#     params,
-#     lr=hparams.get("learning_rate", 0.001),
-#     eps=hparams.get("eps", 1e-8),
-# )
-
-
-# # for logging progress
-# class MinerConsoleLogging(Callback):
-#     """A variant progress bar that works off of steps and prints periodically."""
-
-#     def __init__(self, num_steps):
-#         super().__init__()
-#         self.num_steps = num_steps
-#         self.num_peers = 0
-#         self.previous_step = None
-#         self.prev_avg_loss = None
-
-#     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
-#         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
-#         step = int(trainer.callback_metrics.get("global_step", -1))
-#         if step == -1:
-#             return
-
-#         current_loss = float(trainer.callback_metrics["train_loss"])
-
-#         avg_loss = 0
-#         if not isnan(current_loss):
-#             avg_loss = self.average_loss(current_loss, self.prev_avg_loss)
-#             self.prev_avg_loss = avg_loss
-
-#         output = f"Global Step: {str(step)}, Local Loss: {avg_loss:.3f}"
-
-#         if hasattr(trainer.strategy, "num_peers"):
-#             output += f", Peers: {trainer.strategy.num_peers}"
-
-#         if step != self.previous_step or self.num_peers != trainer.strategy.num_peers:
-#             print(output)
-#             self.previous_step = step
-#             self.num_peers = trainer.strategy.num_peers
-
-#     def average_loss(self, current_loss, prev_avg_loss, smoothing=0.01):
-#         if prev_avg_loss is None:
-#             return current_loss
-#         else:
-#             return (smoothing * current_loss) + (1 - smoothing) * prev_avg_loss
-
 
 # class MinerModelSaver(Callback):
 #     """Periodically save the model during training."""
@@ -639,156 +441,3 @@ trainer.fit(train_model, dataset)
 
 #     def save_pytorch_model(self, trainer, lm):
 #         lm.model.save_pretrained(self.output_dir, safe_serialization=True)
-
-
-# class ValidationCommunicator(Callback):
-#     """Periodically save the model during training."""
-
-#     def __init__(self, args, sync_interval=600, batch_to_send=100):
-#         super().__init__()
-
-#         BittensorNetwork.initialize(args)
-
-#         # Now you can access wallet, subtensor, and metagraph like this:
-#         self.wallet = BittensorNetwork.wallet
-#         self.subtensor = BittensorNetwork.subtensor
-#         self.metagraph = BittensorNetwork.metagraph
-#         self.step = 0
-#         self.sync_interval = sync_interval
-#         self.last_sync_time = 0
-#         self.validator_urls = []
-#         self.batch_to_send = batch_to_send
-
-#     def get_validator_uids_and_addresses(
-#         self, metagraph: "bt.metagraph.Metagraph", vpermit_tao_limit: int = 1
-#     ):
-#         """
-#         Check availability of all UIDs in a given subnet, returning their IP, port numbers, and hotkeys
-#         if they are serving and have at least vpermit_tao_limit stake, along with a list of strings
-#         formatted as 'ip:port' for each validator.
-
-#         Args:
-#             metagraph (bt.metagraph.Metagraph): Metagraph object.
-#             vpermit_tao_limit (int): Validator permit tao limit.
-
-#         Returns:
-#             Tuple[List[dict], List[str]]: A tuple where the first element is a list of dicts with details
-#                                             of available UIDs, including their IP, port, and hotkeys, and the
-#                                             second element is a list of strings formatted as 'ip:port'.
-#         """
-#         available_uid_details = []
-#         validator_addresses = []  # List to hold 'ip:port' strings
-#         for uid in range(len(self.metagraph.S)):
-#             if self.metagraph.S[uid] >= vpermit_tao_limit:
-#                 ip = self.metagraph.axons[uid].ip
-#                 port = self.metagraph.axons[uid].port
-#                 details = {
-#                     "uid": uid,
-#                     "ip": ip,
-#                     "port": port,
-#                     "hotkey": self.metagraph.hotkeys[uid],
-#                 }
-#                 available_uid_details.append(details)
-#                 validator_addresses.append(
-#                     f"{ip}:{port}"
-#                 )  # Format and add 'ip:port' to the list
-
-#         return available_uid_details, validator_addresses
-
-#     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx, checksum=None):
-#         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
-
-#         self.step = int(trainer.callback_metrics.get("local_step", 0)) + 1
-#         if (self.step % self.batch_to_send) == 0:
-#             if self.should_sync_metagraph():
-#                 self.resync_metagraph()
-#                 _, self.validator_urls = self.get_validator_uids_and_addresses(
-#                     self.metagraph
-#                 )
-#             timestamp = str(int(time.time()))
-#             message, signature, public_address = self.create_signed_message(timestamp)
-#             self.last_sync_time = int(timestamp)
-
-#             for url in self.validator_urls:
-#                 try:
-#                     response = requests.post(
-#                         f"http://{url}/validate_metrics",
-#                         json={
-#                             "metrics": {"loss": outputs["loss"].item()},
-#                             "message": message,
-#                             "signature": signature,
-#                             "public_address": public_address,
-#                         },
-#                         timeout=0.1,
-#                     )
-#                     if response.status_code == 200:
-#                         logger.info(f"Metrics reported successfully to validator {url}")
-#                     else:
-#                         logger.warn(
-#                             f"Error @ validator {url} --- Error: {response.json['error']}"
-#                         )  # FIXME add gen
-#                 except:
-#                     logger.warn(
-#                         f"Failed to send to validator at {url} -- Failure to communicate with validators will impact your incentive"
-#                     )
-
-#     def create_signed_message(self, message):
-#         """Sign a message and return the signature."""
-#         signature = self.wallet.hotkey.sign(
-#             message
-#         ).hex()  # Convert bytes to hex string for easy transmission
-#         public_address = self.wallet.hotkey.ss58_address
-#         return message, signature, public_address
-
-#     def send_metrics(metrics, validator_urls):
-#         timestamp = str(int(time.time()))
-#         message, signature, public_address = create_signed_message(timestamp)
-#         data = {
-#             "message": message,
-#             "signature": signature,
-#             "public_address": public_address,
-#             "metrics": metrics,
-#         }
-#         # Ensure metrics is a dictionary
-#         if not isinstance(metrics, dict):
-#             raise ValueError("Metrics must be provided as a dictionary.")
-#         # Ensure validator_urls is a list
-#         if not isinstance(validator_urls, list):
-#             raise ValueError("validator_urls must be provided as a list.")
-
-#     def resync_metagraph(self):
-#         self.metagraph.sync(subtensor=self.subtensor)
-
-#     def should_sync_metagraph(self):
-#         """
-#         Check if enough epoch blocks have elapsed since the last checkpoint to sync.
-#         """
-#         return (time.time() - self.last_sync_time) > self.sync_interval
-#         # return (
-#         #    self.block - self.metagraph.last_update[self.uid]
-#         # ) > self.config.neuron.epoch_length
-
-#     def check_registered(self):
-#         # --- Check for registration.
-#         if not self.subtensor.is_hotkey_registered(
-#             netuid=self.config.netuid,
-#             hotkey_ss58=self.wallet.hotkey.ss58_address,
-#         ):
-#             bt.logging.error(
-#                 f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}."
-#                 f" Please register the hotkey using `btcli subnets register` before trying again"
-#             )
-#             exit()
-
-
-# train_params["callbacks"].append(MinerConsoleLogging(hparams.get("num_steps")))
-# train_params["callbacks"].append(MinerModelSaver(save_every, "/data"))
-# train_params["callbacks"].append(ValidationCommunicator(args, 60))
-
-# # Wrap the model in a pytorch-lightning module
-# train_model = MinerTrainer(model, optimizer, hparams)
-
-# # fit the trainer and run
-# model.train()
-# trainer = Trainer(**train_params)
-# trainer.fit(train_model, dataset)
