@@ -15,6 +15,7 @@ server_requirements = [
     "flask",
     "lightning",
     "numpy",
+    "pytorch_optimizer",
     "werkzeug",
 ]
 

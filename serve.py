@@ -1,3 +1,4 @@
+import logging
 import math
 import random
 
@@ -7,14 +8,17 @@ from lightning.pytorch import LightningModule
 from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.trainer import Trainer
-from torch.optim import AdamW
+from lightning.pytorch.loggers import CSVLogger
+from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer)
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from api import APIServer
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
+
+logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
+logger = CSVLogger("logs", name="praxis")
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
@@ -34,6 +38,19 @@ dataset_config = {
     "key": "text",
 }
 
+optimizer_config = {
+    "optimizer_name": "Lion",
+    "lr": 1e-4,
+    "weight_decay": 1e-5,
+    "wd_ban_list": [
+        "bias",
+        "LayerNorm.bias",
+        "LayerNorm.weight",
+        "RMSNorm.weight",
+        "RMSNorm.bias",
+    ],
+}
+
 hparams = dict(
     learning_rate=0.001,
     weight_decay=0.0001,
@@ -47,7 +64,7 @@ train_params = dict(
     devices="auto",
     max_steps=-1,
     max_epochs=-1,
-    reload_dataloaders_every_n_epochs=-1,
+    reload_dataloaders_every_n_epochs=0,
     precision="32-true",
     accumulate_grad_batches=64,  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
@@ -55,6 +72,7 @@ train_params = dict(
     benchmark=True,
     enable_progress_bar=False,
     enable_model_summary=False,
+    logger=logger,
     callbacks=[],
 )
 
@@ -126,7 +144,7 @@ class TerminalInterface(Callback):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
 
         loss = trainer.callback_metrics.get("loss", 0)
-        self.ema = self._compute_ema(float(loss), self.ema)
+        self.ema = self._compute_ema_loss(float(loss), self.ema)
         self.dashboard.update_losses(self.ema, random.random() * 0.1)
 
         step = trainer.callback_metrics.get("step", 0)
@@ -147,7 +165,7 @@ class TerminalInterface(Callback):
         self.dashboard.update_status(self.text)
         lm.model.train()
 
-    def _compute_ema(self, current_loss, prev_avg_loss, alpha=0.01):
+    def _compute_ema_loss(self, current_loss, prev_avg_loss, alpha=0.01):
         if prev_avg_loss is None:
             return current_loss
         else:
@@ -219,7 +237,8 @@ class Generator:
         }
         if kwargs.get("prompt"):
             del kwargs["prompt"]
-        outputs = self.model.generate(input_ids, **{**defaults, **kwargs})
+        combined = {**defaults, **kwargs}
+        outputs = self.model.generate(input_ids, **combined)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
@@ -229,47 +248,11 @@ api_server = APIServer(generator)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 
-
-# set weights as trainable
-def set_trainable_parameters(model, hparams):
-    no_decay = [
-        "bias",
-        "LayerNorm.bias",
-        "LayerNorm.weight",
-        "RMSNorm.weight",
-        "RMSNorm.bias",
-    ]
-    grouped_parameters = []
-
-    for n, p in model.named_parameters():
-        if not p.requires_grad:
-            continue
-
-        if any(nd in n for nd in no_decay):
-            weight_decay = 0.0
-        else:
-            weight_decay = hparams["weight_decay"]
-
-        grouped_parameters.append(
-            {
-                "params": [p],
-                "weight_decay": weight_decay,
-            }
-        )
-
-    return grouped_parameters
-
-
 train_params["callbacks"].append(TerminalInterface())
 
-# set model parameters as trainable
-params = set_trainable_parameters(model, hparams)
 
 # create the optimizer
-optimizer = AdamW(
-    params,
-    lr=0.001,
-)
+optimizer = create_optimizer(model, **optimizer_config)
 
 # Load a dataset
 dataset = HuggingfaceDataset(tokenizer, dataset_config)
@@ -284,36 +267,12 @@ trainer.fit(train_model, dataset)
 
 # import argparse
 # import ipaddress
-# import logging
-# import os
-# import random
-# import re
-# import sys
-# import time
 # from functools import partial
-# from math import isnan
-
-# import numpy as np
-# import requests
-# import torch
-# from datasets import load_dataset
 # from hivemind.utils.networking import log_visible_maddrs
 # from lightning.fabric.utilities.seed import reset_seed, seed_everything
-# from lightning.pytorch import LightningModule
-# from lightning.pytorch.callbacks import Callback
-# from lightning.pytorch.core.datamodule import LightningDataModule
-# from lightning.pytorch.trainer import Trainer
 # from lightning_hivemind.strategy import HivemindStrategy
-# from torch.optim import AdamW
-# from torch.utils.data import DataLoader, Dataset, IterableDataset
-# from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
-
-# logging.getLogger("lightning.pytorch").setLevel(logging.INFO)
-# logger = logging.getLogger("lightning.pytorch")
 
 # args = Configurator.combine_configs()
-
 
 # def flatten_list(nested_list):
 #     """Flatten a nested list."""
@@ -330,58 +289,6 @@ trainer.fit(train_model, dataset)
 # block_size = 512
 # num_steps = 100_000
 # target_batch_size = 8192
-
-# dataset_config = {
-#     "dataset": "tiiuae/falcon-refinedweb",
-#     "key": "content",
-#     "split": "train",
-#     "block_size": block_size,
-# }
-
-
-# # wrap the LightningModule in a custom class
-# class MinerTrainer(LightningModule):
-#     """
-#     A training module for AIGen.
-#     """
-
-#     def __init__(self, model, optimizer, hparams):
-#         super(MinerTrainer, self).__init__()
-
-#         self.model, self.optimizer = (model, optimizer)
-#         self.automatic_optimization = True
-#         self.save_hyperparameters(hparams)
-
-#     def forward(self, inputs):
-#         return self.model(**inputs)
-
-#     def training_step(self, batch, batch_idx):
-#         outputs = self({"input_ids": batch, "labels": batch})
-#         loss = outputs[0]
-#         self.log(
-#             "train_loss", float(loss), on_step=True, on_epoch=False, sync_dist=True
-#         )
-#         return loss
-
-#     def on_train_batch_end(self, trainer, outputs, idx):
-#         self.log(
-#             "local_step",
-#             int(self.global_step),
-#             on_step=True,
-#             on_epoch=False,
-#             sync_dist=True,
-#         )
-#         self.log(
-#             "global_step",
-#             int(self.trainer.strategy.optimizers[0].local_epoch),
-#             on_step=True,
-#             on_epoch=False,
-#             sync_dist=True,
-#         )
-
-#     def configure_optimizers(self):
-#         "Create optimizer and scheduler"
-#         return [self.optimizer]
 
 # # define the hivemind strategy
 # strategy = HivemindStrategy(
