@@ -30,37 +30,21 @@ class ThornsModel(PreTrainedModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time"
-            )
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-            input_ids = input_ids.view(-1, input_shape[-1])
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
 
-        if inputs_embeds is None:
-            inputs_embeds = self.wte(input_ids)
+        input_shape = input_ids.size()
+        input_ids = input_ids.view(-1, input_shape[-1])
 
-        hidden_states = inputs_embeds
+        input_embeds = self.wte(input_ids)
+        hidden_states = input_embeds
 
         # Always create an attention mask if it's not provided
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
-
-        attention_mask = self._prepare_attention_mask(
-            attention_mask, input_shape, inputs_embeds.dtype
-        )
 
         for block in self.h:
             hidden_states = block(hidden_states, attention_mask)
@@ -73,32 +57,6 @@ class ThornsModel(PreTrainedModel):
             hidden_states=None,
             attentions=None,
         )
-
-    def _prepare_attention_mask(self, attention_mask, input_shape, dtype):
-        # Handle 1D attention mask
-        if attention_mask.dim() == 1:
-            attention_mask = attention_mask.unsqueeze(0)  # Add batch dimension
-
-        # We create a 3D attention mask from a 2D tensor mask.
-        # Sizes are [batch_size, 1, 1, to_seq_length]
-        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
-        if attention_mask.dim() == 2:
-            extended_attention_mask = attention_mask[:, None, None, :]
-        elif attention_mask.dim() == 3:
-            extended_attention_mask = attention_mask[:, None, :, :]
-        else:
-            raise ValueError(
-                f"Wrong shape for attention_mask (shape {attention_mask.shape})"
-            )
-
-        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
-        # masked positions, this operation will create a tensor which is 0.0 for
-        # positions we want to attend and -10000.0 for masked positions.
-        extended_attention_mask = extended_attention_mask.to(dtype=dtype)
-        extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(
-            dtype
-        ).min
-        return extended_attention_mask
 
 
 class ThornsAttention(nn.Module):
@@ -167,11 +125,6 @@ class ThornsAttention(nn.Module):
             scores = scores.masked_fill(causal_mask == 0, float("-inf"))
 
         if attention_mask is not None:
-            # Ensure attention_mask is 4D
-            if attention_mask.dim() == 3:
-                attention_mask = attention_mask.unsqueeze(1)
-            elif attention_mask.dim() == 2:
-                attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             scores = scores + attention_mask
 
         attn_weights = F.softmax(scores, dim=-1)
@@ -256,11 +209,9 @@ class ThornsForCausalLM(ThornsModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -268,10 +219,8 @@ class ThornsForCausalLM(ThornsModel):
         transformer_outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            inputs_embeds=inputs_embeds,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
