@@ -65,10 +65,12 @@ class PraxisBlock(nn.Module):
         self.mlp = get_experts(self.dht, ["expert.0"])[0]
 
     def forward(self, x, attention_mask=None):
+        # Self-Attention
         residual = x
         x = self.attn_norm(x)
         x = self.attn(x, attention_mask)
         x = residual + x
+        # Feedforward
         residual = x
         x = self.mlp_norm(x)
         x = self.mlp(x)

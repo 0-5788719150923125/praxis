@@ -112,16 +112,31 @@ class TerminalDashboard:
 
     def _draw_chart(self, data, width, height):
         if len(data) > 1:
-            # Ensure we only plot the most recent data points that fit in the width
-            plot_data = list(data)[-width:]
+            # Use all available data points, up to max_data_points
+            plot_data = list(data)
+
+            # Downsample if we have more data points than width
+            if len(plot_data) > width:
+                indices = np.linspace(0, len(plot_data) - 1, width, dtype=int)
+                plot_data = [plot_data[i] for i in indices]
+
+            # Calculate overall min and max for consistent scaling
+            data_min, data_max = min(data), max(data)
+            y_range = data_max - data_min
+
+            # Add a small buffer to the top and bottom of the chart
+            buffer = y_range * 0.1
+            chart_min = data_min - buffer
+            chart_max = data_max + buffer
+
             chart = asciichartpy.plot(
                 plot_data,
                 {
                     "height": height - 2,
                     "width": width - 2,
                     "format": "{:8.2f}",
-                    "min": min(plot_data),
-                    "max": max(plot_data),
+                    "min": chart_min,
+                    "max": chart_max,
                 },
             )
             lines = chart.split("\n")
@@ -158,7 +173,8 @@ class TerminalDashboard:
             right_content = " " * right_width
 
             if i == 0:
-                left_content = " Training Loss".ljust(half_width)
+                train_loss = self.train_losses[-1] if self.train_losses else 0
+                left_content = f" Training Loss: {train_loss:.4f}".ljust(half_width)
                 right_content = " Feed".ljust(right_width)
             elif i == 1:
                 left_content = "─" * half_width
@@ -172,7 +188,8 @@ class TerminalDashboard:
                 left_content = "═" * half_width
                 right_content = "═" * right_width
             elif i == half_height:
-                left_content = " Validation Loss".ljust(half_width)
+                val_loss = self.val_losses[-1] if self.val_losses else 0
+                left_content = f" Validation Loss: {val_loss:.4f}".ljust(half_width)
                 right_content = " Logger".ljust(right_width)
             elif i == half_height + 1:
                 left_content = "─" * half_width
@@ -194,11 +211,7 @@ class TerminalDashboard:
         frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
 
         with self.lock:
-            train_loss = self.train_losses[-1] if self.train_losses else 0
-            val_loss = self.val_losses[-1] if self.val_losses else 0
-            frame.append(
-                f" PRAXIS | Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
-            )
+            frame.append(f" PRAXIS | Step: {int(self.step)}")
 
         return frame
 
