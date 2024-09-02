@@ -8,7 +8,6 @@ from transformers.modeling_outputs import (
 from typing import Optional, Tuple, Union
 from .configuration_thorns import ThornsConfig
 from .blocks.thorns import ThornsBlock
-from hivemind.moe.server import background_server
 
 
 class ThornsModel(PreTrainedModel):

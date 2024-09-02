@@ -5,20 +5,19 @@ from typing import OrderedDict
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 
 
-ffn_sample_input = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
+input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
 
-@register_expert_class("thorn", ffn_sample_input)
+@register_expert_class("thorn", input_shape)
 class ThornsMLP(nn.Module):
-    def __init__(self, hid_dim):
+    def __init__(self, config):
         super().__init__()
         self.network = nn.Sequential(
             OrderedDict(
                 [
-                    ("in_proj", nn.Linear(hid_dim, 4 * hid_dim)),
-                    # ("act", ACT2FN[config.activation_function]),
-                    ("act", ACT2FN["mish"]),
-                    ("out_proj", nn.Linear(4 * hid_dim, hid_dim)),
+                    ("in_proj", nn.Linear(config.n_embd, 4 * config.n_embd)),
+                    ("act", ACT2FN[config.activation_function]),
+                    ("out_proj", nn.Linear(4 * config.n_embd, config.n_embd)),
                 ]
             )
         )

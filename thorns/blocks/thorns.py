@@ -1,36 +1,18 @@
 import torch.nn as nn
 import hivemind
-
 from hivemind import DHT
-from hivemind.moe.client.expert import create_remote_experts
 from hivemind.moe import Server
-from hivemind.moe.expert_uid import ExpertInfo
-from hivemind.moe.server.dht_handler import DHTHandlerThread, get_experts
-from hivemind.moe.server import background_server
-from hivemind.moe.server.dht_handler import declare_experts, get_experts
-from ..layers.attention import ThornsAttention
-from ..layers.mlp import ThornsMLP
-from functools import partial
-from contextlib import ExitStack
-from hivemind.utils import BatchTensorDescriptor, MPFuture, get_dht_time
+from hivemind.utils import BatchTensorDescriptor
 from hivemind.moe.server.layers import name_to_block
 from hivemind.moe.server import (
     ModuleBackend,
     Server,
     background_server,
     declare_experts,
+    get_experts,
 )
-
-# dht = hivemind.DHT(
-#     # initial_peers=["/ip4/127.0.0.1/tcp/TODO/COPYFULL_ADDRESS/FROM_ONE_OF_THE_SERVERS"],
-#     initial_peers=None,
-#     client_mode=False,
-#     use_ipfs=True,
-#     use_relay=True,
-#     use_auto_relay=True,
-#     start=False,
-# )
-# dht.run_in_background(await_ready=True)
+from ..layers.attention import ThornsAttention
+from ..layers.mlp import ThornsMLP
 
 
 # PUBLIC_INITIAL_PEERS = [
@@ -45,127 +27,40 @@ from hivemind.moe.server import (
 #     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
 # ]
 
-dht = DHT(start=True)
+dht = DHT(
+    start=True, initial_peers=None, use_auto_relay=True, use_relay=True, use_ipfs=True
+)
 
 
 class ThornsBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        # for attr in dir(dht):
-        #     if not attr.startswith("__"):  # Exclude dunder methods
-        #         print(attr)
-        # print(dht.get("initial_peers"))
-        # return
-        self.hid_dim = config.n_embd
         self.norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = ThornsAttention(config)
-        # self.mlp = ThornsMLP(hid_dim=config.n_embd)
 
         experts = {}
-        for i in range(4):
-            expert = name_to_block["thorn"](self.hid_dim)
+        for i in range(1):
+            expert = name_to_block["thorn"](config)
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
                 module=expert,
                 # optimizer=torch.optim.Adam(expert.parameters()),
-                args_schema=(BatchTensorDescriptor(self.hid_dim),),
-                outputs_schema=BatchTensorDescriptor(self.hid_dim),
+                args_schema=(BatchTensorDescriptor(config.n_embd),),
+                outputs_schema=BatchTensorDescriptor(config.n_embd),
                 max_batch_size=16,
             )
 
         server = Server(dht, experts, num_connection_handlers=1)
         server.start()
         server.ready.wait()
-        self.dht = DHT(initial_peers=dht.get_visible_maddrs(), start=True)
-
-        # expert = experts.get("expert.0")
-        # expert = get_experts(self.dht, ["expert.0"])[0]
-        # print(expert)
-
-        # print(config)
-        # with background_server(
-        #     expert_cls="ffn",
-        #     num_experts=2,
-        #     device="cpu",
-        #     hidden_dim=self.hid_dim,
-        #     num_handlers=2,
-        #     # custom_module_path=CUSTOM_EXPERTS_PATH,
-        # ) as server:
-        #     print(server)
-        # dht = DHT(initial_peers=server_peer_info.addrs, start=True)
-        # self.expert0, self.expert1 = create_remote_experts(
-        #     [
-        #         ExpertInfo(uid="expert.0", peer_id=server_peer_info.peer_id),
-        #         ExpertInfo(uid="expert.1", peer_id=server_peer_info.peer_id),
-        #     ],
-        #     dht=dht,
-        # )
-
-        # self.exit_stack = ExitStack()
-        # self.server_peer_info = self.exit_stack.enter_context(
-        #     background_server(
-        #         expert_cls="thorns",
-        #         num_experts=2,
-        #         device="cpu",
-        #         hidden_dim=config.n_embd,
-        #         num_handlers=2,
-        #         # custom_module_path=CUSTOM_EXPERTS_PATH,
-        #     )
-        # )
-        # self.dht = DHT(initial_peers=self.server_peer_info.addrs, start=True)
-        # self.expert0, self.expert1 = create_remote_experts(
-        #     [
-        #         ExpertInfo(uid="expert.0", peer_id=self.server_peer_info.peer_id),
-        #         ExpertInfo(uid="expert.1", peer_id=self.server_peer_info.peer_id),
-        #     ],
-        #     dht=self.dht,
-        # )
-        # print(server)
-        # dht = DHT(initial_peers=server.addrs, start=True)
-        # self.expert1, self.expert2 = create_remote_experts(
-        #     [
-        #         ExpertInfo(uid="expert.0", peer_id=server.peer_id),
-        #         ExpertInfo(uid="expert.1", peer_id=server.peer_id),
-        #     ],
-        #     dht=dht,
-        # )
-        # self.exit_stack = ExitStack()
-        # # self.server_peer_info = self.exit_stack.enter_context(
-        # #     background_server(
-        # #         expert_cls="perceptron",
-        # #         num_experts=2,
-        # #         device="cpu",
-        # #         hidden_dim=hid_dim,
-        # #         num_handlers=2,
-        # #         custom_module_path=CUSTOM_EXPERTS_PATH,
-        # #     )
-        # # )
-        # self.server = self.exit_stack.enter_context(
-        #     background_server, expert_cls="thorn", num_experts=1, device="cpu", hidden_dim=config.n_embd
-        # )
-        # with self.server() as server:
-        #     print(server)
-        # self.server = Server.create(
-        #     num_experts=1,
-        #     expert_cls="thorn",
-        #     # dht=dht,
-        #     # expert_cls="ffn",
-        #     hidden_dim=config.n_embd,
-        #     # host_maddrs=host_maddrs if host_maddrs is not None else ["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
-        #     # host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
-        #     # announce_maddrs=["/ip4/127.0.0.1/tcp/4010", "/ip4/127.0.0.1/udp/4010/quic"],
-        #     # initial_peers=PUBLIC_INITIAL_PEERS,
-        #     use_ipfs=True,
-        #     use_relay=True,
-        #     use_auto_relay=True,
-        #     start=False,
-        # )
-        # self.server.dht.run_in_background(await_ready=True)
-        # self.server.run()
-        # self.server.join()
-        # print(self.server)
-        # self.mlp = get_experts(self.server.dht, ["expert.0"])[0]
-        # print(self.mlp)
+        self.dht = DHT(
+            initial_peers=dht.get_visible_maddrs(),
+            start=True,
+            use_auto_relay=True,
+            use_relay=True,
+            use_ipfs=True,
+        )
+        self.mlp = get_experts(self.dht, ["expert.0"])[0]
 
     def forward(self, x, attention_mask=None):
         residual = x
@@ -174,28 +69,6 @@ class ThornsBlock(nn.Module):
         x = residual + x
         residual = x
         x = self.norm(x)
-
-        # with background_server(
-        #     expert_cls="ffn",
-        #     num_experts=2,
-        #     device="cpu",
-        #     hidden_dim=self.hid_dim,
-        #     num_handlers=2,
-        #     # custom_module_path=CUSTOM_EXPERTS_PATH,
-        # ) as server:
-        #     print(server)
-        # dht = DHT(initial_peers=server.addrs, start=True)
-        # self.expert1, self.expert2 = create_remote_experts(
-        #     [
-        #         ExpertInfo(uid="expert.0", peer_id=server.peer_id),
-        #         ExpertInfo(uid="expert.1", peer_id=server.peer_id),
-        #     ],
-        #     dht=dht,
-        # )
-        # batch = torch.randn(1, self.hid_dim)
-        # print(self.expert1(batch))
-        expert = get_experts(self.dht, ["expert.0"])[0]
-        x = expert(x)
-        # x = self.mlp(x)
+        x = self.mlp(x)
         x = residual + x
         return x
