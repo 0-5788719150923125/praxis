@@ -18,7 +18,7 @@ class ThornsModel(PreTrainedModel):
         self.embed_dim = config.n_embd
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.h = nn.ModuleList([ThornsBlock(config) for _ in range(config.n_layer)])
-        self.ln_f = ScaledRMSNorm(config.n_embd, eps=config.layer_norm_epsilon)
+        self.rms_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
 
     def get_input_embeddings(self):
         return self.wte
@@ -49,7 +49,7 @@ class ThornsModel(PreTrainedModel):
         for block in self.h:
             hidden_states = block(hidden_states, attention_mask)
 
-        hidden_states = self.ln_f(hidden_states)
+        hidden_states = self.rms_norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states.view(*output_shape),
@@ -62,6 +62,7 @@ class ThornsModel(PreTrainedModel):
 class ThornsAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.causal = config.causal
         self.hidden_size = config.n_embd
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
@@ -78,7 +79,6 @@ class ThornsAttention(nn.Module):
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
         self.register_buffer("m", self._get_alibi_slope(self.num_heads))
-        self.causal = config.causal
 
     def _get_relative_positions(self, seq_len: int) -> torch.tensor:
         x = torch.arange(seq_len)[None, :]
@@ -111,7 +111,9 @@ class ThornsAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim**0.5)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / torch.sqrt(
+            torch.tensor(self.head_dim)
+        )
 
         # Apply ALiBi bias
         bias = (self.m * self._get_relative_positions(seq_len)).unsqueeze(0)
@@ -139,13 +141,8 @@ class ThornsAttention(nn.Module):
 class ThornsBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.input_layernorm = ScaledRMSNorm(
-            config.n_embd, eps=config.layer_norm_epsilon
-        )
+        self.rms_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attention = ThornsAttention(config)
-        self.post_attention_layernorm = ScaledRMSNorm(
-            config.n_embd, eps=config.layer_norm_epsilon
-        )
         self.mlp = nn.Sequential(
             OrderedDict(
                 [
@@ -158,43 +155,29 @@ class ThornsBlock(nn.Module):
 
     def forward(self, x, attention_mask=None):
         residual = x
-        x = self.input_layernorm(x)
+        x = self.rms_norm(x)
         x = self.attention(x, attention_mask)
         x = residual + x
         residual = x
-        x = self.post_attention_layernorm(x)
+        x = self.rms_norm(x)
         x = self.mlp(x)
         x = residual + x
         return x
-
-
-class ScaledRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, x):
-        variance = x.to(torch.float32).pow(2).mean(-1, keepdim=True)
-        x = x * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * x
 
 
 class ThornsForCausalLM(ThornsModel):
     def __init__(self, config):
         config.causal = True
         super().__init__(config)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
     def get_output_embeddings(self):
-        return self.lm_head
+        return self.head
 
     def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+        self.head = new_embeddings
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
-        attention_mask = kwargs.get("attention_mask", None)
-
         if past:
             input_ids = input_ids[:, -1:]
 
@@ -202,7 +185,7 @@ class ThornsForCausalLM(ThornsModel):
             "input_ids": input_ids,
             "past_key_values": past,
             "use_cache": kwargs.get("use_cache"),
-            "attention_mask": attention_mask,
+            "attention_mask": kwargs.get("attention_mask", None),
         }
 
     def forward(
@@ -226,11 +209,11 @@ class ThornsForCausalLM(ThornsModel):
         )
 
         hidden_states = transformer_outputs[0]
-        lm_logits = self.lm_head(hidden_states)
+        logits = self.head(hidden_states)
 
         loss = None
         if labels is not None:
-            shift_logits = lm_logits[..., :-1, :].contiguous()
+            shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(
@@ -238,12 +221,12 @@ class ThornsForCausalLM(ThornsModel):
             )
 
         if not return_dict:
-            output = (lm_logits,) + transformer_outputs[1:]
+            output = (logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,
-            logits=lm_logits,
+            logits=logits,
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
