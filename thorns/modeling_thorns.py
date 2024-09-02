@@ -6,6 +6,7 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
+from transformers.activations import ACT2FN
 from typing import Optional, OrderedDict, Tuple, Union
 from .configuration_thorns import ThornsConfig
 
@@ -147,7 +148,7 @@ class ThornsBlock(nn.Module):
             OrderedDict(
                 [
                     ("in_proj", nn.Linear(config.n_embd, 4 * config.n_embd)),
-                    ("act", nn.Mish()),
+                    ("act", ACT2FN[config.activation_function]),
                     ("out_proj", nn.Linear(4 * config.n_embd, config.n_embd)),
                 ]
             )
