@@ -59,6 +59,7 @@ class PraxisBlock(nn.Module):
             use_auto_relay=True,
             use_relay=True,
             use_ipfs=True,
+            ensure_bootstrap_success=False,
         )
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.mlp = get_experts(self.dht, ["expert.0"])[0]

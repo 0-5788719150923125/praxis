@@ -28,9 +28,12 @@ class TerminalDashboard:
 
     def update_losses(self, train_loss, val_loss):
         with self.lock:
-            self.train_losses.append(train_loss)
-            self.val_losses.append(val_loss)
-            self.step += 1
+            self.train_losses.append(train_loss) if train_loss else None
+            self.val_losses.append(val_loss) if val_loss else None
+
+    def update_step(self, step):
+        with self.lock:
+            self.step = step
 
     def update_status(self, status):
         with self.lock:
@@ -102,7 +105,7 @@ class TerminalDashboard:
 
                     if i == 0:
                         left_content = "Training Loss".ljust(half_width)
-                        right_content = "Status".ljust(right_width)
+                        right_content = "Feed".ljust(right_width)
                     elif i == 1:
                         left_content = "─" * half_width
                         right_content = "─" * right_width
@@ -138,7 +141,7 @@ class TerminalDashboard:
                     train_loss = self.train_losses[-1] if self.train_losses else 0
                     val_loss = self.val_losses[-1] if self.val_losses else 0
                     print(
-                        f"Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
+                        f"PRAXIS | Step: {self.step}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
                     )
 
                 time.sleep(0.1)  # Update every 0.1 seconds
@@ -151,12 +154,15 @@ if __name__ == "__main__":
     dashboard = TerminalDashboard()
     dashboard.start()
 
+    step = 0
     try:
         for epoch in range(100):
+            step += 1
             train_loss = 1 / (epoch + 1) + random.uniform(0, 0.1)
             val_loss = train_loss + random.uniform(0, 0.05)
             dashboard.update_losses(train_loss, val_loss)
             dashboard.update_status(f"Training... Epoch {epoch}")
+            dashboard.update_step(step)
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass

@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 from lightning.pytorch import LightningModule
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.core.datamodule import LightningDataModule
+from lightning.pytorch.callbacks import Callback
 from torch.optim import AdamW
 from transformers import AutoConfig, AutoModel, AutoTokenizer, AutoModelForCausalLM
 from datasets import load_dataset
@@ -60,8 +61,6 @@ model.train()
 
 print(model)
 
-dashboard = TerminalDashboard()
-
 
 class PraxisTrainer(LightningModule):
     """
@@ -75,9 +74,7 @@ class PraxisTrainer(LightningModule):
 
         self.automatic_optimization = True
         self.batch_size = hparams["batch_size"]
-        self.ema = 0
         self.save_hyperparameters(ignore=["model", "optimizer"])
-        dashboard.start()
 
     def forward(self, inputs):
         return self.model(**inputs)
@@ -86,52 +83,74 @@ class PraxisTrainer(LightningModule):
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
-        avg_loss = self.compute_ema(float(loss), self.ema)
-        self.ema = avg_loss
-
         self.log_dict(
             {
-                "loss": avg_loss,
+                "loss": loss,
                 "step": math.floor(batch_idx / hparams["accumulate_grad_batches"]),
             },
             on_step=True,
             on_epoch=True,
-            # prog_bar=False,
             logger=True,
             batch_size=self.batch_size,
         )
 
-        if batch_idx % 100 == 0:
-            # Test text generation
-            model.eval()
-            input_ids = tokenizer.encode("", return_tensors="pt")
-            outputs = model.generate(
-                input_ids,
-                do_sample=True,
-                max_new_tokens=32,
-                temperature=0.7,
-                eta_cutoff=0.002,
-                penalty_alpha=0.6,
-                top_k=4,
-                repetition_penalty=1.2,
-            )
-            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            dashboard.update_status(generated_text)
-            model.train()
-
-        dashboard.update_losses(avg_loss, avg_loss)
-
         return loss
-
-    def compute_ema(self, current_loss, prev_avg_loss, alpha=0.01):
-        if prev_avg_loss is None:
-            return current_loss
-        else:
-            return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"
         return [self.optimizer]
+
+
+class TerminalInterface(Callback):
+    """A single pane of glass containing charts and information."""
+
+    def __init__(self):
+        super().__init__()
+        self.ema = 0
+        self.text = ""
+        self.max_length = 512
+        self.dashboard = TerminalDashboard()
+        self.dashboard.start()
+
+    def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
+        super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
+
+        step = trainer.callback_metrics.get("step", 0)
+        # global_step = trainer.callback_metrics.get("global_step", 0)
+        loss = trainer.callback_metrics.get("loss", 0)
+        self.ema = self._compute_ema(float(loss), self.ema)
+
+        self.dashboard.update_step(step.item())
+        self.dashboard.update_losses(self.ema, random.random() * 0.1)
+        self._generate_sample_text(lm, batch_idx)
+
+    def _generate_sample_text(self, lm, batch_idx, interval=10):
+        if batch_idx % interval != 0:
+            return
+
+        lm.model.eval()
+        input_ids = tokenizer.encode(self.text, return_tensors="pt")
+        outputs = lm.model.generate(
+            input_ids,
+            do_sample=True,
+            max_new_tokens=1,
+            temperature=0.7,
+            eta_cutoff=0.002,
+            penalty_alpha=0.6,
+            top_k=4,
+            repetition_penalty=1.2,
+        )
+        self.text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        while len(self.text) > self.max_length:
+            self.text = self.text[1:]
+        self.dashboard.update_status(self.text)
+        lm.model.train()
+
+    def _compute_ema(self, current_loss, prev_avg_loss, alpha=0.01):
+        if prev_avg_loss is None:
+            return current_loss
+        else:
+            return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
 
 
 class HuggingfaceDataset(IterableDataset):
@@ -168,7 +187,7 @@ class HuggingfaceDataset(IterableDataset):
             tokens = self.tokenizer(
                 text=self.cached_text,
                 max_length=block_size,
-                stride=64,
+                stride=16,
                 padding=True,
                 truncation=True,
                 return_overflowing_tokens=True,
@@ -209,6 +228,8 @@ def set_trainable_parameters(model, hparams):
 
     return grouped_parameters
 
+
+train_params["callbacks"].append(TerminalInterface())
 
 # set model parameters as trainable
 params = set_trainable_parameters(model, hparams)
