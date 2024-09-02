@@ -17,17 +17,17 @@ from hivemind.moe.client.expert import create_remote_experts
 from hivemind.moe.expert_uid import ExpertInfo
 from hivemind.moe.server import background_server
 
-CUSTOM_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "custom_networks.py")
+# CUSTOM_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "custom_networks.py")
 
 
 def test_custom_expert(hid_dim=16):
     with background_server(
-        expert_cls="perceptron",
+        expert_cls="ffn",
         num_experts=2,
         device="cpu",
         hidden_dim=hid_dim,
         num_handlers=2,
-        custom_module_path=CUSTOM_EXPERTS_PATH,
+        # custom_module_path=CUSTOM_EXPERTS_PATH,
     ) as server_peer_info:
         dht = DHT(initial_peers=server_peer_info.addrs, start=True)
         expert0, expert1 = create_remote_experts(
