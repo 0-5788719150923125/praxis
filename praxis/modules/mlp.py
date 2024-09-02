@@ -1,9 +1,9 @@
+from typing import OrderedDict
+
 import torch
 import torch.nn as nn
-from transformers.activations import ACT2FN
-from typing import OrderedDict
 from hivemind.moe.server.layers.custom_experts import register_expert_class
-
+from transformers.activations import ACT2FN
 
 input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 

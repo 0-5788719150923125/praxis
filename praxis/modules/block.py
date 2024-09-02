@@ -1,19 +1,14 @@
-import torch.nn as nn
 import hivemind
+import torch.nn as nn
 from hivemind import DHT
 from hivemind.moe import Server
-from hivemind.utils import BatchTensorDescriptor
+from hivemind.moe.server import (ModuleBackend, Server, background_server,
+                                 declare_experts, get_experts)
 from hivemind.moe.server.layers import name_to_block
-from hivemind.moe.server import (
-    ModuleBackend,
-    Server,
-    background_server,
-    declare_experts,
-    get_experts,
-)
+from hivemind.utils import BatchTensorDescriptor
+
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
-
 
 # PUBLIC_INITIAL_PEERS = [
 #     # IPv4 DNS addresses

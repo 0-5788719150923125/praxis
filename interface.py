@@ -1,16 +1,15 @@
-import sys
 import io
-import time
-import blessed
-import asciichartpy
-from collections import deque
-from threading import Thread, Lock
-import textwrap
-import wcwidth
 import logging
-import sys
-import io
 import os
+import sys
+import textwrap
+import time
+from collections import deque
+from threading import Lock, Thread
+
+import asciichartpy
+import blessed
+import wcwidth
 
 
 class DashboardOutput:

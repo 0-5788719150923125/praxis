@@ -1,6 +1,8 @@
 import asyncio
+import inspect
 import logging
-from threading import Thread, Event
+from threading import Event, Thread
+
 from flask import Flask, jsonify, request
 from werkzeug.serving import make_server
 
@@ -26,6 +28,7 @@ class APIServer:
 
     def _run_server(self):
         with app.app_context():
+            app.config["generator"] = self.generator
             self.server = make_server("0.0.0.0", self.port, app)
             self.started.set()  # Signal that the server has started
             self.server.serve_forever()
@@ -39,24 +42,21 @@ class APIServer:
     def get_url(self):
         return f"http://localhost:{self.port}"
 
-    @app.route("/generate/", methods=["GET", "POST"])
-    def generate():
-        try:
-            kwargs = request.get_json()
-            logging.error("Received a valid request via REST.")
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+@app.route("/generate/", methods=["GET", "POST"])
+def generate():
+    try:
+        kwargs = request.get_json()
+        logging.info("Received a valid request via REST.")
 
-            prompt = kwargs.get("prompt", "")
-            output = loop.run_until_complete(
-                app.config["generator"].generate(prompt, kwargs)
-            )
+        prompt = kwargs.get("prompt", "")
+        generator = app.config["generator"]
+        output = generator.generate(prompt, kwargs)
 
-            if not output:
-                raise Exception("Failed to generate an output from this API.")
-        except Exception as e:
-            logging.error(e)
-            return jsonify(str(e)), 400
-        print("Successfully responded to REST request.")
-        return jsonify({"response": output}), 200
+        if not output:
+            raise Exception("Failed to generate an output from this API.")
+    except Exception as e:
+        logging.error(e)
+        return jsonify(str(e)), 400
+    print("Successfully responded to REST request.")
+    return jsonify({"response": output}), 200

@@ -1,18 +1,20 @@
-import torch
-from torch.utils.data import DataLoader, Dataset, IterableDataset
-from lightning.pytorch import LightningModule
-from lightning.pytorch.trainer import Trainer
-from lightning.pytorch.core.datamodule import LightningDataModule
-from lightning.pytorch.callbacks import Callback
-from torch.optim import AdamW
-from transformers import AutoConfig, AutoModel, AutoTokenizer, AutoModelForCausalLM
-from datasets import load_dataset
-from praxis import PraxisConfig, PraxisModel, PraxisForCausalLM
-import numpy as np
-import random
 import math
-from interface import TerminalDashboard
+import random
+
+import torch
+from datasets import load_dataset
+from lightning.pytorch import LightningModule
+from lightning.pytorch.callbacks import Callback
+from lightning.pytorch.core.datamodule import LightningDataModule
+from lightning.pytorch.trainer import Trainer
+from torch.optim import AdamW
+from torch.utils.data import DataLoader, IterableDataset
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer)
+
 from api import APIServer
+from interface import TerminalDashboard
+from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
@@ -36,7 +38,6 @@ hparams = dict(
     learning_rate=0.001,
     weight_decay=0.0001,
     batch_size=1,
-    accumulate_grad_batches=64,
     block_size=256,
 )
 
@@ -44,13 +45,11 @@ train_params = dict(
     accelerator="cpu",
     strategy="auto",
     devices="auto",
-    max_steps=10000,
+    max_steps=-1,
     max_epochs=-1,
-    reload_dataloaders_every_n_epochs=1,
+    reload_dataloaders_every_n_epochs=-1,
     precision="32-true",
-    accumulate_grad_batches=hparams[
-        "accumulate_grad_batches"
-    ],  # must be 1 for Hivemind training
+    accumulate_grad_batches=64,  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
@@ -60,7 +59,7 @@ train_params = dict(
 )
 
 
-max_data_points = 1000
+max_data_points = 10000
 
 tokenizer = AutoTokenizer.from_pretrained(
     "NousResearch/Llama-2-7b-hf", cache_dir="./data"
@@ -70,34 +69,6 @@ model = AutoModelForCausalLM.from_config(config)
 model.train()
 
 print(model)
-
-
-class Generator:
-    def __init__(self, model, tokenizer):
-        self.model = model
-        self.tokenizer = tokenizer
-
-    def generate(self, prompt, **kwargs):
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-        outputs = self.model.generate(
-            input_ids,
-            do_sample=True,
-            max_new_tokens=1,
-            temperature=0.7,
-            eta_cutoff=0.002,
-            penalty_alpha=0.6,
-            top_k=4,
-            repetition_penalty=1.2,
-        )
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-
-generator = Generator(model, tokenizer)
-
-api_server = APIServer(generator)
-api_server.start()
-api_url = api_server.get_url() + "/generate"
-# api_url = "http://localhost:8585/generate"
 
 
 class PraxisTrainer(LightningModule):
@@ -124,7 +95,7 @@ class PraxisTrainer(LightningModule):
         self.log_dict(
             {
                 "loss": loss,
-                "step": math.floor(batch_idx / hparams["accumulate_grad_batches"]),
+                "step": batch_idx // train_params["accumulate_grad_batches"],
             },
             on_step=True,
             on_epoch=True,
@@ -168,22 +139,11 @@ class TerminalInterface(Callback):
             return
 
         lm.model.eval()
-        # input_ids = tokenizer.encode(self.text, return_tensors="pt")
-        # outputs = lm.model.generate(
-        #     input_ids,
-        #     do_sample=True,
-        #     max_new_tokens=1,
-        #     temperature=0.7,
-        #     eta_cutoff=0.002,
-        #     penalty_alpha=0.6,
-        #     top_k=4,
-        #     repetition_penalty=1.2,
-        # )
-        # self.text = tokenizer.decode(outputs[0], skip_special_tokens=True)
         self.text = generator.generate(self.text)
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
+
         self.dashboard.update_status(self.text)
         lm.model.train()
 
@@ -239,6 +199,35 @@ class HuggingfaceDataset(IterableDataset):
                 if len(batch) != hparams["block_size"]:
                     break
                 yield batch
+
+
+class Generator:
+    def __init__(self, model, tokenizer):
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def generate(self, prompt, kwargs={}):
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
+        defaults = {
+            "do_sample": True,
+            "max_new_tokens": 1,
+            "temperature": 0.7,
+            "eta_cutoff": 0.002,
+            "penalty_alpha": 0.6,
+            "top_k": 4,
+            "repetition_penalty": 1.2,
+        }
+        if kwargs.get("prompt"):
+            del kwargs["prompt"]
+        outputs = self.model.generate(input_ids, **{**defaults, **kwargs})
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+generator = Generator(model, tokenizer)
+
+api_server = APIServer(generator)
+api_server.start()
+api_url = api_server.get_url() + "/generate"
 
 
 # set weights as trainable
