@@ -19,3 +19,4 @@ Everything: `pip install .[all]`
 - treat every peer as an experiment in a massive hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
 - ship with an API server; if you run a node, you also get a local API that you can use for inference
 - build connectors, allowing people to specialize their nodes on their own data
+- [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
