@@ -12,6 +12,7 @@ server_requirements = [
     "asciichartpy",
     "blessed",
     "datasets",
+    "flask",
     "lightning",
     "numpy",
 ]

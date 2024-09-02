@@ -12,6 +12,7 @@ import numpy as np
 import random
 import math
 from interface import TerminalDashboard
+from api import APIServer
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
@@ -69,6 +70,8 @@ model = AutoModelForCausalLM.from_config(config)
 model.train()
 
 print(model)
+
+# api_server = APIServer(model)
 
 
 class PraxisTrainer(LightningModule):
