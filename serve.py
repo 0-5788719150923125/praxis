@@ -9,6 +9,7 @@ from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
+from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
@@ -17,6 +18,7 @@ from api import APIServer
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
+disable_possible_user_warnings()
 logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 logger = CSVLogger("logs", name="praxis")
 
@@ -31,29 +33,27 @@ config = PraxisConfig(
     n_layer=6,
     n_head=8,
     device_map="cpu",
+    pad_token_id=0,
+    bos_token_id=1,
+    eos_token_id=2,
 )
 
-dataset_config = {
-    "repo": "HuggingFaceFW/fineweb",
-    "key": "text",
-}
+tokenizer_model = "NousResearch/Llama-2-7b-hf"
 
-optimizer_config = {
-    "optimizer_name": "Lion",
-    "lr": 1e-4,
-    "weight_decay": 1e-5,
-    "wd_ban_list": [
+dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
+
+optimizer_config = dict(
+    optimizer_name="Lion",
+    lr=1e-4,
+    weight_decay=1e-5,
+    wd_ban_list=[
         "bias",
-        "LayerNorm.bias",
-        "LayerNorm.weight",
         "RMSNorm.weight",
         "RMSNorm.bias",
     ],
-}
+)
 
 hparams = dict(
-    learning_rate=0.001,
-    weight_decay=0.0001,
     batch_size=16,
     accumulate_grad_batches=4,
     block_size=256,
@@ -79,18 +79,9 @@ train_params = dict(
     callbacks=[],
 )
 
-
+# Dashboard config
 max_data_points = 10000
 max_feed_chars = 1024
-
-tokenizer = AutoTokenizer.from_pretrained(
-    "NousResearch/Llama-2-7b-hf", cache_dir="./data"
-)
-
-model = AutoModelForCausalLM.from_config(config)
-model.train()
-
-print(model)
 
 
 class PraxisTrainer(LightningModule):
@@ -230,21 +221,27 @@ class Generator:
 
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-        defaults = {
-            "do_sample": True,
-            "max_new_tokens": 1,
-            "temperature": 0.9,
-            "eta_cutoff": 0.002,
-            "penalty_alpha": 0.6,
-            "top_k": 4,
-            "repetition_penalty": 1.5,
-        }
+        defaults = dict(
+            do_sample=True,
+            max_new_tokens=1,
+            temperature=0.95,
+            eta_cutoff=0.002,
+            penalty_alpha=0.6,
+            top_k=4,
+            repetition_penalty=1.5,
+        )
         if kwargs.get("prompt"):
             del kwargs["prompt"]
         combined = {**defaults, **kwargs}
         outputs = self.model.generate(input_ids, **combined)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
+
+tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
+
+model = AutoModelForCausalLM.from_config(config)
+
+print(model)
 
 generator = Generator(model, tokenizer)
 
@@ -253,7 +250,6 @@ api_server.start()
 api_url = api_server.get_url() + "/generate"
 
 train_params["callbacks"].append(TerminalInterface())
-
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
@@ -265,7 +261,6 @@ dataset = HuggingfaceDataset(tokenizer, dataset_config)
 train_model = PraxisTrainer(model, optimizer, hparams)
 
 # fit the trainer and run
-model.train()
 trainer = Trainer(**train_params)
 trainer.fit(train_model, dataset)
 
