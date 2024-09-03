@@ -7,8 +7,8 @@ from datasets import load_dataset
 from lightning.pytorch import LightningModule
 from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.core.datamodule import LightningDataModule
-from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.trainer import Trainer
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
@@ -54,8 +54,8 @@ optimizer_config = {
 hparams = dict(
     learning_rate=0.001,
     weight_decay=0.0001,
-    batch_size=8,
-    accumulate_grad_batches=8,
+    batch_size=16,
+    accumulate_grad_batches=4,
     block_size=256,
 )
 
@@ -81,6 +81,7 @@ train_params = dict(
 
 
 max_data_points = 10000
+max_feed_chars = 1024
 
 tokenizer = AutoTokenizer.from_pretrained(
     "NousResearch/Llama-2-7b-hf", cache_dir="./data"
@@ -138,7 +139,7 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.text = ""
-        self.max_length = 512
+        self.max_length = max_feed_chars
         self.dashboard = TerminalDashboard(max_data_points)
         self.dashboard.start()
         self.dashboard.update_url(api_url)
@@ -232,11 +233,11 @@ class Generator:
         defaults = {
             "do_sample": True,
             "max_new_tokens": 1,
-            "temperature": 0.7,
+            "temperature": 0.9,
             "eta_cutoff": 0.002,
             "penalty_alpha": 0.6,
             "top_k": 4,
-            "repetition_penalty": 1.2,
+            "repetition_penalty": 1.5,
         }
         if kwargs.get("prompt"):
             del kwargs["prompt"]

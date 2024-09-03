@@ -2,8 +2,13 @@ import hivemind
 import torch.nn as nn
 from hivemind import DHT
 from hivemind.moe import Server
-from hivemind.moe.server import (ModuleBackend, Server, background_server,
-                                 declare_experts, get_experts)
+from hivemind.moe.server import (
+    ModuleBackend,
+    Server,
+    background_server,
+    declare_experts,
+    get_experts,
+)
 from hivemind.moe.server.layers import name_to_block
 from hivemind.utils import BatchTensorDescriptor
 

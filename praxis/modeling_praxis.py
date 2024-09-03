@@ -3,8 +3,10 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
-from transformers.modeling_outputs import (BaseModelOutputWithPast,
-                                           CausalLMOutputWithPast)
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
 
 from .configuration_praxis import PraxisConfig
 from .modules.block import PraxisBlock

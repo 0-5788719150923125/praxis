@@ -1,6 +1,5 @@
 import torch
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer)
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 

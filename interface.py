@@ -5,12 +5,12 @@ import sys
 import textwrap
 import time
 from collections import deque
+from datetime import datetime, timedelta
 from threading import Lock, Thread
 
 import asciichartpy
 import blessed
 import wcwidth
-from datetime import datetime, timedelta
 
 
 class DashboardOutput:
