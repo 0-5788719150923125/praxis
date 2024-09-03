@@ -8,7 +8,7 @@ from transformers.activations import ACT2FN
 input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
 
-@register_expert_class("praxis", input_shape)
+@register_expert_class("praxis_mlp", input_shape)
 class PraxisMLP(nn.Module):
     def __init__(self, config):
         super().__init__()

@@ -40,7 +40,7 @@ class PraxisBlock(nn.Module):
 
         experts = {}
         for i in range(1):
-            expert = name_to_block["praxis"](config)
+            expert = name_to_block["praxis_mlp"](config)
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
                 module=expert,
