@@ -2,7 +2,7 @@
 
 <!-- Triangulated Human Observation for Reasoning in the Natural Sciences -->
 
-*Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.* - Gemini
+*Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.*
 
 ![Terminal](./static/terminal.webp)
 
