@@ -2,17 +2,78 @@
 
 <!-- Triangulated Human Observation for Reasoning in the Natural Sciences -->
 
-*Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.*
+*Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.* - Gemini
 
-## what this model aims to be
+## what we're building
 
-We are trying to build a decentralized, peer-to-peer, always online, always learning LLM - with Hivemind integrated into the model itself. We will do this via a mixture of experts, sparse routing, and by replacing feedforward layers with remote experts.
+The Praxis swarm intelligence is a decentralized, peer-to-peer, always online, and always-learning LLM - with Hivemind integrated into core layers of the model itself. We will do this via a mixture of experts, sparse routing, algorithmic switching and self-modeling of remotely-hosted peers.
 
 ## install
 
-The model: `pip install .`
+From a Linux shell, run these commands:
 
-Everything: `pip install .[all]`
+```sh
+# Setup a virtual environment
+source make-venv.sh
+
+# Install core model dependencies
+pip install .
+
+# Install training dependencies
+pip install .[all]
+```
+
+## contribute to the swarm
+
+To donate your compute:
+
+```sh
+python server.py
+```
+
+## do inference
+
+Send a JSON-encoded payload via POST to:
+
+```
+http://localhost:5000/generate
+```
+
+This payload should support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
+
+## to register with transformers
+
+```py
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
+
+AutoConfig.register("praxis", PraxisConfig)
+AutoModel.register(PraxisConfig, PraxisModel)
+AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
+
+config = PraxisConfig(
+    n_positions=512,
+    n_embd=256,
+    n_layer=6,
+    n_head=8,
+    device_map="cuda:0",
+    pad_token_id=0,
+    bos_token_id=1,
+    eos_token_id=2,
+)
+
+tokenizer_model = "NousResearch/Llama-2-7b-hf"
+tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
+
+model = AutoModelForCausalLM.from_config(config)
+
+input_ids = tokenizer.encode("The quick brown fox ")
+
+outputs = model.generate(input_ids, do_sample=True)
+
+print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
+# --> The quick brown fox jumped over a lazy dog.
+```
 
 ## ideas
 

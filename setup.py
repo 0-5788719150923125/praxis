@@ -24,7 +24,7 @@ setup(
     packages=find_packages(),
     install_requires=base_requirements,
     extras_require={
-        "serve": server_requirements,
+        "server": server_requirements,
         "all": base_requirements + server_requirements,
     },
 )
