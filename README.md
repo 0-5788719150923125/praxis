@@ -4,9 +4,11 @@
 
 *Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.* - Gemini
 
+![Terminal](./static/terminal.gif)
+
 ## what we're building
 
-The Praxis swarm intelligence is a decentralized, peer-to-peer, always online, and always-learning LLM - with Hivemind integrated into core layers of the model itself. We will do this via a mixture of experts, sparse routing, algorithmic switching and self-modeling of remotely-hosted peers.
+The Praxis swarm is a decentralized, peer-to-peer, always online, and continuously-learning AI intelligence - with Hivemind integrated into core layers of the model itself. We will do this via a mixture of experts, sparse routing, algorithmic switching and self-modeling of remotely-hosted peers.
 
 ## install
 
