@@ -10,6 +10,7 @@ from threading import Lock, Thread
 import asciichartpy
 import blessed
 import wcwidth
+from datetime import datetime, timedelta
 
 
 class DashboardOutput:
@@ -52,6 +53,7 @@ class TerminalDashboard:
         self.dashboard_output = DashboardOutput(self.original_stdout)
         self.log_capture = LogCapture(self)
         self.previous_frame = None
+        self.start_time = datetime.now()
 
     def start(self):
         self.running = True
@@ -86,6 +88,12 @@ class TerminalDashboard:
             # Split the message into lines, filter out empty lines, and strip whitespace
             new_lines = [line.strip() for line in message.splitlines() if line.strip()]
             self.log_buffer.extend(new_lines)
+
+    def hours_since(self):
+        current_time = datetime.now()
+        time_difference = current_time - self.start_time
+        hours = time_difference.total_seconds() / 3600
+        return hours
 
     def update_placeholder(self, text):
         with self.lock:
@@ -199,7 +207,10 @@ class TerminalDashboard:
         frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
 
         with self.lock:
-            frame.append(f" PRAXIS | Step: {int(self.step)}, URL: {self.url}")
+            elapsed = self.hours_since()
+            frame.append(
+                f" PRAXIS | Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}"
+            )
 
         return frame
 

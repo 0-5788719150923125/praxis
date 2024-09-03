@@ -54,7 +54,8 @@ optimizer_config = {
 hparams = dict(
     learning_rate=0.001,
     weight_decay=0.0001,
-    batch_size=1,
+    batch_size=8,
+    accumulate_grad_batches=8,
     block_size=256,
 )
 
@@ -66,7 +67,9 @@ train_params = dict(
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
     precision="32-true",
-    accumulate_grad_batches=64,  # must be 1 for Hivemind training
+    accumulate_grad_batches=hparams[
+        "accumulate_grad_batches"
+    ],  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
@@ -135,7 +138,7 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.text = ""
-        self.max_length = 2048
+        self.max_length = 512
         self.dashboard = TerminalDashboard(max_data_points)
         self.dashboard.start()
         self.dashboard.update_url(api_url)
