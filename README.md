@@ -91,6 +91,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 - a proper and robust DHT
 - a routing algorithm with multi-hop support (ping -> pang -> pong -> ping)
+- switch transformers
 - multi-layer experts
 - peer validation
 - self-modeling of remote experts
