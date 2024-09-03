@@ -86,3 +86,15 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - ship with an API server; if you run a node, you also get a local API that you can use for inference
 - build connectors, allowing people to specialize their nodes on their own data
 - [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
+
+## TBD
+
+- a proper and robust DHT
+- a routing algorithm with multi-hop support (ping -> pang -> pong -> ping)
+- multi-layer experts
+- peer validation
+- self-modeling of remote experts
+
+## won't do
+
+- cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
