@@ -4,7 +4,7 @@
 
 *Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.* - Gemini
 
-![Terminal](./static/terminal.gif)
+![Terminal](https://github.com/0-5788719150923125/praxis/static/terminal.gif)
 
 ## what we're building
 
