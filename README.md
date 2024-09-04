@@ -79,19 +79,20 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ## ideas
 
-- a GLOBAL swarm, by default
-- replace dense layers with remote experts, then leverage [self-modeling](https://arxiv.org/abs/2407.10188) to train the network to model those peers
-- make experts deeper; if an expert is comprised of multiple transformer blocks, rather than a single dense layer, then the network could learn to dynamically-route through deeper networks, or it could learn to relay information across multiple peers, or it could learn that "no relay is needed" at all, simply returning simple predictions back to the requestee. For example, let's say that every peer runs a 6-layer transformer, comprised of three experts - with 2 layers each. By routing through multiple peers, one could theoretically turn a 6-layer transformer into 600 layers (if routing between tons of peers). Obviously, 600 layers would be tough to optimize, but if each peer kept optimization local - that's just 6 layers to optimize. Each peer becomes highly specialized in "something."
-- treat every peer as an experiment in a massive hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
-- ship with an API server; if you run a node, you also get a local API that you can use for inference
-- build connectors, allowing people to specialize their nodes on their own data
+- a global swarm, exclusively
+- leverage [self-modeling](https://arxiv.org/abs/2407.10188) to focus learning on remote peers
+- experts with a stack of attention/feedforward blocks
+- if an expert is comprised of multiple transformer blocks, rather than a single layer, then the network might learn to dynamically-route through deeper subnetworks, or it could learn to relay/ensemble information across multiple peers, or it could learn that "no relay is needed" at all, simply returning a simple prediction back to the requestee.
+- treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
+- build connectors, allowing people to integrate their nodes with personal data
+- [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)?
 - [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
+- [Mixture of Depths](https://arxiv.org/abs/2404.02258).
 
 ## TBD
 
 - a proper and robust DHT
 - a routing algorithm with multi-hop support (ping -> pang -> pong -> ping)
-- switch transformers
 - multi-layer experts
 - peer validation
 - self-modeling of remote experts

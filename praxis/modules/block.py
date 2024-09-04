@@ -67,11 +67,11 @@ class PraxisBlock(nn.Module):
             grid_size=(3,),
             dht=self.dht,
             uid_prefix=f"expert.",
-            jitter_eps=0.1,
+            jitter_eps=0.01,
             forward_timeout=30.0,
             backward_timeout=30.0,
             allow_zero_outputs=False,
-            k_best=1,
+            k_best=2,
         )
 
         # TODO: For some reason, this part is required, else Hivemind will fail in the forward passes
