@@ -81,7 +81,8 @@ train_params = dict(
 
 # Dashboard config
 max_data_points = 10000
-max_feed_chars = 1024
+max_feed_chars = 768
+predict_interval = 3
 
 
 class PraxisTrainer(LightningModule):
@@ -131,6 +132,7 @@ class TerminalInterface(Callback):
         self.ema = 0
         self.text = ""
         self.max_length = max_feed_chars
+        self.interval = predict_interval
         self.dashboard = TerminalDashboard(max_data_points)
         self.dashboard.start()
         self.dashboard.update_url(api_url)
@@ -145,7 +147,7 @@ class TerminalInterface(Callback):
         step = trainer.callback_metrics.get("step", 0)
         self.dashboard.update_step(step.item())
 
-        self._generate_sample_text(lm, batch_idx)
+        self._generate_sample_text(lm, batch_idx, interval=self.interval)
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
         if batch_idx % interval != 0:
