@@ -104,7 +104,7 @@ optimizer_config = dict(
 # Dashboard config
 max_data_points = 10000
 max_feed_chars = 768
-predict_interval = 3
+predict_interval = 10
 
 hparams = dict(
     batch_size=16,

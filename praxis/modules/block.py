@@ -28,13 +28,13 @@ class PraxisBlock(nn.Module):
         self.attn = PraxisAttention(config)
 
         # layer_idx = random.randint(0, 999)
-        layer_idx = ""
+
         n_experts = 3
         experts = {}
         for i in range(n_experts):
             expert = name_to_block["praxis_mlp"](config)
-            experts[f"expert{layer_idx}.{i}"] = ModuleBackend(
-                name=f"expert{layer_idx}.{i}",
+            experts[f"expert.{i}"] = ModuleBackend(
+                name=f"expert.{i}",
                 module=expert,
                 # optimizer=torch.optim.Adam(expert.parameters()),
                 args_schema=(BatchTensorDescriptor(config.n_embd),),
@@ -47,28 +47,26 @@ class PraxisBlock(nn.Module):
         server = Server(
             global_dht.get_dht(), experts, num_connection_handlers=4, start=True
         )
-        print("creating experts")
 
         self.dht = DHT(
             start=True,
-            daemon=False,
+            daemon=True,
             await_ready=True,
             initial_peers=global_dht.get_visible_maddrs(),
             use_auto_relay=True,
             use_relay=True,
             use_ipfs=True,
-            ensure_bootstrap_success=False,
+            ensure_bootstrap_success=True,
             # parallel_rpc=1,
             # client_mode=False,
         )
-        print("done")
 
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.moe = RemoteSwitchMixtureOfExperts(
             in_features=config.n_embd,
             grid_size=(3,),
             dht=self.dht,
-            uid_prefix=f"expert{layer_idx}.",
+            uid_prefix=f"expert.",
             jitter_eps=0.1,
             forward_timeout=30.0,
             backward_timeout=30.0,
@@ -143,13 +141,13 @@ class DHTSingleton:
             use_auto_relay=True,
             use_relay=True,
             use_ipfs=True,
-            ensure_bootstrap_success=False,
+            ensure_bootstrap_success=True,
             # parallel_rpc=1,
             # client_mode=False,
             # identity_path="./data/id.key",
         )
 
-        dht = DHT(start=True, daemon=False, await_ready=True, **dht_kwargs)
+        dht = DHT(start=True, daemon=True, await_ready=True, **dht_kwargs)
 
         print("Waiting for the DHT to propagate the network")
         time.sleep(5)
