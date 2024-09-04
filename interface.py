@@ -1,16 +1,30 @@
+import atexit
 import io
 import logging
 import os
+import signal
 import sys
 import textwrap
 import time
+import warnings
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from threading import Lock, Thread
 
 import asciichartpy
 import blessed
 import wcwidth
+
+
+class DashboardStreamHandler(logging.StreamHandler):
+    def __init__(self, dashboard):
+        super().__init__()
+        self.dashboard = dashboard
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.dashboard.add_log(msg)
 
 
 class DashboardOutput:
@@ -54,6 +68,59 @@ class TerminalDashboard:
         self.log_capture = LogCapture(self)
         self.previous_frame = None
         self.start_time = datetime.now()
+        self.url = "N/A"
+
+        # Set up logging
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.ERROR)
+        handler = DashboardStreamHandler(self)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
+        # Capture warnings
+        warnings.showwarning = self.show_warning
+
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+        # Register the cleanup function
+        atexit.register(self._cleanup)
+
+    def show_warning(self, message, category, filename, lineno, file=None, line=None):
+        warning_message = warnings.formatwarning(
+            message, category, filename, lineno, line
+        )
+        self.add_log(warning_message)
+
+    def _signal_handler(self, signum, frame):
+        self.stop()
+        sys.exit(0)
+
+    def _cleanup(self):
+        self.stop()
+        self._reset_terminal()
+
+    def _reset_terminal(self):
+        print(
+            self.term.normal
+            + self.term.clear
+            + self.term.home
+            + self.term.visible_cursor,
+            end="",
+        )
+        sys.stdout.flush()
+
+    @contextmanager
+    def managed_terminal(self):
+        try:
+            with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
+                yield
+        finally:
+            self._reset_terminal()
 
     def start(self):
         self.running = True
@@ -260,11 +327,14 @@ class TerminalDashboard:
         self.dashboard_output.flush()
 
     def _run_dashboard(self):
-        with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
+        with self.managed_terminal():
             while self.running:
-                new_frame = self._create_frame()
-                self._update_screen(new_frame)
-                time.sleep(0.1)
+                try:
+                    new_frame = self._create_frame()
+                    self._update_screen(new_frame)
+                    time.sleep(0.1)
+                except Exception as e:
+                    self.add_log(f"Dashboard error: {str(e)}")
 
 
 # Example usage
@@ -283,6 +353,23 @@ if __name__ == "__main__":
             dashboard.update_losses(train_loss, val_loss)
             dashboard.update_status(f"Training... Epoch {epoch}")
             dashboard.update_step(step)
+
+            # Test logging at different levels
+            dashboard.logger.debug("This is a debug message")
+            dashboard.logger.info("This is an info message")
+            dashboard.logger.warning("This is a warning message")
+            dashboard.logger.error("This is an error message")
+
+            # Test warnings
+            warnings.warn("This is a test warning")
+
+            # Test exceptions
+            if epoch % 10 == 0:
+                try:
+                    raise ValueError("This is a test exception")
+                except Exception as e:
+                    dashboard.logger.exception("Caught an exception:")
+
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass

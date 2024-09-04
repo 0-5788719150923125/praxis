@@ -1,6 +1,25 @@
+import os
+import signal
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
+
+
+# Ensures that orphaned threads and libp2p daemons are killed when this script dies
+def sigint_handler(signum, frame):
+    print("\nCtrl+C detected. Killing all spawned processes.")
+    # Kill the entire process group
+    os.killpg(os.getpgid(0), signal.SIGTERM)
+    sys.exit(1)
+
+
+# Create a new process group
+os.setpgrp()
+
+# Set up the SIGINT handler
+signal.signal(signal.SIGINT, sigint_handler)
+
 
 import argparse
 import logging
@@ -159,8 +178,11 @@ class TerminalInterface(Callback):
         self.max_length = max_feed_chars
         self.interval = predict_interval
         self.dashboard = TerminalDashboard(max_data_points)
-        self.dashboard.start()
-        self.dashboard.update_url(api_url)
+        try:
+            self.dashboard.start()
+            self.dashboard.update_url(api_url)
+        except KeyboardInterrupt:
+            self.dashboard.stop()
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
