@@ -70,9 +70,9 @@ class PraxisBlock(nn.Module):
             dht=self.dht,
             uid_prefix=f"expert{layer_idx}.",
             jitter_eps=0.1,
-            forward_timeout=0.5,
-            backward_timeout=0.5,
-            allow_zero_outputs=True,
+            forward_timeout=30.0,
+            backward_timeout=30.0,
+            allow_zero_outputs=False,
             k_best=1,
         )
 
@@ -152,7 +152,7 @@ class DHTSingleton:
         dht = DHT(start=True, daemon=False, await_ready=True, **dht_kwargs)
 
         print("Waiting for the DHT to propagate the network")
-        time.sleep(10)
+        time.sleep(5)
 
         return dht
 

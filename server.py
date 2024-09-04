@@ -53,7 +53,7 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 
-# User args, accepted vie CLI
+# User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
 parser.add_argument(
     "--no_dashboard",
@@ -61,6 +61,13 @@ parser.add_argument(
     default=False,
     help="Use dashboard (default: True)",
 )
+parser.add_argument(
+    "--use_gpu",
+    action="store_true",
+    default=False,
+    help="Use GPU.",
+)
+gpu_idx = 1
 
 args = parser.parse_args()
 
@@ -75,7 +82,7 @@ config = PraxisConfig(
     pad_token_id=0,
     bos_token_id=1,
     eos_token_id=2,
-    device_map="cpu",
+    device_map=f"cuda:{gpu_idx}" if args.use_gpu else "cpu",
     torch_dtype="float32",
 )
 
@@ -106,9 +113,9 @@ hparams = dict(
 )
 
 train_params = dict(
-    accelerator="cpu",
+    accelerator=f"gpu" if args.use_gpu else "cpu",
     strategy="auto",
-    devices="auto",
+    devices=[int(gpu_idx)] if args.use_gpu else "auto",
     max_steps=-1,
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
@@ -285,6 +292,8 @@ class Generator:
 
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
+        if args.use_gpu:
+            input_ids = input_ids.to(gpu_idx)
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,

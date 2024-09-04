@@ -60,7 +60,9 @@ class PraxisAttention(nn.Module):
         )
 
         # Apply ALiBi bias
-        bias = (self.m * self._get_relative_positions(seq_len)).unsqueeze(0)
+        bias = (self.m * self._get_relative_positions(seq_len).to(x.device)).unsqueeze(
+            0
+        )
         scores = scores - bias
 
         # Apply the causal mask
