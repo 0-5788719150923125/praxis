@@ -8,7 +8,7 @@
 
 ## what we're building
 
-The Praxis swarm is a decentralized, peer-to-peer, always online, and continuously-learning AI intelligence - with Hivemind integrated into core layers of the model itself. We will do this via a mixture of experts, sparse routing, algorithmic switching and self-modeling of remotely-hosted peers.
+The Praxis swarm is a decentralized, peer-to-peer, always online, and continuously-learning AI intelligence - with [Hivemind](https://github.com/learning-at-home/hivemind) directly-integrated into core layers of the model itself. The goal is to build an expert model that is small and simple, easy to parallelize and performant at a scale of hundreds/thousands of peers. We will do this via a sparse mixture of experts, curated routing, algorithmic switching and weighted self-modeling of remotely-hosted peers.
 
 ## install
 
