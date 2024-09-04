@@ -70,18 +70,11 @@ class PraxisBlock(nn.Module):
             )
 
         server = Server(dht, experts, num_connection_handlers=1, start=True)
-        # # server.start()
-        # # server.ready.wait()
         self.dht = DHT(
             start=True,
             **dht_kwargs,
-            # initial_peers=dht.get_visible_maddrs(),
         )
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
-        # self.mlp = get_experts(self.dht, ["expert.0"])[0]
-        # features = 256
-        # x = torch.randn(4, 128, 256)
-        # batch_size, time_steps, features = x.shape
         self.moe = RemoteSwitchMixtureOfExperts(
             in_features=config.n_embd,
             grid_size=(3,),
@@ -94,7 +87,7 @@ class PraxisBlock(nn.Module):
             k_best=2,
         )
 
-        # For some reason, this part is required, else Hivemind will fail in the forward passes
+        # TODO: For some reason, this part is required, else Hivemind will fail in the forward passes
         out, balancing_loss = self.moe(torch.randn(16, config.n_embd))
 
     def forward(self, x, attention_mask=None):
@@ -103,10 +96,12 @@ class PraxisBlock(nn.Module):
         x = self.attn_norm(x)
         x = self.attn(x, attention_mask)
         x = residual + x
-        # MoE of Feedforward layers
+
+        # Mixture of feedforward experts
         residual = x
         x = self.mlp_norm(x)
         batch_size, time_steps, features = x.shape
+
         # Reshape to (batch_size * time_steps, features)
         x_reshaped = x.view(-1, features)
 

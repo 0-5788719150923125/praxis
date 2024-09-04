@@ -23,6 +23,7 @@ class PraxisModel(PreTrainedModel):
             [PraxisBlock(config) for _ in range(config.n_layer)]
         )
         self.post_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.extra_loss = 0
 
     def get_input_embeddings(self):
         return self.wte
@@ -51,7 +52,8 @@ class PraxisModel(PreTrainedModel):
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
         for block in self.blocks:
-            hidden_states = block(hidden_states, attention_mask)
+            hidden_states, extra_loss = block(hidden_states, attention_mask)
+            self.extra_loss += extra_loss
 
         hidden_states = self.post_norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)
@@ -117,6 +119,9 @@ class PraxisForCausalLM(PraxisModel):
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
             )
+            loss += self.extra_loss
+
+        self.extra_loss = 0
 
         if not return_dict:
             output = (logits,) + transformer_outputs[1:]

@@ -57,7 +57,7 @@ optimizer_config = dict(
 )
 
 # Dashboard config
-use_dashboard = False
+use_dashboard = True
 max_data_points = 10000
 max_feed_chars = 768
 predict_interval = 3
