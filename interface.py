@@ -2,6 +2,7 @@ import atexit
 import io
 import logging
 import os
+import re
 import signal
 import sys
 import textwrap
@@ -54,6 +55,7 @@ class LogCapture:
 class TerminalDashboard:
     def __init__(self, max_data_points=50, max_log_lines=100):
         self.term = blessed.Terminal()
+        self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         self.max_data_points = max_data_points
         self.train_losses = deque(maxlen=max_data_points)
         self.val_losses = deque(maxlen=max_data_points)
@@ -152,9 +154,16 @@ class TerminalDashboard:
 
     def add_log(self, message):
         with self.lock:
-            # Split the message into lines, filter out empty lines, and strip whitespace
-            new_lines = [line.strip() for line in message.splitlines() if line.strip()]
+            # Strip ANSI codes and split the message into lines
+            stripped_message = self._strip_ansi(message)
+            new_lines = [
+                line.strip() for line in stripped_message.splitlines() if line.strip()
+            ]
             self.log_buffer.extend(new_lines)
+
+    def _strip_ansi(self, text):
+        """Remove ANSI escape sequences from the text."""
+        return self.ansi_escape.sub("", text)
 
     def hours_since(self):
         current_time = datetime.now()
@@ -185,8 +194,10 @@ class TerminalDashboard:
         return "".join(result)
 
     def _wrap_text(self, text, width):
+        # Strip ANSI codes before wrapping
+        stripped_text = self._strip_ansi(text)
         wrapped_lines = []
-        for line in text.splitlines():
+        for line in stripped_text.splitlines():
             wrapped_line = []
             current_width = 0
             for char in line:
@@ -265,9 +276,13 @@ class TerminalDashboard:
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
 
-            # Ensure left and right content are exactly the right width
-            left_content = self._truncate_to_width(left_content, half_width)
-            right_content = self._truncate_to_width(right_content, right_width)
+            # Ensure left and right content are exactly the right width and strip ANSI codes
+            left_content = self._strip_ansi(
+                self._truncate_to_width(left_content, half_width)
+            )
+            right_content = self._strip_ansi(
+                self._truncate_to_width(right_content, right_width)
+            )
             left_content = self._visual_ljust(left_content, half_width)
             right_content = self._visual_ljust(right_content, right_width)
 
@@ -308,7 +323,10 @@ class TerminalDashboard:
     def _update_screen(self, new_frame):
         if self.previous_frame is None:
             print(
-                self.term.home + self.term.clear + "\n".join(new_frame),
+                self.term.home
+                + self.term.clear
+                + self.term.white
+                + "\n".join(new_frame),
                 end="",
                 file=self.dashboard_output,
             )
@@ -318,7 +336,7 @@ class TerminalDashboard:
             ):
                 if old_line != new_line:
                     print(
-                        self.term.move(i, 0) + new_line,
+                        self.term.move(i, 0) + self.term.white + new_line,
                         end="",
                         file=self.dashboard_output,
                     )
