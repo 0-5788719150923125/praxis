@@ -4,6 +4,7 @@ import random
 from datetime import datetime, timedelta
 
 import torch
+import torch.nn as nn
 from datasets import load_dataset
 from lightning.pytorch import LightningModule
 from lightning.pytorch.callbacks import Callback
@@ -127,7 +128,9 @@ class PraxisTrainer(LightningModule):
 
 
 class TerminalInterface(Callback):
-    """A single pane of glass containing charts and information."""
+    """
+    A single pane of glass containing charts and information.
+    """
 
     def __init__(self):
         super().__init__()
@@ -145,7 +148,7 @@ class TerminalInterface(Callback):
 
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema = self._compute_ema_loss(float(loss), self.ema)
-        self.dashboard.update_losses(self.ema, random.random() * 0.1)
+        self.dashboard.update_losses(self.ema, random.gauss())
 
         step = trainer.callback_metrics.get("step", 0)
         self.dashboard.update_step(step.item())
@@ -180,6 +183,10 @@ class TerminalInterface(Callback):
 
 
 class HuggingfaceDataset(IterableDataset):
+    """
+    A wrapper that streams, tokenizes and batches data for training.
+    """
+
     def __init__(self, tokenizer, config):
         self.tokenizer = tokenizer
         self.dataset = load_dataset(
@@ -227,6 +234,10 @@ class HuggingfaceDataset(IterableDataset):
 
 
 class Generator:
+    """
+    Wraps a model in a simplified generation API.
+    """
+
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer

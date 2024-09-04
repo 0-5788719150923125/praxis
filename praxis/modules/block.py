@@ -56,9 +56,9 @@ class PraxisBlock(nn.Module):
                 max_batch_size=16,
             )
 
-        server = Server(dht, experts, num_connection_handlers=1)
-        server.start()
-        server.ready.wait()
+        server = Server(dht, experts, num_connection_handlers=1, start=True)
+        # server.start()
+        # server.ready.wait()
         self.dht = DHT(
             initial_peers=dht.get_visible_maddrs(),
             start=True,

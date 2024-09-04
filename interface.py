@@ -99,34 +99,42 @@ class TerminalDashboard:
         with self.lock:
             self.placeholder_text = text
 
+    def _visual_ljust(self, string, width):
+        """Left-justify a string to a specified width, considering character display width."""
+        visual_width = sum(wcwidth.wcwidth(char) for char in string)
+        padding = max(0, width - visual_width)
+        return string + " " * padding
+
     def _truncate_to_width(self, text, width):
         """Truncate text to fit within a given width, accounting for wide characters."""
         current_width = 0
-        for i, char in enumerate(text):
+        result = []
+        for char in text:
             char_width = wcwidth.wcwidth(char)
             if current_width + char_width > width:
-                return text[:i]
+                break
+            result.append(char)
             current_width += char_width
-        return text
+        return "".join(result)
 
     def _wrap_text(self, text, width):
         wrapped_lines = []
         for line in text.splitlines():
-            wrapped_line = ""
+            wrapped_line = []
             current_width = 0
             for char in line:
                 char_width = wcwidth.wcwidth(char)
                 if current_width + char_width > width:
-                    wrapped_lines.append(wrapped_line)
-                    wrapped_line = ""
+                    wrapped_lines.append(
+                        self._visual_ljust("".join(wrapped_line), width)
+                    )
+                    wrapped_line = []
                     current_width = 0
-                wrapped_line += char
+                wrapped_line.append(char)
                 current_width += char_width
             if wrapped_line:
-                wrapped_lines.append(wrapped_line)
-        return [
-            self._truncate_to_width(line, width).ljust(width) for line in wrapped_lines
-        ]
+                wrapped_lines.append(self._visual_ljust("".join(wrapped_line), width))
+        return wrapped_lines
 
     def _create_frame(self):
         height = self.term.height - 4
@@ -158,8 +166,10 @@ class TerminalDashboard:
 
             if i == 0:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
-                left_content = f" Training Loss: {train_loss:.4f}".ljust(half_width)
-                right_content = " Feed".ljust(right_width)
+                left_content = self._visual_ljust(
+                    f" Training Loss: {train_loss:.4f}", half_width
+                )
+                right_content = self._visual_ljust(" Feed", right_width)
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -173,8 +183,10 @@ class TerminalDashboard:
                 right_content = "═" * right_width
             elif i == half_height:
                 val_loss = self.val_losses[-1] if self.val_losses else 0
-                left_content = f" Validation Loss: {val_loss:.4f}".ljust(half_width)
-                right_content = " Logger".ljust(right_width)
+                left_content = self._visual_ljust(
+                    f" Validation Loss: {val_loss:.4f}", half_width
+                )
+                right_content = self._visual_ljust(" Logger", right_width)
             elif i == half_height + 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -187,12 +199,10 @@ class TerminalDashboard:
                     right_content = log_lines[log_index]
 
             # Ensure left and right content are exactly the right width
-            left_content = self._truncate_to_width(left_content, half_width).ljust(
-                half_width
-            )
-            right_content = self._truncate_to_width(right_content, right_width).ljust(
-                right_width
-            )
+            left_content = self._truncate_to_width(left_content, half_width)
+            right_content = self._truncate_to_width(right_content, right_width)
+            left_content = self._visual_ljust(left_content, half_width)
+            right_content = self._visual_ljust(right_content, right_width)
 
             frame.append(f"║{left_content}║{right_content}║")
 
@@ -201,7 +211,10 @@ class TerminalDashboard:
         with self.lock:
             elapsed = self.hours_since()
             frame.append(
-                f" PRAXIS | Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}"
+                self._truncate_to_width(
+                    f" PRAXIS | Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}",
+                    width,
+                )
             )
 
         return frame
