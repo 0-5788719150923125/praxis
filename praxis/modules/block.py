@@ -19,18 +19,6 @@ from hivemind.utils import BatchTensorDescriptor
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
 
-# PUBLIC_INITIAL_PEERS = [
-#     # IPv4 DNS addresses
-#     "/dns/bootstrap1.petals.dev/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
-#     "/dns/bootstrap2.petals.dev/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
-#     # IPv6 DNS addresses
-#     "/dns6/bootstrap1.petals.dev/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
-#     "/dns6/bootstrap2.petals.dev/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
-#     # Reserved IPs
-#     "/ip4/159.89.214.152/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
-#     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
-# ]
-
 
 class PraxisBlock(nn.Module):
     def __init__(self, config):
@@ -59,6 +47,8 @@ class PraxisBlock(nn.Module):
 
         self.dht = DHT(
             start=True,
+            daemon=True,
+            await_ready=True,
             initial_peers=global_dht.get_visible_maddrs(),
             use_auto_relay=True,
             use_relay=True,
@@ -73,10 +63,10 @@ class PraxisBlock(nn.Module):
             dht=self.dht,
             uid_prefix="expert.",
             jitter_eps=0.1,
-            forward_timeout=0.1,
-            backward_timeout=0.1,
+            forward_timeout=0.5,
+            backward_timeout=0.5,
             allow_zero_outputs=True,
-            k_best=2,
+            k_best=1,
         )
 
         # TODO: For some reason, this part is required, else Hivemind will fail in the forward passes
@@ -107,6 +97,19 @@ class PraxisBlock(nn.Module):
         return x, balancing_loss
 
 
+# PUBLIC_INITIAL_PEERS = [
+#     # IPv4 DNS addresses
+#     "/dns/bootstrap1.petals.dev/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
+#     "/dns/bootstrap2.petals.dev/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
+#     # IPv6 DNS addresses
+#     "/dns6/bootstrap1.petals.dev/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
+#     "/dns6/bootstrap2.petals.dev/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
+#     # Reserved IPs
+#     "/ip4/159.89.214.152/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
+#     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
+# ]
+
+
 class DHTSingleton:
     """
     Ensures that we only initialize the global DHT once.
@@ -129,6 +132,7 @@ class DHTSingleton:
 
     def _initialize_dht(self):
         dht_kwargs = dict(
+            # initial_peers=PUBLIC_INITIAL_PEERS,
             use_auto_relay=True,
             use_relay=True,
             use_ipfs=True,
@@ -136,10 +140,10 @@ class DHTSingleton:
             # identity_path="./data/id.key",
         )
 
-        dht = DHT(start=True, **dht_kwargs)
+        dht = DHT(start=True, daemon=True, await_ready=True, **dht_kwargs)
 
         print("Waiting for the DHT to propagate the network")
-        time.sleep(5)
+        time.sleep(10)
 
         return dht
 

@@ -1,3 +1,7 @@
+import sys
+
+sys.dont_write_bytecode = True
+
 import argparse
 import logging
 import math
@@ -47,7 +51,7 @@ use_dashboard = False if args.no_dashboard else True
 config = PraxisConfig(
     n_positions=512,
     n_embd=256,
-    n_layer=3,
+    n_layer=6,
     n_head=8,
     pad_token_id=0,
     bos_token_id=1,
@@ -303,29 +307,15 @@ train_model = PraxisTrainer(model, optimizer, hparams)
 trainer = Trainer(**train_params)
 trainer.fit(train_model, dataset)
 
-# import argparse
 # import ipaddress
 # from functools import partial
 # from hivemind.utils.networking import log_visible_maddrs
 # from lightning.fabric.utilities.seed import reset_seed, seed_everything
 # from lightning_hivemind.strategy import HivemindStrategy
 
-# args = Configurator.combine_configs()
-
-# def flatten_list(nested_list):
-#     """Flatten a nested list."""
-#     if nested_list and isinstance(nested_list[0], list):
-#         # Assumes only one level of nesting
-#         return [item for sublist in nested_list for item in sublist]
-#     return nested_list
-
 
 # # set some basic configuration values
 # initial_peers = flatten_list(args.initial_peers)
-# batch_size = args.batch_size
-# save_every = args.save_every
-# block_size = 512
-# num_steps = 100_000
 # target_batch_size = 8192
 
 # # define the hivemind strategy
