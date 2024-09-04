@@ -1,3 +1,5 @@
+import time
+
 import hivemind
 import torch
 import torch.nn as nn
@@ -29,26 +31,6 @@ from .mlp import PraxisMLP
 #     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
 # ]
 
-dht_kwargs = dict(
-    # cache_locally=False,
-    # initial_peers=None,
-    use_auto_relay=True,
-    use_relay=True,
-    use_ipfs=True,
-    ensure_bootstrap_success=False,
-    # identity_path="./data/identity.key",
-)
-
-dht = DHT(start=True, **dht_kwargs)
-
-dht_kwargs["initial_peers"] = dht.get_visible_maddrs()
-
-import time
-
-print("waiting for the DHT to propagate the network")
-
-time.sleep(5)
-
 
 class PraxisBlock(nn.Module):
     def __init__(self, config):
@@ -69,11 +51,21 @@ class PraxisBlock(nn.Module):
                 max_batch_size=16,
             )
 
-        server = Server(dht, experts, num_connection_handlers=1, start=True)
+        global_dht = DHTSingleton.get_instance()
+
+        server = Server(
+            global_dht.get_dht(), experts, num_connection_handlers=1, start=True
+        )
+
         self.dht = DHT(
             start=True,
-            **dht_kwargs,
+            initial_peers=global_dht.get_visible_maddrs(),
+            use_auto_relay=True,
+            use_relay=True,
+            use_ipfs=True,
+            ensure_bootstrap_success=False,
         )
+
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.moe = RemoteSwitchMixtureOfExperts(
             in_features=config.n_embd,
@@ -113,3 +105,46 @@ class PraxisBlock(nn.Module):
         x = residual + x
 
         return x, balancing_loss
+
+
+class DHTSingleton:
+    """
+    Ensures that we only initialize the global DHT once.
+    """
+
+    _instance = None
+
+    @staticmethod
+    def get_instance():
+        if DHTSingleton._instance is None:
+            DHTSingleton()
+        return DHTSingleton._instance
+
+    def __init__(self):
+        if DHTSingleton._instance is not None:
+            raise Exception("This class is a singleton!")
+        else:
+            DHTSingleton._instance = self
+            self.dht = self._initialize_dht()
+
+    def _initialize_dht(self):
+        dht_kwargs = dict(
+            use_auto_relay=True,
+            use_relay=True,
+            use_ipfs=True,
+            ensure_bootstrap_success=False,
+            # identity_path="./data/id.key",
+        )
+
+        dht = DHT(start=True, **dht_kwargs)
+
+        print("Waiting for the DHT to propagate the network")
+        time.sleep(5)
+
+        return dht
+
+    def get_visible_maddrs(self):
+        return self.dht.get_visible_maddrs()
+
+    def get_dht(self):
+        return self.dht

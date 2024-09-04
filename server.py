@@ -1,3 +1,4 @@
+import argparse
 import logging
 import math
 import random
@@ -29,6 +30,20 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 
+# User args, accepted vie CLI
+parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
+parser.add_argument(
+    "--no_dashboard",
+    action="store_true",
+    default=False,
+    help="Use dashboard (default: True)",
+)
+
+args = parser.parse_args()
+
+use_dashboard = False if args.no_dashboard else True
+
+# System args
 config = PraxisConfig(
     n_positions=512,
     n_embd=256,
@@ -57,7 +72,6 @@ optimizer_config = dict(
 )
 
 # Dashboard config
-use_dashboard = True
 max_data_points = 10000
 max_feed_chars = 768
 predict_interval = 3
