@@ -32,7 +32,7 @@ AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 config = PraxisConfig(
     n_positions=512,
     n_embd=256,
-    n_layer=6,
+    n_layer=3,
     n_head=8,
     pad_token_id=0,
     bos_token_id=1,
@@ -56,6 +56,12 @@ optimizer_config = dict(
     ],
 )
 
+# Dashboard config
+use_dashboard = False
+max_data_points = 10000
+max_feed_chars = 768
+predict_interval = 3
+
 hparams = dict(
     batch_size=16,
     accumulate_grad_batches=4,
@@ -76,16 +82,11 @@ train_params = dict(
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
-    enable_progress_bar=False,
+    enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     logger=logger,
     callbacks=[],
 )
-
-# Dashboard config
-max_data_points = 10000
-max_feed_chars = 768
-predict_interval = 3
 
 
 class PraxisTrainer(LightningModule):
@@ -272,7 +273,8 @@ api_server = APIServer(generator)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 
-train_params["callbacks"].append(TerminalInterface())
+if use_dashboard:
+    train_params["callbacks"].append(TerminalInterface())
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
