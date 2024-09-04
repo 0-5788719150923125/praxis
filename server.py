@@ -1,6 +1,7 @@
 import logging
 import math
 import random
+from datetime import datetime, timedelta
 
 import torch
 from datasets import load_dataset
@@ -130,6 +131,7 @@ class TerminalInterface(Callback):
     def __init__(self):
         super().__init__()
         self.ema = 0
+        self.last_time = datetime.now()
         self.text = ""
         self.max_length = max_feed_chars
         self.interval = predict_interval
@@ -150,7 +152,8 @@ class TerminalInterface(Callback):
         self._generate_sample_text(lm, batch_idx, interval=self.interval)
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
-        if batch_idx % interval != 0:
+
+        if not self._is_time_passed(self.last_time, self.interval):
             return
 
         lm.model.eval()
@@ -160,7 +163,13 @@ class TerminalInterface(Callback):
             self.text = self.text[1:]
 
         self.dashboard.update_status(self.text)
+        self.last_time = datetime.now()
         lm.model.train()
+
+    def _is_time_passed(self, original_time, x_seconds):
+        current_time = datetime.now()
+        time_difference = current_time - original_time
+        return time_difference > timedelta(seconds=x_seconds)
 
     def _compute_ema_loss(self, current_loss, prev_avg_loss, alpha=0.01):
         if prev_avg_loss is None:
