@@ -20,7 +20,6 @@ class PraxisConfig(PretrainedConfig):
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
-        # torch_dtype="float32",
         **kwargs
     ):
         super().__init__(

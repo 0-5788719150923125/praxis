@@ -33,10 +33,11 @@ config = PraxisConfig(
     n_embd=256,
     n_layer=6,
     n_head=8,
-    device_map="cpu",
     pad_token_id=0,
     bos_token_id=1,
     eos_token_id=2,
+    device_map="cpu",
+    torch_dtype="float32",
 )
 
 tokenizer_model = "NousResearch/Llama-2-7b-hf"

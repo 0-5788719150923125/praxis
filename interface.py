@@ -112,33 +112,21 @@ class TerminalDashboard:
     def _wrap_text(self, text, width):
         wrapped_lines = []
         for line in text.splitlines():
-            wrapped_lines.extend(
-                textwrap.wrap(
-                    line, width=width, replace_whitespace=False, drop_whitespace=False
-                )
-            )
+            wrapped_line = ""
+            current_width = 0
+            for char in line:
+                char_width = wcwidth.wcwidth(char)
+                if current_width + char_width > width:
+                    wrapped_lines.append(wrapped_line)
+                    wrapped_line = ""
+                    current_width = 0
+                wrapped_line += char
+                current_width += char_width
+            if wrapped_line:
+                wrapped_lines.append(wrapped_line)
         return [
             self._truncate_to_width(line, width).ljust(width) for line in wrapped_lines
         ]
-
-    def _draw_chart(self, data, width, height):
-        if len(data) > 1:
-            # Ensure we only plot the most recent data points that fit in the width
-            plot_data = list(data)[-width:]
-            chart = asciichartpy.plot(
-                plot_data,
-                {
-                    "height": height - 2,
-                    "width": width - 2,
-                    "format": "{:8.2f}",
-                    "min": min(plot_data),
-                    "max": max(plot_data),
-                },
-            )
-            lines = chart.split("\n")
-            # Ensure each line is exactly the right width
-            return [line.ljust(width)[:width] for line in lines]
-        return [" " * width for _ in range(height)]
 
     def _create_frame(self):
         height = self.term.height - 4
@@ -199,8 +187,12 @@ class TerminalDashboard:
                     right_content = log_lines[log_index]
 
             # Ensure left and right content are exactly the right width
-            left_content = left_content[:half_width].ljust(half_width)
-            right_content = right_content[:right_width].ljust(right_width)
+            left_content = self._truncate_to_width(left_content, half_width).ljust(
+                half_width
+            )
+            right_content = self._truncate_to_width(right_content, right_width).ljust(
+                right_width
+            )
 
             frame.append(f"║{left_content}║{right_content}║")
 
@@ -213,6 +205,25 @@ class TerminalDashboard:
             )
 
         return frame
+
+    def _draw_chart(self, data, width, height):
+        if len(data) > 1:
+            # Ensure we only plot the most recent data points that fit in the width
+            plot_data = list(data)[-width:]
+            chart = asciichartpy.plot(
+                plot_data,
+                {
+                    "height": height - 2,
+                    "width": width - 2,
+                    "format": "{:8.2f}",
+                    "min": min(plot_data),
+                    "max": max(plot_data),
+                },
+            )
+            lines = chart.split("\n")
+            # Ensure each line is exactly the right width
+            return [line.ljust(width)[:width] for line in lines]
+        return [" " * width for _ in range(height)]
 
     def _update_screen(self, new_frame):
         if self.previous_frame is None:
