@@ -33,6 +33,11 @@ To donate your compute:
 python server.py
 ```
 
+## join us
+
+- [Discord](https://discord.gg/8ZmHP8CqUX)
+- [The Source](https://src.eco)
+
 ## do inference
 
 Send a JSON-encoded payload via POST to:
