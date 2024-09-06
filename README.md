@@ -101,9 +101,10 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
 - [Mixture of Depths](https://arxiv.org/abs/2404.02258).
 
-## TBD
+## todo
 
 - a proper and robust DHT
+- central and persistent relay peers, to act as global initial_peers
 - a routing algorithm with multi-hop support (ping -> pang -> pong -> ping)
 - multi-layer experts
 - peer validation

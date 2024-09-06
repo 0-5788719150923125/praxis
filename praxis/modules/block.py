@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from hivemind import DHT
 from hivemind.moe import Server
+from hivemind.moe.client.expert import RemoteExpert
 from hivemind.moe.server import (
     ModuleBackend,
     Server,
@@ -17,10 +18,6 @@ from hivemind.utils import BatchTensorDescriptor
 
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
-
-# dht = DHT(
-#     start=True, initial_peers=None, use_auto_relay=True, use_relay=True, use_ipfs=True
-# )
 
 
 class PraxisBlock(nn.Module):
@@ -38,7 +35,6 @@ class PraxisBlock(nn.Module):
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
                 module=expert,
-                # optimizer=torch.optim.Adam(expert.parameters()),
                 args_schema=(
                     BatchTensorDescriptor(
                         config.n_embd,
@@ -50,33 +46,18 @@ class PraxisBlock(nn.Module):
                 max_batch_size=16,
             )
 
-        global_dht = DHTSingleton.get_instance()
+        relay = DHTSingleton.get_instance()
 
         server = Server(
-            global_dht.get_dht(),
-            # dht,
+            relay.get_dht(),
             experts,
             num_connection_handlers=1,
-            # device="cuda:1",
-            # start=True,
-            # await_ready=True,
         )
         server.start()
         server.ready.wait()
-        # server = Server.create(
-        #     num_experts=1,
-        #     expert_pattern="expert.[0:1]",
-        #     expert_cls="praxis_mlp",
-        #     hidden_dim=config.n_embd,
-        #     initial_peers=dht.get_visible_maddrs(),
-        #     await_ready=True,
-        #     start=True,
-        #     # device=torch.device("cuda:1"),
-        # )
-        print(server)
+
         self.dht = DHT(
-            initial_peers=global_dht.get_visible_maddrs(),
-            # initial_peers=dht.get_visible_maddrs(),
+            initial_peers=relay.get_visible_maddrs(),
             start=True,
             use_auto_relay=True,
             use_relay=True,
