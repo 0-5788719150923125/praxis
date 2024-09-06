@@ -4,20 +4,13 @@ import hivemind
 import torch
 import torch.nn as nn
 from hivemind import DHT
-from hivemind.moe import Server
-from hivemind.moe.client.expert import RemoteExpert
-from hivemind.moe.server import (
-    ModuleBackend,
-    Server,
-    background_server,
-    declare_experts,
-    get_experts,
-)
+from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server.layers import name_to_block
 from hivemind.utils import BatchTensorDescriptor
 
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
+from .router import PraxisRouter
 
 
 class PraxisBlock(nn.Module):
@@ -26,11 +19,14 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = PraxisAttention(config)
 
-        self.n_experts = 3
+        n_experts = 3
         self.k_best = 2
 
+        temperature = 1.0
+        self.router = PraxisRouter(config.n_embd, n_experts, self.k_best, temperature)
+
         experts = {}
-        for i in range(self.n_experts):
+        for i in range(n_experts):
             expert = name_to_block["praxis_mlp"](config)
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
@@ -43,7 +39,7 @@ class PraxisBlock(nn.Module):
                 outputs_schema=BatchTensorDescriptor(
                     config.n_embd,
                 ),
-                max_batch_size=16,
+                max_batch_size=1024,
             )
 
         relay = DHTSingleton.get_instance()
@@ -64,9 +60,7 @@ class PraxisBlock(nn.Module):
             use_ipfs=True,
         )
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
-        self.experts = get_experts(
-            self.dht, [f"expert.{i}" for i in range(self.n_experts)]
-        )
+        self.experts = get_experts(self.dht, [f"expert.{i}" for i in range(n_experts)])
 
     def forward(self, x, attention_mask=None):
         residual = x
@@ -77,22 +71,54 @@ class PraxisBlock(nn.Module):
         x = self.mlp_norm(x)
 
         # expert handling
-        x_cpu = x.to("cpu")
+        original_device = x.device
+        batch_size, seq_len, input_size = x.shape
+        top_k_scores, top_k_indices, balancing_loss = self.router(x)
 
-        # Collect outputs from selected experts
-        outputs = []
-        selections = random.sample(self.experts, min(self.k_best, len(self.experts)))
-        for expert in selections:
-            outputs.append(expert(x_cpu).to(x.device))
+        # Flatten the input and create index tensors
+        flat_x = x.reshape(-1, input_size).to("cpu")
+        batch_seq_index = (
+            torch.arange(batch_size * seq_len).repeat_interleave(self.k_best).to("cpu")
+        )
+        flat_expert_indices = top_k_indices.reshape(-1).to("cpu")
 
-        # Stack outputs along a new dimension
-        x = torch.stack(outputs)
+        # Sort by expert indices for efficient batching
+        sorted_expert_indices, sort_idx = torch.sort(flat_expert_indices)
+        sorted_batch_seq_index = batch_seq_index[sort_idx].to("cpu")
 
-        # Compute the mean along the expert dimension
-        x = torch.mean(x, dim=0)
+        # Find the boundaries between different experts
+        expert_boundaries = (
+            torch.where(sorted_expert_indices[1:] != sorted_expert_indices[:-1])[0] + 1
+        )
+        expert_boundaries = torch.cat(
+            [
+                torch.tensor([0]).to("cpu"),
+                expert_boundaries,
+                torch.tensor([len(sorted_expert_indices)]).to("cpu"),
+            ]
+        )
+
+        # Get unique experts actually used
+        unique_experts = torch.unique(sorted_expert_indices)
+
+        # Process each expert's batch
+        combined_output = torch.zeros_like(flat_x).repeat(self.k_best, 1).to("cpu")
+        for i, expert_idx in enumerate(unique_experts):
+            start, end = expert_boundaries[i], expert_boundaries[i + 1]
+            expert_input = flat_x[sorted_batch_seq_index[start:end]]
+            expert_output = self.experts[expert_idx](expert_input)
+            combined_output[sort_idx[start:end]] = expert_output
+
+        # Reshape output and apply routing weights
+        output = combined_output.view(self.k_best, batch_size, seq_len, input_size).to(
+            "cpu"
+        )
+
+        weighted_output = output * top_k_scores.to("cpu").permute(2, 0, 1).unsqueeze(-1)
+
+        x = weighted_output.sum(dim=0).to(original_device)
 
         x = residual + x
-        balancing_loss = 0  # dummy loss
         return x, balancing_loss
 
 

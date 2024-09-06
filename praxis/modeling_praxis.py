@@ -53,7 +53,8 @@ class PraxisModel(PreTrainedModel):
 
         for block in self.blocks:
             hidden_states, extra_loss = block(hidden_states, attention_mask)
-            self.extra_losses.append(extra_loss)
+            if self.training:
+                self.extra_losses.append(extra_loss)
 
         hidden_states = self.post_norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)

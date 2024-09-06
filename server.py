@@ -23,8 +23,10 @@ signal.signal(signal.SIGINT, sigint_handler)
 import argparse
 import logging
 import math
+import os
 import random
 from datetime import datetime, timedelta
+from typing import Dict, List
 
 import torch
 import torch.nn as nn
@@ -37,7 +39,13 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
@@ -66,11 +74,18 @@ parser.add_argument(
     default="cpu",
     help="Device to use (default: cpu)",
 )
+parser.add_argument(
+    "--data_path",
+    type=str,
+    default=None,
+    help="Path to a directory of files to use as training data (default: None)",
+)
 
 args = parser.parse_args()
 
 use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
+data_path = args.data_path
 
 # System args
 config = PraxisConfig(
@@ -87,7 +102,8 @@ config = PraxisConfig(
 
 tokenizer_model = "NousResearch/Llama-2-7b-hf"
 
-dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
+# dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
+dataset_config = dict(repo="open-phi/textbooks", key="markdown")
 
 optimizer_config = dict(
     optimizer_name="Lion",
@@ -234,8 +250,9 @@ class HuggingfaceDataset(IterableDataset):
     A wrapper that streams, tokenizes and batches data for training.
     """
 
-    def __init__(self, tokenizer, config):
+    def __init__(self, tokenizer: PreTrainedTokenizer, config: Dict, block_size: int):
         self.tokenizer = tokenizer
+        self.block_size = block_size
         self.dataset = load_dataset(
             config.get("repo", "HuggingFaceFW/fineweb"),
             split="train",
@@ -264,7 +281,7 @@ class HuggingfaceDataset(IterableDataset):
 
             tokens = self.tokenizer(
                 text=self.cached_text,
-                max_length=hparams["block_size"],
+                max_length=self.block_size,
                 stride=16,
                 padding=True,
                 truncation=True,
@@ -275,7 +292,80 @@ class HuggingfaceDataset(IterableDataset):
             self.cached_text = ""
 
             for batch in tokens:
-                if len(batch) != hparams["block_size"]:
+                if len(batch) != self.block_size:
+                    break
+                yield batch
+
+
+class DirectoryDataset(IterableDataset):
+    """
+    A file-based iterable dataset that recursively reads files from a directory,
+    tokenizes them, and returns batches for PyTorch Lightning.
+    """
+
+    def __init__(self, tokenizer: PreTrainedTokenizer, directory: str, block_size: int):
+        self.tokenizer = tokenizer
+        self.directory = directory
+        self.block_size = block_size
+        self.cached_text = ""
+        self.file_list = self._get_file_list()
+
+    def _get_file_list(self) -> List[str]:
+        """Recursively get all files in the directory."""
+        file_list = []
+        for root, _, files in os.walk(self.directory):
+            for file in files:
+                file_list.append(os.path.join(root, file))
+        return file_list
+
+    def _read_file(self, file_path: str) -> str:
+        """Read the contents of a file."""
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def __iter__(self):
+        buffer_size = 10_000
+        text_cache_size = 10 * buffer_size
+        block_size = self.block_size
+
+        random.shuffle(self.file_list)
+
+        for file_path in self.file_list:
+            self.cached_text += self._read_file(file_path) + self.tokenizer.eos_token
+            if len(self.cached_text) < text_cache_size:
+                continue
+
+            tokens = self.tokenizer(
+                text=self.cached_text,
+                max_length=block_size,
+                stride=16,
+                padding=True,
+                truncation=True,
+                return_overflowing_tokens=True,
+                return_tensors="pt",
+            )["input_ids"]
+
+            self.cached_text = ""
+
+            for batch in tokens:
+                if len(batch) != block_size:
+                    break
+                yield batch
+
+        # Process any remaining text in the cache
+        if self.cached_text:
+            tokens = self.tokenizer(
+                text=self.cached_text,
+                max_length=block_size,
+                stride=16,
+                padding=True,
+                truncation=True,
+                return_overflowing_tokens=True,
+                return_tensors="pt",
+            )["input_ids"]
+
+            for batch in tokens:
+                if len(batch) != block_size:
                     break
                 yield batch
 
@@ -328,7 +418,10 @@ if use_dashboard:
 optimizer = create_optimizer(model, **optimizer_config)
 
 # Load a dataset
-dataset = HuggingfaceDataset(tokenizer, dataset_config)
+if data_path:
+    dataset = DirectoryDataset(tokenizer, data_path, hparams["block_size"])
+else:
+    dataset = HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, hparams)

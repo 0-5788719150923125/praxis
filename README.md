@@ -36,8 +36,9 @@ python server.py
 Supported arguments:
 ```sh
 python server.py \
-  --no_dashboard \  # Disables the CLI interface.
-  --device cuda:0   # Specify your GPU's index. Leave blank to use CPU.
+  --data_path /path/to/my/data \ # Train on a local directory of data.
+  --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
+  --no_dashboard                 # Disables the CLI interface.
 ```
 
 ## join us
