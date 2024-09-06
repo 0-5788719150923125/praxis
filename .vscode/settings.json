@@ -7,10 +7,6 @@
     },
   },
   "isort.check": true,
-  "prettier.enable": true,
-  "prettier.requireConfig": true,
-  "prettier.useEditorConfig": true,
-  "terminal.integrated.scrollback": 10000,
   "workbench.editor.limit.value": 3,
   "workbench.editor.limit.enabled": true
 }
