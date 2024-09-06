@@ -33,6 +33,13 @@ To donate your compute:
 python server.py
 ```
 
+Supported arguments:
+```sh
+python server.py \
+  --no_dashboard \  # Disables the CLI interface.
+  --device cuda:0   # Specify your GPU's index. Leave blank to use CPU.
+```
+
 ## join us
 
 - [Discord](https://discord.gg/8ZmHP8CqUX)
