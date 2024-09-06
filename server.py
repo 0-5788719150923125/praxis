@@ -77,8 +77,9 @@ parser.add_argument(
 parser.add_argument(
     "--data_path",
     type=str,
+    nargs="+",
     default=None,
-    help="Path to a directory of files to use as training data (default: None)",
+    help="Paths to directories of files to use as training data (default: None)",
 )
 
 args = parser.parse_args()
@@ -102,8 +103,8 @@ config = PraxisConfig(
 
 tokenizer_model = "NousResearch/Llama-2-7b-hf"
 
-# dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
-dataset_config = dict(repo="open-phi/textbooks", key="markdown")
+dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
+# dataset_config = dict(repo="open-phi/textbooks", key="markdown")
 
 optimizer_config = dict(
     optimizer_name="Lion",
@@ -297,25 +298,28 @@ class HuggingfaceDataset(IterableDataset):
                 yield batch
 
 
-class DirectoryDataset(IterableDataset):
+class MultiDirectoryDataset(IterableDataset):
     """
-    A file-based iterable dataset that recursively reads files from a directory,
+    A file-based iterable dataset that recursively reads files from multiple directories,
     tokenizes them, and returns batches for PyTorch Lightning.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, directory: str, block_size: int):
+    def __init__(
+        self, tokenizer: PreTrainedTokenizer, directories: List[str], block_size: int
+    ):
         self.tokenizer = tokenizer
-        self.directory = directory
+        self.directories = directories
         self.block_size = block_size
         self.cached_text = ""
         self.file_list = self._get_file_list()
 
     def _get_file_list(self) -> List[str]:
-        """Recursively get all files in the directory."""
+        """Recursively get all files in all directories."""
         file_list = []
-        for root, _, files in os.walk(self.directory):
-            for file in files:
-                file_list.append(os.path.join(root, file))
+        for directory in self.directories:
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    file_list.append(os.path.join(root, file))
         return file_list
 
     def _read_file(self, file_path: str) -> str:
@@ -419,7 +423,7 @@ optimizer = create_optimizer(model, **optimizer_config)
 
 # Load a dataset
 if data_path:
-    dataset = DirectoryDataset(tokenizer, data_path, hparams["block_size"])
+    dataset = MultiDirectoryDataset(tokenizer, data_path, hparams["block_size"])
 else:
     dataset = HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
 

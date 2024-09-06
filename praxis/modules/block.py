@@ -22,7 +22,7 @@ class PraxisBlock(nn.Module):
         n_experts = 3
         self.k_best = 2
 
-        temperature = 1.0
+        temperature = 0.95
         self.router = PraxisRouter(config.n_embd, n_experts, self.k_best, temperature)
 
         experts = {}
@@ -39,7 +39,7 @@ class PraxisBlock(nn.Module):
                 outputs_schema=BatchTensorDescriptor(
                     config.n_embd,
                 ),
-                max_batch_size=1024,
+                max_batch_size=8192,
             )
 
         relay = DHTSingleton.get_instance()
