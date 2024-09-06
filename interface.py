@@ -71,6 +71,7 @@ class TerminalDashboard:
         self.previous_frame = None
         self.start_time = datetime.now()
         self.url = "N/A"
+        self.experts = ""
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -147,6 +148,17 @@ class TerminalDashboard:
     def update_url(self, url):
         with self.lock:
             self.url = url
+
+    def update_utilization(self, utilization_percentages):
+        with self.lock:
+            self.experts = (
+                "[ "
+                + ", ".join(
+                    f"'{i}': {percentage:.1f}%"
+                    for i, percentage in enumerate(utilization_percentages)
+                )
+                + " ]"
+            )
 
     def add_log(self, message):
         with self.lock:
@@ -283,7 +295,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f" PRAXIS | Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}",
+                    f" PRAXIS | Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}, Experts: {self.experts}",
                     width,
                 )
             )

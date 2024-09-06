@@ -1,5 +1,6 @@
 from typing import Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
@@ -24,6 +25,10 @@ class PraxisModel(PreTrainedModel):
         )
         self.post_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.extra_losses = []
+        self.n_experts = config.n_experts
+        self.register_buffer("ema_expert_utilization", torch.zeros(self.n_experts))
+        self.ema_decay = 0.99  # Adjust this value to control the EMA decay rate
+        self.forward_count = 0
 
     def get_input_embeddings(self):
         return self.wte
@@ -47,14 +52,28 @@ class PraxisModel(PreTrainedModel):
         input_embeds = self.wte(input_ids)
         hidden_states = input_embeds
 
-        # Always create an attention mask if it's not provided
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
+        total_expert_counts = torch.zeros(self.n_experts, device=hidden_states.device)
+
         for block in self.blocks:
-            hidden_states, extra_loss = block(hidden_states, attention_mask)
+            hidden_states, extra_loss, expert_counts = block(
+                hidden_states, attention_mask
+            )
             if self.training:
                 self.extra_losses.append(extra_loss)
+            total_expert_counts += expert_counts
+
+        # Update EMA expert utilization
+        if self.forward_count == 0:
+            self.ema_expert_utilization = total_expert_counts
+        else:
+            self.ema_expert_utilization = (
+                self.ema_decay * self.ema_expert_utilization
+                + (1 - self.ema_decay) * total_expert_counts
+            )
+        self.forward_count += 1
 
         hidden_states = self.post_norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)
@@ -64,6 +83,18 @@ class PraxisModel(PreTrainedModel):
             hidden_states=None,
             attentions=None,
         )
+
+    def get_expert_utilization(self):
+        if self.forward_count == 0:
+            return None
+        utilization = self.ema_expert_utilization.cpu().numpy()
+        # Convert to percentages
+        utilization_percentages = (utilization / np.sum(utilization)) * 100
+        return utilization_percentages
+
+    def reset_expert_utilization(self):
+        self.ema_expert_utilization.zero_()
+        self.forward_count = 0
 
 
 class PraxisForCausalLM(PraxisModel):

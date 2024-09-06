@@ -19,14 +19,16 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = PraxisAttention(config)
 
-        n_experts = 3
-        self.k_best = 2
+        self.n_experts = config.n_experts
+        self.k_best = config.k_best
 
         temperature = 0.95
-        self.router = PraxisRouter(config.n_embd, n_experts, self.k_best, temperature)
+        self.router = PraxisRouter(
+            config.n_embd, self.n_experts, self.k_best, temperature
+        )
 
         experts = {}
-        for i in range(n_experts):
+        for i in range(self.n_experts):
             expert = name_to_block["praxis_mlp"](config)
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
@@ -60,7 +62,9 @@ class PraxisBlock(nn.Module):
             use_ipfs=True,
         )
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
-        self.experts = get_experts(self.dht, [f"expert.{i}" for i in range(n_experts)])
+        self.experts = get_experts(
+            self.dht, [f"expert.{i}" for i in range(self.n_experts)]
+        )
 
     def forward(self, x, attention_mask=None):
         residual = x
@@ -73,7 +77,7 @@ class PraxisBlock(nn.Module):
         # expert handling
         original_device = x.device
         batch_size, seq_len, input_size = x.shape
-        top_k_scores, top_k_indices, balancing_loss = self.router(x)
+        top_k_scores, top_k_indices, balancing_loss, expert_counts = self.router(x)
 
         # Flatten the input and create index tensors
         flat_x = x.reshape(-1, input_size).to("cpu")
@@ -119,7 +123,7 @@ class PraxisBlock(nn.Module):
         x = weighted_output.sum(dim=0).to(original_device)
 
         x = residual + x
-        return x, balancing_loss
+        return x, balancing_loss, expert_counts
 
 
 # PUBLIC_INITIAL_PEERS = [

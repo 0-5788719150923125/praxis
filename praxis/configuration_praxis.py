@@ -16,6 +16,8 @@ class PraxisConfig(PretrainedConfig):
         embd_pdrop=0,
         rms_norm_epsilon=1e-5,
         initializer_range=0.02,
+        n_experts=3,
+        k_best=2,
         use_cache=False,
         pad_token_id=0,
         bos_token_id=1,
@@ -39,5 +41,7 @@ class PraxisConfig(PretrainedConfig):
         self.embd_pdrop = embd_pdrop
         self.rms_norm_epsilon = rms_norm_epsilon
         self.initializer_range = initializer_range
+        self.n_experts = n_experts
+        self.k_best = k_best
         self.use_cache = use_cache
         self.causal = False

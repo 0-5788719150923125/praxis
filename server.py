@@ -218,6 +218,7 @@ class TerminalInterface(Callback):
         self.dashboard.update_step(step.item())
 
         self._generate_sample_text(lm, batch_idx, interval=self.interval)
+        self.dashboard.update_utilization(lm.model.get_expert_utilization())
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 

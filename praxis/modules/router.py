@@ -38,7 +38,7 @@ class PraxisRouter(nn.Module):
             expert_probs.log(), target_probs, reduction="batchmean"
         )
 
-        return router_probs, top_k_indices, load_balancing_loss
+        return router_probs, top_k_indices, load_balancing_loss, expert_counts
 
 
 # Usage example
