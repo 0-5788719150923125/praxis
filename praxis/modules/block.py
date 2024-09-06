@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 from hivemind import DHT
 from hivemind.moe import Server
-from hivemind.moe.client.switch_moe import RemoteSwitchMixtureOfExperts
 from hivemind.moe.server import (
     ModuleBackend,
     Server,
@@ -20,14 +19,18 @@ from hivemind.utils import BatchTensorDescriptor
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
 
+# from hivemind.moe.client.switch_moe import (
+#     RemoteMixtureOfExperts,
+#     RemoteSwitchMixtureOfExperts,
+# )
+from .switch_moe import RemoteSwitchMixtureOfExperts
+
 
 class PraxisBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.attn = PraxisAttention(config)
-
-        # layer_idx = random.randint(0, 999)
 
         n_experts = 3
         experts = {}
@@ -37,8 +40,14 @@ class PraxisBlock(nn.Module):
                 name=f"expert.{i}",
                 module=expert,
                 # optimizer=torch.optim.Adam(expert.parameters()),
-                args_schema=(BatchTensorDescriptor(config.n_embd),),
-                outputs_schema=BatchTensorDescriptor(config.n_embd),
+                args_schema=(
+                    BatchTensorDescriptor(
+                        config.n_embd,
+                    ),
+                ),
+                outputs_schema=BatchTensorDescriptor(
+                    config.n_embd,
+                ),
                 max_batch_size=16,
             )
 
@@ -57,8 +66,7 @@ class PraxisBlock(nn.Module):
             use_relay=True,
             use_ipfs=True,
             ensure_bootstrap_success=True,
-            # parallel_rpc=1,
-            # client_mode=False,
+            parallel_rpc=4,
         )
 
         self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
@@ -75,7 +83,7 @@ class PraxisBlock(nn.Module):
         )
 
         # TODO: For some reason, this part is required, else Hivemind will fail in the forward passes
-        out, balancing_loss = self.moe(torch.randn(16, config.n_embd))
+        out = self.moe(torch.randn(16, config.n_embd))
 
     def forward(self, x, attention_mask=None):
         # Self-Attention
@@ -93,12 +101,12 @@ class PraxisBlock(nn.Module):
         x_reshaped = x.view(-1, features)
 
         # Apply MoE
-        x, balancing_loss = self.moe(x_reshaped)
+        x, balancing_loss = self.moe(x_reshaped.to(x.device))
 
         # Reshape back to (batch_size, time_steps, features)
         x = x.view(batch_size, time_steps, features)
         x = residual + x
-
+        # balancing_loss = 0
         return x, balancing_loss
 
 
@@ -142,15 +150,13 @@ class DHTSingleton:
             use_relay=True,
             use_ipfs=True,
             ensure_bootstrap_success=True,
-            # parallel_rpc=1,
+            parallel_rpc=4,
             # client_mode=False,
             # identity_path="./data/id.key",
         )
 
+        print("Waiting for the DHT to initialize")
         dht = DHT(start=True, daemon=True, await_ready=True, **dht_kwargs)
-
-        print("Waiting for the DHT to propagate the network")
-        time.sleep(5)
 
         return dht
 

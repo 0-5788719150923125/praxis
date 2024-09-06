@@ -61,16 +61,16 @@ parser.add_argument(
     help="Use dashboard (default: True)",
 )
 parser.add_argument(
-    "--use_gpu",
-    action="store_true",
-    default=False,
-    help="Use GPU.",
+    "--device",
+    type=str,
+    default="cpu",
+    help="Device to use (default: cpu)",
 )
-gpu_idx = 1
 
 args = parser.parse_args()
 
 use_dashboard = False if args.no_dashboard else True
+device = args.device if args.device else "cpu"
 
 # System args
 config = PraxisConfig(
@@ -81,7 +81,7 @@ config = PraxisConfig(
     pad_token_id=0,
     bos_token_id=1,
     eos_token_id=2,
-    device_map=f"cuda:{gpu_idx}" if args.use_gpu else "cpu",
+    device_map=device,
     torch_dtype="float32",
 )
 
@@ -112,9 +112,9 @@ hparams = dict(
 )
 
 train_params = dict(
-    accelerator=f"gpu" if args.use_gpu else "cpu",
+    accelerator=f"cpu" if args.device == "cpu" else "gpu",
     strategy="auto",
-    devices=[int(gpu_idx)] if args.use_gpu else "auto",
+    devices=[int(device.split(":")[1])] if args.device.startswith("cuda") else "auto",
     max_steps=-1,
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
@@ -291,8 +291,8 @@ class Generator:
 
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-        if args.use_gpu:
-            input_ids = input_ids.to(gpu_idx)
+        if args.device.startswith("cuda"):
+            input_ids = input_ids.to(int(device.split(":")[1]))
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
