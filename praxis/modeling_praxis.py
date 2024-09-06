@@ -55,7 +55,10 @@ class PraxisModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        total_expert_counts = torch.zeros(self.n_experts, device=hidden_states.device)
+        if self.training:
+            total_expert_counts = torch.zeros(
+                self.n_experts, device=hidden_states.device
+            )
 
         for block in self.blocks:
             hidden_states, extra_loss, expert_counts = block(
@@ -63,17 +66,18 @@ class PraxisModel(PreTrainedModel):
             )
             if self.training:
                 self.extra_losses.append(extra_loss)
-            total_expert_counts += expert_counts
+                total_expert_counts += expert_counts
 
         # Update EMA expert utilization
-        if self.forward_count == 0:
-            self.ema_expert_utilization = total_expert_counts
-        else:
-            self.ema_expert_utilization = (
-                self.ema_decay * self.ema_expert_utilization
-                + (1 - self.ema_decay) * total_expert_counts
-            )
-        self.forward_count += 1
+        if self.training:
+            if self.forward_count == 0:
+                self.ema_expert_utilization = total_expert_counts
+            else:
+                self.ema_expert_utilization = (
+                    self.ema_decay * self.ema_expert_utilization
+                    + (1 - self.ema_decay) * total_expert_counts
+                )
+            self.forward_count += 1
 
         hidden_states = self.post_norm(hidden_states)
         output_shape = input_shape + (hidden_states.size(-1),)
