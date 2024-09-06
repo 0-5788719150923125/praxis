@@ -14,7 +14,6 @@ server_requirements = [
     "datasets",
     "flask",
     "lightning",
-    "numpy",
     "pytorch_optimizer",
     "werkzeug",
 ]

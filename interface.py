@@ -144,10 +144,6 @@ class TerminalDashboard:
         with self.lock:
             self.step = step
 
-    def update_status(self, status):
-        with self.lock:
-            self.status_text = status
-
     def update_url(self, url):
         with self.lock:
             self.url = url
@@ -193,26 +189,9 @@ class TerminalDashboard:
             current_width += char_width
         return "".join(result)
 
-    def _wrap_text(self, text, width):
-        # Strip ANSI codes before wrapping
-        stripped_text = self._strip_ansi(text)
-        wrapped_lines = []
-        for line in stripped_text.splitlines():
-            wrapped_line = []
-            current_width = 0
-            for char in line:
-                char_width = wcwidth.wcwidth(char)
-                if current_width + char_width > width:
-                    wrapped_lines.append(
-                        self._visual_ljust("".join(wrapped_line), width)
-                    )
-                    wrapped_line = []
-                    current_width = 0
-                wrapped_line.append(char)
-                current_width += char_width
-            if wrapped_line:
-                wrapped_lines.append(self._visual_ljust("".join(wrapped_line), width))
-        return wrapped_lines
+    def update_status(self, status):
+        with self.lock:
+            self.status_text = status  # Keep this as it was originally
 
     def _create_frame(self):
         height = self.term.height - 4
@@ -230,12 +209,22 @@ class TerminalDashboard:
             )
             val_chart = self._draw_chart(self.val_losses, half_width, half_height - 1)
 
+        # Wrap the entire status text
         status_lines = self._wrap_text(self.status_text, right_width)
+
+        # Calculate the maximum number of lines that can fit in the status section
+        max_status_lines = half_height - 3
+
+        # If status_lines exceed max_status_lines, keep only the most recent lines
+        if len(status_lines) > max_status_lines:
+            status_lines = status_lines[-max_status_lines:]
+
         log_lines = self._wrap_text(
             "\n".join(list(self.log_buffer)[-half_height + 3 :]), right_width
         )
 
-        status_lines += [" " * right_width] * (half_height - 3 - len(status_lines))
+        # Pad status_lines and log_lines if they're shorter than the available space
+        status_lines += [" " * right_width] * (max_status_lines - len(status_lines))
         log_lines += [" " * right_width] * (half_height - 3 - len(log_lines))
 
         for i in range(height):
@@ -262,7 +251,7 @@ class TerminalDashboard:
             elif i == half_height:
                 val_loss = self.val_losses[-1] if self.val_losses else 0
                 left_content = self._visual_ljust(
-                    f" Validation Loss: {val_loss:.4f}", half_width
+                    f" Frequency Bias: {val_loss:.4f}", half_width
                 )
                 right_content = self._visual_ljust(" Logger", right_width)
             elif i == half_height + 1:
@@ -300,6 +289,20 @@ class TerminalDashboard:
             )
 
         return frame
+
+    def _wrap_text(self, text, width):
+        # Strip ANSI codes before wrapping
+        stripped_text = self._strip_ansi(text)
+        wrapped_lines = []
+        for line in stripped_text.splitlines():
+            while line:
+                if len(line) <= width:
+                    wrapped_lines.append(self._visual_ljust(line, width))
+                    break
+                wrapped_line = line[:width]
+                wrapped_lines.append(self._visual_ljust(wrapped_line, width))
+                line = line[width:]
+        return wrapped_lines
 
     def _draw_chart(self, data, width, height):
         if len(data) > 1:

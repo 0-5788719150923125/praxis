@@ -102,7 +102,7 @@ optimizer_config = dict(
 
 # Dashboard config
 max_data_points = 10000
-max_feed_chars = 768
+max_prompt_charts = 2048
 predict_interval = 3
 
 hparams = dict(
@@ -181,7 +181,7 @@ class TerminalInterface(Callback):
         self.ema = 0
         self.last_time = datetime.now()
         self.text = ""
-        self.max_length = max_feed_chars
+        self.max_length = max_prompt_charts
         self.interval = predict_interval
         self.dashboard = TerminalDashboard(max_data_points)
         try:
