@@ -49,7 +49,13 @@ from transformers import (
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    TokenMonster,
+    TokenMonsterConfig,
+)
 
 disable_possible_user_warnings()
 logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
@@ -59,6 +65,7 @@ AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
+AutoTokenizer.register(TokenMonsterConfig, TokenMonster)
 
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
@@ -88,20 +95,22 @@ use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
 
+tokenizer_model = "englishcode-8000-consistent-v1"
+tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
+tokenizer = TokenMonster(vocab_file=tokenizer_config.vocab_file)
+
 # System args
 config = PraxisConfig(
     n_positions=512,
     n_embd=256,
     n_layer=6,
     n_head=8,
-    pad_token_id=0,
-    bos_token_id=1,
-    eos_token_id=2,
+    pad_token_id=tokenizer.pad_token_id,
+    bos_token_id=tokenizer.bos_token_id,
+    eos_token_id=tokenizer.eos_token_id,
     device_map=device,
     torch_dtype="float32",
 )
-
-tokenizer_model = "NousResearch/Llama-2-7b-hf"
 
 dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
 # dataset_config = dict(repo="open-phi/textbooks", key="markdown")
@@ -197,7 +206,7 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.last_time = datetime.now()
-        self.text = ""
+        self.text = "Once"
         self.max_length = max_prompt_charts
         self.interval = predict_interval
         self.dashboard = TerminalDashboard(max_data_points)
@@ -226,7 +235,7 @@ class TerminalInterface(Callback):
             return
 
         lm.model.eval()
-        self.text = generator.generate(self.text)
+        self.text = generator.stream(self.text)
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
@@ -375,14 +384,18 @@ class MultiDirectoryDataset(IterableDataset):
                 yield batch
 
 
+import torch
+
+
 class Generator:
     """
-    Wraps a model in a simplified generation API.
+    Wraps a model in a simplified generation API, using TokenMonster's decoder for streaming.
     """
 
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer
+        self.decoder = tokenizer.get_decoder()  # Create a decoder instance
 
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
@@ -403,8 +416,54 @@ class Generator:
         outputs = self.model.generate(input_ids, **combined)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
+    def stream(self, prompt, kwargs={}):
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
+        if isinstance(input_ids, dict):
+            input_ids = input_ids["input_ids"]
+
+        if args.device.startswith("cuda"):
+            input_ids = input_ids.to(int(device.split(":")[1]))
+
+        defaults = dict(
+            do_sample=True,
+            max_new_tokens=1,
+            temperature=0.95,
+            eta_cutoff=0.002,
+            penalty_alpha=0.6,
+            top_k=4,
+            repetition_penalty=1.5,
+        )
+        combined = {**defaults, **kwargs}
+        if "prompt" in combined:
+            del combined["prompt"]
+
+        generated_text = ""
+        total_tokens = 0
+        max_tokens = combined.get("max_new_tokens", 1)
+
+        while total_tokens < max_tokens:
+            outputs = self.model.generate(input_ids, **combined)
+            new_token = outputs[0, -1].unsqueeze(0)  # Get only the last generated token
+            decoded_token = self.decoder.decode(
+                new_token.tolist()
+            )  # Decode single token
+
+            if decoded_token:
+                generated_text += decoded_token
+                total_tokens += 1
+
+            input_ids = outputs  # Use the full output as the next input
+
+            if total_tokens >= max_tokens:
+                break
+
+        return prompt + generated_text
+
+    def __del__(self):
+        # Clean up the decoder when the Generator is destroyed
+        del self.decoder
+
 
 model = AutoModelForCausalLM.from_config(config)
 
