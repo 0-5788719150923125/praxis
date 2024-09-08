@@ -366,26 +366,6 @@ class MultiDirectoryDataset(IterableDataset):
                     break
                 yield batch
 
-        # Process any remaining text in the cache
-        if self.cached_text:
-            tokens = self.tokenizer(
-                text=self.cached_text,
-                max_length=block_size,
-                stride=16,
-                padding=True,
-                truncation=True,
-                return_overflowing_tokens=True,
-                return_tensors="pt",
-            )["input_ids"]
-
-            for batch in tokens:
-                if len(batch) != block_size:
-                    break
-                yield batch
-
-
-import torch
-
 
 class Generator:
     """
@@ -395,7 +375,6 @@ class Generator:
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer
-        self.decoder = tokenizer.get_decoder()  # Create a decoder instance
 
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
@@ -410,9 +389,9 @@ class Generator:
             top_k=4,
             repetition_penalty=1.5,
         )
-        if kwargs.get("prompt"):
-            del kwargs["prompt"]
         combined = {**defaults, **kwargs}
+        if "prompt" in combined:
+            del combined["prompt"]
         outputs = self.model.generate(input_ids, **combined)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
@@ -442,12 +421,11 @@ class Generator:
         total_tokens = 0
         max_tokens = combined.get("max_new_tokens", 1)
 
+        decoder = tokenizer.get_decoder()
         while total_tokens < max_tokens:
             outputs = self.model.generate(input_ids, **combined)
             new_token = outputs[0, -1].unsqueeze(0)  # Get only the last generated token
-            decoded_token = self.decoder.decode(
-                new_token.tolist()
-            )  # Decode single token
+            decoded_token = decoder.decode(new_token.tolist())  # Decode single token
 
             if decoded_token:
                 generated_text += decoded_token
@@ -459,10 +437,6 @@ class Generator:
                 break
 
         return prompt + generated_text
-
-    def __del__(self):
-        # Clean up the decoder when the Generator is destroyed
-        del self.decoder
 
 
 model = AutoModelForCausalLM.from_config(config)
