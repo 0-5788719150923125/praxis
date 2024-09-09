@@ -95,9 +95,11 @@ use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
 
-tokenizer_model = "englishcode-8000-consistent-v1"
-tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
-tokenizer = TokenMonster(vocab_file=tokenizer_config.vocab_file)
+# tokenizer_model = "englishcode-8000-consistent-v1"
+# tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
+# tokenizer = TokenMonster(vocab_file=tokenizer_config.vocab_file)
+tokenizer_model = "NousResearch/Llama-2-7b-hf"
+tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 
 # System args
 config = PraxisConfig(
@@ -206,7 +208,7 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.last_time = datetime.now()
-        self.text = "Once upon a time, "
+        self.text = ""
         self.max_length = max_feed_chars
         self.interval = predict_interval
         self.dashboard = TerminalDashboard(max_data_points)
