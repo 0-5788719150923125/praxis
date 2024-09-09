@@ -108,7 +108,8 @@ config = PraxisConfig(
     n_head=8,
     n_experts=5,
     k_best=2,
-    temperature=1.0,
+    target_temperature=0.1,
+    annealing_steps=100_000,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -193,6 +194,7 @@ class PraxisTrainer(LightningModule):
             on_epoch=True,
             logger=True,
             batch_size=self.batch_size,
+            prog_bar=True,
         )
 
         return loss
@@ -207,32 +209,36 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
-    def __init__(self):
+    def __init__(self, use_dashboard=False):
         super().__init__()
         self.ema = 0
         self.last_time = datetime.now()
         self.text = ""
         self.max_length = max_feed_chars
         self.interval = predict_interval
-        self.dashboard = TerminalDashboard(max_data_points)
-        try:
-            self.dashboard.start()
-            self.dashboard.update_url(api_url)
-        except KeyboardInterrupt:
-            self.dashboard.stop()
+        self.dashboard = False
+        if use_dashboard:
+            self.dashboard = TerminalDashboard(max_data_points)
+            try:
+                self.dashboard.start()
+                self.dashboard.update_url(api_url)
+            except KeyboardInterrupt:
+                self.dashboard.stop()
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
 
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema = self._compute_ema_loss(float(loss), self.ema)
-        self.dashboard.update_losses(self.ema, random.gauss())
 
         step = trainer.callback_metrics.get("step", 0)
-        self.dashboard.update_step(step.item())
 
-        self.dashboard.update_utilization(lm.model.get_expert_utilization())
         self._generate_sample_text(lm, batch_idx, interval=self.interval)
+
+        if self.dashboard:
+            self.dashboard.update_step(step.item())
+            self.dashboard.update_losses(self.ema, random.gauss())
+            self.dashboard.update_utilization(lm.model.get_expert_utilization())
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
@@ -245,9 +251,12 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        self.dashboard.update_status(self.text)
         self.last_time = datetime.now()
         lm.model.train()
+        if self.dashboard:
+            self.dashboard.update_status(self.text)
+        else:
+            print(self.text)
 
     def _is_time_passed(self, original_time, x_seconds):
         current_time = datetime.now()
@@ -418,8 +427,7 @@ api_server = APIServer(generator)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 
-if use_dashboard:
-    train_params["callbacks"].append(TerminalInterface())
+train_params["callbacks"].append(TerminalInterface(use_dashboard=use_dashboard))
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)

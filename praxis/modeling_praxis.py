@@ -27,7 +27,7 @@ class PraxisModel(PreTrainedModel):
         self.extra_losses = []
         self.n_experts = config.n_experts
         self.register_buffer("ema_expert_utilization", torch.zeros(self.n_experts))
-        self.ema_decay = 0.99  # Adjust this value to control the EMA decay rate
+        self.ema_decay = 0.99
         self.forward_count = 0
 
     def get_input_embeddings(self):

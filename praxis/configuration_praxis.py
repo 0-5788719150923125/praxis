@@ -18,18 +18,19 @@ class PraxisConfig(PretrainedConfig):
         initializer_range=0.02,
         n_experts=3,
         k_best=2,
-        temperature=0.9,
+        target_temperature=0.9,
+        annealing_steps=10_000,
         use_cache=False,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
-            **kwargs
+            **kwargs,
         )
 
         self.vocab_size = vocab_size
@@ -44,6 +45,7 @@ class PraxisConfig(PretrainedConfig):
         self.initializer_range = initializer_range
         self.n_experts = n_experts
         self.k_best = k_best
-        self.temperature = temperature
+        self.target_temperature = target_temperature
+        self.annealing_steps = annealing_steps
         self.use_cache = use_cache
         self.causal = False

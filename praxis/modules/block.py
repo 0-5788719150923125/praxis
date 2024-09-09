@@ -22,9 +22,12 @@ class PraxisBlock(nn.Module):
         self.n_experts = config.n_experts
         self.k_best = config.k_best
 
-        temperature = config.temperature
         self.router = PraxisRouter(
-            config.n_embd, self.n_experts, self.k_best, temperature
+            config.n_embd,
+            self.n_experts,
+            self.k_best,
+            config.target_temperature,
+            config.annealing_steps,
         )
 
         experts = {}
@@ -76,7 +79,9 @@ class PraxisBlock(nn.Module):
 
         # expert handling
         batch_size, seq_len, input_size = x.shape
-        top_k_scores, top_k_indices, balancing_loss, expert_counts = self.router(x)
+        top_k_scores, top_k_indices, balancing_loss, expert_counts, temperature = (
+            self.router(x)
+        )
 
         # Flatten the input and create index tensors
         flat_x = x.reshape(-1, input_size).to("cpu")
