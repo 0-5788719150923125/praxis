@@ -128,7 +128,7 @@ optimizer_config = dict(
 
 # Dashboard config
 max_data_points = 10000
-max_prompt_charts = 2048
+max_feed_chars = 1024
 predict_interval = 3
 
 hparams = dict(
@@ -206,8 +206,8 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.last_time = datetime.now()
-        self.text = "Once"
-        self.max_length = max_prompt_charts
+        self.text = "Once upon a time, "
+        self.max_length = max_feed_chars
         self.interval = predict_interval
         self.dashboard = TerminalDashboard(max_data_points)
         try:
@@ -226,8 +226,8 @@ class TerminalInterface(Callback):
         step = trainer.callback_metrics.get("step", 0)
         self.dashboard.update_step(step.item())
 
-        self._generate_sample_text(lm, batch_idx, interval=self.interval)
         self.dashboard.update_utilization(lm.model.get_expert_utilization())
+        self._generate_sample_text(lm, batch_idx, interval=self.interval)
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
@@ -235,7 +235,7 @@ class TerminalInterface(Callback):
             return
 
         lm.model.eval()
-        self.text = generator.stream(self.text)
+        self.text = generator.generate(self.text)
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
@@ -378,31 +378,12 @@ class Generator:
 
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-        if args.device.startswith("cuda"):
-            input_ids = input_ids.to(int(device.split(":")[1]))
-        defaults = dict(
-            do_sample=True,
-            max_new_tokens=1,
-            temperature=0.95,
-            eta_cutoff=0.002,
-            penalty_alpha=0.6,
-            top_k=4,
-            repetition_penalty=1.5,
-        )
-        combined = {**defaults, **kwargs}
-        if "prompt" in combined:
-            del combined["prompt"]
-        outputs = self.model.generate(input_ids, **combined)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    def stream(self, prompt, kwargs={}):
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if isinstance(input_ids, dict):
             input_ids = input_ids["input_ids"]
 
         if args.device.startswith("cuda"):
-            input_ids = input_ids.to(int(device.split(":")[1]))
+            input_ids = input_ids.to(int(args.device.split(":")[1]))
 
         defaults = dict(
             do_sample=True,
@@ -421,11 +402,13 @@ class Generator:
         total_tokens = 0
         max_tokens = combined.get("max_new_tokens", 1)
 
-        decoder = tokenizer.get_decoder()
         while total_tokens < max_tokens:
             outputs = self.model.generate(input_ids, **combined)
             new_token = outputs[0, -1].unsqueeze(0)  # Get only the last generated token
-            decoded_token = decoder.decode(new_token.tolist())  # Decode single token
+
+            decoded_token = self.tokenizer.decode(
+                new_token
+            )  # Decode single token using vocab.decode()
 
             if decoded_token:
                 generated_text += decoded_token

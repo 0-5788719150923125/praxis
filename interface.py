@@ -231,13 +231,12 @@ class TerminalDashboard:
         if len(status_lines) > max_status_lines:
             status_lines = status_lines[-max_status_lines:]
 
-        log_lines = self._wrap_text(
-            "\n".join(list(self.log_buffer)[-half_height + 3 :]), right_width
-        )
+        log_text = "\n".join(list(self.log_buffer)[-half_height + 3 :])
+        log_lines = self._wrap_text(log_text, right_width)
 
         # Pad status_lines and log_lines if they're shorter than the available space
-        status_lines += [" " * right_width] * (max_status_lines - len(status_lines))
-        log_lines += [" " * right_width] * (half_height - 3 - len(log_lines))
+        status_lines += [""] * (max_status_lines - len(status_lines))
+        log_lines += [""] * (half_height - 3 - len(log_lines))
 
         for i in range(height):
             left_content = " " * half_width
@@ -303,17 +302,19 @@ class TerminalDashboard:
         return frame
 
     def _wrap_text(self, text, width):
-        # Strip ANSI codes before wrapping
-        stripped_text = self._strip_ansi(text)
+        """Wrap text to fit within a given width, handling newlines and extra whitespace."""
         wrapped_lines = []
-        for line in stripped_text.splitlines():
-            while line:
-                if len(line) <= width:
-                    wrapped_lines.append(self._visual_ljust(line, width))
-                    break
-                wrapped_line = line[:width]
-                wrapped_lines.append(self._visual_ljust(wrapped_line, width))
-                line = line[width:]
+        for line in text.splitlines():
+            # Strip leading/trailing whitespace from each line
+            line = line.strip()
+            if not line:
+                wrapped_lines.append("")
+                continue
+            # Use textwrap to handle word wrapping
+            wrapped = textwrap.wrap(
+                line, width=width, break_long_words=True, replace_whitespace=False
+            )
+            wrapped_lines.extend(wrapped or [""])
         return wrapped_lines
 
     def _draw_chart(self, data, width, height):

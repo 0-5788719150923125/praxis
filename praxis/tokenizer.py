@@ -44,6 +44,8 @@ class TokenMonster(PreTrainedTokenizer):
         self.vocab_file = vocab_file
         self.add_bos_token = add_bos_token
         self.add_eos_token = add_eos_token
+
+        tokenmonster.set_local_directory("./data/tokenmonster")
         self.tokenizer = self.load_vocab(vocab_file)
 
         # Set up special tokens
@@ -118,7 +120,7 @@ class TokenMonster(PreTrainedTokenizer):
         )
 
     def load_vocab(self, vocab_file):
-        return tokenmonster.load(vocab_file)
+        return tokenmonster.load_multiprocess_safe(vocab_file)
 
     def build_inputs_with_special_tokens(
         self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
