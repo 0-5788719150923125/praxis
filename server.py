@@ -371,7 +371,7 @@ class MultiDirectoryDataset(IterableDataset):
 
 class Generator:
     """
-    Wraps a model in a simplified generation API, using TokenMonster's decoder for streaming.
+    Wraps a model in a simplified generation API.
     """
 
     def __init__(self, model, tokenizer):
@@ -400,28 +400,9 @@ class Generator:
         if "prompt" in combined:
             del combined["prompt"]
 
-        generated_text = ""
-        total_tokens = 0
-        max_tokens = combined.get("max_new_tokens", 1)
+        outputs = self.model.generate(input_ids, **combined)
 
-        while total_tokens < max_tokens:
-            outputs = self.model.generate(input_ids, **combined)
-            new_token = outputs[0, -1].unsqueeze(0)  # Get only the last generated token
-
-            decoded_token = self.tokenizer.decode(
-                new_token
-            )  # Decode single token using vocab.decode()
-
-            if decoded_token:
-                generated_text += decoded_token
-                total_tokens += 1
-
-            input_ids = outputs  # Use the full output as the next input
-
-            if total_tokens >= max_tokens:
-                break
-
-        return prompt + generated_text
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
 model = AutoModelForCausalLM.from_config(config)
