@@ -57,8 +57,8 @@ from praxis import (
     TokenMonsterConfig,
 )
 
-disable_possible_user_warnings()
-logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
+# disable_possible_user_warnings()
+# logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 logger = CSVLogger("logs", name="praxis")
 
 AutoConfig.register("praxis", PraxisConfig)
@@ -103,10 +103,12 @@ tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 
 # System args
 config = PraxisConfig(
-    n_positions=512,
     n_embd=256,
     n_layer=6,
     n_head=8,
+    n_experts=5,
+    k_best=2,
+    temperature=1.0,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -130,7 +132,7 @@ optimizer_config = dict(
 
 # Dashboard config
 max_data_points = 10000
-max_feed_chars = 1024
+max_feed_chars = 2048
 predict_interval = 3
 
 hparams = dict(
@@ -155,6 +157,7 @@ train_params = dict(
     benchmark=True,
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
+    detect_anomaly=True,
     logger=logger,
     callbacks=[],
 )

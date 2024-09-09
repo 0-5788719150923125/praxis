@@ -80,7 +80,6 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 config = PraxisConfig(
-    n_positions=512,
     n_embd=256,
     n_layer=6,
     n_head=8,

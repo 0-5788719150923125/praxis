@@ -22,7 +22,7 @@ class PraxisBlock(nn.Module):
         self.n_experts = config.n_experts
         self.k_best = config.k_best
 
-        temperature = 0.95
+        temperature = config.temperature
         self.router = PraxisRouter(
             config.n_embd, self.n_experts, self.k_best, temperature
         )
@@ -75,7 +75,6 @@ class PraxisBlock(nn.Module):
         x = self.mlp_norm(x)
 
         # expert handling
-        original_device = x.device
         batch_size, seq_len, input_size = x.shape
         top_k_scores, top_k_indices, balancing_loss, expert_counts = self.router(x)
 
@@ -120,7 +119,7 @@ class PraxisBlock(nn.Module):
 
         weighted_output = output * top_k_scores.to("cpu").permute(2, 0, 1).unsqueeze(-1)
 
-        x = weighted_output.sum(dim=0).to(original_device)
+        x = weighted_output.sum(dim=0).to(x.device)
 
         x = residual + x
         return x, balancing_loss, expert_counts

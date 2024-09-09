@@ -18,6 +18,7 @@ class PraxisConfig(PretrainedConfig):
         initializer_range=0.02,
         n_experts=3,
         k_best=2,
+        temperature=0.9,
         use_cache=False,
         pad_token_id=0,
         bos_token_id=1,
@@ -43,5 +44,6 @@ class PraxisConfig(PretrainedConfig):
         self.initializer_range = initializer_range
         self.n_experts = n_experts
         self.k_best = k_best
+        self.temperature = temperature
         self.use_cache = use_cache
         self.causal = False

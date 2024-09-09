@@ -11,7 +11,6 @@ AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 def test_praxis_model():
     # Initialize configuration
     config = PraxisConfig(
-        n_positions=1024,
         n_embd=768,
         n_layer=12,
         n_head=12,
@@ -43,7 +42,6 @@ def test_praxis_model():
 def test_praxis_for_causal_lm():
     # Initialize configuration
     config = PraxisConfig(
-        n_positions=1024,
         n_embd=768,
         n_layer=12,
         n_head=12,
