@@ -97,7 +97,7 @@ data_path = args.data_path
 
 tokenizer_model = "englishcode-16000-consistent-v1"
 tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
-tokenizer = TokenMonster(vocab_file=tokenizer_config.vocab_file)
+tokenizer = TokenMonster(tokenizer_config)
 # tokenizer_model = "NousResearch/Llama-2-7b-hf"
 # tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 
@@ -109,10 +109,12 @@ config = PraxisConfig(
     n_experts=5,
     k_best=2,
     target_temperature=0.1,
-    annealing_steps=100_000,
+    annealing_steps=10_000,
+    vocab_size=tokenizer.vocab_size,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
+    unk_token_id=tokenizer.unk_token_id,
     device_map=device,
     torch_dtype="float32",
 )
@@ -134,7 +136,7 @@ optimizer_config = dict(
 # Dashboard config
 max_data_points = 10000
 max_feed_chars = 2048
-predict_interval = 3
+predict_interval = 5
 
 hparams = dict(
     batch_size=16,
@@ -158,7 +160,7 @@ train_params = dict(
     benchmark=True,
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
-    detect_anomaly=True,
+    detect_anomaly=False,
     logger=logger,
     callbacks=[],
 )

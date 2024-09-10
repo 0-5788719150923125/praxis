@@ -22,6 +22,7 @@ class PraxisBlock(nn.Module):
         self.n_experts = config.n_experts
         self.k_best = config.k_best
 
+        self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
         self.router = PraxisRouter(
             config.n_embd,
             self.n_experts,
@@ -64,7 +65,7 @@ class PraxisBlock(nn.Module):
             use_relay=True,
             use_ipfs=True,
         )
-        self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+
         self.experts = get_experts(
             self.dht, [f"expert.{i}" for i in range(self.n_experts)]
         )

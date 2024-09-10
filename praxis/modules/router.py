@@ -22,7 +22,7 @@ class PraxisRouter(nn.Module):
             OrderedDict(
                 [
                     ("in", nn.Linear(input_size, self.num_experts)),
-                    ("act", ACT2FN["leaky_relu"]),
+                    ("act", ACT2FN["gelu_new"]),
                     ("out", nn.Linear(self.num_experts, self.num_experts)),
                 ]
             )
@@ -77,6 +77,18 @@ class PraxisRouter(nn.Module):
             self.target_temperature
             + (self.initial_temperature - self.target_temperature) * cosine_decay
         )
+
+    # def get_temperature(self):
+    #     if self.current_step >= self.annealing_steps:
+    #         return self.target_temperature
+
+    #     progress = self.current_step / self.annealing_steps
+    #     # Using a faster decaying function
+    #     decay = 1 - (1 - math.exp(-5 * progress)) / (1 - math.exp(-5))
+    #     return (
+    #         self.target_temperature
+    #         + (self.initial_temperature - self.target_temperature) * decay
+    #     )
 
 
 # Usage example

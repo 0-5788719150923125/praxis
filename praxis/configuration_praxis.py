@@ -6,7 +6,6 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size=32000,
         n_embd=768,
         n_layer=12,
         n_head=12,
@@ -21,15 +20,18 @@ class PraxisConfig(PretrainedConfig):
         target_temperature=0.9,
         annealing_steps=10_000,
         use_cache=False,
+        vocab_size=32000,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
+        unk_token_id=4,
         **kwargs,
     ):
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
+            unk_token_id=unk_token_id,
             **kwargs,
         )
 
