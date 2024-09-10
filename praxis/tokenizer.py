@@ -31,9 +31,6 @@ class TokenMonsterConfig(PretrainedConfig):
 
 
 class TokenMonster(PreTrainedTokenizer):
-    vocab_files_names = {"vocab_file": "vocab.tm"}
-    model_input_names = ["input_ids", "attention_mask"]
-
     def __init__(
         self,
         vocab_file="englishcode-32000-consistent-v1",
@@ -48,27 +45,26 @@ class TokenMonster(PreTrainedTokenizer):
         tokenmonster.set_local_directory("./data/tokenmonster")
         self.tokenizer = self.load_vocab(vocab_file)
 
-        # Set up special tokens
+        # Add special tokens directly to the TokenMonster vocabulary
         self.pad_token = kwargs.pop("pad_token", "<pad>")
         self.bos_token = kwargs.pop("bos_token", "<s>")
         self.eos_token = kwargs.pop("eos_token", "</s>")
         self.unk_token = kwargs.pop("unk_token", "<unk>")
 
-        # Initialize special tokens list
-        self._all_special_tokens = [
-            self.pad_token,
-            self.bos_token,
-            self.eos_token,
-            self.unk_token,
-        ]
+        self.tokenizer.enable_unk_token()
 
-        # Extend vocabulary with special tokens
-        self._base_vocab_size = self.tokenizer.vocab_size
-        self._special_token_ids = {}
-        for i, token in enumerate(self._all_special_tokens):
-            self._special_token_ids[token] = self._base_vocab_size + i
+        original_size = self.tokenizer.vocab_size
 
-        # Now call the parent constructor
+        self.tokenizer.modify(self.pad_token, resize=original_size + 1)
+        self.tokenizer.modify(self.bos_token, resize=original_size + 2)
+        self.tokenizer.modify(self.eos_token, resize=original_size + 3)
+        self.tokenizer.modify(self.unk_token, resize=original_size + 4, change_unk=True)
+
+        # Verify the new vocabulary size
+        assert (
+            self.tokenizer.vocab_size == original_size + 4
+        ), "Vocabulary size mismatch"
+
         super().__init__(
             pad_token=self.pad_token,
             bos_token=self.bos_token,
@@ -77,50 +73,33 @@ class TokenMonster(PreTrainedTokenizer):
             **kwargs,
         )
 
-        # Initialize other TokenMonster-specific attributes
-        self._vocab_size = self._base_vocab_size + len(self._all_special_tokens)
-        self._all_special_ids = list(self._special_token_ids.values())
-
     @property
     def vocab_size(self) -> int:
-        return self._vocab_size
+        return self.tokenizer.vocab_size
 
     def get_vocab(self) -> Dict[str, int]:
         vocab_dict = {
             item["token_decoded"]: item["id"]
             for item in self.tokenizer.get_dictionary().values()
         }
-        vocab_dict.update(self._special_token_ids)
         return vocab_dict
-
-    def get_decoder(self):
-        return self.tokenizer.decoder()
 
     def _tokenize(self, text: str) -> List[str]:
         return [self.tokenizer.id_to_token(id) for id in self.tokenizer.tokenize(text)]
 
     def _convert_token_to_id(self, token: str) -> int:
-        if token in self._special_token_ids:
-            return self._special_token_ids[token]
         return self.tokenizer.token_to_id(token)
 
     def _convert_id_to_token(self, index: int) -> str:
-        if index >= self._base_vocab_size:
-            return list(self._special_token_ids.keys())[
-                list(self._special_token_ids.values()).index(index)
-            ]
         return self.tokenizer.id_to_token(index)
 
     def convert_tokens_to_string(self, tokens: List[str]) -> str:
-        non_special_tokens = [
-            token for token in tokens if token not in self._special_token_ids
-        ]
         return self.tokenizer.decode(
-            [self.tokenizer.token_to_id(token) for token in non_special_tokens]
+            [self.tokenizer.token_to_id(token) for token in tokens]
         )
 
     def load_vocab(self, vocab_file):
-        return tokenmonster.load_multiprocess_safe(vocab_file)
+        return tokenmonster.load(vocab_file)
 
     def build_inputs_with_special_tokens(
         self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
@@ -248,46 +227,94 @@ class TokenMonster(PreTrainedTokenizer):
         else:
             return encoded_inputs
 
-    def __call__(
+    def decode(
         self,
-        text: Union[str, List[str], List[List[str]]],
-        text_pair: Optional[Union[str, List[str], List[List[str]]]] = None,
+        token_ids: Union[int, List[int], np.ndarray, torch.Tensor],
+        skip_special_tokens: bool = False,
+    ) -> str:
+        if isinstance(token_ids, (np.ndarray, torch.Tensor)):
+            token_ids = (
+                token_ids.astype(np.uint16)
+                if isinstance(token_ids, np.ndarray)
+                else token_ids.to(torch.uint16)
+            )
+            token_ids = token_ids.tolist()
+        elif isinstance(token_ids, list):
+            token_ids = [np.uint16(id) for id in token_ids]
+        else:
+            token_ids = [np.uint16(token_ids)]
+
+        # Decode using TokenMonster's built-in method
+        decoded = self.tokenizer.decode(token_ids)
+
+        if skip_special_tokens:
+            # Remove special tokens after decoding
+            special_tokens = [
+                self.pad_token,
+                self.bos_token,
+                self.eos_token,
+                self.unk_token,
+            ]
+            for token in special_tokens:
+                decoded = decoded.replace(token, "")
+            # Remove any extra spaces that might have been left
+            decoded = " ".join(decoded.split())
+
+        return decoded
+
+    def encode(
+        self,
+        text: Union[str, List[str]],
         add_special_tokens: bool = True,
-        padding: Union[bool, str, PaddingStrategy] = False,
-        truncation: Union[bool, str, TruncationStrategy] = False,
+        padding: Union[bool, str] = False,
+        truncation: Union[bool, str] = False,
         max_length: Optional[int] = None,
-        stride: int = 0,
-        is_split_into_words: bool = False,
-        pad_to_multiple_of: Optional[int] = None,
-        return_tensors: Optional[Union[str, TensorType]] = None,
-        return_token_type_ids: Optional[bool] = None,
-        return_attention_mask: Optional[bool] = None,
-        return_overflowing_tokens: bool = False,
-        return_special_tokens_mask: bool = False,
-        return_offsets_mapping: bool = False,
-        return_length: bool = False,
-        verbose: bool = True,
-        **kwargs,
-    ) -> BatchEncoding:
-        return self.encode_plus(
-            text,
-            text_pair=text_pair,
-            add_special_tokens=add_special_tokens,
-            padding=padding,
-            truncation=truncation,
-            max_length=max_length,
-            stride=stride,
-            pad_to_multiple_of=pad_to_multiple_of,
-            return_tensors=return_tensors,
-            return_token_type_ids=return_token_type_ids,
-            return_attention_mask=return_attention_mask,
-            return_overflowing_tokens=return_overflowing_tokens,
-            return_special_tokens_mask=return_special_tokens_mask,
-            return_offsets_mapping=return_offsets_mapping,
-            return_length=return_length,
-            verbose=verbose,
-            **kwargs,
-        )
+        return_tensors: Optional[str] = None,
+    ) -> Union[List[int], List[List[int]], np.ndarray, torch.Tensor]:
+        if isinstance(text, str):
+            text = [text]
+
+        encoded = [np.array(self.tokenizer.tokenize(t), dtype=np.uint16) for t in text]
+
+        if add_special_tokens:
+            if self.add_bos_token:
+                bos_token_id = np.array(
+                    [self.tokenizer.token_to_id(self.bos_token)], dtype=np.uint16
+                )
+                encoded = [np.concatenate((bos_token_id, ids)) for ids in encoded]
+
+            if self.add_eos_token:
+                eos_token_id = np.array(
+                    [self.tokenizer.token_to_id(self.eos_token)], dtype=np.uint16
+                )
+                encoded = [np.concatenate((ids, eos_token_id)) for ids in encoded]
+
+        # Handle truncation and padding here if needed
+        if truncation and max_length is not None:
+            encoded = [ids[:max_length] for ids in encoded]
+
+        if padding and max_length is not None:
+            pad_token_id = self.tokenizer.token_to_id(self.pad_token)
+            encoded = [
+                np.pad(
+                    ids,
+                    (0, max_length - len(ids)),
+                    "constant",
+                    constant_values=pad_token_id,
+                )
+                for ids in encoded
+            ]
+
+        if return_tensors == "np":
+            return np.array(encoded)
+        elif return_tensors == "pt":
+            return torch.tensor(encoded, dtype=torch.long)
+        elif return_tensors == "tf":
+            import tensorflow as tf
+
+            return tf.constant(encoded, dtype=tf.int32)
+        else:
+            return encoded if len(encoded) > 1 else encoded[0]
 
     def encode_plus(
         self,
@@ -378,11 +405,13 @@ class TokenMonster(PreTrainedTokenizer):
 
     def _add_special_tokens(self, ids: List[int]) -> List[int]:
         if self.add_bos_token:
-            if ids[0] != self._special_token_ids[self.bos_token]:
-                ids = [self._special_token_ids[self.bos_token]] + ids
+            bos_token_id = self.tokenizer.token_to_id(self.bos_token)
+            if ids[0] != bos_token_id:
+                ids = [bos_token_id] + ids
         if self.add_eos_token:
-            if ids[-1] != self._special_token_ids[self.eos_token]:
-                ids = ids + [self._special_token_ids[self.eos_token]]
+            eos_token_id = self.tokenizer.token_to_id(self.eos_token)
+            if ids[-1] != eos_token_id:
+                ids = ids + [eos_token_id]
         return ids
 
     def _pad_and_truncate(
@@ -405,106 +434,6 @@ class TokenMonster(PreTrainedTokenizer):
             ids = ids + [self.pad_token_id] * pad_len
         return ids
 
-    def encode(
-        self,
-        text: Union[str, List[str]],
-        add_special_tokens: bool = True,
-        padding: Union[bool, str] = False,
-        truncation: Union[bool, str] = False,
-        max_length: Optional[int] = None,
-        return_tensors: Optional[str] = None,
-    ) -> Union[List[int], List[List[int]], np.ndarray, torch.Tensor]:
-        if isinstance(text, str):
-            text = [text]
-
-        encoded = [self.tokenizer.tokenize(t) for t in text]
-
-        if add_special_tokens:
-            encoded = [self._add_special_tokens(ids) for ids in encoded]
-
-        if padding or truncation:
-            encoded = self.pad_and_truncate(encoded, max_length, padding, truncation)
-
-        if return_tensors == "np":
-            return np.array(encoded, dtype=np.int32)
-        elif return_tensors == "pt":
-            import torch
-
-            return torch.tensor(encoded, dtype=torch.long)
-        elif return_tensors == "tf":
-            import tensorflow as tf
-
-            return tf.constant(encoded, dtype=tf.int32)
-        else:
-            return encoded if len(encoded) > 1 else encoded[0]
-
-    def decode(
-        self,
-        token_ids: Union[
-            int,
-            List[int],
-            List[List[int]],
-            np.ndarray,
-            torch.Tensor,
-            Dict[str, Union[List[int], np.ndarray, torch.Tensor]],
-        ],
-        skip_special_tokens: bool = False,
-    ) -> Union[str, List[str]]:
-        if isinstance(token_ids, dict):
-            token_ids = token_ids["input_ids"]
-
-        if isinstance(token_ids, (np.ndarray, torch.Tensor)):
-            if token_ids.ndim == 2:
-                return [
-                    self.decode(ids, skip_special_tokens=skip_special_tokens)
-                    for ids in token_ids
-                ]
-            token_ids = token_ids.tolist()
-
-        if (
-            isinstance(token_ids, list)
-            and len(token_ids) > 0
-            and isinstance(token_ids[0], list)
-        ):
-            return [
-                self.decode(ids, skip_special_tokens=skip_special_tokens)
-                for ids in token_ids
-            ]
-
-        if not isinstance(token_ids, list):
-            token_ids = [token_ids]
-
-        # Separate special tokens and regular tokens
-        special_tokens = []
-        regular_tokens = []
-        for id in token_ids:
-            if isinstance(id, (int, np.integer)):
-                if id in self._all_special_ids:
-                    if not skip_special_tokens:
-                        special_tokens.append(self._convert_id_to_token(id))
-                else:
-                    regular_tokens.append(id)
-            else:
-                raise ValueError(f"Unexpected token id type: {type(id)}")
-
-        # Decode regular tokens all at once
-        decoded_text = self.tokenizer.decode(regular_tokens)
-
-        # Add special tokens back in their original positions without extra spaces
-        if special_tokens:
-            bos_token = self._convert_id_to_token(
-                self._special_token_ids[self.bos_token]
-            )
-            eos_token = self._convert_id_to_token(
-                self._special_token_ids[self.eos_token]
-            )
-            if bos_token in special_tokens:
-                decoded_text = f"{bos_token}{decoded_text}"
-            if eos_token in special_tokens:
-                decoded_text = f"{decoded_text}{eos_token}"
-
-        return decoded_text
-
 
 if __name__ == "__main__":
     # Register the tokenizer
@@ -521,10 +450,13 @@ if __name__ == "__main__":
 
     decoded = tokenizer.decode(encoded, skip_special_tokens=True)
     print("Decoded:", decoded)
+    decoded = tokenizer.decode(encoded, skip_special_tokens=False)
+    print("Decoded (w/ special tokens):", decoded)
 
     # Test get_vocab
+    print("Vocabulary size:", tokenizer.vocab_size)
+
     vocab = tokenizer.get_vocab()
-    print("Vocabulary size:", len(vocab))
     print("First 10 items:", dict(list(vocab.items())[:10]))
 
     # Test tokenizer with parameters similar to production use case
@@ -545,5 +477,5 @@ if __name__ == "__main__":
     print("\nTokens shape:", tokens.shape)
     print("First sequence of tokens:", tokens[0])
     print("Number of sequences:", len(tokens))
-    for batch in tokens:
-        print(batch)
+    # for batch in tokens:
+    #     print(batch)
