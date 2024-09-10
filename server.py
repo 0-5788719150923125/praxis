@@ -53,8 +53,8 @@ from praxis import (
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
-    TokenMonster,
     TokenMonsterConfig,
+    TokenMonsterTokenizer,
 )
 
 # disable_possible_user_warnings()
@@ -65,7 +65,7 @@ AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
-AutoTokenizer.register(TokenMonsterConfig, TokenMonster)
+AutoTokenizer.register(TokenMonsterConfig, TokenMonsterTokenizer)
 
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
@@ -97,7 +97,7 @@ data_path = args.data_path
 
 tokenizer_model = "englishcode-16000-consistent-v1"
 tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
-tokenizer = TokenMonster(tokenizer_config)
+tokenizer = TokenMonsterTokenizer(tokenizer_config)
 # tokenizer_model = "NousResearch/Llama-2-7b-hf"
 # tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 

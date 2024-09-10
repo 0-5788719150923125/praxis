@@ -38,7 +38,7 @@ class TokenMonsterConfig(PretrainedConfig):
         super().__init__(**kwargs)
 
 
-class TokenMonster(PreTrainedTokenizer):
+class TokenMonsterTokenizer(PreTrainedTokenizer):
     config_class = TokenMonsterConfig
 
     def __init__(
@@ -358,11 +358,11 @@ class TokenMonster(PreTrainedTokenizer):
 
 if __name__ == "__main__":
     # Register the tokenizer
-    AutoTokenizer.register(TokenMonsterConfig, TokenMonster)
+    AutoTokenizer.register(TokenMonsterConfig, TokenMonsterTokenizer)
 
     # Usage example
     config = TokenMonsterConfig(vocab_file="englishcode-32000-consistent-v1")
-    tokenizer = TokenMonster(vocab_file=config.vocab_file)
+    tokenizer = TokenMonsterTokenizer(vocab_file=config.vocab_file)
 
     # Test the tokenizer
     text = "Hello, how are you?"
