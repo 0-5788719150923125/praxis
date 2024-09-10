@@ -274,7 +274,13 @@ class TokenMonster(PreTrainedTokenizer):
         if isinstance(text, str):
             text = [text]
 
-        encoded = [np.array(self.tokenizer.tokenize(t), dtype=np.uint16) for t in text]
+        encoded = []
+        for t in text:
+            if t:
+                ids = np.array(self.tokenizer.tokenize(t), dtype=np.uint16)
+            else:
+                ids = np.array([], dtype=np.uint16)
+            encoded.append(ids)
 
         if add_special_tokens:
             if self.add_bos_token:
@@ -293,17 +299,29 @@ class TokenMonster(PreTrainedTokenizer):
         if truncation and max_length is not None:
             encoded = [ids[:max_length] for ids in encoded]
 
-        if padding and max_length is not None:
+        if padding:
             pad_token_id = self.tokenizer.token_to_id(self.pad_token)
-            encoded = [
-                np.pad(
-                    ids,
-                    (0, max_length - len(ids)),
-                    "constant",
-                    constant_values=pad_token_id,
-                )
-                for ids in encoded
-            ]
+            if max_length is not None:
+                encoded = [
+                    np.pad(
+                        ids,
+                        (0, max_length - len(ids)),
+                        "constant",
+                        constant_values=pad_token_id,
+                    )
+                    for ids in encoded
+                ]
+            else:
+                max_len = max(len(ids) for ids in encoded)
+                encoded = [
+                    np.pad(
+                        ids,
+                        (0, max_len - len(ids)),
+                        "constant",
+                        constant_values=pad_token_id,
+                    )
+                    for ids in encoded
+                ]
 
         # Prepare the output dictionary
         output = {"input_ids": encoded}
