@@ -119,9 +119,19 @@ config = PraxisConfig(
     torch_dtype="float32",
 )
 
-dataset_config = dict(repo="HuggingFaceFW/fineweb", key="text")
-# dataset_config = dict(repo="open-phi/textbooks", key="markdown")
+# Training data config
+possibilities = [
+    dict(repo="HuggingFaceFW/fineweb", key="text"),
+    dict(repo="open-phi/textbooks", key="markdown"),
+]
+dataset_config = random.sample(possibilities, 1)[0]
 
+# Dashboard config
+max_data_points = 10000
+max_feed_chars = 2048
+predict_interval = 5
+
+# Optimizer configuration
 optimizer_config = dict(
     optimizer_name="Lion",
     lr=1e-4,
@@ -133,17 +143,14 @@ optimizer_config = dict(
     ],
 )
 
-# Dashboard config
-max_data_points = 10000
-max_feed_chars = 2048
-predict_interval = 5
-
+# Batch config
 hparams = dict(
     batch_size=16,
     accumulate_grad_batches=4,
     block_size=256,
 )
 
+# Training config
 train_params = dict(
     accelerator=f"cpu" if args.device == "cpu" else "gpu",
     strategy="auto",
@@ -244,7 +251,7 @@ class TerminalInterface(Callback):
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
-        if not self._is_time_passed(self.last_time, self.interval):
+        if not self._is_trigger_passed(self.last_time, self.interval):
             return
 
         lm.model.eval()
@@ -260,7 +267,7 @@ class TerminalInterface(Callback):
         else:
             print(self.text)
 
-    def _is_time_passed(self, original_time, x_seconds):
+    def _is_trigger_passed(self, original_time, x_seconds):
         current_time = datetime.now()
         time_difference = current_time - original_time
         return time_difference > timedelta(seconds=x_seconds)
