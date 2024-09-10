@@ -95,11 +95,11 @@ use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
 
-# tokenizer_model = "englishcode-8000-consistent-v1"
-# tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
-# tokenizer = TokenMonster(vocab_file=tokenizer_config.vocab_file)
-tokenizer_model = "NousResearch/Llama-2-7b-hf"
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
+tokenizer_model = "englishcode-16000-consistent-v1"
+tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
+tokenizer = TokenMonster(vocab_file=tokenizer_config.vocab_file)
+# tokenizer_model = "NousResearch/Llama-2-7b-hf"
+# tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 
 # System args
 config = PraxisConfig(
@@ -391,10 +391,7 @@ class Generator:
         self.tokenizer = tokenizer
 
     def generate(self, prompt, kwargs={}):
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
-
-        if isinstance(input_ids, dict):
-            input_ids = input_ids["input_ids"]
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")["input_ids"]
 
         if args.device.startswith("cuda"):
             input_ids = input_ids.to(int(args.device.split(":")[1]))
@@ -412,9 +409,32 @@ class Generator:
         if "prompt" in combined:
             del combined["prompt"]
 
-        outputs = self.model.generate(input_ids, **combined)
+        return_text = prompt
+        max_attempts = 30  # Prevent infinite loops
+        attempts = 0
 
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        while attempts < max_attempts:
+            outputs = self.model.generate(input_ids, **combined)
+            new_token = outputs[0, -1].unsqueeze(0).unsqueeze(0)  # Make it 2D: [1, 1]
+            decoded_new = self.tokenizer.decode(
+                new_token.squeeze(), skip_special_tokens=True
+            )
+
+            if decoded_new.strip():  # If the new token is not just whitespace
+                return_text += decoded_new
+                break
+            else:
+                input_ids = torch.cat(
+                    [input_ids, new_token], dim=1
+                )  # Concatenate along sequence dimension
+                attempts += 1
+
+        if attempts == max_attempts:
+            print(
+                "Warning: Reached maximum attempts without generating non-empty token"
+            )
+
+        return return_text
 
 
 model = AutoModelForCausalLM.from_config(config)
