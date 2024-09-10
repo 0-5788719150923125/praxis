@@ -84,148 +84,148 @@ class TokenMonster(PreTrainedTokenizer):
         }
         return vocab_dict
 
-    def _tokenize(self, text: str) -> List[str]:
-        return [self.tokenizer.id_to_token(id) for id in self.tokenizer.tokenize(text)]
+    # def _tokenize(self, text: str) -> List[str]:
+    #     return [self.tokenizer.id_to_token(id) for id in self.tokenizer.tokenize(text)]
 
-    def _convert_token_to_id(self, token: str) -> int:
-        return self.tokenizer.token_to_id(token)
+    # def _convert_token_to_id(self, token: str) -> int:
+    #     return self.tokenizer.token_to_id(token)
 
-    def _convert_id_to_token(self, index: int) -> str:
-        return self.tokenizer.id_to_token(index)
+    # def _convert_id_to_token(self, index: int) -> str:
+    #     return self.tokenizer.id_to_token(index)
 
-    def convert_tokens_to_string(self, tokens: List[str]) -> str:
-        return self.tokenizer.decode(
-            [self.tokenizer.token_to_id(token) for token in tokens]
-        )
+    # def convert_tokens_to_string(self, tokens: List[str]) -> str:
+    #     return self.tokenizer.decode(
+    #         [self.tokenizer.token_to_id(token) for token in tokens]
+    #     )
 
     def load_vocab(self, vocab_file):
         return tokenmonster.load(vocab_file)
 
-    def build_inputs_with_special_tokens(
-        self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
-    ) -> List[int]:
-        if token_ids_1 is None:
-            return [self.bos_token_id] + token_ids_0 + [self.eos_token_id]
-        bos = [self.bos_token_id]
-        eos = [self.eos_token_id]
-        return bos + token_ids_0 + eos + token_ids_1 + eos
+    # def build_inputs_with_special_tokens(
+    #     self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
+    # ) -> List[int]:
+    #     if token_ids_1 is None:
+    #         return [self.bos_token_id] + token_ids_0 + [self.eos_token_id]
+    #     bos = [self.bos_token_id]
+    #     eos = [self.eos_token_id]
+    #     return bos + token_ids_0 + eos + token_ids_1 + eos
 
-    def create_token_type_ids_from_sequences(
-        self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
-    ) -> List[int]:
-        eos = [self.eos_token_id]
-        bos = [self.bos_token_id]
-        if token_ids_1 is None:
-            return [0] * len(bos + token_ids_0 + eos)
-        return [0] * len(bos + token_ids_0 + eos) + [1] * len(token_ids_1 + eos)
+    # def create_token_type_ids_from_sequences(
+    #     self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
+    # ) -> List[int]:
+    #     eos = [self.eos_token_id]
+    #     bos = [self.bos_token_id]
+    #     if token_ids_1 is None:
+    #         return [0] * len(bos + token_ids_0 + eos)
+    #     return [0] * len(bos + token_ids_0 + eos) + [1] * len(token_ids_1 + eos)
 
-    def prepare_for_model(
-        self,
-        ids: List[int],
-        pair_ids: Optional[List[int]] = None,
-        add_special_tokens: bool = True,
-        padding: Union[bool, str, PaddingStrategy] = False,
-        truncation: Union[bool, str, TruncationStrategy] = None,
-        max_length: Optional[int] = None,
-        stride: int = 0,
-        pad_to_multiple_of: Optional[int] = None,
-        return_tensors: Optional[Union[str, TensorType]] = None,
-        return_token_type_ids: Optional[bool] = None,
-        return_attention_mask: Optional[bool] = None,
-        return_overflowing_tokens: bool = False,
-        return_special_tokens_mask: bool = False,
-        return_offsets_mapping: bool = False,
-        return_length: bool = False,
-        verbose: bool = True,
-        prepend_batch_axis: bool = False,
-        **kwargs,
-    ) -> BatchEncoding:
-        # Handle special tokens
-        if add_special_tokens:
-            if pair_ids is not None:
-                ids, pair_ids = self.build_inputs_with_special_tokens(ids, pair_ids)
-            else:
-                ids = self.build_inputs_with_special_tokens(ids)
+    # def prepare_for_model(
+    #     self,
+    #     ids: List[int],
+    #     pair_ids: Optional[List[int]] = None,
+    #     add_special_tokens: bool = True,
+    #     padding: Union[bool, str, PaddingStrategy] = False,
+    #     truncation: Union[bool, str, TruncationStrategy] = None,
+    #     max_length: Optional[int] = None,
+    #     stride: int = 0,
+    #     pad_to_multiple_of: Optional[int] = None,
+    #     return_tensors: Optional[Union[str, TensorType]] = None,
+    #     return_token_type_ids: Optional[bool] = None,
+    #     return_attention_mask: Optional[bool] = None,
+    #     return_overflowing_tokens: bool = False,
+    #     return_special_tokens_mask: bool = False,
+    #     return_offsets_mapping: bool = False,
+    #     return_length: bool = False,
+    #     verbose: bool = True,
+    #     prepend_batch_axis: bool = False,
+    #     **kwargs,
+    # ) -> BatchEncoding:
+    #     # Handle special tokens
+    #     if add_special_tokens:
+    #         if pair_ids is not None:
+    #             ids, pair_ids = self.build_inputs_with_special_tokens(ids, pair_ids)
+    #         else:
+    #             ids = self.build_inputs_with_special_tokens(ids)
 
-        # Truncation and padding
-        padding_strategy = PaddingStrategy(padding)
-        truncation_strategy = (
-            TruncationStrategy(truncation)
-            if truncation is not None
-            else TruncationStrategy.DO_NOT_TRUNCATE
-        )
+    #     # Truncation and padding
+    #     padding_strategy = PaddingStrategy(padding)
+    #     truncation_strategy = (
+    #         TruncationStrategy(truncation)
+    #         if truncation is not None
+    #         else TruncationStrategy.DO_NOT_TRUNCATE
+    #     )
 
-        # Truncate and/or pad
-        if (
-            truncation_strategy != TruncationStrategy.DO_NOT_TRUNCATE
-            or padding_strategy != PaddingStrategy.DO_NOT_PAD
-        ):
-            ids = self._pad_and_truncate(
-                ids,
-                max_length=max_length,
-                stride=stride,
-                pad_to_multiple_of=pad_to_multiple_of,
-                padding_strategy=padding_strategy,
-                truncation_strategy=truncation_strategy,
-            )
-            if pair_ids is not None:
-                pair_ids = self._pad_and_truncate(
-                    pair_ids,
-                    max_length=max_length,
-                    stride=stride,
-                    pad_to_multiple_of=pad_to_multiple_of,
-                    padding_strategy=padding_strategy,
-                    truncation_strategy=truncation_strategy,
-                )
+    #     # Truncate and/or pad
+    #     if (
+    #         truncation_strategy != TruncationStrategy.DO_NOT_TRUNCATE
+    #         or padding_strategy != PaddingStrategy.DO_NOT_PAD
+    #     ):
+    #         ids = self._pad_and_truncate(
+    #             ids,
+    #             max_length=max_length,
+    #             stride=stride,
+    #             pad_to_multiple_of=pad_to_multiple_of,
+    #             padding_strategy=padding_strategy,
+    #             truncation_strategy=truncation_strategy,
+    #         )
+    #         if pair_ids is not None:
+    #             pair_ids = self._pad_and_truncate(
+    #                 pair_ids,
+    #                 max_length=max_length,
+    #                 stride=stride,
+    #                 pad_to_multiple_of=pad_to_multiple_of,
+    #                 padding_strategy=padding_strategy,
+    #                 truncation_strategy=truncation_strategy,
+    #             )
 
-        # Prepare outputs
-        encoded_inputs = {}
-        encoded_inputs["input_ids"] = ids
-        if pair_ids is not None:
-            encoded_inputs["input_ids"] = [ids, pair_ids]
+    #     # Prepare outputs
+    #     encoded_inputs = {}
+    #     encoded_inputs["input_ids"] = ids
+    #     if pair_ids is not None:
+    #         encoded_inputs["input_ids"] = [ids, pair_ids]
 
-        if return_token_type_ids:
-            encoded_inputs["token_type_ids"] = (
-                self.create_token_type_ids_from_sequences(ids, pair_ids)
-            )
+    #     if return_token_type_ids:
+    #         encoded_inputs["token_type_ids"] = (
+    #             self.create_token_type_ids_from_sequences(ids, pair_ids)
+    #         )
 
-        if return_attention_mask:
-            encoded_inputs["attention_mask"] = [1] * len(ids)
-            if pair_ids is not None:
-                encoded_inputs["attention_mask"] = [
-                    encoded_inputs["attention_mask"],
-                    [1] * len(pair_ids),
-                ]
+    #     if return_attention_mask:
+    #         encoded_inputs["attention_mask"] = [1] * len(ids)
+    #         if pair_ids is not None:
+    #             encoded_inputs["attention_mask"] = [
+    #                 encoded_inputs["attention_mask"],
+    #                 [1] * len(pair_ids),
+    #             ]
 
-        if return_special_tokens_mask:
-            encoded_inputs["special_tokens_mask"] = self.get_special_tokens_mask(
-                ids, pair_ids
-            )
+    #     if return_special_tokens_mask:
+    #         encoded_inputs["special_tokens_mask"] = self.get_special_tokens_mask(
+    #             ids, pair_ids
+    #         )
 
-        # Convert to tensors if needed
-        if return_tensors is not None:
-            encoded_inputs = self.convert_to_tensors(encoded_inputs, return_tensors)
+    #     # Convert to tensors if needed
+    #     if return_tensors is not None:
+    #         encoded_inputs = self.convert_to_tensors(encoded_inputs, return_tensors)
 
-        if return_length:
-            encoded_inputs["length"] = len(ids)
+    #     if return_length:
+    #         encoded_inputs["length"] = len(ids)
 
-        return BatchEncoding(encoded_inputs, tensor_type=return_tensors)
+    #     return BatchEncoding(encoded_inputs, tensor_type=return_tensors)
 
-    def convert_to_tensors(
-        self, encoded_inputs: Dict[str, Any], return_tensors: str
-    ) -> Dict[str, Any]:
-        if return_tensors == "np":
-            return {k: np.array(v) for k, v in encoded_inputs.items()}
-        elif return_tensors == "pt":
-            import torch
+    # def convert_to_tensors(
+    #     self, encoded_inputs: Dict[str, Any], return_tensors: str
+    # ) -> Dict[str, Any]:
+    #     if return_tensors == "np":
+    #         return {k: np.array(v) for k, v in encoded_inputs.items()}
+    #     elif return_tensors == "pt":
+    #         import torch
 
-            return {k: torch.tensor(v) for k, v in encoded_inputs.items()}
-        elif return_tensors == "tf":
-            import tensorflow as tf
+    #         return {k: torch.tensor(v) for k, v in encoded_inputs.items()}
+    #     elif return_tensors == "tf":
+    #         import tensorflow as tf
 
-            return {k: tf.constant(v) for k, v in encoded_inputs.items()}
-        else:
-            return encoded_inputs
+    #         return {k: tf.constant(v) for k, v in encoded_inputs.items()}
+    #     else:
+    #         return encoded_inputs
 
     def decode(
         self,
@@ -270,7 +270,7 @@ class TokenMonster(PreTrainedTokenizer):
         truncation: Union[bool, str] = False,
         max_length: Optional[int] = None,
         return_tensors: Optional[str] = None,
-    ) -> Union[List[int], List[List[int]], np.ndarray, torch.Tensor]:
+    ) -> Union[Dict[str, Union[List[int], np.ndarray, torch.Tensor]], BatchEncoding]:
         if isinstance(text, str):
             text = [text]
 
@@ -305,16 +305,28 @@ class TokenMonster(PreTrainedTokenizer):
                 for ids in encoded
             ]
 
+        # Prepare the output dictionary
+        output = {"input_ids": encoded}
+
         if return_tensors == "np":
-            return np.array(encoded)
+            output = {k: np.array(v) for k, v in output.items()}
         elif return_tensors == "pt":
-            return torch.tensor(encoded, dtype=torch.long)
+            output = {k: torch.tensor(v, dtype=torch.long) for k, v in output.items()}
         elif return_tensors == "tf":
             import tensorflow as tf
 
-            return tf.constant(encoded, dtype=tf.int32)
-        else:
-            return encoded if len(encoded) > 1 else encoded[0]
+            output = {k: tf.constant(v, dtype=tf.int32) for k, v in output.items()}
+
+        return BatchEncoding(output)
+
+    # def _tokenize(self, text: str, **kwargs) -> List[str]:
+    #     return self.encode(text, kwargs)
+
+    # def _convert_token_to_id(self, token: str) -> int:
+    #     return self.tokenizer.token_to_id(token)
+
+    # def _convert_id_to_token(self, index: int) -> str:
+    #     return self.tokenizer.id_to_token(index)
 
     def encode_plus(
         self,
@@ -445,12 +457,13 @@ if __name__ == "__main__":
 
     # Test the tokenizer
     text = "Hello, how are you?"
-    encoded = tokenizer.encode(text)
+    encoded = tokenizer.encode(text, return_tensors="pt")
     print("Encoded:", encoded)
+    print("Input IDs shape:", encoded["input_ids"].shape)
 
-    decoded = tokenizer.decode(encoded, skip_special_tokens=True)
+    decoded = tokenizer.decode(encoded["input_ids"][0], skip_special_tokens=True)
     print("Decoded:", decoded)
-    decoded = tokenizer.decode(encoded, skip_special_tokens=False)
+    decoded = tokenizer.decode(encoded["input_ids"][0], skip_special_tokens=False)
     print("Decoded (w/ special tokens):", decoded)
 
     # Test get_vocab
@@ -472,10 +485,8 @@ if __name__ == "__main__":
         truncation=True,
         return_overflowing_tokens=True,
         return_tensors="pt",
-    )["input_ids"]
-    print(tokens)
-    print("\nTokens shape:", tokens.shape)
-    print("First sequence of tokens:", tokens[0])
-    print("Number of sequences:", len(tokens))
-    # for batch in tokens:
-    #     print(batch)
+    )
+    print("\nTokens:", tokens)
+    print("Input IDs shape:", tokens["input_ids"].shape)
+    print("First sequence of tokens:", tokens["input_ids"][0])
+    print("Number of sequences:", len(tokens["input_ids"]))
