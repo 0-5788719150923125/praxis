@@ -100,11 +100,18 @@ class TokenMonsterTokenizer(PreTrainedTokenizer):
         return self.tokenizer.vocab_size
 
     def get_vocab(self) -> Dict[str, int]:
-        vocab_dict = {
-            item["token_decoded"]: item["id"]
-            for item in self.tokenizer.get_dictionary().values()
-        }
+        vocab_dict = {}
+        for id in range(self.tokenizer.vocab_size):
+            token = self.tokenizer.id_to_token(id)
+            vocab_dict[token] = id
+
         return vocab_dict
+
+    def _convert_token_to_id(self, token: str) -> int:
+        return self.tokenizer.token_to_id(token)
+
+    def _convert_id_to_token(self, index: int) -> str:
+        return self.tokenizer.id_to_token(index)
 
     def load_vocab(self, vocab_file):
         return tokenmonster.load(vocab_file)
@@ -205,6 +212,11 @@ class TokenMonsterTokenizer(PreTrainedTokenizer):
                     for ids in encoded
                 ]
 
+        # outputs = {"input_ids": encoded}
+        # if return_tensors:
+        #     outputs = self._convert_to_tensors(outputs, return_tensors)
+
+        # return outputs["input_ids"]
         # Prepare the output dictionary
         output = {"input_ids": encoded}
 
@@ -371,47 +383,6 @@ class TokenMonsterTokenizer(PreTrainedTokenizer):
         else:
             return outputs
 
-    def verify_attention_mask(self, text: str, max_length: int = 128):
-        """
-        Tokenize the input text and visualize the attention mask.
-
-        Args:
-        text (str): The input text to tokenize.
-        max_length (int): The maximum length of the tokenized sequence.
-
-        Returns:
-        None (prints the visualization)
-        """
-        # Tokenize the text
-        encoding = self.encode_plus(
-            text,
-            max_length=max_length,
-            padding="max_length",
-            truncation=True,
-            return_attention_mask=True,
-            return_tensors="pt",
-        )
-
-        input_ids = encoding["input_ids"][0].tolist()
-        attention_mask = encoding["attention_mask"][0].tolist()
-
-        # Decode tokens
-        tokens = [self.tokenizer.id_to_token_decoded(id) for id in input_ids]
-
-        # Print the visualization
-        print("Token\t\tID\tMask")
-        print("-" * 40)
-        for token, id, mask in zip(tokens, input_ids, attention_mask):
-            # Replace newline characters for better visibility
-            token = token.replace("\n", "\\n")
-            print(f"{token[:15]:<15}\t{id}\t{mask}")
-
-        # Additional statistics
-        print("\nStatistics:")
-        print(f"Total tokens: {len(tokens)}")
-        print(f"Non-padding tokens: {sum(attention_mask)}")
-        print(f"Padding tokens: {len(attention_mask) - sum(attention_mask)}")
-
 
 if __name__ == "__main__":
     # Register the tokenizer
@@ -437,10 +408,11 @@ if __name__ == "__main__":
 
     vocab = tokenizer.get_vocab()
     print("First 10 items:", dict(list(vocab.items())[:10]))
+    print("get_vocab() length:", len(vocab))
 
     # Test tokenizer with parameters similar to production use case
     long_text = (
-        "This is a longer piece of text that we will use to test the tokenizer with striding and overflow tokens. "
+        "This is a longer piece of text. We will use this to test the tokenizer.\n\nBut should we we, or shouldn't we?\nDoes it even matter? "
         * 10
     )
     tokens = tokenizer(
@@ -457,6 +429,3 @@ if __name__ == "__main__":
     print("First sequence of tokens:", tokens["input_ids"][0])
     print("Number of sequences:", len(tokens["input_ids"]))
     print("Decoded first sequence:", tokenizer.decode(tokens["input_ids"][0]))
-    tokenizer.verify_attention_mask(
-        "This is a test sentence. Let's see how the attention mask looks."
-    )
