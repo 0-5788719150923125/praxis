@@ -72,15 +72,19 @@ class TokenMonsterTokenizer(PreTrainedTokenizer):
     def vocab_size(self) -> int:
         return self.tokenizer.vocab_size
 
+    # def get_vocab(self):
+    #     vocab = {}
+    #     for i in range(self.vocab_size):
+    #         token = self.convert_ids_to_tokens(i)
+    #         if token not in vocab:
+    #             vocab[token] = set()
+    #         vocab[token].add(i)
+
+    #     # Convert sets to sorted lists for consistency
+    #     return {token: sorted(list(ids)) for token, ids in vocab.items()}
+
     def get_vocab(self):
         return {self.convert_ids_to_tokens(i): i for i in range(self.vocab_size)}
-
-    # def get_vocab(self):
-    #     dictionary = self.tokenizer.get_dictionary()
-    #     return {
-    #         index: token_info["token"]
-    #         for index, token_info in enumerate(dictionary.values())
-    #     }
 
     def _tokenize(self, text: str) -> List[str]:
         return self.tokenizer.tokenize(text)

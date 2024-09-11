@@ -96,11 +96,11 @@ device = args.device if args.device else "cpu"
 data_path = args.data_path
 
 # tokenizer_model = "englishcode-16000-consistent-v1"
-tokenizer_model = "englishcode-16000-consistent-nocapcode-v1"
-tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
-tokenizer = TokenMonsterTokenizer(tokenizer_config)
-# tokenizer_model = "NousResearch/Llama-2-7b-hf"
-# tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
+# tokenizer_model = "englishcode-16000-consistent-nocapcode-v1"
+# tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
+# tokenizer = TokenMonsterTokenizer(tokenizer_config)
+tokenizer_model = "NousResearch/Llama-2-7b-hf"
+tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 
 # System args
 config = PraxisConfig(
@@ -132,8 +132,8 @@ max_data_points = 10000
 max_feed_chars = 2048
 
 # Predictions
-prompt_text = "Once upon a time, "
-predict_interval = 5
+prompt_text = ""
+predict_interval = 3
 predict_tokens = 1
 
 # Optimizer configuration
