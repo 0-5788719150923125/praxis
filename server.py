@@ -57,8 +57,8 @@ from praxis import (
     TokenMonsterTokenizer,
 )
 
-# disable_possible_user_warnings()
-# logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
+disable_possible_user_warnings()
+logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 logger = CSVLogger("logs", name="praxis")
 
 AutoConfig.register("praxis", PraxisConfig)
@@ -95,7 +95,8 @@ use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
 
-tokenizer_model = "englishcode-16000-consistent-v1"
+# tokenizer_model = "englishcode-16000-consistent-v1"
+tokenizer_model = "englishcode-16000-consistent-nocapcode-v1"
 tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
 tokenizer = TokenMonsterTokenizer(tokenizer_config)
 # tokenizer_model = "NousResearch/Llama-2-7b-hf"
@@ -122,20 +123,24 @@ config = PraxisConfig(
 # Training data config
 possibilities = [
     dict(repo="HuggingFaceFW/fineweb", key="text"),
-    dict(repo="open-phi/textbooks", key="markdown"),
+    # dict(repo="open-phi/textbooks", key="markdown"),
 ]
 dataset_config = random.sample(possibilities, 1)[0]
 
 # Dashboard config
 max_data_points = 10000
 max_feed_chars = 2048
+
+# Predictions
+prompt_text = "Once upon a time, "
 predict_interval = 5
+predict_tokens = 1
 
 # Optimizer configuration
 optimizer_config = dict(
-    optimizer_name="Lion",
-    lr=1e-4,
-    weight_decay=1e-5,
+    optimizer_name="GrokFastAdamW",
+    lr=1e-3,
+    weight_decay=1e-4,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
@@ -222,9 +227,10 @@ class TerminalInterface(Callback):
         super().__init__()
         self.ema = 0
         self.last_time = datetime.now()
-        self.text = ""
+        self.text = prompt_text
         self.max_length = max_feed_chars
         self.interval = predict_interval
+        self.num_tokens = predict_tokens
         self.dashboard = False
         if use_dashboard:
             self.dashboard = TerminalDashboard(max_data_points)
@@ -255,7 +261,7 @@ class TerminalInterface(Callback):
             return
 
         lm.model.eval()
-        self.text = generator.generate(self.text)
+        self.text = generator.generate(self.text, {"max_new_tokens": self.num_tokens})
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
@@ -400,7 +406,7 @@ class Generator:
         self.tokenizer = tokenizer
 
     def generate(self, prompt, kwargs={}):
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")["input_ids"]
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if args.device.startswith("cuda"):
             input_ids = input_ids.to(int(args.device.split(":")[1]))
@@ -424,18 +430,13 @@ class Generator:
 
         while attempts < max_attempts:
             outputs = self.model.generate(input_ids, **combined)
-            new_token = outputs[0, -1].unsqueeze(0).unsqueeze(0)  # Make it 2D: [1, 1]
-            decoded_new = self.tokenizer.decode(
-                new_token.squeeze(), skip_special_tokens=True
-            )
+            decoded_new = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-            if decoded_new.strip():  # If the new token is not just whitespace
-                return_text += decoded_new
+            if decoded_new != prompt:
+                return_text = decoded_new
                 break
             else:
-                input_ids = torch.cat(
-                    [input_ids, new_token], dim=1
-                )  # Concatenate along sequence dimension
+                input_ids = outputs
                 attempts += 1
 
         if attempts == max_attempts:
