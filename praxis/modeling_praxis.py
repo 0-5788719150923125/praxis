@@ -94,10 +94,6 @@ class PraxisModel(PreTrainedModel):
         utilization_percentages = (utilization / np.sum(utilization)) * 100
         return utilization_percentages
 
-    def reset_expert_utilization(self):
-        self.ema_expert_utilization.zero_()
-        self.forward_count = 0
-
 
 class PraxisForCausalLM(PraxisModel):
     def __init__(self, config):
