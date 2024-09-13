@@ -78,18 +78,6 @@ class PraxisRouter(nn.Module):
             + (self.initial_temperature - self.target_temperature) * cosine_decay
         )
 
-    # def get_temperature(self):
-    #     if self.current_step >= self.annealing_steps:
-    #         return self.target_temperature
-
-    #     progress = self.current_step / self.annealing_steps
-    #     # Using a faster decaying function
-    #     decay = 1 - (1 - math.exp(-5 * progress)) / (1 - math.exp(-5))
-    #     return (
-    #         self.target_temperature
-    #         + (self.initial_temperature - self.target_temperature) * decay
-    #     )
-
 
 # Usage example
 if __name__ == "__main__":

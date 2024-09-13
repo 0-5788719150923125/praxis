@@ -128,7 +128,17 @@ class PraxisBlock(nn.Module):
         x = weighted_output.sum(dim=0).to(x.device)
 
         x = residual + x
-        return x, balancing_loss, expert_counts
+
+        # TODO: this is a hack to fix gradient sparsity, caused by MoE switching
+        dummy_input = torch.zeros(1, 1, input_size, device="cpu")
+        dummy_outputs = [expert(dummy_input) * 0 for expert in self.experts]
+        dummy_loss = sum(
+            dummy_output.to(x.device).sum() for dummy_output in dummy_outputs
+        )
+        # dummy_loss = sum(expert.weight.sum() * 0 for expert in self.experts)
+        extra_loss = balancing_loss + dummy_loss
+
+        return x, extra_loss, expert_counts
 
 
 # PUBLIC_INITIAL_PEERS = [
