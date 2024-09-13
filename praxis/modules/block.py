@@ -171,58 +171,7 @@ class PraxisBlock(nn.Module):
 
         expert_outputs = self.sparse_experts(flat_x, flat_top_k_indices)
         output = expert_outputs.view(self.k_best, batch_size, seq_len, input_size)
-        # flat_x = x.reshape(-1, input_size)
-        # batch_seq_index = (
-        #     torch.arange(batch_size * seq_len)
-        #     .repeat_interleave(self.k_best)
-        #     .to(x.device)
-        # )
-        # flat_expert_indices = top_k_indices.reshape(-1)
 
-        # # Sort by expert indices for efficient batching
-        # sorted_expert_indices, sort_idx = torch.sort(flat_expert_indices.to(x.device))
-        # sorted_batch_seq_index = batch_seq_index[sort_idx]
-
-        # # Find the boundaries between different experts
-        # expert_boundaries = (
-        #     torch.where(sorted_expert_indices[1:] != sorted_expert_indices[:-1])[0] + 1
-        # )
-        # expert_boundaries = torch.cat(
-        #     [
-        #         torch.tensor([0], device=expert_boundaries.device),
-        #         expert_boundaries,
-        #         torch.tensor(
-        #             [len(sorted_expert_indices)], device=expert_boundaries.device
-        #         ),
-        #     ]
-        # )
-
-        # # Get unique experts actually used
-        # unique_experts = torch.unique(sorted_expert_indices)
-
-        # # Process each expert's batch
-        # combined_output = torch.zeros_like(flat_x).repeat(self.k_best, 1)
-        # for i, expert_idx in enumerate(unique_experts):
-        #     start, end = expert_boundaries[i], expert_boundaries[i + 1]
-        #     expert_input = flat_x[sorted_batch_seq_index[start:end]].to("cpu")
-        #     expert_output = self.experts[expert_idx.to("cpu").item()](expert_input).to(
-        #         x.device
-        #     )
-        #     combined_output[sort_idx[start:end]] = expert_output
-
-        # # TODO: this is a hack, to ensure that gradients are computed for unused experts
-        # unused_experts = set(range(self.n_experts)) - set(unique_experts.tolist())
-        # if unused_experts:
-        #     dummy_input = torch.zeros(1, input_size, device="cpu")
-        #     for expert_idx in unused_experts:
-        #         dummy_output = self.experts[expert_idx](dummy_input).to(x.device)
-        #         # Multiply by 0 to nullify the output, but maintain gradient flow
-        #         combined_output += (
-        #             dummy_output.repeat(self.k_best * batch_size * seq_len, 1) * 0
-        #         )
-
-        # Reshape output and apply routing weights
-        # output = combined_output.view(self.k_best, batch_size, seq_len, input_size)
         weighted_output = output * top_k_scores.permute(2, 0, 1).unsqueeze(-1)
         x = weighted_output.sum(dim=0)
 
