@@ -7,21 +7,100 @@ from hivemind import DHT
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server.layers import name_to_block
 from hivemind.utils import BatchTensorDescriptor
+from torch.amp import custom_bwd, custom_fwd
 
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
 from .router import PraxisRouter
 
 
-class GradientEnsuredExpert(torch.nn.Module):
-    def __init__(self, remote_expert):
-        super().__init__()
-        self.remote_expert = remote_expert
+class EfficientSparseRemoteExpertFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inputs, expert_indices, experts, num_experts, k):
+        ctx.expert_indices = expert_indices
+        ctx.experts = experts
+        ctx.num_experts = num_experts
+        ctx.k = k
 
-    def forward(self, x):
-        output = self.remote_expert(x)
-        # Add a small regularization term to ensure gradient flow
-        return output + 0.0 * x.sum()
+        # Handle both 2D and 3D inputs
+        if inputs.dim() == 2:
+            batch_size_seq_len, input_size = inputs.shape
+            batch_size = 1
+            seq_len = batch_size_seq_len
+        else:
+            batch_size, seq_len, input_size = inputs.shape
+
+        outputs = torch.zeros(batch_size * seq_len, k, input_size, device=inputs.device)
+
+        for i in range(k):
+            for expert_idx in range(num_experts):
+                expert_mask = expert_indices[:, i].reshape(-1) == expert_idx
+                if expert_mask.any():
+                    expert_input = inputs.view(-1, input_size)[expert_mask]
+                    expert_output = experts[expert_idx](expert_input.to("cpu")).to(
+                        inputs.device
+                    )
+                    outputs[:, i][expert_mask] = expert_output
+
+        ctx.save_for_backward(inputs, outputs)
+        return outputs.view(batch_size, seq_len, k, input_size)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        inputs, outputs = ctx.saved_tensors
+        expert_indices = ctx.expert_indices
+        experts = ctx.experts
+        num_experts = ctx.num_experts
+        k = ctx.k
+
+        if inputs.dim() == 2:
+            batch_size_seq_len, input_size = inputs.shape
+            batch_size = 1
+            seq_len = batch_size_seq_len
+        else:
+            batch_size, seq_len, input_size = inputs.shape
+
+        d_inputs = torch.zeros(
+            batch_size * seq_len, k, input_size, device=inputs.device
+        )
+
+        for i in range(k):
+            for expert_idx in range(num_experts):
+                expert_mask = expert_indices[:, i].reshape(-1) == expert_idx
+                if expert_mask.any():
+                    expert_grad = grad_output.view(-1, k, input_size)[:, i][expert_mask]
+                    d_inputs[:, i][expert_mask] = experts[expert_idx](
+                        expert_grad.to("cpu")
+                    ).to(inputs.device)
+
+        # Ensure unused experts receive some gradient
+        used_experts = torch.unique(expert_indices)
+        if len(used_experts) < num_experts:
+            dummy_grad = torch.zeros(1, input_size, device="cpu")
+            for i in range(num_experts):
+                if i not in used_experts:
+                    experts[i](dummy_grad)
+
+        return (
+            d_inputs.view(batch_size, seq_len, k, input_size).sum(dim=2),
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+class EfficientSparseRemoteExperts(nn.Module):
+    def __init__(self, experts, k):
+        super().__init__()
+        self.experts = experts
+        self.num_experts = len(experts)
+        self.k = k
+
+    def forward(self, inputs, expert_indices):
+        return EfficientSparseRemoteExpertFunction.apply(
+            inputs, expert_indices, self.experts, self.num_experts, self.k
+        )
 
 
 class PraxisBlock(nn.Module):
@@ -77,15 +156,10 @@ class PraxisBlock(nn.Module):
             use_ipfs=True,
         )
 
-        # self.experts = get_experts(
-        #     self.dht, [f"expert.{i}" for i in range(self.n_experts)]
-        # )
-        self.experts = {
-            i: GradientEnsuredExpert(expert)
-            for i, expert in enumerate(
-                get_experts(self.dht, [f"expert.{i}" for i in range(self.n_experts)])
-            )
-        }
+        self.experts = get_experts(
+            self.dht, [f"expert.{i}" for i in range(self.n_experts)]
+        )
+        self.sparse_experts = EfficientSparseRemoteExperts(self.experts, self.k_best)
 
     def forward(self, x, attention_mask=None):
         residual = x
@@ -101,58 +175,64 @@ class PraxisBlock(nn.Module):
             self.router(x)
         )
 
+        # Flatten x and top_k_indices for the sparse experts
         flat_x = x.reshape(-1, input_size)
-        batch_seq_index = (
-            torch.arange(batch_size * seq_len)
-            .repeat_interleave(self.k_best)
-            .to(x.device)
-        )
-        flat_expert_indices = top_k_indices.reshape(-1)
+        flat_top_k_indices = top_k_indices.reshape(-1, self.k_best)
 
-        # Sort by expert indices for efficient batching
-        sorted_expert_indices, sort_idx = torch.sort(flat_expert_indices.to(x.device))
-        sorted_batch_seq_index = batch_seq_index[sort_idx]
+        expert_outputs = self.sparse_experts(flat_x, flat_top_k_indices)
+        output = expert_outputs.view(self.k_best, batch_size, seq_len, input_size)
+        # flat_x = x.reshape(-1, input_size)
+        # batch_seq_index = (
+        #     torch.arange(batch_size * seq_len)
+        #     .repeat_interleave(self.k_best)
+        #     .to(x.device)
+        # )
+        # flat_expert_indices = top_k_indices.reshape(-1)
 
-        # Find the boundaries between different experts
-        expert_boundaries = (
-            torch.where(sorted_expert_indices[1:] != sorted_expert_indices[:-1])[0] + 1
-        )
-        expert_boundaries = torch.cat(
-            [
-                torch.tensor([0], device=expert_boundaries.device),
-                expert_boundaries,
-                torch.tensor(
-                    [len(sorted_expert_indices)], device=expert_boundaries.device
-                ),
-            ]
-        )
+        # # Sort by expert indices for efficient batching
+        # sorted_expert_indices, sort_idx = torch.sort(flat_expert_indices.to(x.device))
+        # sorted_batch_seq_index = batch_seq_index[sort_idx]
 
-        # Get unique experts actually used
-        unique_experts = torch.unique(sorted_expert_indices)
+        # # Find the boundaries between different experts
+        # expert_boundaries = (
+        #     torch.where(sorted_expert_indices[1:] != sorted_expert_indices[:-1])[0] + 1
+        # )
+        # expert_boundaries = torch.cat(
+        #     [
+        #         torch.tensor([0], device=expert_boundaries.device),
+        #         expert_boundaries,
+        #         torch.tensor(
+        #             [len(sorted_expert_indices)], device=expert_boundaries.device
+        #         ),
+        #     ]
+        # )
 
-        # Process each expert's batch
-        combined_output = torch.zeros_like(flat_x).repeat(self.k_best, 1)
-        for i, expert_idx in enumerate(unique_experts):
-            start, end = expert_boundaries[i], expert_boundaries[i + 1]
-            expert_input = flat_x[sorted_batch_seq_index[start:end]].to("cpu")
-            expert_output = self.experts[expert_idx.to("cpu").item()](expert_input).to(
-                x.device
-            )
-            combined_output[sort_idx[start:end]] = expert_output
+        # # Get unique experts actually used
+        # unique_experts = torch.unique(sorted_expert_indices)
 
-        # TODO: this is a hack, to ensure that gradients are computed for unused experts
-        unused_experts = set(range(self.n_experts)) - set(unique_experts.tolist())
-        if unused_experts:
-            dummy_input = torch.zeros(1, input_size, device="cpu")
-            for expert_idx in unused_experts:
-                dummy_output = self.experts[expert_idx](dummy_input).to(x.device)
-                # Multiply by 0 to nullify the output, but maintain gradient flow
-                combined_output += (
-                    dummy_output.repeat(self.k_best * batch_size * seq_len, 1) * 0
-                )
+        # # Process each expert's batch
+        # combined_output = torch.zeros_like(flat_x).repeat(self.k_best, 1)
+        # for i, expert_idx in enumerate(unique_experts):
+        #     start, end = expert_boundaries[i], expert_boundaries[i + 1]
+        #     expert_input = flat_x[sorted_batch_seq_index[start:end]].to("cpu")
+        #     expert_output = self.experts[expert_idx.to("cpu").item()](expert_input).to(
+        #         x.device
+        #     )
+        #     combined_output[sort_idx[start:end]] = expert_output
+
+        # # TODO: this is a hack, to ensure that gradients are computed for unused experts
+        # unused_experts = set(range(self.n_experts)) - set(unique_experts.tolist())
+        # if unused_experts:
+        #     dummy_input = torch.zeros(1, input_size, device="cpu")
+        #     for expert_idx in unused_experts:
+        #         dummy_output = self.experts[expert_idx](dummy_input).to(x.device)
+        #         # Multiply by 0 to nullify the output, but maintain gradient flow
+        #         combined_output += (
+        #             dummy_output.repeat(self.k_best * batch_size * seq_len, 1) * 0
+        #         )
 
         # Reshape output and apply routing weights
-        output = combined_output.view(self.k_best, batch_size, seq_len, input_size)
+        # output = combined_output.view(self.k_best, batch_size, seq_len, input_size)
         weighted_output = output * top_k_scores.permute(2, 0, 1).unsqueeze(-1)
         x = weighted_output.sum(dim=0)
 
