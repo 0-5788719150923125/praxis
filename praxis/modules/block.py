@@ -14,85 +14,6 @@ from .mlp import PraxisMLP
 from .router import PraxisRouter
 
 
-class EfficientSparseRemoteExpertFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, inputs, expert_indices, experts, num_experts, k):
-        ctx.save_for_backward(inputs, expert_indices)
-        ctx.experts = experts
-        ctx.num_experts = num_experts
-        ctx.k = k
-
-        if inputs.dim() == 2:
-            batch_size_seq_len, input_size = inputs.shape
-            batch_size = 1
-            seq_len = batch_size_seq_len
-        else:
-            batch_size, seq_len, input_size = inputs.shape
-
-        # Reshape expert_indices if necessary
-        if expert_indices.dim() == 2:
-            expert_indices = expert_indices.view(batch_size, seq_len, k)
-
-        outputs = torch.zeros(batch_size * seq_len, k, input_size, device=inputs.device)
-
-        for i in range(k):
-            for expert_idx in range(num_experts):
-                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
-                if mask.any():
-                    expert_input = inputs.view(-1, input_size)[mask]
-                    expert_output = experts[expert_idx](expert_input.to("cpu")).to(
-                        inputs.device
-                    )
-                    outputs[:, i][mask] = expert_output
-
-        return outputs.view(batch_size, seq_len, k, input_size)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        inputs, expert_indices = ctx.saved_tensors
-        experts = ctx.experts
-        num_experts = ctx.num_experts
-        k = ctx.k
-
-        if inputs.dim() == 2:
-            batch_size_seq_len, input_size = inputs.shape
-            batch_size = 1
-            seq_len = batch_size_seq_len
-        else:
-            batch_size, seq_len, input_size = inputs.shape
-
-        # Reshape expert_indices if necessary
-        if expert_indices.dim() == 2:
-            expert_indices = expert_indices.view(batch_size, seq_len, k)
-
-        d_inputs = torch.zeros_like(inputs)
-
-        for i in range(k):
-            for expert_idx in range(num_experts):
-                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
-                if mask.any():
-                    expert_grad = grad_output.view(-1, k, input_size)[:, i][mask]
-                    d_expert_input = experts[expert_idx](expert_grad.to("cpu")).to(
-                        inputs.device
-                    )
-                    d_inputs.view(-1, input_size)[mask] += d_expert_input
-
-        return d_inputs, None, None, None, None
-
-
-class EfficientSparseRemoteExperts(nn.Module):
-    def __init__(self, experts, k):
-        super().__init__()
-        self.experts = experts
-        self.num_experts = len(experts)
-        self.k = k
-
-    def forward(self, inputs, expert_indices):
-        return EfficientSparseRemoteExpertFunction.apply(
-            inputs, expert_indices, self.experts, self.num_experts, self.k
-        )
-
-
 class PraxisBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -149,7 +70,7 @@ class PraxisBlock(nn.Module):
         self.experts = get_experts(
             self.dht, [f"expert.{i}" for i in range(self.n_experts)]
         )
-        self.sparse_experts = EfficientSparseRemoteExperts(self.experts, self.k_best)
+        self.sparse_experts = PraxisExpert(self.experts, self.k_best)
 
     def forward(self, x, attention_mask=None):
         residual = x
@@ -178,6 +99,76 @@ class PraxisBlock(nn.Module):
         x = residual + x
 
         return x, balancing_loss, expert_counts
+
+
+class PraxisExpert(nn.Module):
+    def __init__(self, experts, k):
+        super().__init__()
+        self.experts = experts
+        self.num_experts = len(experts)
+        self.k = k
+
+    def forward(self, inputs, expert_indices):
+        return PraxisExpertGradFunction.apply(
+            inputs, expert_indices, self.experts, self.num_experts, self.k
+        )
+
+
+class PraxisExpertGradFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inputs, expert_indices, experts, num_experts, k):
+        ctx.save_for_backward(inputs, expert_indices)
+        ctx.experts = experts
+        ctx.num_experts = num_experts
+        ctx.k = k
+
+        batch_size, seq_len, input_size = (
+            inputs.shape if inputs.dim() == 3 else (1, *inputs.shape)
+        )
+        expert_indices = expert_indices.view(batch_size, seq_len, k)
+
+        outputs = torch.zeros(batch_size * seq_len, k, input_size, device=inputs.device)
+
+        for i in range(k):
+            for expert_idx in range(num_experts):
+                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
+                if mask.any():
+                    expert_input = inputs.view(-1, input_size)[mask]
+                    expert_output = experts[expert_idx](expert_input.to("cpu")).to(
+                        inputs.device
+                    )
+                    outputs[:, i][mask] = expert_output
+
+        return outputs.view(batch_size, seq_len, k, input_size)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        inputs, expert_indices = ctx.saved_tensors
+        experts = ctx.experts
+        num_experts = ctx.num_experts
+        k = ctx.k
+
+        batch_size, seq_len, input_size = (
+            inputs.shape if inputs.dim() == 3 else (1, *inputs.shape)
+        )
+        expert_indices = expert_indices.view(batch_size, seq_len, k)
+
+        d_inputs = torch.zeros_like(inputs)
+
+        for i in range(k):
+            for expert_idx in range(num_experts):
+                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
+                if mask.any():
+                    expert_grad = grad_output.view(-1, k, input_size)[:, i][mask]
+                    with torch.enable_grad():
+                        expert_input = (
+                            inputs.view(-1, input_size)[mask].detach().requires_grad_()
+                        )
+                        expert_output = experts[expert_idx](expert_input.to("cpu"))
+                        expert_output.backward(expert_grad.to("cpu"))
+                        d_inputs.view(-1, input_size)[mask] += expert_input.grad
+
+        return d_inputs, None, None, None, None
 
 
 # PUBLIC_INITIAL_PEERS = [

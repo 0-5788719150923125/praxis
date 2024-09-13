@@ -265,7 +265,7 @@ class TerminalInterface(Callback):
     def __init__(self, use_dashboard=False):
         super().__init__()
         self.ema = 0
-        self.alpha = 1e-3
+        self.alpha = 5e-3
         self.last_time = datetime.now()
         self.text = prompt_text
         self.max_length = max_feed_chars
