@@ -70,12 +70,6 @@ AutoTokenizer.register(TokenMonsterConfig, TokenMonsterTokenizer)
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
 parser.add_argument(
-    "--no_dashboard",
-    action="store_true",
-    default=False,
-    help="Use dashboard (default: True)",
-)
-parser.add_argument(
     "--device",
     type=str,
     default="cpu",
@@ -88,6 +82,18 @@ parser.add_argument(
     default=None,
     help="Paths to directories of files to use as training data (default: None)",
 )
+parser.add_argument(
+    "--no_dashboard",
+    action="store_true",
+    default=False,
+    help="Use dashboard (default: True)",
+)
+parser.add_argument(
+    "--use_tokenmonster",
+    action="store_true",
+    default=False,
+    help="Use TokenMonster (default: False)",
+)
 
 args = parser.parse_args()
 
@@ -95,12 +101,15 @@ use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
 
-# tokenizer_model = "englishcode-16000-consistent-v1"
-# tokenizer_model = "englishcode-16000-consistent-nocapcode-v1"
-# tokenizer_config = TokenMonsterConfig(vocab_file=tokenizer_model, add_bos_token=True)
-# tokenizer = TokenMonsterTokenizer(tokenizer_config)
-tokenizer_model = "NousResearch/Llama-2-7b-hf"
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
+if args.use_tokenmonster:
+    tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
+    tokenizer_config = TokenMonsterConfig(
+        vocab_file=tokenizer_model, add_bos_token=False
+    )
+    tokenizer = TokenMonsterTokenizer(tokenizer_config)
+else:
+    tokenizer_model = "NousResearch/Llama-2-7b-hf"
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
 
 # System args
 config = PraxisConfig(
@@ -120,6 +129,13 @@ config = PraxisConfig(
     torch_dtype="float32",
 )
 
+# Batch config
+hparams = dict(
+    batch_size=16,
+    accumulate_grad_batches=2,
+    block_size=256,
+)
+
 # Training data config
 possibilities = [
     dict(repo="HuggingFaceFW/fineweb", key="text"),
@@ -132,7 +148,7 @@ max_data_points = 10000
 max_feed_chars = 2048
 
 # Predictions
-prompt_text = ""
+prompt_text = tokenizer.bos_token
 predict_interval = 3
 predict_tokens = 1
 
@@ -146,13 +162,6 @@ optimizer_config = dict(
         "RMSNorm.weight",
         "RMSNorm.bias",
     ],
-)
-
-# Batch config
-hparams = dict(
-    batch_size=16,
-    accumulate_grad_batches=4,
-    block_size=256,
 )
 
 # Training config
@@ -468,12 +477,20 @@ if data_path:
 else:
     dataset = HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
 
+# Put the data onto a dataloader
+data_loader = DataLoader(
+    dataset,
+    batch_size=hparams["batch_size"],
+    pin_memory=True,
+    num_workers=1,
+)
+
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, hparams)
 
 # fit the trainer and run
 trainer = Trainer(**train_params)
-trainer.fit(train_model, dataset)
+trainer.fit(train_model, data_loader)
 
 # import ipaddress
 # from functools import partial

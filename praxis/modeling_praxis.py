@@ -18,7 +18,8 @@ class PraxisModel(PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.embed_dim = config.n_embd
+        self.config = config
+        self.n_embd = config.n_embd
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.blocks = nn.ModuleList(
             [PraxisBlock(config) for _ in range(config.n_layer)]

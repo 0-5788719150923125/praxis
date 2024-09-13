@@ -73,6 +73,9 @@ class PraxisAttention(nn.Module):
             scores = scores.masked_fill(causal_mask == 0, float("-inf"))
 
         if attention_mask is not None:
+            # Expand attention_mask to match the shape of scores
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            attention_mask = attention_mask.expand(-1, self.num_heads, -1, -1)
             scores = scores + attention_mask
 
         attn_weights = F.softmax(scores, dim=-1)

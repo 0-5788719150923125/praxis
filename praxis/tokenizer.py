@@ -106,8 +106,9 @@ class TokenMonsterTokenizer(PreTrainedTokenizer):
         # return self.tokenizer.get_dictionary()
         return {self.convert_ids_to_tokens(i): i for i in range(self.vocab_size)}
 
-    # def tokenize(self, text: str) -> List[str]:
-    #     return self.tokenizer.tokenize(text)
+    def tokenize(self, text: str) -> List[str]:
+        # return self.tokenizer.tokenize(text)
+        pass
 
     @property
     def added_tokens_encoder(self):

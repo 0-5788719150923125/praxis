@@ -38,7 +38,8 @@ Supported arguments:
 python server.py \
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
-  --no_dashboard                 # Disables the CLI interface.
+  --no_dashboard \               # Disables the CLI interface.
+  --use_tokenmonster             # Replace the LLaMA-2 tokenizer with TokenMonster.
 ```
 
 ## join us
