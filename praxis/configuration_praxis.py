@@ -19,7 +19,6 @@ class PraxisConfig(PretrainedConfig):
         k_best=2,
         target_temperature=0.9,
         annealing_steps=10_000,
-        use_cache=False,
         vocab_size=32000,
         pad_token_id=0,
         bos_token_id=1,
@@ -49,5 +48,5 @@ class PraxisConfig(PretrainedConfig):
         self.k_best = k_best
         self.target_temperature = target_temperature
         self.annealing_steps = annealing_steps
-        self.use_cache = use_cache
+        self.use_cache = False
         self.causal = False
