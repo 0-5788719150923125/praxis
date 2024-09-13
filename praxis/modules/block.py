@@ -17,12 +17,11 @@ from .router import PraxisRouter
 class EfficientSparseRemoteExpertFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inputs, expert_indices, experts, num_experts, k):
-        ctx.expert_indices = expert_indices
+        ctx.save_for_backward(inputs, expert_indices)
         ctx.experts = experts
         ctx.num_experts = num_experts
         ctx.k = k
 
-        # Handle both 2D and 3D inputs
         if inputs.dim() == 2:
             batch_size_seq_len, input_size = inputs.shape
             batch_size = 1
@@ -30,25 +29,27 @@ class EfficientSparseRemoteExpertFunction(torch.autograd.Function):
         else:
             batch_size, seq_len, input_size = inputs.shape
 
+        # Reshape expert_indices if necessary
+        if expert_indices.dim() == 2:
+            expert_indices = expert_indices.view(batch_size, seq_len, k)
+
         outputs = torch.zeros(batch_size * seq_len, k, input_size, device=inputs.device)
 
         for i in range(k):
             for expert_idx in range(num_experts):
-                expert_mask = expert_indices[:, i].reshape(-1) == expert_idx
-                if expert_mask.any():
-                    expert_input = inputs.view(-1, input_size)[expert_mask]
+                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
+                if mask.any():
+                    expert_input = inputs.view(-1, input_size)[mask]
                     expert_output = experts[expert_idx](expert_input.to("cpu")).to(
                         inputs.device
                     )
-                    outputs[:, i][expert_mask] = expert_output
+                    outputs[:, i][mask] = expert_output
 
-        ctx.save_for_backward(inputs, outputs)
         return outputs.view(batch_size, seq_len, k, input_size)
 
     @staticmethod
     def backward(ctx, grad_output):
-        inputs, outputs = ctx.saved_tensors
-        expert_indices = ctx.expert_indices
+        inputs, expert_indices = ctx.saved_tensors
         experts = ctx.experts
         num_experts = ctx.num_experts
         k = ctx.k
@@ -60,34 +61,23 @@ class EfficientSparseRemoteExpertFunction(torch.autograd.Function):
         else:
             batch_size, seq_len, input_size = inputs.shape
 
-        d_inputs = torch.zeros(
-            batch_size * seq_len, k, input_size, device=inputs.device
-        )
+        # Reshape expert_indices if necessary
+        if expert_indices.dim() == 2:
+            expert_indices = expert_indices.view(batch_size, seq_len, k)
+
+        d_inputs = torch.zeros_like(inputs)
 
         for i in range(k):
             for expert_idx in range(num_experts):
-                expert_mask = expert_indices[:, i].reshape(-1) == expert_idx
-                if expert_mask.any():
-                    expert_grad = grad_output.view(-1, k, input_size)[:, i][expert_mask]
-                    d_inputs[:, i][expert_mask] = experts[expert_idx](
-                        expert_grad.to("cpu")
-                    ).to(inputs.device)
+                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
+                if mask.any():
+                    expert_grad = grad_output.view(-1, k, input_size)[:, i][mask]
+                    d_expert_input = experts[expert_idx](expert_grad.to("cpu")).to(
+                        inputs.device
+                    )
+                    d_inputs.view(-1, input_size)[mask] += d_expert_input
 
-        # Ensure unused experts receive some gradient
-        used_experts = torch.unique(expert_indices)
-        if len(used_experts) < num_experts:
-            dummy_grad = torch.zeros(1, input_size, device="cpu")
-            for i in range(num_experts):
-                if i not in used_experts:
-                    experts[i](dummy_grad)
-
-        return (
-            d_inputs.view(batch_size, seq_len, k, input_size).sum(dim=2),
-            None,
-            None,
-            None,
-            None,
-        )
+        return d_inputs, None, None, None, None
 
 
 class EfficientSparseRemoteExperts(nn.Module):

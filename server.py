@@ -76,6 +76,12 @@ parser.add_argument(
     help="Device to use (default: cpu)",
 )
 parser.add_argument(
+    "--batch_size",
+    type=int,
+    default=1,
+    help="Batch size to use for training (default: 1)",
+)
+parser.add_argument(
     "--data_path",
     type=str,
     nargs="+",
@@ -129,11 +135,35 @@ config = PraxisConfig(
     torch_dtype="float32",
 )
 
+
+def calculate_grad_accumulation(batch_size, target_batch_size):
+    """
+    Calculate the number of gradient accumulation steps.
+
+    Args:
+    batch_size (int): The current batch size.
+    target_batch_size (int): The desired effective batch size.
+
+    Returns:
+    int: The number of gradient accumulation steps.
+    """
+    if batch_size >= target_batch_size:
+        return 1
+    else:
+        return math.ceil(target_batch_size / batch_size)
+
+
 # Batch config
 hparams = dict(
-    batch_size=16,
-    accumulate_grad_batches=2,
+    batch_size=args.batch_size,
+    target_batch_size=32,
     block_size=256,
+)
+calculate_grad_accumulation = lambda batch_size, target_batch_size: (
+    1 if batch_size >= target_batch_size else -(-target_batch_size // batch_size)
+)
+hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
+    hparams["batch_size"], hparams["target_batch_size"]
 )
 
 # Training data config
