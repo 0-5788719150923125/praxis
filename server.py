@@ -484,12 +484,13 @@ class Generator:
 # Define checkpointing behavior
 checkpoint_callback = ModelCheckpoint(
     every_n_train_steps=50,
-    save_top_k=3,
+    save_top_k=2,
     save_last="link",
     monitor="step",
     mode="max",
     dirpath=f"{cache_dir}/praxis",
     filename="model-{step}",
+    enable_version_counter=False,
 )
 
 # Bootstrap the model and trainer
