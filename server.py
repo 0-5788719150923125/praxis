@@ -488,7 +488,7 @@ checkpoint_callback = ModelCheckpoint(
     save_last="link",
     monitor="step",
     mode="max",
-    dirpath="{cache_dir}/praxis",
+    dirpath=f"{cache_dir}/praxis",
     filename="model-{step}",
 )
 
@@ -498,6 +498,7 @@ model = AutoModelForCausalLM.from_config(config)
 ckpt_path = None
 symlink = f"{cache_dir}/praxis/last.ckpt"
 if os.path.exists(symlink):
+    print(f"resuming from: {symlink}")
     ckpt_path = symlink
 
 print(model)
