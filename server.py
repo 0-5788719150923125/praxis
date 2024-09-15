@@ -485,6 +485,7 @@ class Generator:
 checkpoint_callback = ModelCheckpoint(
     every_n_train_steps=50,
     save_top_k=3,
+    save_last="link",
     monitor="step",
     mode="max",
     dirpath="{cache_dir}/praxis",
@@ -494,9 +495,10 @@ checkpoint_callback = ModelCheckpoint(
 # Bootstrap the model and trainer
 model = AutoModelForCausalLM.from_config(config)
 
-# file_path = "/path/to/your/file.txt"
-# if os.path.exists(file_path):
-#     model = MyLightningModule.load_from_checkpoint("/path/to/checkpoint.ckpt")
+ckpt_path = None
+symlink = f"{cache_dir}/praxis/last.ckpt"
+if os.path.exists(symlink):
+    ckpt_path = symlink
 
 print(model)
 
@@ -531,7 +533,7 @@ train_model = PraxisTrainer(model, optimizer, hparams)
 
 # fit the trainer and run
 trainer = Trainer(**train_params)
-trainer.fit(train_model, data_loader)
+trainer.fit(train_model, data_loader, ckpt_path=ckpt_path)
 
 # import ipaddress
 # from functools import partial
