@@ -15,7 +15,7 @@ server_requirements = [
     "datasets",
     "flask",
     "lightning",
-    "pytorch_optimizer",
+    "pytorch_optimizer @ git+https://github.com/kozistr/pytorch_optimizer.git",
     "werkzeug",
 ]
 

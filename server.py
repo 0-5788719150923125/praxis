@@ -32,7 +32,7 @@ import torch
 import torch.nn as nn
 from datasets import load_dataset
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import Callback
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -89,6 +89,13 @@ parser.add_argument(
     help="Paths to directories of files to use as training data (default: None)",
 )
 parser.add_argument(
+    "--cache_dir",
+    type=str,
+    nargs="+",
+    default="./data",
+    help="Paths to a directory where artifacts will be saved (default: ./data)",
+)
+parser.add_argument(
     "--no_dashboard",
     action="store_true",
     default=False,
@@ -106,6 +113,7 @@ args = parser.parse_args()
 use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
+cache_dir = args.cache_dir
 
 if args.use_tokenmonster:
     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
@@ -115,7 +123,7 @@ if args.use_tokenmonster:
     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
     tokenizer_model = "NousResearch/Llama-2-7b-hf"
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir="./data")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 
 # System args
 config = PraxisConfig(
@@ -131,26 +139,10 @@ config = PraxisConfig(
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
     unk_token_id=tokenizer.unk_token_id,
-    device_map=device,
     torch_dtype="float32",
+    device_map=device,
+    cache_dir=cache_dir,
 )
-
-
-def calculate_grad_accumulation(batch_size, target_batch_size):
-    """
-    Calculate the number of gradient accumulation steps.
-
-    Args:
-    batch_size (int): The current batch size.
-    target_batch_size (int): The desired effective batch size.
-
-    Returns:
-    int: The number of gradient accumulation steps.
-    """
-    if batch_size >= target_batch_size:
-        return 1
-    else:
-        return math.ceil(target_batch_size / batch_size)
 
 
 # Batch config
@@ -179,14 +171,15 @@ max_feed_chars = 2048
 
 # Predictions
 prompt_text = tokenizer.bos_token
-predict_interval = 3
+predict_interval = 30
 predict_tokens = 1
 
 # Optimizer configuration
 optimizer_config = dict(
-    optimizer_name="GrokFastAdamW",
+    optimizer_name="AdEMAMix",
     lr=1e-3,
-    weight_decay=1e-4,
+    weight_decay=1e-5,
+    weight_decouple=True,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
@@ -213,6 +206,7 @@ train_params = dict(
     enable_model_summary=False,
     detect_anomaly=False,
     logger=logger,
+    enable_checkpointing=True,
     callbacks=[],
 )
 
@@ -449,16 +443,16 @@ class Generator:
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if args.device.startswith("cuda"):
-            input_ids = input_ids.to(int(args.device.split(":")[1]))
+            input_ids = input_ids.to(device)
 
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.95,
+            temperature=0.7,
             eta_cutoff=0.002,
             penalty_alpha=0.6,
             top_k=4,
-            repetition_penalty=1.5,
+            repetition_penalty=1.35,
         )
         combined = {**defaults, **kwargs}
         if "prompt" in combined:
@@ -487,7 +481,22 @@ class Generator:
         return return_text
 
 
+# Define checkpointing behavior
+checkpoint_callback = ModelCheckpoint(
+    every_n_train_steps=50,
+    save_top_k=3,
+    monitor="step",
+    mode="max",
+    dirpath="{cache_dir}/praxis",
+    filename="model-{step}",
+)
+
+# Bootstrap the model and trainer
 model = AutoModelForCausalLM.from_config(config)
+
+# file_path = "/path/to/your/file.txt"
+# if os.path.exists(file_path):
+#     model = MyLightningModule.load_from_checkpoint("/path/to/checkpoint.ckpt")
 
 print(model)
 
@@ -497,6 +506,7 @@ api_server = APIServer(generator)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 
+train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(TerminalInterface(use_dashboard=use_dashboard))
 
 # create the optimizer
