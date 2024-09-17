@@ -32,7 +32,11 @@ import torch
 import torch.nn as nn
 from datasets import load_dataset
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import Callback, ModelCheckpoint
+from lightning.pytorch.callbacks import (
+    Callback,
+    ModelCheckpoint,
+    StochasticWeightAveraging,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -92,7 +96,7 @@ parser.add_argument(
     "--cache_dir",
     type=str,
     nargs="+",
-    default="./data",
+    default="data",
     help="Paths to a directory where artifacts will be saved (default: ./data)",
 )
 parser.add_argument(
@@ -122,7 +126,7 @@ if args.use_tokenmonster:
     )
     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
-    tokenizer_model = "NousResearch/Llama-2-7b-hf"
+    tokenizer_model = "UNSAFE/praxis-8192"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 
 # System args
@@ -161,7 +165,9 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 # Training data config
 possibilities = [
     dict(repo="HuggingFaceFW/fineweb", key="text"),
-    # dict(repo="open-phi/textbooks", key="markdown"),
+    dict(
+        repo="togethercomputer/RedPajama-Data-V2", key="raw_content", subset="default"
+    ),
 ]
 dataset_config = random.sample(possibilities, 1)[0]
 
@@ -171,7 +177,7 @@ max_feed_chars = 2048
 
 # Predictions
 prompt_text = tokenizer.bos_token
-predict_interval = 30
+predict_interval = 5
 predict_tokens = 1
 
 # Optimizer configuration
@@ -327,14 +333,15 @@ class HuggingfaceDataset(IterableDataset):
     def __init__(self, tokenizer: PreTrainedTokenizer, config: Dict, block_size: int):
         self.tokenizer = tokenizer
         self.block_size = block_size
+        self.key = config.get("key", "text")
         self.dataset = load_dataset(
             config.get("repo", "HuggingFaceFW/fineweb"),
+            subset=config.get("subset", None),
             split="train",
             streaming=True,
             cache_dir="./tmp/pile",
             trust_remote_code=True,
         )
-        self.key = config.get("key", "text")
 
         self.cached_text = ""
 
@@ -512,6 +519,7 @@ api_url = api_server.get_url() + "/generate"
 
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(TerminalInterface(use_dashboard=use_dashboard))
+# train_params["callbacks"].append(StochasticWeightAveraging(swa_lrs=1e-2))
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
