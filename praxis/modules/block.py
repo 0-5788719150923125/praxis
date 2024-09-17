@@ -7,7 +7,6 @@ from hivemind import DHT
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server.layers import name_to_block
 from hivemind.utils import BatchTensorDescriptor
-from torch.amp import custom_bwd, custom_fwd
 
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
@@ -50,14 +49,19 @@ class PraxisBlock(nn.Module):
             )
 
         relay = DHTSingleton.get_instance()
-
         server = Server(
             relay.get_dht(),
             experts,
             num_connection_handlers=1,
         )
+
         server.start()
-        server.ready.wait()
+        server.ready.wait(timeout=5.0)
+
+        while not server.ready.is_set():
+            print("server was not ready, trying again")
+            server.start()
+            server.ready.wait(timeout=5.0)
 
         self.dht = DHT(
             initial_peers=relay.get_visible_maddrs(),
@@ -67,10 +71,10 @@ class PraxisBlock(nn.Module):
             use_ipfs=True,
         )
 
-        self.experts = get_experts(
+        dht_experts = get_experts(
             self.dht, [f"expert.{i}" for i in range(self.n_experts)]
         )
-        self.sparse_experts = PraxisExpert(self.experts, self.k_best)
+        self.experts = PraxisExpert(dht_experts, self.k_best)
 
     def forward(self, x, attention_mask=None):
         residual = x
@@ -90,7 +94,7 @@ class PraxisBlock(nn.Module):
         flat_x = x.reshape(-1, input_size)
         flat_top_k_indices = top_k_indices.reshape(-1, self.k_best)
 
-        expert_outputs = self.sparse_experts(flat_x, flat_top_k_indices)
+        expert_outputs = self.experts(flat_x, flat_top_k_indices)
         output = expert_outputs.view(self.k_best, batch_size, seq_len, input_size)
 
         weighted_output = output * top_k_scores.permute(2, 0, 1).unsqueeze(-1)
@@ -115,6 +119,7 @@ class PraxisExpert(nn.Module):
 
 
 class PraxisExpertGradFunction(torch.autograd.Function):
+
     @staticmethod
     def forward(ctx, inputs, expert_indices, experts, num_experts, k):
         ctx.save_for_backward(inputs, expert_indices)

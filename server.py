@@ -164,9 +164,10 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 
 # Training data config
 possibilities = [
-    dict(repo="HuggingFaceFW/fineweb", key="text"),
+    # dict(path="open-phi/textbooks", key="markdown")
+    dict(path="HuggingFaceFW/fineweb", key="text"),
     dict(
-        repo="togethercomputer/RedPajama-Data-V2", key="raw_content", subset="default"
+        path="togethercomputer/RedPajama-Data-V2", key="raw_content", subset="default"
     ),
 ]
 dataset_config = random.sample(possibilities, 1)[0]
@@ -265,7 +266,7 @@ class TerminalInterface(Callback):
     def __init__(self, use_dashboard=False):
         super().__init__()
         self.ema = 0
-        self.alpha = 5e-3
+        self.alpha = 1e-2
         self.last_time = datetime.now()
         self.text = prompt_text
         self.max_length = max_feed_chars
@@ -334,15 +335,18 @@ class HuggingfaceDataset(IterableDataset):
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.key = config.get("key", "text")
-        self.dataset = load_dataset(
-            config.get("repo", "HuggingFaceFW/fineweb"),
-            subset=config.get("subset", None),
+        dataset_args = dict(
+            path=config.get("path", "HuggingFaceFW/fineweb"),
             split="train",
             streaming=True,
             cache_dir="./tmp/pile",
             trust_remote_code=True,
         )
 
+        if "subset" in config:
+            dataset_args["name"] = config["subset"]
+
+        self.dataset = load_dataset(**dataset_args)
         self.cached_text = ""
 
     def __iter__(self):
