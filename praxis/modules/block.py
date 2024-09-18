@@ -118,25 +118,67 @@ class PraxisExpert(nn.Module):
         self.k = k
 
     def forward(self, inputs, expert_indices):
+        return PraxisExpertGradFunction.apply(
+            inputs, expert_indices, self.experts, self.num_experts, self.k
+        )
+
+
+class PraxisExpertGradFunction(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, inputs, expert_indices, experts, num_experts, k):
+        ctx.save_for_backward(inputs, expert_indices)
+        ctx.experts = experts
+        ctx.num_experts = num_experts
+        ctx.k = k
+
         batch_size, seq_len, input_size = (
             inputs.shape if inputs.dim() == 3 else (1, *inputs.shape)
         )
-        k = self.k
         expert_indices = expert_indices.view(batch_size, seq_len, k)
 
         outputs = torch.zeros(batch_size * seq_len, k, input_size, device=inputs.device)
 
         for i in range(k):
-            for expert_idx in range(self.num_experts):
+            for expert_idx in range(num_experts):
                 mask = expert_indices[:, :, i].reshape(-1) == expert_idx
                 if mask.any():
                     expert_input = inputs.view(-1, input_size)[mask]
-                    expert_output = self.experts[expert_idx](expert_input.to("cpu")).to(
+                    expert_output = experts[expert_idx](expert_input.to("cpu")).to(
                         inputs.device
                     )
                     outputs[:, i][mask] = expert_output
 
         return outputs.view(batch_size, seq_len, k, input_size)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        inputs, expert_indices = ctx.saved_tensors
+        experts = ctx.experts
+        num_experts = ctx.num_experts
+        k = ctx.k
+
+        batch_size, seq_len, input_size = (
+            inputs.shape if inputs.dim() == 3 else (1, *inputs.shape)
+        )
+        expert_indices = expert_indices.view(batch_size, seq_len, k)
+
+        d_inputs = torch.zeros_like(inputs)
+
+        for i in range(k):
+            for expert_idx in range(num_experts):
+                mask = expert_indices[:, :, i].reshape(-1) == expert_idx
+                if mask.any():
+                    expert_grad = grad_output.view(-1, k, input_size)[:, i][mask]
+                    with torch.enable_grad():
+                        expert_input = (
+                            inputs.view(-1, input_size)[mask].detach().requires_grad_()
+                        )
+                        expert_output = experts[expert_idx](expert_input.to("cpu"))
+                        expert_output.backward(expert_grad.to("cpu"))
+                        d_inputs.view(-1, input_size)[mask] += expert_input.grad
+
+        return d_inputs, None, None, None, None
 
 
 # PUBLIC_INITIAL_PEERS = [
