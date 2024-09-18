@@ -86,6 +86,12 @@ parser.add_argument(
     help="Batch size to use for training (default: 1)",
 )
 parser.add_argument(
+    "--n_layer",
+    type=int,
+    default=6,
+    help="The number of layers to host (default: 6)",
+)
+parser.add_argument(
     "--data_path",
     type=str,
     nargs="+",
@@ -132,9 +138,9 @@ else:
 # System args
 config = PraxisConfig(
     n_embd=256,
-    n_layer=6,
+    n_layer=args.n_layer,
     n_head=8,
-    n_experts=5,
+    n_experts=3,
     k_best=2,
     target_temperature=0.1,
     annealing_steps=10_000,
@@ -164,11 +170,11 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 
 # Training data config
 possibilities = [
-    # dict(path="open-phi/textbooks", key="markdown")
-    dict(path="HuggingFaceFW/fineweb", key="text"),
-    dict(
-        path="togethercomputer/RedPajama-Data-V2", key="raw_content", subset="default"
-    ),
+    dict(path="open-phi/textbooks", key="markdown")
+    # dict(path="HuggingFaceFW/fineweb", key="text"),
+    # dict(
+    #     path="togethercomputer/RedPajama-Data-V2", key="raw_content", subset="default"
+    # ),
 ]
 dataset_config = random.sample(possibilities, 1)[0]
 
@@ -303,12 +309,13 @@ class TerminalInterface(Callback):
 
         lm.model.eval()
         self.text = generator.generate(self.text, {"max_new_tokens": self.num_tokens})
+        lm.model.train()
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
         self.last_time = datetime.now()
-        lm.model.train()
+
         if self.dashboard:
             self.dashboard.update_status(self.text)
         else:
