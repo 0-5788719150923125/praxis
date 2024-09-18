@@ -172,7 +172,7 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 possibilities = [
     # dict(path="open-phi/textbooks", key="markdown")
     dict(path="HuggingFaceFW/fineweb", key="text"),
-    dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
+    # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
 ]
 dataset_config = random.sample(possibilities, 1)[0]
 

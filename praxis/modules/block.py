@@ -46,6 +46,7 @@ class PraxisBlock(nn.Module):
                     config.n_embd,
                 ),
                 max_batch_size=8192,
+                # start=True,
             )
 
         relay = DHTSingleton.get_instance()

@@ -22,7 +22,7 @@ class PraxisRouter(nn.Module):
             OrderedDict(
                 [
                     ("in", nn.Linear(input_size, self.num_experts)),
-                    ("act", ACT2FN["gelu_new"]),
+                    ("act", ACT2FN["sigmoid"]),
                     ("out", nn.Linear(self.num_experts, self.num_experts)),
                 ]
             )
