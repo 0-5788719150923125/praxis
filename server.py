@@ -170,11 +170,9 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 
 # Training data config
 possibilities = [
-    dict(path="open-phi/textbooks", key="markdown")
-    # dict(path="HuggingFaceFW/fineweb", key="text"),
-    # dict(
-    #     path="togethercomputer/RedPajama-Data-V2", key="raw_content", subset="default"
-    # ),
+    # dict(path="open-phi/textbooks", key="markdown")
+    dict(path="HuggingFaceFW/fineweb", key="text"),
+    dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
 ]
 dataset_config = random.sample(possibilities, 1)[0]
 
@@ -248,6 +246,7 @@ class PraxisTrainer(LightningModule):
         self.log_dict(
             {
                 "loss": loss,
+                "batch": batch_idx,
                 "step": batch_idx // train_params["accumulate_grad_batches"],
             },
             on_step=True,
@@ -293,11 +292,12 @@ class TerminalInterface(Callback):
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema = self._compute_ema_loss(float(loss), self.ema, self.alpha)
 
-        step = trainer.callback_metrics.get("step", 0)
-
         self._generate_sample_text(lm, batch_idx, interval=self.interval)
 
         if self.dashboard:
+            batch = trainer.callback_metrics.get("batch", 0)
+            step = trainer.callback_metrics.get("step", 0)
+            self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_losses(self.ema, random.gauss())
             self.dashboard.update_utilization(lm.model.get_expert_utilization())
@@ -350,8 +350,8 @@ class HuggingfaceDataset(IterableDataset):
             trust_remote_code=True,
         )
 
-        if "subset" in config:
-            dataset_args["name"] = config["subset"]
+        if "name" in config:
+            dataset_args["name"] = config["name"]
 
         self.dataset = load_dataset(**dataset_args)
         self.cached_text = ""

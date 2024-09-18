@@ -61,6 +61,7 @@ class TerminalDashboard:
         self.val_losses = deque(maxlen=max_data_points)
         self.status_text = "Initializing..."
         self.log_buffer = deque(maxlen=max_log_lines)
+        self.batch = 0
         self.step = 0
         self.running = False
         self.lock = Lock()
@@ -144,6 +145,10 @@ class TerminalDashboard:
     def update_step(self, step):
         with self.lock:
             self.step = step
+
+    def update_batch(self, batch):
+        with self.lock:
+            self.batch = batch
 
     def update_url(self, url):
         with self.lock:
@@ -294,7 +299,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f" PRAXIS | Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}, Experts: {self.experts}",
+                    f" PRAXIS | Batch: {int(self.batch)}, Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}, Experts: {self.experts}",
                     width,
                 )
             )
@@ -386,6 +391,7 @@ if __name__ == "__main__":
             val_loss = train_loss + random.uniform(0, 0.05)
             dashboard.update_losses(train_loss, val_loss)
             dashboard.update_status(f"Training... Epoch {epoch}")
+            dashboard.update_batch(batch)
             dashboard.update_step(step)
 
             # Test logging at different levels
