@@ -24,7 +24,7 @@ class PraxisModel(PreTrainedModel):
         self.blocks = nn.ModuleList(
             [PraxisBlock(config) for _ in range(config.n_layer)]
         )
-        self.extra_losses = []
+        self.aux_losses = []
         self.n_experts = config.n_experts
         self.register_buffer("ema_expert_utilization", torch.zeros(self.n_experts))
         self.ema_decay = 0.99
@@ -55,29 +55,30 @@ class PraxisModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        if self.training:
-            total_expert_counts = torch.zeros(
-                self.n_experts, device=hidden_states.device
-            )
+        # if self.training:
+        #     total_expert_counts = torch.zeros(
+        #         self.n_experts, device=hidden_states.device
+        #     )
 
         for block in self.blocks:
-            hidden_states, extra_loss, expert_counts = block(
-                hidden_states, attention_mask
-            )
+            # hidden_states, extra_loss, expert_counts = block(
+            #     hidden_states, attention_mask
+            # )
+            hidden_states, aux_loss = block(hidden_states, attention_mask)
             if self.training:
-                self.extra_losses.append(extra_loss)
-                total_expert_counts += expert_counts
+                self.aux_losses.append(aux_loss)
+                # total_expert_counts += expert_counts
 
         # Update EMA expert utilization
-        if self.training:
-            if self.forward_count == 0:
-                self.ema_expert_utilization = total_expert_counts
-            else:
-                self.ema_expert_utilization = (
-                    self.ema_decay * self.ema_expert_utilization
-                    + (1 - self.ema_decay) * total_expert_counts
-                )
-            self.forward_count += 1
+        # if self.training:
+        #     if self.forward_count == 0:
+        #         self.ema_expert_utilization = total_expert_counts
+        #     else:
+        #         self.ema_expert_utilization = (
+        #             self.ema_decay * self.ema_expert_utilization
+        #             + (1 - self.ema_decay) * total_expert_counts
+        #         )
+        #     self.forward_count += 1
 
         output_shape = input_shape + (hidden_states.size(-1),)
         return BaseModelOutputWithPast(
@@ -150,9 +151,9 @@ class PraxisForCausalLM(PraxisModel):
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
             )
-            loss += sum(self.extra_losses)
+            loss += sum(self.aux_losses)
 
-        self.extra_losses = []
+        self.aux_losses = []
 
         if not return_dict:
             output = (logits,) + transformer_outputs[1:]

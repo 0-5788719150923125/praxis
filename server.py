@@ -158,7 +158,7 @@ config = PraxisConfig(
 # Batch config
 hparams = dict(
     batch_size=args.batch_size,
-    target_batch_size=32,
+    target_batch_size=64,
     block_size=256,
 )
 calculate_grad_accumulation = lambda batch_size, target_batch_size: (
@@ -182,14 +182,14 @@ max_feed_chars = 2048
 
 # Predictions
 prompt_text = tokenizer.bos_token
-predict_interval = 5
+predict_interval = 3
 predict_tokens = 1
 
 # Optimizer configuration
 optimizer_config = dict(
     optimizer_name="AdEMAMix",
     lr=1e-3,
-    weight_decay=1e-5,
+    weight_decay=1e-2,
     weight_decouple=True,
     wd_ban_list=[
         "bias",
@@ -300,7 +300,7 @@ class TerminalInterface(Callback):
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_losses(self.ema, random.gauss())
-            self.dashboard.update_utilization(lm.model.get_expert_utilization())
+            # self.dashboard.update_utilization(lm.model.get_expert_utilization())
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
@@ -466,7 +466,7 @@ class Generator:
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.7,
+            temperature=0.3,
             eta_cutoff=0.002,
             penalty_alpha=0.6,
             top_k=4,
