@@ -301,6 +301,8 @@ class TerminalInterface(Callback):
         if self.dashboard:
             batch = trainer.callback_metrics.get("batch", 0)
             step = trainer.callback_metrics.get("step", 0)
+            total_params = sum(p.numel() for p in lm.model.parameters())
+            self.dashboard.update_params(total_params)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_losses(self.ema, random.gauss())

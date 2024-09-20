@@ -73,6 +73,7 @@ class TerminalDashboard:
         self.start_time = datetime.now()
         self.url = "N/A"
         self.experts = ""
+        self.total_params = ""
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -136,6 +137,11 @@ class TerminalDashboard:
         self.running = False
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
+
+    def update_params(self, total_params):
+        with self.lock:
+            reduced = int(total_params / 10**6)
+            self.total_params = f"{reduced}M"
 
     def update_losses(self, train_loss, val_loss):
         with self.lock:
@@ -299,7 +305,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f" PRAXIS | Batch: {int(self.batch)}, Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}{self.experts}",
+                    f" PRAXIS | {str(self.total_params)} | Batch: {int(self.batch)}, Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}",
                     width,
                 )
             )
