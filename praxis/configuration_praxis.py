@@ -6,19 +6,13 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        n_embd=768,
+        n_dim=768,
         n_layer=12,
         n_head=12,
         activation_function="mish",
-        attn_pdrop=0,
-        resid_pdrop=0,
-        embd_pdrop=0,
         rms_norm_epsilon=1e-5,
         initializer_range=0.02,
-        n_experts=3,
-        k_best=2,
-        target_temperature=0.9,
-        annealing_steps=10_000,
+        capacity=0.25,
         vocab_size=32000,
         pad_token_id=0,
         bos_token_id=1,
@@ -35,18 +29,12 @@ class PraxisConfig(PretrainedConfig):
         )
 
         self.vocab_size = vocab_size
-        self.n_embd = n_embd
+        self.n_dim = n_dim
         self.n_layer = n_layer
         self.n_head = n_head
         self.activation_function = activation_function
-        self.attn_pdrop = attn_pdrop
-        self.resid_pdrop = resid_pdrop
-        self.embd_pdrop = embd_pdrop
         self.rms_norm_epsilon = rms_norm_epsilon
         self.initializer_range = initializer_range
-        self.n_experts = n_experts
-        self.k_best = k_best
-        self.target_temperature = target_temperature
-        self.annealing_steps = annealing_steps
+        self.capacity = capacity
         self.use_cache = False
         self.causal = False

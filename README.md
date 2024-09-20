@@ -38,8 +38,10 @@ Supported arguments:
 python server.py \
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
+  --batch_size 8 \               # Set the batch size to use for training.
   --no_dashboard \               # Disables the CLI interface.
-  --use_tokenmonster             # Replace the LLaMA-2 tokenizer with TokenMonster.
+  --use_tokenmonster \           # Replace the LLaMA-2 tokenizer with TokenMonster.
+  --dev                          # Launch with settings that bootstrap faster (1 layer, smaller dataset, etc.)
 ```
 
 ## join us
@@ -81,7 +83,7 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 config = PraxisConfig(
-    n_embd=256,
+    n_dim=256,
     n_layer=6,
     n_head=8,
     device_map="cuda:0",

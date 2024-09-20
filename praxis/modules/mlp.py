@@ -15,9 +15,9 @@ class PraxisMLP(nn.Module):
         self.network = nn.Sequential(
             OrderedDict(
                 [
-                    ("in_proj", nn.Linear(config.n_embd, 4 * config.n_embd)),
+                    ("in_proj", nn.Linear(config.n_dim, 4 * config.n_dim)),
                     ("act", ACT2FN[config.activation_function]),
-                    ("out_proj", nn.Linear(4 * config.n_embd, config.n_embd)),
+                    ("out_proj", nn.Linear(4 * config.n_dim, config.n_dim)),
                 ]
             )
         )

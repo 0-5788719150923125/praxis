@@ -11,6 +11,7 @@ from transformers.modeling_outputs import (
 
 from .configuration_praxis import PraxisConfig
 from .modules.block import PraxisBlock
+from .modules.router import PraxisMixtureOfDepths
 
 
 class PraxisModel(PreTrainedModel):
@@ -19,16 +20,20 @@ class PraxisModel(PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
-        self.n_embd = config.n_embd
-        self.wte = nn.Embedding(config.vocab_size, config.n_embd)
-        self.blocks = nn.ModuleList(
-            [PraxisBlock(config) for _ in range(config.n_layer)]
-        )
+        self.n_dim = config.n_dim
+        self.wte = nn.Embedding(config.vocab_size, config.n_dim)
+        self.layers = []
+        for i in range(config.n_layer):
+            use_router = False
+            if i % 2 == 0:
+                use_router = True
+            self.layers.append(
+                PraxisMixtureOfDepths(
+                    PraxisBlock(config), use_router, config.n_dim, config.capacity
+                )
+            )
+        self.blocks = nn.ModuleList(self.layers)
         self.aux_losses = []
-        self.n_experts = config.n_experts
-        self.register_buffer("ema_expert_utilization", torch.zeros(self.n_experts))
-        self.ema_decay = 0.99
-        self.forward_count = 0
 
     def get_input_embeddings(self):
         return self.wte
@@ -55,30 +60,10 @@ class PraxisModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        # if self.training:
-        #     total_expert_counts = torch.zeros(
-        #         self.n_experts, device=hidden_states.device
-        #     )
-
         for block in self.blocks:
-            # hidden_states, extra_loss, expert_counts = block(
-            #     hidden_states, attention_mask
-            # )
             hidden_states, aux_loss = block(hidden_states, attention_mask)
             if self.training:
                 self.aux_losses.append(aux_loss)
-                # total_expert_counts += expert_counts
-
-        # Update EMA expert utilization
-        # if self.training:
-        #     if self.forward_count == 0:
-        #         self.ema_expert_utilization = total_expert_counts
-        #     else:
-        #         self.ema_expert_utilization = (
-        #             self.ema_decay * self.ema_expert_utilization
-        #             + (1 - self.ema_decay) * total_expert_counts
-        #         )
-        #     self.forward_count += 1
 
         output_shape = input_shape + (hidden_states.size(-1),)
         return BaseModelOutputWithPast(
@@ -88,20 +73,12 @@ class PraxisModel(PreTrainedModel):
             attentions=None,
         )
 
-    def get_expert_utilization(self):
-        if self.forward_count == 0:
-            return None
-        utilization = self.ema_expert_utilization.cpu().numpy()
-        # Convert to percentages
-        utilization_percentages = (utilization / np.sum(utilization)) * 100
-        return utilization_percentages
-
 
 class PraxisForCausalLM(PraxisModel):
     def __init__(self, config):
         config.causal = True
         super().__init__(config)
-        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.head = nn.Linear(config.n_dim, config.vocab_size, bias=False)
 
     def get_output_embeddings(self):
         return self.head

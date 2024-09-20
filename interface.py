@@ -156,7 +156,7 @@ class TerminalDashboard:
 
     def update_utilization(self, utilization_percentages):
         with self.lock:
-            self.experts = (
+            self.experts = ", Experts: " + (
                 "[ "
                 + ", ".join(
                     f"'{i}': {percentage:.1f}%"
@@ -299,7 +299,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f" PRAXIS | Batch: {int(self.batch)}, Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}, Experts: {self.experts}",
+                    f" PRAXIS | Batch: {int(self.batch)}, Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}{self.experts}",
                     width,
                 )
             )

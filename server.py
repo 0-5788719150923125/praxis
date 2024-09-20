@@ -86,12 +86,6 @@ parser.add_argument(
     help="Batch size to use for training (default: 1)",
 )
 parser.add_argument(
-    "--n_layer",
-    type=int,
-    default=6,
-    help="The number of layers to host (default: 6)",
-)
-parser.add_argument(
     "--data_path",
     type=str,
     nargs="+",
@@ -117,6 +111,12 @@ parser.add_argument(
     default=False,
     help="Use TokenMonster (default: False)",
 )
+parser.add_argument(
+    "--dev",
+    action="store_true",
+    default=False,
+    help="Run with settings that make bootstrap faster (default: False)",
+)
 
 args = parser.parse_args()
 
@@ -124,6 +124,7 @@ use_dashboard = False if args.no_dashboard else True
 device = args.device if args.device else "cpu"
 data_path = args.data_path
 cache_dir = args.cache_dir
+dev = args.dev
 
 if args.use_tokenmonster:
     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
@@ -137,8 +138,8 @@ else:
 
 # System args
 config = PraxisConfig(
-    n_embd=256,
-    n_layer=args.n_layer,
+    n_dim=512,
+    n_layer=12 if not dev else 1,
     n_head=8,
     n_experts=3,
     k_best=2,
@@ -169,16 +170,19 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 )
 
 # Training data config
-possibilities = [
-    # dict(path="open-phi/textbooks", key="markdown")
-    dict(path="HuggingFaceFW/fineweb", key="text"),
-    # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
-]
+if dev:
+    possibilities = [dict(path="open-phi/textbooks", key="markdown")]
+else:
+    possibilities = [
+        dict(path="HuggingFaceFW/fineweb", key="text"),
+        # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
+    ]
 dataset_config = random.sample(possibilities, 1)[0]
 
-# Dashboard config
+# Misc config
 max_data_points = 10000
 max_feed_chars = 2048
+save_every = 1000
 
 # Predictions
 prompt_text = tokenizer.bos_token
@@ -501,7 +505,7 @@ class Generator:
 
 # Define checkpointing behavior
 checkpoint_callback = ModelCheckpoint(
-    every_n_train_steps=50,
+    every_n_train_steps=save_every,
     save_top_k=2,
     save_last="link",
     monitor="step",

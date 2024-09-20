@@ -16,15 +16,15 @@ from .router import PraxisRouter
 class PraxisBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.attn_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.rms_norm_epsilon)
         self.attn = PraxisAttention(config)
 
         self.n_experts = config.n_experts
         self.k_best = config.k_best
 
-        self.mlp_norm = nn.RMSNorm(config.n_embd, eps=config.rms_norm_epsilon)
+        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.rms_norm_epsilon)
         self.router = PraxisRouter(
-            config.n_embd,
+            config.n_dim,
             self.n_experts,
             self.k_best,
             config.target_temperature,
@@ -39,11 +39,11 @@ class PraxisBlock(nn.Module):
                 module=expert,
                 args_schema=(
                     BatchTensorDescriptor(
-                        config.n_embd,
+                        config.n_dim,
                     ),
                 ),
                 outputs_schema=BatchTensorDescriptor(
-                    config.n_embd,
+                    config.n_dim,
                 ),
                 max_batch_size=8192,
                 # start=True,
