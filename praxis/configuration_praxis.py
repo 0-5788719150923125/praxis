@@ -6,14 +6,14 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        n_dim=768,
-        n_emb=1024,
+        n_dim=256,
+        n_emb=512,
         n_layer=12,
-        n_head=12,
+        n_head=8,
         activation="mish",
         epsilon=1e-6,
         capacity=0.125,
-        vocab_size=32000,
+        vocab_size=8192,
         context_length=1024,
         pad_token_id=0,
         bos_token_id=1,
