@@ -154,7 +154,7 @@ config = PraxisConfig(
 # Batch config
 hparams = dict(
     batch_size=args.batch_size,
-    target_batch_size=512,
+    target_batch_size=128,
     block_size=256,
 )
 calculate_grad_accumulation = lambda batch_size, target_batch_size: (
@@ -301,7 +301,6 @@ class TerminalInterface(Callback):
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_losses(self.ema, random.gauss())
-            # self.dashboard.update_utilization(lm.model.get_expert_utilization())
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
