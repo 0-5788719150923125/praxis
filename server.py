@@ -39,23 +39,13 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-    TokenMonsterConfig,
-    TokenMonsterTokenizer,
-)
+from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
+                    TokenMonsterConfig, TokenMonsterTokenizer)
 
 # Register and configure environment
 disable_possible_user_warnings()
@@ -163,11 +153,10 @@ population = [
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/100BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/350BT"),
 ]
-weights = [1, 0, 0, 0] if dev else [0, 0.333, 0.666666, 1.0]
+weights = [1, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333]
 dataset_choice = random.choices(population, weights, k=1)[0]
 
 # Misc config
-max_data_points = 10000
 max_feed_chars = 2048
 save_every = 1000
 save_top_k = 3
@@ -230,7 +219,7 @@ class PraxisTrainer(LightningModule):
         self.model, self.optimizer = (model, optimizer)
 
         self.automatic_optimization = True
-        self.batch_size = hparams["batch_size"]
+        # self.batch_size = hparams["batch_size"]
         self.save_hyperparameters(ignore=["model", "optimizer"])
 
     def forward(self, inputs):
@@ -240,6 +229,8 @@ class PraxisTrainer(LightningModule):
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
+        batch_size, _, _ = outputs.shape
+
         self.log_dict(
             {
                 "loss": loss,
@@ -247,9 +238,8 @@ class PraxisTrainer(LightningModule):
                 "step": int(batch_idx // train_params["accumulate_grad_batches"]),
             },
             on_step=True,
-            on_epoch=True,
             logger=True,
-            batch_size=self.batch_size,
+            batch_size=batch_size,
             prog_bar=True,
         )
 
@@ -265,10 +255,10 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
-    def __init__(self, use_dashboard=False):
+    def __init__(self, use_dashboard=False, api_url=None):
         super().__init__()
-        self.ema = 0
         self.alpha = 1e-2
+        self.ema_loss = 0
         self.last_time = datetime.now()
         self.text = prompt_text
         self.max_length = max_feed_chars
@@ -276,6 +266,7 @@ class TerminalInterface(Callback):
         self.num_tokens = predict_tokens
         self.dashboard = False
         if use_dashboard:
+            max_data_points = 10000
             self.dashboard = TerminalDashboard(max_data_points)
             try:
                 self.dashboard.start()
@@ -287,7 +278,7 @@ class TerminalInterface(Callback):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
 
         loss = trainer.callback_metrics.get("loss", 0)
-        self.ema = self._compute_ema_loss(float(loss), self.ema, self.alpha)
+        self.ema_loss = self._compute_ema_loss(float(loss), self.ema_loss, self.alpha)
 
         self._generate_sample_text(lm, batch_idx, interval=self.interval)
 
@@ -298,7 +289,7 @@ class TerminalInterface(Callback):
             self.dashboard.update_params(total_params)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
-            self.dashboard.update_losses(self.ema, random.gauss())
+            self.dashboard.update_losses(self.ema_loss, random.gauss())
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
@@ -306,7 +297,9 @@ class TerminalInterface(Callback):
             return
 
         lm.model.eval()
+
         self.text = generator.generate(self.text, {"max_new_tokens": self.num_tokens})
+
         lm.model.train()
 
         while len(self.text) > self.max_length:
@@ -531,7 +524,7 @@ api_server.start()
 api_url = api_server.get_url() + "/generate"
 
 train_params["callbacks"].append(checkpoint_callback)
-train_params["callbacks"].append(TerminalInterface(use_dashboard=use_dashboard))
+train_params["callbacks"].append(TerminalInterface(use_dashboard, api_url))
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
