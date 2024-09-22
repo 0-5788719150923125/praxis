@@ -99,21 +99,6 @@ class PraxisMixtureOfDepths(nn.Module):
             router_logits.view(-1), router_targets
         )
 
-    # def aux_loss(self, x: Tensor, router_logits: Tensor, selected_tokens: Tensor):
-    #     batch_size, seq_len, dim = x.shape
-    #     # Page 7, Section 3.5 sampling
-    #     router_targets = torch.zeros_like(router_logits).view(
-    #         -1
-    #     )  # i think torch to scatter will work here TODO
-    #     router_targets[selected_tokens.view(-1)] = 1.0
-    #     aux_router_logits = self.aux_router(x.detach().view(batch_size * seq_len, -1))
-    #     # aux_router_logits = F.sigmoid(aux_router_logits)  # keep output in range [0,1)
-    #     # RuntimeError: torch.nn.functional.binary_cross_entropy and torch.nn.BCELoss are unsafe to autocast.
-    #     # so binary_cross_entropy_with_logits == sigmoid + bce_loss
-    #     return F.binary_cross_entropy_with_logits(
-    #         aux_router_logits.view(-1), router_targets
-    #     )
-
 
 # This uses expert-choice routing, which was greatly preferred by the
 # original authors: https://arxiv.org/abs/2404.02258

@@ -11,6 +11,7 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
+        self.max_seq_len = config.context_length
         self.hidden_size = config.n_dim
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
@@ -26,14 +27,12 @@ class PraxisAttention(nn.Module):
         self.out = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
-        # Define maximum sequence length
-        max_seq_len = config.context_length
 
         # Precompute the slopes for ALiBi
         self.register_buffer("m", self._get_alibi_slope(self.num_heads))
 
         # Precompute the relative positions for the maximum sequence length
-        relative_positions = self._get_relative_positions(max_seq_len)
+        relative_positions = self._get_relative_positions(self.max_seq_len)
         # Compute the biases and store them
         self.register_buffer("alibi_bias", self.m * relative_positions)
 
@@ -91,12 +90,6 @@ class PraxisAttention(nn.Module):
         bias = self.alibi_bias[:, :seq_len, :seq_len].to(scores.device)
         # Add biases to the scores
         scores = scores + bias
-
-        # # Apply ALiBi bias
-        # bias = (self.m * self._get_relative_positions(seq_len).to(x.device)).unsqueeze(
-        #     0
-        # )
-        # scores = scores - bias
 
         # Apply the causal mask
         if self.causal:
