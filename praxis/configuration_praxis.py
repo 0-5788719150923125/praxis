@@ -9,10 +9,9 @@ class PraxisConfig(PretrainedConfig):
         n_dim=768,
         n_layer=12,
         n_head=12,
-        activation_function="mish",
-        rms_norm_epsilon=1e-6,
-        initializer_range=0.02,
-        capacity=0.5,
+        activation="mish",
+        epsilon=1e-6,
+        capacity=0.125,
         vocab_size=32000,
         pad_token_id=0,
         bos_token_id=1,
@@ -32,9 +31,8 @@ class PraxisConfig(PretrainedConfig):
         self.n_dim = n_dim
         self.n_layer = n_layer
         self.n_head = n_head
-        self.activation_function = activation_function
-        self.rms_norm_epsilon = rms_norm_epsilon
-        self.initializer_range = initializer_range
+        self.activation = activation
+        self.epsilon = epsilon
         self.capacity = capacity
         self.use_cache = False
         self.causal = False

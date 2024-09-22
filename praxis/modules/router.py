@@ -75,7 +75,7 @@ class PraxisMixtureOfDepths(nn.Module):
         r_weights = torch.gather(token_weights, dim=1, index=index)
 
         # pass the selected tokens through the transformer block
-        outputs = self.block(filtered_x, attention_mask=mask, weights=r_weights)
+        outputs = self.block(filtered_x, attention_mask=mask, router_weights=r_weights)
 
         # re-combine the selected tokens and residual tokens
         hidden_states = torch.scatter(

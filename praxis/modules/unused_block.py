@@ -16,13 +16,13 @@ from .router import PraxisRouter
 class PraxisBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.rms_norm_epsilon)
+        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.attn = PraxisAttention(config)
 
         self.n_experts = config.n_experts
         self.k_best = config.k_best
 
-        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.rms_norm_epsilon)
+        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.router = PraxisRouter(
             config.n_dim,
             self.n_experts,

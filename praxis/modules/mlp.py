@@ -18,7 +18,7 @@ class PraxisMLP(nn.Module):
             OrderedDict(
                 [
                     ("in_proj", nn.Linear(config.n_dim, 4 * config.n_dim)),
-                    ("act", ACT2FN[config.activation_function]),
+                    ("act", ACT2FN[config.activation]),
                     ("out_proj", nn.Linear(4 * config.n_dim, config.n_dim)),
                 ]
             )
