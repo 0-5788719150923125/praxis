@@ -23,20 +23,12 @@ class PraxisMixtureOfDepths(nn.Module):
         super().__init__()
         self.block = block
         self.capacity = config.capacity
-        self.n_dim = config.n_dim
-        self.router = nn.Linear(self.n_dim, 1, bias=False)
-        self.aux_router = nn.Sequential(
-            nn.Linear(self.n_dim, self.n_dim // 2),
-            nn.SiLU(),
-            nn.Linear(self.n_dim // 2, 1),
-        )
+        self.router = nn.Linear(config.n_dim, 1, bias=True)
 
     def forward(
         self,
         x: Tensor,
-        mask,
-        mode="train",
-        auxiliary_loss=False,
+        attention_mask: Tensor,
         *args,
         **kwargs,
     ):
@@ -53,7 +45,7 @@ class PraxisMixtureOfDepths(nn.Module):
 
         #  𝑟𝑙> 𝑃𝛽 (R)  ... eqution 1
         token_weights, token_index = torch.topk(
-            router_logits, top_k, dim=1, sorted=False
+            torch.sigmoid(router_logits), top_k, dim=1, sorted=False
         )
 
         # since its auto regressive model we need to keep casual nature of it
@@ -75,7 +67,9 @@ class PraxisMixtureOfDepths(nn.Module):
         r_weights = torch.gather(token_weights, dim=1, index=index)
 
         # pass the selected tokens through the transformer block
-        outputs = self.block(filtered_x, attention_mask=mask, router_weights=r_weights)
+        outputs = self.block(
+            filtered_x, attention_mask=attention_mask, router_weights=r_weights
+        )
 
         # re-combine the selected tokens and residual tokens
         hidden_states = torch.scatter(

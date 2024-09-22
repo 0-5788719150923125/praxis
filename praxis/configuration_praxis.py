@@ -13,7 +13,7 @@ class PraxisConfig(PretrainedConfig):
         epsilon=1e-6,
         capacity=0.125,
         vocab_size=32000,
-        context_length=2048,
+        context_length=1024,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,

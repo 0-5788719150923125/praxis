@@ -6,13 +6,13 @@ from .block import PraxisBlock
 from .router import PraxisMixtureOfDepths
 
 
-class PraxisStack(nn.Module):
+class PraxisDecoder(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         layers = []
         for i in range(config.n_layer):
-            odd = i % 2 != 0
-            if odd:
+            layer_is_odd = i % 2 != 0
+            if layer_is_odd:
                 layers.append(PraxisMixtureOfDepths(PraxisBlock(config), config))
             else:
                 layers.append(PraxisBlock(config))

@@ -10,7 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from .configuration_praxis import PraxisConfig
-from .modules.stack import PraxisStack
+from .modules.decoder import PraxisDecoder
 
 
 class PraxisModel(PreTrainedModel):
@@ -21,7 +21,7 @@ class PraxisModel(PreTrainedModel):
         self.config = config
         self.n_dim = config.n_dim
         self.wte = nn.Embedding(config.vocab_size, config.n_dim)
-        self.stack = PraxisStack(config)
+        self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
     def get_input_embeddings(self):
@@ -48,7 +48,7 @@ class PraxisModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        outputs = self.stack(hidden_states, attention_mask)
+        outputs = self.decoder(hidden_states, attention_mask)
 
         if self.training:
             self.aux_losses.append(outputs["aux_loss"])
@@ -126,13 +126,4 @@ class PraxisForCausalLM(PraxisModel):
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
-        )
-
-    @staticmethod
-    def _reorder_cache(
-        past: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor
-    ) -> Tuple[Tuple[torch.Tensor]]:
-        return tuple(
-            tuple(past_state.index_select(0, beam_idx) for past_state in layer_past)
-            for layer_past in past
         )
