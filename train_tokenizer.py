@@ -48,7 +48,7 @@ tokenizer = Tokenizer(
         unk_token=unk_token,
         byte_fallback=True,
         fuse_unk=True,
-        cache_capacity=65536,
+        cache_capacity=4096,
     )
 )
 
@@ -68,8 +68,8 @@ trainer = trainers.BpeTrainer(
 
 tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     [
-        pre_tokenizers.Punctuation(behavior="isolated"),
         pre_tokenizers.Digits(individual_digits=True),
+        pre_tokenizers.Punctuation(behavior="isolated"),
         pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True),
     ]
 )

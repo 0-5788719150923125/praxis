@@ -141,7 +141,7 @@ class TerminalDashboard:
     def update_params(self, total_params):
         with self.lock:
             reduced = int(total_params / 10**6)
-            self.total_params = f"{reduced}M"
+            self.total_params = f" | {reduced}M"
 
     def update_losses(self, train_loss, val_loss):
         with self.lock:
@@ -305,7 +305,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f" PRAXIS | {str(self.total_params)} | Batch: {int(self.batch)}, Step: {int(self.step)}, Elapsed: {elapsed:.2f}h, URL: {self.url}",
+                    f" PRAXIS{str(self.total_params)} | Batch: {int(self.batch)}, Step: {int(self.step)} | Elapsed: {elapsed:.2f}h | URL: {self.url}",
                     width,
                 )
             )

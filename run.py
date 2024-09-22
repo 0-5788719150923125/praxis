@@ -142,6 +142,7 @@ config = PraxisConfig(
     n_layer=12 if not dev else 3,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
+    context_length=2048,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -154,7 +155,7 @@ config = PraxisConfig(
 # Training and model
 hparams = dict(
     batch_size=args.batch_size,
-    target_batch_size=128,
+    target_batch_size=64,
     block_size=256,
 )
 
