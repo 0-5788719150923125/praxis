@@ -26,8 +26,6 @@ bos_token = "[BOS]"
 eos_token = "[EOS]"
 unk_token = "[UNK]"
 
-num_examples = 1_000_000
-
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
     name="sample-10BT",
@@ -41,6 +39,7 @@ dataset = load_dataset(
 )
 
 column = "text"
+num_examples = 10_000_000
 iterator = islice((item[column] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
