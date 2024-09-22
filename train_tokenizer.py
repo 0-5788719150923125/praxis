@@ -3,15 +3,24 @@ from itertools import islice
 from typing import List, Union
 
 from datasets import load_dataset
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers, processors, trainers
+from tokenizers import (
+    Tokenizer,
+    decoders,
+    models,
+    normalizers,
+    pre_tokenizers,
+    processors,
+    trainers,
+)
 from transformers import PreTrainedTokenizerFast
 
+seed = 59
 save_path = "data/praxis"
 
 vocab_size = 8192
 dropout = 0.1
-min_frequency = 2
-max_token_length = 5
+min_frequency = 3
+max_token_length = 7
 
 pad_token = "[PAD]"
 bos_token = "[BOS]"
@@ -21,26 +30,27 @@ unk_token = "[UNK]"
 train_steps = 10_000_000
 
 dataset = load_dataset(
-    "HuggingFaceFW/fineweb",
+    "HuggingFaceFW/fineweb-edu",
+    name="sample-10BT",
     split="train",
     streaming=True,
     cache_dir="./tmp/pile",
     trust_remote_code=True,
 ).shuffle(
-    seed=42,
+    seed=seed,
     buffer_size=100_000,
 )
 
-key = "text"
-
-data = islice((item[key] for item in dataset), train_steps)
+column = "text"
+iterator = islice((item[key] for item in dataset), train_steps)
 
 tokenizer = Tokenizer(
     models.BPE(
         dropout=dropout,
-        byte_fallback=True,
         unk_token=unk_token,
+        byte_fallback=True,
         fuse_unk=True,
+        cache_capacity=65536,
     )
 )
 
@@ -59,12 +69,16 @@ trainer = trainers.BpeTrainer(
 
 tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     [
+        pre_tokenizers.Punctuation(behavior="isolated"),
+        pre_tokenizers.Whitespace(),
         pre_tokenizers.Digits(individual_digits=True),
         pre_tokenizers.ByteLevel(
             add_prefix_space=False, trim_offsets=True, use_regex=True
         ),
     ]
 )
+
+tokenizer.normalizer = normalizers.NFD()
 
 tokenizer.decoder = decoders.ByteLevel(
     add_prefix_space=True, trim_offsets=True, use_regex=True
@@ -74,7 +88,7 @@ tokenizer.post_processor = processors.ByteLevel(
     add_prefix_space=True, trim_offsets=True, use_regex=True
 )
 
-tokenizer.train_from_iterator(iterator=data, trainer=trainer, length=train_steps)
+tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=train_steps)
 
 trained_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
 

@@ -164,15 +164,15 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
     hparams["batch_size"], hparams["target_batch_size"]
 )
 
-# Training data config
-if dev:
-    possibilities = [dict(path="open-phi/textbooks", key="markdown")]
-else:
-    possibilities = [
-        dict(path="HuggingFaceFW/fineweb", key="text"),
-        # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
-    ]
-dataset_config = random.sample(possibilities, 1)[0]
+# Training data mixing
+population = [
+    dict(path="open-phi/textbooks", key="markdown"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/100BT"),
+    # dict(path="HuggingFaceFW/fineweb", key="text"),
+    # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
+]
+weights = [1, 0] if dev else [0, 1]
+dataset_choice = random.choices(population, weights, k=1)[0]
 
 # Misc config
 max_data_points = 10000
