@@ -83,20 +83,20 @@ class PraxisMixtureOfDepths(nn.Module):
         )
 
         # compute aux loss, in order to maintain causality
-        aux_loss = self.aux_loss(x, router_logits, selected_tokens)
+        aux_loss = self.aux_loss(router_logits, selected_tokens)
 
         return dict(hidden_states=hidden_states, aux_loss=aux_loss)
 
-    def aux_loss(self, x: Tensor, router_logits: Tensor, selected_tokens: Tensor):
+    def aux_loss(self, router_logits: torch.Tensor, selected_tokens: torch.Tensor):
         # Page 7, Section 3.5 sampling
-        router_targets = torch.zeros_like(router_logits).view(
-            -1
-        )  # i think torch to scatter will work here TODO
-        router_targets[selected_tokens.view(-1)] = 1.0
+        router_targets = torch.zeros_like(router_logits)
+
+        # Use scatter_ to set the selected positions to 1.0
+        router_targets.scatter_(1, selected_tokens, 1.0)
 
         # binary_cross_entropy_with_logits == sigmoid + bce_loss
         return F.binary_cross_entropy_with_logits(
-            router_logits.view(-1), router_targets
+            router_logits.view(-1), router_targets.view(-1)
         )
 
 
