@@ -83,13 +83,11 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 config = PraxisConfig(
-    n_dim=256,
+    n_emb=512,
+    n_dim=384,
     n_layer=6,
     n_head=8,
     device_map="cuda:0",
-    pad_token_id=0,
-    bos_token_id=1,
-    eos_token_id=2,
 )
 
 tokenizer_model = "NousResearch/Llama-2-7b-hf"
@@ -122,8 +120,9 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - a proper and robust DHT
 - central and persistent relay peers, to act as global initial_peers
 - a routing algorithm with multi-hop support (ping -> pang -> pong -> ping)
-- multi-layer experts
-- peer validation
+- helix, octopi, pyramids
+- multi-level experts
+- peer validation (zero knowledge proofs)
 - self-modeling of remote experts
 
 ## won't do

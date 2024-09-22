@@ -27,7 +27,7 @@ bos_token = "[BOS]"
 eos_token = "[EOS]"
 unk_token = "[UNK]"
 
-num_examples = 10_000_000
+num_examples = 1_000_000
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
@@ -42,7 +42,7 @@ dataset = load_dataset(
 )
 
 column = "text"
-iterator = islice((item[key] for item in dataset), num_examples)
+iterator = islice((item[column] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
     models.BPE(

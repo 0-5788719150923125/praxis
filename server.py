@@ -32,11 +32,7 @@ import torch
 import torch.nn as nn
 from datasets import load_dataset
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    ModelCheckpoint,
-    StochasticWeightAveraging,
-)
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -140,7 +136,7 @@ else:
 # System args
 config = PraxisConfig(
     n_emb=512,
-    n_dim=256,
+    n_dim=384,
     n_layer=12 if not dev else 3,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
@@ -169,17 +165,19 @@ hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
 # Training data mixing
 population = [
     dict(path="open-phi/textbooks", key="markdown"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/10BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/100BT"),
     # dict(path="HuggingFaceFW/fineweb", key="text"),
     # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
 ]
-weights = [1, 0] if dev else [0, 1]
+weights = [1, 0, 0] if dev else [0, 0.333, 0.666666]
 dataset_choice = random.choices(population, weights, k=1)[0]
 
 # Misc config
 max_data_points = 10000
 max_feed_chars = 2048
 save_every = 1000
+save_top_k = 3
 
 # Predictions
 prompt_text = tokenizer.bos_token
@@ -247,8 +245,8 @@ class PraxisTrainer(LightningModule):
         self.log_dict(
             {
                 "loss": loss,
-                "batch": batch_idx,
-                "step": batch_idx // train_params["accumulate_grad_batches"],
+                "batch": int(batch_idx),
+                "step": int(batch_idx // train_params["accumulate_grad_batches"]),
             },
             on_step=True,
             on_epoch=True,
@@ -508,7 +506,7 @@ class Generator:
 # Define checkpointing behavior
 checkpoint_callback = ModelCheckpoint(
     every_n_train_steps=save_every,
-    save_top_k=2,
+    save_top_k=save_top_k,
     save_last="link",
     monitor="step",
     mode="max",
@@ -536,7 +534,6 @@ api_url = api_server.get_url() + "/generate"
 
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(TerminalInterface(use_dashboard=use_dashboard))
-# train_params["callbacks"].append(StochasticWeightAveraging(swa_lrs=1e-2))
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
