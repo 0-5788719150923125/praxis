@@ -11,8 +11,8 @@ class PraxisStack(nn.Module):
         super().__init__()
         layers = []
         for i in range(config.n_layer):
-            even = i % 2 == 0
-            use_router = False if even else True
+            odd = i % 2 != 0
+            use_router = True if odd else False
             if use_router:
                 layers.append(PraxisMixtureOfDepths(PraxisBlock(config), config))
             else:
