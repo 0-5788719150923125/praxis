@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..configuration_praxis import PraxisConfig
+
 
 class PraxisAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
         self.hidden_size = config.n_dim

@@ -1,23 +1,20 @@
 import torch
 import torch.nn as nn
 
+from ..configuration_praxis import PraxisConfig
 from .block import PraxisBlock
 from .router import PraxisMixtureOfDepths
 
 
 class PraxisStack(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
         layers = []
         for i in range(config.n_layer):
             even = i % 2 == 0
             use_router = False if even else True
             if use_router:
-                layers.append(
-                    PraxisMixtureOfDepths(
-                        PraxisBlock(config), config.n_dim, config.capacity
-                    )
-                )
+                layers.append(PraxisMixtureOfDepths(PraxisBlock(config), config))
             else:
                 layers.append(PraxisBlock(config))
         self.blocks = nn.ModuleList(layers)

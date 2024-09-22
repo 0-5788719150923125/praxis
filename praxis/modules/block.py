@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 
+from ..configuration_praxis import PraxisConfig
 from .attention import PraxisAttention
 from .mlp import PraxisMLP
 
 
 class PraxisBlock(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.rms_norm_epsilon)
         self.attn = PraxisAttention(config)

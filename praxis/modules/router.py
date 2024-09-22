@@ -3,7 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from ..configuration_praxis import PraxisConfig
 
+
+# adapted from:
+# https://huggingface.co/blog/joey00072/mixture-of-depth-is-vibe
 class PraxisMixtureOfDepths(nn.Module):
     """
     Paper: https://arxiv.org/abs/2404.02258
@@ -12,15 +16,14 @@ class PraxisMixtureOfDepths(nn.Module):
     def __init__(
         self,
         block: nn.Module = None,
-        n_dim: int = None,
-        capacity_factor: float = None,
+        config: PraxisConfig = None,
         *args,
         **kwargs,
     ):
         super().__init__()
-        self.capacity_factor = capacity_factor
-        self.n_dim = n_dim
         self.block = block
+        self.capacity = config.capacity
+        self.n_dim = config.n_dim
         self.router = nn.Linear(self.n_dim, 1, bias=False)
         self.aux_router = nn.Sequential(
             nn.Linear(self.n_dim, self.n_dim // 2),
@@ -38,13 +41,11 @@ class PraxisMixtureOfDepths(nn.Module):
         **kwargs,
     ):
 
-        batch_size, seq_len, dim = x.shape
+        b, s, d = x.shape
 
-        # if mode == "inference":
-        #     return self.inference(x, *args, **kwargs)
         # S = seq_len, C = capacity  , C = int(seq_length * capacity_factor)
         #  page 6 above eq 1 | ( C<S ) | here top_k = beta
-        top_k = int(seq_len * self.capacity_factor)
+        top_k = int(s * self.capacity)
 
         # eq1 page 6
         # scaler weights for each token
@@ -55,55 +56,36 @@ class PraxisMixtureOfDepths(nn.Module):
             router_logits, top_k, dim=1, sorted=False
         )
 
-        # now we have idx, we can copy this weights to another tensor and pass them to attn+mlp
-
         # since its auto regressive model we need to keep casual nature of it
         # that why we need sort the tokens by idx before we pass it to attn
         selected_tokens, index = torch.sort(token_index, dim=1)
 
         # select idx for copying for original tensor
-        indices_expanded = selected_tokens.expand(-1, -1, dim)
+        indices_expanded = selected_tokens.expand(-1, -1, d)
 
         # This are fillted topk tokens with capactiy C
         filtered_x = torch.gather(
             input=x, dim=1, index=indices_expanded
         )  # -> batch, capacity, dim
 
-        # softmax router weights, aaah
+        # softmax router weights
         token_weights = F.softmax(token_weights, dim=1)
 
-        # selecting router wight by idx ( in sorted maner)
+        # selecting router wight by idx
         r_weights = torch.gather(token_weights, dim=1, index=index)
 
-        # x_out, _ = self.block(filtered_x, weights=r_weights, attention_mask=mask, freqs_cis)
+        # pass the selected tokens through the transformer block
         outputs = self.block(filtered_x, attention_mask=mask, weights=r_weights)
-        # x_out = self.block(filtered_x, attention_mask=mask)
 
-        # # softmax router weights, aaah
-        # token_weights = F.softmax(token_weights, dim=1)
-
-        # # selecting router wight by idx ( in sorted maner)
-        # r_weights = torch.gather(token_weights, dim=1, index=index)
-
-        # muliply by router weights, this add router in gradient stream
-        # xw_out = r_weights * x_out
-
-        # batch_indices = torch.arange(batch_size).unsqueeze(-1).expand(-1, top_k)
-        # # # https://discuss.pytorch.org/t/when-inplace-operation-are-allowed-and-when-not/169583/2
-        # out = x.clone()
-        # # add back to resuidal strean
-        # out[batch_indices, selected_tokens.squeeze(-1),: ] += xw_out
-        # # ^ this can be done with torch.scatter_add
-        # out = torch.scatter_add(input=x, dim=1, index=indices_expanded, src=xw_out)
-        out = torch.scatter_add(
+        # re-combine the selected tokens and residual tokens
+        hidden_states = torch.scatter(
             input=x, dim=1, index=indices_expanded, src=outputs["hidden_states"]
         )
-        # out = torch.scatter(input=x, dim=1, index=indices_expanded, src=x_out)
 
-        # if auxiliary_loss:
+        # compute aux loss, in order to maintain causality
         aux_loss = self.aux_loss(x, router_logits, selected_tokens)
-        return dict(hidden_states=out, aux_loss=aux_loss)
-        # return out, _
+
+        return dict(hidden_states=hidden_states, aux_loss=aux_loss)
 
     def aux_loss(self, x: Tensor, router_logits: Tensor, selected_tokens: Tensor):
         batch_size, seq_len, dim = x.shape
