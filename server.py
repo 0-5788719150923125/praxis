@@ -543,7 +543,7 @@ optimizer = create_optimizer(model, **optimizer_config)
 if data_path:
     dataset = MultiDirectoryDataset(tokenizer, data_path, hparams["block_size"])
 else:
-    dataset = HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
+    dataset = HuggingfaceDataset(tokenizer, dataset_choice, hparams["block_size"])
 
 # Put the data onto a dataloader
 data_loader = DataLoader(

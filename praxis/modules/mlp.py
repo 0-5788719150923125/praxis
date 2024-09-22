@@ -11,10 +11,9 @@ input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
 
 @register_expert_class("praxis_mlp", input_shape)
-class PraxisMLP(nn.Module):
+class PraxisMLP(nn.Sequential):
     def __init__(self, config: PraxisConfig):
-        super().__init__()
-        self.network = nn.Sequential(
+        super().__init__(
             OrderedDict(
                 [
                     ("in_proj", nn.Linear(config.n_dim, 4 * config.n_dim)),
@@ -23,6 +22,3 @@ class PraxisMLP(nn.Module):
                 ]
             )
         )
-
-    def forward(self, x):
-        return self.network(x)

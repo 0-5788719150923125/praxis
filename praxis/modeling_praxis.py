@@ -35,7 +35,6 @@ class PraxisModel(PreTrainedModel):
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
@@ -54,10 +53,8 @@ class PraxisModel(PreTrainedModel):
         if self.training:
             self.aux_losses.append(outputs["aux_loss"])
 
-        # print(hidden_states)
-        output_shape = input_shape + (outputs["hidden_states"].size(-1),)
         return BaseModelOutputWithPast(
-            last_hidden_state=outputs["hidden_states"].view(*output_shape),
+            last_hidden_state=outputs["hidden_states"],
             past_key_values=None,
             hidden_states=None,
             attentions=None,
@@ -83,7 +80,6 @@ class PraxisForCausalLM(PraxisModel):
         return {
             "input_ids": input_ids,
             "past_key_values": past,
-            "use_cache": kwargs.get("use_cache"),
             "attention_mask": kwargs.get("attention_mask", None),
         }
 
@@ -93,7 +89,6 @@ class PraxisForCausalLM(PraxisModel):
         attention_mask: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -102,7 +97,6 @@ class PraxisForCausalLM(PraxisModel):
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
-            use_cache=use_cache,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )

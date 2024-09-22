@@ -12,8 +12,7 @@ class PraxisStack(nn.Module):
         layers = []
         for i in range(config.n_layer):
             odd = i % 2 != 0
-            use_router = True if odd else False
-            if use_router:
+            if odd:
                 layers.append(PraxisMixtureOfDepths(PraxisBlock(config), config))
             else:
                 layers.append(PraxisBlock(config))

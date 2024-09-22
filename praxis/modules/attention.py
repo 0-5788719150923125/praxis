@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,20 +26,44 @@ class PraxisAttention(nn.Module):
         self.out = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
+        # Define maximum sequence length
+        max_seq_len = config.context_length
+
+        # Precompute the slopes for ALiBi
         self.register_buffer("m", self._get_alibi_slope(self.num_heads))
 
-    def _get_relative_positions(self, seq_len: int) -> torch.tensor:
-        x = torch.arange(seq_len)[None, :]
-        y = torch.arange(seq_len)[:, None]
-        return x - y
+        # Precompute the relative positions for the maximum sequence length
+        relative_positions = self._get_relative_positions(max_seq_len)
+        # Compute the biases and store them
+        self.register_buffer("alibi_bias", self.m * relative_positions)
+
+    def _get_relative_positions(self, max_seq_len: int) -> torch.Tensor:
+        # Compute the relative positions for the maximum sequence length
+        # Shape: (1, max_seq_len, max_seq_len)
+        relative_positions = torch.arange(max_seq_len, dtype=torch.long)
+        relative_positions = relative_positions[None, :] - relative_positions[:, None]
+        relative_positions = relative_positions.unsqueeze(0)
+        return relative_positions
 
     def _get_alibi_slope(self, num_heads):
-        x = (2**8) ** (1 / num_heads)
-        return (
-            torch.tensor([1 / x ** (i + 1) for i in range(num_heads)])
-            .unsqueeze(-1)
-            .unsqueeze(-1)
-        )
+        # ALiBi slope computation as per the paper
+        def get_slopes(n):
+            def get_slopes_power_of_2(n):
+                start = 2 ** (-(2 ** -(math.log2(n) - 3)))
+                ratio = start
+                return [start * ratio**i for i in range(n)]
+
+            if math.log2(n).is_integer():
+                return get_slopes_power_of_2(n)
+            else:
+                closest_power_of_2 = 2 ** math.floor(math.log2(n))
+                return (
+                    get_slopes_power_of_2(closest_power_of_2)
+                    + get_slopes(2 * closest_power_of_2)[0::2][: n - closest_power_of_2]
+                )
+
+        slopes = get_slopes(num_heads)
+        return torch.tensor(slopes).unsqueeze(1).unsqueeze(1)
 
     def forward(self, x, attention_mask=None):
         batch_size, seq_len, _ = x.size()
@@ -61,11 +87,16 @@ class PraxisAttention(nn.Module):
             torch.tensor(self.head_dim)
         )
 
-        # Apply ALiBi bias
-        bias = (self.m * self._get_relative_positions(seq_len).to(x.device)).unsqueeze(
-            0
-        )
-        scores = scores - bias
+        # Slice the precomputed biases to match the sequence length
+        bias = self.alibi_bias[:, :seq_len, :seq_len].to(scores.device)
+        # Add biases to the scores
+        scores = scores + bias
+
+        # # Apply ALiBi bias
+        # bias = (self.m * self._get_relative_positions(seq_len).to(x.device)).unsqueeze(
+        #     0
+        # )
+        # scores = scores - bias
 
         # Apply the causal mask
         if self.causal:

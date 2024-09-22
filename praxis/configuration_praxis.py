@@ -13,6 +13,7 @@ class PraxisConfig(PretrainedConfig):
         epsilon=1e-6,
         capacity=0.125,
         vocab_size=32000,
+        context_length=2048,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -28,11 +29,11 @@ class PraxisConfig(PretrainedConfig):
         )
 
         self.vocab_size = vocab_size
+        self.context_length = context_length
         self.n_dim = n_dim
         self.n_layer = n_layer
         self.n_head = n_head
         self.activation = activation
-        self.epsilon = epsilon
         self.capacity = capacity
-        self.use_cache = False
+        self.epsilon = epsilon
         self.causal = False

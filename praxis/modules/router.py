@@ -83,7 +83,6 @@ class PraxisMixtureOfDepths(nn.Module):
         )
 
         # compute aux loss, in order to maintain causality
-        # aux_loss = self.aux_loss(x, router_logits, selected_tokens)
         aux_loss = self.aux_loss(x, router_logits, selected_tokens)
 
         return dict(hidden_states=hidden_states, aux_loss=aux_loss)
