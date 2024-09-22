@@ -1,6 +1,5 @@
 from typing import Optional, Tuple, Union
 
-import numpy as np
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel
@@ -21,19 +20,9 @@ class PraxisModel(PreTrainedModel):
         self.config = config
         self.n_dim = config.n_dim
         self.wte = nn.Embedding(config.vocab_size, config.n_emb)
-        # Add projection layer if n_emb is larger than n_dim
-        if config.n_emb > config.n_dim:
-            self.reduce = nn.Linear(config.n_emb, config.n_dim)
-        else:
-            self.reduce = nn.Identity()
+        self.wme = nn.Linear(config.n_emb, config.n_dim)
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
-
-    def get_input_embeddings(self):
-        return self.wte
-
-    def set_input_embeddings(self, new_embeddings):
-        self.wte = new_embeddings
 
     def forward(
         self,
@@ -44,15 +33,12 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        input_shape = input_ids.size()
-        input_ids = input_ids.view(-1, input_shape[-1])
-
         input_embeds = self.wte(input_ids)
-        inputs_reduced = self.reduce(input_embeds)
+        inputs_reduced = self.wme(input_embeds)
         hidden_states = inputs_reduced
 
         if attention_mask is None:
-            attention_mask = torch.ones(input_shape, device=hidden_states.device)
+            attention_mask = torch.ones(input_ids.shape, device=hidden_states.device)
 
         outputs = self.decoder(hidden_states, attention_mask)
 
@@ -72,12 +58,6 @@ class PraxisForCausalLM(PraxisModel):
         config.causal = True
         super().__init__(config)
         self.head = nn.Linear(config.n_dim, config.vocab_size, bias=False)
-
-    def get_output_embeddings(self):
-        return self.head
-
-    def set_output_embeddings(self, new_embeddings):
-        self.head = new_embeddings
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
         if past:

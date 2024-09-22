@@ -89,7 +89,7 @@ class PraxisAttention(nn.Module):
         # Slice the precomputed biases to match the sequence length
         bias = self.alibi_bias[:, :seq_len, :seq_len].to(scores.device)
         # Add biases to the scores
-        scores = scores + bias
+        scores += bias
 
         # Apply the causal mask
         if self.causal:
