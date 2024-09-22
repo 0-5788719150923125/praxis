@@ -114,13 +114,15 @@ parser.add_argument(
     help="Run with settings that make bootstrap faster (default: False)",
 )
 
-args = parser.parse_args()
 
-use_dashboard = False if args.no_dashboard else True
-device = args.device if args.device else "cpu"
-data_path = args.data_path
-cache_dir = args.cache_dir
+args = parser.parse_args()
 dev = args.dev
+
+device = args.device if args.device else "cpu"
+use_dashboard = False if args.no_dashboard else True
+cache_dir = args.cache_dir
+train_data_path = args.data_path
+
 
 if args.use_tokenmonster:
     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
@@ -129,8 +131,8 @@ if args.use_tokenmonster:
     )
     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
-    tokenizer_model = "UNSAFE/praxis-8192"
-    # tokenizer_model = "data/praxis"
+    # tokenizer_model = "UNSAFE/praxis-8192"
+    tokenizer_model = "data/praxis"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 
 # System args
@@ -540,8 +542,8 @@ train_params["callbacks"].append(TerminalInterface(use_dashboard, api_url))
 optimizer = create_optimizer(model, **optimizer_config)
 
 # Load a dataset
-if data_path:
-    dataset = MultiDirectoryDataset(tokenizer, data_path, hparams["block_size"])
+if train_data_path:
+    dataset = MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
 else:
     dataset = HuggingfaceDataset(tokenizer, dataset_choice, hparams["block_size"])
 

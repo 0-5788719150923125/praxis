@@ -14,30 +14,29 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-seed = 59
 save_path = "data/praxis"
 
 vocab_size = 8192
 dropout = 0.1
-min_frequency = 3
-max_token_length = 7
+min_frequency = 2
+max_token_length = 5
 
 pad_token = "[PAD]"
 bos_token = "[BOS]"
 eos_token = "[EOS]"
 unk_token = "[UNK]"
 
-num_examples = 10_000_000
+num_examples = 1_000_000
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
     name="sample-10BT",
     split="train",
     streaming=True,
-    cache_dir="tmp",
     trust_remote_code=True,
+    cache_dir="tmp",
 ).shuffle(
-    seed=seed,
+    seed=59,
     buffer_size=100_000,
 )
 
@@ -53,6 +52,7 @@ tokenizer = Tokenizer(
         cache_capacity=65536,
     )
 )
+
 
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
@@ -70,28 +70,18 @@ trainer = trainers.BpeTrainer(
 tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     [
         pre_tokenizers.Punctuation(behavior="isolated"),
-        pre_tokenizers.Whitespace(),
         pre_tokenizers.Digits(individual_digits=True),
-        pre_tokenizers.ByteLevel(
-            add_prefix_space=False, trim_offsets=True, use_regex=True
-        ),
+        pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True),
     ]
 )
 
-tokenizer.normalizer = normalizers.NFD()
-
-tokenizer.decoder = decoders.ByteLevel(
-    add_prefix_space=True, trim_offsets=True, use_regex=True
-)
-
-tokenizer.post_processor = processors.ByteLevel(
-    add_prefix_space=True, trim_offsets=True, use_regex=True
-)
+tokenizer.normalizer = normalizers.NFC()
+tokenizer.decoder = decoders.ByteLevel(add_prefix_space=True, use_regex=True)
+tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
 
 tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)
 
 trained_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
-
 trained_tokenizer.add_special_tokens(
     {
         "unk_token": unk_token,
@@ -102,5 +92,4 @@ trained_tokenizer.add_special_tokens(
 )
 
 os.makedirs(save_path, exist_ok=True)
-
 trained_tokenizer.save_pretrained(save_path)

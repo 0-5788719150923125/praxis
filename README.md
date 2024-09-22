@@ -10,6 +10,11 @@
 
 The Praxis swarm is a decentralized, peer-to-peer, always online, and continuously-learning AI intelligence - with [Hivemind](https://github.com/learning-at-home/hivemind) directly-integrated into core layers of the model itself. The goal is to build an expert model that is small and simple, easy to parallelize and performant at a scale of hundreds/thousands of peers. We will do this via a sparse mixture of experts, curated routing, algorithmic switching and weighted self-modeling of remotely-hosted peers.
 
+## join us
+
+- [Discord](https://discord.gg/8ZmHP8CqUX)
+- [The Source](https://src.eco)
+
 ## install
 
 From a Linux shell, run these commands:
@@ -30,24 +35,19 @@ pip install .[all]
 To donate your compute:
 
 ```sh
-python server.py
+python run.py
 ```
 
 Supported arguments:
 ```sh
-python server.py \
+python run.py \
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
   --batch_size 8 \               # Set the batch size to use for training.
   --no_dashboard \               # Disables the CLI interface.
   --use_tokenmonster \           # Replace the LLaMA-2 tokenizer with TokenMonster.
-  --dev                          # Launch with settings that bootstrap faster (1 layer, smaller dataset, etc.)
+  --dev                          # Launch with settings that bootstrap faster (3 layers, smaller dataset, etc.)
 ```
-
-## join us
-
-- [Discord](https://discord.gg/8ZmHP8CqUX)
-- [The Source](https://src.eco)
 
 ## do inference
 
