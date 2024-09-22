@@ -20,7 +20,12 @@ class PraxisModel(PreTrainedModel):
         super().__init__(config)
         self.config = config
         self.n_dim = config.n_dim
-        self.wte = nn.Embedding(config.vocab_size, config.n_dim)
+        self.wte = nn.Embedding(config.vocab_size, config.n_emb)
+        # Add projection layer if n_emb is larger than n_dim
+        if config.n_emb > config.n_dim:
+            self.reduce = nn.Linear(config.n_emb, config.n_dim)
+        else:
+            self.reduce = nn.Identity()
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
@@ -43,7 +48,8 @@ class PraxisModel(PreTrainedModel):
         input_ids = input_ids.view(-1, input_shape[-1])
 
         input_embeds = self.wte(input_ids)
-        hidden_states = input_embeds
+        inputs_reduced = self.reduce(input_embeds)
+        hidden_states = inputs_reduced
 
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
@@ -115,10 +121,6 @@ class PraxisForCausalLM(PraxisModel):
             loss += sum(self.aux_losses)
 
         self.aux_losses = []
-
-        if not return_dict:
-            output = (logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,

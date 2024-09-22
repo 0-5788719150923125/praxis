@@ -61,6 +61,7 @@ from praxis import (
     TokenMonsterTokenizer,
 )
 
+# Register and configure environment
 disable_possible_user_warnings()
 logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 logger = CSVLogger("logs", name="praxis")
@@ -68,7 +69,6 @@ logger = CSVLogger("logs", name="praxis")
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
-
 AutoTokenizer.register(TokenMonsterConfig, TokenMonsterTokenizer)
 
 # User args, accepted via CLI
@@ -134,10 +134,12 @@ if args.use_tokenmonster:
     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
     tokenizer_model = "UNSAFE/praxis-8192"
+    # tokenizer_model = "data/praxis"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 
 # System args
 config = PraxisConfig(
+    n_emb=512,
     n_dim=256,
     n_layer=12 if not dev else 3,
     n_head=8,

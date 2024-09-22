@@ -7,6 +7,7 @@ class PraxisConfig(PretrainedConfig):
     def __init__(
         self,
         n_dim=768,
+        n_emb=1024,
         n_layer=12,
         n_head=12,
         activation="mish",
@@ -31,6 +32,7 @@ class PraxisConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.context_length = context_length
         self.n_dim = n_dim
+        self.n_emb = n_emb
         self.n_layer = n_layer
         self.n_head = n_head
         self.activation = activation
