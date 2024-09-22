@@ -131,8 +131,8 @@ if args.use_tokenmonster:
     )
     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
-    # tokenizer_model = "UNSAFE/praxis-8192"
-    tokenizer_model = "data/praxis"
+    tokenizer_model = "UNSAFE/praxis-8192"
+    # tokenizer_model = "data/praxis"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 
 # System args

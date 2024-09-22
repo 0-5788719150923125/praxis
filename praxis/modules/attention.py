@@ -86,10 +86,8 @@ class PraxisAttention(nn.Module):
             torch.tensor(self.head_dim)
         )
 
-        # Slice the precomputed biases to match the sequence length
-        bias = self.alibi_bias[:, :seq_len, :seq_len].to(scores.device)
         # Add biases to the scores
-        scores += bias
+        scores += self.alibi_bias[:, :seq_len, :seq_len]
 
         # Apply the causal mask
         if self.causal:

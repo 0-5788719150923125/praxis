@@ -50,10 +50,10 @@ class PraxisMixtureOfDepths(nn.Module):
 
         # since its auto regressive model we need to keep casual nature of it
         # that why we need sort the tokens by idx before we pass it to attn
-        selected_tokens, index = torch.sort(token_index, dim=1)
+        sorted_indices, sorting_indices = torch.sort(token_index, dim=1)
 
         # select idx for copying for original tensor
-        indices_expanded = selected_tokens.expand(-1, -1, d)
+        indices_expanded = sorted_indices.expand(-1, -1, d)
 
         # This are fillted topk tokens with capactiy C
         filtered_x = torch.gather(
@@ -64,20 +64,20 @@ class PraxisMixtureOfDepths(nn.Module):
         token_weights = F.softmax(token_weights, dim=1)
 
         # selecting router wight by idx
-        r_weights = torch.gather(token_weights, dim=1, index=index)
+        router_weights = torch.gather(token_weights, dim=1, index=sorting_indices)
 
         # pass the selected tokens through the transformer block
-        outputs = self.block(
-            filtered_x, attention_mask=attention_mask, router_weights=r_weights
+        block_outputs = self.block(
+            filtered_x, attention_mask=attention_mask, router_weights=router_weights
         )
 
         # re-combine the selected tokens and residual tokens
         hidden_states = torch.scatter(
-            input=x, dim=1, index=indices_expanded, src=outputs["hidden_states"]
+            input=x, dim=1, index=indices_expanded, src=block_outputs["hidden_states"]
         )
 
         # compute aux loss, in order to maintain causality
-        aux_loss = self.aux_loss(router_logits, selected_tokens)
+        aux_loss = self.aux_loss(router_logits, sorted_indices)
 
         return dict(hidden_states=hidden_states, aux_loss=aux_loss)
 
