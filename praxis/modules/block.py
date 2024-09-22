@@ -16,8 +16,8 @@ class PraxisBlock(nn.Module):
     def forward(
         self,
         x,
-        weights=None,
         attention_mask=None,
+        weights=None,
     ):
         residual = x
         x = self.attn_norm(x)
@@ -29,4 +29,4 @@ class PraxisBlock(nn.Module):
         if weights is not None:
             x *= weights
         x = residual + x
-        return x
+        return dict(hidden_states=x)

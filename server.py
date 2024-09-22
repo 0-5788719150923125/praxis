@@ -138,13 +138,9 @@ else:
 
 # System args
 config = PraxisConfig(
-    n_dim=512,
-    n_layer=12 if not dev else 1,
+    n_dim=256,
+    n_layer=12 if not dev else 3,
     n_head=8,
-    n_experts=3,
-    k_best=2,
-    target_temperature=0.1,
-    annealing_steps=10_000,
     vocab_size=tokenizer.vocab_size,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
@@ -155,11 +151,10 @@ config = PraxisConfig(
     cache_dir=cache_dir,
 )
 
-
 # Batch config
 hparams = dict(
     batch_size=args.batch_size,
-    target_batch_size=64,
+    target_batch_size=512,
     block_size=256,
 )
 calculate_grad_accumulation = lambda batch_size, target_batch_size: (
@@ -219,7 +214,7 @@ train_params = dict(
     benchmark=True,
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
-    detect_anomaly=False,
+    detect_anomaly=True if dev else False,
     logger=logger,
     enable_checkpointing=True,
     callbacks=[],
@@ -477,6 +472,10 @@ class Generator:
             penalty_alpha=0.6,
             top_k=4,
             repetition_penalty=1.35,
+            suppress_tokens=[
+                self.tokenizer.eos_token_id,
+                self.tokenizer.pad_token_id,
+            ],  # else the model will degenerate to 100% EOS tokens
         )
         combined = {**defaults, **kwargs}
         if "prompt" in combined:

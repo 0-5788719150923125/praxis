@@ -10,8 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from .configuration_praxis import PraxisConfig
-from .modules.block import PraxisBlock
-from .modules.router import PraxisMixtureOfDepths
+from .modules.stack import PraxisStack
 
 
 class PraxisModel(PreTrainedModel):
@@ -22,17 +21,7 @@ class PraxisModel(PreTrainedModel):
         self.config = config
         self.n_dim = config.n_dim
         self.wte = nn.Embedding(config.vocab_size, config.n_dim)
-        self.layers = []
-        for i in range(config.n_layer):
-            use_router = False
-            if i % 2 == 0:
-                use_router = True
-            self.layers.append(
-                PraxisMixtureOfDepths(
-                    PraxisBlock(config), use_router, config.n_dim, config.capacity
-                )
-            )
-        self.blocks = nn.ModuleList(self.layers)
+        self.stack = PraxisStack(config)
         self.aux_losses = []
 
     def get_input_embeddings(self):
@@ -60,14 +49,15 @@ class PraxisModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_shape, device=hidden_states.device)
 
-        for block in self.blocks:
-            hidden_states, aux_loss = block(hidden_states, attention_mask)
-            if self.training:
-                self.aux_losses.append(aux_loss)
+        outputs = self.stack(hidden_states, attention_mask)
 
-        output_shape = input_shape + (hidden_states.size(-1),)
+        if self.training:
+            self.aux_losses.append(outputs["aux_loss"])
+
+        # print(hidden_states)
+        output_shape = input_shape + (outputs["hidden_states"].size(-1),)
         return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states.view(*output_shape),
+            last_hidden_state=outputs["hidden_states"].view(*output_shape),
             past_key_values=None,
             hidden_states=None,
             attentions=None,
