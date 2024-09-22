@@ -149,17 +149,11 @@ config = PraxisConfig(
     cache_dir=cache_dir,
 )
 
-# Batch config
+# Training and model
 hparams = dict(
     batch_size=args.batch_size,
     target_batch_size=128,
     block_size=256,
-)
-calculate_grad_accumulation = lambda batch_size, target_batch_size: (
-    1 if batch_size >= target_batch_size else -(-target_batch_size // batch_size)
-)
-hparams["accumulate_grad_batches"] = calculate_grad_accumulation(
-    hparams["batch_size"], hparams["target_batch_size"]
 )
 
 # Training data mixing
@@ -167,10 +161,9 @@ population = [
     dict(path="open-phi/textbooks", key="markdown"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/10BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/100BT"),
-    # dict(path="HuggingFaceFW/fineweb", key="text"),
-    # dict(path="togethercomputer/RedPajama-Data-V2", key="raw_content", name="default"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/350BT"),
 ]
-weights = [1, 0, 0] if dev else [0, 0.333, 0.666666]
+weights = [1, 0, 0, 0] if dev else [0, 0.333, 0.666666, 1.0]
 dataset_choice = random.choices(population, weights, k=1)[0]
 
 # Misc config
@@ -197,6 +190,11 @@ optimizer_config = dict(
     ],
 )
 
+# Batch config
+fit_grad_accumulation = lambda batch_size, target_batch_size: (
+    1 if batch_size >= target_batch_size else -(-target_batch_size // batch_size)
+)
+
 # Training config
 train_params = dict(
     accelerator=f"cpu" if args.device == "cpu" else "gpu",
@@ -206,9 +204,9 @@ train_params = dict(
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
     precision="32-true",
-    accumulate_grad_batches=hparams[
-        "accumulate_grad_batches"
-    ],  # must be 1 for Hivemind training
+    accumulate_grad_batches=fit_grad_accumulation(
+        **hparams
+    ),  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
