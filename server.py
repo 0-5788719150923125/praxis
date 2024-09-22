@@ -39,13 +39,23 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
-                    TokenMonsterConfig, TokenMonsterTokenizer)
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    TokenMonsterConfig,
+    TokenMonsterTokenizer,
+)
 
 # Register and configure environment
 disable_possible_user_warnings()
@@ -149,9 +159,9 @@ hparams = dict(
 # Training data mixing
 population = [
     dict(path="open-phi/textbooks", key="markdown"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/10BT"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/100BT"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample/350BT"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-10BT"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-100BT"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-350BT"),
 ]
 weights = [1, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333]
 dataset_choice = random.choices(population, weights, k=1)[0]
@@ -194,7 +204,7 @@ train_params = dict(
     reload_dataloaders_every_n_epochs=0,
     precision="32-true",
     accumulate_grad_batches=fit_grad_accumulation(
-        **hparams
+        hparams["batch_size"], hparams["target_batch_size"]
     ),  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
@@ -229,7 +239,7 @@ class PraxisTrainer(LightningModule):
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
-        batch_size, _, _ = outputs.shape
+        batch_size, _ = batch.shape
 
         self.log_dict(
             {
