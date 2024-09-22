@@ -27,7 +27,7 @@ bos_token = "[BOS]"
 eos_token = "[EOS]"
 unk_token = "[UNK]"
 
-train_steps = 10_000_000
+num_examples = 10_000_000
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
@@ -42,7 +42,7 @@ dataset = load_dataset(
 )
 
 column = "text"
-iterator = islice((item[key] for item in dataset), train_steps)
+iterator = islice((item[key] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
     models.BPE(
@@ -88,7 +88,7 @@ tokenizer.post_processor = processors.ByteLevel(
     add_prefix_space=True, trim_offsets=True, use_regex=True
 )
 
-tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=train_steps)
+tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)
 
 trained_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
 
