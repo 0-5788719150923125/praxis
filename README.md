@@ -55,7 +55,7 @@ python run.py \
 Send a JSON-encoded payload via POST to:
 
 ```
-http://localhost:5000/generate
+http://localhost:5000/input
 ```
 
 This payload should support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
@@ -64,7 +64,7 @@ Example request:
 ```py
 import requests
 
-url = "http://localhost:5000/generate"
+url = "http://localhost:5000/input"
 payload = {"prompt": "Once upon a time, ", "do_sample": True, "temperature": 0.7}
 
 response = requests.post(url, json=payload)

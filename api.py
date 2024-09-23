@@ -25,7 +25,7 @@ class APIServer:
         self.started.wait(timeout=5)  # Wait up to 5 seconds for the server to start
         if not self.started.is_set():
             raise RuntimeError("Server failed to start within the timeout period")
-        print(f"API Server started in the background. URL: {self.get_url()}")
+        print(f"API Server started in the background. URL: {self.get_api_addr()}")
 
     def _run_server(self):
         with app.app_context():
@@ -40,11 +40,11 @@ class APIServer:
         if self.server_thread:
             self.server_thread.join()
 
-    def get_url(self):
-        return f"{self.host}:{self.port}"
+    def get_api_addr(self):
+        return f"{self.host}:{self.port}/input"
 
 
-@app.route("/generate/", methods=["GET", "POST"])
+@app.route("/input/", methods=["GET", "POST"])
 def generate():
     try:
         kwargs = request.get_json()

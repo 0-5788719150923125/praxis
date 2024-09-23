@@ -614,10 +614,10 @@ generator = Generator(model, tokenizer)
 
 api_server = APIServer(generator, port)
 api_server.start()
-api_url = api_server.get_url() + "/generate"
+api_url = api_server.get_api_addr()
 
 
-class PraxisAccumulationSchedule(GradientAccumulationScheduler):
+class AccumulationSchedule(GradientAccumulationScheduler):
     """
     Change gradient accumulation factor according to scheduling.
     """
@@ -642,7 +642,7 @@ class PraxisAccumulationSchedule(GradientAccumulationScheduler):
 
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(
-    PraxisAccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
+    AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
 train_params["callbacks"].append(TerminalInterface(use_dashboard, api_url))
 
@@ -657,7 +657,7 @@ else:
     dataset = HuggingfaceDataset(tokenizer, dataset_choice, hparams["block_size"])
 
 
-class PraxisDataModule(LightningDataModule):
+class DataModule(LightningDataModule):
     def __init__(self, dataset, batch_size):
         super().__init__()
         self.batch_size = batch_size
@@ -673,7 +673,7 @@ class PraxisDataModule(LightningDataModule):
 
 
 # Put the data onto a dataloader
-dataloader = PraxisDataModule(dataset, hparams["batch_size"])
+dataloader = DataModule(dataset, hparams["batch_size"])
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, hparams)
