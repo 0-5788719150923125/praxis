@@ -121,6 +121,12 @@ parser.add_argument(
     help="Use TokenMonster (default: False)",
 )
 parser.add_argument(
+    "--dense",
+    action="store_true",
+    default=False,
+    help="Run as a dense model (default: False)",
+)
+parser.add_argument(
     "--dev",
     action="store_true",
     default=False,
@@ -176,13 +182,15 @@ else:
 
 # System args
 config = PraxisConfig(
-    n_emb=512,
     n_dim=384,
+    n_emb=512,
+    n_factors=8,
     n_layer=5 if not dev else 3,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
     foresight=-1e-9,
+    sparse=False if args.dense else True,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,

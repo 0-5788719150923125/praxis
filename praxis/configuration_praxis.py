@@ -8,6 +8,7 @@ class PraxisConfig(PretrainedConfig):
         self,
         n_dim=384,
         n_emb=512,
+        n_factors=8,
         n_layer=12,
         n_head=8,
         epsilon=1e-5,
@@ -16,6 +17,7 @@ class PraxisConfig(PretrainedConfig):
         context_length=1024,
         foresight=float("-inf"),
         activation="mish",
+        sparse=True,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -32,6 +34,7 @@ class PraxisConfig(PretrainedConfig):
 
         self.n_dim = n_dim
         self.n_emb = n_emb
+        self.n_factors = n_factors
         self.n_layer = n_layer
         self.n_head = n_head
         self.epsilon = epsilon
@@ -40,4 +43,5 @@ class PraxisConfig(PretrainedConfig):
         self.context_length = context_length
         self.foresight = foresight
         self.activation = activation
+        self.sparse = sparse
         self.causal = False
