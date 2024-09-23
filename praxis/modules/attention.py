@@ -11,6 +11,7 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
+        self.foresight = config.foresight
         self.max_seq_len = config.context_length
         self.hidden_size = config.n_dim
         self.num_heads = config.n_head
@@ -94,8 +95,7 @@ class PraxisAttention(nn.Module):
             causal_mask = torch.tril(
                 torch.ones(seq_len, seq_len, device=x.device)
             ).view(1, 1, seq_len, seq_len)
-            # scores = scores.masked_fill(causal_mask == 0, float("-inf"))
-            scores = scores.masked_fill(causal_mask == 0, float(-1e-8))
+            scores = scores.masked_fill(causal_mask == 0, self.foresight)
 
         if attention_mask is not None:
             # Slice the attention mask to match the sequence length

@@ -10,11 +10,12 @@ class PraxisConfig(PretrainedConfig):
         n_emb=512,
         n_layer=12,
         n_head=8,
-        activation="mish",
-        epsilon=1e-6,
+        epsilon=1e-5,
         capacity=0.125,
         vocab_size=8192,
         context_length=1024,
+        foresight=float("-inf"),
+        activation="mish",
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -29,13 +30,14 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
-        self.vocab_size = vocab_size
-        self.context_length = context_length
         self.n_dim = n_dim
         self.n_emb = n_emb
         self.n_layer = n_layer
         self.n_head = n_head
-        self.activation = activation
-        self.capacity = capacity
         self.epsilon = epsilon
+        self.capacity = capacity
+        self.vocab_size = vocab_size
+        self.context_length = context_length
+        self.foresight = foresight
+        self.activation = activation
         self.causal = False

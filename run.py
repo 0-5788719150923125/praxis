@@ -168,6 +168,7 @@ config = PraxisConfig(
     n_head=8,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
+    foresight=-1e-9,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
