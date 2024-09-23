@@ -16,12 +16,13 @@ from transformers import PreTrainedTokenizerFast
 
 num_examples = 1_000_000
 
-save_path = f"data/praxis"
+save_path = "data/praxis"
 
 
-vocab_size = 8192
+vocab_size = 1024
 max_token_length = 3
-dropout = 0.5
+min_frequency = 64
+dropout = 0.1
 
 
 pad_token = "[PAD]"
@@ -57,6 +58,7 @@ tokenizer = Tokenizer(
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
     max_token_length=max_token_length,
+    min_frequency=min_frequency,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     show_progress=True,
     special_tokens=[

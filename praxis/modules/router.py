@@ -16,15 +16,15 @@ class PraxisMixtureOfDepths(nn.Module):
 
     def __init__(
         self,
-        block: nn.Module = None,
         config: PraxisConfig = None,
+        block: nn.Module = None,
         *args,
         **kwargs,
     ):
         super().__init__()
         self.block = block
         self.capacity = config.capacity
-        self.router = nn.Linear(config.n_dim, 1, bias=True)
+        self.router = nn.Linear(config.n_dim, 1, bias=False)
 
     def forward(
         self,

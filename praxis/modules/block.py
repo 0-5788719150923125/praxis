@@ -18,16 +18,15 @@ class PraxisBlock(nn.Module):
         self,
         x,
         attention_mask=None,
-        router_weights=None,
+        router_weights=False,
     ):
         residual = x
-        x = self.attn_norm(x)
-        x = self.attn(x, attention_mask)
-        x = residual + x
-        residual = x
-        x = self.mlp_norm(x)
-        x = self.mlp(x)
+        norm = self.attn_norm(x)
+        y = self.attn(norm, attention_mask) + residual
+        residual = y
+        norm = self.mlp_norm(y)
+        y = self.mlp(norm)
         if router_weights is not None:
-            x *= router_weights
-        x = residual + x
+            y *= router_weights
+        y += residual
         return dict(hidden_states=x)

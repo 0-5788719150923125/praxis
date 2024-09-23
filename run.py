@@ -34,10 +34,15 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import Callback, ModelCheckpoint
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
+from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
@@ -86,7 +91,7 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=1,
+    default=None,
     help="Batch size to use for training (default: 1)",
 )
 parser.add_argument(
@@ -123,11 +128,11 @@ parser.add_argument(
 )
 
 
-def sample_linear_decay(max_value):
-    return int(math.exp((1 - random.random())) * 2**31 - 1)
+def sample_linear_decay(max_value=2**31 - 1):
+    return int(math.exp((1 - random.random())) * max_value)
 
 
-def sample_cosine_decay(max_value):
+def sample_cosine_decay(max_value=2**31 - 1):
     seed = random.random()
     curve = 1 - seed  # invert distribution
     return int(curve * curve * max_value)
@@ -136,7 +141,7 @@ def sample_cosine_decay(max_value):
 parser.add_argument(
     "--seed",
     type=int,
-    default=int(sample_cosine_decay(2**31 - 1)),
+    default=int(sample_cosine_decay(65536)),
     help="Global seed (default: random)",
 )
 
@@ -151,6 +156,7 @@ port = args.port
 
 cache_dir = args.cache_dir
 train_data_path = args.data_path
+
 use_dashboard = False if args.no_dashboard else True
 
 if args.use_tokenmonster:
@@ -164,15 +170,15 @@ else:
     try:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
     except Exception as e:
-        print(e)
-        tokenizer_model = "UNSAFE/praxis-8192"
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(
+            "UNSAFE/praxis-8192", cache_dir=cache_dir
+        )
 
 # System args
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
-    n_layer=9 if not dev else 3,
+    n_layer=5 if not dev else 3,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
@@ -187,7 +193,7 @@ config = PraxisConfig(
 
 # Training and model
 hparams = dict(
-    batch_size=args.batch_size,
+    batch_size=args.batch_size if args.batch_size else 1,
     target_batch_size=64,
     block_size=512,
 )
@@ -215,21 +221,15 @@ predict_tokens = 1
 
 # Optimizer configuration
 optimizer_config = dict(
-    optimizer_name="Lion",
-    lr=1e-4,
+    optimizer_name="AdamW",
+    lr=1e-3,
     weight_decay=1e-2,
-    weight_decouple=True,
-    use_gc=True,
+    amsgrad=True,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
         "RMSNorm.bias",
     ],
-)
-
-# Batch config
-fit_grad_accumulation = lambda batch_size, target_batch_size: (
-    1 if batch_size >= target_batch_size else -(-target_batch_size // batch_size)
 )
 
 # Training config
@@ -241,9 +241,6 @@ train_params = dict(
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
     precision="32-true",
-    accumulate_grad_batches=fit_grad_accumulation(
-        hparams["batch_size"], hparams["target_batch_size"]
-    ),  # must be 1 for Hivemind training
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
@@ -265,9 +262,10 @@ class PraxisTrainer(LightningModule):
         super(PraxisTrainer, self).__init__()
 
         self.model, self.optimizer = (model, optimizer)
+        self.batch_size = hparams["batch_size"]
 
         self.automatic_optimization = True
-        # self.batch_size = hparams["batch_size"]
+
         self.save_hyperparameters(ignore=["model", "optimizer"])
 
     def forward(self, inputs):
@@ -283,7 +281,6 @@ class PraxisTrainer(LightningModule):
             {
                 "loss": loss,
                 "batch": int(batch_idx),
-                "step": int(batch_idx // train_params["accumulate_grad_batches"]),
                 "seed": int(seed),
             },
             on_step=True,
@@ -315,7 +312,7 @@ class TerminalInterface(Callback):
         self.num_tokens = predict_tokens
         self.dashboard = False
         if use_dashboard:
-            max_data_points = 10000
+            max_data_points = 1000
             self.dashboard = TerminalDashboard(seed, max_data_points)
             try:
                 self.dashboard.start()
@@ -331,6 +328,18 @@ class TerminalInterface(Callback):
         self.ema_loss = self._compute_ema_loss(float(loss), self.ema_loss, self.alpha)
 
         self._generate_sample_text(lm, batch_idx, interval=self.interval)
+
+        batch_size, _ = batch.shape
+
+        self.log_dict(
+            {
+                "step": int(batch_idx // trainer.accumulate_grad_batches),
+            },
+            on_step=True,
+            logger=True,
+            batch_size=batch_size,
+            prog_bar=True,
+        )
 
         if self.dashboard:
             batch = trainer.callback_metrics.get("batch", 0)
@@ -360,7 +369,7 @@ class TerminalInterface(Callback):
 
         self.last_time = datetime.now()
 
-        n_grams = 3
+        n_grams = 5
         frequency = 10
         if self._detect_repetition(n_grams, frequency):
             self.text = tokenizer.bos_token
@@ -390,8 +399,7 @@ class TerminalInterface(Callback):
         return False
 
     def _is_trigger_passed(self, original_time, x_seconds):
-        current_time = datetime.now()
-        time_difference = current_time - original_time
+        time_difference = datetime.now() - original_time
         return time_difference > timedelta(seconds=x_seconds)
 
     def _compute_ema_loss(self, current_loss, prev_avg_loss, alpha=0.01):
@@ -534,10 +542,10 @@ class Generator:
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.7,
-            eta_cutoff=0.002,
-            penalty_alpha=0.6,
-            top_k=4,
+            temperature=0.3,
+            # eta_cutoff=0.002,
+            # penalty_alpha=0.6,
+            # top_k=4,
             repetition_penalty=1.35,
             suppress_tokens=[
                 self.tokenizer.eos_token_id,
@@ -600,8 +608,36 @@ api_server = APIServer(generator, port)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 
+
+class PraxisAccumulationSchedule(GradientAccumulationScheduler):
+    """
+    Change gradient accumulation factor according to scheduling.
+    """
+
+    def __init__(self, batch_size=1, target_batch_size=1):
+        # NOTE: must be 1 for Hivemind training; will need adapting once we get there
+        self.factor = self._fit_grad_accumulation(batch_size, target_batch_size)
+        self.schedule = {1: self.factor}
+        super().__init__(self.schedule)
+
+    def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
+        super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
+        trainer.accumulate_grad_batches = self.factor
+
+    def _fit_grad_accumulation(self, batch_size, target_batch_size):
+        return (
+            1
+            if batch_size >= target_batch_size
+            else -(-target_batch_size // batch_size)
+        )
+
+
 train_params["callbacks"].append(checkpoint_callback)
+train_params["callbacks"].append(
+    PraxisAccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
+)
 train_params["callbacks"].append(TerminalInterface(use_dashboard, api_url))
+
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
@@ -612,20 +648,47 @@ if train_data_path:
 else:
     dataset = HuggingfaceDataset(tokenizer, dataset_choice, hparams["block_size"])
 
+
+class PraxisDataModule(LightningDataModule):
+    def __init__(self, dataset, batch_size):
+        super().__init__()
+        self.batch_size = batch_size
+        self.data_loader = DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            pin_memory=True,
+            num_workers=1,
+        )
+
+    def train_dataloader(self):
+        return self.data_loader
+
+
 # Put the data onto a dataloader
-data_loader = DataLoader(
-    dataset,
-    batch_size=hparams["batch_size"],
-    pin_memory=True,
-    num_workers=1,
-)
+dataloader = PraxisDataModule(dataset, hparams["batch_size"])
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, hparams)
 
 # fit the trainer and run
 trainer = Trainer(**train_params)
-trainer.fit(train_model, data_loader, ckpt_path=ckpt_path)
+# if args.batch_size is None:
+#     print("tuning batch size...")
+#     tuner = Tuner(trainer)
+#     auto_batch_size = tuner.scale_batch_size(
+#         train_model,
+#         dataloader,
+#         mode="power",
+#         max_trials=5,
+#         steps_per_trial=3,
+#         init_val=2,
+#     )
+#     print(f"stopped on batch size of: {auto_batch_size}")
+#     train_params["accumulate_grad_batches"] = fit_grad_accumulation(
+#         auto_batch_size, hparams["target_batch_size"]
+#     )
+
+trainer.fit(train_model, dataloader.train_dataloader(), ckpt_path=ckpt_path)
 
 # import ipaddress
 # from functools import partial

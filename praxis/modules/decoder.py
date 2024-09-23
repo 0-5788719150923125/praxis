@@ -11,9 +11,10 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.blocks = nn.ModuleList()
         for i in range(config.n_layer):
-            use_router = i % 2 != 0  # if layer is odd
+            # use_router = i % 2 != 0  # if layer is odd
+            use_router = False
             if use_router:
-                self.blocks.append(PraxisMixtureOfDepths(PraxisBlock(config), config))
+                self.blocks.append(PraxisMixtureOfDepths(config, PraxisBlock(config)))
             else:
                 self.blocks.append(PraxisBlock(config))
 

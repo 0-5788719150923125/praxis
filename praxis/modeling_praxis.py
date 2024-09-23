@@ -20,7 +20,7 @@ class PraxisModel(PreTrainedModel):
         self.config = config
         self.n_dim = config.n_dim
         self.wte = nn.Embedding(config.vocab_size, config.n_emb)
-        self.wme = nn.Linear(config.n_emb, config.n_dim)
+        self.wme = nn.Linear(config.n_emb, config.n_dim, bias=False)
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 

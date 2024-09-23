@@ -83,33 +83,16 @@ class PraxisAttention(nn.Module):
         attn_output = attn_output.transpose(1, 2).reshape(
             batch_size, seq_len, self.hidden_size
         )
-        attn_output = self.out(attn_output)
-        return attn_output
+
+        return self.out(attn_output)
 
     def _get_relative_positions(self, max_seq_len: int) -> torch.Tensor:
         # Compute the relative positions for the maximum sequence length
         # Shape: (1, max_seq_len, max_seq_len)
         relative_positions = torch.arange(max_seq_len, dtype=torch.long)
-        relative_positions = relative_positions[None, :] - relative_positions[:, None]
-        relative_positions = relative_positions.unsqueeze(0)
-        return relative_positions
+        return relative_positions[None, :] - relative_positions[:, None]
 
     def _get_alibi_slope(self, num_heads):
-        # ALiBi slope computation as per the paper
-        def get_slopes(n):
-            def get_slopes_power_of_2(n):
-                start = 2 ** (-(2 ** -(math.log2(n) - 3)))
-                ratio = start
-                return [start * ratio**i for i in range(n)]
-
-            if math.log2(n).is_integer():
-                return get_slopes_power_of_2(n)
-            else:
-                closest_power_of_2 = 2 ** math.floor(math.log2(n))
-                return (
-                    get_slopes_power_of_2(closest_power_of_2)
-                    + get_slopes(2 * closest_power_of_2)[0::2][: n - closest_power_of_2]
-                )
-
-        slopes = get_slopes(num_heads)
-        return torch.tensor(slopes).unsqueeze(1).unsqueeze(1)
+        start_slope = 2 ** (-8 / num_heads)
+        slopes = torch.tensor([start_slope**i for i in range(1, num_heads + 1)]).float()
+        return slopes.unsqueeze(1).unsqueeze(1)
