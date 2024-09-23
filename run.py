@@ -339,7 +339,10 @@ class TerminalInterface(Callback):
             self.dashboard.update_params(total_params)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
-            self.dashboard.update_losses(self.ema_loss, random.gauss())
+            self.dashboard.update_loss(self.ema_loss)
+            self.dashboard.update_validator(
+                self._sign_wave(amplitude=1.23, frequency=0.01, step=batch_idx)
+            )
 
     def _generate_sample_text(self, lm, batch_idx, interval=10):
 
@@ -366,6 +369,9 @@ class TerminalInterface(Callback):
             self.dashboard.update_status(self.text)
         else:
             print(self.text)
+
+    def _sign_wave(self, amplitude=1, frequency=1, phase_shift=0, step=1):
+        return amplitude * math.sin(2 * math.pi * frequency * step + phase_shift)
 
     def _detect_repetition(self, top_n, threshold):
         text = self.text

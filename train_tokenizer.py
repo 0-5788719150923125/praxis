@@ -91,9 +91,10 @@ trained_tokenizer.add_special_tokens(
     }
 )
 
-os.makedirs(save_path, exist_ok=True)
-trained_tokenizer.save_pretrained(save_path)
-
 archive_path = save_path + f"-{vocab_size}"
+
+os.makedirs(save_path, exist_ok=True)
 os.makedirs(archive_path, exist_ok=True)
+
+trained_tokenizer.save_pretrained(save_path)
 trained_tokenizer.save_pretrained(archive_path)

@@ -10,12 +10,12 @@ app = Flask(__name__)
 
 
 class APIServer:
-    def __init__(self, generator, port=5000):
+    def __init__(self, generator, port=5000, host="localhost"):
         self.generator = generator
         self.server_thread = None
         self.server = None
         self.started = Event()
-        self.host = "api.src.eco"
+        self.host = host
         self.port = port
 
     def start(self):
@@ -41,7 +41,7 @@ class APIServer:
             self.server_thread.join()
 
     def get_url(self):
-        return f"{self.host}:{self.port}, localhost:{self.port}"
+        return f"{self.host}:{self.port}"
 
 
 @app.route("/generate/", methods=["GET", "POST"])

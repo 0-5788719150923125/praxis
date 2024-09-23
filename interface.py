@@ -148,9 +148,12 @@ class TerminalDashboard:
             reduced = int(total_params / 10**6)
             self.total_params = f" | {reduced}M"
 
-    def update_losses(self, train_loss, val_loss):
+    def update_loss(self, train_loss):
         with self.lock:
             self.train_losses.append(train_loss) if train_loss is not None else None
+
+    def update_validator(self, val_loss):
+        with self.lock:
             self.val_losses.append(val_loss) if val_loss is not None else None
 
     def update_step(self, step):
@@ -261,9 +264,9 @@ class TerminalDashboard:
             if i == 0:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
                 left_content = self._visual_ljust(
-                    f" Training Loss: {train_loss:.4f}", half_width
+                    f" LOSS: {train_loss:.4f}", half_width
                 )
-                right_content = self._visual_ljust(" Feed", right_width)
+                right_content = self._visual_ljust(" HOST", right_width)
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -277,10 +280,8 @@ class TerminalDashboard:
                 right_content = "═" * right_width
             elif i == half_height:
                 val_loss = self.val_losses[-1] if self.val_losses else 0
-                left_content = self._visual_ljust(
-                    f" Frequency Bias: {val_loss:.4f}", half_width
-                )
-                right_content = self._visual_ljust(" Logger", right_width)
+                left_content = self._visual_ljust(f" SIGN: {val_loss:.4f}", half_width)
+                right_content = self._visual_ljust(" LOG", right_width)
             elif i == half_height + 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -310,7 +311,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)}{str(self.total_params)} | BATCH: {int(self.batch)}, STEP: {int(self.step)} | RUN: {elapsed:.2f}h | {self.url}",
+                    f"\n PRAXIS:{str(self.seed)}{str(self.total_params)} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)} | {self.url}",
                     width,
                 )
             )
