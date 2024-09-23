@@ -16,9 +16,9 @@ class PraxisMLP(nn.Sequential):
         super().__init__(
             OrderedDict(
                 [
-                    ("in_proj", nn.Linear(config.n_dim, 4 * config.n_dim)),
+                    ("in", nn.Linear(config.n_dim, 4 * config.n_dim)),
                     ("act", ACT2FN[config.activation]),
-                    ("out_proj", nn.Linear(4 * config.n_dim, config.n_dim)),
+                    ("out", nn.Linear(4 * config.n_dim, config.n_dim)),
                 ]
             )
         )

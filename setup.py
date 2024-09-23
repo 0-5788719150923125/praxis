@@ -9,7 +9,7 @@ base_requirements = [
 ]
 
 # Additional requirements for training and orchestration
-hosting_requirements = [
+host_requirements = [
     "asciichartpy",
     "blessed",
     "datasets",
@@ -24,6 +24,6 @@ setup(
     packages=find_packages(),
     install_requires=base_requirements,
     extras_require={
-        "all": base_requirements + hosting_requirements,
+        "all": base_requirements + host_requirements,
     },
 )

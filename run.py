@@ -131,23 +131,26 @@ if args.use_tokenmonster:
     )
     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
-    tokenizer_model = "UNSAFE/praxis-8192"
-    # tokenizer_model = "data/praxis"
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
+    tokenizer_model = "data/praxis"
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
+    except Exception as e:
+        print(e)
+        tokenizer_model = "UNSAFE/praxis-8192"
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 
 # System args
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
-    n_layer=12 if not dev else 3,
+    n_layer=9 if not dev else 3,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
-    context_length=2048,
+    context_length=1024,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
     unk_token_id=tokenizer.unk_token_id,
-    torch_dtype="float32",
     device_map=device,
     cache_dir=cache_dir,
 )
@@ -156,7 +159,7 @@ config = PraxisConfig(
 hparams = dict(
     batch_size=args.batch_size,
     target_batch_size=64,
-    block_size=256,
+    block_size=512,
 )
 
 # Training data mixing
@@ -165,8 +168,9 @@ population = [
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-10BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-100BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-350BT"),
+    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="default"),
 ]
-weights = [1, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333]
+weights = [1, 0, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333, 0.1]
 dataset_choice = random.choices(population, weights, k=1)[0]
 
 # Misc config
@@ -181,10 +185,11 @@ predict_tokens = 1
 
 # Optimizer configuration
 optimizer_config = dict(
-    optimizer_name="AdEMAMix",
-    lr=1e-3,
+    optimizer_name="Lion",
+    lr=1e-4,
     weight_decay=1e-2,
     weight_decouple=True,
+    use_gc=True,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",

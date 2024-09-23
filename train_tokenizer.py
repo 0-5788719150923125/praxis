@@ -18,8 +18,7 @@ save_path = "data/praxis"
 
 vocab_size = 8192
 dropout = 0.1
-min_frequency = 2
-max_token_length = 5
+max_token_length = 3
 
 pad_token = "[PAD]"
 bos_token = "[BOS]"
@@ -34,12 +33,12 @@ dataset = load_dataset(
     trust_remote_code=True,
     cache_dir="tmp",
 ).shuffle(
-    seed=59,
+    seed=44,
     buffer_size=100_000,
 )
 
 column = "text"
-num_examples = 10_000_000
+num_examples = 1_000_000
 iterator = islice((item[column] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
@@ -52,12 +51,11 @@ tokenizer = Tokenizer(
     )
 )
 
-
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
-    min_frequency=min_frequency,
     max_token_length=max_token_length,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+    show_progress=True,
     special_tokens=[
         unk_token,
         pad_token,
@@ -68,9 +66,9 @@ trainer = trainers.BpeTrainer(
 
 tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     [
-        pre_tokenizers.Digits(individual_digits=True),
-        pre_tokenizers.Punctuation(behavior="isolated"),
         pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True),
+        pre_tokenizers.Punctuation(behavior="isolated"),
+        pre_tokenizers.Digits(individual_digits=True),
     ]
 )
 

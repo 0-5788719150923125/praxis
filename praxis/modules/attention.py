@@ -94,7 +94,8 @@ class PraxisAttention(nn.Module):
             causal_mask = torch.tril(
                 torch.ones(seq_len, seq_len, device=x.device)
             ).view(1, 1, seq_len, seq_len)
-            scores = scores.masked_fill(causal_mask == 0, float("-inf"))
+            # scores = scores.masked_fill(causal_mask == 0, float("-inf"))
+            scores = scores.masked_fill(causal_mask == 0, float(-1e-8))
 
         if attention_mask is not None:
             # Slice the attention mask to match the sequence length

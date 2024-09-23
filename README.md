@@ -103,9 +103,9 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 # --> The quick brown fox jumped over a lazy dog.
 ```
 
-## ideas
+## tasks
 
-- a global swarm, exclusively
+- a global swarm
 - leverage [self-modeling](https://arxiv.org/abs/2407.10188) to focus learning on remote peers
 - experts with a stack of attention/feedforward blocks
 - if an expert is comprised of multiple transformer blocks, rather than a single layer, then the network might learn to dynamically-route through deeper subnetworks, or it could learn to relay/ensemble information across multiple peers, or it could learn that "no relay is needed" at all, simply returning a simple prediction back to the requestee.
@@ -115,7 +115,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
 - [Mixture of Depths](https://arxiv.org/abs/2404.02258).
 
-## todo
+## tbd
 
 - a proper and robust DHT
 - central and persistent relay peers, to act as global initial_peers

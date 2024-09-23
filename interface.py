@@ -305,7 +305,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f" PRAXIS{str(self.total_params)} | Batch: {int(self.batch)}, Step: {int(self.step)} | Elapsed: {elapsed:.2f}h | URL: {self.url}",
+                    f"\n PRAXIS{str(self.total_params)} | Batch: {int(self.batch)}, Step: {int(self.step)} | Elapsed: {elapsed:.2f}h | URL: {self.url}",
                     width,
                 )
             )
