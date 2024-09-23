@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import re
+import shutil
 import signal
 import sys
 import textwrap
@@ -66,6 +67,7 @@ class TerminalDashboard:
         self.step = 0
         self.running = False
         self.lock = Lock()
+        self.previous_size = self._get_terminal_size()
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
         self.dashboard_output = DashboardOutput(self.original_stdout)
@@ -119,6 +121,9 @@ class TerminalDashboard:
             end="",
         )
         sys.stdout.flush()
+
+    def _get_terminal_size(self):
+        return shutil.get_terminal_size()
 
     @contextmanager
     def managed_terminal(self):
@@ -220,13 +225,58 @@ class TerminalDashboard:
             current_width += char_width
         return "".join(result)
 
+    def _correct_borders(self, frame):
+        """Correct any misaligned borders in the frame."""
+        width = len(frame[0])
+        for i in range(1, len(frame) - 1):
+            if frame[i][0] != "║" or frame[i][-1] != "║":
+                frame[i] = "║" + frame[i][1:-1] + "║"
+            if len(frame[i]) != width:
+                frame[i] = frame[i][: width - 1] + "║"
+        return frame
+
+    def _update_screen(self, new_frame):
+        new_frame = self._correct_borders(new_frame)
+
+        if self.previous_frame is None or len(self.previous_frame) != len(new_frame):
+            print(
+                self.term.home
+                + self.term.clear
+                + self.term.white
+                + "\n".join(new_frame),
+                end="",
+                file=self.dashboard_output,
+            )
+        else:
+            for i, (old_line, new_line) in enumerate(
+                zip(self.previous_frame, new_frame)
+            ):
+                if old_line != new_line:
+                    print(
+                        self.term.move(i, 0) + self.term.white + new_line,
+                        end="",
+                        file=self.dashboard_output,
+                    )
+
+        self.previous_frame = new_frame
+        self.dashboard_output.flush()
+
     def update_status(self, status):
         with self.lock:
             self.status_text = status  # Keep this as it was originally
 
     def _create_frame(self):
-        height = self.term.height - 4
-        width = self.term.width - 3
+        # Get current terminal size
+        current_size = self._get_terminal_size()
+
+        # Check if terminal size has changed
+        if current_size != self.previous_size:
+            self.previous_frame = None  # Force full redraw
+            self.previous_size = current_size
+
+        width, height = current_size
+        height -= 4  # Adjust for status bar and borders
+        width -= 3  # Adjust for left and right borders
         half_height = height // 2
         half_width = width // 2
         right_width = width - half_width - 1
@@ -353,30 +403,6 @@ class TerminalDashboard:
             return [line.ljust(width)[:width] for line in lines]
         return [" " * width for _ in range(height)]
 
-    def _update_screen(self, new_frame):
-        if self.previous_frame is None:
-            print(
-                self.term.home
-                + self.term.clear
-                + self.term.white
-                + "\n".join(new_frame),
-                end="",
-                file=self.dashboard_output,
-            )
-        else:
-            for i, (old_line, new_line) in enumerate(
-                zip(self.previous_frame, new_frame)
-            ):
-                if old_line != new_line:
-                    print(
-                        self.term.move(i, 0) + self.term.white + new_line,
-                        end="",
-                        file=self.dashboard_output,
-                    )
-
-        self.previous_frame = new_frame
-        self.dashboard_output.flush()
-
     def _run_dashboard(self):
         with self.managed_terminal():
             while self.running:
@@ -386,13 +412,14 @@ class TerminalDashboard:
                     time.sleep(0.1)
                 except Exception as e:
                     self.add_log(f"Dashboard error: {str(e)}")
+                    time.sleep(1)  # Add a delay to prevent rapid error logging
 
 
 # Example usage
 if __name__ == "__main__":
     import random
 
-    dashboard = TerminalDashboard()
+    dashboard = TerminalDashboard(42)
     dashboard.start()
 
     step = 0

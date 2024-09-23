@@ -188,7 +188,7 @@ config = PraxisConfig(
 # Training and model
 hparams = dict(
     batch_size=args.batch_size,
-    target_batch_size=256,
+    target_batch_size=64,
     block_size=512,
 )
 
