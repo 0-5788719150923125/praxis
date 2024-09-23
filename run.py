@@ -31,6 +31,7 @@ from typing import Dict, List
 import torch
 import torch.nn as nn
 from datasets import load_dataset
+from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
 from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.core.datamodule import LightningDataModule
@@ -115,14 +116,34 @@ parser.add_argument(
 )
 
 
-args = parser.parse_args()
-dev = args.dev
+def sample_linear_decay(max_value):
+    return int(math.exp((1 - random.random())) * 2**31 - 1)
 
+
+def sample_cosine_decay(max_value):
+    seed = random.random()
+    curve = 1 - seed  # invert distribution
+    return int(curve * curve * max_value)
+
+
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=int(sample_cosine_decay(2**31 - 1)),
+    help="Global seed (default: 44)",
+)
+
+args = parser.parse_args()
+
+seed = args.seed
+seed_everything(seed)
+
+dev = args.dev
 device = args.device if args.device else "cpu"
-use_dashboard = False if args.no_dashboard else True
+
 cache_dir = args.cache_dir
 train_data_path = args.data_path
-
+use_dashboard = False if args.no_dashboard else True
 
 if args.use_tokenmonster:
     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
@@ -168,7 +189,7 @@ population = [
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-10BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-100BT"),
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-350BT"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="default"),
+    dict(path="HuggingFaceFW/fineweb", key="text", name="default"),
 ]
 weights = [1, 0, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333, 0.1]
 dataset_choice = random.choices(population, weights, k=1)[0]
@@ -254,6 +275,7 @@ class PraxisTrainer(LightningModule):
                 "loss": loss,
                 "batch": int(batch_idx),
                 "step": int(batch_idx // train_params["accumulate_grad_batches"]),
+                "seed": int(seed),
             },
             on_step=True,
             logger=True,
@@ -285,9 +307,10 @@ class TerminalInterface(Callback):
         self.dashboard = False
         if use_dashboard:
             max_data_points = 10000
-            self.dashboard = TerminalDashboard(max_data_points)
+            self.dashboard = TerminalDashboard(seed, max_data_points)
             try:
                 self.dashboard.start()
+                self.dashboard.update_seed(seed)
                 self.dashboard.update_url(api_url)
             except KeyboardInterrupt:
                 self.dashboard.stop()
@@ -371,7 +394,7 @@ class HuggingfaceDataset(IterableDataset):
         text_cache_size = 10 * buffer_size
 
         shuffled = self.dataset.shuffle(
-            seed=random.randint(0, 2**31),
+            seed=seed,
             buffer_size=buffer_size,
         )
 

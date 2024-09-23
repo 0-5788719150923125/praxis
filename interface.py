@@ -53,7 +53,8 @@ class LogCapture:
 
 
 class TerminalDashboard:
-    def __init__(self, max_data_points=50, max_log_lines=100):
+    def __init__(self, seed, max_data_points=50, max_log_lines=100):
+        self.seed = seed
         self.term = blessed.Terminal()
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         self.max_data_points = max_data_points
@@ -137,6 +138,10 @@ class TerminalDashboard:
         self.running = False
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
+
+    def update_seed(self, seed):
+        with self.lock:
+            self.seed = seed
 
     def update_params(self, total_params):
         with self.lock:
@@ -305,7 +310,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS{str(self.total_params)} | Batch: {int(self.batch)}, Step: {int(self.step)} | Elapsed: {elapsed:.2f}h | URL: {self.url}",
+                    f"\n PRAXIS{str(self.total_params)}:{str(self.seed)} | Batch: {int(self.batch)}, Step: {int(self.step)} | Elapsed: {elapsed:.2f}h | URL: {self.url}",
                     width,
                 )
             )
