@@ -25,5 +25,4 @@ class PraxisDecoder(nn.Module):
             hidden_states = new_states["hidden_states"]
             if "aux_loss" in new_states:
                 aux_losses.append(new_states["aux_loss"])
-        aux_loss = sum(aux_losses)
-        return dict(hidden_states=hidden_states, aux_loss=aux_loss)
+        return dict(hidden_states=hidden_states, aux_loss=sum(aux_losses))

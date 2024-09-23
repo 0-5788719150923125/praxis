@@ -10,13 +10,13 @@ app = Flask(__name__)
 
 
 class APIServer:
-    def __init__(self, generator):
+    def __init__(self, generator, port=5000):
         self.generator = generator
         self.server_thread = None
         self.server = None
         self.started = Event()
         self.host = "api.src.eco"
-        self.port = 5000  # Default Flask port
+        self.port = port
 
     def start(self):
         self.server_thread = Thread(target=self._run_server)
@@ -59,5 +59,5 @@ def generate():
     except Exception as e:
         logging.error(e)
         return jsonify(str(e)), 400
-    print("Successfully responded to REST request.")
+    logging.info("Successfully responded to REST request.")
     return jsonify({"response": output}), 200

@@ -14,11 +14,15 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-save_path = "data/praxis"
+num_examples = 1_000_000
+
+save_path = f"data/praxis"
+
 
 vocab_size = 8192
-dropout = 0.1
 max_token_length = 3
+dropout = 0.5
+
 
 pad_token = "[PAD]"
 bos_token = "[BOS]"
@@ -38,7 +42,6 @@ dataset = load_dataset(
 )
 
 column = "text"
-num_examples = 1_000_000
 iterator = islice((item[column] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
@@ -90,3 +93,7 @@ trained_tokenizer.add_special_tokens(
 
 os.makedirs(save_path, exist_ok=True)
 trained_tokenizer.save_pretrained(save_path)
+
+archive_path = save_path + f"-{vocab_size}"
+os.makedirs(archive_path, exist_ok=True)
+trained_tokenizer.save_pretrained(archive_path)

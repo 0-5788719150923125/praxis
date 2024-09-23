@@ -25,6 +25,7 @@ import logging
 import math
 import os
 import random
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, List
 
@@ -75,6 +76,12 @@ parser.add_argument(
     type=str,
     default="cpu",
     help="Device to use (default: cpu)",
+)
+parser.add_argument(
+    "--port",
+    type=int,
+    default=5000,
+    help="Serve the local API at this port (default: 5000)",
 )
 parser.add_argument(
     "--batch_size",
@@ -130,7 +137,7 @@ parser.add_argument(
     "--seed",
     type=int,
     default=int(sample_cosine_decay(2**31 - 1)),
-    help="Global seed (default: 44)",
+    help="Global seed (default: random)",
 )
 
 args = parser.parse_args()
@@ -140,6 +147,7 @@ seed_everything(seed)
 
 dev = args.dev
 device = args.device if args.device else "cpu"
+port = args.port
 
 cache_dir = args.cache_dir
 train_data_path = args.data_path
@@ -180,7 +188,7 @@ config = PraxisConfig(
 # Training and model
 hparams = dict(
     batch_size=args.batch_size,
-    target_batch_size=64,
+    target_batch_size=256,
     block_size=512,
 )
 
@@ -349,10 +357,31 @@ class TerminalInterface(Callback):
 
         self.last_time = datetime.now()
 
-        if self.dashboard:
+        n_grams = 3
+        frequency = 10
+        if self._detect_repetition(n_grams, frequency):
+            self.text = tokenizer.bos_token
+            self.dashboard.update_status("[ERR]")
+        elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:
             print(self.text)
+
+    def _detect_repetition(self, top_n, threshold):
+        text = self.text
+
+        # Step 1: Generate n-grams based on characters
+        n_grams = [text[i : i + top_n] for i in range(len(text) - top_n + 1)]
+
+        # Step 2: Count n-gram frequencies
+        n_gram_counts = Counter(n_grams)
+
+        # Step 3: Check if any n-gram exceeds the threshold
+        for count in n_gram_counts.values():
+            if count > threshold:
+                return True
+
+        return False
 
     def _is_trigger_passed(self, original_time, x_seconds):
         current_time = datetime.now()
@@ -499,7 +528,7 @@ class Generator:
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.3,
+            temperature=0.7,
             eta_cutoff=0.002,
             penalty_alpha=0.6,
             top_k=4,
@@ -530,7 +559,7 @@ class Generator:
 
         if attempts == max_attempts:
             print(
-                "Warning: Reached maximum attempts without generating non-empty token"
+                "Warning: Reached maximum attempts without generating a single non-empty token"
             )
 
         return return_text
@@ -561,7 +590,7 @@ print(model)
 
 generator = Generator(model, tokenizer)
 
-api_server = APIServer(generator)
+api_server = APIServer(generator, port)
 api_server.start()
 api_url = api_server.get_url() + "/generate"
 
