@@ -399,7 +399,7 @@ class TerminalInterface(Callback):
         lm.model.train()
 
     def _sign_wave(self, amplitude=1, frequency=1, phase_shift=0, step=1):
-        distribution = random.gauss(0.23, 0.2)
+        distribution = random.gauss(0.25, 0.2)
         return distribution + (
             amplitude * math.sin(2 * math.pi * frequency * step + phase_shift)
         )
