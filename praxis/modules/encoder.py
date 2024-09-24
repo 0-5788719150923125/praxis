@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ..configuration_praxis import PraxisConfig
 from .block import PraxisBlock
@@ -54,4 +55,13 @@ class PraxisEncoder(nn.Module):
         combined = torch.cat([inputs_reduced, pca_reduced], dim=-1)
         hidden_states = self.pca(combined)
 
-        return dict(hidden_states=hidden_states, aux_loss=0)
+        # Calculate squared cosine distance between wme and pca outputs
+        cosine_distance_squared = (
+            1 - F.cosine_similarity(inputs_reduced, hidden_states, dim=-1)
+        ) ** 2
+
+        # Calculate auxiliary loss
+        aux_weight = 0.1
+        aux_loss = cosine_distance_squared.mean() * aux_weight
+
+        return dict(hidden_states=hidden_states, aux_loss=aux_loss)
