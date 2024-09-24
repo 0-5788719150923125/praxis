@@ -141,6 +141,9 @@ parser.add_argument(
 )
 
 
+vocab_size = 1024
+
+
 def sample_linear_decay(max_value=2**31 - 1):
     return int(math.exp((1 - random.random())) * max_value)
 
@@ -185,7 +188,7 @@ else:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
     except Exception as e:
         tokenizer = AutoTokenizer.from_pretrained(
-            "UNSAFE/praxis-8192", cache_dir=cache_dir
+            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
         )
 
 # System args
@@ -383,17 +386,18 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        self.last_time = datetime.now()
-
         n_grams = 5
         frequency = 10
-        if self._detect_repetition(n_grams, frequency):
+        if self._detect_repetition(n_grams, frequency) or self._is_all_whitespace():
             self.text = tokenizer.bos_token
-            self.dashboard.update_status("[ERR]")
+            if self.dashboard:
+                self.dashboard.update_status("[ERR]")
         elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:
             print(self.text)
+
+        self.last_time = datetime.now()
 
         lm.model.train()
 
@@ -418,6 +422,9 @@ class TerminalInterface(Callback):
                 return True
 
         return False
+
+    def _is_all_whitespace(self):
+        return self.text.isspace()
 
     def _is_trigger_passed(self, original_time, x_seconds):
         time_difference = datetime.now() - original_time

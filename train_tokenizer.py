@@ -14,13 +14,13 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-num_examples = 2_000_000
+num_examples = 1_000_000
 
 save_path = "data/praxis"
 
 
-vocab_size = 8192
-max_token_length = 4
+vocab_size = 1024
+max_token_length = 3
 min_frequency = 16
 dropout = 0.1
 
