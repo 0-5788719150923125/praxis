@@ -8,7 +8,7 @@ class PraxisConfig(PretrainedConfig):
         self,
         n_dim=384,
         n_emb=512,
-        n_factors=8,
+        n_factors=2,
         n_layer=12,
         n_head=8,
         epsilon=1e-5,
