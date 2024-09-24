@@ -15,15 +15,15 @@ class PraxisBlock(nn.Module):
 
     def forward(
         self,
-        x,
+        inputs,
         attention_mask=None,
         router_weights=False,
     ):
-        residual = x
-        y = self.attn(x, attention_mask) + residual
-        residual = y
-        y = self.mlp(self.norm(y))
+        residual = inputs
+        outputs = self.attn(inputs, attention_mask) + residual
+        residual = outputs
+        outputs = self.mlp(self.norm(outputs))
         if router_weights is not None:
-            y *= router_weights
-        y += residual
-        return dict(hidden_states=x)
+            outputs *= router_weights
+        outputs += residual
+        return dict(hidden_states=outputs)

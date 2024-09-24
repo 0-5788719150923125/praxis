@@ -242,8 +242,7 @@ predict_tokens = 1
 optimizer_config = dict(
     optimizer_name="AdamW",
     lr=1e-3,
-    weight_decay=1e-2,
-    amsgrad=True,
+    weight_decay=1e-5,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",

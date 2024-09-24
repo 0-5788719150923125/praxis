@@ -28,13 +28,13 @@ class PraxisMixtureOfDepths(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
+        inputs: Tensor,
         attention_mask: Tensor,
         *args,
         **kwargs,
     ):
 
-        b, s, d = x.shape
+        b, s, d = inputs.shape
 
         # S = seq_len, C = capacity  , C = int(seq_length * capacity_factor)
         #  page 6 above eq 1 | ( C<S ) | here top_k = beta
@@ -42,7 +42,9 @@ class PraxisMixtureOfDepths(nn.Module):
 
         # eq1 page 6
         # scaler weights for each token
-        router_logits = self.router(x)  # (x) batch,seq_len,dim -> r batch,seq_len,1
+        router_logits = self.router(
+            inputs
+        )  # (x) batch,seq_len,dim -> r batch,seq_len,1
 
         #  𝑟𝑙> 𝑃𝛽 (R)  ... eqution 1
         token_weights, token_index = torch.topk(
@@ -57,8 +59,8 @@ class PraxisMixtureOfDepths(nn.Module):
         indices_expanded = sorted_indices.expand(-1, -1, d)
 
         # This are fillted topk tokens with capactiy C
-        filtered_x = torch.gather(
-            input=x, dim=1, index=indices_expanded
+        filtered_inputs = torch.gather(
+            input=inputs, dim=1, index=indices_expanded
         )  # -> batch, capacity, dim
 
         # softmax router weights
@@ -69,18 +71,23 @@ class PraxisMixtureOfDepths(nn.Module):
 
         # pass the selected tokens through the transformer block
         block_outputs = self.block(
-            filtered_x, attention_mask=attention_mask, router_weights=router_weights
+            filtered_inputs,
+            attention_mask=attention_mask,
+            router_weights=router_weights,
         )
 
         # integrate the selected and residual tokens
-        hidden_states = torch.scatter(
-            input=x, dim=1, index=indices_expanded, src=block_outputs["hidden_states"]
+        outputs = torch.scatter(
+            input=inputs,
+            dim=1,
+            index=indices_expanded,
+            src=block_outputs["hidden_states"],
         )
 
         # compute aux loss, in order to maintain causality
         aux_loss = self.aux_loss(router_logits, sorted_indices)
 
-        return dict(hidden_states=hidden_states, aux_loss=aux_loss)
+        return dict(hidden_states=outputs, aux_loss=aux_loss)
 
     def aux_loss(self, router_logits: torch.Tensor, selected_tokens: torch.Tensor):
         # Page 7, Section 3.5 sampling

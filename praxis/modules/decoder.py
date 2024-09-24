@@ -18,8 +18,8 @@ class PraxisDecoder(nn.Module):
             else:
                 self.blocks.append(PraxisBlock(config))
 
-    def forward(self, x, attention_mask):
-        hidden_states = x
+    def forward(self, inputs, attention_mask):
+        hidden_states = inputs
         aux_losses = []
         for block in self.blocks:
             new_states = block(hidden_states, attention_mask)

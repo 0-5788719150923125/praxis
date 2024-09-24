@@ -3,26 +3,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..configuration_praxis import PraxisConfig
-from .block import PraxisBlock
-from .router import PraxisMixtureOfDepths
 
 
 class PraxisEncoder(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.config = config
         self.n_dim = config.n_dim
+        self.n_factors = config.n_factors
         self.wte = nn.Embedding(config.vocab_size, config.n_emb)
         self.wme = nn.Linear(config.n_emb, config.n_dim, bias=False)
         self.max_pca_k = min(
             config.n_dim, config.n_emb
         )  # Maximum number of principal components
-        self.n_factors = config.n_factors
         self.pca = nn.Linear(config.n_dim + self.max_pca_k, config.n_dim, bias=True)
 
-    def forward(self, x):
+    def forward(self, inputs):
         # Word token embeddings
-        input_embeds = self.wte(x)
+        input_embeds = self.wte(inputs)
 
         # Linear projection (residual)
         inputs_reduced = self.wme(input_embeds)
@@ -53,15 +50,15 @@ class PraxisEncoder(nn.Module):
 
         # Combine linear projection and PCA results
         combined = torch.cat([inputs_reduced, pca_reduced], dim=-1)
-        hidden_states = self.pca(combined)
+        outputs = self.pca(combined)
 
         # Calculate squared cosine distance between wme and pca outputs
         cosine_distance_squared = (
-            1 - F.cosine_similarity(inputs_reduced, hidden_states, dim=-1)
+            1 - F.cosine_similarity(inputs_reduced, outputs, dim=-1)
         ) ** 2
 
         # Calculate auxiliary loss
         aux_weight = 0.1
         aux_loss = cosine_distance_squared.mean() * aux_weight
 
-        return dict(hidden_states=hidden_states, aux_loss=aux_loss)
+        return dict(hidden_states=outputs, aux_loss=aux_loss)
