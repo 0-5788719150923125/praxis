@@ -21,6 +21,7 @@ signal.signal(signal.SIGINT, sigint_handler)
 
 
 import argparse
+import itertools
 import logging
 import math
 import os
@@ -127,6 +128,12 @@ parser.add_argument(
     help="Run as a dense model (default: False)",
 )
 parser.add_argument(
+    "--phi",
+    action="store_true",
+    default=False,
+    help="Supplement with expert data (default: False)",
+)
+parser.add_argument(
     "--dev",
     action="store_true",
     default=False,
@@ -159,6 +166,7 @@ seed_everything(seed)
 dev = args.dev
 device = args.device if args.device else "cpu"
 port = args.port
+phi = args.phi
 
 cache_dir = args.cache_dir
 train_data_path = args.data_path
@@ -215,7 +223,10 @@ population = [
     dict(path="HuggingFaceFW/fineweb", key="text", name="default"),
 ]
 weights = [1, 0, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333, 0.1]
-dataset_choice = random.choices(population, weights, k=1)[0]
+primary_dataset = random.choices(population, weights, k=1)[0]
+
+if phi:
+    secondary_dataset = population[0]
 
 # Misc config
 max_feed_chars = 2048
@@ -309,7 +320,7 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
-    def __init__(self, use_dashboard=False, api_url=None):
+    def __init__(self, use_dashboard=False, url=None):
         super().__init__()
         self.alpha = 1e-2
         self.ema_loss = 0
@@ -325,7 +336,7 @@ class TerminalInterface(Callback):
             try:
                 self.dashboard.start()
                 self.dashboard.update_seed(seed)
-                self.dashboard.update_url(api_url)
+                self.dashboard.update_url(url)
             except KeyboardInterrupt:
                 self.dashboard.stop()
 
@@ -370,8 +381,6 @@ class TerminalInterface(Callback):
 
         self.text = generator.generate(self.text, {"max_new_tokens": self.num_tokens})
 
-        lm.model.train()
-
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
@@ -386,6 +395,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_status(self.text)
         else:
             print(self.text)
+
+        lm.model.train()
 
     def _sign_wave(self, amplitude=1, frequency=1, phase_shift=0, step=1):
         return amplitude * math.sin(2 * math.pi * frequency * step + phase_shift)
@@ -640,43 +651,91 @@ class AccumulationSchedule(GradientAccumulationScheduler):
         )
 
 
+# create the optimizer
+optimizer = create_optimizer(model, **optimizer_config)
+
+
+# Load a dataset
+train_data = []
+if train_data_path:
+    train_data.append(
+        MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
+    )
+else:
+    train_data.append(
+        HuggingfaceDataset(tokenizer, primary_dataset, hparams["block_size"])
+    )
+
+
+# Load expert dataset
+if phi:
+    train_data.append(
+        HuggingfaceDataset(tokenizer, secondary_dataset, hparams["block_size"])
+    )
+
+
+class WeightedIterableDataset(IterableDataset):
+    def __init__(self, datasets, weights):
+        assert len(datasets) == len(
+            weights
+        ), "Number of datasets and weights must match"
+        assert sum(weights) == 1, "Weights must sum to 1"
+
+        self.datasets = datasets
+        self.weights = weights
+        self.cumulative_weights = [sum(weights[: i + 1]) for i in range(len(weights))]
+
+    def __iter__(self):
+        iters = [iter(dataset) for dataset in self.datasets]
+        while True:
+            try:
+                rand = random.random()
+                for i, cum_weight in enumerate(self.cumulative_weights):
+                    if rand < cum_weight:
+                        yield next(iters[i])
+                        break
+            except StopIteration:
+                break
+
+
+class DataModule(LightningDataModule):
+    def __init__(self, train_data, batch_size=1):
+        super().__init__()
+        self.batch_size = batch_size
+        self.loaders = []
+        for i, data in enumerate(train_data):
+            self.loaders.append(
+                DataLoader(
+                    data,
+                    batch_size=self.batch_size,
+                    pin_memory=True,
+                    num_workers=1,
+                )
+            )
+
+        self.weights = []
+        if len(self.loaders) == 1:
+            self.weights.append(1.0)
+        else:
+            self.weights.append(0.9)  # global
+            self.weights.append(0.1)  # expert
+
+    def train_dataloader(self):
+        return WeightedIterableDataset(self.loaders, self.weights)
+
+
+# Put the data onto a dataloader
+dataloader = DataModule(train_data, hparams["batch_size"])
+
+# Wrap the model in a pytorch-lightning module
+train_model = PraxisTrainer(model, optimizer, hparams)
+
+# Load the callbacks
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
 train_params["callbacks"].append(TerminalInterface(use_dashboard, api_url))
-
-
-# create the optimizer
-optimizer = create_optimizer(model, **optimizer_config)
-
-# Load a dataset
-if train_data_path:
-    dataset = MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
-else:
-    dataset = HuggingfaceDataset(tokenizer, dataset_choice, hparams["block_size"])
-
-
-class DataModule(LightningDataModule):
-    def __init__(self, dataset, batch_size):
-        super().__init__()
-        self.batch_size = batch_size
-        self.data_loader = DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            pin_memory=True,
-            num_workers=1,
-        )
-
-    def train_dataloader(self):
-        return self.data_loader
-
-
-# Put the data onto a dataloader
-dataloader = DataModule(dataset, hparams["batch_size"])
-
-# Wrap the model in a pytorch-lightning module
-train_model = PraxisTrainer(model, optimizer, hparams)
 
 # fit the trainer and run
 trainer = Trainer(**train_params)

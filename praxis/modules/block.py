@@ -9,9 +9,8 @@ from .mlp import PraxisMLP
 class PraxisBlock(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.attn = PraxisAttention(config)
-        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.mlp = PraxisMLP(config)
 
     def forward(
@@ -21,11 +20,9 @@ class PraxisBlock(nn.Module):
         router_weights=False,
     ):
         residual = x
-        norm = self.attn_norm(x)
-        y = self.attn(norm, attention_mask) + residual
+        y = self.attn(x, attention_mask) + residual
         residual = y
-        norm = self.mlp_norm(y)
-        y = self.mlp(norm)
+        y = self.mlp(self.norm(y))
         if router_weights is not None:
             y *= router_weights
         y += residual
