@@ -11,22 +11,22 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
-        self.foresight = config.foresight
         self.max_seq_len = config.context_length
+        self.foresight = config.foresight
         self.hidden_size = config.n_dim
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
         self.query = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
+            self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.key = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
+            self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
         self.out = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=False
+            self.num_heads * self.head_dim, self.hidden_size, bias=True
         )
 
         # Precompute the slopes for ALiBi

@@ -10,6 +10,7 @@ from transformers.modeling_outputs import (
 
 from .configuration_praxis import PraxisConfig
 from .modules.decoder import PraxisDecoder
+from .modules.encoder import PraxisEncoder
 
 
 class PraxisModel(PreTrainedModel):
@@ -17,15 +18,7 @@ class PraxisModel(PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.config = config
-        self.n_dim = config.n_dim
-        self.wte = nn.Embedding(config.vocab_size, config.n_emb)
-        self.wme = nn.Linear(config.n_emb, config.n_dim, bias=False)
-        self.max_pca_k = min(
-            config.n_dim, config.n_emb
-        )  # Maximum number of principal components
-        self.n_factors = config.n_factors
-        self.pca = nn.Linear(config.n_dim + self.max_pca_k, config.n_dim, bias=True)
+        self.encoder = PraxisEncoder(config)
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
@@ -38,46 +31,17 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        # Word token embeddings
-        input_embeds = self.wte(input_ids)
-
-        # Linear projection (residual)
-        inputs_reduced = self.wme(input_embeds)
-
-        # Calculate pca_k dynamically
-        q = min(self.max_pca_k, input_embeds.size(0), input_embeds.size(1)) - 1
-
-        # PCA operation
-        if q > 0:
-            _, _, v = torch.pca_lowrank(
-                input_embeds, q=q, center=True, niter=self.n_factors
-            )
-            pca_reduced = torch.matmul(input_embeds, v)
-        else:
-            # Fallback if PCA is not possible
-            pca_reduced = torch.zeros(
-                *input_embeds.shape[:-1], 0, device=input_embeds.device
-            )
-
-        # Pad pca_reduced if necessary
-        if pca_reduced.size(-1) < self.max_pca_k:
-            padding = torch.zeros(
-                *pca_reduced.shape[:-1],
-                self.max_pca_k - pca_reduced.size(-1),
-                device=pca_reduced.device
-            )
-            pca_reduced = torch.cat([pca_reduced, padding], dim=-1)
-
-        # Combine linear projection and PCA results
-        combined = torch.cat([inputs_reduced, pca_reduced], dim=-1)
-        hidden_states = self.pca(combined)
+        inputs = self.encoder(input_ids)
 
         if attention_mask is None:
-            attention_mask = torch.ones(input_ids.shape, device=hidden_states.device)
+            attention_mask = torch.ones(
+                input_ids.shape, device=inputs["hidden_states"].device
+            )
 
-        outputs = self.decoder(hidden_states, attention_mask)
+        outputs = self.decoder(inputs["hidden_states"], attention_mask)
 
         if self.training:
+            self.aux_losses.append(inputs["aux_loss"])
             self.aux_losses.append(outputs["aux_loss"])
 
         return BaseModelOutputWithPast(
