@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 
 class APIServer:
-    def __init__(self, generator, port=5000, host="localhost"):
+    def __init__(self, generator, host="localhost", port=5000):
         self.generator = generator
         self.server_thread = None
         self.server = None

@@ -16,6 +16,7 @@ class PraxisEncoder(nn.Module):
             config.n_dim, config.n_emb
         )  # Maximum number of principal components
         self.pca = nn.Linear(config.n_dim + self.max_pca_k, config.n_dim, bias=True)
+        self.aux_weight = 0.2
 
     def forward(self, inputs):
         # Word token embeddings
@@ -58,7 +59,6 @@ class PraxisEncoder(nn.Module):
         ) ** 2
 
         # Calculate auxiliary loss
-        aux_weight = 0.1
-        aux_loss = cosine_distance_squared.mean() * aux_weight
+        aux_loss = cosine_distance_squared.mean() * self.aux_weight
 
         return dict(hidden_states=outputs, aux_loss=aux_loss)

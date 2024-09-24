@@ -84,6 +84,12 @@ parser.add_argument(
     help="Device to use (default: cpu)",
 )
 parser.add_argument(
+    "--host_name",
+    type=str,
+    default="localhost",
+    help="Serve the local API at this CNAME (default: 'localhost')",
+)
+parser.add_argument(
     "--port",
     type=int,
     default=5000,
@@ -169,6 +175,7 @@ seed_everything(seed)
 dev = args.dev
 device = args.device if args.device else "cpu"
 port = args.port
+host_name = args.host_name
 phi = args.phi
 
 cache_dir = args.cache_dir
@@ -225,7 +232,7 @@ population = [
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-350BT"),
     dict(path="HuggingFaceFW/fineweb", key="text", name="default"),
 ]
-weights = [1, 0, 0, 0, 0] if dev else [0, 1.0, 0.666666, 0.333, 0.1]
+weights = [1, 0, 0, 0, 0] if dev else [0, 1e0, 6e-6, 3e-3, 1e-1]
 primary_dataset = random.choices(population, weights, k=1)[0]
 
 if phi:
@@ -242,10 +249,12 @@ predict_interval = 3
 predict_tokens = 1
 
 # Optimizer configuration
+# from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 optimizer_config = dict(
-    optimizer_name="AdamW",
+    optimizer_name="AdEMAMix",
     lr=1e-3,
-    weight_decay=1e-5,
+    weight_decay=1e-2,
+    alpha=4.444,  # foresight
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
@@ -632,9 +641,8 @@ print(model)
 
 generator = Generator(model, tokenizer)
 
-api_server = APIServer(generator, port)
+api_server = APIServer(generator, host_name, port)
 api_server.start()
-api_url = api_server.get_api_addr()
 
 
 class AccumulationSchedule(GradientAccumulationScheduler):
@@ -744,7 +752,9 @@ train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
-train_params["callbacks"].append(TerminalInterface(use_dashboard, api_url))
+train_params["callbacks"].append(
+    TerminalInterface(use_dashboard, api_server.get_api_addr())
+)
 
 # fit the trainer and run
 trainer = Trainer(**train_params)
