@@ -191,47 +191,43 @@ class TFreeTokenizer(PreTrainedTokenizer):
         return tokens
 
 
-class TFreeModelForCausalLM(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
-        lm_config = GPT2Config(
-            vocab_size=config.vocab_size,
-            n_embd=config.embedding_dim,
-            n_layer=3,
-            n_head=4,
-        )
-        self.language_model = GPT2LMHeadModel(lm_config)
-        self.language_model.set_input_embeddings(self.embedding)
-
-    def forward(self, input_ids, labels=None):
-        attention_mask = (input_ids != self.config.pad_token_id).long()
-        outputs = self.language_model(
-            input_ids=input_ids, attention_mask=attention_mask, labels=labels
-        )
-        return outputs
-
-
-def generate_random_sequence(length):
-    return "".join(random.choice(string.ascii_letters + " ") for _ in range(length))
-
-
-# Function to calculate similarity between two texts
-def calculate_similarity(original, decoded):
-    # Simple character-level similarity
-    matches = sum(o == d for o, d in zip(original, decoded))
-    return matches / max(len(original), len(decoded))
-
-
-def truncate_text(text, max_length=512):
-    return text[:max_length]
-
-
 if __name__ == "__main__":
     import numpy as np
     import pandas as pd
     from datasets import load_dataset
+
+    class TFreeModelForCausalLM(nn.Module):
+        def __init__(self, config):
+            super().__init__()
+            self.config = config
+            self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
+            lm_config = GPT2Config(
+                vocab_size=config.vocab_size,
+                n_embd=config.embedding_dim,
+                n_layer=3,
+                n_head=4,
+            )
+            self.language_model = GPT2LMHeadModel(lm_config)
+            self.language_model.set_input_embeddings(self.embedding)
+
+        def forward(self, input_ids, labels=None):
+            attention_mask = (input_ids != self.config.pad_token_id).long()
+            outputs = self.language_model(
+                input_ids=input_ids, attention_mask=attention_mask, labels=labels
+            )
+            return outputs
+
+    def generate_random_sequence(length):
+        return "".join(random.choice(string.ascii_letters + " ") for _ in range(length))
+
+    # Function to calculate similarity between two texts
+    def calculate_similarity(original, decoded):
+        # Simple character-level similarity
+        matches = sum(o == d for o, d in zip(original, decoded))
+        return matches / max(len(original), len(decoded))
+
+    def truncate_text(text, max_length=512):
+        return text[:max_length]
 
     config = TFreeConfig(
         vocab_size=1024,  # Increased vocab_size to reduce hash collisions
@@ -244,7 +240,7 @@ if __name__ == "__main__":
     model = TFreeModelForCausalLM(config)
 
     # Adjust as needed
-    num_iterations = 10_000
+    num_iterations = 100
     buffer_size = 1000
     # Number of test samples per iteration
     num_test_samples = 2
@@ -292,11 +288,6 @@ if __name__ == "__main__":
         train_sample = truncate_text(next(dataset_iterator))
         print(f"Iteration {iteration + 1}/{num_iterations}")
 
-        # If the iterator is exhausted, break the loop
-        if not train_sample:
-            print("Training data iterator exhausted.")
-            break
-
         # Train on train_sample
         tokenizer.encode(train_sample)
 
@@ -324,8 +315,6 @@ if __name__ == "__main__":
                     "Sample": test_data,
                 }
             )
-
-    import pandas as pd
 
     # Pivot the DataFrame to create a matrix for surface plotting
     df = pd.DataFrame(all_similarity_scores)

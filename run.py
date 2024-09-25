@@ -102,6 +102,12 @@ parser.add_argument(
     help="Batch size to use for training (default: 1)",
 )
 parser.add_argument(
+    "--depth",
+    type=int,
+    default=7,
+    help="Number of layers to use (default: 3)",
+)
+parser.add_argument(
     "--data_path",
     type=str,
     nargs="+",
@@ -203,7 +209,7 @@ config = PraxisConfig(
     n_dim=384,
     n_emb=512,
     n_factors=3,
-    n_layer=3 if dev else 7,
+    n_layer=args.depth if not dev else 3,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,

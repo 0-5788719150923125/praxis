@@ -44,6 +44,7 @@ python run.py \
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
   --batch_size 8 \               # Set the batch size to use for training.
+  --depth \                      # The number of layers to host.
   --no_dashboard \               # Disables the CLI interface.
   --use_tokenmonster \           # Replace the LLaMA-2 tokenizer with TokenMonster.
   --dense \                      # Run as a fully-connected (dense) model. (defaults to a sparse model)
