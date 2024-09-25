@@ -92,7 +92,7 @@ parser.add_argument(
 parser.add_argument(
     "--port",
     type=int,
-    default=5000,
+    default=12300,
     help="Serve the local API at this port (default: 5000)",
 )
 parser.add_argument(
@@ -213,7 +213,7 @@ config = PraxisConfig(
     n_head=8,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
-    foresight=-1e-9,
+    foresight=1e-7,
     sparse=False if args.dense else True,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
@@ -238,7 +238,7 @@ population = [
     dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-350BT"),
     dict(path="HuggingFaceFW/fineweb", key="text", name="default"),
 ]
-weights = [1, 0, 0, 0, 0] if dev else [0, 1e0, 6e-6, 3e-3, 1e-1]
+weights = [1, 0, 0, 0, 0] if dev else [0, 1, 6e-6, 3e-3, 1e-1]
 primary_dataset = random.choices(population, weights, k=1)[0]
 
 if phi:
@@ -362,7 +362,7 @@ class TerminalInterface(Callback):
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema_loss = self._compute_ema_loss(float(loss), self.ema_loss, self.alpha)
 
-        self._generate_sample_text(lm, batch_idx, interval=self.interval)
+        self._generate_sample_text(lm, self.interval)
 
         batch_size, _ = batch.shape
 
@@ -388,7 +388,7 @@ class TerminalInterface(Callback):
                 self._sign_wave(amplitude=1.23, frequency=0.01, step=batch_idx)
             )
 
-    def _generate_sample_text(self, lm, batch_idx, interval=10):
+    def _generate_sample_text(self, lm, interval=10):
 
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
@@ -411,6 +411,10 @@ class TerminalInterface(Callback):
             self.dashboard.update_status(self.text)
         else:
             print(self.text)
+
+        # allow for multiple tokens
+        if random.random() < 0.1:
+            return self._generate_sample_text(lm)
 
         self.last_time = datetime.now()
 

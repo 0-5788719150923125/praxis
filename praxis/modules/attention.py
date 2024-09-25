@@ -20,7 +20,7 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.key = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
+            self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
@@ -37,20 +37,20 @@ class PraxisAttention(nn.Module):
         positions = torch.arange(self.max_seq_len, dtype=torch.float32)
         self.register_buffer("positions", positions)
 
-    def forward(self, x, attention_mask=None):
-        batch_size, seq_len, _ = x.size()
+    def forward(self, inputs, attention_mask=None):
+        batch_size, seq_len, _ = inputs.size()
         q = (
-            self.query(x)
+            self.query(inputs)
             .view(batch_size, seq_len, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
         k = (
-            self.key(x)
+            self.key(inputs)
             .view(batch_size, seq_len, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
         v = (
-            self.value(x)
+            self.value(inputs)
             .view(batch_size, seq_len, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
@@ -63,47 +63,45 @@ class PraxisAttention(nn.Module):
         alibi_bias = self.slopes.unsqueeze(1).unsqueeze(1) * self.positions[
             :seq_len
         ].unsqueeze(0).unsqueeze(0)
+
         alibi_bias = alibi_bias.expand(self.num_heads, seq_len, seq_len)
 
         # Subtract biases from the scores
-        scores = scores - alibi_bias
+        scores -= alibi_bias
 
         # Apply the causal mask
         if self.causal:
             causal_mask = torch.tril(
-                torch.ones(seq_len, seq_len, device=x.device)
+                torch.ones(seq_len, seq_len, device=inputs.device)
             ).view(1, 1, seq_len, seq_len)
-            scores = scores.masked_fill(causal_mask == 0, self.foresight)
 
-        # Apply the causal mask
-        # if self.causal:
-        #     # Create the causal mask
-        #     causal_mask = torch.triu(
-        #         torch.ones(seq_len, seq_len, device=x.device), diagonal=1
-        #     ).bool()
-        #     causal_mask = causal_mask.unsqueeze(0).unsqueeze(
-        #         0
-        #     )  # Add batch and head dimensions
+            # Generate Gaussian random values
+            soft_mask = torch.normal(
+                mean=-1e9,
+                std=abs(mean) * min(self.foresight, 0.1),
+                size=(batch_size, self.num_heads, seq_len, seq_len),
+                device=inputs.device,
+            )
 
-        #     # Apply the penalty to the masked positions
-        #     scores = torch.where(causal_mask, scores + self.foresight, scores)
-        #     print(scores)
+            # Create an index tensor for scatter_add
+            index = (
+                torch.arange(seq_len, device=inputs.device)
+                .view(1, 1, 1, seq_len)
+                .expand_as(scores)
+            )
 
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_output = (
-            torch.matmul(attn_weights, v)
+            # Apply the random foresight values where the causal mask is 0
+            scores = scores.scatter_add_(
+                -1,
+                index,
+                soft_mask * (1 - causal_mask),  # Only add penalties where mask is 0
+            )
+
+        weights = F.softmax(scores, dim=-1)
+        outputs = (
+            torch.matmul(weights, v)
             .transpose(1, 2)
             .reshape(batch_size, seq_len, self.hidden_size)
         )
 
-        return self.out(attn_output)
-
-    def _get_relative_positions(self, max_seq_len: int) -> torch.Tensor:
-        # Compute the relative positions for the maximum sequence length
-        relative_positions = torch.arange(max_seq_len, dtype=torch.long)
-        return relative_positions[None, :] - relative_positions[:, None]
-
-    def _get_alibi_slope(self, num_heads):
-        start_slope = 2 ** (-8 / num_heads)
-        slopes = 2 ** (-8 * torch.arange(1, num_heads + 1) / num_heads)
-        return slopes
+        return self.out(outputs)

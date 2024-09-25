@@ -17,7 +17,7 @@ class PraxisBlock(nn.Module):
         self,
         inputs,
         attention_mask=None,
-        router_weights=False,
+        router_weights=None,
     ):
         residual = inputs
         outputs = self.attn(inputs, attention_mask) + residual

@@ -41,7 +41,7 @@ class APIServer:
             self.server_thread.join()
 
     def get_api_addr(self):
-        return f"{self.host}:{self.port}/input"
+        return f"{self.host}:{self.port}"
 
 
 @app.route("/input/", methods=["GET", "POST"])

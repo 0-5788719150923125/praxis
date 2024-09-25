@@ -12,8 +12,7 @@ class PraxisDecoder(nn.Module):
         self.blocks = nn.ModuleList()
         for i in range(config.n_layer):
             use_router = i % 2 != 0  # if layer is odd
-            is_sparse = config.sparse
-            if is_sparse and use_router:
+            if config.sparse and use_router:
                 self.blocks.append(PraxisMixtureOfDepths(config, PraxisBlock(config)))
             else:
                 self.blocks.append(PraxisBlock(config))
@@ -22,8 +21,8 @@ class PraxisDecoder(nn.Module):
         hidden_states = inputs
         aux_losses = []
         for block in self.blocks:
-            new_states = block(hidden_states, attention_mask)
-            hidden_states = new_states["hidden_states"]
-            if "aux_loss" in new_states:
-                aux_losses.append(new_states["aux_loss"])
+            outputs = block(hidden_states, attention_mask)
+            hidden_states = outputs["hidden_states"]
+            if "aux_loss" in outputs:
+                aux_losses.append(outputs["aux_loss"])
         return dict(hidden_states=hidden_states, aux_loss=sum(aux_losses))

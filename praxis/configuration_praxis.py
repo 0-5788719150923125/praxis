@@ -15,7 +15,7 @@ class PraxisConfig(PretrainedConfig):
         capacity=0.125,
         vocab_size=8192,
         context_length=1024,
-        foresight=float("-inf"),
+        foresight=0,
         activation="mish",
         sparse=True,
         pad_token_id=0,
