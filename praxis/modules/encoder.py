@@ -8,57 +8,66 @@ from ..configuration_praxis import PraxisConfig
 class PraxisEncoder(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.n_dim = config.n_dim
-        self.n_factors = config.n_factors
-        self.wte = nn.Embedding(config.vocab_size, config.n_emb)
-        self.wme = nn.Linear(config.n_emb, config.n_dim, bias=False)
-        self.max_pca_k = min(
-            config.n_dim, config.n_emb
-        )  # Maximum number of principal components
-        self.pca = nn.Linear(config.n_dim + self.max_pca_k, config.n_dim, bias=True)
-        self.aux_weight = 0.2
+        self.wte = nn.Embedding(config.vocab_size, config.n_dim)
 
     def forward(self, inputs):
-        # Word token embeddings
-        input_embeds = self.wte(inputs)
+        return dict(hidden_states=self.wte(inputs), aux_loss=0)
 
-        # Linear projection (residual)
-        inputs_reduced = self.wme(input_embeds)
 
-        # Calculate pca_k dynamically
-        q = min(self.max_pca_k, input_embeds.size(0), input_embeds.size(1)) - 1
+# class PraxisEncoder(nn.Module):
+#     def __init__(self, config: PraxisConfig):
+#         super().__init__()
+#         self.n_dim = config.n_dim
+#         self.n_factors = config.n_factors
+#         self.wte = nn.Embedding(config.vocab_size, config.n_emb)
+#         self.wme = nn.Linear(config.n_emb, config.n_dim, bias=False)
+#         self.max_pca_k = min(
+#             config.n_dim, config.n_emb
+#         )  # Maximum number of principal components
+#         self.pca = nn.Linear(config.n_dim + self.max_pca_k, config.n_dim, bias=True)
+#         self.aux_weight = 0.2
 
-        # PCA operation
-        if q > 0:
-            _, _, v = torch.pca_lowrank(
-                input_embeds, q=q, center=True, niter=self.n_factors
-            )
-            pca_reduced = torch.matmul(input_embeds, v)
-        else:
-            # Fallback if PCA is not possible
-            pca_reduced = torch.zeros(
-                *input_embeds.shape[:-1], 0, device=input_embeds.device
-            )
+#     def forward(self, inputs):
+#         # Word token embeddings
+#         input_embeds = self.wte(inputs)
 
-        # Pad pca_reduced if necessary
-        if pca_reduced.size(-1) < self.max_pca_k:
-            padding = torch.zeros(
-                *pca_reduced.shape[:-1],
-                self.max_pca_k - pca_reduced.size(-1),
-                device=pca_reduced.device
-            )
-            pca_reduced = torch.cat([pca_reduced, padding], dim=-1)
+#         # Linear projection (residual)
+#         inputs_reduced = self.wme(input_embeds)
 
-        # Combine linear projection and PCA results
-        combined = torch.cat([inputs_reduced, pca_reduced], dim=-1)
-        outputs = self.pca(combined)
+#         # Calculate pca_k dynamically
+#         q = min(self.max_pca_k, input_embeds.size(0), input_embeds.size(1)) - 1
 
-        # Calculate squared cosine distance between wme and pca outputs
-        cosine_distance_squared = (
-            1 - F.cosine_similarity(inputs_reduced, outputs, dim=-1)
-        ) ** 2
+#         # PCA operation
+#         if q > 0:
+#             _, _, v = torch.pca_lowrank(
+#                 input_embeds, q=q, center=True, niter=self.n_factors
+#             )
+#             pca_reduced = torch.matmul(input_embeds, v)
+#         else:
+#             # Fallback if PCA is not possible
+#             pca_reduced = torch.zeros(
+#                 *input_embeds.shape[:-1], 0, device=input_embeds.device
+#             )
 
-        # Calculate auxiliary loss
-        aux_loss = cosine_distance_squared.mean() * self.aux_weight
+#         # Pad pca_reduced if necessary
+#         if pca_reduced.size(-1) < self.max_pca_k:
+#             padding = torch.zeros(
+#                 *pca_reduced.shape[:-1],
+#                 self.max_pca_k - pca_reduced.size(-1),
+#                 device=pca_reduced.device
+#             )
+#             pca_reduced = torch.cat([pca_reduced, padding], dim=-1)
 
-        return dict(hidden_states=outputs, aux_loss=aux_loss)
+#         # Combine linear projection and PCA results
+#         combined = torch.cat([inputs_reduced, pca_reduced], dim=-1)
+#         outputs = self.pca(combined)
+
+#         # Calculate squared cosine distance between wme and pca outputs
+#         cosine_distance_squared = (
+#             1 - F.cosine_similarity(inputs_reduced, outputs, dim=-1)
+#         ) ** 2
+
+#         # Calculate auxiliary loss
+#         aux_loss = cosine_distance_squared.mean() * self.aux_weight
+
+#         return dict(hidden_states=outputs, aux_loss=aux_loss)

@@ -14,14 +14,14 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-num_examples = 1_000_000
+num_examples = 5_000_000
 
 save_path = "data/praxis"
 
 
 vocab_size = 4096
-max_token_length = 3
-min_frequency = 16
+# max_token_length = 3
+# min_frequency = 16
 dropout = 0.1
 
 
@@ -32,7 +32,7 @@ unk_token = "[UNK]"
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
-    name="sample-10BT",
+    name="sample-100BT",
     split="train",
     streaming=True,
     trust_remote_code=True,
@@ -57,8 +57,8 @@ tokenizer = Tokenizer(
 
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
-    max_token_length=max_token_length,
-    min_frequency=min_frequency,
+    # max_token_length=max_token_length,
+    # min_frequency=min_frequency,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     show_progress=True,
     special_tokens=[
@@ -71,9 +71,9 @@ trainer = trainers.BpeTrainer(
 
 tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     [
-        pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True),
         pre_tokenizers.Punctuation(behavior="isolated"),
         pre_tokenizers.Digits(individual_digits=True),
+        pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True),
     ]
 )
 

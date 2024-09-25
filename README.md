@@ -110,6 +110,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - a global swarm
 - leverage [self-modeling](https://arxiv.org/abs/2407.10188) to focus learning on remote peers
 - experts with a stack of attention/feedforward blocks
+- commit to yourself
 - if an expert is comprised of multiple transformer blocks, rather than a single layer, then the network might learn to dynamically-route through deeper subnetworks, or it could learn to relay/ensemble information across multiple peers, or it could learn that "no relay is needed" at all, simply returning a simple prediction back to the requestee.
 - treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
 - build connectors, allowing people to integrate their nodes with personal data

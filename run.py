@@ -251,10 +251,9 @@ predict_tokens = 1
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 optimizer_config = dict(
-    optimizer_name="AdEMAMix",
+    optimizer_name="AdamW",
     lr=1e-3,
     weight_decay=1e-2,
-    alpha=4.444,  # foresight
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
