@@ -140,6 +140,12 @@ parser.add_argument(
     help="Run as a dense model (default: False)",
 )
 parser.add_argument(
+    "--sparse",
+    action="store_true",
+    default=True,
+    help="Run as a sparse model (default: True)",
+)
+parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
@@ -220,7 +226,7 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
     foresight=1e-7,
-    sparse=False if args.dense else True,
+    sparse=False if args.dense else args.sparse,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -409,7 +415,6 @@ class TerminalInterface(Callback):
         n_grams = 5
         frequency = 20
         if self._detect_repetition(n_grams, frequency) or self._is_all_whitespace():
-            print(self.text)
             self.text = tokenizer.bos_token
             if self.dashboard:
                 self.dashboard.update_status("[ERR]")
@@ -503,7 +508,9 @@ class HuggingfaceDataset(IterableDataset):
 
             if args.no_tokenizer:
                 # Train on train_sample
-                self.tokenizer.encode(self.cached_text)
+                self.tokenizer.encode(
+                    self.cached_text[: math.ceil(self.block_size / 2)]
+                )
 
                 # Apply decay after encoding the sample
                 self.tokenizer.decay_frequencies()

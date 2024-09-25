@@ -3,32 +3,22 @@ import math
 import random
 import re
 import string
-from collections import Counter, defaultdict
-from itertools import islice
+from collections import Counter
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-from transformers import (
-    GPT2Config,
-    GPT2LMHeadModel,
-    PretrainedConfig,
-    PreTrainedTokenizer,
-)
-from transformers.utils import logging
-
-logger = logging.get_logger(__name__)
+from transformers import PretrainedConfig, PreTrainedTokenizer
 
 
+# Inspired by:
+# https://arxiv.org/abs/2406.19223
 class PraxisTokenizerConfig(PretrainedConfig):
     model_type = "t_free"
 
-    def __init__(self, vocab_size=8000, embedding_dim=768, m=8, k=3, **kwargs):
+    def __init__(self, vocab_size=8000, embedding_dim=768, **kwargs):
         super().__init__(**kwargs)
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
-        self.m = m
-        self.k = k
         self.pad_token_id = 0
         self.unk_token_id = 1
         self.bos_token_id = 2
@@ -64,8 +54,6 @@ class PraxisTokenizer(PreTrainedTokenizer):
         self.bos_token_id = self.encoder[self.bos_token]
         self.eos_token_id = self.encoder[self.eos_token]
 
-        self.m = config.m
-        self.k = config.k
         self.hash_function = hashlib.sha256
 
         # Initialize an empty reverse mapping
@@ -174,20 +162,19 @@ class PraxisTokenizer(PreTrainedTokenizer):
 
     def generate_trigrams(self, word):
         padded_word = f" {word} "
-        trigrams = set()
         length = len(padded_word)
-        # Generate trigrams
-        trigrams.update(padded_word[i : i + 3] for i in range(length - 2))
-        # Generate bigrams
-        trigrams.update(padded_word[i : i + 2] for i in range(length - 1))
-        # Generate unigrams
-        trigrams.update(padded_word[i] for i in range(length))
+        trigrams = set(
+            padded_word[i:j]
+            for i in range(length)
+            for j in range(i + 1, min(i + 4, length + 1))
+        )
         return trigrams
 
     def get_trigram_id(self, trigram):
         hasher = self.hash_function()
         hasher.update(trigram.encode("utf-8"))
-        trigram_id = int(hasher.hexdigest(), 16) % (self.config.vocab_size - 2) + 2
+        # Adjusted to avoid IDs 0-3 reserved for special tokens
+        trigram_id = int(hasher.hexdigest(), 16) % (self.config.vocab_size - 4) + 4
         return trigram_id
 
     def _convert_token_to_id(self, token):
@@ -221,9 +208,16 @@ class PraxisTokenizer(PreTrainedTokenizer):
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
     from datasets import load_dataset
+    from transformers import (
+        GPT2Config,
+        GPT2LMHeadModel,
+        PretrainedConfig,
+        PreTrainedTokenizer,
+    )
 
     class TFreeModelForCausalLM(nn.Module):
         def __init__(self, config):
@@ -261,8 +255,6 @@ if __name__ == "__main__":
     config = PraxisTokenizerConfig(
         vocab_size=1024,  # Increased vocab_size to reduce hash collisions
         embedding_dim=256,
-        m=8,
-        k=3,
     )
 
     tokenizer = PraxisTokenizer(config)
