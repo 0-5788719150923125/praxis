@@ -77,6 +77,7 @@ class TerminalDashboard:
         self.url = "N/A"
         self.experts = ""
         self.total_params = ""
+        self.num_faults = 0
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -147,6 +148,10 @@ class TerminalDashboard:
     def update_seed(self, seed):
         with self.lock:
             self.seed = seed
+
+    def count(self):
+        with self.lock:
+            self.num_faults += 1
 
     def update_params(self, total_params):
         with self.lock:
@@ -316,7 +321,9 @@ class TerminalDashboard:
                 left_content = self._visual_ljust(
                     f" LOSS: {train_loss:.4f}", half_width
                 )
-                right_content = self._visual_ljust(" HOST", right_width)
+                right_content = self._visual_ljust(
+                    f" HOST {self.num_faults}", right_width
+                )
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width

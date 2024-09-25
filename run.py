@@ -147,7 +147,7 @@ parser.add_argument(
 )
 
 
-vocab_size = 1024
+vocab_size = 4096
 
 
 def sample_linear_decay(max_value=2**31 - 1):
@@ -203,7 +203,7 @@ config = PraxisConfig(
     n_dim=384,
     n_emb=512,
     n_factors=3,
-    n_layer=7 if not dev else 3,
+    n_layer=3 if dev else 7,
     n_head=8,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
@@ -395,11 +395,12 @@ class TerminalInterface(Callback):
             self.text = self.text[1:]
 
         n_grams = 5
-        frequency = 10
+        frequency = 20
         if self._detect_repetition(n_grams, frequency) or self._is_all_whitespace():
             self.text = tokenizer.bos_token
             if self.dashboard:
                 self.dashboard.update_status("[ERR]")
+                self.dashboard.count()
         elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:
@@ -578,10 +579,10 @@ class Generator:
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.3,
-            # eta_cutoff=0.002,
-            # penalty_alpha=0.6,
-            # top_k=4,
+            temperature=0.45,
+            eta_cutoff=0.002,
+            penalty_alpha=0.6,
+            top_k=4,
             repetition_penalty=1.35,
             suppress_tokens=[
                 self.tokenizer.eos_token_id,

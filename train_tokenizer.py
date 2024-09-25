@@ -19,7 +19,7 @@ num_examples = 5_000_000
 save_path = "data/praxis"
 
 
-vocab_size = 4096
+vocab_size = 1024
 # max_token_length = 3
 # min_frequency = 16
 dropout = 0.1

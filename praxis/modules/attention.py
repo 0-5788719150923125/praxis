@@ -70,13 +70,13 @@ class PraxisAttention(nn.Module):
             ).view(1, 1, seq_len, seq_len)
             scores = scores.masked_fill(causal_mask == 0, self.foresight)
 
-        if attention_mask is not None:
-            # Slice the attention mask to match the sequence length
-            attention_mask = attention_mask[:, :seq_len]
-            # Ensure attention_mask is broadcastable
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-            attention_mask = (1.0 - attention_mask) * torch.finfo(scores.dtype).min
-            scores = scores + attention_mask
+        # if attention_mask is not None:
+        #     # Slice the attention mask to match the sequence length
+        #     attention_mask = attention_mask[:, :seq_len]
+        #     # Ensure attention_mask is broadcastable
+        #     attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        #     # attention_mask = (1.0 - attention_mask) * torch.finfo(scores.dtype).min
+        #     scores = scores + attention_mask
 
         attn_weights = F.softmax(scores, dim=-1)
         attn_output = torch.matmul(attn_weights, v)

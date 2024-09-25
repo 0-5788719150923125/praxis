@@ -34,14 +34,12 @@ class PraxisModel(PreTrainedModel):
         inputs = self.encoder(input_ids)
 
         if attention_mask is None:
-            attention_mask = torch.ones(
-                input_ids.shape, device=inputs["hidden_states"].device
-            )
+            attention_mask = torch.ones(input_ids.shape, device=inputs.device)
 
-        outputs = self.decoder(inputs["hidden_states"], attention_mask)
+        outputs = self.decoder(inputs, attention_mask)
 
         if self.training:
-            self.aux_losses.append(inputs["aux_loss"])
+            # self.aux_losses.append(inputs["aux_loss"])
             self.aux_losses.append(outputs["aux_loss"])
 
         return BaseModelOutputWithPast(

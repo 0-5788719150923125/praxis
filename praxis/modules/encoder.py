@@ -5,13 +5,9 @@ import torch.nn.functional as F
 from ..configuration_praxis import PraxisConfig
 
 
-class PraxisEncoder(nn.Module):
+class PraxisEncoder(nn.Embedding):
     def __init__(self, config: PraxisConfig):
-        super().__init__()
-        self.wte = nn.Embedding(config.vocab_size, config.n_dim)
-
-    def forward(self, inputs):
-        return dict(hidden_states=self.wte(inputs), aux_loss=0)
+        super().__init__(config.vocab_size, config.n_dim)
 
 
 # class PraxisEncoder(nn.Module):
