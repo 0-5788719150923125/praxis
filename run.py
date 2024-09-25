@@ -61,8 +61,8 @@ from praxis import (
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
-    TokenMonsterConfig,
-    TokenMonsterTokenizer,
+    PraxisTokenizer,
+    PraxisTokenizerConfig,
 )
 
 # Register and configure environment
@@ -73,7 +73,7 @@ logger = CSVLogger("logs", name="praxis")
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
-AutoTokenizer.register(TokenMonsterConfig, TokenMonsterTokenizer)
+AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
 
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
@@ -128,10 +128,10 @@ parser.add_argument(
     help="Use dashboard (default: True)",
 )
 parser.add_argument(
-    "--use_tokenmonster",
+    "--no_tokenizer",
     action="store_true",
     default=False,
-    help="Use TokenMonster (default: False)",
+    help="Use T-FREE (default: False)",
 )
 parser.add_argument(
     "--dense",
@@ -189,12 +189,18 @@ train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
 
-if args.use_tokenmonster:
-    tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
-    tokenizer_config = TokenMonsterConfig(
-        vocab_file=tokenizer_model, add_bos_token=False
+if args.no_tokenizer:
+    tokenizer_config = PraxisTokenizerConfig(
+        vocab_size=vocab_size,
+        embedding_dim=512,
     )
-    tokenizer = TokenMonsterTokenizer(tokenizer_config)
+    tokenizer = PraxisTokenizer(tokenizer_config)
+# elif args.use_tokenmonster:
+#     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
+#     tokenizer_config = TokenMonsterConfig(
+#         vocab_file=tokenizer_model, add_bos_token=False
+#     )
+#     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
     tokenizer_model = "data/praxis"
     try:
@@ -403,6 +409,7 @@ class TerminalInterface(Callback):
         n_grams = 5
         frequency = 20
         if self._detect_repetition(n_grams, frequency) or self._is_all_whitespace():
+            print(self.text)
             self.text = tokenizer.bos_token
             if self.dashboard:
                 self.dashboard.update_status("[ERR]")
@@ -494,6 +501,13 @@ class HuggingfaceDataset(IterableDataset):
             if len(self.cached_text) < text_cache_size:
                 continue
 
+            if args.no_tokenizer:
+                # Train on train_sample
+                self.tokenizer.encode(self.cached_text)
+
+                # Apply decay after encoding the sample
+                self.tokenizer.decay_frequencies()
+
             tokens = self.tokenizer(
                 text=self.cached_text,
                 max_length=self.block_size,
@@ -584,6 +598,10 @@ class Generator:
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if args.device.startswith("cuda"):
+            # print(input_ids)
+            # input_ids = input_ids.to(device)
+            if isinstance(input_ids, list):
+                input_ids = torch.tensor([input_ids], dtype=torch.long)
             input_ids = input_ids.to(device)
 
         defaults = dict(

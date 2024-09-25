@@ -20,10 +20,10 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.key = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=True
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
         self.value = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
+            self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.out = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=True

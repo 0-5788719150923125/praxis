@@ -46,7 +46,7 @@ python run.py \
   --batch_size 8 \               # Set the batch size to use for training.
   --depth \                      # The number of layers to host.
   --no_dashboard \               # Disables the CLI interface.
-  --use_tokenmonster \           # Replace the LLaMA-2 tokenizer with TokenMonster.
+  --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
   --dense \                      # Run as a fully-connected (dense) model. (defaults to a sparse model)
   --phi \                        # Supplement with expert data.
   --dev                          # Launch with settings that bootstrap faster (3 layers, smaller dataset, etc.)
