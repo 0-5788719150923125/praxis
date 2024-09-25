@@ -76,8 +76,9 @@ class PraxisAttention(nn.Module):
             ).view(1, 1, seq_len, seq_len)
 
             # Generate Gaussian random values
+            mean = -1e9
             soft_mask = torch.normal(
-                mean=-1e9,
+                mean=mean,
                 std=abs(mean) * min(self.foresight, 0.1),
                 size=(batch_size, self.num_heads, seq_len, seq_len),
                 device=inputs.device,
