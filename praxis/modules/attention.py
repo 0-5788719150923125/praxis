@@ -26,7 +26,7 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.out = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=True
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
 
         # Precompute the slopes for ALiBi

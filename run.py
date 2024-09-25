@@ -35,11 +35,9 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -47,23 +45,13 @@ from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-    PraxisTokenizer,
-    PraxisTokenizerConfig,
-)
+from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
+                    PraxisTokenizer, PraxisTokenizerConfig)
 
 # Register and configure environment
 disable_possible_user_warnings()
@@ -92,7 +80,7 @@ parser.add_argument(
 parser.add_argument(
     "--port",
     type=int,
-    default=12300,
+    default=2100,
     help="Serve the local API at this port (default: 5000)",
 )
 parser.add_argument(
@@ -244,17 +232,23 @@ hparams = dict(
 
 # Training data mixing
 population = [
-    dict(path="open-phi/textbooks", key="markdown"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-10BT"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-100BT"),
-    dict(path="HuggingFaceFW/fineweb-edu", key="text", name="sample-350BT"),
-    dict(path="HuggingFaceFW/fineweb", key="text", name="default"),
+    dict(path="open-phi/textbooks", keys=["markdown"]),
+    dict(
+        path="HuggingFaceTB/smollm-corpus",
+        name="cosmopedia-v2",
+        keys=["prompt", "text"],
+    ),
+    dict(path="HuggingFaceFW/fineweb-edu", name="sample-10BT", keys=["text"]),
+    dict(path="HuggingFaceFW/fineweb-edu", name="sample-100BT", keys=["text"]),
+    dict(path="HuggingFaceFW/fineweb-edu", name="sample-350BT", keys=["text"]),
+    dict(path="HuggingFaceFW/fineweb", name="default", keys=["text"]),
 ]
-weights = [1, 0, 0, 0, 0] if dev else [0, 1, 6e-6, 3e-3, 1e-1]
+weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0.1, 1, 0.666666, 0.333, 0.01]
 primary_dataset = random.choices(population, weights, k=1)[0]
 
 if phi:
     secondary_dataset = population[0]
+    tertiary_dataset = population[1]
 
 # Misc config
 max_feed_chars = 2048
@@ -374,7 +368,7 @@ class TerminalInterface(Callback):
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema_loss = self._compute_ema_loss(float(loss), self.ema_loss, self.alpha)
 
-        self._generate_sample_text(lm, self.interval)
+        self._generate_sample_text(lm, batch_idx, self.interval)
 
         batch_size, _ = batch.shape
 
@@ -403,7 +397,7 @@ class TerminalInterface(Callback):
                     )
                 )
 
-    def _generate_sample_text(self, lm, interval=10):
+    def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
@@ -479,7 +473,7 @@ class HuggingfaceDataset(IterableDataset):
     def __init__(self, tokenizer: PreTrainedTokenizer, config: Dict, block_size: int):
         self.tokenizer = tokenizer
         self.block_size = block_size
-        self.key = config.get("key", "text")
+        self.keys = config.get("keys", ["text"])
         dataset_args = dict(
             path=config.get("path", "HuggingFaceFW/fineweb"),
             split="train",
@@ -505,7 +499,15 @@ class HuggingfaceDataset(IterableDataset):
         )
 
         for document in shuffled:
-            self.cached_text += document.get(self.key) + self.tokenizer.eos_token
+
+            for i, key in enumerate(self.keys):
+                content = document.get(key)
+                if random.random() < 0.7:
+                    content = "INPUT: " + content
+                else:
+                    content = "OUTPUT: " + content + self.tokenizer.eos_token
+                self.cached_text += content
+
             if len(self.cached_text) < text_cache_size:
                 continue
 
@@ -727,6 +729,9 @@ if phi:
     train_data.append(
         HuggingfaceDataset(tokenizer, secondary_dataset, hparams["block_size"])
     )
+    train_data.append(
+        HuggingfaceDataset(tokenizer, tertiary_dataset, hparams["block_size"])
+    )
 
 
 class WeightedIterableDataset(IterableDataset):
@@ -771,9 +776,13 @@ class DataModule(LightningDataModule):
         self.weights = []
         if len(self.loaders) == 1:
             self.weights.append(1.0)
-        else:
+        if len(self.loaders) == 2:
             self.weights.append(0.9)  # global
             self.weights.append(0.1)  # expert
+        if len(self.loaders) > 2:
+            self.weights.append(0.89)  # global
+            self.weights.append(0.1)  # expert
+            self.weights.append(0.01)  # expert
 
     def train_dataloader(self):
         return WeightedIterableDataset(self.loaders, self.weights)

@@ -1,7 +1,9 @@
+import asyncio
 import atexit
 import io
 import logging
 import os
+import random
 import re
 import shutil
 import signal
@@ -61,7 +63,7 @@ class TerminalDashboard:
         self.max_data_points = max_data_points
         self.train_losses = deque(maxlen=max_data_points)
         self.val_losses = deque(maxlen=max_data_points)
-        self.status_text = "Initializing..."
+        self.status_text = "_initializing"
         self.log_buffer = deque(maxlen=max_log_lines)
         self.batch = 0
         self.step = 0
@@ -296,7 +298,9 @@ class TerminalDashboard:
             val_chart = self._draw_chart(self.val_losses, half_width, half_height - 1)
 
         # Wrap the entire status text
-        status_lines = self._wrap_text(self.status_text, right_width)
+        status_lines = self._wrap_text(
+            self.status_text, half_width
+        )  # Changed to half_width
 
         # Calculate the maximum number of lines that can fit in the status section
         max_status_lines = half_height - 3
@@ -318,20 +322,20 @@ class TerminalDashboard:
 
             if i == 0:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
-                left_content = self._visual_ljust(
-                    f" LOSS: {train_loss:.4f}", half_width
-                )
                 right_content = self._visual_ljust(
-                    f" HOST {self.num_faults}", right_width
+                    f" ERROR: {train_loss:.4f}", right_width
+                )
+                left_content = self._visual_ljust(
+                    f" HOST {self.num_faults}", half_width
                 )
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
             elif i < half_height - 1:
-                if i - 2 < len(train_chart):
-                    left_content = train_chart[i - 2]
                 if i - 2 < len(status_lines):
-                    right_content = status_lines[i - 2]
+                    left_content = status_lines[i - 2]
+                if i - 2 < len(train_chart):
+                    right_content = train_chart[i - 2]
             elif i == half_height - 1:
                 left_content = "═" * half_width
                 right_content = "═" * right_width
