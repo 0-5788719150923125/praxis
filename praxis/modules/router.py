@@ -46,9 +46,13 @@ class PraxisMixtureOfDepths(nn.Module):
             inputs
         )  # (x) batch,seq_len,dim -> r batch,seq_len,1
 
-        #  𝑟𝑙> 𝑃𝛽 (R)  ... eqution 1
+        #  𝑟𝑙> 𝑃𝛽 (R)  ... equation 1
         token_weights, token_index = torch.topk(
-            torch.sigmoid(router_logits), top_k, dim=1, sorted=False
+            # page 7: [aux] loss centers the sigmoid of the router’s outputs around 0.5
+            torch.sigmoid(router_logits),
+            top_k,
+            dim=1,
+            sorted=False,
         )
 
         # since its auto regressive model we need to keep casual nature of it

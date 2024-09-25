@@ -396,9 +396,12 @@ class TerminalInterface(Callback):
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_loss(self.ema_loss)
-            self.dashboard.update_validator(
-                self._sign_wave(amplitude=1.23, frequency=0.01, step=batch_idx)
-            )
+            if random.random() < 0.25:
+                self.dashboard.update_validator(
+                    self._sign_wave(
+                        amplitude=1.0, frequency=0.01, phase_shift=0.23, step=batch_idx
+                    )
+                )
 
     def _generate_sample_text(self, lm, interval=10):
 

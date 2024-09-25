@@ -435,7 +435,7 @@ if __name__ == "__main__":
             step += 1
             train_loss = 1 / (epoch + 1) + random.uniform(0, 0.1)
             val_loss = train_loss + random.uniform(0, 0.05)
-            dashboard.update_losses(train_loss, val_loss)
+            dashboard.update_losses(train_loss)
             dashboard.update_status(f"Training... Epoch {epoch}")
             dashboard.update_batch(batch)
             dashboard.update_step(step)
