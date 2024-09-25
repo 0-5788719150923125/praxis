@@ -11,6 +11,7 @@ class PraxisConfig(PretrainedConfig):
         n_factors=2,
         n_layer=12,
         n_head=8,
+        dropout=0,
         epsilon=1e-5,
         capacity=0.125,
         vocab_size=8192,
@@ -37,6 +38,7 @@ class PraxisConfig(PretrainedConfig):
         self.n_factors = n_factors
         self.n_layer = n_layer
         self.n_head = n_head
+        self.dropout = dropout
         self.epsilon = epsilon
         self.capacity = capacity
         self.vocab_size = vocab_size

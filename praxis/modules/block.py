@@ -11,6 +11,7 @@ class PraxisBlock(nn.Module):
         super().__init__()
         self.attn = PraxisAttention(config)
         self.norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.drop = nn.Dropout(config.dropout)
         self.mlp = PraxisMLP(config)
 
     def forward(
@@ -23,6 +24,7 @@ class PraxisBlock(nn.Module):
         outputs = self.attn(inputs, attention_mask) + residual
         residual = outputs
         outputs = self.mlp(self.norm(outputs))
+        outputs += self.drop(outputs)
         if router_weights is not None:
             outputs *= router_weights
         outputs += residual

@@ -17,18 +17,17 @@ class PraxisMixtureOfDepths(nn.Module):
     def __init__(
         self,
         config: PraxisConfig = None,
-        block: nn.Module = None,
         *args,
         **kwargs,
     ):
         super().__init__()
-        self.block = block
         self.capacity = config.capacity
         self.router = nn.Linear(config.n_dim, 1, bias=False)
 
     def forward(
         self,
         inputs: Tensor,
+        expert: nn.Module,
         attention_mask: Tensor,
         *args,
         **kwargs,
@@ -74,7 +73,7 @@ class PraxisMixtureOfDepths(nn.Module):
         router_weights = torch.gather(token_weights, dim=1, index=sorting_indices)
 
         # pass the selected tokens through the transformer block
-        block_outputs = self.block(
+        layer_outputs = expert(
             filtered_inputs,
             attention_mask=attention_mask,
             router_weights=router_weights,
@@ -85,7 +84,7 @@ class PraxisMixtureOfDepths(nn.Module):
             input=inputs,
             dim=1,
             index=indices_expanded,
-            src=block_outputs["hidden_states"],
+            src=layer_outputs["hidden_states"],
         )
 
         # compute aux loss, in order to maintain causality

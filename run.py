@@ -35,9 +35,11 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -45,13 +47,23 @@ from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
-                    PraxisTokenizer, PraxisTokenizerConfig)
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    PraxisTokenizer,
+    PraxisTokenizerConfig,
+)
 
 # Register and configure environment
 disable_possible_user_warnings()
@@ -211,6 +223,7 @@ config = PraxisConfig(
     n_factors=3,
     n_layer=args.depth if not dev else 3,
     n_head=8,
+    dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
     foresight=1e-7,
@@ -263,7 +276,7 @@ predict_tokens = 1
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 optimizer_config = dict(
-    optimizer_name="AdamW",
+    optimizer_name="AdEMAMix",
     lr=1e-3,
     weight_decay=1e-2,
     wd_ban_list=[
