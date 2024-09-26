@@ -278,10 +278,14 @@ predict_tokens = 1
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 optimizer_config = dict(
-    optimizer_name="AdEMAMix",
+    optimizer_name="AdamMini",
     lr=1e-3,
     weight_decay=1e-2,
-    alpha=5.9,
+    num_embeds=vocab_size * config.n_emb,
+    num_heads=config.n_head,
+    num_query_groups=config.n_head,
+    eps=1e-10,
+    model_sharding=False,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
@@ -412,6 +416,7 @@ class TerminalInterface(Callback):
                         amplitude=1.0, frequency=0.01, phase_shift=0.23, step=batch_idx
                     )
                 )
+            self.dashboard.fake_log(chance=0.00001)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 

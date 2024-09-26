@@ -35,7 +35,7 @@ class PraxisGLU(nn.Module):
 
     def forward(self, x):
         x = self.inputs(x)
-        x = self.activation(x)
         x, gate = x.chunk(2, dim=-1)
-        x = F.silu(gate) * x
+        x = self.activation(x)
+        x = x * F.silu(gate)
         return self.output(x)

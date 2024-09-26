@@ -22,7 +22,7 @@ class PraxisMixtureOfDepths(nn.Module):
     ):
         super().__init__()
         self.capacity = config.capacity
-        self.router = nn.Linear(config.n_dim, 1, bias=False)
+        self.router = nn.Linear(config.n_dim, 1)
 
     def forward(
         self,

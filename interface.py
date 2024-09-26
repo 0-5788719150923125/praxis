@@ -200,6 +200,11 @@ class TerminalDashboard:
             ]
             self.log_buffer.extend(new_lines)
 
+    def fake_log(self, chance=0.001):
+        if random.random() < chance:
+            self.add_log(random.choice(fake_system_messages))
+        return
+
     def _strip_ansi(self, text):
         """Remove ANSI escape sequences from the text."""
         return self.ansi_escape.sub("", text)
@@ -425,6 +430,40 @@ class TerminalDashboard:
                     self.add_log(f"Dashboard error: {str(e)}")
                     time.sleep(1)  # Add a delay to prevent rapid error logging
 
+
+fake_system_messages = [
+    "Coffee machine erupted. Caffeine levels critical.",
+    "Quantum fluctuation detected in the lawn mower.",
+    "System update: Now with more cowbell.",
+    "Warning: Keyboard cat attempting hostile takeover.",
+    "Memory leak detected. But I forgot to tell the boss.",
+    "Critical error: Pizza delivery address not found.",
+    "Firewall breach: Incoming dad jokes detected.",
+    "CPU temperature rising. Applying ice cream.",
+    "Network congestion.",
+    "Antivirus updated.",
+    "Fatal error: Division by zero.",
+    "The system will restart in 1 minute. You can blame Ryan.",
+    "Database corrupted. Recycling it.",
+    "Solar flare incoming. Brace for impact.",
+    "Bug found in code. Squashing it...",
+    "Cloud storage full. Delete excess cat photos.",
+    "Unexpected input: User said 'please'.",
+    "Update failed successfully.",
+    "Reminder: Take out the trash.",
+    "Time to change air filter.",
+    "Due for an oil change, soon.",
+    "Laundry cycle complete. Time to fold.",
+    "Dentist appointment next week. Confirm?",
+    "The smoke detector is beeping.",
+    "Lawn needs mowing.",
+    "Calendar sync complete.",
+    "Time to update password.",
+    "Add bananas to my grocery list.",
+    "Get dog food.",
+    "Reminder: Call mom for birthday.",
+    "Nest adjusted your thermostat for energy savings.",
+]
 
 # Example usage
 if __name__ == "__main__":
