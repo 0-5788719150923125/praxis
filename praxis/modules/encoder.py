@@ -1,13 +1,26 @@
+from typing import OrderedDict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ..configuration_praxis import PraxisConfig
 
+# class PraxisEncoder(nn.Embedding):
+#     def __init__(self, config: PraxisConfig):
+#         super().__init__(config.vocab_size, config.n_dim)
 
-class PraxisEncoder(nn.Embedding):
+
+class PraxisEncoder(nn.Sequential):
     def __init__(self, config: PraxisConfig):
-        super().__init__(config.vocab_size, config.n_dim)
+        super().__init__(
+            OrderedDict(
+                [
+                    ("wte", nn.Embedding(config.vocab_size, config.n_emb)),
+                    ("wme", nn.Linear(config.n_emb, config.n_dim, bias=False)),
+                ]
+            )
+        )
 
 
 # class PraxisEncoder(nn.Module):

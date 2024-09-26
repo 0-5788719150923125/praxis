@@ -195,6 +195,7 @@ train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
 
+# All tokenizer initialization
 if args.no_tokenizer:
     tokenizer_config = PraxisTokenizerConfig(
         vocab_size=vocab_size,
@@ -218,8 +219,8 @@ else:
 
 # System args
 config = PraxisConfig(
-    n_dim=384,
     n_emb=512,
+    n_dim=384,
     n_factors=3,
     n_layer=args.depth if not dev else 3,
     n_head=8,
@@ -244,6 +245,7 @@ hparams = dict(
 )
 
 # Training data mixing
+weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0.1, 1, 0.666666, 0.333, 0.01]
 population = [
     dict(path="open-phi/textbooks", keys=["markdown"]),
     dict(
@@ -256,7 +258,7 @@ population = [
     dict(path="HuggingFaceFW/fineweb-edu", name="sample-350BT", keys=["text"]),
     dict(path="HuggingFaceFW/fineweb", name="default", keys=["text"]),
 ]
-weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0.1, 1, 0.666666, 0.333, 0.01]
+
 primary_dataset = random.choices(population, weights, k=1)[0]
 
 if phi:

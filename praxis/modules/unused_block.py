@@ -9,7 +9,7 @@ from hivemind.moe.server.layers import name_to_block
 from hivemind.utils import BatchTensorDescriptor
 
 from .attention import PraxisAttention
-from .mlp import PraxisMLP
+from .dense import PraxisMLP
 from .router import PraxisRouter
 
 

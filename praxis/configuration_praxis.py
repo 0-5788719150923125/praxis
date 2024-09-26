@@ -6,8 +6,8 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        n_dim=384,
         n_emb=512,
+        n_dim=384,
         n_factors=2,
         n_layer=12,
         n_head=8,
@@ -33,8 +33,8 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
-        self.n_dim = n_dim
         self.n_emb = n_emb
+        self.n_dim = n_dim
         self.n_factors = n_factors
         self.n_layer = n_layer
         self.n_head = n_head
