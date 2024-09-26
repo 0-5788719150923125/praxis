@@ -279,6 +279,7 @@ optimizer_config = dict(
     optimizer_name="AdEMAMix",
     lr=1e-3,
     weight_decay=1e-2,
+    alpha=5.9,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
@@ -792,10 +793,10 @@ class DataModule(LightningDataModule):
         if len(self.loaders) == 2:
             self.weights.append(0.9)  # global
             self.weights.append(0.1)  # expert
-        if len(self.loaders) > 2:
-            self.weights.append(0.89)  # global
+        if len(self.loaders) >= 3:
+            self.weights.append(0.8)  # global
             self.weights.append(0.1)  # expert
-            self.weights.append(0.01)  # expert
+            self.weights.append(0.1)  # expert
 
     def train_dataloader(self):
         return WeightedIterableDataset(self.loaders, self.weights)
