@@ -217,7 +217,14 @@ else:
             f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
         )
 
-# System args
+# Training and model
+hparams = dict(
+    batch_size=args.batch_size if args.batch_size else 1,
+    target_batch_size=64,
+    block_size=512,
+)
+
+# Model config
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
@@ -235,13 +242,6 @@ config = PraxisConfig(
     unk_token_id=tokenizer.unk_token_id,
     device_map=device,
     cache_dir=cache_dir,
-)
-
-# Training and model
-hparams = dict(
-    batch_size=args.batch_size if args.batch_size else 1,
-    target_batch_size=64,
-    block_size=512,
 )
 
 # Training data mixing

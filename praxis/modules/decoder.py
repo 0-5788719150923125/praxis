@@ -14,21 +14,23 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.sparse = config.sparse
         self.experts = nn.ModuleList()
-        self.pipe = nn.ModuleList()
+        if self.sparse:
+            self.switches = nn.ModuleList()
         for i in range(config.n_layer):
             self.experts.append(PraxisBlock(config))
             use_router = i % 2 != 0  # if layer is odd
-            if config.sparse and use_router:
-                self.pipe.append(PraxisMixtureOfDepths(config))
+            if self.sparse and use_router:
+                self.switches.append(PraxisMixtureOfDepths(config))
 
     def forward(self, inputs, attention_mask):
         hidden_states = inputs
         aux_losses = []
         for i, expert in enumerate(self.experts):
-            outputs = expert(hidden_states, attention_mask)
             use_router = i % 2 != 0  # if layer is odd
             if self.sparse and use_router:
-                outputs = self.pipe[i % 2](hidden_states, expert, attention_mask)
+                outputs = self.switches[i % 2](hidden_states, expert, attention_mask)
+            else:
+                outputs = expert(hidden_states, attention_mask)
             hidden_states = outputs["hidden_states"]
             if "aux_loss" in outputs:
                 aux_losses.append(outputs["aux_loss"])

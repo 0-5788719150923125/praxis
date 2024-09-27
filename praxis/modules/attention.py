@@ -71,32 +71,45 @@ class PraxisAttention(nn.Module):
 
         # Apply the causal mask
         if self.causal:
-            causal_mask = torch.tril(
-                torch.ones(seq_len, seq_len, device=inputs.device)
-            ).view(1, 1, seq_len, seq_len)
-
-            # Generate Gaussian random values
-            mean = -1e9
-            soft_mask = torch.normal(
-                mean=mean,
-                std=abs(mean) * min(self.foresight, 0.1),
-                size=(batch_size, self.num_heads, seq_len, seq_len),
-                device=inputs.device,
+            # Create a standard causal mask filled with negative infinity
+            causal_mask = torch.triu(
+                torch.ones(seq_len, seq_len, device=inputs.device) * float("-inf"),
+                diagonal=1,
             )
+            causal_mask = causal_mask.unsqueeze(0).unsqueeze(
+                0
+            )  # Add batch and head dimensions
 
-            # Create an index tensor for scatter_add
-            index = (
-                torch.arange(seq_len, device=inputs.device)
-                .view(1, 1, 1, seq_len)
-                .expand_as(scores)
-            )
+            # Apply the causal mask to the scores
+            scores = scores + causal_mask
 
-            # Apply the random foresight values where the causal mask is 0
-            scores = scores.scatter_add_(
-                -1,
-                index,
-                soft_mask * (1 - causal_mask),  # Only add penalties where mask is 0
-            )
+        # if self.causal:
+        #     causal_mask = torch.tril(
+        #         torch.ones(seq_len, seq_len, device=inputs.device)
+        #     ).view(1, 1, seq_len, seq_len)
+
+        #     # Generate Gaussian random values
+        #     mean = -1e9
+        #     soft_mask = torch.normal(
+        #         mean=mean,
+        #         std=abs(mean) * min(self.foresight, 0.1),
+        #         size=(batch_size, self.num_heads, seq_len, seq_len),
+        #         device=inputs.device,
+        #     )
+
+        #     # Create an index tensor for scatter_add
+        #     index = (
+        #         torch.arange(seq_len, device=inputs.device)
+        #         .view(1, 1, 1, seq_len)
+        #         .expand_as(scores)
+        #     )
+
+        #     # Apply the random foresight values where the causal mask is 0
+        #     scores = scores.scatter_add_(
+        #         -1,
+        #         index,
+        #         soft_mask * (1 - causal_mask),  # Only add penalties where mask is 0
+        #     )
 
         weights = F.softmax(scores, dim=-1)
         outputs = (

@@ -29,13 +29,10 @@ class PraxisMLP(nn.Sequential):
 class PraxisGLU(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.inputs = nn.Linear(config.n_dim, 8 * config.n_dim)
-        self.activation = ACT2FN[config.activation]
-        self.output = nn.Linear(4 * config.n_dim, config.n_dim)
+        self.up = nn.Linear(config.n_dim, 8 * config.n_dim)
+        self.act = ACT2FN[config.activation]
+        self.down = nn.Linear(4 * config.n_dim, config.n_dim)
 
     def forward(self, x):
-        x = self.inputs(x)
-        x, gate = x.chunk(2, dim=-1)
-        x = self.activation(x)
-        x = x * F.silu(gate)
-        return self.output(x)
+        a, b = self.up(x).chunk(2, dim=-1)
+        return self.down(a * self.act(b))
