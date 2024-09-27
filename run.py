@@ -46,7 +46,7 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import (
     AutoConfig,
@@ -290,6 +290,7 @@ predict_tokens = 1
 optimizer_config = dict(
     optimizer_name="AdamMini",
     lr=1e-3,
+    min_lr=1e-5,
     weight_decay=1e-2,
     num_embeds=config.n_emb,
     num_heads=config.n_head,
@@ -301,12 +302,52 @@ optimizer_config = dict(
     ],
 )
 
-# Scheduling
-scheduler_func = partial(
-    CosineAnnealingWarmRestarts,
+
+class WarmupCosineLR(_LRScheduler):
+    def __init__(self, optimizer, warmup_steps, cosine_scheduler_func, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.cosine_scheduler = cosine_scheduler_func(optimizer)
+        super(WarmupCosineLR, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch < self.warmup_steps:
+            return [
+                base_lr * (self.last_epoch / self.warmup_steps)
+                for base_lr in self.base_lrs
+            ]
+        return self.cosine_scheduler.get_last_lr()
+
+    def step(self, epoch=None):
+        if self.last_epoch < self.warmup_steps:
+            super(WarmupCosineLR, self).step(epoch)
+        else:
+            if self.last_epoch == self.warmup_steps:
+                self.cosine_scheduler.base_lrs = self.base_lrs
+            self.cosine_scheduler.step(epoch)
+        self._last_lr = self.get_lr()
+
+
+def create_warmup_cosine_scheduler(warmup_steps, T_0, T_mult, eta_min, eta_max):
+    cosine_scheduler_func = partial(
+        CosineAnnealingWarmRestarts, T_0=T_0, T_mult=T_mult, eta_min=eta_min
+    )
+
+    return partial(
+        WarmupCosineLR,
+        warmup_steps=warmup_steps,
+        cosine_scheduler_func=cosine_scheduler_func,
+    )
+
+
+# Scheduler
+scheduler_func = create_warmup_cosine_scheduler(
+    warmup_steps=128,  # Number of warmup steps
     T_0=4096,  # Number of iterations for the first restart
     T_mult=1,  # Multiplicative factor for T_i
-    eta_min=1e-5,  # Minimum learning rate
+    eta_min=optimizer_config["min_lr"],  # Minimum learning rate
+    eta_max=optimizer_config[
+        "lr"
+    ],  # Maximum learning rate (initial learning rate after warmup)
 )
 
 # Training config
@@ -356,7 +397,7 @@ class PraxisTrainer(LightningModule):
                 "loss": loss,
                 "batch": int(batch_idx),
                 "seed": int(seed),
-                "learning_rate": self.optimizer.param_groups[0]["lr"],
+                "learning_rate": self.scheduler.get_last_lr()[0],
             },
             on_step=True,
             logger=True,
