@@ -17,7 +17,7 @@ class PraxisDecoder(nn.Module):
         for i in range(config.n_layer):
             self.experts.append(PraxisBlock(config))
             use_router = i % 2 != 0  # if layer is odd
-            if self.switches and use_router:
+            if self.switches is not None and use_router:
                 self.switches.append(PraxisMixtureOfDepths(config))
 
     def forward(self, inputs, attention_mask):
@@ -25,7 +25,7 @@ class PraxisDecoder(nn.Module):
         aux_losses = []
         for i, expert in enumerate(self.experts):
             use_router = i % 2 != 0  # if layer is odd
-            if self.switches and use_router:
+            if self.switches is not None and use_router:
                 outputs = self.switches[i % 2](hidden_states, expert, attention_mask)
             else:
                 outputs = expert(hidden_states, attention_mask)
