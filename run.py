@@ -28,6 +28,7 @@ import shutil
 import time
 from collections import Counter
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Dict, List
 
 import torch
@@ -45,6 +46,7 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import (
     AutoConfig,
@@ -299,6 +301,14 @@ optimizer_config = dict(
     ],
 )
 
+# Scheduling
+scheduler_func = partial(
+    CosineAnnealingWarmRestarts,
+    T_0=4096,  # Number of iterations for the first restart
+    T_mult=1,  # Multiplicative factor for T_i
+    eta_min=1e-5,  # Minimum learning rate
+)
+
 # Training config
 train_params = dict(
     accelerator=f"cpu" if args.device == "cpu" else "gpu",
@@ -325,15 +335,12 @@ class PraxisTrainer(LightningModule):
     A training module for Praxis.
     """
 
-    def __init__(self, model, optimizer, hparams):
+    def __init__(self, model, optimizer, scheduler, hparams):
         super(PraxisTrainer, self).__init__()
-
-        self.model, self.optimizer = (model, optimizer)
+        self.model, self.optimizer, self.scheduler = (model, optimizer, scheduler)
         self.batch_size = hparams["batch_size"]
-
         self.automatic_optimization = True
-
-        self.save_hyperparameters(ignore=["model", "optimizer"])
+        self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
 
     def forward(self, inputs):
         return self.model(**inputs)
@@ -349,6 +356,7 @@ class PraxisTrainer(LightningModule):
                 "loss": loss,
                 "batch": int(batch_idx),
                 "seed": int(seed),
+                "learning_rate": self.optimizer.param_groups[0]["lr"],
             },
             on_step=True,
             logger=True,
@@ -360,7 +368,14 @@ class PraxisTrainer(LightningModule):
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"
-        return [self.optimizer]
+        return {
+            "optimizer": self.optimizer,
+            "lr_scheduler": {
+                "scheduler": self.scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
 
 
 class TerminalInterface(Callback):
@@ -859,11 +874,14 @@ if phi:
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
 
+# create the scheduler
+scheduler = scheduler_func(optimizer)
+
 # Put the data onto a dataloader
 dataloader = DataModule(train_data, hparams["batch_size"])
 
 # Wrap the model in a pytorch-lightning module
-train_model = PraxisTrainer(model, optimizer, hparams)
+train_model = PraxisTrainer(model, optimizer, scheduler, hparams)
 
 # Load the callbacks
 train_params["callbacks"].append(checkpoint_callback)
