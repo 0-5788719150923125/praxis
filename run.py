@@ -23,8 +23,8 @@ import argparse
 import itertools
 import logging
 import math
-import os
 import random
+import shutil
 import time
 from collections import Counter
 from datetime import datetime, timedelta
@@ -43,7 +43,6 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
-from lightning.pytorch.tuner import Tuner
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
@@ -157,6 +156,12 @@ parser.add_argument(
     default=False,
     help="Run with settings that make bootstrap faster (default: False)",
 )
+parser.add_argument(
+    "--reset",
+    action="store_true",
+    default=False,
+    help="Reset the checkpoint (default: False)",
+)
 
 
 vocab_size = 4096
@@ -194,6 +199,9 @@ cache_dir = args.cache_dir
 train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
+
+if args.reset:
+    shutil.rmtree(f"data/praxis", ignore_errors=True)
 
 # Model hyperparameters
 hparams = dict(
@@ -234,7 +242,6 @@ config = PraxisConfig(
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     context_length=1024,
-    foresight=1e-7,
     sparse=False if args.dense else args.sparse,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
@@ -869,23 +876,6 @@ train_params["callbacks"].append(
 
 # fit the trainer and run
 trainer = Trainer(**train_params)
-# if args.batch_size is None:
-#     print("tuning batch size...")
-#     tuner = Tuner(trainer)
-#     auto_batch_size = tuner.scale_batch_size(
-#         train_model,
-#         dataloader,
-#         mode="binsearch",
-#         max_trials=10,
-#         steps_per_trial=3,
-#         init_val=1,
-#     )
-#     print(f"stopped on batch size of: {auto_batch_size}")
-#     hparams["batch_size"] = auto_batch_size
-#     train_params["accumulate_grad_batches"] = fit_grad_accumulation(
-#         auto_batch_size, hparams["target_batch_size"]
-#     )
-
 trainer.fit(train_model, dataloader.train_dataloader(), ckpt_path=ckpt_path)
 
 # import ipaddress

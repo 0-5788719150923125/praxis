@@ -49,7 +49,8 @@ python run.py \
   --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
   --dense \                      # Run as a fully-connected (dense) model. (defaults to a sparse model)
   --phi \                        # Supplement with expert data.
-  --dev                          # Launch with settings that bootstrap faster (3 layers, smaller dataset, etc.)
+  --dev \                        # Launch with settings that bootstrap faster (3 layers, smaller dataset, etc.)
+  --reset                        # Start from a brand-new checkpoint.
 ```
 
 ## do inference

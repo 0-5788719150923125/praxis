@@ -2,23 +2,29 @@ import hashlib
 import math
 import random
 import re
-import string
-from collections import Counter
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
 from transformers import PretrainedConfig, PreTrainedTokenizer
 
 
-# Inspired by:
-# https://arxiv.org/abs/2406.19223
 class PraxisTokenizerConfig(PretrainedConfig):
     model_type = "t_free"
 
-    def __init__(self, vocab_size=8000, embedding_dim=768, **kwargs):
+    def __init__(
+        self,
+        vocab_size=8000,
+        embedding_dim=768,
+        num_activations=8,
+        lowercase_overlap=3,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
+        self.num_activations = num_activations
+        self.lowercase_overlap = lowercase_overlap
         self.pad_token_id = 0
         self.unk_token_id = 1
         self.bos_token_id = 2
@@ -33,7 +39,6 @@ class PraxisTokenizer(PreTrainedTokenizer):
         self.bos_token = "<bos>"
         self.eos_token = "<eos>"
 
-        # Assign unique IDs to special tokens
         self.encoder = {
             self.pad_token: 0,
             self.unk_token: 1,
@@ -55,12 +60,10 @@ class PraxisTokenizer(PreTrainedTokenizer):
         self.eos_token_id = self.encoder[self.eos_token]
 
         self.hash_function = hashlib.sha256
+        self.num_activations = config.num_activations
+        self.lowercase_overlap = config.lowercase_overlap
 
-        # Initialize an empty reverse mapping
-        self.trigram_id_to_trigrams = {}
-
-        # Initialize trigram frequencies
-        self.trigram_frequencies = Counter()
+        self.trigram_id_to_trigram = {}
 
     def encode(self, text, add_special_tokens=True, **kwargs):
         tokens = self._tokenize(text)
@@ -69,72 +72,36 @@ class PraxisTokenizer(PreTrainedTokenizer):
         if add_special_tokens:
             token_ids.append(self.bos_token_id)
 
-        learning_rate = 0.1  # Adjust as needed
-        trigrams_to_update = {}
         for token in tokens:
             if token in self.encoder:
                 token_ids.append(self.encoder[token])
             else:
                 trigrams = self.generate_trigrams(token)
+                trigram_ids = []
                 for trigram in trigrams:
                     trigram_id = self.get_trigram_id(trigram)
-                    token_ids.append(trigram_id)
+                    trigram_ids.append(trigram_id)
+                    self.trigram_id_to_trigram[trigram_id] = trigram
 
-                    # Collect frequencies to update
-                    trigrams_to_update[trigram] = (
-                        trigrams_to_update.get(trigram, 0) + learning_rate
-                    )
+                # Select a fixed number of activations per word
+                if len(trigram_ids) > self.num_activations:
+                    trigram_ids = random.sample(trigram_ids, self.num_activations)
+                else:
+                    # Pad with random trigram IDs if not enough activations
+                    padding_ids = [
+                        random.randint(4, self.config.vocab_size - 1)
+                        for _ in range(self.num_activations - len(trigram_ids))
+                    ]
+                    trigram_ids.extend(padding_ids)
 
-                    # Update reverse mapping
-                    if trigram_id not in self.trigram_id_to_trigrams:
-                        self.trigram_id_to_trigrams[trigram_id] = set()
-                    self.trigram_id_to_trigrams[trigram_id].add(trigram)
+                token_ids.extend(trigram_ids)
 
         if add_special_tokens:
             token_ids.append(self.eos_token_id)
 
-        # Bulk update frequencies
-        for trigram, freq in trigrams_to_update.items():
-            self.trigram_frequencies[trigram] = (
-                self.trigram_frequencies.get(trigram, 0) + freq
-            )
-
         return token_ids
 
-    def decay_frequencies(self):
-        decay_factor = 0.9  # Adjust as needed
-        # Use list to avoid RuntimeError: dictionary changed size during iteration
-        trigrams = list(self.trigram_frequencies.keys())
-        for trigram in trigrams:
-            self.trigram_frequencies[trigram] *= decay_factor
-            # Optionally remove trigrams with negligible frequencies to save memory
-            if self.trigram_frequencies[trigram] < 1e-6:
-                del self.trigram_frequencies[trigram]
-
-    def reconstruct_text(self, possible_trigrams_per_token):
-        epsilon = 1e-8  # Small constant to prevent division by zero
-        total_freq = sum(self.trigram_frequencies.values()) + epsilon
-        beam_width = 5
-        sequences = [("", 0.0)]
-        for trigrams in possible_trigrams_per_token:
-            all_candidates = []
-            for seq, score in sequences:
-                for trigram in trigrams:
-                    freq = self.trigram_frequencies.get(trigram, epsilon)
-                    prob = freq / total_freq
-                    prob = max(prob, epsilon)  # Ensure prob is positive
-                    trigram_score = -math.log(prob)
-                    if len(trigram) == 3:
-                        new_seq = seq + trigram[-1]
-                    else:
-                        new_seq = seq + trigram.strip()
-                    new_score = score + trigram_score
-                    all_candidates.append((new_seq, new_score))
-            sequences = sorted(all_candidates, key=lambda x: x[1])[:beam_width]
-        return sequences[0][0] if sequences else ""
-
     def decode(self, token_ids, skip_special_tokens=False, **kwargs):
-        # Optionally remove special tokens
         if skip_special_tokens:
             token_ids = [
                 token_id
@@ -143,39 +110,59 @@ class PraxisTokenizer(PreTrainedTokenizer):
                 not in {self.bos_token_id, self.eos_token_id, self.pad_token_id}
             ]
 
-        # Reconstruct possible trigrams from token IDs
-        possible_trigrams_per_token = []
+        decoded_tokens = []
+        current_word = []
+
         for token_id in token_ids:
             if token_id in self.encoder.values():
-                # Handle special tokens
-                token = self._convert_id_to_token(token_id)
-                possible_trigrams_per_token.append({token})
+                if current_word:
+                    decoded_tokens.append("".join(current_word).strip())
+                    current_word = []
+                decoded_tokens.append(self._convert_id_to_token(token_id))
             else:
-                possible_trigrams = self.trigram_id_to_trigrams.get(
-                    token_id, {self.unk_token}
-                )
-                possible_trigrams_per_token.append(possible_trigrams)
+                trigram = self.trigram_id_to_trigram.get(token_id, "")
+                if trigram.startswith(" ") and current_word:
+                    decoded_tokens.append("".join(current_word).strip())
+                    current_word = []
+                current_word.append(trigram.strip())
 
-        # Reconstruct possible words from trigrams
-        decoded_text = self.reconstruct_text(possible_trigrams_per_token)
+        if current_word:
+            decoded_tokens.append("".join(current_word).strip())
+
+        decoded_text = " ".join(decoded_tokens)
         return decoded_text
+
+    def get_trigram_id(self, trigram):
+        hash_input = (
+            f"{trigram.lower()}"
+            if random.random() < self.lowercase_overlap
+            else f"{trigram}"
+        )
+        trigram_id = self.hash_trigram(hash_input)
+        return trigram_id
+
+    def get_trigram_ids(self, trigram):
+        trigram_ids = []
+        for i in range(self.num_activations):
+            if i < self.lowercase_overlap:
+                hash_input = f"{trigram.lower()}_{i}"
+            else:
+                hash_input = f"{trigram}_{i}"
+            trigram_id = self.hash_trigram(hash_input)
+            trigram_ids.append(trigram_id)
+        return trigram_ids
+
+    def hash_trigram(self, trigram):
+        hasher = self.hash_function()
+        hasher.update(trigram.encode("utf-8"))
+        trigram_id = int(hasher.hexdigest(), 16) % (self.config.vocab_size - 4) + 4
+        return trigram_id
 
     def generate_trigrams(self, word):
         padded_word = f" {word} "
         length = len(padded_word)
-        trigrams = set(
-            padded_word[i:j]
-            for i in range(length)
-            for j in range(i + 1, min(i + 4, length + 1))
-        )
+        trigrams = set(padded_word[i : i + 3] for i in range(length - 2))
         return trigrams
-
-    def get_trigram_id(self, trigram):
-        hasher = self.hash_function()
-        hasher.update(trigram.encode("utf-8"))
-        # Adjusted to avoid IDs 0-3 reserved for special tokens
-        trigram_id = int(hasher.hexdigest(), 16) % (self.config.vocab_size - 4) + 4
-        return trigram_id
 
     def _convert_token_to_id(self, token):
         return self.encoder.get(token, self.unk_token_id)
@@ -197,7 +184,7 @@ class PraxisTokenizer(PreTrainedTokenizer):
 
     @property
     def vocab_size(self):
-        return self.config.vocab_size  # Use config.vocab_size
+        return self.config.vocab_size
 
     def get_vocab(self):
         return self.encoder.copy()
@@ -207,86 +194,90 @@ class PraxisTokenizer(PreTrainedTokenizer):
         return tokens
 
 
+class TFreeModelForCausalLM(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
+        lm_config = GPT2Config(
+            vocab_size=config.vocab_size,
+            n_embd=config.embedding_dim,
+            n_layer=3,
+            n_head=4,
+        )
+        self.language_model = GPT2LMHeadModel(lm_config)
+        self.language_model.set_input_embeddings(self.embedding)
+        self.loss_fn = nn.BCEWithLogitsLoss()
+
+    def forward(self, input_ids, labels=None):
+        attention_mask = (input_ids != self.config.pad_token_id).long()
+        outputs = self.language_model(
+            input_ids=input_ids, attention_mask=attention_mask
+        )
+        logits = outputs.logits
+
+        if labels is not None:
+            # Assuming labels are multi-hot encoded
+            loss = self.loss_fn(logits, labels.float())
+            outputs.loss = loss
+
+        return outputs
+
+
+def generate_dictionary(tokenizer, dataset, max_words=100000):
+    dictionary = defaultdict(set)
+    for text in dataset:
+        tokens = tokenizer._tokenize(text)
+        for token in tokens:
+            if token not in tokenizer.encoder:
+                trigrams = tokenizer.generate_trigrams(token)
+                for trigram in trigrams:
+                    trigram_ids = tokenizer.get_trigram_ids(trigram)
+                    dictionary[token].update(trigram_ids)
+        if len(dictionary) >= max_words:
+            break
+    return dictionary
+
+
+def calculate_similarity(original, decoded):
+    matches = sum(o == d for o, d in zip(original, decoded))
+    return matches / max(len(original), len(decoded))
+
+
+def truncate_text(text, max_length=512):
+    return text[:max_length]
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
+    import seaborn as sns
     from datasets import load_dataset
-    from transformers import (
-        GPT2Config,
-        GPT2LMHeadModel,
-        PretrainedConfig,
-        PreTrainedTokenizer,
-    )
-
-    class TFreeModelForCausalLM(nn.Module):
-        def __init__(self, config):
-            super().__init__()
-            self.config = config
-            self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
-            lm_config = GPT2Config(
-                vocab_size=config.vocab_size,
-                n_embd=config.embedding_dim,
-                n_layer=3,
-                n_head=4,
-            )
-            self.language_model = GPT2LMHeadModel(lm_config)
-            self.language_model.set_input_embeddings(self.embedding)
-
-        def forward(self, input_ids, labels=None):
-            attention_mask = (input_ids != self.config.pad_token_id).long()
-            outputs = self.language_model(
-                input_ids=input_ids, attention_mask=attention_mask, labels=labels
-            )
-            return outputs
-
-    def generate_random_sequence(length):
-        return "".join(random.choice(string.ascii_letters + " ") for _ in range(length))
-
-    # Function to calculate similarity between two texts
-    def calculate_similarity(original, decoded):
-        # Simple character-level similarity
-        matches = sum(o == d for o, d in zip(original, decoded))
-        return matches / max(len(original), len(decoded))
-
-    def truncate_text(text, max_length=512):
-        return text[:max_length]
+    from transformers import GPT2Config, GPT2LMHeadModel
 
     config = PraxisTokenizerConfig(
-        vocab_size=1024,  # Increased vocab_size to reduce hash collisions
+        vocab_size=1024,
         embedding_dim=256,
+        num_activations=8,
+        lowercase_overlap=3,
     )
 
     tokenizer = PraxisTokenizer(config)
     model = TFreeModelForCausalLM(config)
 
-    # Adjust as needed
     num_iterations = 100
     buffer_size = 1000
-    # Number of test samples per iteration
     num_test_samples = 2
 
-    # Test the tokenizer
     text = "Hello, how are you?"
     print("\nEncoding text:", text)
     encoded = tokenizer.encode(text)
     print("Encoded:", encoded)
-    input_ids = torch.tensor([encoded], dtype=torch.long)
-    print("Input IDs shape:", input_ids.shape)
 
-    # Decode the tokens
     decoded = tokenizer.decode(encoded)
     print("Decoded:", decoded)
 
-    # Forward pass
-    labels = input_ids.clone()
-    outputs = model(input_ids=input_ids, labels=labels)
-    loss = outputs.loss
-    logits = outputs.logits
-
-    print("Loss:", loss.item())
-
-    # Load the dataset
     dataset = load_dataset(
         "HuggingFaceFW/fineweb-edu",
         name="sample-10BT",
@@ -300,27 +291,16 @@ if __name__ == "__main__":
     column = "text"
     dataset_iterator = (item[column] for item in dataset)
 
-    # Initialize a list to store iteration, sample index, and similarity
     all_similarity_scores = []
 
-    # Training and testing loop
     for iteration in range(num_iterations):
-        # Get the next training sample
         train_sample = truncate_text(next(dataset_iterator))
         print(f"Iteration {iteration + 1}/{num_iterations}")
 
-        # Train on train_sample
         tokenizer.encode(train_sample)
 
-        # Apply decay after encoding the sample
-        tokenizer.decay_frequencies()
+        random_samples = [next(dataset_iterator) for _ in range(num_test_samples)]
 
-        # Randomly select test samples from the testing_samples
-        random_samples = []
-        for i in range(num_test_samples):
-            random_samples.append(next(dataset_iterator))
-
-        # Inside your training loop
         iteration_similarity = []
         test_samples = random.sample(random_samples, num_test_samples)
         for sample_idx, test_data in enumerate(test_samples):
@@ -330,22 +310,19 @@ if __name__ == "__main__":
             iteration_similarity.append(similarity)
             all_similarity_scores.append(
                 {
-                    "Iteration": iteration + 1,  # Use capital 'I' to match the pivot
-                    "SampleIndex": sample_idx,  # Include 'SampleIndex'
+                    "Iteration": iteration + 1,
+                    "SampleIndex": sample_idx,
                     "Similarity": similarity,
                     "Sample": test_data,
                 }
             )
 
-    # Pivot the DataFrame to create a matrix for surface plotting
     df = pd.DataFrame(all_similarity_scores)
 
-    # Spiral plot
     theta = np.linspace(0, 4 * np.pi, len(df))
     z = df["Similarity"].values
     r = df["Iteration"].values
 
-    # Convert to Cartesian coordinates
     x = r * np.cos(theta)
     y = r * np.sin(theta)
 
@@ -360,9 +337,6 @@ if __name__ == "__main__":
     fig.colorbar(sc, label="Similarity")
     plt.show()
 
-    import seaborn as sns
-
-    # Pivot the DataFrame to create a matrix for surface plotting
     pivot_df = df.pivot(index="SampleIndex", columns="Iteration", values="Similarity")
 
     plt.figure(figsize=(10, 8))
@@ -372,11 +346,9 @@ if __name__ == "__main__":
     plt.title("Heatmap of Similarity Scores")
     plt.show()
 
-    # Prepare data for surface plot
     X, Y = np.meshgrid(pivot_df.columns, pivot_df.index)
     Z = pivot_df.values
 
-    # Create a surface plot
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
@@ -389,3 +361,22 @@ if __name__ == "__main__":
     fig.colorbar(surf, shrink=0.5, aspect=5)
 
     plt.show()
+
+    dictionary = generate_dictionary(tokenizer, dataset[column])
+
+    test_text = "This is a test sentence."
+    encoded_ids = tokenizer.encode(test_text)
+    trigram_ids = torch.tensor([encoded_ids], dtype=torch.long)
+    dictionary_matrix = torch.zeros((len(dictionary), config.vocab_size))
+    for idx, (word, trigrams) in enumerate(dictionary.items()):
+        dictionary_matrix[idx, list(trigrams)] = 1
+
+    with torch.no_grad():
+        outputs = model(trigram_ids)
+        logits = outputs.logits
+        scores = torch.matmul(dictionary_matrix, logits.squeeze())
+        predicted_idx = scores.argmax().item()
+        predicted_word = list(dictionary.keys())[predicted_idx]
+
+    print("Test Text:", test_text)
+    print("Predicted Next Word:", predicted_word)

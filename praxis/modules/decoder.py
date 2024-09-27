@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..configuration_praxis import PraxisConfig
-from .block import PraxisBlock
+from .experts import PraxisBlock
 from .router import PraxisMixtureOfDepths
 
 
@@ -17,7 +17,7 @@ class PraxisDecoder(nn.Module):
         for i in range(config.n_layer):
             self.experts.append(PraxisBlock(config))
             use_router = i % 2 != 0  # if layer is odd
-            if config.sparse and use_router:
+            if self.switches and use_router:
                 self.switches.append(PraxisMixtureOfDepths(config))
 
     def forward(self, inputs, attention_mask):

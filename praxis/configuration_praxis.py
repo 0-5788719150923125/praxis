@@ -16,7 +16,6 @@ class PraxisConfig(PretrainedConfig):
         capacity=0.125,
         vocab_size=8192,
         context_length=1024,
-        foresight=0,
         activation="mish",
         sparse=True,
         pad_token_id=0,
@@ -43,7 +42,6 @@ class PraxisConfig(PretrainedConfig):
         self.capacity = capacity
         self.vocab_size = vocab_size
         self.context_length = context_length
-        self.foresight = foresight
         self.activation = activation
         self.sparse = sparse
         self.causal = False

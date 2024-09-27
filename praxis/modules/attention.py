@@ -12,7 +12,6 @@ class PraxisAttention(nn.Module):
         super().__init__()
         self.causal = config.causal
         self.max_seq_len = config.context_length
-        self.foresight = config.foresight
         self.hidden_size = config.n_dim
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
@@ -78,34 +77,6 @@ class PraxisAttention(nn.Module):
                 .unsqueeze(0)
             )
             scores += causal_mask
-
-        # if self.causal:
-        #     causal_mask = torch.tril(
-        #         torch.ones(seq_len, seq_len, device=inputs.device)
-        #     ).view(1, 1, seq_len, seq_len)
-
-        #     # Generate Gaussian random values
-        #     mean = -1e9
-        #     soft_mask = torch.normal(
-        #         mean=mean,
-        #         std=abs(mean) * min(self.foresight, 0.1),
-        #         size=(batch_size, self.num_heads, seq_len, seq_len),
-        #         device=inputs.device,
-        #     )
-
-        #     # Create an index tensor for scatter_add
-        #     index = (
-        #         torch.arange(seq_len, device=inputs.device)
-        #         .view(1, 1, 1, seq_len)
-        #         .expand_as(scores)
-        #     )
-
-        #     # Apply the random foresight values where the causal mask is 0
-        #     scores = scores.scatter_add_(
-        #         -1,
-        #         index,
-        #         soft_mask * (1 - causal_mask),  # Only add penalties where mask is 0
-        #     )
 
         weights = F.softmax(scores, dim=-1)
         outputs = (

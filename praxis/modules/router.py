@@ -7,8 +7,7 @@ from ..configuration_praxis import PraxisConfig
 
 
 # This uses expert-choice routing, which was greatly preferred by the
-# original authors: https://arxiv.org/abs/2404.02258
-# reference: https://huggingface.co/blog/joey00072/mixture-of-depth-is-vibe
+# original authors of this research: https://arxiv.org/abs/2404.02258
 class PraxisMixtureOfDepths(nn.Module):
     """
     Paper: https://arxiv.org/abs/2404.02258
