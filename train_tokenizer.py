@@ -20,8 +20,7 @@ save_path = "data/praxis"
 
 
 vocab_size = 1024
-# max_token_length = 3
-# min_frequency = 16
+max_token_length = 3
 dropout = 0.1
 
 
@@ -57,8 +56,7 @@ tokenizer = Tokenizer(
 
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
-    # max_token_length=max_token_length,
-    # min_frequency=min_frequency,
+    max_token_length=max_token_length,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     show_progress=True,
     special_tokens=[

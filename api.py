@@ -25,7 +25,7 @@ class APIServer:
         self.started.wait(timeout=5)  # Wait up to 5 seconds for the server to start
         if not self.started.is_set():
             raise RuntimeError("Server failed to start within the timeout period")
-        print(f"API Server started in the background. URL: {self.get_api_addr()}")
+        print(f"API server started at: {self.get_api_addr()}")
 
     def _run_server(self):
         with app.app_context():

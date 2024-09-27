@@ -6,10 +6,6 @@ import torch.nn.functional as F
 
 from ..configuration_praxis import PraxisConfig
 
-# class PraxisEncoder(nn.Embedding):
-#     def __init__(self, config: PraxisConfig):
-#         super().__init__(config.vocab_size, config.n_dim)
-
 
 class PraxisEncoder(nn.Sequential):
     def __init__(self, config: PraxisConfig):
@@ -22,6 +18,10 @@ class PraxisEncoder(nn.Sequential):
             )
         )
 
+
+# class PraxisEncoder(nn.Embedding):
+#     def __init__(self, config: PraxisConfig):
+#         super().__init__(config.vocab_size, config.n_dim)
 
 # class PraxisEncoder(nn.Module):
 #     def __init__(self, config: PraxisConfig):

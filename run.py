@@ -19,13 +19,13 @@ os.setpgrp()
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
 
-
 import argparse
 import itertools
 import logging
 import math
 import os
 import random
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, List
@@ -195,6 +195,13 @@ train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
 
+# Model hyperparameters
+hparams = dict(
+    batch_size=args.batch_size if args.batch_size else 1,
+    target_batch_size=64,
+    block_size=512,
+)
+
 # All tokenizer initialization
 if args.no_tokenizer:
     tokenizer_config = PraxisTokenizerConfig(
@@ -217,13 +224,6 @@ else:
             f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
         )
 
-# Training and model
-hparams = dict(
-    batch_size=args.batch_size if args.batch_size else 1,
-    target_batch_size=64,
-    block_size=512,
-)
-
 # Model config
 config = PraxisConfig(
     n_emb=512,
@@ -245,7 +245,7 @@ config = PraxisConfig(
 )
 
 # Training data mixing
-weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0.1, 1, 0.666666, 0.333, 0.01]
+weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0, 1, 0.666666, 0.333, 0.01]
 population = [
     dict(path="open-phi/textbooks", keys=["markdown"]),
     dict(
@@ -260,14 +260,15 @@ population = [
 ]
 
 primary_dataset = random.choices(population, weights, k=1)[0]
+secondary_datasets = []
 
 if phi:
-    secondary_dataset = population[0]
-    tertiary_dataset = population[1]
+    secondary_datasets.append(population[0])
+    secondary_datasets.append(population[1])
 
 # Misc config
 max_feed_chars = 2048
-save_every = 1000
+save_interval = 3600  # seconds
 save_top_k = 3
 
 # Predictions
@@ -281,11 +282,9 @@ optimizer_config = dict(
     optimizer_name="AdamMini",
     lr=1e-3,
     weight_decay=1e-2,
-    num_embeds=vocab_size * config.n_emb,
+    num_embeds=config.n_emb,
     num_heads=config.n_head,
     num_query_groups=config.n_head,
-    eps=1e-10,
-    model_sharding=False,
     wd_ban_list=[
         "bias",
         "RMSNorm.weight",
@@ -413,7 +412,7 @@ class TerminalInterface(Callback):
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
-                        amplitude=1.0, frequency=0.01, phase_shift=0.23, step=batch_idx
+                        amplitude=1.0, frequency=0.005, phase_shift=0.23, step=batch_idx
                     )
                 )
             self.dashboard.fake_log(chance=0.00001)
@@ -522,11 +521,17 @@ class HuggingfaceDataset(IterableDataset):
         for document in shuffled:
 
             for i, key in enumerate(self.keys):
+
                 content = document.get(key)
-                if random.random() < 0.7:
-                    content = "INPUT: " + content
+
+                if len(self.keys) > 1:
+                    if i % 2 == 0:
+                        content = "INPUT: " + content
+                    else:
+                        content = "OUTPUT: " + content + self.tokenizer.eos_token
                 else:
-                    content = "OUTPUT: " + content + self.tokenizer.eos_token
+                    content += self.tokenizer.eos_token
+
                 self.cached_text += content
 
             if len(self.cached_text) < text_cache_size:
@@ -544,7 +549,7 @@ class HuggingfaceDataset(IterableDataset):
             tokens = self.tokenizer(
                 text=self.cached_text,
                 max_length=self.block_size,
-                stride=16,
+                stride=random.randint(16, 64),
                 padding=True,
                 truncation=True,
                 return_overflowing_tokens=True,
@@ -640,7 +645,7 @@ class Generator:
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.45,
+            temperature=0.3,
             eta_cutoff=0.002,
             penalty_alpha=0.6,
             top_k=4,
@@ -677,33 +682,55 @@ class Generator:
         return return_text
 
 
-# Define checkpointing behavior
-checkpoint_callback = ModelCheckpoint(
-    every_n_train_steps=save_every,
-    save_top_k=save_top_k,
-    save_last="link",
-    monitor="step",
-    mode="max",
-    dirpath=f"{cache_dir}/praxis",
-    filename="model-{step}",
-    enable_version_counter=False,
-)
+class TimeBasedCheckpoint(ModelCheckpoint):
+    def __init__(self, save_interval: int, *args, **kwargs):
+        """
+        Args:
+            save_interval: Interval (in seconds) at which checkpoints
+                should be saved.
+        """
 
-# Bootstrap the model and trainer
-model = AutoModelForCausalLM.from_config(config)
+        # Disable other checkpointing triggers
+        kwargs["every_n_train_steps"] = 0
+        kwargs["every_n_epochs"] = 0
 
-ckpt_path = None
-symlink = f"{cache_dir}/praxis/last.ckpt"
-if os.path.exists(symlink):
-    print(f"resuming from: {symlink}")
-    ckpt_path = symlink
+        super().__init__(*args, **kwargs)
+        self.save_interval = save_interval
+        self.last_checkpoint_time = time.monotonic()
 
-print(model)
+    def on_train_batch_end(
+        self,
+        trainer,
+        pl_module,
+        outputs,
+        batch,
+        batch_idx,
+    ):
+        # Get current time
+        current_time = time.monotonic()
 
-generator = Generator(model, tokenizer)
+        # Check if save_interval has elapsed
+        if current_time - self.last_checkpoint_time >= self.save_interval:
 
-api_server = APIServer(generator, host_name, port)
-api_server.start()
+            # Get current metrics
+            monitor_candidates = self._monitor_candidates(trainer)
+
+            # Save checkpoint
+            self._save_topk_checkpoint(trainer, monitor_candidates)
+            self._save_last_checkpoint(trainer, monitor_candidates)
+
+            # Update last checkpoint time
+            self.last_checkpoint_time = current_time
+
+        # return super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # Disable saving checkpoints at the end of every epoch
+        pass
+
+
+def fit_grad_accumulation(batch_size, target_batch_size):
+    return 1 if batch_size >= target_batch_size else -(-target_batch_size // batch_size)
 
 
 class AccumulationSchedule(GradientAccumulationScheduler):
@@ -713,46 +740,13 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 
     def __init__(self, batch_size=1, target_batch_size=1):
         # NOTE: must be 1 for Hivemind training; will need adapting once we get there
-        self.factor = self._fit_grad_accumulation(batch_size, target_batch_size)
+        self.factor = fit_grad_accumulation(batch_size, target_batch_size)
         self.schedule = {1: self.factor}
         super().__init__(self.schedule)
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
         trainer.accumulate_grad_batches = self.factor
-
-    def _fit_grad_accumulation(self, batch_size, target_batch_size):
-        return (
-            1
-            if batch_size >= target_batch_size
-            else -(-target_batch_size // batch_size)
-        )
-
-
-# create the optimizer
-optimizer = create_optimizer(model, **optimizer_config)
-
-
-# Load a dataset
-train_data = []
-if train_data_path:
-    train_data.append(
-        MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
-    )
-else:
-    train_data.append(
-        HuggingfaceDataset(tokenizer, primary_dataset, hparams["block_size"])
-    )
-
-
-# Load expert dataset
-if phi:
-    train_data.append(
-        HuggingfaceDataset(tokenizer, secondary_dataset, hparams["block_size"])
-    )
-    train_data.append(
-        HuggingfaceDataset(tokenizer, tertiary_dataset, hparams["block_size"])
-    )
 
 
 class WeightedIterableDataset(IterableDataset):
@@ -809,6 +803,55 @@ class DataModule(LightningDataModule):
         return WeightedIterableDataset(self.loaders, self.weights)
 
 
+# Define checkpointing behavior
+checkpoint_callback = TimeBasedCheckpoint(
+    save_top_k=save_top_k,
+    save_last="link",
+    monitor="step",
+    mode="max",
+    dirpath=f"{cache_dir}/praxis",
+    filename="model-{step}",
+    enable_version_counter=False,
+    save_interval=save_interval,
+)
+
+# Bootstrap the model and trainer
+model = AutoModelForCausalLM.from_config(config)
+
+ckpt_path = None
+symlink = f"{cache_dir}/praxis/last.ckpt"
+if os.path.exists(symlink):
+    print(f"resuming from: {symlink}")
+    ckpt_path = symlink
+
+print(model)
+
+generator = Generator(model, tokenizer)
+
+api_server = APIServer(generator, host_name, port)
+api_server.start()
+
+# Load a dataset
+train_data = []
+if train_data_path:
+    train_data.append(
+        MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
+    )
+else:
+    train_data.append(
+        HuggingfaceDataset(tokenizer, primary_dataset, hparams["block_size"])
+    )
+
+# Load expert datasets
+if phi:
+    for dataset_config in secondary_datasets:
+        train_data.append(
+            HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
+        )
+
+# create the optimizer
+optimizer = create_optimizer(model, **optimizer_config)
+
 # Put the data onto a dataloader
 dataloader = DataModule(train_data, hparams["batch_size"])
 
@@ -832,12 +875,13 @@ trainer = Trainer(**train_params)
 #     auto_batch_size = tuner.scale_batch_size(
 #         train_model,
 #         dataloader,
-#         mode="power",
-#         max_trials=5,
+#         mode="binsearch",
+#         max_trials=10,
 #         steps_per_trial=3,
-#         init_val=2,
+#         init_val=1,
 #     )
 #     print(f"stopped on batch size of: {auto_batch_size}")
+#     hparams["batch_size"] = auto_batch_size
 #     train_params["accumulate_grad_batches"] = fit_grad_accumulation(
 #         auto_batch_size, hparams["target_batch_size"]
 #     )

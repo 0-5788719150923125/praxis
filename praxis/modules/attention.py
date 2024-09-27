@@ -25,16 +25,14 @@ class PraxisAttention(nn.Module):
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
-        self.out = nn.Linear(
+        self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
 
-        # Precompute the slopes for ALiBi
+        # Precompute the slopes and positions needed for ALiBi
         slopes = 2 ** (-8 * torch.arange(1, self.num_heads + 1) / self.num_heads)
-        self.register_buffer("slopes", slopes)
-
-        # Precompute the positions
         positions = torch.arange(self.max_seq_len, dtype=torch.float32)
+        self.register_buffer("slopes", slopes)
         self.register_buffer("positions", positions)
 
     def forward(self, inputs, attention_mask=None):
@@ -71,17 +69,15 @@ class PraxisAttention(nn.Module):
 
         # Apply the causal mask
         if self.causal:
-            # Create a standard causal mask filled with negative infinity
-            causal_mask = torch.triu(
-                torch.ones(seq_len, seq_len, device=inputs.device) * float("-inf"),
-                diagonal=1,
+            causal_mask = (
+                torch.triu(
+                    torch.ones(seq_len, seq_len, device=inputs.device) * float("-inf"),
+                    diagonal=1,
+                )
+                .unsqueeze(0)
+                .unsqueeze(0)
             )
-            causal_mask = causal_mask.unsqueeze(0).unsqueeze(
-                0
-            )  # Add batch and head dimensions
-
-            # Apply the causal mask to the scores
-            scores = scores + causal_mask
+            scores += causal_mask
 
         # if self.causal:
         #     causal_mask = torch.tril(
@@ -118,4 +114,4 @@ class PraxisAttention(nn.Module):
             .reshape(batch_size, seq_len, self.hidden_size)
         )
 
-        return self.out(outputs)
+        return self.output(outputs)
