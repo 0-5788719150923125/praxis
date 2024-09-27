@@ -8,7 +8,7 @@ from ..configuration_praxis import PraxisConfig
 
 # This uses expert-choice routing, which was greatly preferred by the
 # original authors of this research: https://arxiv.org/abs/2404.02258
-class PraxisMixtureOfDepths(nn.Module):
+class PraxisMixtureOfDepths(nn.Linear):
     """
     Paper: https://arxiv.org/abs/2404.02258
     """
@@ -19,9 +19,8 @@ class PraxisMixtureOfDepths(nn.Module):
         *args,
         **kwargs,
     ):
-        super().__init__()
+        super().__init__(in_features=config.n_dim, out_features=1)
         self.capacity = config.capacity
-        self.router = nn.Linear(config.n_dim, 1)
 
     def forward(
         self,
@@ -40,8 +39,8 @@ class PraxisMixtureOfDepths(nn.Module):
 
         # eq1 page 6
         # scaler weights for each token
-        router_logits = self.router(
-            inputs
+        router_logits = F.linear(
+            inputs, self.weight
         )  # (x) batch,seq_len,dim -> r batch,seq_len,1
 
         #  𝑟𝑙> 𝑃𝛽 (R)  ... equation 1

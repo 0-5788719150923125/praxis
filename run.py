@@ -253,6 +253,26 @@ config = PraxisConfig(
     cache_dir=cache_dir,
 )
 
+# Training config
+train_params = dict(
+    accelerator=f"cpu" if args.device == "cpu" else "gpu",
+    strategy="auto",
+    devices=[int(device.split(":")[1])] if args.device.startswith("cuda") else "auto",
+    max_steps=-1,
+    max_epochs=-1,
+    reload_dataloaders_every_n_epochs=0,
+    precision="32-true",
+    gradient_clip_val=1.0,
+    gradient_clip_algorithm="norm",
+    benchmark=True,
+    enable_progress_bar=False if use_dashboard else True,
+    enable_model_summary=False,
+    detect_anomaly=True if dev else False,
+    logger=logger,
+    enable_checkpointing=True,
+    callbacks=[],
+)
+
 # Training data mixing
 weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0, 1, 0.666666, 0.333, 0.01]
 population = [
@@ -348,26 +368,6 @@ scheduler_func = create_warmup_cosine_scheduler(
     eta_max=optimizer_config[
         "lr"
     ],  # Maximum learning rate (initial learning rate after warmup)
-)
-
-# Training config
-train_params = dict(
-    accelerator=f"cpu" if args.device == "cpu" else "gpu",
-    strategy="auto",
-    devices=[int(device.split(":")[1])] if args.device.startswith("cuda") else "auto",
-    max_steps=-1,
-    max_epochs=-1,
-    reload_dataloaders_every_n_epochs=0,
-    precision="32-true",
-    gradient_clip_val=1.0,
-    gradient_clip_algorithm="norm",
-    benchmark=True,
-    enable_progress_bar=False if use_dashboard else True,
-    enable_model_summary=False,
-    detect_anomaly=True if dev else False,
-    logger=logger,
-    enable_checkpointing=True,
-    callbacks=[],
 )
 
 
@@ -478,7 +478,7 @@ class TerminalInterface(Callback):
                         amplitude=1.0, frequency=0.005, phase_shift=0.23, step=batch_idx
                     )
                 )
-            self.dashboard.fake_log(chance=0.00001)
+            self.dashboard.fake_log(chance=0.00005)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
