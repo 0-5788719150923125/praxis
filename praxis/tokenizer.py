@@ -64,37 +64,31 @@ class PraxisTokenizer(PreTrainedTokenizer):
         self.lowercase_overlap = config.lowercase_overlap
 
         self.trigram_id_to_trigram = {}
+        self.trigram_weights = {}
+        self.trigram_positions = {}  # New attribute to store trigram positions
 
     def encode(self, text, add_special_tokens=True, **kwargs):
         tokens = self._tokenize(text)
         token_ids = []
+        position = 0
 
         if add_special_tokens:
             token_ids.append(self.bos_token_id)
+            position += 1
 
         for token in tokens:
             if token in self.encoder:
                 token_ids.append(self.encoder[token])
+                position += 1
             else:
                 trigrams = self.generate_trigrams(token)
-                trigram_ids = []
                 for trigram in trigrams:
-                    trigram_id = self.get_trigram_id(trigram)
-                    trigram_ids.append(trigram_id)
+                    trigram_id, weight = self.get_trigram_id_and_weight(trigram, token)
+                    token_ids.append(trigram_id)
                     self.trigram_id_to_trigram[trigram_id] = trigram
-
-                # Select a fixed number of activations per word
-                if len(trigram_ids) > self.num_activations:
-                    trigram_ids = random.sample(trigram_ids, self.num_activations)
-                else:
-                    # Pad with random trigram IDs if not enough activations
-                    padding_ids = [
-                        random.randint(4, self.config.vocab_size - 1)
-                        for _ in range(self.num_activations - len(trigram_ids))
-                    ]
-                    trigram_ids.extend(padding_ids)
-
-                token_ids.extend(trigram_ids)
+                    self.trigram_weights[trigram] = weight
+                    self.trigram_positions[trigram_id] = position
+                    position += 1
 
         if add_special_tokens:
             token_ids.append(self.eos_token_id)
@@ -111,26 +105,93 @@ class PraxisTokenizer(PreTrainedTokenizer):
             ]
 
         decoded_tokens = []
-        current_word = []
+        current_word_trigrams = []
+        current_word_positions = []
 
         for token_id in token_ids:
             if token_id in self.encoder.values():
-                if current_word:
-                    decoded_tokens.append("".join(current_word).strip())
-                    current_word = []
+                if current_word_trigrams:
+                    decoded_tokens.append(
+                        self.reconstruct_word(
+                            current_word_trigrams, current_word_positions
+                        )
+                    )
+                    current_word_trigrams = []
+                    current_word_positions = []
                 decoded_tokens.append(self._convert_id_to_token(token_id))
             else:
                 trigram = self.trigram_id_to_trigram.get(token_id, "")
-                if trigram.startswith(" ") and current_word:
-                    decoded_tokens.append("".join(current_word).strip())
-                    current_word = []
-                current_word.append(trigram.strip())
+                position = self.trigram_positions.get(token_id, 0)
+                if trigram.startswith(" ") and current_word_trigrams:
+                    decoded_tokens.append(
+                        self.reconstruct_word(
+                            current_word_trigrams, current_word_positions
+                        )
+                    )
+                    current_word_trigrams = []
+                    current_word_positions = []
+                current_word_trigrams.append(trigram)
+                current_word_positions.append(position)
 
-        if current_word:
-            decoded_tokens.append("".join(current_word).strip())
+        if current_word_trigrams:
+            decoded_tokens.append(
+                self.reconstruct_word(current_word_trigrams, current_word_positions)
+            )
 
-        decoded_text = " ".join(decoded_tokens)
+        decoded_text = self.post_process_text(" ".join(decoded_tokens))
         return decoded_text
+
+    def reconstruct_word(self, trigrams, positions):
+        word = ""
+        sorted_trigrams = sorted(zip(trigrams, positions), key=lambda x: x[1])
+
+        for trigram, _ in sorted_trigrams:
+            if not word:
+                word = trigram.strip()
+            else:
+                overlap = self.find_overlap(word, trigram)
+                word += trigram[overlap:].strip()
+
+        return word.strip()
+
+    def find_overlap(self, word, trigram):
+        for i in range(min(len(word), 3), 0, -1):
+            if word.endswith(trigram[:i].strip()):
+                return i
+        return 0
+
+    def post_process_text(self, text):
+        # Handle punctuation and spacing
+        text = re.sub(r"\s+([.,!?])", r"\1", text)
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(
+            r"([.,!?])([^\s])", r"\1 \2", text
+        )  # Add space after punctuation if missing
+        return text.strip()
+
+    def generate_trigrams(self, word):
+        padded_word = f" {word} "
+        length = len(padded_word)
+        trigrams = [padded_word[i : i + 3] for i in range(length - 2)]
+        return trigrams
+
+    def get_trigram_id_and_weight(self, trigram, word):
+        position = word.find(trigram.strip())
+        weight = 1.0
+
+        if position == 0 or position == len(word) - 3:
+            weight = (
+                1.5  # Higher weight for trigrams at the beginning or end of the word
+            )
+
+        hash_input = (
+            f"{trigram.lower()}"
+            if random.random() < self.lowercase_overlap
+            else f"{trigram}"
+        )
+        trigram_id = self.hash_trigram(hash_input)
+
+        return trigram_id, weight
 
     def get_trigram_id(self, trigram):
         hash_input = (
@@ -157,12 +218,6 @@ class PraxisTokenizer(PreTrainedTokenizer):
         hasher.update(trigram.encode("utf-8"))
         trigram_id = int(hasher.hexdigest(), 16) % (self.config.vocab_size - 4) + 4
         return trigram_id
-
-    def generate_trigrams(self, word):
-        padded_word = f" {word} "
-        length = len(padded_word)
-        trigrams = set(padded_word[i : i + 3] for i in range(length - 2))
-        return trigrams
 
     def _convert_token_to_id(self, token):
         return self.encoder.get(token, self.unk_token_id)
@@ -277,6 +332,40 @@ if __name__ == "__main__":
 
     decoded = tokenizer.decode(encoded)
     print("Decoded:", decoded)
+
+    def test_tokenizer(tokenizer, text):
+        print("\nOriginal text:")
+        print(text)
+        print("\nEncoding text...")
+        encoded = tokenizer.encode(text)
+        print("Encoded:", encoded)
+        print("\nDecoding...")
+        decoded = tokenizer.decode(encoded)
+        print("Decoded:", decoded)
+        print("\nSimilarity:", calculate_similarity(text, decoded))
+        print("-" * 80)
+
+    # Initialize the tokenizer
+    config = PraxisTokenizerConfig(
+        vocab_size=1024,
+        embedding_dim=256,
+        num_activations=8,
+        lowercase_overlap=3,
+    )
+    tokenizer = PraxisTokenizer(config)
+
+    # Test cases
+    test_cases = [
+        "Hey! What's up? This sentence has multiple punctuation marks!!! Isn't it cool?",
+        "Bonjour, comment allez-vous? J'espère que vous passez une bonne journée.",
+        "The quick brown fox jumps over the lazy dog. This is a pangram, which means it contains every letter of the alphabet. It's often used to showcase fonts or test character encoding. The sentence's length makes it useful for testing various text-processing tasks, including tokenization and language models.",
+        "In 2023, AI made significant progress. GPT-4 achieved 90% accuracy on complex tasks, while DALL-E3 generated photo-realistic images with 95% fidelity.",
+        "The HTTP protocol uses TCP/IP for data transfer. APIs often return JSON or XML. CRUD operations (CREATE, READ, UPDATE, DELETE) are fundamental in RESTful services.",
+    ]
+
+    # Run tests
+    for case in test_cases:
+        test_tokenizer(tokenizer, case)
 
     dataset = load_dataset(
         "HuggingFaceFW/fineweb-edu",
