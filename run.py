@@ -317,6 +317,7 @@ optimizer_config = dict(
     num_query_groups=config.n_head,
     wd_ban_list=[
         "bias",
+        "wte",
         "RMSNorm.weight",
         "RMSNorm.bias",
     ],
@@ -478,7 +479,7 @@ class TerminalInterface(Callback):
                         amplitude=1.0, frequency=0.005, phase_shift=0.23, step=batch_idx
                     )
                 )
-            self.dashboard.fake_log(chance=0.00005)
+            self.dashboard.fake_log(chance=0.00001)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
