@@ -8,9 +8,11 @@ from torch import Tensor
 from ..configuration_praxis import PraxisConfig
 
 
-# This uses expert-choice routing, which was greatly preferred by the
-# original authors of this research: https://arxiv.org/abs/2404.02258
 class PraxisMixtureOfDepths(nn.Linear):
+    """
+    This uses expert-choice routing, which was greatly preferred by the
+    original authors of this research: https://arxiv.org/abs/2404.02258
+    """
 
     def __init__(
         self,
@@ -64,7 +66,7 @@ class PraxisMixtureOfDepths(nn.Linear):
                 token_weights = torch.ones(b, select_tokens, 1, device=inputs.device)
             else:
                 token_weights = (
-                    router_logits.squeeze(-1).gather(1, token_indices).unsqueeze(-1)
+                    router_logits.squeeze(-1).gather(b, token_indices).unsqueeze(-1)
                 )
 
             token_indices = token_indices.unsqueeze(-1)
