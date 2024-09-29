@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from ..configuration_praxis import PraxisConfig
 
 
-class PraxisEncoder(nn.Sequential):
+class PraxisEmbedding(nn.Sequential):
     def __init__(self, config: PraxisConfig):
         super().__init__(
             OrderedDict(
@@ -19,11 +19,11 @@ class PraxisEncoder(nn.Sequential):
         )
 
 
-# class PraxisEncoder(nn.Embedding):
+# class PraxisEmbedding(nn.Embedding):
 #     def __init__(self, config: PraxisConfig):
 #         super().__init__(config.vocab_size, config.n_dim)
 
-# class PraxisEncoder(nn.Module):
+# class PraxisEmbedding(nn.Module):
 #     def __init__(self, config: PraxisConfig):
 #         super().__init__()
 #         self.n_dim = config.n_dim

@@ -29,11 +29,13 @@ class PraxisAttention(nn.Module):
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
 
-        # Precompute the slopes and positions needed for ALiBi
+        # Pre-compute the ALiBi bias
         slopes = 2 ** (-8 * torch.arange(1, self.num_heads + 1) / self.num_heads)
         positions = torch.arange(self.max_seq_len, dtype=torch.float32)
-        self.register_buffer("slopes", slopes)
-        self.register_buffer("positions", positions)
+        alibi_bias = slopes.unsqueeze(1).unsqueeze(1) * positions.unsqueeze(
+            0
+        ).unsqueeze(0)
+        self.register_buffer("alibi_bias", alibi_bias)
 
     def forward(self, inputs, attention_mask=None):
         batch_size, seq_len, _ = inputs.size()
@@ -53,19 +55,15 @@ class PraxisAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        scores = torch.matmul(q, k.transpose(-2, -1)) / torch.sqrt(
-            torch.tensor(self.head_dim)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * torch.rsqrt(
+            torch.tensor(self.head_dim, device=inputs.device)
         )
 
-        # Compute ALiBi bias
-        alibi_bias = self.slopes.unsqueeze(1).unsqueeze(1) * self.positions[
-            :seq_len
-        ].unsqueeze(0).unsqueeze(0)
-
-        alibi_bias = alibi_bias.expand(self.num_heads, seq_len, seq_len)
+        # Slice from the pre-computed ALiBi bias
+        alibi = self.alibi_bias[:, :seq_len, :seq_len]
 
         # Subtract biases from the scores
-        scores -= alibi_bias
+        scores -= alibi
 
         # Apply the causal mask
         if self.causal:
@@ -78,6 +76,9 @@ class PraxisAttention(nn.Module):
                 .unsqueeze(0)
             )
             scores += causal_mask
+
+        if attention_mask is not None:
+            scores *= attention_mask.unsqueeze(1).unsqueeze(0)
 
         weights = F.softmax(scores, dim=-1)
         outputs = (

@@ -32,6 +32,7 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
+        # Praxis args
         self.n_emb = n_emb
         self.n_dim = n_dim
         self.n_factors = n_factors
@@ -45,3 +46,8 @@ class PraxisConfig(PretrainedConfig):
         self.activation = activation
         self.sparse = sparse
         self.causal = False
+
+        # Huggingface args
+        self.is_decoder = True
+        self.is_encoder_decoder = False
+        self.tie_word_embeddings = False

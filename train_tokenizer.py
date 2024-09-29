@@ -19,8 +19,7 @@ num_examples = 5_000_000
 save_path = "data/praxis"
 
 
-vocab_size = 1024
-max_token_length = 3
+vocab_size = 4096
 dropout = 0.1
 
 
@@ -38,7 +37,7 @@ dataset = load_dataset(
     cache_dir="tmp",
 ).shuffle(
     seed=44,
-    buffer_size=100_000,
+    buffer_size=10_000,
 )
 
 column = "text"
@@ -48,15 +47,12 @@ tokenizer = Tokenizer(
     models.BPE(
         dropout=dropout,
         unk_token=unk_token,
-        byte_fallback=True,
-        fuse_unk=True,
         cache_capacity=4096,
     )
 )
 
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
-    max_token_length=max_token_length,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     show_progress=True,
     special_tokens=[
@@ -75,8 +71,9 @@ tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     ]
 )
 
-tokenizer.normalizer = normalizers.NFC()
-tokenizer.decoder = decoders.ByteLevel(add_prefix_space=True, use_regex=True)
+tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC(), normalizers.Strip()])
+
+tokenizer.decoder = decoders.ByteLevel()
 tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
 
 tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)

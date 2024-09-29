@@ -29,6 +29,7 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
+from glob import glob
 from typing import Dict, List
 
 import torch
@@ -203,7 +204,8 @@ train_data_path = args.data_path
 use_dashboard = False if args.no_dashboard else True
 
 if args.reset:
-    shutil.rmtree(f"data/praxis", ignore_errors=True)
+    for checkpoint in glob(os.path.join("data/praxis", "*.ckpt")):
+        os.remove(checkpoint)
 
 # Model hyperparameters
 hparams = dict(
@@ -243,7 +245,7 @@ config = PraxisConfig(
     n_head=8,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
-    context_length=1024,
+    context_length=2048,
     sparse=False if args.dense else args.sparse,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
@@ -307,14 +309,14 @@ predict_tokens = 1
 
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
+min_lr = 1e-5
 optimizer_config = dict(
-    optimizer_name="AdamMini",
+    optimizer_name="AdamW",
     lr=1e-3,
-    min_lr=1e-5,
     weight_decay=1e-2,
-    num_embeds=config.n_emb,
-    num_heads=config.n_head,
-    num_query_groups=config.n_head,
+    # num_embeds=config.n_emb,
+    # num_heads=config.n_head,
+    # num_query_groups=config.n_head,
     wd_ban_list=[
         "bias",
         "wte",
@@ -365,7 +367,7 @@ scheduler_func = create_warmup_cosine_scheduler(
     warmup_steps=128,  # Number of warmup steps
     T_0=4096,  # Number of iterations for the first restart
     T_mult=1,  # Multiplicative factor for T_i
-    eta_min=optimizer_config["min_lr"],  # Minimum learning rate
+    eta_min=min_lr,  # Minimum learning rate
     eta_max=optimizer_config[
         "lr"
     ],  # Maximum learning rate (initial learning rate after warmup)
@@ -493,9 +495,9 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        n_grams = 5
+        n_gram_size = 7
         frequency = 20
-        if self._detect_repetition(n_grams, frequency) or self._is_all_whitespace():
+        if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
             self.text = tokenizer.bos_token
             if self.dashboard:
                 self.dashboard.update_status("[ERR]")

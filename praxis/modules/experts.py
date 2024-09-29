@@ -28,7 +28,7 @@ class PraxisBlock(nn.Module):
         router_weights=None,
     ):
         residual = inputs
-        outputs = self.attn(inputs, attention_mask) + residual
+        outputs = self.attn(self.norm(inputs), attention_mask) + residual
         residual = outputs
         outputs = self.mlp(self.norm(outputs))
         outputs = self.drop(outputs)

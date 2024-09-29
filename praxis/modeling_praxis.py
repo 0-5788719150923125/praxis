@@ -10,7 +10,7 @@ from transformers.modeling_outputs import (
 
 from .configuration_praxis import PraxisConfig
 from .modules.decoder import PraxisDecoder
-from .modules.encoder import PraxisEncoder
+from .modules.embeddings import PraxisEmbedding
 
 
 class PraxisModel(PreTrainedModel):
@@ -18,7 +18,7 @@ class PraxisModel(PreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.encoder = PraxisEncoder(config)
+        self.embeds = PraxisEmbedding(config)
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
@@ -31,7 +31,7 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        inputs = self.encoder(input_ids)
+        inputs = self.embeds(input_ids)
 
         if attention_mask is None:
             attention_mask = torch.ones(input_ids.shape, device=inputs.device)
@@ -39,7 +39,8 @@ class PraxisModel(PreTrainedModel):
         outputs = self.decoder(inputs, attention_mask)
 
         if self.training:
-            # self.aux_losses.append(inputs["aux_loss"])
+            if isinstance(inputs, dict) and "aux_loss" in inputs:
+                self.aux_losses.append(inputs["aux_loss"])
             self.aux_losses.append(outputs["aux_loss"])
 
         return BaseModelOutputWithPast(
@@ -51,19 +52,17 @@ class PraxisModel(PreTrainedModel):
 
 
 class PraxisForCausalLM(PraxisModel):
+    model_type = "praxis"
+
     def __init__(self, config):
         config.causal = True
         super().__init__(config)
         self.head = nn.Linear(config.n_dim, config.vocab_size, bias=False)
 
-    def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
-        if past:
-            input_ids = input_ids[:, -1:]
-
+    def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
         return {
             "input_ids": input_ids,
-            "past_key_values": past,
-            "attention_mask": kwargs.get("attention_mask", None),
+            "attention_mask": attention_mask,
         }
 
     def forward(
