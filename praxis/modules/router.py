@@ -33,9 +33,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         b, s, d = inputs.shape
 
         # scalar weights for each token
-        router_logits = F.linear(
-            inputs, self.weight
-        )  # (x) batch,seq_len,dim -> r batch,seq_len,1
+        router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
 
         k = int(s * self.capacity)
 
@@ -43,7 +41,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
             token_weights, token_indices = torch.topk(
                 # page 7: the [aux] loss centers the sigmoid of the router’s outputs around 0.5
-                torch.sigmoid(router_logits),
+                router_logits,
                 k,
                 dim=1,
                 sorted=False,
@@ -53,7 +51,11 @@ class PraxisMixtureOfDepths(nn.Linear):
             token_mask = torch.sigmoid(router_logits) > 0.5
             token_indices = torch.nonzero(token_mask, as_tuple=True)[1].view(b, -1)
 
-            if token_indices.numel() == 0:
+            if token_indices.numel() > 0:
+                token_weights = (
+                    router_logits.squeeze(-1).gather(b, token_indices).unsqueeze(-1)
+                )
+            else:
                 # if no tokens were selected, just use the most recent k tokens
                 select_tokens = min(k, s)
                 token_indices = (
@@ -62,10 +64,6 @@ class PraxisMixtureOfDepths(nn.Linear):
                     .expand(b, -1)
                 )
                 token_weights = torch.ones(b, select_tokens, 1, device=inputs.device)
-            else:
-                token_weights = (
-                    router_logits.squeeze(-1).gather(b, token_indices).unsqueeze(-1)
-                )
 
             token_indices = token_indices.unsqueeze(-1)
 
@@ -78,7 +76,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         # filtered topk tokens with a capacity of C
         filtered_inputs = torch.gather(
             input=inputs, dim=1, index=indices_expanded
-        )  # -> batch, capacity, dim
+        )  # -> batch, capacity, 1
 
         # selecting router weight by idx
         router_weights = torch.gather(token_weights, dim=1, index=sorted_index_indices)
@@ -96,6 +94,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             attention_mask=filtered_attention_mask,
             router_weights=router_weights,
         )
+
         # integrate the selected and residual tokens
         outputs = torch.scatter(
             input=inputs,
@@ -105,14 +104,14 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # compute aux loss, in order to maintain causality
-        aux_loss = self.aux_loss(router_logits, sorted_index_values)
+        aux_loss = self.aux_loss(router_logits, token_indices)
 
         return dict(hidden_states=outputs, aux_loss=aux_loss)
 
-    def aux_loss(self, router_logits: torch.Tensor, selected_tokens: torch.Tensor):
+    def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
         # section 3.5: sampling
         router_targets = torch.zeros_like(router_logits)
-        router_targets.scatter_(1, selected_tokens, 1.0)
+        router_targets.scatter_(1, selected_indices, 1.0)
         return F.binary_cross_entropy_with_logits(
             router_logits.view(-1), router_targets.view(-1)
         )
