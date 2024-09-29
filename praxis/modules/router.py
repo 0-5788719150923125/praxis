@@ -83,15 +83,21 @@ class PraxisMixtureOfDepths(nn.Linear):
         # selecting router weight by idx
         router_weights = torch.gather(token_weights, dim=1, index=sorted_index_indices)
 
+        # slice the attention mask based on the selected token indices
+        filtered_attention_mask = torch.gather(
+            input=attention_mask,
+            dim=1,
+            index=sorted_index_values.squeeze(-1),
+        )
+
         # pass the selected tokens through the transformer block
         expert_outputs = expert(
             filtered_inputs,
-            # attention_mask=attention_mask,
+            attention_mask=filtered_attention_mask,
             router_weights=router_weights,
         )
-
         # integrate the selected and residual tokens
-        outputs = torch.scatter_add(
+        outputs = torch.scatter(
             input=inputs,
             dim=1,
             index=indices_expanded,
