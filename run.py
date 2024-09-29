@@ -204,7 +204,7 @@ train_data_path = args.data_path
 use_dashboard = False if args.no_dashboard else True
 
 if args.reset:
-    for checkpoint in glob(os.path.join("data/praxis", "*.ckpt")):
+    for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
         os.remove(checkpoint)
 
 # Model hyperparameters
@@ -228,7 +228,7 @@ if args.no_tokenizer:
 #     )
 #     tokenizer = TokenMonsterTokenizer(tokenizer_config)
 else:
-    tokenizer_model = "data/praxis"
+    tokenizer_model = os.path.join(cache_dir, "praxis")
     try:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
     except Exception as e:
@@ -478,7 +478,10 @@ class TerminalInterface(Callback):
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
-                        amplitude=1.0, frequency=0.005, phase_shift=0.23, step=batch_idx
+                        amplitude=1.0,
+                        frequency=0.00333,
+                        phase_shift=0.23,
+                        step=batch_idx,
                     )
                 )
             self.dashboard.fake_log(chance=0.00001)
@@ -564,7 +567,7 @@ class HuggingfaceDataset(IterableDataset):
             path=config.get("path", "HuggingFaceFW/fineweb"),
             split="train",
             streaming=True,
-            cache_dir="./tmp/pile",
+            cache_dir=os.path.join(cache_dir, "datasets"),
             trust_remote_code=True,
         )
 
@@ -795,10 +798,6 @@ class TimeBasedCheckpoint(ModelCheckpoint):
         pass
 
 
-def fit_grad_accumulation(batch_size, target_batch_size):
-    return 1 if batch_size >= target_batch_size else -(-target_batch_size // batch_size)
-
-
 class AccumulationSchedule(GradientAccumulationScheduler):
     """
     Change gradient accumulation factor according to scheduling.
@@ -806,13 +805,20 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 
     def __init__(self, batch_size=1, target_batch_size=1):
         # NOTE: must be 1 for Hivemind training; will need adapting once we get there
-        self.factor = fit_grad_accumulation(batch_size, target_batch_size)
+        self.factor = self._fit_grad_accumulation(batch_size, target_batch_size)
         self.schedule = {1: self.factor}
         super().__init__(self.schedule)
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
         trainer.accumulate_grad_batches = self.factor
+
+    def _fit_grad_accumulation(self, batch_size, target_batch_size):
+        return (
+            1
+            if batch_size >= target_batch_size
+            else -(-target_batch_size // batch_size)
+        )
 
 
 class WeightedIterableDataset(IterableDataset):
@@ -873,10 +879,10 @@ class DataModule(LightningDataModule):
 checkpoint_callback = TimeBasedCheckpoint(
     save_top_k=save_top_k,
     save_last="link",
-    monitor="step",
-    mode="max",
-    dirpath=f"{cache_dir}/praxis",
-    filename="model-{step}",
+    monitor="loss",
+    mode="min",
+    dirpath=os.path.join(cache_dir, "praxis"),
+    filename="model-{loss:.4f}",
     enable_version_counter=False,
     save_interval=save_interval,
 )
@@ -885,7 +891,7 @@ checkpoint_callback = TimeBasedCheckpoint(
 model = AutoModelForCausalLM.from_config(config)
 
 ckpt_path = None
-symlink = f"{cache_dir}/praxis/last.ckpt"
+symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
 if os.path.exists(symlink):
     print(f"resuming from: {symlink}")
     ckpt_path = symlink

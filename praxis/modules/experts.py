@@ -16,8 +16,8 @@ input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 class PraxisBlock(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.attn = PraxisAttention(config)
         self.norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.attn = PraxisAttention(config)
         self.mlp = PraxisGLU(config)
         self.drop = nn.Dropout(config.dropout)
 
