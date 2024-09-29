@@ -3,7 +3,7 @@ import inspect
 import logging
 from threading import Event, Thread
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
 
 app = Flask(__name__)
@@ -42,6 +42,11 @@ class APIServer:
 
     def get_api_addr(self):
         return f"{self.host}:{self.port}"
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return render_template("index.html")
 
 
 @app.route("/input/", methods=["GET", "POST"])

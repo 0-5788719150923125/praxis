@@ -17,13 +17,13 @@ class PraxisAttention(nn.Module):
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
         self.query = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=True
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
         self.key = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
         self.value = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=True
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
