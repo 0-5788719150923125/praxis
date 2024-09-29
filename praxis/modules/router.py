@@ -37,17 +37,37 @@ class PraxisMixtureOfDepths(nn.Linear):
             inputs, self.weight
         )  # (x) batch,seq_len,dim -> r batch,seq_len,1
 
-        k = math.ceil(s * self.capacity)
-        k = s if k < 16 else k
+        k = int(s * self.capacity)
 
-        #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
-        token_weights, token_indices = torch.topk(
-            # page 7: [aux] loss centers the sigmoid of the router’s outputs around 0.5
-            torch.sigmoid(router_logits),
-            k,
-            dim=1,
-            sorted=False,
-        )
+        if self.training:
+            #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
+            token_weights, token_indices = torch.topk(
+                # page 7: the [aux] loss centers the sigmoid of the router’s outputs around 0.5
+                torch.sigmoid(router_logits),
+                k,
+                dim=1,
+                sorted=False,
+            )
+        else:
+            # top-k breaks causality; the sigmoid here allows us to sample autoregressively during inference
+            token_mask = torch.sigmoid(router_logits) > 0.5
+            token_indices = torch.nonzero(token_mask, as_tuple=True)[1].view(b, -1)
+
+            if token_indices.numel() == 0:
+                # if no tokens were selected, just use the most recent k tokens
+                select_tokens = min(k, s)
+                token_indices = (
+                    torch.arange(s - select_tokens, s, device=inputs.device)
+                    .view(1, -1)
+                    .expand(b, -1)
+                )
+                token_weights = torch.ones(b, select_tokens, 1, device=inputs.device)
+            else:
+                token_weights = (
+                    router_logits.squeeze(-1).gather(1, token_indices).unsqueeze(-1)
+                )
+
+            token_indices = token_indices.unsqueeze(-1)
 
         # required to maintain the casual nature of an autoregressive model
         sorted_index_values, sorted_index_indices = torch.sort(token_indices, dim=1)
@@ -66,7 +86,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         # pass the selected tokens through the transformer block
         expert_outputs = expert(
             filtered_inputs,
-            attention_mask=attention_mask,
+            # attention_mask=attention_mask,
             router_weights=router_weights,
         )
 

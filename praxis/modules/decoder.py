@@ -26,7 +26,9 @@ class PraxisDecoder(nn.Module):
         for i, expert in enumerate(self.experts):
             use_router = i % 2 != 0  # if layer is odd
             if self.routers is not None and use_router:
-                outputs = self.routers[i % 2](hidden_states, expert, attention_mask)
+                outputs = self.routers[(i - 1) // 2](
+                    hidden_states, expert, attention_mask
+                )
             else:
                 outputs = expert(hidden_states, attention_mask)
             hidden_states = outputs["hidden_states"]
