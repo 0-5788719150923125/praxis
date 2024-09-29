@@ -20,6 +20,9 @@ class PraxisMixtureOfDepths(nn.Linear):
     ):
         super().__init__(in_features=config.n_dim, out_features=1)
         self.capacity = config.capacity
+        assert (
+            self.capacity > 0 and self.capacity < 1.0
+        ), "'capacity' must be set to a value between 0 and 1."
 
     def forward(
         self,
@@ -31,11 +34,10 @@ class PraxisMixtureOfDepths(nn.Linear):
     ):
 
         b, s, d = inputs.shape
-
-        # scalar weights for each token
-        router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
-
         k = int(s * self.capacity)
+
+        # emit scalar weights for each token
+        router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
 
         if self.training:
             #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
@@ -46,8 +48,8 @@ class PraxisMixtureOfDepths(nn.Linear):
                 sorted=False,
             )
         else:
-            # top-k breaks causality; a sigmoid operation allows us to sample
-            # autoregressively regardless, during inference
+            # top-k can see into the future, breaking causality; a sigmoid operation
+            # allows us to sample autoregressively, regardless, during inference
             token_mask = torch.sigmoid(router_logits) > 0.5
             token_indices = torch.nonzero(token_mask, as_tuple=True)[1].view(b, -1)
 
@@ -56,7 +58,7 @@ class PraxisMixtureOfDepths(nn.Linear):
                     router_logits.squeeze(-1).gather(1, token_indices).unsqueeze(-1)
                 )
             else:
-                # if no tokens were selected, just use the most recent k tokens
+                # if no tokens were selected by the router, just use the most recent k tokens
                 selected_tokens = min(k, s)
                 token_indices = (
                     torch.arange(s - selected_tokens, s, device=inputs.device)
@@ -67,29 +69,29 @@ class PraxisMixtureOfDepths(nn.Linear):
 
             token_indices = token_indices.unsqueeze(-1)
 
-        # select idx for copying for original tensor
+        # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
 
-        # filtered topk tokens with a capacity of C
+        # pull top-k tokens from the original inputs
         filtered_inputs = torch.gather(
             input=inputs, dim=1, index=indices_expanded
         )  # -> batch, capacity, 1
 
-        # slice the attention mask based on the selected token indices
+        # slice an attention mask that matches the top-k selections
         filtered_attention_mask = torch.gather(
             input=attention_mask,
             dim=1,
             index=token_indices.squeeze(-1),
         )
 
-        # pass the selected tokens through the transformer block
+        # pass the selected tokens through a transformer block
         expert_outputs = expert(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,
         )
 
-        # integrate the activated tokens with the residual stream
+        # re-integrate the activated tokens with our residual stream
         outputs = torch.scatter(
             input=inputs,
             dim=1,
@@ -97,7 +99,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             src=expert_outputs["hidden_states"],
         )
 
-        # compute aux loss, in order to maintain causality
+        # compute aux loss, in order to teach the router about causality
         aux_loss = self.aux_loss(router_logits, token_indices)
 
         return dict(hidden_states=outputs, aux_loss=aux_loss)
