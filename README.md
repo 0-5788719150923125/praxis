@@ -44,13 +44,14 @@ python run.py \
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
   --batch_size 8 \               # Set the batch size to use for training.
-  --depth \                      # The number of layers to host.
+  --depth 7 \                    # The number of layers to host.
   --no_dashboard \               # Disables the CLI interface.
   --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
-  --dense \                      # Run as a fully-connected (dense) model. (defaults to a sparse model)
+  --dense \                      # Run as a fully-connected (dense) model. (default: False)
+  --sparse \                     # Run as a sparse model. (default: True)
   --phi \                        # Supplement with expert data.
-  --dev \                        # Launch with settings that bootstrap faster (3 layers, smaller dataset, etc.)
-  --reset                        # Start from a brand-new checkpoint.
+  --dev \                        # Launch with settings that bootstrap faster (3 layers, a smaller dataset, etc.)
+  --reset                        # Delete your checkpoints and start-over.
 ```
 
 ## do inference

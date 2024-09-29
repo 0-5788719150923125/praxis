@@ -37,11 +37,9 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -49,23 +47,13 @@ from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-    PraxisTokenizer,
-    PraxisTokenizerConfig,
-)
+from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
+                    PraxisTokenizer, PraxisTokenizerConfig)
 
 # Register and configure environment
 disable_possible_user_warnings()
@@ -705,8 +693,6 @@ class Generator:
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
         if args.device.startswith("cuda"):
-            # print(input_ids)
-            # input_ids = input_ids.to(device)
             if isinstance(input_ids, list):
                 input_ids = torch.tensor([input_ids], dtype=torch.long)
             input_ids = input_ids.to(device)
@@ -722,7 +708,7 @@ class Generator:
             suppress_tokens=[
                 self.tokenizer.eos_token_id,
                 self.tokenizer.pad_token_id,
-            ],  # else the model will degenerate to 100% EOS tokens
+            ],  # else the model may degenerate to 100% [EOS] or [PAD] tokens
         )
         combined = {**defaults, **kwargs}
         if "prompt" in combined:
