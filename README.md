@@ -41,15 +41,15 @@ python run.py
 Supported arguments:
 ```sh
 python run.py \
-  --seed \                       # Set a global seed for random number generation.
-  --data_path /path/to/my/data \ # Train on a local directory of data.
+  --seed 42 \                    # Set a global seed for random number generation.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
   --batch_size 8 \               # Set the batch size to use for training.
   --depth 7 \                    # The number of layers to host.
-  --no_dashboard \               # Disables the CLI interface.
-  --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
   --dense \                      # Run as a fully-connected (dense) model. (default: False)
   --sparse \                     # Run as a sparse model. (default: True)
+  --no_dashboard \               # Disables the CLI interface.
+  --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
+  --data_path /path/to/my/data \ # Train on a local directory of data.
   --phi \                        # Supplement with expert data.
   --dev \                        # Launch with settings that bootstrap faster (3 layers, a smaller dataset, etc.)
   --reset                        # Delete your checkpoints and start-over.

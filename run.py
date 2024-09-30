@@ -312,12 +312,12 @@ predict_tokens = 1
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-5
 optimizer_config = dict(
-    optimizer_name="AdamW",
+    optimizer_name="AdamMini",
     lr=1e-3,
     weight_decay=1e-2,
-    # num_embeds=config.n_emb,
-    # num_heads=config.n_head,
-    # num_query_groups=config.n_head,
+    num_embeds=config.n_emb,
+    num_heads=config.n_head,
+    num_query_groups=config.n_head,
     wd_ban_list=[
         "bias",
         "wte",
@@ -713,11 +713,13 @@ class Generator:
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
-            temperature=0.3,
+            temperature=0.45,
             eta_cutoff=0.002,
             penalty_alpha=0.6,
             top_k=4,
             repetition_penalty=1.35,
+            renormalize_logits=True,
+            remove_invalid_values=True,
             suppress_tokens=[
                 self.tokenizer.eos_token_id,
                 self.tokenizer.pad_token_id,
@@ -735,10 +737,7 @@ class Generator:
             outputs = self.model.generate(input_ids, **combined)
             decoded_new = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-            if "�" in decoded_new:
-                input_ids = outputs
-                attempts += 1
-            elif decoded_new != prompt:
+            if decoded_new != prompt:
                 return_text = decoded_new
                 break
             else:
@@ -746,9 +745,7 @@ class Generator:
                 attempts += 1
 
         if attempts == max_attempts:
-            print(
-                "Warning: Reached maximum attempts without generating a single non-empty token"
-            )
+            print("Warning: Reached maximum attempts without generating a valid token")
 
         return return_text
 
