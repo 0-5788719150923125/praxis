@@ -19,7 +19,7 @@ num_examples = 5_000_000
 save_path = "data/praxis"
 
 
-vocab_size = 4096
+vocab_size = 2048
 dropout = 0.1
 
 

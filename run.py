@@ -37,9 +37,11 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -47,13 +49,23 @@ from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
-                    PraxisTokenizer, PraxisTokenizerConfig)
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    PraxisTokenizer,
+    PraxisTokenizerConfig,
+)
 
 # Register and configure environment
 disable_possible_user_warnings()
@@ -65,8 +77,25 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
 
+
+def sample_linear_decay(max_value=2**31 - 1):
+    return int(math.exp((1 - random.random())) * max_value)
+
+
+def sample_cosine_decay(max_value=2**31 - 1):
+    seed = random.random()
+    curve = 1 - seed  # invert distribution
+    return int(curve * curve * max_value)
+
+
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=int(sample_cosine_decay(65536)),
+    help="Global seed (default: random)",
+)
 parser.add_argument(
     "--device",
     type=str,
@@ -155,26 +184,6 @@ parser.add_argument(
 )
 
 
-vocab_size = 4096
-
-
-def sample_linear_decay(max_value=2**31 - 1):
-    return int(math.exp((1 - random.random())) * max_value)
-
-
-def sample_cosine_decay(max_value=2**31 - 1):
-    seed = random.random()
-    curve = 1 - seed  # invert distribution
-    return int(curve * curve * max_value)
-
-
-parser.add_argument(
-    "--seed",
-    type=int,
-    default=int(sample_cosine_decay(65536)),
-    help="Global seed (default: random)",
-)
-
 args = parser.parse_args()
 
 seed = args.seed
@@ -194,6 +203,10 @@ use_dashboard = False if args.no_dashboard else True
 if args.reset:
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
         os.remove(checkpoint)
+
+# Global configuration
+
+vocab_size = 4096
 
 # Model hyperparameters
 hparams = dict(
@@ -233,7 +246,7 @@ config = PraxisConfig(
     n_head=8,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
-    context_length=2048,
+    context_length=4096,
     sparse=False if args.dense else args.sparse,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
@@ -286,7 +299,7 @@ if phi:
     secondary_datasets.append(population[1])
 
 # Misc config
-max_feed_chars = 2048
+max_feed_chars = 4096
 save_interval = 3600  # seconds
 save_top_k = 3
 
@@ -722,7 +735,10 @@ class Generator:
             outputs = self.model.generate(input_ids, **combined)
             decoded_new = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-            if decoded_new != prompt:
+            if "�" in decoded_new:
+                input_ids = outputs
+                attempts += 1
+            elif decoded_new != prompt:
                 return_text = decoded_new
                 break
             else:

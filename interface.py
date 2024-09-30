@@ -447,7 +447,7 @@ fake_system_messages = [
     "Database corrupted. Recycling it.",
     "Solar flare incoming. Brace for impact.",
     "Bug found in code. Squashing it...",
-    "Cloud storage full. Delete excess cat photos.",
+    "Cloud storage full. Please delete the excess cat photos.",
     "Unexpected input: User said 'please'.",
     "Update failed successfully.",
     "Reminder: Take out the trash.",

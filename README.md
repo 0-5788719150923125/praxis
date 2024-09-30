@@ -41,6 +41,7 @@ python run.py
 Supported arguments:
 ```sh
 python run.py \
+  --seed \                       # Set a global seed for random number generation.
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
   --batch_size 8 \               # Set the batch size to use for training.

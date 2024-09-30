@@ -46,6 +46,9 @@ class PraxisTokenizer(PreTrainedTokenizer):
             self.eos_token: 3,
         }
         self.decoder = {v: k for k, v in self.encoder.items()}
+        self.whitespace_token = "<space>"
+        self.encoder[self.whitespace_token] = len(self.encoder)
+        self.decoder[len(self.decoder)] = self.whitespace_token
 
         super().__init__(
             pad_token=self.pad_token,
@@ -65,7 +68,7 @@ class PraxisTokenizer(PreTrainedTokenizer):
 
         self.trigram_id_to_trigram = {}
         self.trigram_weights = {}
-        self.trigram_positions = {}  # New attribute to store trigram positions
+        self.trigram_positions = {}
 
     def encode(self, text, add_special_tokens=True, **kwargs):
         tokens = self._tokenize(text)
@@ -77,18 +80,23 @@ class PraxisTokenizer(PreTrainedTokenizer):
             position += 1
 
         for token in tokens:
-            if token in self.encoder:
+            if token == " ":
+                token_ids.append(self.encoder[self.whitespace_token])
+                position += 1
+            elif token in self.encoder:
                 token_ids.append(self.encoder[token])
                 position += 1
             else:
                 trigrams = self.generate_trigrams(token)
+                trigram_ids = []
                 for trigram in trigrams:
                     trigram_id, weight = self.get_trigram_id_and_weight(trigram, token)
-                    token_ids.append(trigram_id)
+                    trigram_ids.append(trigram_id)
                     self.trigram_id_to_trigram[trigram_id] = trigram
                     self.trigram_weights[trigram] = weight
                     self.trigram_positions[trigram_id] = position
-                    position += 1
+                token_ids.extend(trigram_ids)
+                position += 1
 
         if add_special_tokens:
             token_ids.append(self.eos_token_id)
@@ -106,73 +114,56 @@ class PraxisTokenizer(PreTrainedTokenizer):
 
         decoded_tokens = []
         current_word_trigrams = []
-        current_word_positions = []
 
         for token_id in token_ids:
             if token_id in self.encoder.values():
                 if current_word_trigrams:
-                    decoded_tokens.append(
-                        self.reconstruct_word(
-                            current_word_trigrams, current_word_positions
-                        )
-                    )
+                    decoded_tokens.append(self.reconstruct_word(current_word_trigrams))
                     current_word_trigrams = []
-                    current_word_positions = []
                 decoded_tokens.append(self._convert_id_to_token(token_id))
             else:
                 trigram = self.trigram_id_to_trigram.get(token_id, "")
-                position = self.trigram_positions.get(token_id, 0)
-                if trigram.startswith(" ") and current_word_trigrams:
-                    decoded_tokens.append(
-                        self.reconstruct_word(
-                            current_word_trigrams, current_word_positions
-                        )
-                    )
-                    current_word_trigrams = []
-                    current_word_positions = []
                 current_word_trigrams.append(trigram)
-                current_word_positions.append(position)
 
         if current_word_trigrams:
-            decoded_tokens.append(
-                self.reconstruct_word(current_word_trigrams, current_word_positions)
-            )
+            decoded_tokens.append(self.reconstruct_word(current_word_trigrams))
 
-        decoded_text = self.post_process_text(" ".join(decoded_tokens))
+        decoded_text = "".join(decoded_tokens)
         return decoded_text
 
-    def reconstruct_word(self, trigrams, positions):
-        word = ""
-        sorted_trigrams = sorted(zip(trigrams, positions), key=lambda x: x[1])
+    def _tokenize(self, text):
+        # Split on morphological units (e.g., prefixes, suffixes, roots)
+        tokens = re.findall(r"\w+|[^\w\s]", text)
+        return tokens
 
-        for trigram, _ in sorted_trigrams:
-            if not word:
-                word = trigram.strip()
-            else:
-                overlap = self.find_overlap(word, trigram)
-                word += trigram[overlap:].strip()
-
-        return word.strip()
+    def reconstruct_word(self, trigrams):
+        # Implement a more sophisticated word reconstruction algorithm
+        # that leverages the sparse trigram activations effectively.
+        # This could involve techniques like beam search or dynamic programming.
+        reconstructed_word = "".join(trigrams)
+        return reconstructed_word
 
     def find_overlap(self, word, trigram):
         for i in range(min(len(word), 3), 0, -1):
-            if word.endswith(trigram[:i].strip()):
+            if word[-i:] == trigram[:i]:
                 return i
         return 0
 
     def post_process_text(self, text):
         # Handle punctuation and spacing
-        text = re.sub(r"\s+([.,!?])", r"\1", text)
-        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"\s+", " ", text)  # Remove extra whitespace
+        text = re.sub(r"\s([.,!?;:])", r"\1", text)  # Remove space before punctuation
         text = re.sub(
-            r"([.,!?])([^\s])", r"\1 \2", text
-        )  # Add space after punctuation if missing
+            r"([.,!?;:])(\w)", r"\1 \2", text
+        )  # Add space after punctuation if followed by a word
         return text.strip()
 
     def generate_trigrams(self, word):
-        padded_word = f" {word} "
-        length = len(padded_word)
-        trigrams = [padded_word[i : i + 3] for i in range(length - 2)]
+        # Generate overlapping trigrams
+        trigrams = []
+        for i in range(len(word) - 2):
+            trigram = word[i : i + 3]
+            trigrams.append(trigram)
         return trigrams
 
     def get_trigram_id_and_weight(self, trigram, word):
@@ -180,9 +171,7 @@ class PraxisTokenizer(PreTrainedTokenizer):
         weight = 1.0
 
         if position == 0 or position == len(word) - 3:
-            weight = (
-                1.5  # Higher weight for trigrams at the beginning or end of the word
-            )
+            weight = 1.5
 
         hash_input = (
             f"{trigram.lower()}"
@@ -243,10 +232,6 @@ class PraxisTokenizer(PreTrainedTokenizer):
 
     def get_vocab(self):
         return self.encoder.copy()
-
-    def _tokenize(self, text):
-        tokens = re.findall(r"\w+|[^\s\w]", text, re.UNICODE)
-        return tokens
 
 
 class TFreeModelForCausalLM(nn.Module):
