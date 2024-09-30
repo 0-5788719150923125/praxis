@@ -78,8 +78,9 @@ class TerminalDashboard:
         self.start_time = datetime.now()
         self.url = "N/A"
         self.experts = ""
-        self.total_params = ""
+        self.total_params = "0M"
         self.num_faults = 0
+        self.mode = "train"
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -151,6 +152,10 @@ class TerminalDashboard:
         with self.lock:
             self.seed = seed
 
+    def set_mode(self, mode="train"):
+        with self.lock:
+            self.mode = mode
+
     def count(self):
         with self.lock:
             self.num_faults += 1
@@ -158,7 +163,7 @@ class TerminalDashboard:
     def update_params(self, total_params):
         with self.lock:
             reduced = int(total_params / 10**6)
-            self.total_params = f" | {reduced}M"
+            self.total_params = f"{reduced}M"
 
     def update_loss(self, train_loss):
         with self.lock:
@@ -377,7 +382,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)}{str(self.total_params)} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)} | {self.url}",
+                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)} | {self.url}",
                     width,
                 )
             )

@@ -68,6 +68,7 @@ from praxis import (
 )
 
 # Register and configure environment
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 disable_possible_user_warnings()
 logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 logger = CSVLogger("logs", name="praxis")
@@ -153,6 +154,12 @@ parser.add_argument(
     help="Use T-FREE (default: False)",
 )
 parser.add_argument(
+    "--wandb",
+    action="store_true",
+    default=False,
+    help="Log experiment to Weights and Biases (Default: False)",
+)
+parser.add_argument(
     "--dense",
     action="store_true",
     default=False,
@@ -205,15 +212,7 @@ if args.reset:
         os.remove(checkpoint)
 
 # Global configuration
-
 vocab_size = 4096
-
-# Model hyperparameters
-hparams = dict(
-    batch_size=args.batch_size if args.batch_size else 1,
-    target_batch_size=64,
-    block_size=512,
-)
 
 # All tokenizer initialization
 if args.no_tokenizer:
@@ -256,6 +255,15 @@ config = PraxisConfig(
     cache_dir=cache_dir,
 )
 
+# Model hyperparameters
+hparams = dict(
+    seed=seed,
+    batch_size=args.batch_size if args.batch_size else 1,
+    target_batch_size=64,
+    block_size=512,
+    **config.to_dict(),
+)
+
 # Training config
 train_params = dict(
     accelerator=f"cpu" if args.device == "cpu" else "gpu",
@@ -268,22 +276,31 @@ train_params = dict(
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
+    enable_checkpointing=True,
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
+    val_check_interval=4096,
+    limit_val_batches=1024,
+    log_every_n_steps=1,
     logger=logger,
-    enable_checkpointing=True,
     callbacks=[],
 )
 
 # Training data mixing
-weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0, 1, 0.666666, 0.333, 0.01]
+weights = [1, 0, 0, 0, 0, 0, 0] if dev else [0, 0, 0, 1, 0.666666, 0.333, 0.01]
 population = [
     dict(path="open-phi/textbooks", keys=["markdown"]),
     dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
+    ),
+    dict(
+        path="togethercomputer/RedPajama-Data-V2",
+        name="sample-10B",
+        snapshots=["2023-14"],
+        keys=["raw_content"],
     ),
     dict(path="HuggingFaceFW/fineweb-edu", name="sample-10BT", keys=["text"]),
     dict(path="HuggingFaceFW/fineweb-edu", name="sample-100BT", keys=["text"]),
@@ -297,6 +314,12 @@ secondary_datasets = []
 if phi:
     secondary_datasets.append(population[0])
     secondary_datasets.append(population[1])
+
+hparams["training_data"] = dict(primary=primary_dataset, secondary=secondary_datasets)
+
+if not dev:
+    primary_validation_dataset = population[2]
+    hparams["validation_data"] = dict(primary=primary_validation_dataset)
 
 # Misc config
 max_feed_chars = 4096
@@ -325,6 +348,8 @@ optimizer_config = dict(
         "RMSNorm.bias",
     ],
 )
+
+hparams["optimizer"] = optimizer_config
 
 
 class WarmupCosineLR(_LRScheduler):
@@ -383,25 +408,27 @@ class PraxisTrainer(LightningModule):
     def __init__(self, model, optimizer, scheduler, hparams):
         super(PraxisTrainer, self).__init__()
         self.model, self.optimizer, self.scheduler = (model, optimizer, scheduler)
-        self.batch_size = hparams["batch_size"]
         self.automatic_optimization = True
+        self.num_tokens = 0
         self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
 
     def forward(self, inputs):
         return self.model(**inputs)
 
     def training_step(self, batch, batch_idx):
+
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
-        batch_size, _ = batch.shape
+        batch_size, num_tokens = batch.shape
+        self.num_tokens += batch_size * num_tokens
 
         self.log_dict(
             {
                 "loss": loss,
                 "batch": int(batch_idx),
-                "seed": int(seed),
                 "learning_rate": self.scheduler.get_last_lr()[0],
+                "num_tokens": self.num_tokens,
             },
             on_step=True,
             logger=True,
@@ -410,6 +437,27 @@ class PraxisTrainer(LightningModule):
         )
 
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        outputs = self.model(input_ids=batch, labels=batch)
+        loss = outputs[0]
+        perplexity = torch.exp(loss)
+
+        batch_size, _ = batch.shape
+
+        self.log_dict(
+            {
+                "val_loss": loss,
+                "val_perplexity": perplexity,
+            },
+            on_step=True,
+            on_epoch=True,
+            logger=True,
+            batch_size=batch_size,
+            prog_bar=True,
+        )
+
+        return {"val_loss": loss, "val_perplexity": perplexity}
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"
@@ -447,6 +495,16 @@ class TerminalInterface(Callback):
                 self.dashboard.update_url(url)
             except KeyboardInterrupt:
                 self.dashboard.stop()
+
+    def on_train_batch_start(self, trainer, lm, batch, batch_idx):
+        super().on_train_batch_start(trainer, lm, batch, batch_idx)
+        if self.dashboard:
+            self.dashboard.set_mode("train")
+
+    def on_validation_start(self, trainer, lm):
+        super().on_validation_start(trainer, lm)
+        if self.dashboard:
+            self.dashboard.set_mode("validation")
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
@@ -889,13 +947,27 @@ checkpoint_callback = TimeBasedCheckpoint(
 # Bootstrap the model and trainer
 model = AutoModelForCausalLM.from_config(config)
 
+print(model)
+
+if args.wandb:
+    from lightning.pytorch.loggers import WandbLogger
+
+    import wandb
+
+    wandb.login()
+    wandb_logger = WandbLogger(
+        project="praxis", save_dir=os.path.join(cache_dir, "wandb")
+    )
+
+    # log gradients and model topology
+    wandb_logger.watch(model, log="all", log_freq=100, log_graph=True)
+    train_params["logger"] = wandb_logger
+
 ckpt_path = None
 symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
 if os.path.exists(symlink):
     print(f"resuming from: {symlink}")
     ckpt_path = symlink
-
-print(model)
 
 generator = Generator(model, tokenizer)
 
@@ -920,6 +992,13 @@ if phi:
             HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
         )
 
+# Load validation data
+validation_data = []
+if primary_validation_dataset:
+    validation_data.append(
+        HuggingfaceDataset(tokenizer, primary_validation_dataset, hparams["block_size"])
+    )
+
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
 
@@ -927,7 +1006,13 @@ optimizer = create_optimizer(model, **optimizer_config)
 scheduler = scheduler_func(optimizer)
 
 # Put the data onto a dataloader
-dataloader = DataModule(train_data, hparams["batch_size"])
+train_dataloader = DataModule(train_data, hparams["batch_size"])
+
+validation_dataloader = None
+if len(validation_data) > 0:
+    validation_dataloader = DataModule(
+        validation_data, hparams["batch_size"]
+    ).train_dataloader()
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, scheduler, hparams)
@@ -943,7 +1028,12 @@ train_params["callbacks"].append(
 
 # fit the trainer and run
 trainer = Trainer(**train_params)
-trainer.fit(train_model, dataloader.train_dataloader(), ckpt_path=ckpt_path)
+trainer.fit(
+    train_model,
+    train_dataloader.train_dataloader(),
+    val_dataloaders=validation_dataloader,
+    ckpt_path=ckpt_path,
+)
 
 # import ipaddress
 # from functools import partial
