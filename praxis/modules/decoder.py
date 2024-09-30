@@ -12,6 +12,7 @@ from .router import PraxisMixtureOfDepths
 class PraxisDecoder(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
+        self.ctrl = PraxisController(config)
         self.experts = nn.ModuleList()
         self.routers = nn.ModuleList() if config.sparse else None
         for i in range(config.n_layer):
@@ -23,7 +24,12 @@ class PraxisDecoder(nn.Module):
     def forward(self, inputs, attention_mask):
         hidden_states = inputs
         aux_losses = []
-        for i, expert in enumerate(self.experts):
+
+        sequence, aux_loss = self.ctrl(hidden_states)
+        aux_losses.append(aux_loss)
+
+        for i, choice in enumerate(sequence):
+            expert = self.experts[choice]
             use_router = i % 2 != 0  # if layer is odd
             if self.routers is not None and use_router:
                 outputs = self.routers[(i - 1) // 2](
@@ -37,113 +43,67 @@ class PraxisDecoder(nn.Module):
         return dict(hidden_states=hidden_states, aux_loss=sum(aux_losses))
 
 
-# class PraxisDecoder(nn.Module):
-#     def __init__(self, config: PraxisConfig):
-#         super().__init__()
-#         self.sparse = config.sparse
-#         self.experts = nn.ModuleList()
-#         self.net = nn.ModuleList()
-#         self.svm = PraxiSVM(config)
-#         for i in range(config.n_layer):
-#             self.experts.append(PraxisBlock(config))
-#             use_router = i % 2 != 0  # if layer is odd
-#             if config.sparse and use_router:
-#                 self.net.append(PraxisMixtureOfDepths(config))
+class PraxisController(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.n_dim = config.n_dim
+        self.n_layer = config.n_layer
+        self.temperature = 0.5
 
-#     def forward(self, inputs, attention_mask):
-#         hidden_states = inputs
-#         aux_losses = []
+        self.gru = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
+        self.fc = nn.Linear(config.n_dim, config.n_layer)
 
-#         # Predict the best order of experts using the router
-#         expert_order, hinge_loss = self.svm(hidden_states)
-#         aux_losses.append(hinge_loss)
+        # self.batch_reduction = LearnableReduction(config.n_dim, hidden_dim=64)
 
-#         if random.random() < 0.01:
-#             print(expert_order)
+        self.register_buffer("order_ema", torch.zeros(self.n_layer))
+        self.ema_decay = 0.99
+        self.aux_weight = 10.0
 
-#         # Iterate over the batch
-#         for batch_idx in range(expert_order.shape[0]):
-#             # Iterate over the experts based on the predicted order
-#             for seq_idx in range(expert_order.shape[1]):
-#                 expert_idx = expert_order[batch_idx, seq_idx].item()
-#                 expert = self.experts[expert_idx]
-#                 outputs = hidden_states
-#                 use_router = expert_idx % 2 != 0  # if layer is odd
-#                 if self.sparse and use_router:
-#                     outputs = self.net[expert_idx % 2](
-#                         hidden_states[batch_idx].unsqueeze(0),
-#                         expert,
-#                         attention_mask[batch_idx].unsqueeze(0),
-#                     )
-#                 else:
-#                     outputs = expert(
-#                         hidden_states[batch_idx].unsqueeze(0),
-#                         attention_mask[batch_idx].unsqueeze(0),
-#                     )
-#                 hidden_states = hidden_states.clone()
-#                 hidden_states[batch_idx] = outputs["hidden_states"]
-#                 if "aux_loss" in outputs:
-#                     aux_losses.append(outputs["aux_loss"])
+    def forward(self, inputs):
+        # Aggregate inputs (via mean) to create a single context vector
+        inputs_reduced = inputs.mean(dim=0)  # Shape: (seq_len, dims)
+        # inputs_reduced = self.batch_reduction(inputs)
 
-#         return dict(hidden_states=hidden_states, aux_loss=sum(aux_losses))
+        # Pass through GRU
+        gru_out, _ = self.gru(inputs_reduced)  # Shape: (seq_len, dims)
 
+        # Reduce GRU outputs to just a single time step
+        reduced_gru = gru_out.mean(dim=0)  # Shape: (dims)
 
-# class PraxiSVM(nn.Module):
-#     def __init__(self, config: PraxisConfig):
-#         super().__init__()
-#         self.n_dim = config.n_dim
-#         self.key = nn.Linear(self.n_dim, config.n_layer)
-#         self.temperature = 0.9
+        # Compute logits for each expert
+        logits = self.fc(reduced_gru)  # Shape: (num_experts)
 
-#     def forward(self, hidden_states, labels=None):
-#         # Compute the router logits
-#         logits = self.key(hidden_states[:, -1])  # Use the last token for routing
+        # Apply Gumbel-Softmax to obtain one-hot encoded selections
+        gumbel = F.gumbel_softmax(
+            logits, tau=self.temperature, hard=False
+        )  # Shape: (num_experts)
 
-#         # Add Gumbel noise to the logits
-#         gumbel_noise = -torch.log(-torch.log(torch.rand_like(logits)))
-#         noisy_logits = (logits + gumbel_noise) / self.temperature
+        # Return the indices of the order of predicted experts
+        sequence = torch.argsort(gumbel, dim=-1, descending=True)
 
-#         # Apply softmax to obtain the permutation
-#         permutation = F.softmax(noisy_logits, dim=-1)
+        # Update EMA of expert order
+        current_order = F.one_hot(sequence, num_classes=self.n_layer).float()
+        self.order_ema = (
+            self.ema_decay * self.order_ema + (1 - self.ema_decay) * current_order
+        )
 
-#         # Get the indices of the experts in the permutation order
-#         expert_order = torch.argsort(permutation, dim=-1, descending=True)
+        # Compute diversity loss
+        aux_loss = F.mse_loss(current_order, self.order_ema) * self.aux_weight
 
-#         # Compute the hinge loss if labels are provided
-#         hinge_loss = 0
-#         if labels is not None:
-#             hinge_loss = nn.HingeEmbeddingLoss()(logits.squeeze(), labels.float())
-
-#         return expert_order, hinge_loss
+        return sequence, aux_loss
 
 
-# class PraxiSVM(nn.Module):
-#     def __init__(self, config: PraxisConfig):
-#         super().__init__()
-#         self.n_dim = config.n_dim
-#         self.hidden_size = config.n_dim // 2
-#         self.temporal = nn.GRU(self.n_dim, self.hidden_size, batch_first=True)
-#         self.out = nn.Linear(self.hidden_size, config.n_layer)
-#         self.temperature = 0.9
+class LearnableReduction(nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, hidden_dim, kernel_size=(3, 1), padding=(1, 0))
+        self.conv2 = nn.Conv2d(hidden_dim, 1, kernel_size=(3, 1), padding=(1, 0))
+        self.activation = nn.GELU()
 
-#     def forward(self, hidden_states, labels=None):
-#         # Pass the hidden states through the GRU
-#         replay_output, _ = self.temporal(hidden_states)
-#         logits = self.out(replay_output[:, -1])
-
-#         # Add Gumbel noise to the logits
-#         gumbel_noise = -torch.log(-torch.log(torch.rand_like(logits)))
-#         noisy_logits = (logits + gumbel_noise) / self.temperature
-
-#         # Apply softmax to obtain the permutation
-#         permutation = F.softmax(noisy_logits, dim=-1)
-
-#         # Get the indices of the experts in the permutation order
-#         expert_order = torch.argsort(permutation, dim=-1, descending=True)
-
-#         # Compute the hinge loss if labels are provided
-#         hinge_loss = 0
-#         if labels is not None:
-#             hinge_loss = nn.HingeEmbeddingLoss()(logits.squeeze(), labels.float())
-
-#         return expert_order, hinge_loss
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, dim)
+        x = x.unsqueeze(1)  # (batch_size, 1, seq_len, dim)
+        x = self.activation(self.conv1(x))
+        x = self.conv2(x)
+        x = x.squeeze(1)  # (batch_size, seq_len, dim)
+        return x.mean(dim=0)  # (seq_len, dim)
