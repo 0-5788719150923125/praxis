@@ -96,7 +96,7 @@ config = PraxisConfig(
     device_map="cuda:0",
 )
 
-tokenizer_model = "NousResearch/Llama-2-7b-hf"
+tokenizer_model = "UNSAFE/praxis-4096"
 tokenizer = AutoTokenizer.from_pretrained(tokenizer_model)
 
 model = AutoModelForCausalLM.from_config(config)

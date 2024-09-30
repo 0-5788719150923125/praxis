@@ -207,10 +207,6 @@ train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
 
-if args.reset:
-    for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
-        os.remove(checkpoint)
-
 # Global configuration
 vocab_size = 4096
 
@@ -280,7 +276,7 @@ train_params = dict(
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=4096 * hparams["batch_size"],
+    val_check_interval=1024 * hparams["batch_size"],
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=logger,
@@ -308,18 +304,15 @@ population = [
     dict(path="HuggingFaceFW/fineweb", name="default", keys=["text"]),
 ]
 
-primary_dataset = random.choices(population, weights, k=1)[0]
-secondary_datasets = []
+hparams["training_data"] = dict(primary=[], validation=[])
+hparams["training_data"]["primary"].append(random.choices(population, weights, k=1)[0])
 
 if phi:
-    secondary_datasets.append(population[0])
-    secondary_datasets.append(population[1])
-
-hparams["training_data"] = dict(primary=primary_dataset, secondary=secondary_datasets)
+    hparams["training_data"]["primary"].append(population[0])
+    hparams["training_data"]["primary"].append(population[1])
 
 if not dev:
-    primary_validation_dataset = population[2]
-    hparams["validation_data"] = dict(primary=primary_validation_dataset)
+    hparams["training_data"]["validation"].append(population[2])
 
 # Misc config
 max_feed_chars = 4096
@@ -931,6 +924,9 @@ class DataModule(LightningDataModule):
     def train_dataloader(self):
         return WeightedIterableDataset(self.loaders, self.weights)
 
+    def val_dataloader(self):
+        return WeightedIterableDataset(self.loaders, self.weights)
+
 
 # Define checkpointing behavior
 checkpoint_callback = TimeBasedCheckpoint(
@@ -963,6 +959,11 @@ if args.wandb:
     wandb_logger.watch(model, log="all", log_freq=100, log_graph=True)
     train_params["logger"] = wandb_logger
 
+# Checkpoint management
+if args.reset:
+    for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
+        os.remove(checkpoint)
+
 ckpt_path = None
 symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
 if os.path.exists(symlink):
@@ -974,30 +975,25 @@ generator = Generator(model, tokenizer)
 api_server = APIServer(generator, host_name, port)
 api_server.start()
 
-# Load a dataset
+# Load training datasets
 train_data = []
+for dataset_config in hparams["training_data"]["primary"]:
+    train_data.append(
+        HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
+    )
+
 if train_data_path:
     train_data.append(
         MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
     )
-else:
-    train_data.append(
-        HuggingfaceDataset(tokenizer, primary_dataset, hparams["block_size"])
-    )
-
-# Load expert datasets
-if phi:
-    for dataset_config in secondary_datasets:
-        train_data.append(
-            HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
-        )
 
 # Load validation data
 validation_data = []
-if primary_validation_dataset:
-    validation_data.append(
-        HuggingfaceDataset(tokenizer, primary_validation_dataset, hparams["block_size"])
-    )
+if len(hparams["training_data"]["validation"]) > 0:
+    for dataset_config in hparams["training_data"]["validation"]:
+        validation_data.append(
+            HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
+        )
 
 # create the optimizer
 optimizer = create_optimizer(model, **optimizer_config)
@@ -1012,7 +1008,7 @@ validation_dataloader = None
 if len(validation_data) > 0:
     validation_dataloader = DataModule(
         validation_data, hparams["batch_size"]
-    ).train_dataloader()
+    ).val_dataloader()
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, scheduler, hparams)

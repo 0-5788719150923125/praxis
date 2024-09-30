@@ -51,7 +51,7 @@ class PraxisController(nn.Module):
         self.temperature = 0.5
 
         self.gru = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
-        self.fc = nn.Linear(config.n_dim, config.n_layer)
+        self.focus = nn.Linear(config.n_dim, config.n_layer)
 
         # self.batch_reduction = LearnableReduction(config.n_dim, hidden_dim=64)
 
@@ -71,7 +71,7 @@ class PraxisController(nn.Module):
         reduced_gru = gru_out.mean(dim=0)  # Shape: (dims)
 
         # Compute logits for each expert
-        logits = self.fc(reduced_gru)  # Shape: (num_experts)
+        logits = self.focus(reduced_gru)  # Shape: (num_experts)
 
         # Apply Gumbel-Softmax to obtain one-hot encoded selections
         gumbel = F.gumbel_softmax(
