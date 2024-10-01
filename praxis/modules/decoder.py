@@ -3,6 +3,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers.activations import ACT2FN
 
 from ..configuration_praxis import PraxisConfig
 from .experts import PraxisBlock
@@ -48,10 +49,12 @@ class PraxisController(nn.Module):
         super().__init__()
         self.n_dim = config.n_dim
         self.n_layer = config.n_layer
-        self.temperature = 0.5
+
+        self.tau = 0.7
+        self.epsilon = 1e-8
 
         self.gru = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
-        self.focus = nn.Linear(config.n_dim, config.n_layer)
+        self.psi = nn.Linear(config.n_dim, config.n_layer)
 
         # self.batch_reduction = LearnableReduction(config.n_dim, hidden_dim=64)
 
@@ -62,6 +65,7 @@ class PraxisController(nn.Module):
     def forward(self, inputs):
         # Aggregate inputs (via mean) to create a single context vector
         inputs_reduced = inputs.mean(dim=0)  # Shape: (seq_len, dims)
+
         # inputs_reduced = self.batch_reduction(inputs)
 
         # Pass through GRU
@@ -71,24 +75,42 @@ class PraxisController(nn.Module):
         reduced_gru = gru_out.mean(dim=0)  # Shape: (dims)
 
         # Compute logits for each expert
-        logits = self.focus(reduced_gru)  # Shape: (num_experts)
+        logits = self.psi(reduced_gru)  # Shape: (num_experts)
 
-        # Apply Gumbel-Softmax to obtain one-hot encoded selections
-        gumbel = F.gumbel_softmax(
-            logits, tau=self.temperature, hard=False
-        )  # Shape: (num_experts)
+        if self.training:
+            # Apply Gumbel-Softmax during training
+            probs = F.gumbel_softmax(logits, tau=self.tau, hard=False)
+            sequence = torch.argsort(probs, dim=-1, descending=True)
+        else:
+            # Use multinomial sampling during inference
+            probs = F.softmax(logits / self.tau, dim=-1)
+            sequence = torch.multinomial(
+                probs, num_samples=self.n_layer, replacement=False
+            )
 
-        # Return the indices of the order of predicted experts
-        sequence = torch.argsort(gumbel, dim=-1, descending=True)
+        aux_loss = 0
+        if self.training:
+            # Create a position-aware encoding
+            current_order = torch.zeros(
+                self.n_layer, self.n_layer, device=sequence.device
+            )
+            current_order[torch.arange(self.n_layer), sequence] = 1.0
 
-        # Update EMA of expert order
-        current_order = F.one_hot(sequence, num_classes=self.n_layer).float()
-        self.order_ema = (
-            self.ema_decay * self.order_ema + (1 - self.ema_decay) * current_order
-        )
+            # Update EMA of expert order
+            self.order_ema = (
+                self.ema_decay * self.order_ema + (1 - self.ema_decay) * current_order
+            )
 
-        # Compute diversity loss
-        aux_loss = F.mse_loss(current_order, self.order_ema) * self.aux_weight
+            # Compute diversity loss
+            target_distribution = torch.ones_like(self.order_ema) / self.n_layer
+            aux_loss = (
+                F.kl_div(
+                    (self.order_ema + self.epsilon).log(),
+                    target_distribution,
+                    reduction="batchmean",
+                )
+                * self.aux_weight
+            )
 
         return sequence, aux_loss
 

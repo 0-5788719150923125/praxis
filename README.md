@@ -50,6 +50,7 @@ python run.py \
   --no_dashboard \               # Disables the CLI interface.
   --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
   --data_path /path/to/my/data \ # Train on a local directory of data.
+  --wandb \                      # Log training metrics to Weights and Biases (https://wandb.ai).
   --phi \                        # Supplement with expert data.
   --dev \                        # Launch with settings that bootstrap faster (3 layers, a smaller dataset, etc.)
   --reset                        # Delete your checkpoints and start-over.
