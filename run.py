@@ -24,6 +24,7 @@ import itertools
 import logging
 import math
 import random
+import re
 import shutil
 import time
 from collections import Counter
@@ -945,20 +946,6 @@ model = AutoModelForCausalLM.from_config(config)
 
 print(model)
 
-if args.wandb:
-    from lightning.pytorch.loggers import WandbLogger
-
-    import wandb
-
-    wandb.login()
-    wandb_logger = WandbLogger(
-        project="praxis", save_dir=os.path.join(cache_dir, "wandb")
-    )
-
-    # log gradients and model topology
-    wandb_logger.watch(model, log="all", log_freq=100, log_graph=True)
-    train_params["logger"] = wandb_logger
-
 # Checkpoint management
 if args.reset:
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
@@ -969,6 +956,30 @@ symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
 if os.path.exists(symlink):
     print(f"resuming from: {symlink}")
     ckpt_path = symlink
+
+if args.wandb:
+    import wandb
+    from lightning.pytorch.loggers import WandbLogger
+
+    wandb.login()
+
+    wandb_opts = dict(project="praxis", save_dir=cache_dir)
+    if ckpt_path is not None:
+        pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
+        for filename in os.listdir(os.path.join(directory, "wandb", "latest-run")):
+            match = pattern.match(filename)
+            if match:
+                # Capture the run ID from saved file name
+                wandb_opts["id"] = match.group(1)
+                break
+
+        wandb_opts["resume"] = "must"
+
+    wandb_logger = WandbLogger(**wandb_opts)
+
+    # log gradients and model topology
+    wandb_logger.watch(model, log="all", log_freq=100, log_graph=True)
+    train_params["logger"] = wandb_logger
 
 generator = Generator(model, tokenizer)
 
