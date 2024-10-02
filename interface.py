@@ -155,6 +155,7 @@ class TerminalDashboard:
     def set_mode(self, mode="train"):
         with self.lock:
             self.mode = mode
+            self.previous_frame = None  # force a redraw
 
     def count(self):
         with self.lock:
@@ -164,6 +165,7 @@ class TerminalDashboard:
         with self.lock:
             reduced = int(total_params / 10**6)
             self.total_params = f"{reduced}M"
+            self.previous_frame = None  # force a redraw
 
     def update_loss(self, train_loss):
         with self.lock:
@@ -465,7 +467,7 @@ fake_system_messages = [
     "Calendar sync complete.",
     "Time to update password.",
     "Add bananas to my grocery list.",
-    "Get dog food.",
+    "Reminder: Get dog food.",
     "Reminder: Call mom for birthday.",
     "Nest adjusted your thermostat for energy savings.",
 ]

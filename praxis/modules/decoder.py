@@ -1,3 +1,4 @@
+import math
 import random
 
 import torch
@@ -47,46 +48,42 @@ class PraxisDecoder(nn.Module):
 class PraxisController(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.n_dim = config.n_dim
         self.n_layer = config.n_layer
 
-        self.tau = 0.7
+        self.tau_start = 1.0
+        self.tau_end = 0.1
+        self.annealing_steps = 10_000
+        self.current_step = 0
+
         self.epsilon = 1e-8
 
         self.gru = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
+        self.red = SequenceReduction(config.n_dim, config.n_dim // 2)
         self.psi = nn.Linear(config.n_dim, config.n_layer)
-
-        # self.batch_reduction = LearnableReduction(config.n_dim, hidden_dim=64)
 
         self.register_buffer("order_ema", torch.zeros(self.n_layer))
         self.ema_decay = 0.99
-        self.aux_weight = 10.0
+        self.aux_weight = 1.0
 
     def forward(self, inputs):
-        # Aggregate inputs (via mean) to create a single context vector
-        inputs_reduced = inputs.mean(dim=0)  # Shape: (seq_len, dims)
-
-        # inputs_reduced = self.batch_reduction(inputs)
-
         # Pass through GRU
-        gru_out, _ = self.gru(inputs_reduced)  # Shape: (seq_len, dims)
+        gru_out, _ = self.gru(inputs)  # Shape: (batch_size, seq_len, n_dim)
 
-        # Reduce GRU outputs to just a single time step
-        reduced_gru = gru_out.mean(dim=0)  # Shape: (dims)
+        # Learnable reduction of GRU outputs
+        reduced_gru = self.red(gru_out)  # Shape: (batch_size, n_dim)
+
+        # Average across batches
+        reduced_gru = reduced_gru.mean(dim=0)  # Shape: (n_dim)
 
         # Compute logits for each expert
         logits = self.psi(reduced_gru)  # Shape: (num_experts)
 
         if self.training:
             # Apply Gumbel-Softmax during training
-            probs = F.gumbel_softmax(logits, tau=self.tau, hard=False)
-            sequence = torch.argsort(probs, dim=-1, descending=True)
-        else:
-            # Use multinomial sampling during inference
-            probs = F.softmax(logits / self.tau, dim=-1)
-            sequence = torch.multinomial(
-                probs, num_samples=self.n_layer, replacement=False
-            )
+            tau = self.get_current_tau()
+            logits = F.gumbel_softmax(logits, tau=tau, hard=False)
+
+        sequence = torch.argsort(logits, dim=-1, descending=True)
 
         aux_loss = 0
         if self.training:
@@ -114,18 +111,223 @@ class PraxisController(nn.Module):
 
         return sequence, aux_loss
 
+    def get_current_tau(self):
+        if self.current_step >= self.annealing_steps:
+            return self.tau_end
 
-class LearnableReduction(nn.Module):
+        self.current_step += 1
+
+        cos_factor = (math.cos(math.pi * self.current_step / self.annealing_steps)) / 2
+
+        return self.tau_end + (self.tau_start - self.tau_end) * cos_factor
+
+
+class SequenceReduction(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, hidden_dim, kernel_size=(3, 1), padding=(1, 0))
-        self.conv2 = nn.Conv2d(hidden_dim, 1, kernel_size=(3, 1), padding=(1, 0))
-        self.activation = nn.GELU()
+        self.proj = nn.Linear(input_dim, hidden_dim)
+        self.attn = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
-        # x shape: (batch_size, seq_len, dim)
-        x = x.unsqueeze(1)  # (batch_size, 1, seq_len, dim)
-        x = self.activation(self.conv1(x))
-        x = self.conv2(x)
-        x = x.squeeze(1)  # (batch_size, seq_len, dim)
-        return x.mean(dim=0)  # (seq_len, dim)
+        # x shape: (batch_size, seq_len, input_dim)
+        proj = self.proj(x)  # (batch_size, seq_len, hidden_dim)
+        attn_weights = F.softmax(
+            self.attn(proj).squeeze(-1), dim=1
+        )  # (batch_size, seq_len)
+        x_reduced = torch.bmm(
+            attn_weights.unsqueeze(1), x
+        )  # (batch_size, 1, input_dim)
+        return x_reduced.squeeze(1)  # (batch_size, input_dim)
+
+
+# class PraxisController(nn.Module):
+#     def __init__(self, config):
+#         super().__init__()
+#         self.n_dim = config.n_dim
+#         self.n_layer = config.n_layer
+
+#         self.tau = 0.1
+#         self.epsilon = 1e-8
+
+#         self.gru = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
+#         self.psi = nn.Linear(config.n_dim, config.n_layer)
+
+#         self.b_red = BatchReduction(config.n_dim, hidden_dim=64)
+#         self.s_red = SequenceReduction(config.n_dim, hidden_dim=64)
+
+#         self.register_buffer("order_ema", torch.zeros(self.n_layer))
+#         self.ema_decay = 0.99
+#         self.aux_weight = 10.0
+
+#     def forward(self, inputs):
+#         # Aggregate inputs (via mean) to create a single context vector
+#         inputs_reduced = self.b_red(inputs)
+
+#         # Pass through GRU
+#         gru_out, _ = self.gru(inputs_reduced)  # Shape: (seq_len, dims)
+
+#         # Reduce GRU outputs to just a single time step
+#         reduced_gru = self.s_red(gru_out)  # Shape: (dims)
+
+#         # Compute logits for each expert
+#         logits = self.psi(reduced_gru)  # Shape: (num_experts)
+
+#         if self.training:
+#             # Apply Gumbel-Softmax during training
+#             logits = F.gumbel_softmax(logits, tau=self.tau, hard=False)
+
+#         sequence = torch.argsort(logits, dim=-1, descending=True)
+
+#         aux_loss = 0
+#         if self.training:
+#             # Create a position-aware encoding
+#             current_order = torch.zeros(
+#                 self.n_layer, self.n_layer, device=sequence.device
+#             )
+#             current_order[torch.arange(self.n_layer), sequence] = 1.0
+
+#             # Update EMA of expert order
+#             self.order_ema = (
+#                 self.ema_decay * self.order_ema + (1 - self.ema_decay) * current_order
+#             )
+
+#             # Compute diversity loss
+#             target_distribution = torch.ones_like(self.order_ema) / self.n_layer
+#             aux_loss = (
+#                 F.kl_div(
+#                     (self.order_ema + self.epsilon).log(),
+#                     target_distribution,
+#                     reduction="batchmean",
+#                 )
+#                 * self.aux_weight
+#             )
+
+#         return sequence, aux_loss
+
+
+# class BatchReduction(nn.Module):
+#     def __init__(self, input_dim, hidden_dim):
+#         super().__init__()
+#         self.conv1 = nn.Conv2d(1, hidden_dim, kernel_size=(3, 1), padding=(1, 0))
+#         self.conv2 = nn.Conv2d(hidden_dim, 1, kernel_size=(3, 1), padding=(1, 0))
+#         self.activation = nn.GELU()
+
+#     def forward(self, x):
+#         # x shape: (batch_size, seq_len, dim)
+#         x = x.unsqueeze(1)  # (batch_size, 1, seq_len, dim)
+#         x = self.activation(self.conv1(x))
+#         x = self.conv2(x)
+#         x = x.squeeze(1)  # (batch_size, seq_len, dim)
+#         return x.mean(dim=0)  # (seq_len, dim)
+
+
+# class SequenceReduction(nn.Module):
+#     def __init__(self, input_dim, hidden_dim):
+#         super().__init__()
+#         self.conv1 = nn.Conv1d(input_dim, hidden_dim, kernel_size=3, padding=1)
+#         self.conv2 = nn.Conv1d(hidden_dim, input_dim, kernel_size=3, padding=1)
+#         self.activation = nn.GELU()
+
+#     def forward(self, x):
+#         # x shape: (seq_len, dim)
+#         x = x.transpose(0, 1).unsqueeze(0)  # (1, dim, seq_len)
+#         x = self.activation(self.conv1(x))
+#         x = self.conv2(x)
+#         print(x.shape)
+#         return x.squeeze(0).mean(dim=1)  # (dim)
+
+
+# class PraxisController(nn.Module):
+#     def __init__(self, config):
+#         super().__init__()
+#         self.n_dim = config.n_dim
+#         self.n_layer = config.n_layer
+
+#         self.tau = 0.1
+#         self.epsilon = 1e-8
+
+#         self.gru = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
+#         self.psi = nn.Linear(config.n_dim, config.n_layer)
+
+#         self.b_red = LearnableReduction(config.n_dim, hidden_dim=64)
+#         # self.s_red = LearnableReduction(config.n_dim, hidden_dim=64)
+
+#         self.register_buffer("order_ema", torch.zeros(self.n_layer))
+#         self.ema_decay = 0.99
+#         self.aux_weight = 10.0
+
+#     def forward(self, inputs):
+#         # Aggregate inputs (via mean) to create a single context vector
+#         inputs_reduced = self.b_red(inputs)
+
+#         # Pass through GRU
+#         gru_out, _ = self.gru(inputs_reduced.unsqueeze(0))  # Shape: (seq_len, dims)
+#         print(gru_out.shape)
+#         # Reduce GRU outputs to just a single time step
+#         reduced_gru = gru_out.mean(dim=0)  # Shape: (dims)
+#         # reduced_gru = self.s_red(gru_out.squeeze(0))
+
+#         # Compute logits for each expert
+#         logits = self.psi(reduced_gru.squeeze(0))  # Shape: (num_experts)
+#         # logits = logits.mean(dim=0)
+
+#         # logits = self.s_red(psi_out.squeeze(0))
+
+#         # if self.training:
+#         #     # Apply Gumbel-Softmax during training
+#         #     probs = F.gumbel_softmax(logits, tau=self.tau, hard=False)
+#         #     sequence = torch.argsort(probs, dim=-1, descending=True)
+#         # else:
+#         #     # Use multinomial sampling during inference
+#         #     probs = F.softmax(logits / self.tau, dim=-1)
+#         #     sequence = torch.multinomial(
+#         #         probs, num_samples=self.n_layer, replacement=False
+#         #     )
+
+#         if self.training:
+#             # Apply Gumbel-Softmax during training
+#             logits = F.gumbel_softmax(logits, tau=self.tau, hard=False)
+
+#         sequence = torch.argsort(logits, dim=-1, descending=True)
+
+#         aux_loss = 0
+#         if self.training:
+#             # Create a position-aware encoding
+#             current_order = torch.zeros(
+#                 self.n_layer, self.n_layer, device=sequence.device
+#             )
+#             current_order[torch.arange(self.n_layer), sequence] = 1.0
+
+#             # Update EMA of expert order
+#             self.order_ema = (
+#                 self.ema_decay * self.order_ema + (1 - self.ema_decay) * current_order
+#             )
+
+#             # Compute diversity loss
+#             target_distribution = torch.ones_like(self.order_ema) / self.n_layer
+#             aux_loss = (
+#                 F.kl_div(
+#                     (self.order_ema + self.epsilon).log(),
+#                     target_distribution,
+#                     reduction="batchmean",
+#                 )
+#                 * self.aux_weight
+#             )
+
+#         return sequence, aux_loss
+
+
+# class LearnableReduction(nn.Module):
+#     def __init__(self, input_dim, hidden_dim):
+#         super().__init__()
+#         self.conv1 = nn.Conv2d(1, hidden_dim, kernel_size=(3, 1), padding=(1, 0))
+#         self.conv2 = nn.Conv2d(hidden_dim, 1, kernel_size=(3, 1), padding=(1, 0))
+#         self.activation = nn.GELU()
+
+#     def forward(self, x):
+#         # x shape: (batch_size, seq_len, dim)
+#         x = x.unsqueeze(1)  # (batch_size, 1, seq_len, dim)
+#         x = self.activation(self.conv1(x))
+#         x = self.conv2(x)
+#         x = x.squeeze(1)  # (batch_size, seq_len, dim)
+#         return x.mean(dim=0)  # (seq_len, dim)

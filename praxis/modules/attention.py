@@ -78,7 +78,7 @@ class PraxisAttention(nn.Module):
             scores += causal_mask
 
         if attention_mask is not None:
-            scores *= attention_mask.unsqueeze(1).unsqueeze(0)
+            scores *= attention_mask.unsqueeze(1).unsqueeze(1)
 
         weights = F.softmax(scores, dim=-1)
         outputs = (
