@@ -233,7 +233,7 @@ else:
             f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
         )
 
-# Model config
+# Transformers config
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
@@ -329,12 +329,12 @@ predict_tokens = 1
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-5
 optimizer_config = dict(
-    optimizer_name="AdamMini",
+    optimizer_name="AdamW",
     lr=1e-3,
     weight_decay=1e-2,
-    num_embeds=config.n_emb,
-    num_heads=config.n_head,
-    num_query_groups=config.n_head,
+    # num_embeds=config.n_emb,
+    # num_heads=config.n_head,
+    # num_query_groups=config.n_head,
     wd_ban_list=[
         "bias",
         "wte",
@@ -382,15 +382,13 @@ def create_warmup_cosine_scheduler(warmup_steps, T_0, T_mult, eta_min, eta_max):
     )
 
 
-# Scheduler
+# Scheduler config
 scheduler_func = create_warmup_cosine_scheduler(
-    warmup_steps=128,  # Number of warmup steps
-    T_0=4096,  # Number of iterations for the first restart
+    warmup_steps=512,  # Number of warmup steps
+    T_0=8192,  # Number of iterations for the first restart
     T_mult=1,  # Multiplicative factor for T_i
     eta_min=min_lr,  # Minimum learning rate
-    eta_max=optimizer_config[
-        "lr"
-    ],  # Maximum learning rate (initial learning rate after warmup)
+    eta_max=optimizer_config["lr"],  # Maximum learning rate (after warmup)
 )
 
 
@@ -463,6 +461,12 @@ class PraxisTrainer(LightningModule):
                 "frequency": 1,
             },
         }
+
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["num_tokens"] = self.num_tokens
+
+    def on_load_checkpoint(self, checkpoint):
+        self.num_tokens = checkpoint.get("num_tokens", 0)
 
 
 class TerminalInterface(Callback):
@@ -966,7 +970,7 @@ if args.wandb:
     wandb_opts = dict(project="praxis", save_dir=cache_dir)
     if ckpt_path is not None:
         pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
-        for filename in os.listdir(os.path.join(directory, "wandb", "latest-run")):
+        for filename in os.listdir(os.path.join(cache_dir, "wandb", "latest-run")):
             match = pattern.match(filename)
             if match:
                 # Capture the run ID from saved file name

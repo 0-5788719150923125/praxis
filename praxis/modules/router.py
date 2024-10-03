@@ -39,7 +39,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
 
-        if self.training:
+        # We cannot support batch sizes greater than 1 during inference, currently
+        if self.training or b > 1:
             #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
             token_weights, token_indices = torch.topk(
                 router_logits,
