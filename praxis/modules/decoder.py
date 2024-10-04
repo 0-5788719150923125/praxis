@@ -129,7 +129,7 @@ class SequenceReduction(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.act = nn.Tanh()
+        self.act = nn.Softsign()
         self.fc2 = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):

@@ -40,11 +40,9 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -52,23 +50,13 @@ from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import create_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-    PraxisTokenizer,
-    PraxisTokenizerConfig,
-)
+from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
+                    PraxisTokenizer, PraxisTokenizerConfig)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -148,12 +136,6 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="Use dashboard (default: True)",
-)
-parser.add_argument(
-    "--no_tokenizer",
-    action="store_true",
-    default=False,
-    help="Use T-FREE (default: False)",
 )
 parser.add_argument(
     "--wandb",
@@ -239,26 +221,20 @@ sys.excepthook = exception_to_file
 vocab_size = 4096
 
 # All tokenizer initialization
-if args.no_tokenizer:
-    tokenizer_config = PraxisTokenizerConfig(
-        vocab_size=vocab_size,
-        embedding_dim=512,
-    )
-    tokenizer = PraxisTokenizer(tokenizer_config)
-# elif args.use_tokenmonster:
+# if args.use_tokenmonster:
 #     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
 #     tokenizer_config = TokenMonsterConfig(
 #         vocab_file=tokenizer_model, add_bos_token=False
 #     )
 #     tokenizer = TokenMonsterTokenizer(tokenizer_config)
-else:
-    tokenizer_model = os.path.join(cache_dir, "praxis")
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
-    except Exception as e:
-        tokenizer = AutoTokenizer.from_pretrained(
-            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
-        )
+# else:
+tokenizer_model = os.path.join(cache_dir, "praxis")
+try:
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
+except Exception as e:
+    tokenizer = AutoTokenizer.from_pretrained(
+        f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
+    )
 
 # Transformers config
 config = PraxisConfig(
@@ -283,7 +259,7 @@ config = PraxisConfig(
 hparams = dict(
     seed=seed,
     batch_size=args.batch_size if args.batch_size else 1,
-    target_batch_size=64,
+    target_batch_size=128,
     block_size=512,
     **config.to_dict(),
 )
@@ -354,10 +330,10 @@ predict_tokens = 1
 
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-min_lr = 1e-5
+min_lr = 1e-6
 optimizer_config = dict(
     optimizer_name="AdamW",
-    lr=1e-3,
+    lr=5e-4,
     weight_decay=1e-2,
     # num_embeds=config.n_emb,
     # num_heads=config.n_head,
@@ -689,15 +665,6 @@ class HuggingfaceDataset(IterableDataset):
 
             if len(self.cached_text) < text_cache_size:
                 continue
-
-            if args.no_tokenizer:
-                # Train on train_sample
-                self.tokenizer.encode(
-                    self.cached_text[: math.ceil(self.block_size / 2)]
-                )
-
-                # Apply decay after encoding the sample
-                self.tokenizer.decay_frequencies()
 
             tokens = self.tokenizer(
                 text=self.cached_text,

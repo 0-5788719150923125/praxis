@@ -48,7 +48,6 @@ python run.py \
   --dense \                      # Run as a fully-connected (dense) model. (default: False)
   --sparse \                     # Run as a sparse model. (default: True)
   --no_dashboard \               # Disables the CLI interface.
-  --no_tokenizer \               # Replace the LLaMA-2 tokenizer with a T-FREE variant.
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --wandb \                      # Log training metrics to Weights and Biases (https://wandb.ai).
   --phi \                        # Supplement with expert data.
@@ -121,7 +120,8 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - build connectors, allowing people to integrate their nodes with personal data
 - [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)?
 - [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
-- [Mixture of Depths](https://arxiv.org/abs/2404.02258).
+- ~~[Mixture of Depths](https://arxiv.org/abs/2404.02258).~~
+- [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 
 ## tbd
 
