@@ -10,6 +10,11 @@
 
 The Praxis swarm is a decentralized, peer-to-peer, always online, and continuously-learning AI intelligence - with [Hivemind](https://github.com/learning-at-home/hivemind) directly-integrated into core layers of the model itself. The goal is to build an expert model that is small and simple, easy to parallelize and performant at a scale of hundreds/thousands of peers. We will do this via a sparse mixture of experts, curated routing, algorithmic switching and weighted self-modeling of remotely-hosted peers.
 
+## design
+
+- A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
+- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can perform well, even when every layer is shuffled at every forward pass. We take this a step further, and implement a controller that predicts an optimized layer order. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or penalized for some reason or another...
+
 ## join us
 
 - [Discord](https://discord.gg/8ZmHP8CqUX)
@@ -109,7 +114,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 # --> The quick brown fox jumped over a lazy dog.
 ```
 
-## tasks
+## ideas
 
 - a global swarm
 - leverage [self-modeling](https://arxiv.org/abs/2407.10188) to focus learning on remote peers
@@ -120,7 +125,6 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - build connectors, allowing people to integrate their nodes with personal data
 - [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)?
 - [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
-- ~~[Mixture of Depths](https://arxiv.org/abs/2404.02258).~~
 - [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 
 ## tbd

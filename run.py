@@ -47,7 +47,7 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
-from pytorch_optimizer import create_optimizer
+from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
@@ -68,23 +68,12 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
 
-
-def sample_linear_decay(max_value=2**31 - 1):
-    return int(math.exp((1 - random.random())) * max_value)
-
-
-def sample_cosine_decay(max_value=2**31 - 1):
-    seed = random.random()
-    curve = 1 - seed  # invert distribution
-    return int(curve * curve * max_value)
-
-
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
 parser.add_argument(
     "--seed",
     type=int,
-    default=int(sample_cosine_decay(65536)),
+    default=int(math.exp((1 - random.random())) * 65536),
     help="Global seed (default: random)",
 )
 parser.add_argument(
@@ -240,7 +229,6 @@ except Exception as e:
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
-    n_factors=3,
     n_layer=args.depth if not dev else 3,
     n_head=8,
     dropout=0.1,
@@ -255,12 +243,13 @@ config = PraxisConfig(
     cache_dir=cache_dir,
 )
 
-# Model hyperparameters
+# Misc hyperparameters
 hparams = dict(
     seed=seed,
     batch_size=args.batch_size if args.batch_size else 1,
     target_batch_size=128,
     block_size=512,
+    training_data=dict(primary=[], validation=[]),
     **config.to_dict(),
 )
 
@@ -280,7 +269,7 @@ train_params = dict(
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=1024 * hparams["batch_size"],
+    val_check_interval=hparams["target_batch_size"] * hparams["batch_size"] ** 2,
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
@@ -308,7 +297,6 @@ population = [
     dict(path="HuggingFaceFW/fineweb", name="default", keys=["text"]),
 ]
 
-hparams["training_data"] = dict(primary=[], validation=[])
 hparams["training_data"]["primary"].append(random.choices(population, weights, k=1)[0])
 
 if phi:
@@ -319,19 +307,13 @@ if not dev:
     hparams["training_data"]["validation"].append(population[2])
 
 # Misc config
-max_feed_chars = 4096
-save_interval = 3600  # seconds
-save_top_k = 3
-
-# Predictions
-prompt_text = tokenizer.bos_token
-predict_interval = 3
+predict_interval = 3  # seconds
 predict_tokens = 1
 
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-6
-optimizer_config = dict(
+hparams["optimizer"] = dict(
     optimizer_name="AdamW",
     lr=5e-4,
     weight_decay=1e-2,
@@ -346,52 +328,61 @@ optimizer_config = dict(
     ],
 )
 
-hparams["optimizer"] = optimizer_config
+
+# class WarmupCosineLR(_LRScheduler):
+#     """
+#     An infinite learning rate scheduler with warmup steps and hard restarts.
+#     """
+
+#     def __init__(self, optimizer, warmup_steps, cosine_scheduler_func, last_epoch=-1):
+#         self.warmup_steps = warmup_steps
+#         self.cosine_scheduler = cosine_scheduler_func(optimizer)
+#         super(WarmupCosineLR, self).__init__(optimizer, last_epoch)
+
+#     def get_lr(self):
+#         if self.last_epoch < self.warmup_steps:
+#             return [
+#                 base_lr * (self.last_epoch / self.warmup_steps)
+#                 for base_lr in self.base_lrs
+#             ]
+#         return self.cosine_scheduler.get_last_lr()
+
+#     def step(self, epoch=None):
+#         if self.last_epoch < self.warmup_steps:
+#             super(WarmupCosineLR, self).step(epoch)
+#         else:
+#             if self.last_epoch == self.warmup_steps:
+#                 self.cosine_scheduler.base_lrs = self.base_lrs
+#             self.cosine_scheduler.step(epoch)
+#         self._last_lr = self.get_lr()
 
 
-class WarmupCosineLR(_LRScheduler):
-    def __init__(self, optimizer, warmup_steps, cosine_scheduler_func, last_epoch=-1):
-        self.warmup_steps = warmup_steps
-        self.cosine_scheduler = cosine_scheduler_func(optimizer)
-        super(WarmupCosineLR, self).__init__(optimizer, last_epoch)
+# def create_warmup_cosine_scheduler(warmup_steps, T_0, T_mult, eta_min, eta_max):
+#     cosine_scheduler_func = partial(
+#         CosineAnnealingWarmRestarts, T_0=T_0, T_mult=T_mult, eta_min=eta_min
+#     )
 
-    def get_lr(self):
-        if self.last_epoch < self.warmup_steps:
-            return [
-                base_lr * (self.last_epoch / self.warmup_steps)
-                for base_lr in self.base_lrs
-            ]
-        return self.cosine_scheduler.get_last_lr()
-
-    def step(self, epoch=None):
-        if self.last_epoch < self.warmup_steps:
-            super(WarmupCosineLR, self).step(epoch)
-        else:
-            if self.last_epoch == self.warmup_steps:
-                self.cosine_scheduler.base_lrs = self.base_lrs
-            self.cosine_scheduler.step(epoch)
-        self._last_lr = self.get_lr()
-
-
-def create_warmup_cosine_scheduler(warmup_steps, T_0, T_mult, eta_min, eta_max):
-    cosine_scheduler_func = partial(
-        CosineAnnealingWarmRestarts, T_0=T_0, T_mult=T_mult, eta_min=eta_min
-    )
-
-    return partial(
-        WarmupCosineLR,
-        warmup_steps=warmup_steps,
-        cosine_scheduler_func=cosine_scheduler_func,
-    )
+#     return partial(
+#         WarmupCosineLR,
+#         warmup_steps=warmup_steps,
+#         cosine_scheduler_func=cosine_scheduler_func,
+#     )
 
 
 # Scheduler config
-scheduler_func = create_warmup_cosine_scheduler(
-    warmup_steps=512,  # Number of warmup steps
-    T_0=8192,  # Number of iterations for the first restart
-    T_mult=1,  # Multiplicative factor for T_i
-    eta_min=min_lr,  # Minimum learning rate
-    eta_max=optimizer_config["lr"],  # Maximum learning rate (after warmup)
+# scheduler_func = create_warmup_cosine_scheduler(
+#     warmup_steps=512,  # Number of warmup steps
+#     T_0=8192,  # Number of iterations for the first restart
+#     T_mult=1,  # Multiplicative factor for T_i
+#     eta_min=min_lr,  # Minimum learning rate
+#     eta_max=hparams["optimizer"]["lr"],  # Maximum learning rate (after warmup)
+# )
+scheduler_func = partial(
+    CosineAnnealingWarmupRestarts,
+    first_cycle_steps=4096,
+    max_lr=hparams["optimizer"]["lr"],
+    min_lr=min_lr,
+    warmup_steps=256,
 )
 
 
@@ -482,8 +473,8 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.text = prompt_text
-        self.max_length = max_feed_chars
+        self.text = " "
+        self.max_length = 4096
         self.interval = predict_interval
         self.num_tokens = predict_tokens
         self.dashboard = False
@@ -801,13 +792,12 @@ class Generator:
 
 
 class TimeBasedCheckpoint(ModelCheckpoint):
-    def __init__(self, save_interval: int, *args, **kwargs):
-        """
-        Args:
-            save_interval: Interval (in seconds) at which checkpoints
-                should be saved.
-        """
+    """
+    Replaces the Pytorch Lightning checkpoint behavior with one that saves on
+    a time-based interval (in seconds).
+    """
 
+    def __init__(self, save_interval: int, *args, **kwargs):
         # Disable other checkpointing triggers
         kwargs["every_n_train_steps"] = 0
         kwargs["every_n_epochs"] = 0
@@ -871,6 +861,10 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 
 
 class WeightedIterableDataset(IterableDataset):
+    """
+    Random sampling from multiple dataloaders with weighting.
+    """
+
     def __init__(self, datasets, weights):
         assert len(datasets) == len(
             weights
@@ -929,14 +923,14 @@ class DataModule(LightningDataModule):
 
 # Define checkpointing behavior
 checkpoint_callback = TimeBasedCheckpoint(
-    save_top_k=save_top_k,
+    save_top_k=3,
     save_last="link",
     monitor="loss",
     mode="min",
     dirpath=os.path.join(cache_dir, "praxis"),
     filename="model-{loss:.4f}",
     enable_version_counter=False,
-    save_interval=save_interval,
+    save_interval=3600,
 )
 
 # Bootstrap the model and trainer
@@ -1005,7 +999,7 @@ if len(hparams["training_data"]["validation"]) > 0:
         )
 
 # create the optimizer
-optimizer = create_optimizer(model, **optimizer_config)
+optimizer = create_optimizer(model, **hparams["optimizer"])
 
 # create the scheduler
 scheduler = scheduler_func(optimizer)
@@ -1031,7 +1025,7 @@ train_params["callbacks"].append(
     TerminalInterface(use_dashboard, api_server.get_api_addr())
 )
 
-# fit the trainer and run
+# fit the trainer and run forever
 trainer = Trainer(**train_params)
 trainer.fit(
     train_model,

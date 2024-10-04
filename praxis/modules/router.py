@@ -93,7 +93,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # re-integrate the activated tokens with our residual stream
-        outputs = torch.scatter(
+        hidden_states = torch.scatter(
             input=inputs,
             dim=1,
             index=indices_expanded,
@@ -103,7 +103,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         # compute aux loss, in order to teach the router about causality
         aux_loss = self.aux_loss(router_logits, token_indices)
 
-        return dict(hidden_states=outputs, aux_loss=aux_loss)
+        return hidden_states, aux_loss
 
     def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
         router_targets = torch.zeros_like(router_logits)

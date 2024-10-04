@@ -28,13 +28,14 @@ class PraxisBlock(nn.Module):
         router_weights=None,
     ):
         residual = inputs
-        outputs = self.attn(self.norm(inputs), attention_mask) + residual
-        residual = outputs
-        outputs = self.mlp(self.norm(outputs))
-        outputs = self.drop(outputs)
+        hidden_states = self.attn(self.norm(inputs), attention_mask)
+        residual = hidden_states + residual
+        hidden_states = self.mlp(self.norm(hidden_states))
+        hidden_states = self.drop(hidden_states)
         if router_weights is not None:
-            outputs *= router_weights
-        return dict(hidden_states=outputs + residual)
+            hidden_states *= router_weights
+        aux_loss = 0
+        return hidden_states + residual, aux_loss
 
 
 @register_expert_class("praxis_mlp", input_shape)

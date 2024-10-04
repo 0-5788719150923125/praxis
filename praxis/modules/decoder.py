@@ -1,8 +1,4 @@
-import math
-
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers.activations import ACT2FN
 
 from ..configuration_praxis import PraxisConfig
@@ -30,18 +26,21 @@ class PraxisDecoder(nn.Module):
         sequence, expert_biases, aux_loss = self.ctrl(hidden_states)
         aux_losses.append(aux_loss)
 
-        for i, choice in enumerate(sequence):
-            expert = self.experts[choice]
+        for i, idx in enumerate(sequence):
+
+            expert = self.experts[idx]
+            expert_bias = expert_biases[i]
             residual = hidden_states
+
             use_router = i % 2 != 0  # if layer is odd
-            if self.routers is not None and use_router:
-                outputs = self.routers[(i - 1) // 2](
+            if use_router and self.routers is not None:
+                hidden_states, aux_loss = self.routers[(i - 1) // 2](
                     hidden_states, expert, attention_mask
                 )
             else:
-                outputs = expert(hidden_states, attention_mask)
-            expert_bias = expert_biases[i]
-            hidden_states = outputs["hidden_states"] + expert_bias + residual
-            if "aux_loss" in outputs:
-                aux_losses.append(outputs["aux_loss"])
-        return dict(hidden_states=hidden_states, aux_loss=sum(aux_losses))
+                hidden_states, aux_loss = expert(hidden_states, attention_mask)
+
+            hidden_states += expert_bias + residual
+            aux_losses.append(aux_loss)
+
+        return hidden_states, sum(aux_losses)

@@ -81,13 +81,13 @@ class PraxisAttention(nn.Module):
             scores *= attention_mask.unsqueeze(1).unsqueeze(1)
 
         weights = F.softmax(scores, dim=-1)
-        outputs = (
+        attention = (
             torch.matmul(weights, v)
             .transpose(1, 2)
             .reshape(batch_size, seq_len, self.hidden_size)
         )
 
-        return self.output(outputs)
+        return self.output(attention)
 
 
 # @torch.jit.script

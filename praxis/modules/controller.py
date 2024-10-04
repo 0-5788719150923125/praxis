@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..configuration_praxis import PraxisConfig
+
 
 class PraxisController(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
         self.alpha = nn.Parameter(torch.ones(config.n_layer))
         self.epsilon = 1e-8
