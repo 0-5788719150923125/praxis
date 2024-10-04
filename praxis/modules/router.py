@@ -39,7 +39,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
 
-        # We cannot support batch sizes greater than 1 during inference, currently
+        # the `b > 1` condition is required for sanity checking in Pytorch Lightning
         if self.training or b > 1:
             #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
             token_weights, token_indices = torch.topk(
