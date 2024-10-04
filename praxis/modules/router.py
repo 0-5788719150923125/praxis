@@ -50,7 +50,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             )
         else:
             # top-k can see into the future, breaking causality; a sigmoid operation
-            # allows us to sample autoregressively, regardless, during inference
+            # allows us to sample autoregressively, during inference
             token_mask = torch.sigmoid(router_logits) > 0.5
             token_indices = torch.nonzero(token_mask, as_tuple=True)[1].view(b, -1)
 

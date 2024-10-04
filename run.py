@@ -19,6 +19,7 @@ os.setpgrp()
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
 
+
 import argparse
 import itertools
 import logging
@@ -27,6 +28,7 @@ import random
 import re
 import shutil
 import time
+import traceback
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
@@ -72,7 +74,6 @@ from praxis import (
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 disable_possible_user_warnings()
 logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
-logger = CSVLogger("logs", name="praxis")
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
@@ -208,6 +209,32 @@ train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
 
+
+def exception_to_file(exc_type, exc_value, exc_traceback):
+    # Get the current timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Format the error message
+    error_msg = f"Error occurred at: {timestamp}\n"
+    error_msg += f"Script: {os.path.abspath(sys.argv[0])}\n"
+    error_msg += f"Exception Type: {exc_type.__name__}\n"
+    error_msg += f"Exception Value: {exc_value}\n"
+    error_msg += "Traceback:\n"
+    error_msg += "".join(traceback.format_tb(exc_traceback))
+
+    # Write to file
+    with open(os.path.join(cache_dir, "error.log"), "w") as error_file:
+        error_file.write(error_msg)
+
+    # Print the full error to console
+    print(error_msg)
+
+    # Call the default exception handler
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+
+sys.excepthook = exception_to_file
+
 # Global configuration
 vocab_size = 4096
 
@@ -280,7 +307,7 @@ train_params = dict(
     val_check_interval=1024 * hparams["batch_size"],
     limit_val_batches=1024,
     log_every_n_steps=1,
-    logger=logger,
+    logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
 )
 
@@ -541,7 +568,7 @@ class TerminalInterface(Callback):
                         step=batch_idx,
                     )
                 )
-            self.dashboard.fake_log(chance=0.00001)
+            self.dashboard.fake_log(chance=0.000001)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
