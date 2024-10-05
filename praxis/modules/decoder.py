@@ -15,9 +15,11 @@ class PraxisDecoder(nn.Module):
         self.routers = nn.ModuleList() if config.sparse else None
         for i in range(config.n_layer):
             self.experts.append(PraxisBlock(config))
-            use_router = i % 2 != 0  # if layer is odd
-            if self.routers is not None and use_router:
+            if self.routers is not None:
                 self.routers.append(PraxisMixtureOfDepths(config))
+            # use_router = i % 2 != 0  # if layer is odd
+            # if self.routers is not None and use_router:
+            #     self.routers.append(PraxisMixtureOfDepths(config))
 
     def forward(self, inputs, attention_mask):
         hidden_states = inputs  # Shape: (batch_size, seq_len, n_dim)
@@ -34,9 +36,8 @@ class PraxisDecoder(nn.Module):
 
             use_router = i % 2 != 0  # if layer is odd
             if use_router and self.routers is not None:
-                hidden_states, aux_loss = self.routers[(i - 1) // 2](
-                    hidden_states, expert, attention_mask
-                )
+                router = self.routers[idx]
+                hidden_states, aux_loss = router(hidden_states, expert, attention_mask)
             else:
                 hidden_states, aux_loss = expert(hidden_states, attention_mask)
 

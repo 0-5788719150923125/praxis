@@ -40,9 +40,11 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -50,13 +52,23 @@ from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
-                    PraxisTokenizer, PraxisTokenizerConfig)
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    PraxisTokenizer,
+    PraxisTokenizerConfig,
+)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -413,7 +425,7 @@ class PraxisTrainer(LightningModule):
             {
                 "loss": loss,
                 "batch": int(batch_idx),
-                "learning_rate": self.scheduler.get_last_lr()[0],
+                "learning_rate": self.scheduler.get_lr()[0],
                 "num_tokens": self.num_tokens,
             },
             on_step=True,
@@ -473,7 +485,7 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.text = " "
+        self.text = tokenizer.bos_token
         self.max_length = 4096
         self.interval = predict_interval
         self.num_tokens = predict_tokens

@@ -88,16 +88,12 @@ class SequenceReduction(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.act = nn.Softsign()
         self.fc2 = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, input_dim)
         proj = self.fc1(x)  # (batch_size, seq_len, hidden_dim)
-        activated = self.act(proj)
-        weights = F.softmax(
-            self.fc2(activated).squeeze(-1), dim=1
-        )  # (batch_size, seq_len)
+        weights = F.softmax(self.fc2(proj).squeeze(-1), dim=1)  # (batch_size, seq_len)
         x_reduced = torch.bmm(weights.unsqueeze(1), x)  # (batch_size, 1, input_dim)
         return x_reduced.squeeze(1)  # (batch_size, input_dim)
 

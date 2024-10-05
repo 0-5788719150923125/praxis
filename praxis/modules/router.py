@@ -86,7 +86,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        expert_outputs = expert(
+        expert_outputs, _ = expert(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,
@@ -97,7 +97,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             input=inputs,
             dim=1,
             index=indices_expanded,
-            src=expert_outputs["hidden_states"],
+            src=expert_outputs,
         )
 
         # compute aux loss, in order to teach the router about causality
