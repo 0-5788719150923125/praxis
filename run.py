@@ -50,7 +50,6 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import (
     AutoConfig,
@@ -206,11 +205,13 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
     error_msg += "".join(traceback.format_tb(exc_traceback))
 
     # Write to file
-    with open(os.path.join(cache_dir, "error.log"), "w") as error_file:
+    error_path = os.path.join(cache_dir, "error.log")
+    with open(error_path, "w") as error_file:
         error_file.write(error_msg)
 
     # Print the full error to console
     print(error_msg)
+    print(f"Error logged to: {error_path}")
 
     # Call the default exception handler
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -259,7 +260,7 @@ config = PraxisConfig(
 hparams = dict(
     seed=seed,
     batch_size=args.batch_size if args.batch_size else 1,
-    target_batch_size=128,
+    target_batch_size=64,
     block_size=512,
     training_data=dict(primary=[], validation=[]),
     **config.to_dict(),
@@ -324,10 +325,10 @@ predict_tokens = 1
 
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-min_lr = 1e-6
+min_lr = 1e-5
 hparams["optimizer"] = dict(
     optimizer_name="AdamW",
-    lr=5e-4,
+    lr=1e-3,
     weight_decay=1e-2,
     # num_embeds=config.n_emb,
     # num_heads=config.n_head,
@@ -340,60 +341,12 @@ hparams["optimizer"] = dict(
     ],
 )
 
-
-# class WarmupCosineLR(_LRScheduler):
-#     """
-#     An infinite learning rate scheduler with warmup steps and hard restarts.
-#     """
-
-#     def __init__(self, optimizer, warmup_steps, cosine_scheduler_func, last_epoch=-1):
-#         self.warmup_steps = warmup_steps
-#         self.cosine_scheduler = cosine_scheduler_func(optimizer)
-#         super(WarmupCosineLR, self).__init__(optimizer, last_epoch)
-
-#     def get_lr(self):
-#         if self.last_epoch < self.warmup_steps:
-#             return [
-#                 base_lr * (self.last_epoch / self.warmup_steps)
-#                 for base_lr in self.base_lrs
-#             ]
-#         return self.cosine_scheduler.get_last_lr()
-
-#     def step(self, epoch=None):
-#         if self.last_epoch < self.warmup_steps:
-#             super(WarmupCosineLR, self).step(epoch)
-#         else:
-#             if self.last_epoch == self.warmup_steps:
-#                 self.cosine_scheduler.base_lrs = self.base_lrs
-#             self.cosine_scheduler.step(epoch)
-#         self._last_lr = self.get_lr()
-
-
-# def create_warmup_cosine_scheduler(warmup_steps, T_0, T_mult, eta_min, eta_max):
-#     cosine_scheduler_func = partial(
-#         CosineAnnealingWarmRestarts, T_0=T_0, T_mult=T_mult, eta_min=eta_min
-#     )
-
-#     return partial(
-#         WarmupCosineLR,
-#         warmup_steps=warmup_steps,
-#         cosine_scheduler_func=cosine_scheduler_func,
-#     )
-
-
-# Scheduler config
-# scheduler_func = create_warmup_cosine_scheduler(
-#     warmup_steps=512,  # Number of warmup steps
-#     T_0=8192,  # Number of iterations for the first restart
-#     T_mult=1,  # Multiplicative factor for T_i
-#     eta_min=min_lr,  # Minimum learning rate
-#     eta_max=hparams["optimizer"]["lr"],  # Maximum learning rate (after warmup)
-# )
 scheduler_func = partial(
     CosineAnnealingWarmupRestarts,
     first_cycle_steps=4096,
     max_lr=hparams["optimizer"]["lr"],
     min_lr=min_lr,
+    gamma=1.0,
     warmup_steps=256,
 )
 

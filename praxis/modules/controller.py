@@ -8,13 +8,13 @@ from ..configuration_praxis import PraxisConfig
 class PraxisController(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.alpha = nn.Parameter(torch.ones(config.n_layer))
         self.epsilon = 1e-8
         self.tau = 0.5
 
         self.recurrent = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
         self.reduction = SequenceReduction(config.n_dim, config.n_dim // 2)
         self.psi = nn.Linear(config.n_dim, config.n_layer)
+        self.alpha = nn.Linear(1, config.n_dim)
 
         self.register_buffer("order_ema", torch.zeros(config.n_layer, config.n_layer))
         self.ema_decay = 0.99
@@ -33,8 +33,6 @@ class PraxisController(nn.Module):
         # Compute logits for each expert
         logits = self.psi(reduced_gru)  # Shape: (num_experts)
 
-        n_experts = logits.size(0)
-
         if self.training:
             # Apply Gumbel-Softmax during training
             probs = gumbel_sigmoid(logits, tau=self.tau, hard=False)
@@ -43,25 +41,15 @@ class PraxisController(nn.Module):
             probs = logits.sigmoid()
 
         # Get sequence for ordering
-        sequence = torch.argsort(probs, dim=-1, descending=True)
-
-        # if self.training:
-        #     # Apply Gumbel-Softmax during training
-        #     probs = gumbel_sigmoid(logits, tau=self.tau, hard=False)
-        #     sequence = torch.argsort(probs, dim=-1, descending=True)
-        # else:
-        #     # Use multinomial sampling during inference
-        #     probs = logits.sigmoid()
-        #     sequence = torch.multinomial(
-        #         probs, num_samples=n_experts, replacement=False
-        #     )
+        values, sequence = torch.sort(probs, dim=-1, descending=True)
 
         # Scale the return weights with a learnable alpha
-        weights = probs * self.alpha
+        weights = self.alpha(values.unsqueeze(-1))
 
         aux_loss = 0
         if self.training:
             # Create a position-aware encoding
+            n_experts = logits.size(0)
             current_order = torch.zeros(n_experts, n_experts, device=sequence.device)
             current_order[torch.arange(n_experts), sequence] = 1.0
 

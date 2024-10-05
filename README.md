@@ -13,7 +13,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 ## design
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
-- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can perform well, even when every layer is shuffled at every forward pass. We take this a step further, and implement a controller that predicts an optimized layer order. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or penalized for some reason or another...
+- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can perform well, even when every layer is shuffled at every forward pass. We take this a step further, and implement a controller that predicts an optimized layer order. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
 
 ## join us
 
