@@ -13,7 +13,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 ## design
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
-- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can perform well, even when every layer is shuffled at every forward pass. We take this a step further, and implement a controller that predicts an optimized layer order. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
+- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can perform well, even when every layer is shuffled at every forward pass. ~~We take this a step further, and implement a controller that predicts an optimized layer order.~~ The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
 
 ## join us
 
@@ -114,18 +114,15 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 # --> The quick brown fox jumped over a lazy dog.
 ```
 
-## ideas
+## goals
 
 - a global swarm
-- leverage [self-modeling](https://arxiv.org/abs/2407.10188) to focus learning on remote peers
-- experts with a stack of attention/feedforward blocks
+- [self-modeling](https://arxiv.org/abs/2407.10188) makes peers easier to model (amongst themselves)
+- layers as experts
 - commit to yourself
-- if an expert is comprised of multiple transformer blocks, rather than a single layer, then the network might learn to dynamically-route through deeper subnetworks, or it could learn to relay/ensemble information across multiple peers, or it could learn that "no relay is needed" at all, simply returning a simple prediction back to the requestee.
+- cascade-style token routing (peer1 -> peer2 -> peer3 -> return) via a Mixture of Depths
 - treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
 - build connectors, allowing people to integrate their nodes with personal data
-- [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)?
-- [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
-- [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 
 ## tbd
 
@@ -136,6 +133,9 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - multi-level experts
 - peer validation (zero knowledge proofs)
 - self-modeling of remote experts
+- [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)?
+- [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
+- [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 
 ## won't do
 
