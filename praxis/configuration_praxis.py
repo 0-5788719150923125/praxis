@@ -16,7 +16,8 @@ class PraxisConfig(PretrainedConfig):
         vocab_size=8192,
         context_length=1024,
         activation="mish",
-        sparse=True,
+        sparse=False,
+        shuffle=False,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -43,6 +44,7 @@ class PraxisConfig(PretrainedConfig):
         self.context_length = context_length
         self.activation = activation
         self.sparse = sparse
+        self.shuffle = shuffle
         self.causal = False
 
         # Huggingface args

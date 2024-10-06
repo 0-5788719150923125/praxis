@@ -11,6 +11,7 @@ from .router import PraxisMixtureOfDepths
 class PraxisDecoder(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
+        self.shuffle = config.shuffle
         self.experts = nn.ModuleList()
         self.routers = nn.ModuleList() if config.sparse else None
         for i in range(config.n_layer):
@@ -23,7 +24,8 @@ class PraxisDecoder(nn.Module):
         aux_losses = []
         hidden_states = inputs  # Shape: (batch_size, seq_len, n_dim)
 
-        random.shuffle(self.experts)
+        if self.shuffle:
+            random.shuffle(self.experts)
 
         for i, expert in enumerate(self.experts):
 
