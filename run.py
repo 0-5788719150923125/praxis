@@ -40,22 +40,34 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
-                    PraxisTokenizer, PraxisTokenizerConfig)
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    PraxisTokenizer,
+    PraxisTokenizerConfig,
+)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -153,7 +165,7 @@ parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
-    help="Supplement with expert data (default: False)",
+    help="Supplement training with specialist data (default: False)",
 )
 parser.add_argument(
     "--dev",
@@ -214,14 +226,7 @@ sys.excepthook = exception_to_file
 # Global configuration
 vocab_size = 4096
 
-# All tokenizer initialization
-# if args.use_tokenmonster:
-#     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
-#     tokenizer_config = TokenMonsterConfig(
-#         vocab_file=tokenizer_model, add_bos_token=False
-#     )
-#     tokenizer = TokenMonsterTokenizer(tokenizer_config)
-# else:
+# Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
 try:
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
