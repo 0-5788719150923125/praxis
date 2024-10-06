@@ -468,7 +468,7 @@ fake_system_messages = [
     "Info: Add bananas to the grocery list.",
     "Reminder: Get dog food.",
     "Reminder: Call mom for birthday.",
-    "Info: Nest adjusted your thermostat for energy savings.",
+    "Info: Adjusted your thermostat for energy savings.",
 ]
 
 # Example usage

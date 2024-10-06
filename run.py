@@ -202,19 +202,17 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
     error_msg += f"Exception Type: {exc_type.__name__}\n"
     error_msg += f"Exception Value: {exc_value}\n"
     error_msg += "Traceback:\n"
-    error_msg += "".join(traceback.format_tb(exc_traceback))
 
     # Write to file
     error_path = os.path.join(cache_dir, "error.log")
     with open(error_path, "w") as error_file:
-        error_file.write(error_msg)
-
-    # Print the full error to console
-    print(error_msg)
-    print(f"Error logged to: {error_path}")
+        written_msg = error_msg + "".join(traceback.format_tb(exc_traceback))
+        error_file.write(written_msg)
 
     # Call the default exception handler
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+    print(f"Error logged to: {error_path}")
 
 
 sys.excepthook = exception_to_file
