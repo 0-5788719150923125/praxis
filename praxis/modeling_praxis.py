@@ -2,6 +2,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
@@ -16,7 +17,7 @@ from .modules.embeddings import PraxisEmbedding
 class PraxisModel(PreTrainedModel):
     config_class = PraxisConfig
 
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__(config)
         self.embeds = PraxisEmbedding(config)
         self.decoder = PraxisDecoder(config)
@@ -36,15 +37,11 @@ class PraxisModel(PreTrainedModel):
         if attention_mask is None:
             attention_mask = torch.ones(input_ids.shape, device=inputs.device)
 
-        outputs = self.decoder(inputs, attention_mask)
-
-        if self.training:
-            if isinstance(inputs, dict) and "aux_loss" in inputs:
-                self.aux_losses.append(inputs["aux_loss"])
-            self.aux_losses.append(outputs["aux_loss"])
+        last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
+        self.aux_losses.append(aux_loss)
 
         return BaseModelOutputWithPast(
-            last_hidden_state=outputs["hidden_states"],
+            last_hidden_state=last_hidden_state,
             past_key_values=None,
             hidden_states=None,
             attentions=None,
@@ -54,7 +51,7 @@ class PraxisModel(PreTrainedModel):
 class PraxisForCausalLM(PraxisModel):
     model_type = "praxis"
 
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         config.causal = True
         super().__init__(config)
         self.head = nn.Linear(config.n_dim, config.vocab_size, bias=False)
@@ -86,11 +83,11 @@ class PraxisForCausalLM(PraxisModel):
         hidden_states = transformer_outputs[0]
         logits = self.head(hidden_states)
 
-        loss = None
+        loss = 0
         if labels is not None:
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            loss = nn.CrossEntropyLoss()(
+            loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
             )
             loss += sum(self.aux_losses)

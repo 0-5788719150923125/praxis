@@ -19,13 +19,16 @@ os.setpgrp()
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
 
+
 import argparse
 import itertools
 import logging
 import math
 import random
+import re
 import shutil
 import time
+import traceback
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
@@ -46,8 +49,7 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
-from pytorch_optimizer import create_optimizer
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, _LRScheduler
+from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import (
     AutoConfig,
@@ -68,32 +70,21 @@ from praxis import (
 )
 
 # Register and configure environment
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 disable_possible_user_warnings()
 logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
-logger = CSVLogger("logs", name="praxis")
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
 
-
-def sample_linear_decay(max_value=2**31 - 1):
-    return int(math.exp((1 - random.random())) * max_value)
-
-
-def sample_cosine_decay(max_value=2**31 - 1):
-    seed = random.random()
-    curve = 1 - seed  # invert distribution
-    return int(curve * curve * max_value)
-
-
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
 parser.add_argument(
     "--seed",
     type=int,
-    default=int(sample_cosine_decay(65536)),
+    default=int(math.exp((1 - random.random())) * 65536),
     help="Global seed (default: random)",
 )
 parser.add_argument(
@@ -147,10 +138,10 @@ parser.add_argument(
     help="Use dashboard (default: True)",
 )
 parser.add_argument(
-    "--no_tokenizer",
+    "--wandb",
     action="store_true",
     default=False,
-    help="Use T-FREE (default: False)",
+    help="Log experiment to Weights and Biases (Default: False)",
 )
 parser.add_argument(
     "--dense",
@@ -165,10 +156,16 @@ parser.add_argument(
     help="Run as a sparse model (default: True)",
 )
 parser.add_argument(
+    "--shuffle",
+    action="store_true",
+    default=True,
+    help="Shuffle intermediate layers at every forward pass (default: True)",
+)
+parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
-    help="Supplement with expert data (default: False)",
+    help="Supplement training with specialist data (default: False)",
 )
 parser.add_argument(
     "--dev",
@@ -200,60 +197,71 @@ train_data_path = args.data_path
 
 use_dashboard = False if args.no_dashboard else True
 
-if args.reset:
-    for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
-        os.remove(checkpoint)
+
+def exception_to_file(exc_type, exc_value, exc_traceback):
+    # Get the current timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Format the error message
+    error_msg = f"Error occurred at: {timestamp}\n"
+    error_msg += f"Script: {os.path.abspath(sys.argv[0])}\n"
+    error_msg += f"Exception Type: {exc_type.__name__}\n"
+    error_msg += f"Exception Value: {exc_value}\n"
+    error_msg += "Traceback:\n"
+
+    # Write to file
+    error_path = os.path.join(cache_dir, "error.log")
+    with open(error_path, "w") as error_file:
+        written_msg = error_msg + "".join(traceback.format_tb(exc_traceback))
+        error_file.write(written_msg)
+
+    # Call the default exception handler
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+    print(f"Error logged to: {error_path}")
+
+
+sys.excepthook = exception_to_file
 
 # Global configuration
-
 vocab_size = 4096
 
-# Model hyperparameters
-hparams = dict(
-    batch_size=args.batch_size if args.batch_size else 1,
-    target_batch_size=64,
-    block_size=512,
-)
-
-# All tokenizer initialization
-if args.no_tokenizer:
-    tokenizer_config = PraxisTokenizerConfig(
-        vocab_size=vocab_size,
-        embedding_dim=512,
+# Tokenizer initialization
+tokenizer_model = os.path.join(cache_dir, "praxis")
+try:
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
+except Exception as e:
+    tokenizer = AutoTokenizer.from_pretrained(
+        f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
     )
-    tokenizer = PraxisTokenizer(tokenizer_config)
-# elif args.use_tokenmonster:
-#     tokenizer_model = "englishcode-8000-consistent-nocapcode-v1"
-#     tokenizer_config = TokenMonsterConfig(
-#         vocab_file=tokenizer_model, add_bos_token=False
-#     )
-#     tokenizer = TokenMonsterTokenizer(tokenizer_config)
-else:
-    tokenizer_model = os.path.join(cache_dir, "praxis")
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
-    except Exception as e:
-        tokenizer = AutoTokenizer.from_pretrained(
-            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
-        )
 
-# Model config
+# Transformers config
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
-    n_factors=3,
     n_layer=args.depth if not dev else 3,
     n_head=8,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     context_length=4096,
     sparse=False if args.dense else args.sparse,
+    shuffle=args.shuffle,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
     unk_token_id=tokenizer.unk_token_id,
     device_map=device,
     cache_dir=cache_dir,
+)
+
+# Misc hyperparameters
+hparams = dict(
+    seed=seed,
+    batch_size=args.batch_size if args.batch_size else 1,
+    target_batch_size=64,
+    block_size=512,
+    training_data=dict(primary=[], validation=[]),
+    **config.to_dict(),
 )
 
 # Training config
@@ -268,16 +276,19 @@ train_params = dict(
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
+    enable_checkpointing=True,
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    logger=logger,
-    enable_checkpointing=True,
+    val_check_interval=hparams["target_batch_size"] * hparams["batch_size"] ** 2,
+    limit_val_batches=1024,
+    log_every_n_steps=1,
+    logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
 )
 
 # Training data mixing
-weights = [1, 0, 0, 0, 0, 0] if dev else [0, 0, 1, 0.666666, 0.333, 0.01]
+weights = [1, 0, 0, 0, 0, 0, 0] if dev else [0, 0, 0, 1, 0.666666, 0.333, 0.01]
 population = [
     dict(path="open-phi/textbooks", keys=["markdown"]),
     dict(
@@ -285,39 +296,41 @@ population = [
         name="cosmopedia-v2",
         keys=["prompt", "text"],
     ),
+    dict(
+        path="togethercomputer/RedPajama-Data-V2",
+        name="sample-10B",
+        snapshots=["2023-14"],
+        keys=["raw_content"],
+    ),
     dict(path="HuggingFaceFW/fineweb-edu", name="sample-10BT", keys=["text"]),
     dict(path="HuggingFaceFW/fineweb-edu", name="sample-100BT", keys=["text"]),
     dict(path="HuggingFaceFW/fineweb-edu", name="sample-350BT", keys=["text"]),
     dict(path="HuggingFaceFW/fineweb", name="default", keys=["text"]),
 ]
 
-primary_dataset = random.choices(population, weights, k=1)[0]
-secondary_datasets = []
+hparams["training_data"]["primary"].append(random.choices(population, weights, k=1)[0])
 
 if phi:
-    secondary_datasets.append(population[0])
-    secondary_datasets.append(population[1])
+    hparams["training_data"]["primary"].append(population[0])
+    hparams["training_data"]["primary"].append(population[1])
+
+if not dev:
+    hparams["training_data"]["validation"].append(population[2])
 
 # Misc config
-max_feed_chars = 4096
-save_interval = 3600  # seconds
-save_top_k = 3
-
-# Predictions
-prompt_text = tokenizer.bos_token
-predict_interval = 3
+predict_interval = 3  # seconds
 predict_tokens = 1
 
 # Optimizer configuration
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-5
-optimizer_config = dict(
-    optimizer_name="AdamMini",
+hparams["optimizer"] = dict(
+    optimizer_name="AdamW",
     lr=1e-3,
     weight_decay=1e-2,
-    num_embeds=config.n_emb,
-    num_heads=config.n_head,
-    num_query_groups=config.n_head,
+    # num_embeds=config.n_emb,
+    # num_heads=config.n_head,
+    # num_query_groups=config.n_head,
     wd_ban_list=[
         "bias",
         "wte",
@@ -326,52 +339,13 @@ optimizer_config = dict(
     ],
 )
 
-
-class WarmupCosineLR(_LRScheduler):
-    def __init__(self, optimizer, warmup_steps, cosine_scheduler_func, last_epoch=-1):
-        self.warmup_steps = warmup_steps
-        self.cosine_scheduler = cosine_scheduler_func(optimizer)
-        super(WarmupCosineLR, self).__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch < self.warmup_steps:
-            return [
-                base_lr * (self.last_epoch / self.warmup_steps)
-                for base_lr in self.base_lrs
-            ]
-        return self.cosine_scheduler.get_last_lr()
-
-    def step(self, epoch=None):
-        if self.last_epoch < self.warmup_steps:
-            super(WarmupCosineLR, self).step(epoch)
-        else:
-            if self.last_epoch == self.warmup_steps:
-                self.cosine_scheduler.base_lrs = self.base_lrs
-            self.cosine_scheduler.step(epoch)
-        self._last_lr = self.get_lr()
-
-
-def create_warmup_cosine_scheduler(warmup_steps, T_0, T_mult, eta_min, eta_max):
-    cosine_scheduler_func = partial(
-        CosineAnnealingWarmRestarts, T_0=T_0, T_mult=T_mult, eta_min=eta_min
-    )
-
-    return partial(
-        WarmupCosineLR,
-        warmup_steps=warmup_steps,
-        cosine_scheduler_func=cosine_scheduler_func,
-    )
-
-
-# Scheduler
-scheduler_func = create_warmup_cosine_scheduler(
-    warmup_steps=128,  # Number of warmup steps
-    T_0=4096,  # Number of iterations for the first restart
-    T_mult=1,  # Multiplicative factor for T_i
-    eta_min=min_lr,  # Minimum learning rate
-    eta_max=optimizer_config[
-        "lr"
-    ],  # Maximum learning rate (initial learning rate after warmup)
+scheduler_func = partial(
+    CosineAnnealingWarmupRestarts,
+    first_cycle_steps=4096,
+    max_lr=hparams["optimizer"]["lr"],
+    min_lr=min_lr,
+    gamma=1.0,
+    warmup_steps=256,
 )
 
 
@@ -383,25 +357,27 @@ class PraxisTrainer(LightningModule):
     def __init__(self, model, optimizer, scheduler, hparams):
         super(PraxisTrainer, self).__init__()
         self.model, self.optimizer, self.scheduler = (model, optimizer, scheduler)
-        self.batch_size = hparams["batch_size"]
         self.automatic_optimization = True
+        self.num_tokens = 0
         self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
 
     def forward(self, inputs):
         return self.model(**inputs)
 
     def training_step(self, batch, batch_idx):
+
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
 
-        batch_size, _ = batch.shape
+        batch_size, num_tokens = batch.shape
+        self.num_tokens += batch_size * num_tokens
 
         self.log_dict(
             {
                 "loss": loss,
                 "batch": int(batch_idx),
-                "seed": int(seed),
-                "learning_rate": self.scheduler.get_last_lr()[0],
+                "learning_rate": self.scheduler.get_lr()[0],
+                "num_tokens": self.num_tokens,
             },
             on_step=True,
             logger=True,
@@ -410,6 +386,27 @@ class PraxisTrainer(LightningModule):
         )
 
         return loss
+
+    def validation_step(self, batch, batch_idx):
+        outputs = self.model(input_ids=batch, labels=batch)
+        loss = outputs[0]
+        perplexity = torch.exp(loss)
+
+        batch_size, _ = batch.shape
+
+        self.log_dict(
+            {
+                "val_loss": loss,
+                "val_perplexity": perplexity,
+            },
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            batch_size=batch_size,
+            prog_bar=True,
+        )
+
+        return {"val_loss": loss, "val_perplexity": perplexity}
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"
@@ -422,6 +419,12 @@ class PraxisTrainer(LightningModule):
             },
         }
 
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["num_tokens"] = self.num_tokens
+
+    def on_load_checkpoint(self, checkpoint):
+        self.num_tokens = checkpoint.get("num_tokens", 0)
+
 
 class TerminalInterface(Callback):
     """
@@ -433,8 +436,8 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.text = prompt_text
-        self.max_length = max_feed_chars
+        self.text = tokenizer.bos_token
+        self.max_length = 4096
         self.interval = predict_interval
         self.num_tokens = predict_tokens
         self.dashboard = False
@@ -447,6 +450,16 @@ class TerminalInterface(Callback):
                 self.dashboard.update_url(url)
             except KeyboardInterrupt:
                 self.dashboard.stop()
+
+    def on_train_batch_start(self, trainer, lm, batch, batch_idx):
+        super().on_train_batch_start(trainer, lm, batch, batch_idx)
+        if self.dashboard:
+            self.dashboard.set_mode("train")
+
+    def on_validation_start(self, trainer, lm):
+        super().on_validation_start(trainer, lm)
+        if self.dashboard:
+            self.dashboard.set_mode("validation")
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
@@ -485,7 +498,7 @@ class TerminalInterface(Callback):
                         step=batch_idx,
                     )
                 )
-            self.dashboard.fake_log(chance=0.00001)
+            self.dashboard.fake_log(chance=0.000001)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
@@ -606,15 +619,6 @@ class HuggingfaceDataset(IterableDataset):
 
             if len(self.cached_text) < text_cache_size:
                 continue
-
-            if args.no_tokenizer:
-                # Train on train_sample
-                self.tokenizer.encode(
-                    self.cached_text[: math.ceil(self.block_size / 2)]
-                )
-
-                # Apply decay after encoding the sample
-                self.tokenizer.decay_frequencies()
 
             tokens = self.tokenizer(
                 text=self.cached_text,
@@ -751,13 +755,12 @@ class Generator:
 
 
 class TimeBasedCheckpoint(ModelCheckpoint):
-    def __init__(self, save_interval: int, *args, **kwargs):
-        """
-        Args:
-            save_interval: Interval (in seconds) at which checkpoints
-                should be saved.
-        """
+    """
+    Replaces the Pytorch Lightning checkpoint behavior with one that saves on
+    a time-based interval (in seconds).
+    """
 
+    def __init__(self, save_interval: int, *args, **kwargs):
         # Disable other checkpointing triggers
         kwargs["every_n_train_steps"] = 0
         kwargs["every_n_epochs"] = 0
@@ -821,6 +824,10 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 
 
 class WeightedIterableDataset(IterableDataset):
+    """
+    Random sampling from multiple dataloaders with weighting.
+    """
+
     def __init__(self, datasets, weights):
         assert len(datasets) == len(
             weights
@@ -873,21 +880,31 @@ class DataModule(LightningDataModule):
     def train_dataloader(self):
         return WeightedIterableDataset(self.loaders, self.weights)
 
+    def val_dataloader(self):
+        return WeightedIterableDataset(self.loaders, self.weights)
+
 
 # Define checkpointing behavior
 checkpoint_callback = TimeBasedCheckpoint(
-    save_top_k=save_top_k,
+    save_top_k=3,
     save_last="link",
     monitor="loss",
     mode="min",
     dirpath=os.path.join(cache_dir, "praxis"),
     filename="model-{loss:.4f}",
     enable_version_counter=False,
-    save_interval=save_interval,
+    save_interval=3600,
 )
 
 # Bootstrap the model and trainer
 model = AutoModelForCausalLM.from_config(config)
+
+print(model)
+
+# Checkpoint management
+if args.reset:
+    for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
+        os.remove(checkpoint)
 
 ckpt_path = None
 symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
@@ -895,39 +912,69 @@ if os.path.exists(symlink):
     print(f"resuming from: {symlink}")
     ckpt_path = symlink
 
-print(model)
+if args.wandb:
+    import wandb
+    from lightning.pytorch.loggers import WandbLogger
+
+    wandb.login()
+
+    wandb_opts = dict(project="praxis", save_dir=cache_dir)
+    if ckpt_path is not None:
+        pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
+        for filename in os.listdir(os.path.join(cache_dir, "wandb", "latest-run")):
+            match = pattern.match(filename)
+            if match:
+                # Capture the run ID from saved file name
+                wandb_opts["id"] = match.group(1)
+                break
+
+        wandb_opts["resume"] = "must"
+
+    wandb_logger = WandbLogger(**wandb_opts)
+
+    # log gradients and model topology
+    wandb_logger.watch(model, log="all", log_freq=100, log_graph=True)
+    train_params["logger"] = wandb_logger
 
 generator = Generator(model, tokenizer)
 
 api_server = APIServer(generator, host_name, port)
 api_server.start()
 
-# Load a dataset
+# Load training datasets
 train_data = []
+for dataset_config in hparams["training_data"]["primary"]:
+    train_data.append(
+        HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
+    )
+
 if train_data_path:
     train_data.append(
         MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
     )
-else:
-    train_data.append(
-        HuggingfaceDataset(tokenizer, primary_dataset, hparams["block_size"])
-    )
 
-# Load expert datasets
-if phi:
-    for dataset_config in secondary_datasets:
-        train_data.append(
+# Load validation data
+validation_data = []
+if len(hparams["training_data"]["validation"]) > 0:
+    for dataset_config in hparams["training_data"]["validation"]:
+        validation_data.append(
             HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
         )
 
 # create the optimizer
-optimizer = create_optimizer(model, **optimizer_config)
+optimizer = create_optimizer(model, **hparams["optimizer"])
 
 # create the scheduler
 scheduler = scheduler_func(optimizer)
 
 # Put the data onto a dataloader
-dataloader = DataModule(train_data, hparams["batch_size"])
+train_dataloader = DataModule(train_data, hparams["batch_size"])
+
+validation_dataloader = None
+if len(validation_data) > 0:
+    validation_dataloader = DataModule(
+        validation_data, hparams["batch_size"]
+    ).val_dataloader()
 
 # Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, scheduler, hparams)
@@ -941,9 +988,14 @@ train_params["callbacks"].append(
     TerminalInterface(use_dashboard, api_server.get_api_addr())
 )
 
-# fit the trainer and run
+# fit the trainer and run forever
 trainer = Trainer(**train_params)
-trainer.fit(train_model, dataloader.train_dataloader(), ckpt_path=ckpt_path)
+trainer.fit(
+    train_model,
+    train_dataloader.train_dataloader(),
+    val_dataloaders=validation_dataloader,
+    ckpt_path=ckpt_path,
+)
 
 # import ipaddress
 # from functools import partial

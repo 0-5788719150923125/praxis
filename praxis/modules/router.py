@@ -39,7 +39,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
 
-        if self.training:
+        # the `b > 1` condition is required for sanity checking in Pytorch Lightning
+        if self.training or b > 1:
             #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
             token_weights, token_indices = torch.topk(
                 router_logits,
@@ -49,7 +50,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             )
         else:
             # top-k can see into the future, breaking causality; a sigmoid operation
-            # allows us to sample autoregressively, regardless, during inference
+            # allows us to sample autoregressively, during inference
             token_mask = torch.sigmoid(router_logits) > 0.5
             token_indices = torch.nonzero(token_mask, as_tuple=True)[1].view(b, -1)
 
@@ -85,24 +86,24 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        expert_outputs = expert(
+        expert_outputs, _ = expert(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,
         )
 
         # re-integrate the activated tokens with our residual stream
-        outputs = torch.scatter(
+        hidden_states = torch.scatter(
             input=inputs,
             dim=1,
             index=indices_expanded,
-            src=expert_outputs["hidden_states"],
+            src=expert_outputs,
         )
 
         # compute aux loss, in order to teach the router about causality
         aux_loss = self.aux_loss(router_logits, token_indices)
 
-        return dict(hidden_states=outputs, aux_loss=aux_loss)
+        return hidden_states, aux_loss
 
     def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
         router_targets = torch.zeros_like(router_logits)

@@ -16,8 +16,9 @@ input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 class PraxisBlock(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.attn = PraxisAttention(config)
+        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.mlp = PraxisGLU(config)
         self.drop = nn.Dropout(config.dropout)
 
@@ -28,13 +29,16 @@ class PraxisBlock(nn.Module):
         router_weights=None,
     ):
         residual = inputs
-        outputs = self.attn(self.norm(inputs), attention_mask) + residual
+        normalized = self.attn_norm(inputs)
+        outputs = self.attn(normalized, attention_mask) + residual
         residual = outputs
-        outputs = self.mlp(self.norm(outputs))
+        normalized = self.mlp_norm(outputs)
+        outputs = self.mlp(normalized)
         outputs = self.drop(outputs)
         if router_weights is not None:
             outputs *= router_weights
-        return dict(hidden_states=outputs + residual)
+        aux_loss = 0
+        return outputs + residual, aux_loss
 
 
 @register_expert_class("praxis_mlp", input_shape)

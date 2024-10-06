@@ -8,7 +8,6 @@ class PraxisConfig(PretrainedConfig):
         self,
         n_emb=512,
         n_dim=384,
-        n_factors=2,
         n_layer=12,
         n_head=8,
         dropout=0,
@@ -17,7 +16,8 @@ class PraxisConfig(PretrainedConfig):
         vocab_size=8192,
         context_length=1024,
         activation="mish",
-        sparse=True,
+        sparse=False,
+        shuffle=False,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -35,7 +35,6 @@ class PraxisConfig(PretrainedConfig):
         # Praxis args
         self.n_emb = n_emb
         self.n_dim = n_dim
-        self.n_factors = n_factors
         self.n_layer = n_layer
         self.n_head = n_head
         self.dropout = dropout
@@ -45,6 +44,7 @@ class PraxisConfig(PretrainedConfig):
         self.context_length = context_length
         self.activation = activation
         self.sparse = sparse
+        self.shuffle = shuffle
         self.causal = False
 
         # Huggingface args

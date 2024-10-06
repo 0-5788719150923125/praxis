@@ -78,8 +78,9 @@ class TerminalDashboard:
         self.start_time = datetime.now()
         self.url = "N/A"
         self.experts = ""
-        self.total_params = ""
+        self.total_params = "0M"
         self.num_faults = 0
+        self.mode = "train"
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -151,6 +152,11 @@ class TerminalDashboard:
         with self.lock:
             self.seed = seed
 
+    def set_mode(self, mode="train"):
+        with self.lock:
+            self.mode = mode
+            self.previous_frame = None  # force a redraw
+
     def count(self):
         with self.lock:
             self.num_faults += 1
@@ -158,7 +164,8 @@ class TerminalDashboard:
     def update_params(self, total_params):
         with self.lock:
             reduced = int(total_params / 10**6)
-            self.total_params = f" | {reduced}M"
+            self.total_params = f"{reduced}M"
+            self.previous_frame = None  # force a redraw
 
     def update_loss(self, train_loss):
         with self.lock:
@@ -377,7 +384,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)}{str(self.total_params)} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)} | {self.url}",
+                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)} | {self.url}",
                     width,
                 )
             )
@@ -432,37 +439,36 @@ class TerminalDashboard:
 
 
 fake_system_messages = [
-    "Coffee machine erupted. Caffeine levels critical.",
-    "Quantum fluctuation detected in the lawn mower.",
-    "System update: Now with more cowbell.",
+    "Error: Coffee machine erupted. Caffeine levels critical.",
+    "Warning: Quantum fluctuation detected in the lawn mower.",
+    "System updated: Now with more cowbell.",
     "Warning: Keyboard cat attempting hostile takeover.",
-    "Memory leak detected. But I forgot to tell the boss.",
+    "Warning: Memory leak detected. But I forgot to tell the boss.",
     "Critical error: Pizza delivery address not found.",
-    "Firewall breach: Incoming dad jokes detected.",
-    "CPU temperature rising. Applying ice cream.",
-    "Network congestion.",
-    "Antivirus updated.",
+    "Warning: CPU temperature is rising. Applying ice cream.",
+    "Warning: Network congestion.",
+    "Info: Antivirus updated.",
     "Fatal error: Division by zero.",
-    "The system will restart in 1 minute. You can blame Ryan.",
-    "Database corrupted. Recycling it.",
-    "Solar flare incoming. Brace for impact.",
-    "Bug found in code. Squashing it...",
-    "Cloud storage full. Please delete the excess cat photos.",
-    "Unexpected input: User said 'please'.",
-    "Update failed successfully.",
+    "Warning: The system will restart in 1 minute. You can blame Ryan.",
+    "Error: Database corrupted. Recycling it.",
+    "Warning: Solar flare incoming. Brace for impact.",
+    "Info: Bug found in code. Squashing it...",
+    "Warning: Cloud storage full. Please delete the excess cat photos.",
+    "Error: Unexpected input: User said 'please'.",
+    "Info: Update failed successfully.",
     "Reminder: Take out the trash.",
-    "Time to change air filter.",
-    "Due for an oil change, soon.",
-    "Laundry cycle complete. Time to fold.",
-    "Dentist appointment next week. Confirm?",
-    "The smoke detector is beeping.",
-    "Lawn needs mowing.",
-    "Calendar sync complete.",
-    "Time to update password.",
-    "Add bananas to my grocery list.",
-    "Get dog food.",
+    "Reminder: Time to change air filter.",
+    "Reminder: Due for an oil change, soon.",
+    "Info: Laundry cycle complete. Time to fold.",
+    "Reminder: Dentist appointment next week. Confirm?",
+    "Reminder: The smoke detector is beeping.",
+    "Reminder: Lawn needs mowing.",
+    "Info: Calendar sync complete.",
+    "Warning: Time to update password.",
+    "Info: Add bananas to the grocery list.",
+    "Reminder: Get dog food.",
     "Reminder: Call mom for birthday.",
-    "Nest adjusted your thermostat for energy savings.",
+    "Info: Adjusted your thermostat for energy savings.",
 ]
 
 # Example usage
