@@ -50,9 +50,9 @@ python run.py \
   --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
   --batch_size 8 \               # Set the batch size to use for training.
   --depth 7 \                    # The number of layers to host.
-  --dense \                      # Run as a fully-connected (dense) model. (default: False)
-  --sparse \                     # Run as a sparse model. (default: True)
-  --shuffle \                    # Shuffle intermediate layers at every forward pass (default: True)
+  --dense \                      # Run as a fully-connected (dense) model. (default: True)
+  --sparse \                     # Run as a sparse model. (default: False)
+  --shuffle \                    # Shuffle intermediate layers at every forward pass (default: False)
   --no_dashboard \               # Disables the CLI interface.
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --wandb \                      # Log training metrics to Weights and Biases (https://wandb.ai).
