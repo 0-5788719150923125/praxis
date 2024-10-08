@@ -588,7 +588,6 @@ class HuggingfaceDataset(IterableDataset):
             dataset_args["name"] = config["name"]
 
         self.dataset = load_dataset(**dataset_args)
-        self.cached_text = ""
 
     def __iter__(self):
 
@@ -599,6 +598,8 @@ class HuggingfaceDataset(IterableDataset):
             seed=seed,
             buffer_size=buffer_size,
         )
+
+        cached_text = ""
 
         for document in shuffled:
 
@@ -614,13 +615,13 @@ class HuggingfaceDataset(IterableDataset):
                 else:
                     content += self.tokenizer.eos_token
 
-                self.cached_text += content
+                cached_text += content
 
-            if len(self.cached_text) < text_cache_size:
+            if len(cached_text) < text_cache_size:
                 continue
 
             tokens = self.tokenizer(
-                text=self.cached_text,
+                text=cached_text,
                 max_length=self.block_size,
                 stride=random.randint(16, 64),
                 padding=True,
@@ -629,7 +630,7 @@ class HuggingfaceDataset(IterableDataset):
                 return_tensors="pt",
             )["input_ids"]
 
-            self.cached_text = ""
+            cached_text = ""
 
             for batch in tokens:
                 if len(batch) != self.block_size:

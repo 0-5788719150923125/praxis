@@ -26,8 +26,8 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     def forward(
         self,
-        inputs: Tensor,
         expert: nn.Module,
+        inputs: Tensor,
         attention_mask: Tensor,
         *args,
         **kwargs,
@@ -37,7 +37,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         k = int(s * self.capacity)
 
         # emit scalar weights for each token
-        router_logits = F.linear(inputs, self.weight)  # -> batch, seq_len, 1
+        router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
 
         # the `b > 1` condition is required for sanity checking in Pytorch Lightning
         if self.training or b > 1:

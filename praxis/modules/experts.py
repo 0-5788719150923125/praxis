@@ -12,7 +12,7 @@ from .attention import PraxisAttention
 input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
 
-@register_expert_class("praxis_expert", input_shape)
+@register_expert_class("praxis_block", input_shape)
 class PraxisBlock(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
