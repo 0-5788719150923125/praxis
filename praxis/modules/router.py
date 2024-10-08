@@ -90,6 +90,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,
+            token_indices=token_indices.squeeze(-1),
         )
 
         # re-integrate the activated tokens with our residual stream

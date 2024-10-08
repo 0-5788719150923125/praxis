@@ -29,15 +29,22 @@ class PraxisAttention(nn.Module):
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
 
-        # Pre-compute the ALiBi bias
+        # Pre-compute the ALiBi slopes
         slopes = 2 ** (-8 * torch.arange(1, self.num_heads + 1) / self.num_heads)
-        positions = torch.arange(self.max_seq_len, dtype=torch.float32)
-        alibi_bias = slopes.unsqueeze(1).unsqueeze(1) * positions.unsqueeze(
-            0
-        ).unsqueeze(0)
-        self.register_buffer("alibi_bias", alibi_bias)
+        self.register_buffer("slopes", slopes)
 
-    def forward(self, inputs, attention_mask=None):
+        # Store positions up to max_seq_len
+        self.register_buffer(
+            "positions", torch.arange(self.max_seq_len, dtype=torch.float32)
+        )
+        # slopes = 2 ** (-8 * torch.arange(1, self.num_heads + 1) / self.num_heads)
+        # positions = torch.arange(self.max_seq_len, dtype=torch.float32)
+        # alibi_bias = slopes.unsqueeze(1).unsqueeze(1) * positions.unsqueeze(
+        #     0
+        # ).unsqueeze(0)
+        # self.register_buffer("alibi_bias", alibi_bias)
+
+    def forward(self, inputs, attention_mask=None, token_indices=None):
         batch_size, seq_len, _ = inputs.size()
         q = (
             self.query(inputs)
@@ -59,11 +66,29 @@ class PraxisAttention(nn.Module):
             torch.tensor(self.head_dim, device=inputs.device)
         )
 
-        # Slice from the pre-computed ALiBi bias
-        alibi = self.alibi_bias[:, :seq_len, :seq_len]
+        # Compute ALiBi biases
+        if token_indices is not None:
+            # positions: [batch_size, seq_len]
+            positions = self.positions[token_indices]
+        else:
+            # positions: [batch_size, seq_len]
+            positions = (
+                self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
+            )
+
+        # Compute position differences
+        position_differences = positions.unsqueeze(2) - positions.unsqueeze(
+            1
+        )  # [batch_size, seq_len, seq_len]
+
+        # Compute biases
+        slopes = self.slopes.view(1, self.num_heads, 1, 1)  # [1, num_heads, 1, 1]
+        biases = slopes * position_differences.unsqueeze(
+            1
+        )  # [batch_size, num_heads, seq_len, seq_len]
 
         # Subtract biases from the scores
-        scores -= alibi
+        scores -= biases
 
         # Apply the causal mask
         if self.causal:

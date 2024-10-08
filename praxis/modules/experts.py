@@ -27,10 +27,11 @@ class PraxisBlock(nn.Module):
         inputs,
         attention_mask=None,
         router_weights=None,
+        token_indices=None,
     ):
         residual = inputs
         normalized = self.attn_norm(inputs)
-        outputs = self.attn(normalized, attention_mask) + residual
+        outputs = self.attn(normalized, attention_mask, token_indices) + residual
         residual = outputs
         normalized = self.mlp_norm(outputs)
         outputs = self.mlp(normalized)
