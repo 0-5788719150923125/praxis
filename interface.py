@@ -439,7 +439,7 @@ class TerminalDashboard:
 
 
 fake_system_messages = [
-    "Error: Coffee machine erupted. Caffeine levels critical.",
+    "Error: Coffee machine exploded. Caffeine levels critical.",
     "Warning: Quantum fluctuation detected in the lawn mower.",
     "System updated: Now with more cowbell.",
     "Warning: Keyboard cat attempting hostile takeover.",
