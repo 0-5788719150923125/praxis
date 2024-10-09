@@ -123,22 +123,22 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [self-modeling](https://arxiv.org/abs/2407.10188) makes peers easier to model (amongst themselves)
 - layers as experts
 - commit to yourself
-- cascade-style token routing (peer1 -> peer2 -> peer3 -> return) via a Mixture of Depths
+- cascade-style token routing (ping -> pang -> pong -> ping) via a Mixture of Depths
 - treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
 - build connectors, allowing people to integrate their nodes with personal data
 
 ## tbd
 
 - a proper and robust DHT
-- central and persistent relay peers, to act as global initial_peers
-- a routing algorithm with multi-hop support (ping -> pang -> pong -> ping)
+- central and persistent relay peers, to act as global bootstrap nodes
 - helix, octopi, pyramids
-- multi-level experts
+- multi-block, heirarchical experts
 - peer validation (zero knowledge proofs)
 - self-modeling of remote experts
-- [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)?
-- [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)?
+- [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)
+- [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153)
 - [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
+- [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale)
 
 ## won't do
 
