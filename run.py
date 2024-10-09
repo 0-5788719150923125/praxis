@@ -387,6 +387,8 @@ class PraxisTrainer(LightningModule):
             prog_bar=True,
         )
 
+        return loss
+
     def validation_step(self, batch, batch_idx):
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
