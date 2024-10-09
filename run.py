@@ -568,10 +568,31 @@ class TerminalInterface(Callback):
             return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
 
 
-class HuggingfaceDataset:
-    def __init__(self, tokenizer: PreTrainedTokenizer, config: Dict, block_size: int):
+class PraxisDataSampler:
+    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
         self.tokenizer = tokenizer
         self.block_size = block_size
+
+    def fill_cache(self):
+        AssertionError("This method should be implemented by a child class.")
+
+    def get_batch(self, oversample: bool = False) -> torch.Tensor:
+        if len(self.token_cache) < 2:
+            self.fill_cache()
+
+        if oversample:
+            if len(self.token_cache) < 2:
+                self.fill_cache()
+            batch = torch.cat([self.token_cache.pop(0), self.token_cache.pop(0)], dim=0)
+        else:
+            batch = self.token_cache.pop(0)
+
+        return batch
+
+
+class HuggingfaceDataset(PraxisDataSampler):
+    def __init__(self, tokenizer: PreTrainedTokenizer, config: Dict, block_size: int):
+        super().__init__(tokenizer, block_size)
         self.keys = config.get("keys", ["text"])
         dataset_args = dict(
             path=config.get("path", "HuggingFaceFW/fineweb"),
@@ -626,27 +647,13 @@ class HuggingfaceDataset:
         )
         self.cached_text = ""
 
-    def get_batch(self, oversample: bool = False) -> torch.Tensor:
-        if len(self.token_cache) < 2:
-            self.fill_cache()
 
-        if oversample:
-            if len(self.token_cache) < 2:
-                self.fill_cache()
-            batch = torch.cat([self.token_cache.pop(0), self.token_cache.pop(0)], dim=0)
-        else:
-            batch = self.token_cache.pop(0)
-
-        return batch
-
-
-class MultiDirectoryDataset:
+class MultiDirectoryDataset(PraxisDataSampler):
     def __init__(
         self, tokenizer: PreTrainedTokenizer, directories: List[str], block_size: int
     ):
-        self.tokenizer = tokenizer
+        super().__init__(tokenizer, block_size)
         self.directories = directories
-        self.block_size = block_size
         self.cached_text = ""
         self.token_cache = []
         self.file_list = self._get_file_list()
@@ -694,19 +701,6 @@ class MultiDirectoryDataset:
             [batch for batch in tokens if len(batch) == self.block_size]
         )
         self.cached_text = ""
-
-    def get_batch(self, oversample: bool = False) -> torch.Tensor:
-        if len(self.token_cache) < 2:
-            self.fill_cache()
-
-        if oversample:
-            if len(self.token_cache) < 2:
-                self.fill_cache()
-            batch = torch.cat([self.token_cache.pop(0), self.token_cache.pop(0)], dim=0)
-        else:
-            batch = self.token_cache.pop(0)
-
-        return batch
 
 
 class Generator:
