@@ -32,7 +32,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
 from glob import glob
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -259,6 +259,7 @@ hparams = dict(
     batch_size=args.batch_size if args.batch_size else 1,
     target_batch_size=64,
     block_size=512,
+    oversample_chance=0.1,
     training_data=dict(primary=[], validation=[]),
     **config.to_dict(),
 )
@@ -567,11 +568,7 @@ class TerminalInterface(Callback):
             return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
 
 
-class HuggingfaceDataset(IterableDataset):
-    """
-    A wrapper that streams, tokenizes and batches data for training.
-    """
-
+class HuggingfaceDataset:
     def __init__(self, tokenizer: PreTrainedTokenizer, config: Dict, block_size: int):
         self.tokenizer = tokenizer
         self.block_size = block_size
@@ -588,62 +585,62 @@ class HuggingfaceDataset(IterableDataset):
             dataset_args["name"] = config["name"]
 
         self.dataset = load_dataset(**dataset_args)
-
-    def __iter__(self):
-
-        buffer_size = 10_000
-        text_cache_size = 10 * buffer_size
-
-        shuffled = self.dataset.shuffle(
-            seed=seed,
-            buffer_size=buffer_size,
+        self.buffer_size = 10_000
+        self.text_cache_size = 10 * self.buffer_size
+        self.cached_text = ""
+        self.token_cache = []
+        self.shuffled_dataset = self.dataset.shuffle(
+            seed=seed, buffer_size=self.buffer_size
         )
+        self.dataset_iterator = iter(self.shuffled_dataset)
 
-        cached_text = ""
-
-        for document in shuffled:
-
-            for i, key in enumerate(self.keys):
-
-                content = document.get(key)
-
-                if len(self.keys) > 1:
-                    if i % 2 == 0:
-                        content = "INPUT: " + content
+    def fill_cache(self):
+        while len(self.cached_text) < self.text_cache_size:
+            try:
+                document = next(self.dataset_iterator)
+                for i, key in enumerate(self.keys):
+                    content = document.get(key)
+                    if len(self.keys) > 1:
+                        if i % 2 == 0:
+                            content = "INPUT: " + content
+                        else:
+                            content = "OUTPUT: " + content + self.tokenizer.eos_token
                     else:
-                        content = "OUTPUT: " + content + self.tokenizer.eos_token
-                else:
-                    content += self.tokenizer.eos_token
+                        content += self.tokenizer.eos_token
+                    self.cached_text += content
+            except StopIteration:
+                self.dataset_iterator = iter(self.shuffled_dataset)
 
-                cached_text += content
+        tokens = self.tokenizer(
+            text=self.cached_text,
+            max_length=self.block_size,
+            stride=0,
+            padding=True,
+            truncation=True,
+            return_overflowing_tokens=True,
+            return_tensors="pt",
+        )["input_ids"]
 
-            if len(cached_text) < text_cache_size:
-                continue
+        self.token_cache.extend(
+            [batch for batch in tokens if len(batch) == self.block_size]
+        )
+        self.cached_text = ""
 
-            tokens = self.tokenizer(
-                text=cached_text,
-                max_length=self.block_size,
-                stride=random.randint(16, 64),
-                padding=True,
-                truncation=True,
-                return_overflowing_tokens=True,
-                return_tensors="pt",
-            )["input_ids"]
+    def get_batch(self, oversample: bool = False) -> torch.Tensor:
+        if len(self.token_cache) < 2:
+            self.fill_cache()
 
-            cached_text = ""
+        if oversample:
+            if len(self.token_cache) < 2:
+                self.fill_cache()
+            batch = torch.cat([self.token_cache.pop(0), self.token_cache.pop(0)], dim=0)
+        else:
+            batch = self.token_cache.pop(0)
 
-            for batch in tokens:
-                if len(batch) != self.block_size:
-                    break
-                yield batch
+        return batch
 
 
-class MultiDirectoryDataset(IterableDataset):
-    """
-    A file-based iterable dataset that recursively reads files from multiple directories,
-    tokenizes them, and returns batches for PyTorch Lightning.
-    """
-
+class MultiDirectoryDataset:
     def __init__(
         self, tokenizer: PreTrainedTokenizer, directories: List[str], block_size: int
     ):
@@ -651,7 +648,12 @@ class MultiDirectoryDataset(IterableDataset):
         self.directories = directories
         self.block_size = block_size
         self.cached_text = ""
+        self.token_cache = []
         self.file_list = self._get_file_list()
+        self.buffer_size = 10_000
+        self.text_cache_size = 10 * self.buffer_size
+        random.shuffle(self.file_list)
+        self.file_iterator = iter(self.file_list)
 
     def _get_file_list(self) -> List[str]:
         """Recursively get all files in all directories."""
@@ -667,34 +669,44 @@ class MultiDirectoryDataset(IterableDataset):
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
 
-    def __iter__(self):
-        buffer_size = 10_000
-        text_cache_size = 10 * buffer_size
-        block_size = self.block_size
+    def fill_cache(self):
+        while len(self.cached_text) < self.text_cache_size:
+            try:
+                file_path = next(self.file_iterator)
+                self.cached_text += (
+                    self._read_file(file_path) + self.tokenizer.eos_token
+                )
+            except StopIteration:
+                random.shuffle(self.file_list)
+                self.file_iterator = iter(self.file_list)
 
-        random.shuffle(self.file_list)
+        tokens = self.tokenizer(
+            text=self.cached_text,
+            max_length=self.block_size,
+            stride=0,
+            padding=True,
+            truncation=True,
+            return_overflowing_tokens=True,
+            return_tensors="pt",
+        )["input_ids"]
 
-        for file_path in self.file_list:
-            self.cached_text += self._read_file(file_path) + self.tokenizer.eos_token
-            if len(self.cached_text) < text_cache_size:
-                continue
+        self.token_cache.extend(
+            [batch for batch in tokens if len(batch) == self.block_size]
+        )
+        self.cached_text = ""
 
-            tokens = self.tokenizer(
-                text=self.cached_text,
-                max_length=block_size,
-                stride=16,
-                padding=True,
-                truncation=True,
-                return_overflowing_tokens=True,
-                return_tensors="pt",
-            )["input_ids"]
+    def get_batch(self, oversample: bool = False) -> torch.Tensor:
+        if len(self.token_cache) < 2:
+            self.fill_cache()
 
-            self.cached_text = ""
+        if oversample:
+            if len(self.token_cache) < 2:
+                self.fill_cache()
+            batch = torch.cat([self.token_cache.pop(0), self.token_cache.pop(0)], dim=0)
+        else:
+            batch = self.token_cache.pop(0)
 
-            for batch in tokens:
-                if len(batch) != block_size:
-                    break
-                yield batch
+        return batch
 
 
 class Generator:
@@ -824,11 +836,13 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 
 
 class WeightedIterableDataset(IterableDataset):
-    """
-    Random sampling from multiple dataloaders with weighting.
-    """
-
-    def __init__(self, datasets, weights):
+    def __init__(
+        self,
+        datasets: List[HuggingfaceDataset],
+        weights: List[float],
+        batch_size: int,
+        oversample_chance: float = 0,
+    ):
         assert len(datasets) == len(
             weights
         ), "Number of datasets and weights must match"
@@ -836,52 +850,65 @@ class WeightedIterableDataset(IterableDataset):
 
         self.datasets = datasets
         self.weights = weights
-        self.cumulative_weights = [sum(weights[: i + 1]) for i in range(len(weights))]
+        self.batch_size = batch_size
+        self.oversample_chance = oversample_chance
 
     def __iter__(self):
-        iters = [iter(dataset) for dataset in self.datasets]
         while True:
-            try:
-                rand = random.random()
-                for i, cum_weight in enumerate(self.cumulative_weights):
-                    if rand < cum_weight:
-                        yield next(iters[i])
-                        break
-            except StopIteration:
-                break
+            oversample = random.random() < self.oversample_chance
+            current_batch_size = self.batch_size // 2 if oversample else self.batch_size
+
+            batch = []
+            for _ in range(current_batch_size):
+                dataset_index = random.choices(
+                    range(len(self.datasets)), weights=self.weights
+                )[0]
+                item = self.datasets[dataset_index].get_batch(oversample)
+                batch.append(item)
+
+            yield torch.stack(batch)
 
 
 class DataModule(LightningDataModule):
-    def __init__(self, train_data, batch_size=1):
+    def __init__(
+        self,
+        train_datasets: List[Dict],
+        tokenizer: PreTrainedTokenizer,
+        batch_size: int = 16,
+        block_size: int = 512,
+        oversample_chance: float = 0,
+    ):
         super().__init__()
-        self.batch_size = batch_size
-        self.loaders = []
-        for i, data in enumerate(train_data):
-            self.loaders.append(
-                DataLoader(
-                    data,
-                    batch_size=self.batch_size,
-                    pin_memory=True,
-                    num_workers=1,
-                )
-            )
 
-        self.weights = []
-        if len(self.loaders) == 1:
-            self.weights.append(1.0)
-        if len(self.loaders) == 2:
-            self.weights.append(0.9)  # global
-            self.weights.append(0.1)  # expert
-        if len(self.loaders) >= 3:
-            self.weights.append(0.8)  # global
-            self.weights.append(0.1)  # expert
-            self.weights.append(0.1)  # expert
+        weights = []
+        if len(train_datasets) == 1:
+            weights.append(1.0)
+        elif len(train_datasets) == 2:
+            weights.extend([0.9, 0.1])
+        elif len(train_datasets) == 3:
+            weights.extend([0.8, 0.1, 0.1])
+        elif len(train_datasets) >= 4:
+            weights.extend([0.7, 0.1, 0.1, 0.1])
+
+        self.weighted_dataset = WeightedIterableDataset(
+            train_datasets, weights, batch_size, oversample_chance
+        )
 
     def train_dataloader(self):
-        return WeightedIterableDataset(self.loaders, self.weights)
+        return DataLoader(
+            dataset=self.weighted_dataset,
+            batch_size=None,
+            num_workers=1,
+            pin_memory=True,
+        )
 
     def val_dataloader(self):
-        return WeightedIterableDataset(self.loaders, self.weights)
+        return DataLoader(
+            dataset=self.weighted_dataset,
+            batch_size=None,
+            num_workers=1,
+            pin_memory=True,
+        )
 
 
 # Define checkpointing behavior
@@ -953,6 +980,7 @@ if train_data_path:
         MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
     )
 
+
 # Load validation data
 validation_data = []
 if len(hparams["training_data"]["validation"]) > 0:
@@ -968,7 +996,13 @@ optimizer = create_optimizer(model, **hparams["optimizer"])
 scheduler = scheduler_func(optimizer)
 
 # Put the data onto a dataloader
-train_dataloader = DataModule(train_data, hparams["batch_size"])
+train_dataloader = DataModule(
+    train_data,
+    tokenizer,
+    hparams["batch_size"],
+    hparams["block_size"],
+    hparams["oversample_chance"],
+)
 
 validation_dataloader = None
 if len(validation_data) > 0:
