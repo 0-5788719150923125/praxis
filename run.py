@@ -240,6 +240,7 @@ config = PraxisConfig(
     n_dim=384,
     n_layer=args.depth if not dev else 3,
     n_head=8,
+    differential_heads=2,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     context_length=4096,
