@@ -54,10 +54,10 @@ class PraxisAttention(nn.Module):
                     ),
                 )
             )
+            self.norm = nn.GroupNorm(
+                num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
+            )
 
-        self.norm = nn.GroupNorm(
-            num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
-        )
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
@@ -123,8 +123,10 @@ class PraxisAttention(nn.Module):
             scores = [scores[i] + causal_mask for i in range(self.differential_heads)]
 
         if attention_mask is not None:
-            mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            scores = [scores[i] + mask for i in range(self.differential_heads)]
+            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            scores = [
+                scores[i] + attention_mask for i in range(self.differential_heads)
+            ]
 
         # Compute attention weights
         weights = [F.softmax(scores[i], dim=-1) for i in range(self.differential_heads)]
