@@ -10,6 +10,7 @@ class PraxisConfig(PretrainedConfig):
         n_dim=384,
         n_layer=12,
         n_head=8,
+        differential_heads=1,
         dropout=0,
         epsilon=1e-5,
         capacity=0.125,
@@ -37,6 +38,7 @@ class PraxisConfig(PretrainedConfig):
         self.n_dim = n_dim
         self.n_layer = n_layer
         self.n_head = n_head
+        self.differential_heads = differential_heads
         self.dropout = dropout
         self.epsilon = epsilon
         self.capacity = capacity

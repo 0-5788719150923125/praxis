@@ -21,6 +21,7 @@ signal.signal(signal.SIGINT, sigint_handler)
 
 
 import argparse
+import contextlib
 import itertools
 import logging
 import math
@@ -240,6 +241,7 @@ config = PraxisConfig(
     n_dim=384,
     n_layer=args.depth if not dev else 3,
     n_head=8,
+    differential_heads=2,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     context_length=4096,
@@ -326,12 +328,11 @@ predict_tokens = 1
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-5
 hparams["optimizer"] = dict(
-    optimizer_name="AdamW",
+    optimizer_name="AdEMAMix",
     lr=1e-3,
     weight_decay=1e-2,
-    # num_embeds=config.n_emb,
-    # num_heads=config.n_head,
-    # num_query_groups=config.n_head,
+    weight_decouple=True,
+    alpha=5.9,
     wd_ban_list=[
         "bias",
         "wte",
@@ -342,11 +343,11 @@ hparams["optimizer"] = dict(
 
 scheduler_func = partial(
     CosineAnnealingWarmupRestarts,
-    first_cycle_steps=4096,
+    first_cycle_steps=4096 * 4,
     max_lr=hparams["optimizer"]["lr"],
     min_lr=min_lr,
     gamma=1.0,
-    warmup_steps=256,
+    warmup_steps=512,
 )
 
 
@@ -407,8 +408,6 @@ class PraxisTrainer(LightningModule):
             prog_bar=True,
         )
 
-        return {"val_loss": loss, "val_perplexity": perplexity}
-
     def configure_optimizers(self):
         "Create optimizer and scheduler"
         return {
@@ -452,6 +451,12 @@ class TerminalInterface(Callback):
             except KeyboardInterrupt:
                 self.dashboard.stop()
 
+    def on_train_start(self, trainer, lm):
+        super().on_train_start(trainer, lm)
+        if self.dashboard:
+            total_params = sum(p.numel() for p in lm.model.parameters())
+            self.dashboard.update_params(total_params)
+
     def on_train_batch_start(self, trainer, lm, batch, batch_idx):
         super().on_train_batch_start(trainer, lm, batch, batch_idx)
         if self.dashboard:
@@ -485,11 +490,10 @@ class TerminalInterface(Callback):
         if self.dashboard:
             batch = trainer.callback_metrics.get("batch", 0)
             step = trainer.callback_metrics.get("step", 0)
-            total_params = sum(p.numel() for p in lm.model.parameters())
-            self.dashboard.update_params(total_params)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_loss(self.ema_loss)
+            self.dashboard.fake_log(chance=0.000001)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
@@ -499,14 +503,11 @@ class TerminalInterface(Callback):
                         step=batch_idx,
                     )
                 )
-            self.dashboard.fake_log(chance=0.000001)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
-
-        lm.model.eval()
 
         self.text = generator.generate(self.text, {"max_new_tokens": self.num_tokens})
 
@@ -530,8 +531,6 @@ class TerminalInterface(Callback):
             return self._generate_sample_text(lm)
 
         self.last_time = datetime.now()
-
-        lm.model.train()
 
     def _sign_wave(self, amplitude=1, frequency=1, phase_shift=0, step=1):
         distribution = random.gauss(0.25, 0.2)
@@ -714,6 +713,15 @@ class Generator:
         self.model = model
         self.tokenizer = tokenizer
 
+    @contextlib.contextmanager
+    def _eval_mode(self):
+        training = self.model.training
+        self.model.eval()
+        try:
+            yield
+        finally:
+            self.model.train(training)
+
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
@@ -732,10 +740,10 @@ class Generator:
             repetition_penalty=1.35,
             renormalize_logits=True,
             remove_invalid_values=True,
-            suppress_tokens=[
-                self.tokenizer.eos_token_id,
-                self.tokenizer.pad_token_id,
-            ],  # else the model may degenerate to 100% [EOS] or [PAD] tokens
+            # suppress_tokens=[
+            #     self.tokenizer.eos_token_id,
+            #     self.tokenizer.pad_token_id,
+            # ],  # else the model may degenerate to 100% [EOS] or [PAD] tokens
         )
         combined = {**defaults, **kwargs}
         if "prompt" in combined:
@@ -745,16 +753,19 @@ class Generator:
         max_attempts = 30  # Prevent infinite loops
         attempts = 0
 
-        while attempts < max_attempts:
-            outputs = self.model.generate(input_ids, **combined)
-            decoded_new = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        with self._eval_mode():
+            while attempts < max_attempts:
+                outputs = self.model.generate(input_ids, **combined)
+                decoded_new = self.tokenizer.decode(
+                    outputs[0], skip_special_tokens=True
+                )
 
-            if decoded_new != prompt:
-                return_text = decoded_new
-                break
-            else:
-                input_ids = outputs
-                attempts += 1
+                if decoded_new != prompt:
+                    return_text = decoded_new
+                    break
+                else:
+                    input_ids = outputs
+                    attempts += 1
 
         if attempts == max_attempts:
             print("Warning: Reached maximum attempts without generating a valid token")

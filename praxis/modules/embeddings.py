@@ -6,6 +6,11 @@ from ..configuration_praxis import PraxisConfig
 
 
 class PraxisEmbedding(nn.Sequential):
+    """
+    A simple token embeddings layer with a linear projection into
+    a reduced dimension.
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__(
             OrderedDict(
