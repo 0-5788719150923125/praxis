@@ -509,7 +509,16 @@ class TerminalInterface(Callback):
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
 
-        self.text = generator.generate(self.text, {"max_new_tokens": self.num_tokens})
+        self.text = generator.generate(
+            self.text,
+            dict(
+                max_new_tokens=self.num_tokens,
+                suppress_tokens=[
+                    tokenizer.eos_token_id,
+                    tokenizer.pad_token_id,
+                ],  # else the model tends to degenerate into 100% [EOS] or [PAD] tokens
+            ),
+        )
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
@@ -740,10 +749,6 @@ class Generator:
             repetition_penalty=1.35,
             renormalize_logits=True,
             remove_invalid_values=True,
-            # suppress_tokens=[
-            #     self.tokenizer.eos_token_id,
-            #     self.tokenizer.pad_token_id,
-            # ],  # else the model may degenerate to 100% [EOS] or [PAD] tokens
         )
         combined = {**defaults, **kwargs}
         if "prompt" in combined:
