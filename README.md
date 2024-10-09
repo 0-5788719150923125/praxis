@@ -10,10 +10,12 @@
 
 The Praxis swarm is a decentralized, peer-to-peer, always online, and continuously-learning AI intelligence - with [Hivemind](https://github.com/learning-at-home/hivemind) directly-integrated into core layers of the model itself. The goal is to build an expert model that is small and simple, easy to parallelize and performant at a scale of hundreds/thousands of peers. We will do this via a sparse mixture of experts, curated routing, algorithmic switching and weighted self-modeling of remotely-hosted peers.
 
-## design
+## architecture
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
 - [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. ~~We take this a step further, and implement a controller that predicts an optimized layer order.~~ The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
+- [Attention with Linear Biases (ALiBi)](https://arxiv.org/abs/2108.12409) for length extrapolation, because it's easy and it requires no trainable parameters.
+- [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 
 ## join us
 
