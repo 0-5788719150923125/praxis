@@ -859,9 +859,9 @@ class WeightedIterableDataset(IterableDataset):
             rand = random.random()
             current_batch_size = self.batch_size
             if rand < self.supersample_chance:
-                if self.batch_size // 8 > 0:
+                if self.batch_size // 16 > 0:
                     supersample = True
-                    current_batch_size = self.batch_size // 8
+                    current_batch_size = self.batch_size // 16
             elif rand < self.oversample_chance:
                 if self.batch_size // 4 > 0:
                     oversample = True
