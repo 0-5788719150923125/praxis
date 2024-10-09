@@ -31,7 +31,8 @@ class PraxisBlock(nn.Module):
     ):
         residual = inputs
         normalized = self.attn_norm(inputs)
-        outputs = self.attn(normalized, attention_mask, token_indices) + residual
+        outputs = self.attn(normalized, attention_mask, token_indices)
+        outputs = outputs + residual
         residual = outputs
         normalized = self.mlp_norm(outputs)
         outputs = self.mlp(normalized)
@@ -39,7 +40,8 @@ class PraxisBlock(nn.Module):
         if router_weights is not None:
             outputs *= router_weights
         aux_loss = 0
-        return outputs + residual, aux_loss
+        outputs = outputs + residual
+        return outputs, aux_loss
 
 
 @register_expert_class("praxis_mlp", input_shape)

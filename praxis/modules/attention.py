@@ -25,6 +25,9 @@ class PraxisAttention(nn.Module):
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
         self.differential_heads = config.differential_heads
+        assert (
+            self.differential_heads > 0
+        ), "'differential_heads' must be set to a value greater than 0."
 
         # Query and key projections for differential heads
         self.query = nn.ModuleList(
@@ -92,9 +95,9 @@ class PraxisAttention(nn.Module):
         )
 
         # Compute attention scores
-        scale = 1.0 / math.sqrt(self.head_dim)
+        reciprocal = 1.0 / math.sqrt(self.head_dim)
         scores = [
-            torch.matmul(q[i], k[i].transpose(-2, -1)) * scale
+            torch.matmul(q[i], k[i].transpose(-2, -1)) * reciprocal
             for i in range(self.differential_heads)
         ]
 
@@ -164,7 +167,7 @@ class PraxisAttention(nn.Module):
             sign = (-1) ** i
             lamb += sign * lambda_scalar  # Shape: (num_heads,)
 
-        # Expand lamb to (1, num_heads, 1, 1) for broadcasting
+        # Expand lamb the lambda for broadcasting
         lamb_expanded = (
             lamb.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
         )  # (1, num_heads, 1, 1)
@@ -176,25 +179,29 @@ class PraxisAttention(nn.Module):
             diff_weights += sign * lamb_expanded * weights[i]
 
         # Compute attention output
-        attention_scores = torch.matmul(diff_weights, v)
-        # Shape: (batch_size, num_heads, seq_len, head_dim)
+        attention_scores = torch.matmul(
+            diff_weights, v
+        )  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
-        # Reshape and apply GroupNorm
-        attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
-        # Shape: (batch_size, seq_len, num_heads, head_dim)
+        # Reshape for normalization
+        attention_scores = attention_scores.permute(
+            0, 2, 1, 3
+        ).contiguous()  # Shape: (batch_size, seq_len, num_heads, head_dim)
 
         attention_scores = attention_scores.view(
             batch_size, seq_len, self.num_heads * self.head_dim
-        )
-        # Shape: (batch_size, seq_len, num_heads * head_dim)
+        )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
-        attention_scores = attention_scores.transpose(1, 2)
-        # Shape: (batch_size, num_heads * head_dim, seq_len)
+        attention_scores = attention_scores.transpose(
+            1, 2
+        )  # Shape: (batch_size, num_heads * head_dim, seq_len)
 
+        # Apply GroupNorm
         attention_scores = self.norm(attention_scores)
 
-        attention_scores = attention_scores.transpose(1, 2)
-        # Shape: (batch_size, seq_len, num_heads * head_dim)
+        attention_scores = attention_scores.transpose(
+            1, 2
+        )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
         # Output projection
         return self.output(attention_scores)
