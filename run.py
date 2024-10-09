@@ -260,6 +260,7 @@ hparams = dict(
     target_batch_size=64,
     block_size=512,
     oversample_chance=0.1,
+    supersample_chance=0.01,
     training_data=dict(primary=[], validation=[]),
     **config.to_dict(),
 )
@@ -576,17 +577,18 @@ class PraxisDataSampler:
     def fill_cache(self):
         AssertionError("This method should be implemented by a child class.")
 
-    def get_batch(self, oversample: bool = False) -> torch.Tensor:
-        if len(self.token_cache) < 2:
+    def get_batch(
+        self, oversample: bool = False, supersample: bool = False
+    ) -> torch.Tensor:
+        if supersample and oversample:
+            raise ValueError("Cannot both oversample and supersample simultaneously.")
+
+        seq_factor = 4 if supersample else (2 if oversample else 1)
+
+        while len(self.token_cache) < seq_factor:
             self.fill_cache()
 
-        if oversample:
-            if len(self.token_cache) < 2:
-                self.fill_cache()
-            batch = torch.cat([self.token_cache.pop(0), self.token_cache.pop(0)], dim=0)
-        else:
-            batch = self.token_cache.pop(0)
-
+        batch = torch.cat([self.token_cache.pop(0) for _ in range(seq_factor)], dim=0)
         return batch
 
 
@@ -819,6 +821,7 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
+        # TODO: implement cosine oscillation of accumulation size
         trainer.accumulate_grad_batches = self.factor
 
     def _fit_grad_accumulation(self, batch_size, target_batch_size):
@@ -836,6 +839,7 @@ class WeightedIterableDataset(IterableDataset):
         weights: List[float],
         batch_size: int,
         oversample_chance: float = 0,
+        supersample_chance: float = 0,
     ):
         assert len(datasets) == len(
             weights
@@ -846,18 +850,32 @@ class WeightedIterableDataset(IterableDataset):
         self.weights = weights
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
+        self.supersample_chance = supersample_chance
 
     def __iter__(self):
         while True:
-            oversample = random.random() < self.oversample_chance
-            current_batch_size = self.batch_size // 2 if oversample else self.batch_size
+            oversample = False
+            supersample = False
+            rand = random.random()
+            current_batch_size = self.batch_size
+            if rand < self.supersample_chance:
+                if self.batch_size // 8 > 0:
+                    supersample = True
+                    current_batch_size = self.batch_size // 8
+            elif rand < self.oversample_chance:
+                if self.batch_size // 4 > 0:
+                    oversample = True
+                    current_batch_size = self.batch_size // 4
 
             batch = []
             for _ in range(current_batch_size):
                 dataset_index = random.choices(
                     range(len(self.datasets)), weights=self.weights
                 )[0]
-                item = self.datasets[dataset_index].get_batch(oversample)
+                item = self.datasets[dataset_index].get_batch(
+                    oversample,
+                    supersample,
+                )
                 batch.append(item)
 
             yield torch.stack(batch)
@@ -871,6 +889,7 @@ class DataModule(LightningDataModule):
         batch_size: int = 16,
         block_size: int = 512,
         oversample_chance: float = 0,
+        supersample_chance: float = 0,
     ):
         super().__init__()
 
@@ -885,7 +904,7 @@ class DataModule(LightningDataModule):
             weights.extend([0.7, 0.1, 0.1, 0.1])
 
         self.weighted_dataset = WeightedIterableDataset(
-            train_datasets, weights, batch_size, oversample_chance
+            train_datasets, weights, batch_size, oversample_chance, supersample_chance
         )
 
     def train_dataloader(self):
@@ -996,6 +1015,7 @@ train_dataloader = DataModule(
     hparams["batch_size"],
     hparams["block_size"],
     hparams["oversample_chance"],
+    hparams["supersample_chance"],
 )
 
 validation_dataloader = None
