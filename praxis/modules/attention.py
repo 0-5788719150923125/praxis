@@ -148,12 +148,10 @@ class PraxisAttention(nn.Module):
         # Compute scalar lambdas per head via dot products
         lambda_scalars = []
         for i in range(self.differential_heads):
-            # Shape: (num_heads, head_dim)
-            lambda_q_i = self.lambdas["q"][i]
-            lambda_k_i = self.lambdas["k"][i]
-
             # Compute dot product across head_dim for each head
-            dot_product = (lambda_q_i * lambda_k_i).sum(dim=-1)  # Shape: (num_heads,)
+            dot_product = (self.lambdas["q"][i] * self.lambdas["k"][i]).sum(
+                dim=-1
+            )  # Shape: (num_heads,)
 
             # Compute scalar lambda per head
             lambda_scalar = torch.exp(dot_product)  # Shape: (num_heads,)
