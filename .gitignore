@@ -1,8 +1,11 @@
 *.egg*
 *logs
 __pycache__
+.parcel-cache
 build
 data
-venv
+dist
+node_modules
 tmp
+venv
 wandb

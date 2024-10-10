@@ -1,0 +1,20 @@
+{
+  "semi": false,
+  "singleQuote": true,
+  "trailingComma": "none",
+  "printWidth": 80,
+  "options": {
+    "arrowParens": "always",
+    "bracketSpacing": true,
+    "tabWidth": 4,
+    "trailingComma": "none"
+  },
+  "overrides": [
+    {
+      "files": "*.json,*.yml",
+      "options": {
+        "tabWidth": 2
+      }
+    }
+  ]
+}
