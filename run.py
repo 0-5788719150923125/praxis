@@ -27,6 +27,7 @@ import logging
 import math
 import random
 import re
+import shutil
 import time
 import traceback
 from collections import Counter
@@ -40,34 +41,22 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-    PraxisTokenizer,
-    PraxisTokenizerConfig,
-)
+from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
+                    PraxisTokenizer, PraxisTokenizerConfig)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -241,7 +230,7 @@ config = PraxisConfig(
     n_dim=384,
     n_layer=args.depth if not dev else 3,
     n_head=8,
-    differential_heads=2,
+    differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     context_length=4096,
@@ -631,9 +620,9 @@ class HuggingfaceDataset(PraxisDataSampler):
                     content = document.get(key)
                     if len(self.keys) > 1:
                         if i % 2 == 0:
-                            content = "INPUT: " + content
+                            content = "\nINPUT: " + content
                         else:
-                            content = "OUTPUT: " + content + self.tokenizer.eos_token
+                            content = "\nOUTPUT: " + content + self.tokenizer.eos_token
                     else:
                         content += self.tokenizer.eos_token
                     self.cached_text += content
@@ -955,10 +944,13 @@ model = AutoModelForCausalLM.from_config(config)
 
 print(model)
 
-# Checkpoint management
+# File cleanup
 if args.reset:
+    directories = ["datasets", "lightning", "wandb"]
+    for directory in directories:
+        shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
-        os.remove(checkpoint)
+        shutil.rmtree(checkpoint)
 
 ckpt_path = None
 symlink = os.path.join(cache_dir, "praxis", "last.ckpt")

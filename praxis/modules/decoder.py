@@ -13,15 +13,13 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.shuffle = config.shuffle
         self.experts = nn.ModuleList(PraxisBlock(config) for _ in range(config.n_layer))
-        self.routers = (
-            nn.ModuleList(
+        if config.sparse:
+            self.routers = nn.ModuleList(
                 PraxisMixtureOfDepths(config) for _ in range(config.n_layer // 2)
             )
-            if config.sparse
-            else None
-        )
 
     def forward(self, inputs, attention_mask):
+
         aux_losses = []
         hidden_states = inputs  # Shape: (batch_size, seq_len, n_dim)
 

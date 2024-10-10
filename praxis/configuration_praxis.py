@@ -10,7 +10,7 @@ class PraxisConfig(PretrainedConfig):
         n_dim=384,
         n_layer=12,
         n_head=8,
-        differential_heads=1,
+        differential_heads=0,
         dropout=0,
         epsilon=1e-5,
         capacity=0.125,

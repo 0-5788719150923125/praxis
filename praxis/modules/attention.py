@@ -24,38 +24,27 @@ class PraxisAttention(nn.Module):
         self.hidden_size = config.n_dim
         self.num_heads = config.n_head
         self.head_dim = self.hidden_size // self.num_heads
-        self.differential_heads = config.differential_heads
-        assert (
-            self.differential_heads > 0
-        ), "'differential_heads' must be set to a value greater than 0."
+        self.effective_heads = config.differential_heads + 1
 
         # Query and key projections for differential heads
         self.query = nn.ModuleList(
             nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            for _ in range(self.differential_heads)
+            for _ in range(self.effective_heads)
         )
         self.key = nn.ModuleList(
             nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-            for _ in range(self.differential_heads)
+            for _ in range(self.effective_heads)
         )
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
 
         # Lambda vectors per differential head and per head
-        if self.differential_heads > 1:
+        if self.effective_heads > 1:
             self.lambda_init = 0.8  # As per the paper
-            self.lambdas = nn.ModuleDict(
-                OrderedDict(
-                    q=nn.ParameterList(
-                        nn.Parameter(torch.randn(self.num_heads, self.head_dim))
-                        for _ in range(self.differential_heads)
-                    ),
-                    k=nn.ParameterList(
-                        nn.Parameter(torch.randn(self.num_heads, self.head_dim))
-                        for _ in range(self.differential_heads)
-                    ),
-                )
+            self.lambdas = nn.ParameterList(
+                nn.Parameter(torch.randn(self.num_heads, self.head_dim))
+                for _ in range(self.effective_heads * 2)
             )
             self.norm = nn.GroupNorm(
                 num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
@@ -80,13 +69,13 @@ class PraxisAttention(nn.Module):
             self.query[i](inputs)
             .view(batch_size, seq_len, self.num_heads, self.head_dim)
             .transpose(1, 2)  # Shape: (batch_size, num_heads, seq_len, head_dim)
-            for i in range(self.differential_heads)
+            for i in range(self.effective_heads)
         ]
         k = [
             self.key[i](inputs)
             .view(batch_size, seq_len, self.num_heads, self.head_dim)
             .transpose(1, 2)
-            for i in range(self.differential_heads)
+            for i in range(self.effective_heads)
         ]
         v = (
             self.value(inputs)
@@ -98,7 +87,7 @@ class PraxisAttention(nn.Module):
         reciprocal = 1.0 / math.sqrt(self.head_dim)
         scores = [
             torch.matmul(q[i], k[i].transpose(-2, -1)) * reciprocal
-            for i in range(self.differential_heads)
+            for i in range(self.effective_heads)
         ]
 
         # Compute ALiBi biases
@@ -111,7 +100,7 @@ class PraxisAttention(nn.Module):
 
         pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
         biases = self.slopes.view(1, self.num_heads, 1, 1) * pos_diff.unsqueeze(1)
-        scores = [scores[i] - biases for i in range(self.differential_heads)]
+        scores = [scores[i] - biases for i in range(self.effective_heads)]
 
         # Apply masks
         if self.causal:
@@ -123,19 +112,17 @@ class PraxisAttention(nn.Module):
                 .unsqueeze(0)
                 .unsqueeze(0)
             )
-            scores = [scores[i] + causal_mask for i in range(self.differential_heads)]
+            scores = [scores[i] + causal_mask for i in range(self.effective_heads)]
 
         if attention_mask is not None:
             attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            scores = [
-                scores[i] + attention_mask for i in range(self.differential_heads)
-            ]
+            scores = [scores[i] + attention_mask for i in range(self.effective_heads)]
 
         # Compute attention weights
-        weights = [F.softmax(scores[i], dim=-1) for i in range(self.differential_heads)]
+        weights = [F.softmax(scores[i], dim=-1) for i in range(self.effective_heads)]
 
         # return early if we aren't using differential attention
-        if self.differential_heads == 1:
+        if self.effective_heads == 1:
             # Use standard attention
             attention = (
                 torch.matmul(weights[0], v)
@@ -147,9 +134,9 @@ class PraxisAttention(nn.Module):
 
         # Compute scalar lambdas per head via dot products
         lambda_scalars = []
-        for i in range(self.differential_heads):
+        for i in range(0, self.effective_heads, 2):
             # Compute dot product across head_dim for each head
-            dot_product = (self.lambdas["q"][i] * self.lambdas["k"][i]).sum(
+            dot_product = (self.lambdas[i] * self.lambdas[i + 1]).sum(
                 dim=-1
             )  # Shape: (num_heads,)
 
@@ -172,7 +159,7 @@ class PraxisAttention(nn.Module):
 
         # Compute differential attention weights
         diff_weights = lamb_expanded * weights[0]
-        for i in range(1, self.differential_heads):
+        for i in range(1, self.effective_heads):
             sign = (-1) ** i
             diff_weights += sign * lamb_expanded * weights[i]
 
