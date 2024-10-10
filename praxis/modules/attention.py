@@ -57,9 +57,9 @@ class PraxisAttention(nn.Module):
                     ),
                 )
             )
-        self.norm = nn.GroupNorm(
-            num_groups=self.num_heads, num_channels=self.head_dim * self.num_heads
-        )
+            self.norm = nn.GroupNorm(
+                num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
+            )
 
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
@@ -181,36 +181,27 @@ class PraxisAttention(nn.Module):
             diff_weights, v
         )  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
-        # Reshape and prepare for GroupNorm
-        attention_scores = attention_scores.permute(0, 1, 3, 2).contiguous()
-        # Shape: (batch_size, num_heads, head_dim, seq_len)
+        # Reshape for GroupNorm
+        attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+        # Shape: (batch_size, seq_len, num_heads, head_dim)
 
-        # Reshape to merge num_heads and head_dim into the channel dimension
-        attention_scores = attention_scores.view(
-            batch_size, self.num_heads * self.head_dim, seq_len
-        )
-        # Shape: (batch_size, num_heads * head_dim, seq_len)
-
-        # Apply GroupNorm
-        attention_scores = self.norm(attention_scores)
-        # Shape remains: (batch_size, num_heads * head_dim, seq_len)
-
-        # Reshape back to (batch_size, num_heads, head_dim, seq_len)
-        attention_scores = attention_scores.view(
-            batch_size, self.num_heads, self.head_dim, seq_len
-        )
-
-        # Permute back to (batch_size, num_heads, seq_len, head_dim)
-        attention_scores = attention_scores.permute(0, 1, 3, 2).contiguous()
-        # Shape: (batch_size, num_heads, seq_len, head_dim)
-
-        # Flatten the last two dimensions for the output projection
         attention_scores = attention_scores.view(
             batch_size, seq_len, self.num_heads * self.head_dim
         )
         # Shape: (batch_size, seq_len, num_heads * head_dim)
 
-        # Apply scaling factor (if required by your implementation)
+        # Permute to (batch_size, num_channels, seq_len)
+        attention_scores = attention_scores.permute(0, 2, 1).contiguous()
+        # Shape: (batch_size, num_heads * head_dim, seq_len)
+
+        # Apply GroupNorm
+        attention_scores = self.norm(attention_scores)
+
+        # Permute back to (batch_size, seq_len, num_heads * head_dim)
+        attention_scores = attention_scores.permute(0, 2, 1).contiguous()
+        # Shape: (batch_size, seq_len, num_heads * head_dim)
+
+        # Apply scaling factor
         attention_scores = attention_scores * (1 - self.lambda_init)
 
         # Output projection
