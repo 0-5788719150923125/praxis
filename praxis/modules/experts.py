@@ -14,6 +14,11 @@ input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
 @register_expert_class("praxis_block", input_shape)
 class PraxisBlock(nn.Module):
+    """
+    A standard transformer block, which we typically refer to as an
+    "expert" elsewhere.
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)

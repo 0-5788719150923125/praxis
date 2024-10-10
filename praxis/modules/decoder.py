@@ -9,6 +9,11 @@ from .router import PraxisMixtureOfDepths
 
 
 class PraxisDecoder(nn.Module):
+    """
+    A module that wraps the entire decoder block (and all
+    intermediate layers) in a single class.
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.shuffle = config.shuffle
