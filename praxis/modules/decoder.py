@@ -2,6 +2,7 @@ import random
 
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from ..configuration_praxis import PraxisConfig
 from .experts import PraxisBlock
@@ -23,7 +24,7 @@ class PraxisDecoder(nn.Module):
                 PraxisMixtureOfDepths(config) for _ in range(config.n_layer // 2)
             )
 
-    def forward(self, inputs, attention_mask):
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
 
         aux_losses = []
         hidden_states = inputs  # Shape: (batch_size, seq_len, n_dim)

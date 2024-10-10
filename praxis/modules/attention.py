@@ -4,6 +4,7 @@ from typing import Optional, OrderedDict, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from ..configuration_praxis import PraxisConfig
 
@@ -61,7 +62,9 @@ class PraxisAttention(nn.Module):
             "positions", torch.arange(self.max_seq_len, dtype=torch.float32)
         )
 
-    def forward(self, inputs, attention_mask=None, token_indices=None):
+    def forward(
+        self, inputs: Tensor, attention_mask: Tensor, token_indices: Tensor = None
+    ):
         batch_size, seq_len, _ = inputs.size()
 
         # Compute queries, keys, and values
@@ -91,7 +94,7 @@ class PraxisAttention(nn.Module):
         ]
 
         # Compute ALiBi biases
-        if token_indices is not None:
+        if torch.is_tensor(token_indices):
             positions = self.positions[token_indices]
         else:
             positions = (
@@ -114,7 +117,7 @@ class PraxisAttention(nn.Module):
             )
             scores = [scores[i] + causal_mask for i in range(self.effective_heads)]
 
-        if attention_mask is not None:
+        if torch.is_tensor(attention_mask):
             attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
             scores = [scores[i] + attention_mask for i in range(self.effective_heads)]
 

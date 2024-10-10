@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind.moe.server.layers.custom_experts import register_expert_class
+from torch import Tensor
 from transformers.activations import ACT2FN
 
 from ..configuration_praxis import PraxisConfig
@@ -29,10 +30,10 @@ class PraxisBlock(nn.Module):
 
     def forward(
         self,
-        inputs,
-        attention_mask=None,
-        router_weights=None,
-        token_indices=None,
+        inputs: Tensor,
+        attention_mask: Tensor,
+        router_weights: Tensor = None,
+        token_indices: Tensor = None,
     ):
         residual = inputs
         normalized = self.attn_norm(inputs)
@@ -42,7 +43,7 @@ class PraxisBlock(nn.Module):
         normalized = self.mlp_norm(outputs)
         outputs = self.mlp(normalized)
         outputs = self.drop(outputs)
-        if router_weights is not None:
+        if torch.is_tensor(router_weights):
             outputs *= router_weights
         aux_loss = 0
         outputs = outputs + residual
