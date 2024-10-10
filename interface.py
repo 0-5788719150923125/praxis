@@ -76,6 +76,7 @@ class TerminalDashboard:
         self.log_capture = LogCapture(self)
         self.previous_frame = None
         self.start_time = datetime.now()
+        self.rate = 0
         self.url = "N/A"
         self.experts = ""
         self.total_params = "0M"
@@ -182,6 +183,10 @@ class TerminalDashboard:
     def update_batch(self, batch):
         with self.lock:
             self.batch = batch
+
+    def update_rate(self, seconds):
+        with self.lock:
+            self.rate = seconds
 
     def update_url(self, url):
         with self.lock:
@@ -384,7 +389,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)} | {self.url}",
+                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, RATE: {self.rate:.2f}s | {self.url}",
                     width,
                 )
             )

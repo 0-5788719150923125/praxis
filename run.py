@@ -361,11 +361,18 @@ class PraxisTrainer(LightningModule):
         self.automatic_optimization = True
         self.num_tokens = 0
         self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
+        self.last_train_step_time = None
+        self.train_step_ema = None
 
     def forward(self, inputs):
         return self.model(**inputs)
 
+    def on_train_start(self):
+        super().on_train_start()
+        self.last_train_step_time = datetime.now()
+
     def training_step(self, batch, batch_idx):
+        current_time = datetime.now()
 
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs[0]
@@ -373,12 +380,18 @@ class PraxisTrainer(LightningModule):
         batch_size, num_tokens = batch.shape
         self.num_tokens += batch_size * num_tokens
 
+        step_time = current_time - self.last_train_step_time
+        self.train_step_ema = self._update_ema(self.train_step_ema, step_time)
+
+        self.last_train_step_time = current_time
+
         self.log_dict(
             {
                 "loss": loss,
                 "batch": int(batch_idx),
                 "learning_rate": self.scheduler.get_lr()[0],
                 "num_tokens": self.num_tokens,
+                "avg_step_time": self.train_step_ema,
             },
             on_step=True,
             logger=True,
@@ -407,6 +420,10 @@ class PraxisTrainer(LightningModule):
             prog_bar=True,
         )
 
+    def on_validation_end(self, trainer, lm):
+        super().on_validation_end(trainer, lm)
+        self.last_train_step_time = datetime.now()
+
     def configure_optimizers(self):
         "Create optimizer and scheduler"
         return {
@@ -423,6 +440,12 @@ class PraxisTrainer(LightningModule):
 
     def on_load_checkpoint(self, checkpoint):
         self.num_tokens = checkpoint.get("num_tokens", 0)
+
+    def _update_ema(self, ema, new_value):
+        if ema is None:
+            return new_value.total_seconds()
+        alpha = 0.01
+        return alpha * new_value.total_seconds() + (1 - alpha) * ema
 
 
 class TerminalInterface(Callback):
@@ -489,8 +512,10 @@ class TerminalInterface(Callback):
         if self.dashboard:
             batch = trainer.callback_metrics.get("batch", 0)
             step = trainer.callback_metrics.get("step", 0)
+            rate = trainer.callback_metrics.get("avg_step_time", 0)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
+            self.dashboard.update_rate(rate.item())
             self.dashboard.update_loss(self.ema_loss)
             self.dashboard.fake_log(chance=0.000001)
             if random.random() < 0.25:
