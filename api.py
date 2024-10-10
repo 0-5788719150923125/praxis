@@ -3,10 +3,11 @@ import inspect
 import logging
 from threading import Event, Thread
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 from werkzeug.serving import make_server
 
 app = Flask(__name__)
+app.static_folder = "templates"
 
 
 class APIServer:
@@ -46,7 +47,13 @@ class APIServer:
 
 @app.route("/", methods=["GET"])
 def home():
-    return render_template("index.html")
+    return send_from_directory(app.static_folder, "index.html")
+
+
+@app.route("/<path:filename>")
+def serve_static(filename):
+    if filename != "input/":  # Exclude your API route
+        return send_from_directory(app.static_folder, filename)
 
 
 @app.route("/input/", methods=["GET", "POST"])
