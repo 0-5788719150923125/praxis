@@ -18,7 +18,7 @@ class PraxisAttention(nn.Module):
     https://arxiv.org/abs/2108.12409
     """
 
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
         self.max_seq_len = config.context_length
@@ -117,9 +117,8 @@ class PraxisAttention(nn.Module):
             )
             scores = [scores[i] + causal_mask for i in range(self.effective_heads)]
 
-        if torch.is_tensor(attention_mask):
-            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            scores = [scores[i] + attention_mask for i in range(self.effective_heads)]
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+        scores = [scores[i] + attention_mask for i in range(self.effective_heads)]
 
         # Compute attention weights
         weights = [F.softmax(scores[i], dim=-1) for i in range(self.effective_heads)]

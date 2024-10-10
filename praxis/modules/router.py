@@ -14,7 +14,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     def __init__(
         self,
-        config: PraxisConfig = None,
+        config: PraxisConfig,
         *args,
         **kwargs,
     ):
