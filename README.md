@@ -2,7 +2,7 @@
 
 <!-- Triangulated Human Observation for Reasoning in the Natural Sciences -->
 
-*Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice.*
+_Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice._
 
 ![Terminal](./static/terminal.webp)
 
@@ -46,6 +46,7 @@ python run.py
 ```
 
 Supported arguments:
+
 ```sh
 python run.py \
   --seed 42 \                    # Set a global seed for random number generation.
@@ -74,6 +75,7 @@ http://localhost:5000/input
 This payload should support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
 
 Example request:
+
 ```py
 import requests
 
@@ -127,7 +129,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
 - build connectors, allowing people to integrate their nodes with personal data
 
-## tbd
+## notes, ideas and random things I want to remember
 
 - a proper and robust DHT
 - central and persistent relay peers, to act as global bootstrap nodes

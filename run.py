@@ -382,7 +382,6 @@ class PraxisTrainer(LightningModule):
 
         step_time = current_time - self.last_train_step_time
         self.train_step_ema = self._update_ema(self.train_step_ema, step_time)
-
         self.last_train_step_time = current_time
 
         self.log_dict(
