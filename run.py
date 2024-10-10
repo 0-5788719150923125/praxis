@@ -328,11 +328,9 @@ predict_tokens = 1
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-5
 hparams["optimizer"] = dict(
-    optimizer_name="AdEMAMix",
+    optimizer_name="AdamW",
     lr=1e-3,
     weight_decay=1e-2,
-    weight_decouple=True,
-    alpha=5.9,
     wd_ban_list=[
         "bias",
         "wte",

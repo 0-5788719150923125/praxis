@@ -57,9 +57,7 @@ class PraxisAttention(nn.Module):
                     ),
                 )
             )
-            self.norm = nn.GroupNorm(
-                num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
-            )
+        self.norm = nn.GroupNorm(num_groups=1, num_channels=self.head_dim)
 
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
@@ -183,25 +181,29 @@ class PraxisAttention(nn.Module):
             diff_weights, v
         )  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
-        # Reshape for normalization
-        attention_scores = attention_scores.permute(
-            0, 2, 1, 3
-        ).contiguous()  # Shape: (batch_size, seq_len, num_heads, head_dim)
+        # Reshape for GroupNorm
+        attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+        # Shape: (batch_size, seq_len, num_heads, head_dim)
 
-        attention_scores = attention_scores.view(
-            batch_size, seq_len, self.num_heads * self.head_dim
-        )  # Shape: (batch_size, seq_len, num_heads * head_dim)
-
-        attention_scores = attention_scores.transpose(
-            1, 2
-        )  # Shape: (batch_size, num_heads * head_dim, seq_len)
+        # Merge batch_size and seq_len
+        attention_scores = attention_scores.view(-1, self.head_dim)
+        # Shape: (batch_size * seq_len * num_heads, head_dim)
 
         # Apply GroupNorm
         attention_scores = self.norm(attention_scores)
 
-        attention_scores = attention_scores.transpose(
-            1, 2
-        )  # Shape: (batch_size, seq_len, num_heads * head_dim)
+        # Reshape back to (batch_size, seq_len, num_heads, head_dim)
+        attention_scores = attention_scores.view(
+            batch_size, seq_len, self.num_heads, self.head_dim
+        )
+
+        # Apply scaling factor
+        attention_scores = attention_scores * (1 - self.lambda_init)
+
+        # Reshape to (batch_size, seq_len, num_heads * head_dim)
+        attention_scores = attention_scores.view(
+            batch_size, seq_len, self.num_heads * self.head_dim
+        )
 
         # Output projection
         return self.output(attention_scores)
