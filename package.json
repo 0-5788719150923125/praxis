@@ -2,9 +2,10 @@
   "name": "praxis",
   "version": "0.1.0",
   "description": "https://src.eco",
+  "source": "flow/index.html",
   "scripts": {
-    "start": "parcel flow/index.html",
-    "build": "parcel build flow/index.html --dist-dir templates --no-content-hash"
+    "start": "parcel",
+    "build": "parcel build --dist-dir templates --no-content-hash"
   },
   "repository": {
     "type": "git",
