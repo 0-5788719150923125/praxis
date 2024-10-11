@@ -1,5 +1,11 @@
 *.egg*
 *logs
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex
+*.gz
 __pycache__
 .parcel-cache
 build

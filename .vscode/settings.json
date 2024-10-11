@@ -8,6 +8,11 @@
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
+  "[latex]": {
+    "editor.formatOnPaste": false,
+    "editor.suggestSelection": "recentlyUsedByPrefix"
+  },
+  "latex-workshop.formatting.latex": "latexindent",
   "editor.formatOnSave": true,
   "isort.check": true,
   "workbench.editor.limit.value": 5,

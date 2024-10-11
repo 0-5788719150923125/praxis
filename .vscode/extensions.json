@@ -1,6 +1,7 @@
 {
     "recommendations": [
         "esbenp.prettier-vscode",
+        "James-Yu.latex-workshop",
         "ms-python.python",
         "ms-python.black-formatter",
         "ms-python.isort",
