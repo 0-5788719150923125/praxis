@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -48,7 +48,7 @@ class PraxisModel(PreTrainedModel):
         )
 
 
-class PraxisForCausalLM(PraxisModel):
+class PraxisForCausalLM(PraxisModel, GenerationMixin):
     model_type = "praxis"
 
     def __init__(self, config: PraxisConfig):

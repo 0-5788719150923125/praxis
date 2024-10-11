@@ -348,11 +348,11 @@ predict_interval = 3  # seconds
 predict_tokens = 1
 
 # Optimizer configuration
-# from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-min_lr = 1e-5
+# https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 hparams["optimizer"] = dict(
     optimizer_name="GrokFastAdamW",
     lr=1e-3,
+    min_lr=1e-5,
     weight_decay=1e-2,
     wd_ban_list=[
         "bias",
@@ -370,7 +370,7 @@ scheduler_func = partial(
     CosineAnnealingWarmupRestarts,
     first_cycle_steps=4096 * 4,
     max_lr=hparams["optimizer"]["lr"],
-    min_lr=min_lr,
+    min_lr=hparams["optimizer"]["min_lr"],
     gamma=1.0,
     warmup_steps=512,
 )
