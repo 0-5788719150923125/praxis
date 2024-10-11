@@ -1,8 +1,8 @@
 {
   "name": "praxis",
   "version": "0.1.0",
-  "description": "https://src.eco",
-  "source": "flow/index.html",
+  "description": "includes all the tricks",
+  "source": "web/index.html",
   "scripts": {
     "start": "parcel",
     "build": "parcel build --dist-dir templates --no-content-hash"
@@ -16,7 +16,7 @@
   "bugs": {
     "url": "https://github.com/0-5788719150923125/praxis/issues"
   },
-  "homepage": "https://github.com/0-5788719150923125/praxis#readme",
+  "homepage": "https://src.eco",
   "devDependencies": {
     "parcel": "^2.12.0",
     "prettier": "^3.3.3",
