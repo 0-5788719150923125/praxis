@@ -240,7 +240,7 @@ except Exception as e:
 config = PraxisConfig(
     n_emb=512,
     n_dim=384,
-    n_layer=args.depth if not dev else 3,
+    n_layer=3 if dev else args.depth,
     n_head=8,
     differential_heads=1,
     dropout=0.1,
@@ -435,9 +435,11 @@ class PraxisTrainer(LightningModule):
         }
 
     def on_save_checkpoint(self, checkpoint):
+        super().on_save_checkpoint(checkpoint)
         checkpoint["num_tokens"] = self.num_tokens
 
     def on_load_checkpoint(self, checkpoint):
+        super().on_load_checkpoint(checkpoint)
         self.num_tokens = checkpoint.get("num_tokens", 0)
 
     def _update_ema(self, ema, new_value):
@@ -528,10 +530,12 @@ class TerminalInterface(Callback):
                     )
                 )
 
-    def on_save_checkpoint(self, checkpoint):
+    def on_save_checkpoint(self, trainer, lm, checkpoint):
+        super().on_save_checkpoint(trainer, lm, checkpoint)
         checkpoint["host_count"] = self.host_count
 
-    def on_load_checkpoint(self, checkpoint):
+    def on_load_checkpoint(self, trainer, lm, checkpoint):
+        super().on_load_checkpoint(trainer, lm, checkpoint)
         self.host_count = checkpoint.get("host_count", 0)
 
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
@@ -980,7 +984,7 @@ checkpoint_callback = TimeBasedCheckpoint(
     dirpath=os.path.join(cache_dir, "praxis"),
     filename="model-{loss:.4f}",
     enable_version_counter=False,
-    save_interval=3600,
+    save_interval=60,
 )
 
 # Bootstrap the model and trainer
