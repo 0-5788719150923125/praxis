@@ -76,7 +76,7 @@ class GunTransport:
                     except Empty:
                         pass  # Queue became empty, try putting again
 
-    def get_training_sample(self, num_entries=10):
+    def get_sample(self, num_entries=10):
         new_entries = []
         while len(new_entries) < num_entries:
             try:
@@ -94,7 +94,7 @@ class GunTransport:
                 )
             sample = all_entries[-num_entries:]
 
-        return [random.choice(["INPUT: ", "OUTPUT: "]) + entry for entry in sample]
+        return sample
 
     def __del__(self):
         if self._nodejs_process:
@@ -117,6 +117,6 @@ if __name__ == "__main__":
     # Retrieve the output whenever needed
     while True:
         time.sleep(10)
-        output = gun.get_training_sample(1000)
+        output = gun.get_sample(1000)
         for i, item in enumerate(output):
             print(f"{i}: {item}")

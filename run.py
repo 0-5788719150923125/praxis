@@ -41,22 +41,34 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
-                    PraxisTokenizer, PraxisTokenizerConfig)
+from praxis import (
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+    PraxisTokenizer,
+    PraxisTokenizerConfig,
+)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -774,10 +786,13 @@ class GunChatDataset(PraxisDataSampler):
             return True
 
     def _tokenize_text(self):
-        text_list = self.gun.get_training_sample(100)
+        text_list = self.gun.get_sample(250)
+        formatted = "\n".join(
+            [random.choice(["INPUT: ", "OUTPUT: "]) + entry for entry in text_list]
+        )
 
         tokens = self.tokenizer(
-            text="\n".join(text_list),
+            text=formatted,
             max_length=self.block_size,
             stride=0,
             padding=True,
