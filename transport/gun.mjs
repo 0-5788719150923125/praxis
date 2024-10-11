@@ -45,6 +45,7 @@ src
         cache.push(message)
         process.stdout.write(message + '\n')
       }
+
       while (cache.length > 25) {
         cache.shift()
       }
