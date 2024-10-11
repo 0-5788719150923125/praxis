@@ -175,6 +175,12 @@ parser.add_argument(
     help="Supplement training with chat data from https://src.eco/?focus=trade (default: False)",
 )
 parser.add_argument(
+    "--instruct",
+    action="store_true",
+    default=False,
+    help="Supplement training with instruction-tuning data (default: False)",
+)
+parser.add_argument(
     "--dev",
     action="store_true",
     default=False,
@@ -199,6 +205,7 @@ port = args.port
 host_name = args.host_name
 phi = args.phi
 gun = args.gun
+instruct = args.instruct
 
 cache_dir = args.cache_dir
 train_data_path = args.data_path
@@ -299,13 +306,18 @@ train_params = dict(
 )
 
 # Training data mixing
-weights = [1, 0, 0, 0, 0, 0, 0] if dev else [0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
+weights = [1, 0, 0, 0, 0, 0, 0, 0] if dev else [0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
 population = [
     dict(path="open-phi/textbooks", keys=["markdown"]),
     dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
+    ),
+    dict(
+        path="Muennighoff/natural-instructions",
+        name="default",
+        keys=["definition", "inputs", "targets"],
     ),
     dict(
         path="togethercomputer/RedPajama-Data-V2",
@@ -324,9 +336,10 @@ hparams["training_data"]["primary"].append(random.choices(population, weights, k
 if phi:
     hparams["training_data"]["primary"].append(population[0])
     hparams["training_data"]["primary"].append(population[1])
+    hparams["training_data"]["primary"].append(population[2])
 
 if not dev:
-    hparams["training_data"]["validation"].append(population[2])
+    hparams["training_data"]["validation"].append(population[3])
 
 # Misc config
 predict_interval = 3  # seconds
@@ -662,9 +675,8 @@ class HuggingfaceDataset(PraxisDataSampler):
             dataset_args["name"] = config["name"]
 
         self.dataset = load_dataset(**dataset_args)
-        self.buffer_size = 10_000
-        self.text_cache_size = 10 * self.buffer_size
-        self.cached_text = ""
+        self.buffer_size = 1_000
+        self.text_cache_size = 100 * self.buffer_size
         self.token_cache = []
         self.shuffled_dataset = self.dataset.shuffle(
             seed=seed, buffer_size=self.buffer_size
@@ -676,24 +688,48 @@ class HuggingfaceDataset(PraxisDataSampler):
         return True
 
     def fill_cache(self):
-        while len(self.cached_text) < self.text_cache_size:
+        cache_text = ""
+        while len(cache_text) < self.text_cache_size:
             try:
+                if len(self.keys) == 3:
+                    formats = [
+                        ["SYSTEM", "INPUT", "OUTPUT"],
+                        ["SYSTEM", "USER", "ASSISTANT"],
+                    ]
+                    fmt = random.choice(formats)
+                elif len(self.keys) == 2:
+                    formats = [
+                        ["INPUT", "OUTPUT"],
+                        ["USER", "ASSISTANT"],
+                    ]
+                    fmt = random.choice(formats)
                 document = next(self.dataset_iterator)
                 for i, key in enumerate(self.keys):
                     content = document.get(key)
-                    if len(self.keys) > 1:
+                    if len(self.keys) == 3:
+                        if i % 3 == 0:
+                            content = f"\n{fmt[0]}: " + content
+                        elif i % 3 == 1:
+                            content = f"\n{fmt[1]}: " + content
+                        elif i % 3 == 2:
+                            content = (
+                                f"\n{fmt[2]}: " + content + self.tokenizer.eos_token
+                            )
+                    elif len(self.keys) == 2:
                         if i % 2 == 0:
-                            content = "\nINPUT: " + content
+                            content = f"\n{fmt[0]}: " + content
                         else:
-                            content = "\nOUTPUT: " + content + self.tokenizer.eos_token
+                            content = (
+                                f"\n{fmt[1]}: " + content + self.tokenizer.eos_token
+                            )
                     else:
                         content += self.tokenizer.eos_token
-                    self.cached_text += content
+                    cache_text += content
             except StopIteration:
                 self.dataset_iterator = iter(self.shuffled_dataset)
 
         tokens = self.tokenizer(
-            text=self.cached_text,
+            text=cache_text,
             max_length=self.block_size,
             stride=0,
             padding=True,
@@ -705,7 +741,6 @@ class HuggingfaceDataset(PraxisDataSampler):
         self.token_cache.extend(
             [batch for batch in tokens if len(batch) == self.block_size]
         )
-        self.cached_text = ""
 
 
 class MultiDirectoryDataset(PraxisDataSampler):

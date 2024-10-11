@@ -61,6 +61,7 @@ python run.py \
   --wandb \                      # Log training metrics to Weights and Biases (https://wandb.ai).
   --phi \                        # Supplement with expert data.
   --gun \                        # Supplement training with chat data from https://src.eco/?focus=trade (default: False)
+  --instruct \                   # Supplement training with instruction-tuning data (default: False)
   --dev \                        # Launch with settings that bootstrap faster (3 layers, a smaller dataset, etc.)
   --reset                        # Delete your checkpoints and start-over.
 ```
