@@ -6,6 +6,9 @@
 *.log
 *.synctex
 *.gz
+*.bbl
+*.blg
+*.bib
 __pycache__
 .parcel-cache
 build
