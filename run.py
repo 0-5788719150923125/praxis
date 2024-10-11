@@ -269,8 +269,8 @@ hparams = dict(
     batch_size=args.batch_size if args.batch_size else 1,
     target_batch_size=64,
     block_size=512,
-    oversample_chance=0.1,
-    supersample_chance=0.01,
+    oversample_chance=0.1,  # double the block_size
+    supersample_chance=0.01,  # quadruple the block_size
     training_data=dict(primary=[], validation=[]),
     **config.to_dict(),
 )
@@ -299,7 +299,7 @@ train_params = dict(
 )
 
 # Training data mixing
-weights = [1, 0, 0, 0, 0, 0, 0] if dev else [0, 0, 0, 1, 0.666666, 0.333, 0.01]
+weights = [1, 0, 0, 0, 0, 0, 0] if dev else [0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
 population = [
     dict(path="open-phi/textbooks", keys=["markdown"]),
     dict(

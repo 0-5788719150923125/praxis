@@ -1,4 +1,5 @@
 import Gun from 'gun'
+import SEA from 'gun/sea.js'
 
 const bootstrapPeers = ['wss://59.src.eco/gun', 'wss://95.src.eco/gun']
 const gun = Gun({
@@ -30,10 +31,19 @@ src
   .get('trade')
   .on(async (node, key) => {
     try {
-      const payload = JSON.parse(node).message
-      if (!cache.includes(payload)) {
-        cache.push(payload)
-        process.stdout.write(payload + '\n')
+      let payload = JSON.parse(node)
+
+      let message = payload.message
+      if (payload?.pubKey !== null) {
+        const sender = await gun.user(payload.pubKey)
+        if (typeof sender !== 'undefined') {
+          message = await SEA.verify(payload.message, sender.pub)
+        }
+      }
+
+      if (!cache.includes(message)) {
+        cache.push(message)
+        process.stdout.write(message + '\n')
       }
       while (cache.length > 25) {
         cache.shift()
