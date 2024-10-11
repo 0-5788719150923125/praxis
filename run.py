@@ -41,34 +41,22 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-    PraxisTokenizer,
-    PraxisTokenizerConfig,
-)
+from praxis import (PraxisConfig, PraxisForCausalLM, PraxisModel,
+                    PraxisTokenizer, PraxisTokenizerConfig)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -169,6 +157,12 @@ parser.add_argument(
     help="Supplement training with specialist data (default: False)",
 )
 parser.add_argument(
+    "--gun",
+    action="store_true",
+    default=False,
+    help="Supplement training with chat data from https://src.eco/?focus=trade (default: False)",
+)
+parser.add_argument(
     "--dev",
     action="store_true",
     default=False,
@@ -192,6 +186,7 @@ device = args.device if args.device else "cpu"
 port = args.port
 host_name = args.host_name
 phi = args.phi
+gun = args.gun
 
 cache_dir = args.cache_dir
 train_data_path = args.data_path
@@ -239,9 +234,9 @@ except Exception as e:
 # Transformers config
 config = PraxisConfig(
     n_emb=512,
-    n_dim=256,
+    n_dim=384,
     n_layer=3 if dev else args.depth,
-    n_head=4,
+    n_head=8,
     differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
@@ -617,6 +612,10 @@ class PraxisDataSampler:
         self.tokenizer = tokenizer
         self.block_size = block_size
 
+    @property
+    def can_sample(self):
+        return True
+
     def fill_cache(self):
         AssertionError("This method should be implemented by a child class.")
 
@@ -659,6 +658,10 @@ class HuggingfaceDataset(PraxisDataSampler):
             seed=seed, buffer_size=self.buffer_size
         )
         self.dataset_iterator = iter(self.shuffled_dataset)
+
+    @property
+    def can_sample(self):
+        return True
 
     def fill_cache(self):
         while len(self.cached_text) < self.text_cache_size:
@@ -707,6 +710,10 @@ class MultiDirectoryDataset(PraxisDataSampler):
         random.shuffle(self.file_list)
         self.file_iterator = iter(self.file_list)
 
+    @property
+    def can_sample(self):
+        return True
+
     def _get_file_list(self) -> List[str]:
         """Recursively get all files in all directories."""
         file_list = []
@@ -746,6 +753,46 @@ class MultiDirectoryDataset(PraxisDataSampler):
             [batch for batch in tokens if len(batch) == self.block_size]
         )
         self.cached_text = ""
+
+
+class GunChatDataset(PraxisDataSampler):
+    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
+        super().__init__(tokenizer, block_size)
+
+        from transport.gun import GunTransport as Gun
+
+        self.gun = Gun()
+        self.token_cache = []
+        self._next_batch = []
+
+    @property
+    def can_sample(self):
+        self._next_batch = self._tokenize_text()
+        if len(self._next_batch) < 4:
+            return False
+        else:
+            return True
+
+    def _tokenize_text(self):
+        text_list = self.gun.get_training_sample(100)
+
+        tokens = self.tokenizer(
+            text="\n".join(text_list),
+            max_length=self.block_size,
+            stride=0,
+            padding=True,
+            truncation=True,
+            return_overflowing_tokens=True,
+            return_tensors="pt",
+        )["input_ids"]
+
+        return tokens
+
+    def fill_cache(self):
+        self.token_cache = []
+        self.token_cache.extend(
+            [batch for batch in self._next_batch if len(batch) == self.block_size]
+        )
 
 
 class Generator:
@@ -919,11 +966,19 @@ class WeightedIterableDataset(IterableDataset):
                     current_batch_size = self.batch_size // 4
 
             batch = []
+
+            available_datasets = []
+            available_weights = []
+            for i, dataset in enumerate(self.datasets):
+                if dataset.can_sample:
+                    available_datasets.append(dataset)
+                    available_weights.append(self.weights[i])
+
             for _ in range(current_batch_size):
                 dataset_index = random.choices(
-                    range(len(self.datasets)), weights=self.weights
+                    range(len(available_datasets)), weights=available_weights
                 )[0]
-                item = self.datasets[dataset_index].get_batch(
+                item = available_datasets[dataset_index].get_batch(
                     oversample,
                     supersample,
                 )
@@ -945,14 +1000,17 @@ class DataModule(LightningDataModule):
         super().__init__()
 
         weights = []
+        # TODO: This is awful
         if len(train_datasets) == 1:
             weights.append(1.0)
         elif len(train_datasets) == 2:
             weights.extend([0.9, 0.1])
         elif len(train_datasets) == 3:
             weights.extend([0.8, 0.1, 0.1])
-        elif len(train_datasets) >= 4:
-            weights.extend([0.7, 0.1, 0.1, 0.1])
+        elif len(train_datasets) == 4:
+            weights.extend([0.79, 0.1, 0.1, 0.01])
+        elif len(train_datasets) >= 5:
+            weights.extend([0.78, 0.1, 0.1, 0.01, 0.01])
 
         self.weighted_dataset = WeightedIterableDataset(
             train_datasets, weights, batch_size, oversample_chance, supersample_chance
@@ -1046,6 +1104,9 @@ if train_data_path:
     train_data.append(
         MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
     )
+
+if gun:
+    train_data.append(GunChatDataset(tokenizer, hparams["block_size"]))
 
 
 # Load validation data
