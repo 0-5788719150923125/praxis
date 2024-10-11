@@ -144,6 +144,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 - [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale)
 - embed training code within the model architecture itself, such that loading a model automatically bootstraps training, as well
+- cascading assistant models via hivemind (speculative decoding)
 
 ## won't do
 

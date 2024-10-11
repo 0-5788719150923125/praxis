@@ -336,6 +336,8 @@ hparams["training_data"]["primary"].append(random.choices(population, weights, k
 if phi:
     hparams["training_data"]["primary"].append(population[0])
     hparams["training_data"]["primary"].append(population[1])
+
+if instruct:
     hparams["training_data"]["primary"].append(population[2])
 
 if not dev:
@@ -349,12 +351,16 @@ predict_tokens = 1
 # from: https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 min_lr = 1e-5
 hparams["optimizer"] = dict(
-    optimizer_name="AdamW",
+    optimizer_name="GrokFastAdamW",
     lr=1e-3,
     weight_decay=1e-2,
     wd_ban_list=[
         "bias",
         "wte",
+        "GroupNorm.weight",
+        "GroupNorm.bias",
+        "LayerNorm.weight",
+        "LayerNorm.bias",
         "RMSNorm.weight",
         "RMSNorm.bias",
     ],
@@ -582,9 +588,9 @@ class TerminalInterface(Callback):
         if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
             self.text = tokenizer.bos_token
             if self.dashboard:
-                self.dashboard.update_status("[ERR]")
                 self.host_count += 1
                 self.dashboard.set_host_count(self.host_count)
+                self.dashboard.update_status("[ERR]")
         elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:
@@ -683,10 +689,6 @@ class HuggingfaceDataset(PraxisDataSampler):
         )
         self.dataset_iterator = iter(self.shuffled_dataset)
 
-    @property
-    def can_sample(self):
-        return True
-
     def fill_cache(self):
         cache_text = ""
         while len(cache_text) < self.text_cache_size:
@@ -756,10 +758,6 @@ class MultiDirectoryDataset(PraxisDataSampler):
         self.text_cache_size = 10 * self.buffer_size
         random.shuffle(self.file_list)
         self.file_iterator = iter(self.file_list)
-
-    @property
-    def can_sample(self):
-        return True
 
     def _get_file_list(self) -> List[str]:
         """Recursively get all files in all directories."""
@@ -871,6 +869,7 @@ class Generator:
                 input_ids = torch.tensor([input_ids], dtype=torch.long)
             input_ids = input_ids.to(device)
 
+        # https://huggingface.co/docs/transformers/v4.22.2/en/main_classes/text_generation
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
