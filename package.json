@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.3.2",
+    "gun": "^0.2020.1240",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

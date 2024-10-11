@@ -239,9 +239,9 @@ except Exception as e:
 # Transformers config
 config = PraxisConfig(
     n_emb=512,
-    n_dim=384,
+    n_dim=256,
     n_layer=3 if dev else args.depth,
-    n_head=8,
+    n_head=4,
     differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
