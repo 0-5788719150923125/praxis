@@ -419,8 +419,8 @@ class PraxisTrainer(LightningModule):
             prog_bar=True,
         )
 
-    def on_validation_end(self, trainer, lm):
-        super().on_validation_end(trainer, lm)
+    def on_validation_end(self):
+        super().on_validation_end()
         self.last_train_step_time = datetime.now()
 
     def configure_optimizers(self):
@@ -461,6 +461,7 @@ class TerminalInterface(Callback):
         self.max_length = 4096
         self.interval = predict_interval
         self.num_tokens = predict_tokens
+        self.host_count = 0
         self.dashboard = False
         if use_dashboard:
             max_data_points = 1000
@@ -527,6 +528,12 @@ class TerminalInterface(Callback):
                     )
                 )
 
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["host_count"] = self.host_count
+
+    def on_load_checkpoint(self, checkpoint):
+        self.host_count = checkpoint.get("host_count", 0)
+
     def _generate_sample_text(self, lm, batch_idx=0, interval=10):
 
         if not self._is_trigger_passed(self.last_time, self.interval):
@@ -552,7 +559,8 @@ class TerminalInterface(Callback):
             self.text = tokenizer.bos_token
             if self.dashboard:
                 self.dashboard.update_status("[ERR]")
-                self.dashboard.count()
+                self.host_count += 1
+                self.dashboard.set_host_count(self.host_count)
         elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:

@@ -158,9 +158,9 @@ class TerminalDashboard:
             self.mode = mode
             self.previous_frame = None  # force a redraw
 
-    def count(self):
+    def set_host_count(self, count):
         with self.lock:
-            self.num_faults += 1
+            self.num_faults = count
 
     def update_params(self, total_params):
         with self.lock:
