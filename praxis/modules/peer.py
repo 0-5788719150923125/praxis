@@ -19,13 +19,13 @@ class PEER(nn.Module):
         super().__init__()
 
         n_dim = config.n_dim
-        dim_key = None
+        key_dim = None
         product_key_topk = None
         self.num_heads = config.peer_heads
         self.separate_embed_per_head = True
         self.num_experts = config.peer_experts
         self.num_experts_per_head = config.peer_experts_per_head
-        self.dim_key = dim_key if dim_key is not None else n_dim // 2
+        self.key_dim = key_dim if key_dim is not None else n_dim // 2
         self.product_key_topk = (
             product_key_topk
             if product_key_topk is not None
@@ -53,18 +53,19 @@ class PEER(nn.Module):
             def forward(self, x):
                 return x.permute(2, 0, 1, 3, 4).contiguous()
 
-        # BatchNorm for combined partitions and heads
-        self.norm = nn.BatchNorm1d(2 * self.num_heads * self.dim_key)
+        # # BatchNorm for combined partitions and heads
+        # self.norm = nn.BatchNorm1d(2 * self.num_heads * self.key_dim)
 
         self.queries = nn.Sequential(
-            nn.Linear(n_dim, self.dim_key * self.num_heads * 2, bias=False),
-            nn.Unflatten(-1, (2, self.num_heads, self.dim_key)),
+            nn.Linear(n_dim, self.key_dim * self.num_heads * 2, bias=False),
+            # nn.BatchNorm1d(2 * self.num_heads * self.key_dim),
+            nn.Unflatten(-1, (2, self.num_heads, self.key_dim)),
             Permute(),
         )
 
         scale = 0.02
         self.keys = nn.Parameter(
-            torch.randn(self.num_heads, self.num_keys, 2, self.dim_key) * scale
+            torch.randn(self.num_heads, self.num_keys, 2, self.key_dim) * scale
         )
 
     def forward(self, x: Tensor):
@@ -74,22 +75,22 @@ class PEER(nn.Module):
         # Generate queries
         queries = self.queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
-        # Reshape for batch normalization
-        queries = queries.permute(
-            0, 1, 3, 2, 4
-        )  # Shape: (batch_size, seq_len, num_heads, 2, dim_key)
-        queries = queries.contiguous().view(
-            batch_size * seq_len, self.num_heads * 2 * self.dim_key
-        )
+        # # Reshape for batch normalization
+        # queries = queries.permute(
+        #     0, 1, 3, 2, 4
+        # )  # Shape: (batch_size, seq_len, num_heads, 2, dim_key)
+        # queries = queries.contiguous().view(
+        #     batch_size * seq_len, self.num_heads * 2 * self.key_dim
+        # )
 
-        # Apply batch normalization
-        queries = self.norm(queries)
+        # # Apply batch normalization
+        # queries = self.norm(queries)
 
-        # Reshape back to original dimensions
-        queries = queries.view(batch_size, seq_len, self.num_heads, 2, self.dim_key)
-        queries = queries.permute(
-            3, 0, 1, 2, 4
-        )  # Shape: (2, batch_size, seq_len, num_heads, dim_key)
+        # # Reshape back to original dimensions
+        # queries = queries.view(batch_size, seq_len, self.num_heads, 2, self.key_dim)
+        # queries = queries.permute(
+        #     3, 0, 1, 2, 4
+        # )  # Shape: (2, batch_size, seq_len, num_heads, dim_key)
 
         # Compute similarities using Einstein summation
         sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
