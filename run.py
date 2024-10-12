@@ -239,7 +239,7 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
 sys.excepthook = exception_to_file
 
 # Global configuration
-vocab_size = 4096
+vocab_size = 4096 * 4
 
 # Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
@@ -261,6 +261,7 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     context_length=4096,
     sparse=True if args.sparse else not args.dense,
+    capacity=0.125,
     shuffle=args.shuffle,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
@@ -365,6 +366,28 @@ hparams["optimizer"] = dict(
         "RMSNorm.bias",
     ],
 )
+# hparams["optimizer"] = dict(
+#     optimizer_name="SOAP",
+#     lr=1e-3,
+#     min_lr=1e-5,
+#     weight_decay=1e-2,
+#     precondition_frequency=10,
+#     max_precondition_dim=1024,
+#     normalize_gradient=False,
+#     correct_bias=True,
+#     precondition_1d=False,
+#     merge_dims=False,
+#     wd_ban_list=[
+#         "bias",
+#         "wte",
+#         "GroupNorm.weight",
+#         "GroupNorm.bias",
+#         "LayerNorm.weight",
+#         "LayerNorm.bias",
+#         "RMSNorm.weight",
+#         "RMSNorm.bias",
+#     ],
+# )
 
 scheduler_func = partial(
     CosineAnnealingWarmupRestarts,

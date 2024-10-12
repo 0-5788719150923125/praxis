@@ -17,6 +17,9 @@ class PraxisConfig(PretrainedConfig):
         vocab_size=4096,
         context_length=4096,
         activation="mish",
+        peer_heads=4,
+        peer_experts=256**2,
+        peer_experts_per_head=4,
         sparse=False,
         shuffle=False,
         pad_token_id=0,
@@ -45,6 +48,9 @@ class PraxisConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.context_length = context_length
         self.activation = activation
+        self.peer_heads = peer_heads
+        self.peer_experts = peer_experts
+        self.peer_experts_per_head = peer_experts_per_head
         self.sparse = sparse
         self.shuffle = shuffle
         self.causal = False

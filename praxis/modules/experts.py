@@ -25,7 +25,7 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
-        self.mlp = PraxisGLU(config)
+        self.mlp = PraxisPeer(config)
         self.drop = nn.Dropout(config.dropout)
 
     def forward(
@@ -77,85 +77,75 @@ class PraxisGLU(nn.Module):
         return self.down(a * self.act(b))
 
 
-def exists(val):
-    return val is not None
-
-
-def default(val, d):
-    return val if exists(val) else d
-
-
-class RMSNorm(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.scale = dim**0.5
-        self.gamma = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x):
-        return F.normalize(x, dim=-1) * self.scale * self.gamma
-
-
-class Permute(nn.Module):
-    def __init__(self):
-        super(Permute, self).__init__()
-
-    def forward(self, x):
-        return x.permute(0, 2, 1, 3, 4).contiguous()
+@register_expert_class("praxis_peer", input_shape)
+class PraxisPeer(nn.Sequential):
+    def __init__(self, config: PraxisConfig):
+        super().__init__(
+            OrderedDict(
+                [
+                    ("up", PEER(config)),
+                    ("act", ACT2FN[config.activation]),
+                    ("down", PEER(config)),
+                ]
+            )
+        )
 
 
 class PEER(nn.Module):
-    def __init__(
-        self,
-        dim,
-        *,
-        heads=8,
-        num_experts=1_000_000,
-        num_experts_per_head=16,
-        activation=nn.GELU,
-        dim_key=None,
-        product_key_topk=None,
-        separate_embed_per_head=False,
-        pre_rmsnorm=False,
-        dropout=0.0,
-    ):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
 
-        self.norm = RMSNorm(dim) if pre_rmsnorm else nn.Identity()
+        n_dim = config.n_dim
+        self.num_heads = config.peer_heads
+        self.separate_embed_per_head = False
+        self.num_experts = config.peer_experts
+        self.num_experts_per_head = config.peer_experts_per_head
+        product_key_topk = None
+        dim_key = None
 
-        self.heads = heads
-        self.separate_embed_per_head = separate_embed_per_head
-        self.num_experts = num_experts
+        num_expert_sets = self.num_heads if self.separate_embed_per_head else 1
 
-        num_expert_sets = heads if separate_embed_per_head else 1
+        self.weight_down_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.weight_up_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
 
-        self.weight_down_embed = nn.Embedding(num_experts * num_expert_sets, dim)
-        self.weight_up_embed = nn.Embedding(num_experts * num_expert_sets, dim)
+        self.act = ACT2FN[config.activation]
 
-        self.activation = activation()
+        assert (
+            self.num_experts**0.5
+        ).is_integer(), "`self.num_experts` needs to be a square"
+        assert (n_dim % 2) == 0, "Feature dimension should be divisible by 2"
 
-        assert (num_experts**0.5).is_integer(), "`num_experts` needs to be a square"
-        assert (dim % 2) == 0, "Feature dimension should be divisible by 2"
-
-        dim_key = default(dim_key, dim // 2)
+        dim_key = self._default(dim_key, n_dim // 2)
         self.dim_key = dim_key  # Store as instance variable
-        self.num_keys = int(num_experts**0.5)
+        self.num_keys = int(self.num_experts**0.5)
+
+        class Permute(nn.Module):
+            def __init__(self):
+                super(Permute, self).__init__()
+
+            def forward(self, x):
+                return x.permute(0, 2, 1, 3, 4).contiguous()
 
         self.to_queries = nn.Sequential(
-            nn.Linear(dim, dim_key * heads * 2, bias=False),
-            nn.Unflatten(-1, (2, heads, dim_key)),
+            nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
+            nn.Unflatten(-1, (2, self.num_heads, dim_key)),
             Permute(),
             # Shape after permute: (p, b, n, h, d)
         )
 
-        self.product_key_topk = default(product_key_topk, num_experts_per_head)
-        self.num_experts_per_head = num_experts_per_head
+        self.product_key_topk = self._default(
+            product_key_topk, self.num_experts_per_head
+        )
 
-        self.keys = nn.Parameter(torch.randn(heads, self.num_keys, 2, dim_key))
+        self.keys = nn.Parameter(torch.randn(self.num_heads, self.num_keys, 2, dim_key))
 
-        self.dropout = nn.Dropout(dropout)
+    def _default(self, val, d):
+        return val if self._exists(val) else d
+
+    def _exists(self, val):
+        return val is not None
 
     def forward(self, x):
-        x = self.norm(x)
 
         queries = self.to_queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
@@ -184,7 +174,7 @@ class PEER(nn.Module):
 
         if self.separate_embed_per_head:
             head_expert_offsets = (
-                torch.arange(self.heads, device=x.device) * self.num_experts
+                torch.arange(self.num_heads, device=x.device) * self.num_experts
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
@@ -209,8 +199,7 @@ class PEER(nn.Module):
             weights_down,
         )
 
-        x = self.activation(x)
-        x = self.dropout(x)
+        x = self.act(x)
 
         # Apply softmax to scores
         scores = F.softmax(scores, dim=-1)
@@ -221,40 +210,3 @@ class PEER(nn.Module):
         x = torch.einsum("b n h k, b n h k d -> b n d", x, weights_up)
 
         return x
-
-
-if __name__ == "__main__":
-    # Parameters for the test
-    dim = 64  # Model dimension, must be divisible by 2
-    heads = 4
-    num_experts = 256  # Must be a perfect square (e.g., 16^2)
-    num_experts_per_head = 4
-    seq_len = 10
-    batch_size = 2
-
-    # Create an instance of the PEER layer with reduced parameters
-    peer_layer = PEER(
-        dim=dim,
-        heads=heads,
-        num_experts=num_experts,
-        num_experts_per_head=num_experts_per_head,
-        activation=nn.GELU,
-        dim_key=None,  # Defaults to dim // 2
-        product_key_topk=None,  # Defaults to num_experts_per_head
-        separate_embed_per_head=False,
-        pre_rmsnorm=False,
-        dropout=0.0,
-    )
-
-    # Generate dummy input data
-    x = torch.randn(batch_size, seq_len, dim)
-
-    # Run a forward pass
-    output = peer_layer(x)
-
-    # Print the output shape
-    print("Output shape:", output.shape)  # Should be (batch_size, seq_len, dim)
-
-    # Verify that the output shape matches the input shape
-    assert output.shape == x.shape, "Output shape does not match input shape"
-    print("Test passed: Output shape matches input shape.")
