@@ -508,7 +508,8 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.text = tokenizer.bos_token
+        self.initial_text = "Once upon a time, "
+        self.text = f"{self.initial_text}"
         self.max_length = 4096
         self.interval = predict_interval
         self.num_tokens = predict_tokens
@@ -609,7 +610,7 @@ class TerminalInterface(Callback):
         n_gram_size = 7
         frequency = 20
         if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
-            self.text = tokenizer.bos_token
+            self.text = f"{self.initial_text}"
             if self.dashboard:
                 self.host_count += 1
                 self.dashboard.set_host_count(self.host_count)
