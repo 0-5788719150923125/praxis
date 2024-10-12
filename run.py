@@ -299,7 +299,7 @@ train_params = dict(
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=hparams["target_batch_size"] * hparams["batch_size"] ** 2,
+    val_check_interval=4096 * hparams["target_batch_size"] // hparams["batch_size"],
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
