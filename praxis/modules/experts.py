@@ -91,12 +91,6 @@ class PraxisPeer(nn.Sequential):
         )
 
 
-from einops import einsum
-from einops.layers.torch import Rearrange
-
-use_einops = True
-
-
 class PEER(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
@@ -125,25 +119,18 @@ class PEER(nn.Module):
         self.dim_key = dim_key  # Store as instance variable
         self.num_keys = int(self.num_experts**0.5)
 
-        if use_einops:
-            self.to_queries = nn.Sequential(
-                nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
-                Rearrange("b n (p h d) -> p b n h d", p=2, h=self.num_heads),
-            )
-        else:
+        class Permute(nn.Module):
+            def __init__(self):
+                super().__init__()
 
-            class Permute(nn.Module):
-                def __init__(self):
-                    super(Permute, self).__init__()
+            def forward(self, x):
+                return x.permute(2, 0, 1, 3, 4).contiguous()
 
-                def forward(self, x):
-                    return x.permute(2, 0, 1, 3, 4).contiguous()
-
-            self.to_queries = nn.Sequential(
-                nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
-                nn.Unflatten(-1, (2, self.num_heads, dim_key)),
-                Permute(),
-            )
+        self.to_queries = nn.Sequential(
+            nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
+            nn.Unflatten(-1, (2, self.num_heads, dim_key)),
+            Permute(),
+        )
 
         self.product_key_topk = self._default(
             product_key_topk, self.num_experts_per_head
@@ -163,10 +150,7 @@ class PEER(nn.Module):
         queries = self.to_queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
         # Compute similarities using Einstein summation
-        if use_einops:
-            sim = einsum(queries, self.keys, "p b n h d, h k p d -> p b n h k")
-        else:
-            sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
+        sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
 
         # For each partition, get top-k indices and scores
         (scores_x, scores_y), (indices_x, indices_y) = [
@@ -196,16 +180,13 @@ class PEER(nn.Module):
         weights_up = self.weight_up_embed(pk_indices)
 
         # Compute expert outputs
-        if use_einops:
-            x = einsum(x, weights_down, "b n d, b n h k d -> b n h k")
-        else:
-            x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)
+        x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)
 
         # Activate the inputs
         x = self.act(x)
 
         # Apply softmax to scores
-        scores = F.softmax(scores, dim=-1) * x
+        x = F.softmax(scores, dim=-1) * x
 
         # Aggregate expert outputs
         x = torch.einsum("b n h k, b n h k d -> b n d", x, weights_up)
