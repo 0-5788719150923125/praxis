@@ -10,12 +10,17 @@ from praxis import PraxisConfig
 
 
 class PEER(nn.Module):
+    """
+    This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
+    https://arxiv.org/abs/2407.04153v1
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__()
 
         n_dim = config.n_dim
         self.num_heads = config.peer_heads
-        self.separate_embed_per_head = False
+        self.separate_embed_per_head = True
         self.num_experts = config.peer_experts
         self.num_experts_per_head = config.peer_experts_per_head
         product_key_topk = None
@@ -33,8 +38,8 @@ class PEER(nn.Module):
         ).is_integer(), "`self.num_experts` needs to be a square"
         assert (n_dim % 2) == 0, "Feature dimension should be divisible by 2"
 
-        dim_key = self._default(dim_key, n_dim // 2)
-        self.dim_key = dim_key  # Store as instance variable
+        dim_key = dim_key if dim_key is not None else n_dim // 2
+        self.dim_key = dim_key
         self.num_keys = int(self.num_experts**0.5)
 
         class Permute(nn.Module):
@@ -50,8 +55,13 @@ class PEER(nn.Module):
             Permute(),
         )
 
-        self.product_key_topk = self._default(
-            product_key_topk, self.num_experts_per_head
+        # BatchNorm for combined partitions and heads
+        self.norm = nn.BatchNorm1d(2 * self.num_heads * self.dim_key)
+
+        self.product_key_topk = (
+            product_key_topk
+            if product_key_topk is not None
+            else self.num_experts_per_head
         )
 
         scale = 0.02
@@ -59,21 +69,35 @@ class PEER(nn.Module):
             torch.randn(self.num_heads, self.num_keys, 2, dim_key) * scale
         )
 
-    def _default(self, val, d):
-        return val if self._exists(val) else d
-
-    def _exists(self, val):
-        return val is not None
-
     def forward(self, x: Tensor):
 
+        batch_size, seq_len, _ = x.size()
+
+        # Generate queries
         queries = self.to_queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
+
+        # Reshape for batch normalization
+        queries = queries.permute(
+            0, 1, 3, 2, 4
+        )  # Shape: (batch_size, seq_len, num_heads, 2, dim_key)
+        queries = queries.contiguous().view(
+            batch_size * seq_len, self.num_heads * 2 * self.dim_key
+        )
+
+        # Apply batch normalization
+        queries = self.norm(queries)
+
+        # Reshape back to original dimensions
+        queries = queries.view(batch_size, seq_len, self.num_heads, 2, self.dim_key)
+        queries = queries.permute(
+            3, 0, 1, 2, 4
+        )  # Shape: (2, batch_size, seq_len, num_heads, dim_key)
 
         # Compute similarities using Einstein summation
         sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
 
         # For each partition, get top-k indices and scores
-        (scores_x, scores_y), (indices_x, indices_y) = [
+        (scores_x, indices_x), (scores_y, indices_y) = [
             s.topk(self.product_key_topk, dim=-1) for s in sim
         ]
 
@@ -96,8 +120,8 @@ class PEER(nn.Module):
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
         # Lookup expert weights using embeddings
-        weights_down = self.down_embed(pk_indices)
-        weights_up = self.up_embed(pk_indices)
+        weights_down = self.down_embed(indices)
+        weights_up = self.up_embed(indices)
 
         # Compute expert outputs
         x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)
