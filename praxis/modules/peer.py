@@ -19,12 +19,18 @@ class PEER(nn.Module):
         super().__init__()
 
         n_dim = config.n_dim
+        dim_key = None
+        product_key_topk = None
         self.num_heads = config.peer_heads
         self.separate_embed_per_head = True
         self.num_experts = config.peer_experts
         self.num_experts_per_head = config.peer_experts_per_head
-        product_key_topk = None
-        dim_key = None
+        self.dim_key = dim_key if dim_key is not None else n_dim // 2
+        self.product_key_topk = (
+            product_key_topk
+            if product_key_topk is not None
+            else self.num_experts_per_head
+        )
 
         num_expert_sets = self.num_heads if self.separate_embed_per_head else 1
 
@@ -36,10 +42,8 @@ class PEER(nn.Module):
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
-        assert (n_dim % 2) == 0, "Feature dimension should be divisible by 2"
+        assert (n_dim % 2) == 0, "`n_dim` should be divisible by 2"
 
-        dim_key = dim_key if dim_key is not None else n_dim // 2
-        self.dim_key = dim_key
         self.num_keys = int(self.num_experts**0.5)
 
         class Permute(nn.Module):
@@ -49,24 +53,18 @@ class PEER(nn.Module):
             def forward(self, x):
                 return x.permute(2, 0, 1, 3, 4).contiguous()
 
-        self.to_queries = nn.Sequential(
-            nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
-            nn.Unflatten(-1, (2, self.num_heads, dim_key)),
-            Permute(),
-        )
-
         # BatchNorm for combined partitions and heads
         self.norm = nn.BatchNorm1d(2 * self.num_heads * self.dim_key)
 
-        self.product_key_topk = (
-            product_key_topk
-            if product_key_topk is not None
-            else self.num_experts_per_head
+        self.queries = nn.Sequential(
+            nn.Linear(n_dim, self.dim_key * self.num_heads * 2, bias=False),
+            nn.Unflatten(-1, (2, self.num_heads, self.dim_key)),
+            Permute(),
         )
 
         scale = 0.02
         self.keys = nn.Parameter(
-            torch.randn(self.num_heads, self.num_keys, 2, dim_key) * scale
+            torch.randn(self.num_heads, self.num_keys, 2, self.dim_key) * scale
         )
 
     def forward(self, x: Tensor):
@@ -74,7 +72,7 @@ class PEER(nn.Module):
         batch_size, seq_len, _ = x.size()
 
         # Generate queries
-        queries = self.to_queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
+        queries = self.queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
         # Reshape for batch normalization
         queries = queries.permute(
