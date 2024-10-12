@@ -53,12 +53,31 @@ class PEER(nn.Module):
             def forward(self, x):
                 return x.permute(2, 0, 1, 3, 4).contiguous()
 
+        # class View(nn.Module):
+        #     def __init__(self):
+        #         super().__init__()
+
+        #     def forward(self, x):
+        #         batch_size, seq_len, _ = x.size()
+        #         return x.view(batch_size * seq_len, -1)
+
+        # class Unview(nn.Module):
+        #     def __init__(self, dim):
+        #         super().__init__()
+        #         self.dim = dim
+
+        #     def forward(self, x):
+        #         batch_size, _ = x.size()
+        #         return x.view(batch_size, -1, self.dim)
+
         # # BatchNorm for combined partitions and heads
         # self.norm = nn.BatchNorm1d(2 * self.num_heads * self.key_dim)
 
         self.queries = nn.Sequential(
             nn.Linear(n_dim, self.key_dim * self.num_heads * 2, bias=False),
+            # View(),
             # nn.BatchNorm1d(2 * self.num_heads * self.key_dim),
+            # Unview(self.key_dim * self.num_heads * 2),
             nn.Unflatten(-1, (2, self.num_heads, self.key_dim)),
             Permute(),
         )
