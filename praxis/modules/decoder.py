@@ -19,6 +19,7 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.shuffle = config.shuffle
         self.experts = nn.ModuleList(PraxisBlock(config) for _ in range(config.n_layer))
+        self.routers = None
         if config.sparse:
             self.routers = nn.ModuleList(
                 PraxisMixtureOfDepths(config) for _ in range(config.n_layer // 2)

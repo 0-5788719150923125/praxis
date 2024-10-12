@@ -18,7 +18,7 @@ class PraxisConfig(PretrainedConfig):
         context_length=4096,
         activation="mish",
         peer_heads=2,
-        peer_experts=64**2,
+        peer_experts=128**2,
         peer_experts_per_head=4,
         sparse=False,
         shuffle=False,

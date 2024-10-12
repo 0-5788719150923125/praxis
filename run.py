@@ -253,7 +253,7 @@ except Exception as e:
 # Transformers config
 config = PraxisConfig(
     n_emb=512,
-    n_dim=384,
+    n_dim=256,
     n_layer=3 if dev else args.depth,
     n_head=8,
     differential_heads=1,
@@ -508,7 +508,8 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.initial_text = "Once upon a time, "
+        # self.initial_text = "Once upon a time, "
+        self.initial_text = tokenizer.bos_token
         self.text = f"{self.initial_text}"
         self.max_length = 4096
         self.interval = predict_interval
