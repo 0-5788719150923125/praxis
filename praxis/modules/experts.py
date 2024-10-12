@@ -124,7 +124,7 @@ class PEER(nn.Module):
                 super(Permute, self).__init__()
 
             def forward(self, x):
-                return x.permute(0, 2, 1, 3, 4).contiguous()
+                return x.permute(2, 0, 1, 3, 4).contiguous()
 
         self.to_queries = nn.Sequential(
             nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
@@ -163,7 +163,7 @@ class PEER(nn.Module):
         # Compute Cartesian product of top-k indices and scores
         all_scores = scores_x.unsqueeze(-1) + scores_y.unsqueeze(-2)
         all_indices = indices_x.unsqueeze(-1) * self.num_keys + indices_y.unsqueeze(-2)
-
+        print(all_scores)
         # Flatten last two dimensions
         all_scores = all_scores.view(*all_scores.shape[:-2], -1)
         all_indices = all_indices.view(*all_indices.shape[:-2], -1)
