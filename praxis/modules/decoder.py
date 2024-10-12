@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from ..configuration_praxis import PraxisConfig
-from .experts import PraxisBlock
-from .router import PraxisMixtureOfDepths
+from praxis import PraxisConfig
+from praxis.modules.experts import PraxisBlock
+from praxis.modules.router import PraxisMixtureOfDepths
 
 
 class PraxisDecoder(nn.Module):

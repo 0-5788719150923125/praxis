@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from ..configuration_praxis import PraxisConfig
+from praxis import PraxisConfig
 
 
 class PraxisAttention(nn.Module):

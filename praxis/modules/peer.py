@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers.activations import ACT2FN
 
-from praxis.configuration_praxis import PraxisConfig
+from praxis import PraxisConfig
 
 
 class PEER(nn.Module):

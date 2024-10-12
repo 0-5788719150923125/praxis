@@ -7,9 +7,9 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 from transformers.activations import ACT2FN
 
-from ..configuration_praxis import PraxisConfig
-from .attention import PraxisAttention
-from .peer import PEER
+from praxis import PraxisConfig
+from praxis.modules.attention import PraxisAttention
+from praxis.modules.peer import PEER
 
 input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 

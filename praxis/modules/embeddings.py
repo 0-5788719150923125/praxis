@@ -2,7 +2,7 @@ from typing import OrderedDict
 
 import torch.nn as nn
 
-from ..configuration_praxis import PraxisConfig
+from praxis import PraxisConfig
 
 
 class PraxisEmbedding(nn.Sequential):
