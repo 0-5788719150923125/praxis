@@ -528,8 +528,8 @@ class TerminalInterface(Callback):
             except KeyboardInterrupt:
                 self.dashboard.stop()
 
-    def on_train_start(self, trainer, lm):
-        super().on_train_start(trainer, lm)
+    def on_fit_start(self, trainer, lm):
+        super().on_fit_start(trainer, lm)
         if self.dashboard:
             total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)

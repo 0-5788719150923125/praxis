@@ -26,7 +26,7 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
-        self.mlp = PraxisPeer(config)
+        self.mlp = PraxisPEER(config)
         self.drop = nn.Dropout(config.dropout)
 
     def forward(
@@ -79,7 +79,7 @@ class PraxisGLU(nn.Module):
 
 
 @register_expert_class("praxis_peer", input_shape)
-class PraxisPeer(nn.Sequential):
+class PraxisPEER(nn.Sequential):
     def __init__(self, config: PraxisConfig):
         super().__init__(
             OrderedDict(
