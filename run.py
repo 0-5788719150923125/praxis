@@ -341,6 +341,9 @@ if phi:
 if instruct:
     hparams["training_data"]["primary"].append(population[2])
 
+if dev:
+    hparams["training_data"]["primary"] = [population[0]]
+
 if not dev:
     hparams["training_data"]["validation"].append(population[3])
 
@@ -508,8 +511,7 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.initial_text = "Once upon a time, "
-        # self.initial_text = tokenizer.bos_token
+        self.initial_text = tokenizer.bos_token
         self.text = f"{self.initial_text}"
         self.max_length = 4096
         self.interval = predict_interval

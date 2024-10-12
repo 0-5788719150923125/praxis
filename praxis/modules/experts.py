@@ -94,9 +94,7 @@ class PraxisPeer(nn.Sequential):
 from einops import einsum
 from einops.layers.torch import Rearrange
 
-# from functorch.einops import rearrange
-
-use_einops = False
+use_einops = True
 
 
 class PEER(nn.Module):
@@ -145,7 +143,6 @@ class PEER(nn.Module):
                 nn.Linear(n_dim, dim_key * self.num_heads * 2, bias=False),
                 nn.Unflatten(-1, (2, self.num_heads, dim_key)),
                 Permute(),
-                # Shape after permute: (p, b, n, h, d)
             )
 
         self.product_key_topk = self._default(
@@ -165,23 +162,16 @@ class PEER(nn.Module):
 
         queries = self.to_queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
+        # Compute similarities using Einstein summation
         if use_einops:
             sim = einsum(queries, self.keys, "p b n h d, h k p d -> p b n h k")
-
-            # For each of the 2 partitions, get top-k indices and scores
-            (scores_x, scores_y), (indices_x, indices_y) = [
-                s.topk(self.product_key_topk, dim=-1) for s in sim
-            ]
         else:
-            # Transpose keys to match dimensions
-            keys = self.keys.permute(2, 0, 1, 3)  # Shape: (2, heads, num_keys, dim_key)
+            sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
 
-            # Compute similarities using torch.einsum
-            sim = torch.einsum("p b n h d, p h k d -> p b n h k", queries, keys)
-
-            (scores_x, indices_x), (scores_y, indices_y) = [
-                s.topk(self.product_key_topk, dim=-1) for s in sim
-            ]
+        # For each partition, get top-k indices and scores
+        (scores_x, scores_y), (indices_x, indices_y) = [
+            s.topk(self.product_key_topk, dim=-1) for s in sim
+        ]
 
         # Compute Cartesian product of top-k indices and scores
         all_scores = scores_x.unsqueeze(-1) + scores_y.unsqueeze(-2)
@@ -201,38 +191,21 @@ class PEER(nn.Module):
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
+        # Lookup expert weights using embeddings
+        weights_down = self.weight_down_embed(pk_indices)
+        weights_up = self.weight_up_embed(pk_indices)
+
+        # Compute expert outputs
         if use_einops:
-            weights_down = self.weight_down_embed(pk_indices)
-            weights_up = self.weight_up_embed(pk_indices)
             x = einsum(x, weights_down, "b n d, b n h k d -> b n h k")
         else:
-            # Lookup expert weights using embeddings
-            indices_flat = indices.view(-1)
-            weights_down = self.weight_down_embed(indices_flat)
-            weights_up = self.weight_up_embed(indices_flat)
+            x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)
 
-            # Reshape weights to match dimensions
-            weights_down = weights_down.view(
-                *indices.shape, -1
-            )  # Shape: (batch_size, seq_len, heads, num_experts_per_head, dim)
-            weights_up = weights_up.view(*indices.shape, -1)
-
-            # Compute expert outputs
-            x_expanded = x.unsqueeze(2).unsqueeze(
-                3
-            )  # Shape: (batch_size, seq_len, 1, 1, dim)
-            x = torch.einsum(
-                "b n d, b n h k d -> b n h k",
-                x_expanded.squeeze(2).squeeze(2),
-                weights_down,
-            )
-
+        # Activate the inputs
         x = self.act(x)
 
         # Apply softmax to scores
-        scores = F.softmax(scores, dim=-1)
-
-        x = scores * x
+        scores = F.softmax(scores, dim=-1) * x
 
         # Aggregate expert outputs
         x = torch.einsum("b n h k, b n h k d -> b n d", x, weights_up)
