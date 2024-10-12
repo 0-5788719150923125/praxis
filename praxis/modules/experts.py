@@ -94,7 +94,9 @@ class PraxisPeer(nn.Sequential):
 from einops import einsum
 from einops.layers.torch import Rearrange
 
-use_einops = True
+# from functorch.einops import rearrange
+
+use_einops = False
 
 
 class PEER(nn.Module):
@@ -165,17 +167,21 @@ class PEER(nn.Module):
 
         if use_einops:
             sim = einsum(queries, self.keys, "p b n h d, h k p d -> p b n h k")
+
+            # For each of the 2 partitions, get top-k indices and scores
+            (scores_x, scores_y), (indices_x, indices_y) = [
+                s.topk(self.product_key_topk, dim=-1) for s in sim
+            ]
         else:
             # Transpose keys to match dimensions
             keys = self.keys.permute(2, 0, 1, 3)  # Shape: (2, heads, num_keys, dim_key)
 
             # Compute similarities using torch.einsum
-            sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, keys)
+            sim = torch.einsum("p b n h d, p h k d -> p b n h k", queries, keys)
 
-        # For each of the 2 partitions, get top-k indices and scores
-        (scores_x, scores_y), (indices_x, indices_y) = [
-            s.topk(self.product_key_topk, dim=-1) for s in sim
-        ]
+            (scores_x, indices_x), (scores_y, indices_y) = [
+                s.topk(self.product_key_topk, dim=-1) for s in sim
+            ]
 
         # Compute Cartesian product of top-k indices and scores
         all_scores = scores_x.unsqueeze(-1) + scores_y.unsqueeze(-2)
