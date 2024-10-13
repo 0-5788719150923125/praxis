@@ -142,7 +142,7 @@ parser.add_argument(
     "--wandb",
     action="store_true",
     default=False,
-    help="Log experiment to Weights and Biases (Default: False)",
+    help="Log metrics to Weights and Biases (https://wandb.ai)",
 )
 parser.add_argument(
     "--optimizer",
@@ -156,7 +156,7 @@ parser.add_argument(
     type=str,
     choices=["mlp", "glu", "peer"],
     default="glu",
-    help="The expert type for use for feedforward networks (default: glu)",
+    help="The module to use for feedforward networks (default: glu)",
 )
 parser.add_argument(
     "--dense",
@@ -174,31 +174,31 @@ parser.add_argument(
     "--shuffle",
     action="store_true",
     default=False,
-    help="Shuffle intermediate layers at every forward pass (default: False)",
+    help="Shuffle layers at every forward pass (default: False)",
 )
 parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
-    help="Supplement training with specialist data (default: False)",
+    help="Supplement training with a mix of expert data.",
 )
 parser.add_argument(
     "--gun",
     action="store_true",
     default=False,
-    help="Supplement training with chat data from https://src.eco/?focus=trade (default: False)",
+    help="Supplement training with chat data from https://src.eco",
 )
 parser.add_argument(
     "--instruct",
     action="store_true",
     default=False,
-    help="Supplement training with instruction-tuning data (default: False)",
+    help="Supplement training with instruction-tuning",
 )
 parser.add_argument(
     "--dev",
     action="store_true",
     default=False,
-    help="Run with settings that make bootstrap faster (default: False)",
+    help="Bootstrap faster (with 3 layers, a smaller dataset, etc.)",
 )
 parser.add_argument(
     "--reset",

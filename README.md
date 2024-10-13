@@ -55,17 +55,17 @@ python run.py \
   --batch_size 8 \               # Set the batch size to use for training.
   --depth 7 \                    # The number of layers to host.
   --optimizer adamw \            # The optimizer profile to use (default: adamw)
-  --expert_type glu \            # The expert type for use for feedforward networks (default: glu)
+  --expert_type glu \            # The module to use for feedforward networks (default: glu)
   --dense \                      # Run as a fully-connected (dense) model. (default: True)
   --sparse \                     # Run as a sparse model. (default: False)
-  --shuffle \                    # Shuffle intermediate layers at every forward pass (default: False)
+  --shuffle \                    # Shuffle layers at every forward pass (default: False)
   --no_dashboard \               # Disables the CLI interface.
   --data_path /path/to/my/data \ # Train on a local directory of data.
-  --wandb \                      # Log training metrics to Weights and Biases (https://wandb.ai).
-  --phi \                        # Supplement with expert data.
-  --gun \                        # Supplement training with chat data from https://src.eco/?focus=trade (default: False)
-  --instruct \                   # Supplement training with instruction-tuning data (default: False)
-  --dev \                        # Launch with settings that bootstrap faster (3 layers, a smaller dataset, etc.)
+  --wandb \                      # Log metrics to Weights and Biases (https://wandb.ai).
+  --phi \                        # Supplement training with a mix of expert data.
+  --gun \                        # Supplement training with chat data from https://src.eco
+  --instruct \                   # Supplement training with instruction-tuning
+  --dev \                        # Bootstrap faster (with 3 layers, a smaller dataset, etc.)
   --reset                        # Delete your checkpoints and start-over.
 ```
 
