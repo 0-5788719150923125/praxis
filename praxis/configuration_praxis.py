@@ -22,7 +22,7 @@ class PraxisConfig(PretrainedConfig):
             neuron_activation="swish",
             n_head=3,
             n_experts=8**2,
-            topk=3,
+            topk=1,
             key_dim=16,
             offset_heads=True,
         ),

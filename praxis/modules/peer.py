@@ -52,7 +52,7 @@ class PEER(nn.Module):
 
             def forward(self, x):
                 b, s, d = x.size()
-                x = x.view(b * s, -1)
+                x = x.view(b * s, d)
                 x = super().forward(x)
                 return x.view(b, s, d)
 
