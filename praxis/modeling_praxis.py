@@ -9,9 +9,9 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
 )
 
-from .configuration_praxis import PraxisConfig
-from .modules.decoder import PraxisDecoder
-from .modules.embeddings import PraxisEmbedding
+from praxis import PraxisConfig
+from praxis.modules.decoder import PraxisDecoder
+from praxis.modules.embeddings import PraxisEmbedding
 
 
 class PraxisModel(PreTrainedModel):

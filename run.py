@@ -145,6 +145,20 @@ parser.add_argument(
     help="Log experiment to Weights and Biases (Default: False)",
 )
 parser.add_argument(
+    "--optimizer",
+    type=str,
+    choices=['adamw', 'soap'],
+    default="adamw",
+    help="The optimizer profile to use (default: adamw)",
+)
+parser.add_argument(
+    "--expert_type",
+    type=str,
+    choices=['mlp', 'glu', 'peer'],
+    default="glu",
+    help="The expert type for use for feedforward networks (default: glu)",
+)
+parser.add_argument(
     "--dense",
     action="store_true",
     default=True,
@@ -239,7 +253,7 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
 sys.excepthook = exception_to_file
 
 # Global configuration
-vocab_size = 4096
+vocab_size = 4096 * 4
 
 # Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
@@ -261,7 +275,9 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     context_length=4096,
     sparse=True if args.sparse else not args.dense,
+    capacity=0.125,
     shuffle=args.shuffle,
+    expert_type=args.expert_type,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -298,7 +314,7 @@ train_params = dict(
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=hparams["target_batch_size"] * hparams["batch_size"] ** 2,
+    val_check_interval=4096 * hparams["target_batch_size"] // hparams["batch_size"],
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
@@ -340,6 +356,9 @@ if phi:
 if instruct:
     hparams["training_data"]["primary"].append(population[2])
 
+if dev:
+    hparams["training_data"]["primary"] = [population[0]]
+
 if not dev:
     hparams["training_data"]["validation"].append(population[3])
 
@@ -349,11 +368,7 @@ predict_tokens = 1
 
 # Optimizer configuration
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-hparams["optimizer"] = dict(
-    optimizer_name="GrokFastAdamW",
-    lr=1e-3,
-    min_lr=1e-5,
-    weight_decay=1e-2,
+optimizer_defaults = dict(
     wd_ban_list=[
         "bias",
         "wte",
@@ -365,7 +380,31 @@ hparams["optimizer"] = dict(
         "RMSNorm.bias",
     ],
 )
+if args.optimizer.lower() == "soap":
+    optimizer_profile = dict(
+        optimizer_name="SOAP",
+        lr=1e-3,
+        min_lr=1e-5,
+        weight_decay=1e-2,
+        precondition_frequency=10,
+        max_precondition_dim=1024,
+        normalize_gradient=False,
+        correct_bias=True,
+        precondition_1d=False,
+        merge_dims=False,
+    )
+else:
+    optimizer_profile = dict(
+        optimizer_name="GrokFastAdamW",
+        lr=1e-3,
+        min_lr=1e-5,
+        weight_decay=1e-2,
+    )
 
+# Merge the optimizer profile with the default profile
+hparams["optimizer"] = {**optimizer_defaults, **optimizer_profile}
+
+# Configure the learning rate scheduler
 scheduler_func = partial(
     CosineAnnealingWarmupRestarts,
     first_cycle_steps=4096 * 4,
@@ -485,7 +524,8 @@ class TerminalInterface(Callback):
         self.alpha = 1e-2
         self.ema_loss = 0
         self.last_time = datetime.now()
-        self.text = tokenizer.bos_token
+        self.initial_text = tokenizer.bos_token
+        self.text = f"{self.initial_text}"
         self.max_length = 4096
         self.interval = predict_interval
         self.num_tokens = predict_tokens
@@ -501,8 +541,8 @@ class TerminalInterface(Callback):
             except KeyboardInterrupt:
                 self.dashboard.stop()
 
-    def on_train_start(self, trainer, lm):
-        super().on_train_start(trainer, lm)
+    def on_fit_start(self, trainer, lm):
+        super().on_fit_start(trainer, lm)
         if self.dashboard:
             total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)
@@ -586,7 +626,7 @@ class TerminalInterface(Callback):
         n_gram_size = 7
         frequency = 20
         if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
-            self.text = tokenizer.bos_token
+            self.text = f"{self.initial_text}"
             if self.dashboard:
                 self.host_count += 1
                 self.dashboard.set_host_count(self.host_count)
@@ -1097,7 +1137,10 @@ checkpoint_callback = TimeBasedCheckpoint(
 # Bootstrap the model and trainer
 model = AutoModelForCausalLM.from_config(config)
 
-print(model)
+print("model:", model)
+total_params = sum(p.numel() for p in model.parameters())
+reduced = int(total_params / 10**6)
+print(f"parameters: {reduced}M")
 
 # File cleanup
 if args.reset:
