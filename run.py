@@ -1136,8 +1136,9 @@ checkpoint_callback = TimeBasedCheckpoint(
 
 # Bootstrap the model and trainer
 model = AutoModelForCausalLM.from_config(config)
-
 print("model:", model)
+
+# Print the total parameter count
 total_params = sum(p.numel() for p in model.parameters())
 reduced = int(total_params / 10**6)
 print(f"parameters: {reduced}M")

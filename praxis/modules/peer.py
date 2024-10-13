@@ -87,7 +87,7 @@ class PEER(nn.Module):
         all_scores = all_scores.view(*all_scores.shape[:-2], -1)
         all_indices = all_indices.view(*all_indices.shape[:-2], -1)
 
-        # Get top num_experts_per_head from the Cartesian product
+        # Get top expert keys from the Cartesian product
         scores, pk_indices = all_scores.topk(self.k, dim=-1)
         indices = all_indices.gather(-1, pk_indices)
 

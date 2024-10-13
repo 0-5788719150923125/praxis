@@ -65,7 +65,7 @@ class PraxisAttention(nn.Module):
     def forward(
         self, inputs: Tensor, attention_mask: Tensor, token_indices: Tensor = None
     ):
-        batch_size, seq_len, _ = inputs.size()
+        batch_size, seq_len, _ = inputs.shape
 
         # Compute queries, keys, and values
         q = [
