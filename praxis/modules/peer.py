@@ -24,14 +24,13 @@ class PEER(nn.Module):
         self.offset_heads = config.expert["offset_heads"]
         self.num_experts = config.expert["n_experts"]
         self.num_keys = int(self.num_experts**0.5)
-        self.topk = config.expert["topk"]
+        self.k = config.expert["k"]
 
         num_expert_sets = self.num_heads if self.offset_heads else 1
 
         self.up_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.act = ACT2FN[config.expert["activation"]]
         self.down_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
-
-        self.act = ACT2FN["gelu_new"]
 
         assert (
             self.num_experts**0.5
@@ -77,7 +76,7 @@ class PEER(nn.Module):
 
         # For each partition, get top-k indices and scores
         (scores_x, indices_x), (scores_y, indices_y) = [
-            s.topk(self.topk, dim=-1) for s in sim
+            s.topk(self.k, dim=-1) for s in sim
         ]
 
         # Compute Cartesian product of top-k indices and scores
@@ -89,7 +88,7 @@ class PEER(nn.Module):
         all_indices = all_indices.view(*all_indices.shape[:-2], -1)
 
         # Get top num_experts_per_head from the Cartesian product
-        scores, pk_indices = all_scores.topk(self.topk, dim=-1)
+        scores, pk_indices = all_scores.topk(self.k, dim=-1)
         indices = all_indices.gather(-1, pk_indices)
 
         if self.offset_heads:

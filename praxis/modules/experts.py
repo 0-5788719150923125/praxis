@@ -58,7 +58,7 @@ class PraxisMLP(nn.Sequential):
             OrderedDict(
                 [
                     ("up", nn.Linear(config.n_dim, 4 * config.n_dim)),
-                    ("act", ACT2FN[config.expert["activation"]]),
+                    ("act", ACT2FN[config.activation]),
                     ("down", nn.Linear(4 * config.n_dim, config.n_dim)),
                 ]
             )
@@ -70,7 +70,7 @@ class PraxisGLU(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.up = nn.Linear(config.n_dim, 8 * config.n_dim)
-        self.act = ACT2FN[config.expert["activation"]]
+        self.act = ACT2FN[config.activation]
         self.down = nn.Linear(4 * config.n_dim, config.n_dim)
 
     def forward(self, x):
@@ -85,7 +85,7 @@ class PraxisPEER(nn.Sequential):
             OrderedDict(
                 [
                     ("up", PEER(config)),
-                    ("act", ACT2FN[config.expert["activation"]]),
+                    ("act", ACT2FN[config.activation]),
                     ("down", PEER(config)),
                 ]
             )
