@@ -201,6 +201,13 @@ parser.add_argument(
     help="Bootstrap faster (with 3 layers, a smaller dataset, etc.)",
 )
 parser.add_argument(
+    "--preserve_memory",
+    type=str,
+    choices=["aggressive", "gentle", "speed"],
+    default="gentle",
+    help="Gradient checkpointing strategy (default: gentle)",
+)
+parser.add_argument(
     "--reset",
     action="store_true",
     default=False,
@@ -278,6 +285,7 @@ config = PraxisConfig(
     capacity=0.125,
     shuffle=args.shuffle,
     expert_type=args.expert_type,
+    preserve_memory=args.preserve_memory,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -510,7 +518,7 @@ class PraxisTrainer(LightningModule):
     def _update_ema(self, ema, new_value):
         if ema is None:
             return new_value.total_seconds()
-        alpha = 0.01
+        alpha = 0.1
         return alpha * new_value.total_seconds() + (1 - alpha) * ema
 
 

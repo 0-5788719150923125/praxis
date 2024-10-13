@@ -20,14 +20,15 @@ class PraxisConfig(PretrainedConfig):
         expert_type="peer",
         expert=dict(
             activation="swish",
-            num_experts=16**2,
-            num_heads=3,
-            k=9,
+            num_experts=20**2,
+            num_heads=2,
+            k=4,
             key_dims=64,
             offset_heads=True,
         ),
         sparse=False,
         shuffle=False,
+        preserve_memory=False,
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -58,6 +59,7 @@ class PraxisConfig(PretrainedConfig):
         self.expert = expert
         self.sparse = sparse
         self.shuffle = shuffle
+        self.preserve_memory = preserve_memory
         self.causal = False
 
         # Huggingface args

@@ -60,6 +60,7 @@ python run.py \
   --sparse \                     # Run as a sparse model. (default: False)
   --shuffle \                    # Shuffle layers at every forward pass (default: False)
   --no_dashboard \               # Disables the CLI interface.
+  --preserve_memory gentle \     # Gradient checkpointing strategy (default: gentle)
   --data_path /path/to/my/data \ # Train on a local directory of data.
   --wandb \                      # Log metrics to Weights and Biases (https://wandb.ai).
   --phi \                        # Supplement training with a mix of expert data.
@@ -159,3 +160,4 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 ## won't do
 
 - cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
+- half-precision; [there is research](https://sambanova.ai/blog/alibi-interpolation-vs-extrapolation) that suggests a detrimental interaction between ALiBi and low-precision. So, until we have replaced ALiBi - operations use full (32-bit) precision for now.

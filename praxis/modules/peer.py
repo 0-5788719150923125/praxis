@@ -68,9 +68,11 @@ class PEER(nn.Module):
         self.act = ACT2FN[config.expert["activation"]]
         self.key_out = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
-    def forward(self, x: Tensor):
+    def forward(self, inputs: Tensor):
         # Generate queries
-        queries = self.queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
+        queries = self.queries(
+            inputs
+        )  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
         # Compute similarities using Einstein summation
         sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
@@ -98,7 +100,7 @@ class PEER(nn.Module):
 
         if self.offset_heads:
             head_expert_offsets = (
-                torch.arange(self.num_heads, device=x.device) * self.num_experts
+                torch.arange(self.num_heads, device=inputs.device) * self.num_experts
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
@@ -107,15 +109,15 @@ class PEER(nn.Module):
         weights_up = self.key_out(indices)
 
         # Compute expert outputs
-        x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)
+        outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)
 
         # Activate the inputs
-        x = self.act(x)
+        outputs = self.act(outputs)
 
         # Apply softmax to scores
-        x = F.softmax(scores, dim=-1) * x
+        outputs = F.softmax(scores, dim=-1) * outputs
 
         # Aggregate expert outputs
-        x = torch.einsum("b n h k, b n h k d -> b n d", x, weights_up)
+        outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
 
-        return x
+        return outputs
