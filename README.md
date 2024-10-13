@@ -46,28 +46,10 @@ To donate your compute:
 python run.py
 ```
 
-Supported arguments:
+To view all supported command-line arguments:
 
 ```sh
-python run.py \
-  --seed 42 \                    # Set a global seed for random number generation.
-  --device cuda:0 \              # Specify your GPU's index. Omit this argument to use CPU.
-  --batch_size 8 \               # Set the batch size to use for training.
-  --depth 7 \                    # The number of layers to host.
-  --optimizer adamw \            # The optimizer profile to use (default: adamw)
-  --expert_type glu \            # The module to use for feedforward networks (default: glu)
-  --dense \                      # Run as a fully-connected (dense) model. (default: True)
-  --sparse \                     # Run as a sparse model. (default: False)
-  --shuffle \                    # Shuffle layers at every forward pass (default: False)
-  --no_dashboard \               # Disables the CLI interface.
-  --preserve_memory gentle \     # Gradient checkpointing strategy (default: gentle)
-  --data_path /path/to/my/data \ # Train on a local directory of data.
-  --wandb \                      # Log metrics to Weights and Biases (https://wandb.ai).
-  --phi \                        # Supplement training with a mix of expert data.
-  --gun \                        # Supplement training with chat data from https://src.eco
-  --instruct \                   # Supplement training with instruction-tuning
-  --dev \                        # Bootstrap faster (with 3 layers, a smaller dataset, etc.)
-  --reset                        # Delete your checkpoints and start-over.
+python run.py --help
 ```
 
 ## do inference

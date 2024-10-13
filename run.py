@@ -86,57 +86,63 @@ parser.add_argument(
     "--seed",
     type=int,
     default=int(math.exp((1 - random.random())) * 65536),
-    help="Global seed (default: random)",
+    help="Global seed",
 )
 parser.add_argument(
     "--device",
     type=str,
     default="cpu",
-    help="Device to use (default: cpu)",
+    help="Device to use",
 )
 parser.add_argument(
     "--host_name",
     type=str,
     default="localhost",
-    help="Serve the local API at this CNAME (default: 'localhost')",
+    help="Serve the local API at this CNAME",
 )
 parser.add_argument(
     "--port",
     type=int,
     default=2100,
-    help="Serve the local API at this port (default: 5000)",
+    help="Serve the local API at this port",
 )
 parser.add_argument(
     "--batch_size",
     type=int,
     default=None,
-    help="Batch size to use for training (default: 1)",
+    help="Batch size to use for training",
 )
 parser.add_argument(
     "--depth",
     type=int,
     default=7,
-    help="Number of layers to use (default: 3)",
+    help="Number of layers to use",
+)
+parser.add_argument(
+    "--reclaim_memory",
+    type=str,
+    choices=["aggressive", "gentle", "speed"],
+    default="gentle",
+    help="Gradient checkpointing strategy",
 )
 parser.add_argument(
     "--data_path",
     type=str,
     nargs="+",
     default=None,
-    help="Paths to directories of files to use as training data (default: None)",
+    help="Paths to a directory of files to use as training data",
 )
 parser.add_argument(
     "--cache_dir",
     type=str,
-    nargs="+",
     default="data",
-    help="Paths to a directory where artifacts will be saved (default: ./data)",
+    help="Paths to a directory where artifacts will be saved",
 )
 parser.add_argument(
     "--no_dashboard",
     action="store_true",
     default=False,
-    help="Use dashboard (default: True)",
+    help="Disable the terminal dashboard",
 )
 parser.add_argument(
     "--wandb",
@@ -149,32 +155,32 @@ parser.add_argument(
     type=str,
     choices=["adamw", "soap"],
     default="adamw",
-    help="The optimizer profile to use (default: adamw)",
+    help="The optimizer profile to use",
 )
 parser.add_argument(
     "--expert_type",
     type=str,
     choices=["mlp", "glu", "peer"],
     default="glu",
-    help="The module to use for feedforward networks (default: glu)",
+    help="The module to use for feedforward networks",
 )
 parser.add_argument(
     "--dense",
     action="store_true",
     default=True,
-    help="Run as a dense model (default: True)",
+    help="Run as a dense model",
 )
 parser.add_argument(
     "--sparse",
     action="store_true",
     default=False,
-    help="Run as a sparse model (default: False)",
+    help="Run as a sparse model",
 )
 parser.add_argument(
     "--shuffle",
     action="store_true",
     default=False,
-    help="Shuffle layers at every forward pass (default: False)",
+    help="Shuffle layers at every forward pass",
 )
 parser.add_argument(
     "--phi",
@@ -201,17 +207,10 @@ parser.add_argument(
     help="Bootstrap faster (with 3 layers, a smaller dataset, etc.)",
 )
 parser.add_argument(
-    "--preserve_memory",
-    type=str,
-    choices=["aggressive", "gentle", "speed"],
-    default="gentle",
-    help="Gradient checkpointing strategy (default: gentle)",
-)
-parser.add_argument(
     "--reset",
     action="store_true",
     default=False,
-    help="Reset the checkpoint (default: False)",
+    help="Reset the checkpoint",
 )
 
 
@@ -285,7 +284,7 @@ config = PraxisConfig(
     capacity=0.125,
     shuffle=args.shuffle,
     expert_type=args.expert_type,
-    preserve_memory=args.preserve_memory,
+    reclaim_memory=args.reclaim_memory,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,

@@ -28,7 +28,7 @@ class PraxisConfig(PretrainedConfig):
         ),
         sparse=False,
         shuffle=False,
-        preserve_memory=False,
+        reclaim_memory="speed",
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -59,7 +59,7 @@ class PraxisConfig(PretrainedConfig):
         self.expert = expert
         self.sparse = sparse
         self.shuffle = shuffle
-        self.preserve_memory = preserve_memory
+        self.reclaim_memory = reclaim_memory
         self.causal = False
 
         # Huggingface args

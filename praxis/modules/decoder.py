@@ -20,7 +20,7 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.shuffle = config.shuffle
         self.checkpoint_layers = self._checkpoint_strategy(
-            config.preserve_memory, config.num_layers
+            config.reclaim_memory, config.num_layers
         )
         self.experts = nn.ModuleList(
             PraxisBlock(config) for _ in range(config.num_layers)
