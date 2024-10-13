@@ -378,13 +378,20 @@ predict_tokens = 1
 optimizer_defaults = dict(
     wd_ban_list=[
         "bias",
-        "wte",
+        "pos_emb",
+        "Embedding",
+        "Embedding.weight",
+        "Embedding.bias",
+        "BatchNorm.weight",
+        "BatchNorm.bias",
         "GroupNorm.weight",
         "GroupNorm.bias",
         "LayerNorm.weight",
         "LayerNorm.bias",
         "RMSNorm.weight",
         "RMSNorm.bias",
+        "InstanceNorm.weight",
+        "InstanceNorm.bias",
     ],
 )
 if args.optimizer.lower() == "soap":

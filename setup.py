@@ -14,6 +14,7 @@ host_requirements = [
     "datasets",
     "flask",
     "lightning",
+    "lm_eval",
     "pytorch_optimizer @ git+https://github.com/kozistr/pytorch_optimizer.git",
     "tokenmonster",
     "werkzeug",
