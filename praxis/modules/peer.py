@@ -19,25 +19,22 @@ class PEER(nn.Module):
         super().__init__()
 
         n_dim = config.n_dim
-        key_dim = None
-        capacity = 0.45
-        self.num_heads = config.peer_heads
-        self.separate_embed_per_head = True
-        self.num_experts = config.peer_experts
-        self.num_experts_per_head = config.peer_experts_per_head
-        self.num_keys = int(self.num_experts**0.5)
-        self.key_dim = key_dim if key_dim is not None else n_dim // 2
-        self.topk = int(self.num_experts_per_head * capacity)
+        key_dim = config.expert["key_dim"]
+        self.num_heads = config.expert["n_head"]
+        self.offset_heads = config.expert["offset_heads"]
+        self.n_experts = config.expert["n_experts"]
+        self.num_keys = int(self.n_experts**0.5)
+        self.topk = config.expert["topk"]
 
-        num_expert_sets = self.num_heads if self.separate_embed_per_head else 1
+        num_expert_sets = self.num_heads if self.offset_heads else 1
 
-        self.up_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
-        self.down_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.up_embed = nn.Embedding(self.n_experts * num_expert_sets, n_dim)
+        self.down_embed = nn.Embedding(self.n_experts * num_expert_sets, n_dim)
 
         self.act = ACT2FN["gelu_new"]
 
         assert (
-            self.num_experts**0.5
+            self.n_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
         assert (n_dim % 2) == 0, "`n_dim` should be divisible by 2"
 
@@ -60,15 +57,15 @@ class PEER(nn.Module):
                 return x.view(b, s, d)
 
         self.queries = nn.Sequential(
-            nn.Linear(n_dim, self.key_dim * self.num_heads * 2, bias=False),
-            BatchNorm1d(self.key_dim * self.num_heads * 2),
-            nn.Unflatten(-1, (2, self.num_heads, self.key_dim)),
+            nn.Linear(n_dim, key_dim * self.num_heads * 2, bias=False),
+            BatchNorm1d(key_dim * self.num_heads * 2),
+            nn.Unflatten(-1, (2, self.num_heads, key_dim)),
             Permute(),
         )
 
         scale = 0.02
         self.keys = nn.Parameter(
-            torch.randn(self.num_heads, self.num_keys, 2, self.key_dim) * scale
+            torch.randn(self.num_heads, self.num_keys, 2, key_dim) * scale
         )
 
     def forward(self, x: Tensor):
@@ -95,9 +92,9 @@ class PEER(nn.Module):
         scores, pk_indices = all_scores.topk(self.topk, dim=-1)
         indices = all_indices.gather(-1, pk_indices)
 
-        if self.separate_embed_per_head:
+        if self.offset_heads:
             head_expert_offsets = (
-                torch.arange(self.num_heads, device=x.device) * self.num_experts
+                torch.arange(self.num_heads, device=x.device) * self.n_experts
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
