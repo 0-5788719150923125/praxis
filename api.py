@@ -52,7 +52,7 @@ def home():
 
 @app.route("/<path:filename>")
 def serve_static(filename):
-    if filename != "input/":  # Exclude your API route
+    if filename != "input/":  # Exclude the API route
         return send_from_directory(app.static_folder, filename)
 
 
