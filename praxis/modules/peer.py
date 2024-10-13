@@ -10,7 +10,7 @@ from transformers.activations import ACT2FN
 from praxis import PraxisConfig
 
 
-class PEER(nn.Module):
+class PraxisPEER(nn.Module):
     """
     This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
     https://arxiv.org/abs/2407.04153v1
@@ -26,8 +26,6 @@ class PEER(nn.Module):
         self.num_experts = config.expert["num_experts"]
         self.num_keys = int(self.num_experts**0.5)
         self.k = config.expert["k"]
-
-        num_expert_sets = self.num_heads if self.offset_heads else 1
 
         assert (
             self.num_experts**0.5
@@ -64,8 +62,9 @@ class PEER(nn.Module):
             torch.randn(self.num_heads, self.num_keys, 2, key_dims) * scale
         )
 
+        num_expert_sets = self.num_heads if self.offset_heads else 1
         self.key_in = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
-        self.act = ACT2FN[config.expert["activation"]]
+        self.act = ACT2FN[config.activation]
         self.key_out = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
     def forward(self, inputs: Tensor):

@@ -1,3 +1,4 @@
+from typing import Optional
 import random
 
 import torch
@@ -50,7 +51,7 @@ class PraxisDecoder(nn.Module):
 
         return hidden_states, sum(aux_losses)
 
-    def _checkpoint_strategy(self, strategy=None, num_layers=0):
+    def _checkpoint_strategy(self, strategy="speed", num_layers=0):
         if strategy == "aggressive":
             # every layer
             return [i for i in range(num_layers)]
@@ -63,10 +64,10 @@ class PraxisDecoder(nn.Module):
 
     def _create_forward(
         self,
-        expert,
-        hidden_states,
-        attention_mask,
-        router=None,
+        expert: nn.Module,
+        hidden_states: Tensor,
+        attention_mask: Tensor,
+        router: Optional[nn.Module],
         gradient_checkpointing=False,
     ):
         def custom_forward(*inputs):

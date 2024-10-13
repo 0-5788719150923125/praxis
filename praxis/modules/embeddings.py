@@ -7,8 +7,7 @@ from praxis import PraxisConfig
 
 class PraxisEmbedding(nn.Sequential):
     """
-    A simple token embeddings layer with a linear projection into
-    a reduced dimension.
+    A simple token embeddings layer with linear projection into a reduced dimension.
     """
 
     def __init__(self, config: PraxisConfig):

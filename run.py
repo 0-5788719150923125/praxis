@@ -122,7 +122,7 @@ parser.add_argument(
     "--reclaim_memory",
     type=str,
     choices=["aggressive", "gentle", "speed"],
-    default="gentle",
+    default="speed",
     help="Gradient checkpointing strategy",
 )
 parser.add_argument(

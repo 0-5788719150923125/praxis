@@ -1,6 +1,5 @@
+from typing import Optional
 import math
-from typing import Optional, OrderedDict, Tuple, Union
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -42,7 +41,7 @@ class PraxisAttention(nn.Module):
 
         # Lambda vectors per differential head and per head
         if self.effective_heads > 1:
-            self.lambda_init = 0.8  # As per the paper
+            self.lambda_init = 0.8  # A good default, per the paper
             self.lambdas = nn.ParameterList(
                 nn.Parameter(torch.randn(self.num_heads, self.head_dim))
                 for _ in range(self.effective_heads * 2)
@@ -63,7 +62,7 @@ class PraxisAttention(nn.Module):
         )
 
     def forward(
-        self, inputs: Tensor, attention_mask: Tensor, token_indices: Tensor = None
+        self, inputs: Tensor, attention_mask: Tensor, token_indices: Optional[Tensor]
     ):
         batch_size, seq_len, _ = inputs.shape
 

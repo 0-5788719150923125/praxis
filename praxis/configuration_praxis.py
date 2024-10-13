@@ -19,10 +19,9 @@ class PraxisConfig(PretrainedConfig):
         activation="mish",
         expert_type="peer",
         expert=dict(
-            activation="swish",
-            num_experts=20**2,
-            num_heads=2,
-            k=4,
+            num_experts=16**2,
+            num_heads=6,
+            k=1,
             key_dims=64,
             offset_heads=True,
         ),

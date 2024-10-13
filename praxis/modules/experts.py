@@ -1,4 +1,4 @@
-from typing import OrderedDict
+from typing import OrderedDict, Optional
 
 import torch
 import torch.nn as nn
@@ -9,7 +9,8 @@ from transformers.activations import ACT2FN
 
 from praxis import PraxisConfig
 from praxis.modules.attention import PraxisAttention
-from praxis.modules.peer import PEER
+from praxis.modules.peer import PraxisPEER
+
 
 input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 
@@ -33,8 +34,8 @@ class PraxisBlock(nn.Module):
         self,
         inputs: Tensor,
         attention_mask: Tensor,
-        router_weights: Tensor = None,
-        token_indices: Tensor = None,
+        router_weights: Optional[Tensor] = None,
+        token_indices: Optional[Tensor] = None,
     ):
         residual = inputs
         normalized = self.attn_norm(inputs)
@@ -53,6 +54,10 @@ class PraxisBlock(nn.Module):
 
 @register_expert_class("praxis_mlp", input_shape)
 class PraxisMLP(nn.Sequential):
+    """
+    A vanilla Multi-Layer Perceptron.
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__(
             OrderedDict(
@@ -67,6 +72,10 @@ class PraxisMLP(nn.Sequential):
 
 @register_expert_class("praxis_glu", input_shape)
 class PraxisGLU(nn.Module):
+    """
+    A basic MLP with a Gated Linear Units.
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.up = nn.Linear(config.num_dims, 8 * config.num_dims)
@@ -76,20 +85,6 @@ class PraxisGLU(nn.Module):
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
         return self.down(a * self.act(b))
-
-
-@register_expert_class("praxis_peer", input_shape)
-class PraxisPEER(nn.Sequential):
-    def __init__(self, config: PraxisConfig):
-        super().__init__(
-            OrderedDict(
-                [
-                    ("up", PEER(config)),
-                    ("act", ACT2FN[config.activation]),
-                    ("down", PEER(config)),
-                ]
-            )
-        )
 
 
 EXPERT_DICT = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}
