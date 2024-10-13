@@ -20,31 +20,26 @@ class PEER(nn.Module):
 
         n_dim = config.n_dim
         key_dim = None
-        product_key_topk = None
+        capacity = 0.45
         self.num_heads = config.peer_heads
         self.separate_embed_per_head = True
         self.num_experts = config.peer_experts
         self.num_experts_per_head = config.peer_experts_per_head
+        self.num_keys = int(self.num_experts**0.5)
         self.key_dim = key_dim if key_dim is not None else n_dim // 2
-        self.product_key_topk = (
-            product_key_topk
-            if product_key_topk is not None
-            else self.num_experts_per_head
-        )
+        self.topk = int(self.num_experts_per_head * capacity)
 
         num_expert_sets = self.num_heads if self.separate_embed_per_head else 1
 
         self.up_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
         self.down_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
 
-        self.act = ACT2FN[config.activation]
+        self.act = ACT2FN["gelu_new"]
 
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
         assert (n_dim % 2) == 0, "`n_dim` should be divisible by 2"
-
-        self.num_keys = int(self.num_experts**0.5)
 
         class Permute(nn.Module):
             def __init__(self):
@@ -62,8 +57,7 @@ class PEER(nn.Module):
                 b, s, d = x.size()
                 x = x.view(b * s, -1)
                 x = super().forward(x)
-                x = x.view(b, s, d)
-                return x
+                return x.view(b, s, d)
 
         self.queries = nn.Sequential(
             nn.Linear(n_dim, self.key_dim * self.num_heads * 2, bias=False),
@@ -78,7 +72,6 @@ class PEER(nn.Module):
         )
 
     def forward(self, x: Tensor):
-
         # Generate queries
         queries = self.queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
 
@@ -87,7 +80,7 @@ class PEER(nn.Module):
 
         # For each partition, get top-k indices and scores
         (scores_x, indices_x), (scores_y, indices_y) = [
-            s.topk(self.product_key_topk, dim=-1) for s in sim
+            s.topk(self.topk, dim=-1) for s in sim
         ]
 
         # Compute Cartesian product of top-k indices and scores
@@ -99,7 +92,7 @@ class PEER(nn.Module):
         all_indices = all_indices.view(*all_indices.shape[:-2], -1)
 
         # Get top num_experts_per_head from the Cartesian product
-        scores, pk_indices = all_scores.topk(self.num_experts_per_head, dim=-1)
+        scores, pk_indices = all_scores.topk(self.topk, dim=-1)
         indices = all_indices.gather(-1, pk_indices)
 
         if self.separate_embed_per_head:
