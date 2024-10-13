@@ -135,12 +135,12 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 ## goals
 
 - a global swarm
-- [self-modeling](https://arxiv.org/abs/2407.10188) makes peers easier to model (amongst themselves)
-- layers as experts
+- [self-modeling](https://arxiv.org/abs/2407.10188) makes peers less-complex, and easier to model (for other AI)
+- layers as experts; a marketplace of expert, composable "blocks"
 - commit to yourself
-- cascade-style token routing (ping -> pang -> pong -> ping) via a Mixture of Depths
-- treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that better-performing hparams are assigned more often
-- build connectors, allowing people to integrate their nodes with personal data
+- cascade-style token routing (ping -> pang -> pong -> ping) via a Mixture of Depths; cyclical graph computation
+- treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that well-performing hparams are assigned more often
+- build adapters/connectors, allowing people to integrate their nodes with external data sources
 
 ## notes, ideas and random things I want to remember
 
@@ -153,7 +153,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)
 - [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 - [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale)
-- embed training code within the model architecture itself, such that loading a model automatically bootstraps training, as well
+- embed training code within the model architecture itself, such that loading a model automatically starts the training, as well
 - cascading assistant models via hivemind (speculative decoding)
 
 ## won't do
