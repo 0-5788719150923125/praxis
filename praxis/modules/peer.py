@@ -28,10 +28,6 @@ class PEER(nn.Module):
 
         num_expert_sets = self.num_heads if self.offset_heads else 1
 
-        self.up_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
-        self.act = ACT2FN[config.expert["activation"]]
-        self.down_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
-
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
@@ -67,6 +63,10 @@ class PEER(nn.Module):
             torch.randn(self.num_heads, self.num_keys, 2, key_dim) * scale
         )
 
+        self.embed_in = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.act = ACT2FN[config.expert["activation"]]
+        self.embed_out = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+
     def forward(self, x: Tensor):
         # Generate queries
         queries = self.queries(x)  # Shape: (2, batch_size, seq_len, heads, dim_key)
@@ -98,8 +98,8 @@ class PEER(nn.Module):
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
         # Lookup expert weights using embeddings
-        weights_down = self.down_embed(indices)
-        weights_up = self.up_embed(indices)
+        weights_down = self.embed_in(indices)
+        weights_up = self.embed_out(indices)
 
         # Compute expert outputs
         x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)

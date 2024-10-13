@@ -74,7 +74,7 @@ python run.py \
 Send a JSON-encoded payload via POST to:
 
 ```
-http://localhost:5000/input
+http://localhost:2100/input
 ```
 
 This payload should support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
@@ -91,6 +91,14 @@ response = requests.post(url, json=payload)
 
 print(response.status_code)
 print(response.json())
+```
+
+## local web chat (coming soon!)
+
+Chat and swarm management interface is available here:
+
+```
+http://localhost:2100
 ```
 
 ## to register with transformers
