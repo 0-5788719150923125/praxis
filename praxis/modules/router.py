@@ -18,7 +18,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         *args,
         **kwargs,
     ):
-        super().__init__(in_features=config.n_dim, out_features=1)
+        super().__init__(in_features=config.num_dims, out_features=1)
         self.capacity = config.capacity
         assert (
             self.capacity > 0 and self.capacity < 1.0

@@ -6,10 +6,10 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        n_emb=512,
-        n_dim=384,
-        n_layer=7,
-        n_head=8,
+        num_embeds=512,
+        num_dims=384,
+        num_layers=7,
+        num_heads=8,
         differential_heads=0,
         dropout=0,
         epsilon=1e-5,
@@ -20,10 +20,10 @@ class PraxisConfig(PretrainedConfig):
         expert_type="peer",
         expert=dict(
             activation="swish",
-            n_experts=16**2,
-            n_head=3,
+            num_experts=16**2,
+            num_heads=3,
             k=9,
-            key_dim=64,
+            key_dims=64,
             offset_heads=True,
         ),
         sparse=False,
@@ -43,10 +43,10 @@ class PraxisConfig(PretrainedConfig):
         )
 
         # Praxis args
-        self.n_emb = n_emb
-        self.n_dim = n_dim
-        self.n_layer = n_layer
-        self.n_head = n_head
+        self.num_embeds = num_embeds
+        self.num_dims = num_dims
+        self.num_layers = num_layers
+        self.num_heads = num_heads
         self.differential_heads = differential_heads
         self.dropout = dropout
         self.epsilon = epsilon

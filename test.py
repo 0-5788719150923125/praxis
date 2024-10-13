@@ -11,9 +11,9 @@ AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 def test_praxis_model():
     # Initialize configuration
     config = PraxisConfig(
-        n_dim=768,
-        n_layer=12,
-        n_head=12,
+        num_dims=768,
+        num_layers=12,
+        num_heads=12,
     )
 
     # Initialize tokenizer (using GPT-2 tokenizer as a placeholder)
@@ -42,9 +42,9 @@ def test_praxis_model():
 def test_praxis_for_causal_lm():
     # Initialize configuration
     config = PraxisConfig(
-        n_dim=768,
-        n_layer=12,
-        n_head=12,
+        num_dims=768,
+        num_layers=12,
+        num_heads=12,
     )
 
     # Initialize tokenizer (using GPT-2 tokenizer as a placeholder)

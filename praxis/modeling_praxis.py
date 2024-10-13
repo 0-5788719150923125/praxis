@@ -54,7 +54,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def __init__(self, config: PraxisConfig):
         config.causal = True
         super().__init__(config)
-        self.head = nn.Linear(config.n_dim, config.vocab_size, bias=False)
+        self.head = nn.Linear(config.num_dims, config.vocab_size, bias=False)
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
         return {

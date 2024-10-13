@@ -16,34 +16,34 @@ from .router import PraxisRouter
 class PraxisBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
 
-        self.n_experts = config.n_experts
+        self.num_experts = config.num_experts
         self.k_best = config.k_best
 
-        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.router = PraxisRouter(
-            config.n_dim,
-            self.n_experts,
+            config.num_dims,
+            self.num_experts,
             self.k_best,
             config.target_temperature,
             config.annealing_steps,
         )
 
         experts = {}
-        for i in range(self.n_experts):
+        for i in range(self.num_experts):
             expert = name_to_block["praxis_mlp"](config)
             experts[f"expert.{i}"] = ModuleBackend(
                 name=f"expert.{i}",
                 module=expert,
                 args_schema=(
                     BatchTensorDescriptor(
-                        config.n_dim,
+                        config.num_dims,
                     ),
                 ),
                 outputs_schema=BatchTensorDescriptor(
-                    config.n_dim,
+                    config.num_dims,
                 ),
                 max_batch_size=8192,
                 # start=True,
@@ -77,7 +77,7 @@ class PraxisBlock(nn.Module):
         )
 
         dht_experts = get_experts(
-            self.dht, [f"expert.{i}" for i in range(self.n_experts)]
+            self.dht, [f"expert.{i}" for i in range(self.num_experts)]
         )
         self.experts = PraxisExpert(dht_experts, self.k_best)
 

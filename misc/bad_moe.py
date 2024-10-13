@@ -9,9 +9,9 @@ from praxis import PraxisConfig
 class ExpertGLU(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.up = nn.Linear(config.n_dim, 8 * config.n_dim)
+        self.up = nn.Linear(config.num_dims, 8 * config.num_dims)
         self.act = ACT2FN[config.activation]
-        self.down = nn.Linear(4 * config.n_dim, config.n_dim)
+        self.down = nn.Linear(4 * config.num_dims, config.num_dims)
 
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
@@ -28,14 +28,14 @@ class SparseMoEMLP(nn.Module):
         self.experts = nn.ModuleList([ExpertGLU(config) for _ in range(num_experts)])
 
         # Router network
-        self.router = nn.Linear(config.n_dim, num_experts)
+        self.router = nn.Linear(config.num_dims, num_experts)
 
     def forward(self, x):
         # Get batch size and sequence length
         batch_size, seq_len, _ = x.shape
 
         # Flatten the input
-        flat_x = x.view(-1, x.size(-1))  # (batch_size * seq_len, n_dim)
+        flat_x = x.view(-1, x.size(-1))  # (batch_size * seq_len, num_dims)
 
         # Route the input
         router_logits = self.router(flat_x)  # (batch_size * seq_len, num_experts)
@@ -66,8 +66,8 @@ class SparseMoEMLP(nn.Module):
 
 
 # Usage
-config = PraxisConfig(n_dim=512, activation="gelu")
+config = PraxisConfig(num_dims=512, activation="gelu")
 moe_mlp = SparseMoEMLP(config, num_experts=8, top_k=2)
-input_tensor = torch.randn(32, 64, 512)  # (batch_size, seq_len, n_dim)
+input_tensor = torch.randn(32, 64, 512)  # (batch_size, seq_len, num_dims)
 output = moe_mlp(input_tensor)
 print(output)

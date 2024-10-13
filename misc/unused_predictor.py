@@ -7,9 +7,9 @@ from ..configuration_praxis import PraxisConfig
 class ExpertPredictor(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
-        self.projector = nn.Linear(config.n_dim, config.n_dim)
-        self.predictor = nn.Linear(config.n_dim, config.n_layer)
+        self.norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
+        self.projector = nn.Linear(config.num_dims, config.num_dims)
+        self.predictor = nn.Linear(config.num_dims, config.num_layers)
         self.temperature = 0.5
 
     def forward(self, inputs):

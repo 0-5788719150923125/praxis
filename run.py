@@ -266,10 +266,10 @@ except Exception as e:
 
 # Transformers config
 config = PraxisConfig(
-    n_emb=512,
-    n_dim=384,
-    n_layer=3 if dev else args.depth,
-    n_head=8,
+    num_embeds=512,
+    num_dims=384,
+    num_layers=3 if dev else args.depth,
+    num_heads=8,
     differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
@@ -387,7 +387,7 @@ if args.optimizer.lower() == "soap":
         min_lr=1e-5,
         weight_decay=1e-2,
         precondition_frequency=10,
-        max_precondition_dim=1024,
+        max_preconditionum_dims=1024,
         normalize_gradient=False,
         correct_bias=True,
         precondition_1d=False,

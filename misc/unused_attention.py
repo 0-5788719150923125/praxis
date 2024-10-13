@@ -13,8 +13,8 @@ class PraxisAttention(nn.Module):
         super().__init__()
         self.causal = config.causal
         self.max_seq_len = config.context_length
-        self.hidden_size = config.n_dim
-        self.num_heads = config.n_head
+        self.hidden_size = config.num_dims
+        self.num_heads = config.num_heads
         self.head_dim = self.hidden_size // self.num_heads
         self.query = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False

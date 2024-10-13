@@ -19,11 +19,11 @@ class PEER(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
 
-        n_dim = config.n_dim
-        key_dim = config.expert["key_dim"]
-        self.num_heads = config.expert["n_head"]
+        num_dims = config.num_dims
+        key_dims = config.expert["key_dims"]
+        self.num_heads = config.expert["num_heads"]
         self.offset_heads = config.expert["offset_heads"]
-        self.num_experts = config.expert["n_experts"]
+        self.num_experts = config.expert["num_experts"]
         self.num_keys = int(self.num_experts**0.5)
         self.k = config.expert["k"]
 
@@ -32,7 +32,7 @@ class PEER(nn.Module):
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
-        assert (n_dim % 2) == 0, "`n_dim` should be divisible by 2"
+        assert (num_dims % 2) == 0, "`num_dims` should be divisible by 2"
 
         class Permute(nn.Module):
             def __init__(self):
@@ -53,20 +53,20 @@ class PEER(nn.Module):
                 return x.view(b, s, d)
 
         self.queries = nn.Sequential(
-            nn.Linear(n_dim, key_dim * self.num_heads * 2, bias=False),
-            BatchNorm1d(key_dim * self.num_heads * 2),
-            nn.Unflatten(-1, (2, self.num_heads, key_dim)),
+            nn.Linear(num_dims, key_dims * self.num_heads * 2, bias=False),
+            BatchNorm1d(key_dims * self.num_heads * 2),
+            nn.Unflatten(-1, (2, self.num_heads, key_dims)),
             Permute(),
         )
 
         scale = 0.02
         self.keys = nn.Parameter(
-            torch.randn(self.num_heads, self.num_keys, 2, key_dim) * scale
+            torch.randn(self.num_heads, self.num_keys, 2, key_dims) * scale
         )
 
-        self.key_in = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.key_in = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
         self.act = ACT2FN[config.expert["activation"]]
-        self.key_out = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.key_out = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
     def forward(self, x: Tensor):
         # Generate queries

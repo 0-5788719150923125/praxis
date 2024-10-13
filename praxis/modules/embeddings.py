@@ -15,8 +15,11 @@ class PraxisEmbedding(nn.Sequential):
         super().__init__(
             OrderedDict(
                 [
-                    ("wte", nn.Embedding(config.vocab_size, config.n_emb)),
-                    ("reduction", nn.Linear(config.n_emb, config.n_dim, bias=False)),
+                    ("wte", nn.Embedding(config.vocab_size, config.num_embeds)),
+                    (
+                        "reduction",
+                        nn.Linear(config.num_embeds, config.num_dims, bias=False),
+                    ),
                 ]
             )
         )

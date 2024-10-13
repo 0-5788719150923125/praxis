@@ -11,24 +11,26 @@ class PraxisController(nn.Module):
         self.epsilon = 1e-8
         self.tau = 0.5
 
-        self.recurrent = nn.GRU(config.n_dim, config.n_dim, batch_first=True)
-        self.reduction = SequenceReduction(config.n_dim, config.n_dim // 2)
-        self.psi = nn.Linear(config.n_dim, config.n_layer)
-        self.alpha = nn.Linear(1, config.n_dim)
+        self.recurrent = nn.GRU(config.num_dims, config.num_dims, batch_first=True)
+        self.reduction = SequenceReduction(config.num_dims, config.num_dims // 2)
+        self.psi = nn.Linear(config.num_dims, config.num_layers)
+        self.alpha = nn.Linear(1, config.num_dims)
 
-        self.register_buffer("order_ema", torch.zeros(config.n_layer, config.n_layer))
+        self.register_buffer(
+            "order_ema", torch.zeros(config.num_layers, config.num_layers)
+        )
         self.ema_decay = 0.99
         self.aux_weight = 1.0
 
     def forward(self, inputs):
         # Pass through GRU
-        gru_out, _ = self.recurrent(inputs)  # Shape: (batch_size, seq_len, n_dim)
+        gru_out, _ = self.recurrent(inputs)  # Shape: (batch_size, seq_len, num_dims)
 
         # Learnable reduction of GRU outputs
-        reduced_gru = self.reduction(gru_out)  # Shape: (batch_size, n_dim)
+        reduced_gru = self.reduction(gru_out)  # Shape: (batch_size, num_dims)
 
         # Average across batches
-        reduced_gru = reduced_gru.mean(dim=0)  # Shape: (n_dim)
+        reduced_gru = reduced_gru.mean(dim=0)  # Shape: (num_dims)
 
         # Compute logits for each expert
         logits = self.psi(reduced_gru)  # Shape: (num_experts)
@@ -49,9 +51,11 @@ class PraxisController(nn.Module):
         aux_loss = 0
         if self.training:
             # Create a position-aware encoding
-            n_experts = logits.size(0)
-            current_order = torch.zeros(n_experts, n_experts, device=sequence.device)
-            current_order[torch.arange(n_experts), sequence] = 1.0
+            num_experts = logits.size(0)
+            current_order = torch.zeros(
+                num_experts, num_experts, device=sequence.device
+            )
+            current_order[torch.arange(num_experts), sequence] = 1.0
 
             # Update EMA of expert order
             self.order_ema = (
@@ -59,7 +63,7 @@ class PraxisController(nn.Module):
             )
 
             # Compute diversity loss
-            target_distribution = torch.ones_like(self.order_ema) / n_experts
+            target_distribution = torch.ones_like(self.order_ema) / num_experts
             aux_loss = (
                 F.kl_div(
                     (self.order_ema + self.epsilon).log(),
@@ -73,14 +77,14 @@ class PraxisController(nn.Module):
 
 
 class SequenceReduction(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
+    def __init__(self, input_dim, hiddenum_dims):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
+        self.fc1 = nn.Linear(input_dim, hiddenum_dims)
+        self.fc2 = nn.Linear(hiddenum_dims, 1)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, input_dim)
-        proj = self.fc1(x)  # (batch_size, seq_len, hidden_dim)
+        proj = self.fc1(x)  # (batch_size, seq_len, hiddenum_dims)
         weights = F.softmax(self.fc2(proj).squeeze(-1), dim=1)  # (batch_size, seq_len)
         x_reduced = torch.bmm(weights.unsqueeze(1), x)  # (batch_size, 1, input_dim)
         return x_reduced.squeeze(1)  # (batch_size, input_dim)

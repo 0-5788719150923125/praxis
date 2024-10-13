@@ -20,11 +20,13 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.gradient_checkpointing = True
         self.shuffle = config.shuffle
-        self.experts = nn.ModuleList(PraxisBlock(config) for _ in range(config.n_layer))
+        self.experts = nn.ModuleList(
+            PraxisBlock(config) for _ in range(config.num_layers)
+        )
         self.routers = None
         if config.sparse:
             self.routers = nn.ModuleList(
-                PraxisMixtureOfDepths(config) for _ in range(config.n_layer // 2)
+                PraxisMixtureOfDepths(config) for _ in range(config.num_layers // 2)
             )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):

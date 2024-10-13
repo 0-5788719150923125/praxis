@@ -22,7 +22,7 @@ class CompressiveMemory(nn.Module):
         sampling_factor: Optional[int] = None,
         update: str = "linear",
         causal: bool = False,
-        position_embedder=None,
+        positionum_embedsedder=None,
         init_state_learnable: bool = False,
     ):
         """Initialize module.
@@ -36,7 +36,7 @@ class CompressiveMemory(nn.Module):
             sampling_factor (Optional[int], optional): Reciprocal of the sampling rate for the Mixture-of-Depths mechanism. Defaults to None.
             update (str, optional): Type of memory update rule to use ("linear" or "delta"). Defaults to "linear".
             causal (bool, optional): Whether to use causal attention masking. Defaults to False.
-            position_embedder (Optional[PositionEmbeddings], optional): Position embedding module. Defaults to None.
+            positionum_embedsedder (Optional[PositionEmbeddings], optional): Position embedding module. Defaults to None.
             init_state_learnable (bool, optional): Whether the initial memory and normalization are learnable. Defaults to False.
         """
         super(CompressiveMemory, self).__init__()
@@ -53,7 +53,7 @@ class CompressiveMemory(nn.Module):
         self.update = update
         self.causal = causal
 
-        self.position_embedder = position_embedder
+        self.positionum_embedsedder = positionum_embedsedder
 
         # Projections for stacked SDP attention
         self.proj_k = nn.Linear(dim_input, num_heads * dim_key, bias=False)
@@ -148,22 +148,22 @@ class CompressiveMemory(nn.Module):
                 sample_mask_seg = None
 
             # If position embedder is specified, add positional embeddings to q and k
-            if self.position_embedder is not None:
+            if self.positionum_embedsedder is not None:
                 if sample_mask is None:
-                    k_pos = self.position_embedder(
+                    k_pos = self.positionum_embedsedder(
                         k, total_seq_len=seq_len, offset=ix_lo
                     )
-                    q_pos = self.position_embedder(
+                    q_pos = self.positionum_embedsedder(
                         q, total_seq_len=seq_len, offset=ix_lo
                     )
                 else:
-                    k_pos = self.position_embedder(
+                    k_pos = self.positionum_embedsedder(
                         k,
                         total_seq_len=seq_len,
                         offset=ix_lo_seg,
                         select_mask=sample_mask_seg,
                     )
-                    q_pos = self.position_embedder(
+                    q_pos = self.positionum_embedsedder(
                         q,
                         total_seq_len=seq_len,
                         offset=ix_lo_seg,
@@ -177,7 +177,7 @@ class CompressiveMemory(nn.Module):
             sigma_q = nn.functional.elu(q) + 1.0
 
             # Apply SDP attention, as part of equation (2) of the paper
-            if self.position_embedder is not None:
+            if self.positionum_embedsedder is not None:
                 scores = q_pos @ k_pos.transpose(-2, -1) / self.dim_key**0.5
             else:
                 scores = q @ k.transpose(-2, -1) / self.dim_key**0.5

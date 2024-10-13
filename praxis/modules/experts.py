@@ -23,9 +23,9 @@ class PraxisBlock(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.attn_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
-        self.mlp_norm = nn.RMSNorm(config.n_dim, eps=config.epsilon)
+        self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.mlp = EXPERT_DICT[config.expert_type](config)
         self.drop = nn.Dropout(config.dropout)
 
@@ -57,9 +57,9 @@ class PraxisMLP(nn.Sequential):
         super().__init__(
             OrderedDict(
                 [
-                    ("up", nn.Linear(config.n_dim, 4 * config.n_dim)),
+                    ("up", nn.Linear(config.num_dims, 4 * config.num_dims)),
                     ("act", ACT2FN[config.activation]),
-                    ("down", nn.Linear(4 * config.n_dim, config.n_dim)),
+                    ("down", nn.Linear(4 * config.num_dims, config.num_dims)),
                 ]
             )
         )
@@ -69,9 +69,9 @@ class PraxisMLP(nn.Sequential):
 class PraxisGLU(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.up = nn.Linear(config.n_dim, 8 * config.n_dim)
+        self.up = nn.Linear(config.num_dims, 8 * config.num_dims)
         self.act = ACT2FN[config.activation]
-        self.down = nn.Linear(4 * config.n_dim, config.n_dim)
+        self.down = nn.Linear(4 * config.num_dims, config.num_dims)
 
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
