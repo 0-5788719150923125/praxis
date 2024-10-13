@@ -1,5 +1,6 @@
 from typing import OrderedDict
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -84,8 +85,12 @@ class PEER(nn.Module):
         all_indices = indices_x.unsqueeze(-1) * self.num_keys + indices_y.unsqueeze(-2)
 
         # Flatten last two dimensions
-        all_scores = all_scores.view(*all_scores.shape[:-2], -1)
-        all_indices = all_indices.view(*all_indices.shape[:-2], -1)
+        all_scores = all_scores.view(
+            *all_scores.shape[:-2], math.prod(all_scores.shape[-2:])
+        )
+        all_indices = all_indices.view(
+            *all_indices.shape[:-2], math.prod(all_indices.shape[-2:])
+        )
 
         # Get top expert keys from the Cartesian product
         scores, pk_indices = all_scores.topk(self.k, dim=-1)
