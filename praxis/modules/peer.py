@@ -24,7 +24,7 @@ class PraxisPEER(nn.Module):
         self.num_heads = config.expert["num_heads"]
         self.offset_heads = config.expert["offset_heads"]
         self.num_experts = config.expert["num_experts"]
-        self.num_keys = int(self.num_experts**0.5)
+        self.num_keys = int(math.sqrt(self.num_experts))
         self.k = config.expert["k"]
 
         assert (
@@ -51,8 +51,9 @@ class PraxisPEER(nn.Module):
                 return x.view(b, s, d)
 
         self.queries = nn.Sequential(
+            BatchNorm1d(num_dims),
             nn.Linear(num_dims, key_dims * self.num_heads * 2, bias=False),
-            BatchNorm1d(key_dims * self.num_heads * 2),
+            # BatchNorm1d(key_dims * self.num_heads * 2),
             nn.Unflatten(-1, (2, self.num_heads, key_dims)),
             Permute(),
         )
@@ -77,9 +78,7 @@ class PraxisPEER(nn.Module):
         sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
 
         # For each partition, get top-k indices and scores
-        (scores_x, indices_x), (scores_y, indices_y) = [
-            s.topk(self.k, dim=-1) for s in sim
-        ]
+        (scores_x, scores_y), (indices_x, indices_y) = sim.topk(self.k, dim=-1)
 
         # Compute Cartesian product of top-k indices and scores
         all_scores = scores_x.unsqueeze(-1) + scores_y.unsqueeze(-2)
