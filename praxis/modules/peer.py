@@ -46,7 +46,7 @@ class PEER(nn.Module):
                 super().__init__(*args, **kwargs)
 
             def forward(self, x):
-                b, s, d = x.size()
+                b, s, d = x.shape
                 x = x.view(b * s, d)
                 x = super().forward(x)
                 return x.view(b, s, d)
@@ -63,9 +63,9 @@ class PEER(nn.Module):
             torch.randn(self.num_heads, self.num_keys, 2, key_dim) * scale
         )
 
-        self.embed_in = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.key_in = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
         self.act = ACT2FN[config.expert["activation"]]
-        self.embed_out = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.key_out = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
 
     def forward(self, x: Tensor):
         # Generate queries
@@ -98,8 +98,8 @@ class PEER(nn.Module):
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
         # Lookup expert weights using embeddings
-        weights_down = self.embed_in(indices)
-        weights_up = self.embed_out(indices)
+        weights_down = self.key_in(indices)
+        weights_up = self.key_out(indices)
 
         # Compute expert outputs
         x = torch.einsum("b n d, b n h k d -> b n h k", x, weights_down)

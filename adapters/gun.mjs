@@ -29,9 +29,9 @@ const cache = []
 src
   .get('bullets')
   .get('trade')
-  .on(async (node, key) => {
+  .on(async (data, key) => {
     try {
-      let payload = JSON.parse(node)
+      const payload = JSON.parse(data)
 
       let message = payload.message
       if (payload?.pubKey !== null) {

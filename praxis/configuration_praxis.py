@@ -20,10 +20,10 @@ class PraxisConfig(PretrainedConfig):
         expert_type="peer",
         expert=dict(
             activation="swish",
-            n_experts=8**2,
+            n_experts=16**2,
             n_head=3,
             k=1,
-            key_dim=16,
+            key_dim=128,
             offset_heads=True,
         ),
         sparse=False,

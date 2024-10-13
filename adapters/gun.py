@@ -8,7 +8,7 @@ from collections import deque
 from queue import Empty, Full
 
 
-class GunTransport:
+class GunAdapter:
     def __init__(self, max_cache_size=1000):
         self._nodejs_process = None
         self._output_queue = multiprocessing.Queue(maxsize=max_cache_size)
@@ -25,7 +25,7 @@ class GunTransport:
                 [
                     "/bin/bash",
                     "-c",
-                    "npm install gun && node --experimental-network-imports transport/gun.mjs",
+                    "npm install gun && node --experimental-network-imports adapters/gun.mjs",
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -111,8 +111,8 @@ class GunTransport:
 atexit.register(lambda: None)  # This ensures __del__ is called on program exit
 
 if __name__ == "__main__":
-    # Create an instance of GunTransport
-    gun = GunTransport()
+    # Create an instance of GunAdapter
+    gun = GunAdapter()
 
     # Retrieve the output whenever needed
     while True:

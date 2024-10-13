@@ -147,14 +147,14 @@ parser.add_argument(
 parser.add_argument(
     "--optimizer",
     type=str,
-    choices=['adamw', 'soap'],
+    choices=["adamw", "soap"],
     default="adamw",
     help="The optimizer profile to use (default: adamw)",
 )
 parser.add_argument(
     "--expert_type",
     type=str,
-    choices=['mlp', 'glu', 'peer'],
+    choices=["mlp", "glu", "peer"],
     default="glu",
     help="The expert type for use for feedforward networks (default: glu)",
 )
@@ -253,7 +253,7 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
 sys.excepthook = exception_to_file
 
 # Global configuration
-vocab_size = 4096 * 4
+vocab_size = 8192
 
 # Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
@@ -844,7 +844,7 @@ class GunChatDataset(PraxisDataSampler):
     def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
         super().__init__(tokenizer, block_size)
 
-        from transport.gun import GunTransport as Gun
+        from adapters import GunAdapter as Gun
 
         self.gun = Gun()
         self.token_cache = []
