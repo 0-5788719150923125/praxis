@@ -145,6 +145,20 @@ parser.add_argument(
     help="Log experiment to Weights and Biases (Default: False)",
 )
 parser.add_argument(
+    "--optimizer",
+    type=str,
+    choices=['adamw', 'soap'],
+    default="adamw",
+    help="The optimizer profile to use (default: adamw)",
+)
+parser.add_argument(
+    "--expert_type",
+    type=str,
+    choices=['mlp', 'glu', 'peer'],
+    default="glu",
+    help="The expert type for use for feedforward networks (default: glu)",
+)
+parser.add_argument(
     "--dense",
     action="store_true",
     default=True,
@@ -263,6 +277,7 @@ config = PraxisConfig(
     sparse=True if args.sparse else not args.dense,
     capacity=0.125,
     shuffle=args.shuffle,
+    expert_type=args.expert_type,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -353,11 +368,7 @@ predict_tokens = 1
 
 # Optimizer configuration
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-hparams["optimizer"] = dict(
-    optimizer_name="GrokFastAdamW",
-    lr=1e-3,
-    min_lr=1e-5,
-    weight_decay=1e-2,
+optimizer_defaults = dict(
     wd_ban_list=[
         "bias",
         "wte",
@@ -369,29 +380,31 @@ hparams["optimizer"] = dict(
         "RMSNorm.bias",
     ],
 )
-# hparams["optimizer"] = dict(
-#     optimizer_name="SOAP",
-#     lr=1e-3,
-#     min_lr=1e-5,
-#     weight_decay=1e-2,
-#     precondition_frequency=10,
-#     max_precondition_dim=1024,
-#     normalize_gradient=False,
-#     correct_bias=True,
-#     precondition_1d=False,
-#     merge_dims=False,
-#     wd_ban_list=[
-#         "bias",
-#         "wte",
-#         "GroupNorm.weight",
-#         "GroupNorm.bias",
-#         "LayerNorm.weight",
-#         "LayerNorm.bias",
-#         "RMSNorm.weight",
-#         "RMSNorm.bias",
-#     ],
-# )
+if args.optimizer.lower() == "soap":
+    optimizer_profile = dict(
+        optimizer_name="SOAP",
+        lr=1e-3,
+        min_lr=1e-5,
+        weight_decay=1e-2,
+        precondition_frequency=10,
+        max_precondition_dim=1024,
+        normalize_gradient=False,
+        correct_bias=True,
+        precondition_1d=False,
+        merge_dims=False,
+    )
+else:
+    optimizer_profile = dict(
+        optimizer_name="GrokFastAdamW",
+        lr=1e-3,
+        min_lr=1e-5,
+        weight_decay=1e-2,
+    )
 
+# Merge the optimizer profile with the default profile
+hparams["optimizer"] = {**optimizer_defaults, **optimizer_profile}
+
+# Configure the learning rate scheduler
 scheduler_func = partial(
     CosineAnnealingWarmupRestarts,
     first_cycle_steps=4096 * 4,

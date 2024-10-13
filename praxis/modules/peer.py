@@ -22,19 +22,19 @@ class PEER(nn.Module):
         key_dim = config.expert["key_dim"]
         self.num_heads = config.expert["n_head"]
         self.offset_heads = config.expert["offset_heads"]
-        self.n_experts = config.expert["n_experts"]
-        self.num_keys = int(self.n_experts**0.5)
+        self.num_experts = config.expert["n_experts"]
+        self.num_keys = int(self.num_experts**0.5)
         self.topk = config.expert["topk"]
 
         num_expert_sets = self.num_heads if self.offset_heads else 1
 
-        self.up_embed = nn.Embedding(self.n_experts * num_expert_sets, n_dim)
-        self.down_embed = nn.Embedding(self.n_experts * num_expert_sets, n_dim)
+        self.up_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
+        self.down_embed = nn.Embedding(self.num_experts * num_expert_sets, n_dim)
 
         self.act = ACT2FN["gelu_new"]
 
         assert (
-            self.n_experts**0.5
+            self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
         assert (n_dim % 2) == 0, "`n_dim` should be divisible by 2"
 
@@ -94,7 +94,7 @@ class PEER(nn.Module):
 
         if self.offset_heads:
             head_expert_offsets = (
-                torch.arange(self.num_heads, device=x.device) * self.n_experts
+                torch.arange(self.num_heads, device=x.device) * self.num_experts
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
