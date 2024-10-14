@@ -66,8 +66,6 @@ from praxis import (
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
-    # PraxisTokenizer,
-    # PraxisTokenizerConfig,
 )
 
 # Register and configure environment
@@ -78,7 +76,6 @@ logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
-# AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
 
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
@@ -624,7 +621,7 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        n_gram_size = 7
+        n_gram_size = 9
         frequency = 20
         if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
             self.text = f"{self.initial_text}"

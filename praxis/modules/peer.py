@@ -63,9 +63,9 @@ class PraxisPEER(nn.Module):
         )
 
         num_expert_sets = self.num_heads if self.offset_heads else 1
-        self.embed_in = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        self.down = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
         self.act = ACT2FN[config.activation]
-        self.embed_out = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        self.up = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
     def forward(self, inputs: Tensor):
         # Generate queries
@@ -102,8 +102,8 @@ class PraxisPEER(nn.Module):
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
         # Lookup expert weights using embeddings
-        weights_down = self.embed_in(indices)
-        weights_up = self.embed_out(indices)
+        weights_down = self.down(indices)
+        weights_up = self.up(indices)
 
         # Compute expert outputs
         outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)
@@ -111,8 +111,8 @@ class PraxisPEER(nn.Module):
         # Activate the inputs
         outputs = self.act(outputs)
 
-        # Apply softmax to scores
-        outputs = F.softmax(scores, dim=-1) * outputs
+        # Apply sigmoid to scores
+        outputs = F.sigmoid(scores) * outputs
 
         # Aggregate expert outputs
         outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
