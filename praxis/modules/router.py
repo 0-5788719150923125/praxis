@@ -26,7 +26,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     def forward(
         self,
-        expert: nn.Module,
+        layer: nn.Module,
         inputs: Tensor,
         attention_mask: Tensor,
         *args,
@@ -86,7 +86,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        expert_outputs, _ = expert(
+        layer_outputs, _ = layer(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,
@@ -98,7 +98,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             input=inputs,
             dim=1,
             index=indices_expanded,
-            src=expert_outputs,
+            src=layer_outputs,
         )
 
         # compute aux loss, in order to teach the router about causality

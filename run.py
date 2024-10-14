@@ -66,8 +66,8 @@ from praxis import (
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
-    PraxisTokenizer,
-    PraxisTokenizerConfig,
+    # PraxisTokenizer,
+    # PraxisTokenizerConfig,
 )
 
 # Register and configure environment
@@ -78,7 +78,7 @@ logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
-AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
+# AutoTokenizer.register(PraxisTokenizer, PraxisTokenizerConfig)
 
 # User args, accepted via CLI
 parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
@@ -234,25 +234,12 @@ use_dashboard = False if args.no_dashboard else True
 
 
 def exception_to_file(exc_type, exc_value, exc_traceback):
-    # Get the current timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Format the error message
-    error_msg = f"Error occurred at: {timestamp}\n"
-    error_msg += f"Script: {os.path.abspath(sys.argv[0])}\n"
-    error_msg += f"Exception Type: {exc_type.__name__}\n"
-    error_msg += f"Exception Value: {exc_value}\n"
-    error_msg += "Traceback:\n"
-
     # Write to file
     error_path = os.path.join(cache_dir, "error.log")
     with open(error_path, "w") as error_file:
-        written_msg = error_msg + "".join(traceback.format_tb(exc_traceback))
-        error_file.write(written_msg)
-
+        error_file.write("".join(traceback.format_tb(exc_traceback)))
     # Call the default exception handler
     sys.__excepthook__(exc_type, exc_value, exc_traceback)
-
     print(f"Error logged to: {error_path}")
 
 

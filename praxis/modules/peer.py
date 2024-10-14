@@ -53,7 +53,6 @@ class PraxisPEER(nn.Module):
         self.queries = nn.Sequential(
             BatchNorm1d(num_dims),
             nn.Linear(num_dims, key_dims * self.num_heads * 2, bias=False),
-            # BatchNorm1d(key_dims * self.num_heads * 2),
             nn.Unflatten(-1, (2, self.num_heads, key_dims)),
             Permute(),
         )
@@ -64,9 +63,9 @@ class PraxisPEER(nn.Module):
         )
 
         num_expert_sets = self.num_heads if self.offset_heads else 1
-        self.key_in = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        self.embed_in = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
         self.act = ACT2FN[config.activation]
-        self.key_out = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        self.embed_out = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
     def forward(self, inputs: Tensor):
         # Generate queries
@@ -103,8 +102,8 @@ class PraxisPEER(nn.Module):
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
         # Lookup expert weights using embeddings
-        weights_down = self.key_in(indices)
-        weights_up = self.key_out(indices)
+        weights_down = self.embed_in(indices)
+        weights_up = self.embed_out(indices)
 
         # Compute expert outputs
         outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)

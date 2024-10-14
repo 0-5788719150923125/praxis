@@ -34,7 +34,7 @@ class PraxisModel(PreTrainedModel):
 
         inputs = self.embeds(input_ids)
 
-        if attention_mask is None:
+        if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(input_ids.shape, device=inputs.device)
 
         last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)

@@ -51,7 +51,6 @@ class PraxisBlock(nn.Module):
         return outputs, aux_loss
 
 
-@register_expert_class("praxis_mlp", input_shape)
 class PraxisMLP(nn.Sequential):
     """
     A vanilla Multi-Layer Perceptron.
@@ -69,7 +68,6 @@ class PraxisMLP(nn.Sequential):
         )
 
 
-@register_expert_class("praxis_glu", input_shape)
 class PraxisGLU(nn.Module):
     """
     A basic MLP with a Gated Linear Units.

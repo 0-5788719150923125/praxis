@@ -45,7 +45,7 @@ class PraxisDecoder(nn.Module):
             )  # select odd layers
             gradient_checkpointing = True if i in self.checkpoint_layers else False
             hidden_states, aux_loss = self._create_forward(
-                expert, hidden_states, attention_mask, router, gradient_checkpointing
+                expert, router, hidden_states, attention_mask, gradient_checkpointing
             )
             aux_losses.append(aux_loss)
 
@@ -65,9 +65,9 @@ class PraxisDecoder(nn.Module):
     def _create_forward(
         self,
         expert: nn.Module,
+        router: Optional[nn.Module],
         hidden_states: Tensor,
         attention_mask: Tensor,
-        router: Optional[nn.Module],
         gradient_checkpointing=False,
     ):
         def custom_forward(*inputs):
