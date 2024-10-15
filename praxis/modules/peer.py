@@ -108,9 +108,6 @@ class PraxisPEER(nn.Module):
 
         # Lookup expert weights using embeddings
         weights_down = self.down(indices)
-        weights_up = self.up(indices)
-
-        # Compute expert outputs
         outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)
 
         # Activate the inputs
@@ -125,8 +122,9 @@ class PraxisPEER(nn.Module):
         # Apply sigmoid to scores
         outputs = F.sigmoid(scores) * outputs
 
-        # Force ensembling of intermediate states
+        # Force sparse ensembling of intermediate states
         outputs = self.dropout(outputs)
+        weights_up = self.dropout(self.up(indices))
 
         # Aggregate expert outputs
         outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
