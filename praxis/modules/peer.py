@@ -27,6 +27,9 @@ class PraxisPEER(nn.Module):
         self.num_keys = int(math.sqrt(self.num_experts))
         self.k = config.expert["k"]
 
+        # Use Gated Linear Units (instead of a regular MLP)
+        self.glu = True
+
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a square"
@@ -64,6 +67,8 @@ class PraxisPEER(nn.Module):
 
         num_expert_sets = self.num_heads if self.offset_heads else 1
         self.down = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        if self.glu:
+            self.gates = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
         self.act = ACT2FN[config.activation]
         self.up = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
@@ -110,6 +115,12 @@ class PraxisPEER(nn.Module):
 
         # Activate the inputs
         outputs = self.act(outputs)
+
+        # Multiply by linear gating weights
+        if self.glu:
+            weights_gated = self.gates(indices)
+            gated = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_gated)
+            outputs *= gated
 
         # Apply sigmoid to scores
         outputs = F.sigmoid(scores) * outputs
