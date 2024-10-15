@@ -22,7 +22,7 @@ class PraxisConfig(PretrainedConfig):
             num_experts=32**2,
             num_heads=2,
             k=8,
-            key_dims=64,
+            key_dims=128,
             offset_heads=True,
         ),
         sparse=False,

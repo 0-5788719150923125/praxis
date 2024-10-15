@@ -65,13 +65,12 @@ class PraxisPEER(nn.Module):
             torch.randn(self.num_heads, self.num_keys, 2, key_dims) * scale
         )
 
-        num_expert_sets = self.num_heads if self.offset_heads else 1
-        self.down = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        self.down = nn.Embedding(self.num_experts, num_dims)
         if self.glu:
-            self.gates = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+            self.gates = nn.Embedding(self.num_experts, num_dims)
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
-        self.up = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
+        self.up = nn.Embedding(self.num_experts, num_dims)
 
     def forward(self, inputs: Tensor):
         # Generate queries
@@ -102,8 +101,8 @@ class PraxisPEER(nn.Module):
         indices = all_indices.gather(-1, pk_indices)
 
         if self.offset_heads:
-            head_expert_offsets = (
-                torch.arange(self.num_heads, device=inputs.device) * self.num_experts
+            head_expert_offsets = torch.arange(self.num_heads, device=inputs.device) * (
+                self.num_heads // self.num_experts
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
