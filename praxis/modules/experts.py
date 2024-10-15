@@ -54,7 +54,7 @@ class PraxisBlock(nn.Module):
 
 class PraxisMLP(nn.Sequential):
     """
-    A vanilla Multi-Layer Perceptron.
+    A standard Multi-Layer Perceptron.
     """
 
     def __init__(self, config: PraxisConfig):
@@ -72,7 +72,7 @@ class PraxisMLP(nn.Sequential):
 
 class PraxisGLU(nn.Module):
     """
-    A basic MLP with a Gated Linear Units.
+    A standard MLP, augmented with a Gated Linear Units.
     """
 
     def __init__(self, config: PraxisConfig):
@@ -84,8 +84,7 @@ class PraxisGLU(nn.Module):
 
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
-        c = self.dropout(a * self.act(b))
-        return self.down(c)
+        return self.down(self.dropout(a * self.act(b)))
 
 
 EXPERT_DICT = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}

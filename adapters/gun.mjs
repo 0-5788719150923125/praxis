@@ -12,7 +12,7 @@ const gun = Gun({
 const src = gun.get('src')
 src.on((data) => {})
 
-async function managePeers() {
+async function keepAlive() {
   const peers = gun.back('opt.peers')
   for (const i of bootstrapPeers) {
     const state = peers[i]?.wire?.readyState
@@ -20,10 +20,10 @@ async function managePeers() {
       gun.opt({ peers: [...bootstrapPeers] })
     }
   }
-  setTimeout(managePeers, 15000)
+  setTimeout(keepAlive, 15000)
 }
 
-managePeers()
+keepAlive()
 
 const cache = []
 src
