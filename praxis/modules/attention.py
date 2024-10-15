@@ -39,6 +39,9 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
 
+        # Force exploration of attention subnetworks
+        self.dropout = nn.Dropout(config.dropout)
+
         # Lambda vectors per differential head and per head
         if self.effective_heads > 1:
             self.lambda_init = 0.8  # A good default, per the paper
@@ -120,7 +123,10 @@ class PraxisAttention(nn.Module):
         scores = [scores[i] + attention_mask for i in range(self.effective_heads)]
 
         # Compute attention weights
-        weights = [F.softmax(scores[i], dim=-1) for i in range(self.effective_heads)]
+        weights = [
+            self.dropout(F.softmax(scores[i], dim=-1))
+            for i in range(self.effective_heads)
+        ]
 
         # return early if we aren't using differential attention
         if self.effective_heads == 1:

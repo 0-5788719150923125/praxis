@@ -72,7 +72,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
-        transformer_outputs = super().forward(
+        outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
@@ -80,7 +80,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return_dict=return_dict,
         )
 
-        hidden_states = transformer_outputs[0]
+        hidden_states = outputs[0]
         logits = self.head(hidden_states)
 
         loss = 0
@@ -97,7 +97,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            past_key_values=transformer_outputs.past_key_values,
-            hidden_states=transformer_outputs.hidden_states,
-            attentions=transformer_outputs.attentions,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )

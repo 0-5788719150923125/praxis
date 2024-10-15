@@ -27,7 +27,7 @@ class PraxisBlock(nn.Module):
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.mlp = EXPERT_DICT[config.expert_type](config)
-        self.drop = nn.Dropout(config.dropout)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(
         self,
@@ -39,11 +39,12 @@ class PraxisBlock(nn.Module):
         residual = inputs
         normalized = self.attn_norm(inputs)
         outputs = self.attn(normalized, attention_mask, token_indices)
+        outputs = self.dropout(outputs)
         outputs = outputs + residual
         residual = outputs
         normalized = self.mlp_norm(outputs)
         outputs = self.mlp(normalized)
-        outputs = self.drop(outputs)
+        outputs = self.dropout(outputs)
         if torch.is_tensor(router_weights):
             outputs *= router_weights
         aux_loss = 0
@@ -62,6 +63,7 @@ class PraxisMLP(nn.Sequential):
                 [
                     ("up", nn.Linear(config.num_dims, 4 * config.num_dims)),
                     ("act", ACT2FN[config.activation]),
+                    ("dropout", nn.Dropout(config.dropout)),
                     ("down", nn.Linear(4 * config.num_dims, config.num_dims)),
                 ]
             )
@@ -77,11 +79,13 @@ class PraxisGLU(nn.Module):
         super().__init__()
         self.up = nn.Linear(config.num_dims, 8 * config.num_dims)
         self.act = ACT2FN[config.activation]
+        self.dropout = nn.Dropout(config.dropout)
         self.down = nn.Linear(4 * config.num_dims, config.num_dims)
 
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
-        return self.down(a * self.act(b))
+        c = self.dropout(a * self.act(b))
+        return self.down(c)
 
 
 EXPERT_DICT = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}

@@ -70,6 +70,7 @@ class PraxisPEER(nn.Module):
         if self.glu:
             self.gates = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
         self.act = ACT2FN[config.activation]
+        self.dropout = nn.Dropout(config.dropout)
         self.up = nn.Embedding(self.num_experts * num_expert_sets, num_dims)
 
     def forward(self, inputs: Tensor):
@@ -124,6 +125,9 @@ class PraxisPEER(nn.Module):
 
         # Apply sigmoid to scores
         outputs = F.sigmoid(scores) * outputs
+
+        # Force ensembling of intermediate states
+        outputs = self.dropout(outputs)
 
         # Aggregate expert outputs
         outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)

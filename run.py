@@ -212,22 +212,7 @@ parser.add_argument(
 
 
 args = parser.parse_args()
-
-seed = args.seed
-seed_everything(seed)
-
-dev = args.dev
-device = args.device if args.device else "cpu"
-port = args.port
-host_name = args.host_name
-phi = args.phi
-gun = args.gun
-instruct = args.instruct
-
 cache_dir = args.cache_dir
-train_data_path = args.data_path
-
-use_dashboard = False if args.no_dashboard else True
 
 
 def exception_to_file(exc_type, exc_value, exc_traceback):
@@ -241,6 +226,20 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
 
 
 sys.excepthook = exception_to_file
+
+# Destructure CLI arguments
+seed = args.seed
+seed_everything(seed)
+
+dev = args.dev
+device = args.device if args.device else "cpu"
+port = args.port
+host_name = args.host_name
+phi = args.phi
+gun = args.gun
+instruct = args.instruct
+train_data_path = args.data_path
+use_dashboard = False if args.no_dashboard else True
 
 # Global configuration
 vocab_size = 8192
@@ -256,16 +255,11 @@ except Exception as e:
 
 # Transformers config
 config = PraxisConfig(
-    num_embeds=512,
-    num_dims=256,
     num_layers=3 if dev else args.depth,
-    num_heads=8,
     differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
-    context_length=4096,
     sparse=True if args.sparse else not args.dense,
-    capacity=0.125,
     shuffle=args.shuffle,
     expert_type=args.expert_type,
     reclaim_memory=args.reclaim_memory,
