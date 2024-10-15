@@ -19,7 +19,7 @@ class PraxisConfig(PretrainedConfig):
         activation="mish",
         expert_type="peer",
         expert=dict(
-            num_experts=32**2,
+            num_experts=40**2,
             num_heads=2,
             k=8,
             key_dims=128,
