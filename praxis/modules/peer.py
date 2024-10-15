@@ -123,8 +123,8 @@ class PraxisPEER(nn.Module):
         outputs = F.sigmoid(scores) * outputs
 
         # Force sparse ensembling of intermediate states
-        outputs = self.dropout(outputs)
         weights_up = self.dropout(self.up(indices))
+        outputs = self.dropout(outputs)
 
         # Aggregate expert outputs
         outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
