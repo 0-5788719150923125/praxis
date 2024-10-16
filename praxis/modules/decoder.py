@@ -16,6 +16,9 @@ from praxis import PraxisConfig
 from praxis.modules.experts import PraxisBlock
 from praxis.modules.router import PraxisMixtureOfDepths
 import asyncio
+import os
+from pathlib import Path
+import time
 
 
 class PraxisDecoder(nn.Module):
@@ -40,6 +43,7 @@ class PraxisDecoder(nn.Module):
                 use_ipfs=True,
                 ensure_bootstrap_success=True,
                 daemon=True,
+                identity_path=os.path.join(os.getcwd(), "id.key"),
             )
             schema = BatchTensorDescriptor(
                 config.num_dims,
@@ -56,13 +60,20 @@ class PraxisDecoder(nn.Module):
                 )
                 self.backends[f"expert.{i}"] = expert
                 self.experts.append(expert.module)
+            # directory = Path(os.path.join("data/praxis", "experts"))
+            # os.makedirs(directory, exist_ok=True)
             server = Server(
                 self.dht,
                 self.backends,
-                num_connection_handlers=4,
+                num_connection_handlers=4 * config.num_layers,
                 device=config.device_map,
+                # checkpoint_dir=directory,
             )
-            server.run_in_background(timeout=5.0)
+
+            while not server.runtime.ready:
+                server.run_in_background(timeout=5.0)
+                server.runtime.clear()
+
         else:
             [self.experts.append(PraxisBlock(config)) for _ in range(config.num_layers)]
 

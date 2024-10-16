@@ -535,6 +535,9 @@ class TerminalInterface(Callback):
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
+        addr = lm.model.get_addr()
+        if len(addr) > 0:
+            print("hivemind address:", addr)
         if self.dashboard:
             total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)

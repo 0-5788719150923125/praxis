@@ -8,6 +8,7 @@
 *.gz
 *.bbl
 *.blg
+*.key
 __pycache__
 .parcel-cache
 build
