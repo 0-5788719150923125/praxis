@@ -48,7 +48,7 @@ class PraxisModel(PreTrainedModel):
         )
 
     def get_addr(self):
-        if self.decoder.dht is not None:
+        if self.decoder.dht:
             addr1 = str(self.decoder.dht.get_visible_maddrs()[0])
             return "/p2p" + addr1.split("/p2p")[1]
         else:

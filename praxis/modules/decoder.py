@@ -33,6 +33,7 @@ class PraxisDecoder(nn.Module):
         self.checkpoint_layers = self._checkpoint_strategy(
             config.memory_profile, config.num_layers
         )
+        self.dht = False
         self.experts = nn.ModuleList()
         if config.hivemind:
             self.dht = DHT(
@@ -70,9 +71,9 @@ class PraxisDecoder(nn.Module):
                 # checkpoint_dir=directory,
             )
 
-            while not server.runtime.ready:
-                server.run_in_background(timeout=5.0)
-                server.runtime.clear()
+            # while not server.runtime.ready:
+            server.run_in_background(timeout=5.0)
+            # server.runtime.clear()
 
         else:
             [self.experts.append(PraxisBlock(config)) for _ in range(config.num_layers)]
@@ -89,6 +90,9 @@ class PraxisDecoder(nn.Module):
         if self.shuffle:
             random.shuffle(self.experts)
 
+        if self.dht:
+            self._search_for_experts()
+
         hidden_states = inputs
         aux_losses = []
 
@@ -103,6 +107,13 @@ class PraxisDecoder(nn.Module):
             aux_losses.append(aux_loss)
 
         return hidden_states, sum(aux_losses)
+
+    def _search_for_experts(self, chance=0.01):
+        if random.random() < chance:
+            dht_experts = get_experts(
+                self.dht, [f"expert.{i}" for i in range(len(list(self.experts)))]
+            )
+            print(dht_experts)
 
     def _checkpoint_strategy(self, strategy="speed", num_layers=0):
         if strategy == "aggressive":
