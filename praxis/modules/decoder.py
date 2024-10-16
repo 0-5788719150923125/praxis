@@ -36,7 +36,7 @@ class PraxisDecoder(nn.Module):
         self.experts = nn.ModuleList()
         if config.hivemind:
             self.dht = DHT(
-                # initial_peers=PUBLIC_INITIAL_PEERS,
+                initial_peers=config.initial_peers,
                 start=True,
                 use_auto_relay=True,
                 use_relay=True,

@@ -186,6 +186,12 @@ parser.add_argument(
     help="Connect your node to the Hivemind swarm",
 )
 parser.add_argument(
+    "--initial_peers",
+    nargs="*",
+    default=None,
+    help="Provide a list of Hivemind bootstrap peers",
+)
+parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
@@ -217,10 +223,12 @@ parser.add_argument(
 )
 
 
+# Destructure CLI arguments
 args = parser.parse_args()
-cache_dir = args.cache_dir
+globals().update(vars(args))
 
 
+# Ensure errors are written to a log file
 def exception_to_file(exc_type, exc_value, exc_traceback):
     # Write to file
     error_path = os.path.join(cache_dir, "error.log")
@@ -233,22 +241,12 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = exception_to_file
 
-# Destructure CLI arguments
-seed = args.seed
+# Set seeds for reproducibility
 seed_everything(seed)
-
-dev = args.dev
-device = args.device if args.device else "cpu"
-port = args.port
-host_name = args.host_name
-phi = args.phi
-gun = args.gun
-instruct = args.instruct
-train_data_path = args.data_path
-use_dashboard = False if args.no_dashboard else True
 
 # Global configuration
 vocab_size = 8192
+use_dashboard = False if no_dashboard else True
 
 # Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
@@ -261,15 +259,15 @@ except Exception as e:
 
 # Transformers config
 config = PraxisConfig(
-    num_layers=3 if dev else args.depth,
+    num_layers=3 if dev else depth,
     differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
-    sparse=True if args.sparse else not args.dense,
-    shuffle=args.shuffle,
-    hivemind=args.hivemind,
-    expert_type=args.expert_type,
-    reclaim_memory=args.reclaim_memory,
+    sparse=True if sparse else not dense,
+    shuffle=shuffle,
+    hivemind=hivemind,
+    expert_type=expert_type,
+    reclaim_memory=reclaim_memory,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -281,7 +279,7 @@ config = PraxisConfig(
 # Misc hyperparameters
 hparams = dict(
     seed=seed,
-    batch_size=args.batch_size if args.batch_size else 1,
+    batch_size=batch_size if batch_size else 1,
     target_batch_size=64,
     block_size=512,
     oversample_chance=0.1,  # double the block_size
@@ -292,9 +290,9 @@ hparams = dict(
 
 # Training config
 train_params = dict(
-    accelerator=f"cpu" if args.device == "cpu" else "gpu",
+    accelerator=f"cpu" if device == "cpu" else "gpu",
     strategy="auto",
-    devices=[int(device.split(":")[1])] if args.device.startswith("cuda") else "auto",
+    devices=[int(device.split(":")[1])] if device.startswith("cuda") else "auto",
     max_steps=-1,
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
@@ -372,7 +370,7 @@ optimizer_defaults = dict(
         "InstanceNorm",
     ],
 )
-if args.optimizer.lower() == "soap":
+if optimizer.lower() == "soap":
     optimizer_profile = dict(
         optimizer_name="SOAP",
         lr=1e-3,
@@ -899,7 +897,7 @@ class Generator:
     def generate(self, prompt, kwargs={}):
         input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
 
-        if args.device.startswith("cuda"):
+        if device.startswith("cuda"):
             if isinstance(input_ids, list):
                 input_ids = torch.tensor([input_ids], dtype=torch.long)
             input_ids = input_ids.to(device)
@@ -1139,7 +1137,7 @@ reduced = int(total_params / 10**6)
 print(f"parameters: {reduced}M")
 
 # File cleanup
-if args.reset:
+if reset:
     directories = ["datasets", "lightning", "wandb"]
     for directory in directories:
         shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
@@ -1152,7 +1150,7 @@ if os.path.exists(symlink):
     print(f"resuming from: {symlink}")
     ckpt_path = symlink
 
-if args.wandb:
+if wandb:
     import wandb
     from lightning.pytorch.loggers import WandbLogger
 
@@ -1188,9 +1186,9 @@ for dataset_config in hparams["training_data"]["primary"]:
         HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
     )
 
-if train_data_path:
+if data_path:
     train_data.append(
-        MultiDirectoryDataset(tokenizer, train_data_path, hparams["block_size"])
+        MultiDirectoryDataset(tokenizer, data_path, hparams["block_size"])
     )
 
 if gun:

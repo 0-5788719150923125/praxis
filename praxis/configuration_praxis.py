@@ -28,6 +28,7 @@ class PraxisConfig(PretrainedConfig):
         sparse=False,
         shuffle=False,
         hivemind=False,
+        initial_peers=None,
         reclaim_memory="speed",
         pad_token_id=0,
         bos_token_id=1,
@@ -60,6 +61,7 @@ class PraxisConfig(PretrainedConfig):
         self.sparse = sparse
         self.shuffle = shuffle
         self.hivemind = hivemind
+        self.initial_peers = initial_peers
         self.reclaim_memory = reclaim_memory
         self.causal = False
 
