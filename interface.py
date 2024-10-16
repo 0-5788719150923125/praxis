@@ -158,6 +158,10 @@ class TerminalDashboard:
             self.mode = mode
             self.previous_frame = None  # force a redraw
 
+    def update_status(self, status):
+        with self.lock:
+            self.status_text = status
+
     def set_host_count(self, count):
         with self.lock:
             self.num_faults = count
@@ -284,10 +288,6 @@ class TerminalDashboard:
 
         self.previous_frame = new_frame
         self.dashboard_output.flush()
-
-    def update_status(self, status):
-        with self.lock:
-            self.status_text = status  # Keep this as it was originally
 
     def _create_frame(self):
         # Get current terminal size
