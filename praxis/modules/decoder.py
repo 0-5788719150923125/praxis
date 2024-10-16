@@ -31,7 +31,7 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.shuffle = config.shuffle
         self.checkpoint_layers = self._checkpoint_strategy(
-            config.reclaim_memory, config.num_layers
+            config.memory_profile, config.num_layers
         )
         self.experts = nn.ModuleList()
         if config.hivemind:
@@ -108,7 +108,7 @@ class PraxisDecoder(nn.Module):
         if strategy == "aggressive":
             # every layer
             return [i for i in range(num_layers)]
-        elif strategy == "gentle":
+        elif strategy == "balanced":
             # every fourth layer
             return [i for i in range(num_layers) if i % 4 == 0]
         else:

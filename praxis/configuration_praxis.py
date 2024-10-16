@@ -29,7 +29,7 @@ class PraxisConfig(PretrainedConfig):
         shuffle=False,
         hivemind=False,
         initial_peers=None,
-        reclaim_memory="speed",
+        memory_profile="speed",
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
@@ -62,10 +62,5 @@ class PraxisConfig(PretrainedConfig):
         self.shuffle = shuffle
         self.hivemind = hivemind
         self.initial_peers = initial_peers
-        self.reclaim_memory = reclaim_memory
+        self.memory_profile = memory_profile
         self.causal = False
-
-        # Huggingface args
-        self.is_decoder = True
-        self.is_encoder_decoder = False
-        self.tie_word_embeddings = False

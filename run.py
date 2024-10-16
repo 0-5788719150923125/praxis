@@ -116,9 +116,9 @@ parser.add_argument(
     help="Number of layers to use",
 )
 parser.add_argument(
-    "--reclaim_memory",
+    "--memory_profile",
     type=str,
-    choices=["aggressive", "gentle", "speed"],
+    choices=["aggressive", "balanced", "speed"],
     default="speed",
     help="Gradient checkpointing strategy",
 )
@@ -267,7 +267,7 @@ config = PraxisConfig(
     shuffle=shuffle,
     hivemind=hivemind,
     expert_type=expert_type,
-    reclaim_memory=reclaim_memory,
+    memory_profile=memory_profile,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
