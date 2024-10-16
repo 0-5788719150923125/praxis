@@ -180,6 +180,12 @@ parser.add_argument(
     help="Shuffle layers at every forward pass",
 )
 parser.add_argument(
+    "--hivemind",
+    action="store_true",
+    default=False,
+    help="Connect your node to the Hivemind swarm",
+)
+parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
@@ -261,6 +267,7 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     sparse=True if args.sparse else not args.dense,
     shuffle=args.shuffle,
+    hivemind=args.hivemind,
     expert_type=args.expert_type,
     reclaim_memory=args.reclaim_memory,
     pad_token_id=tokenizer.pad_token_id,

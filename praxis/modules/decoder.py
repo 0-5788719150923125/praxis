@@ -6,9 +6,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+import hivemind
+from hivemind import DHT
+from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
+from hivemind.moe.server.layers import name_to_block
+from hivemind.utils import BatchTensorDescriptor
+
 from praxis import PraxisConfig
 from praxis.modules.experts import PraxisBlock
 from praxis.modules.router import PraxisMixtureOfDepths
+import asyncio
 
 
 class PraxisDecoder(nn.Module):
@@ -23,14 +30,49 @@ class PraxisDecoder(nn.Module):
         self.checkpoint_layers = self._checkpoint_strategy(
             config.reclaim_memory, config.num_layers
         )
-        self.experts = nn.ModuleList(
-            PraxisBlock(config) for _ in range(config.num_layers)
-        )
-        self.routers = None
-        if config.sparse:
-            self.routers = nn.ModuleList(
+        self.experts = nn.ModuleList()
+        if config.hivemind:
+            self.dht = DHT(
+                # initial_peers=PUBLIC_INITIAL_PEERS,
+                start=True,
+                use_auto_relay=True,
+                use_relay=True,
+                use_ipfs=True,
+                ensure_bootstrap_success=True,
+                daemon=True,
+            )
+            schema = BatchTensorDescriptor(
+                config.num_dims,
+            )
+            self.backends = {}
+            for i in range(config.num_layers):
+                expert = ModuleBackend(
+                    name=f"expert.{i}",
+                    module=name_to_block["praxis_block"](config),
+                    args_schema=(schema,),
+                    outputs_schema=schema,
+                    max_batch_size=64,  # should match the `target_batch_size`
+                    start=True,
+                )
+                self.backends[f"expert.{i}"] = expert
+                self.experts.append(expert.module)
+            server = Server(
+                self.dht,
+                self.backends,
+                num_connection_handlers=4,
+                device=config.device_map,
+            )
+            server.run_in_background(timeout=5.0)
+        else:
+            [self.experts.append(PraxisBlock(config)) for _ in range(config.num_layers)]
+
+        self.routers = (
+            nn.ModuleList(
                 PraxisMixtureOfDepths(config) for _ in range(config.num_layers // 2)
             )
+            if config.sparse
+            else None
+        )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         if self.shuffle:
