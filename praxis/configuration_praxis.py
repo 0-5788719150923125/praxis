@@ -6,8 +6,8 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        num_embeds=1024,
-        num_dims=256,
+        num_embeds=540,
+        num_dims=180,
         num_layers=7,
         num_heads=8,
         differential_heads=0,
@@ -19,10 +19,10 @@ class PraxisConfig(PretrainedConfig):
         activation="mish",
         expert_type="peer",
         expert=dict(
-            num_experts=40**2,
-            num_heads=2,
-            k=8,
-            key_dims=128,
+            num_experts=48**2,
+            num_heads=3,
+            k=9,
+            key_dims=64,
             offset_heads=True,
         ),
         sparse=False,
