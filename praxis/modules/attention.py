@@ -128,7 +128,7 @@ class PraxisAttention(nn.Module):
             for i in range(self.effective_heads)
         ]
 
-        # return early if we aren't using differential attention
+        # Return early if we aren't using differential attention
         if self.effective_heads == 1:
             # Use standard attention
             attention = (
