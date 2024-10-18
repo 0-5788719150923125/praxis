@@ -55,6 +55,9 @@ class PraxisDecoder(nn.Module):
             schema = BatchTensorDescriptor(
                 config.num_dims,
             )
+            attn_schema = BatchTensorDescriptor(
+                1,
+            )
             self.backends = {}
             self.local_experts = []
             for i in range(config.num_layers):
@@ -63,7 +66,10 @@ class PraxisDecoder(nn.Module):
                 expert = ModuleBackend(
                     name=expert_name,
                     module=name_to_block["praxis_block"](config),
-                    args_schema=(schema,),
+                    args_schema=(
+                        schema,
+                        attn_schema,
+                    ),
                     outputs_schema=schema,
                     max_batch_size=64,  # should match the `target_batch_size`
                     start=True,
@@ -103,22 +109,38 @@ class PraxisDecoder(nn.Module):
                 self.routers[(i - 1) // 2] if self.routers and i % 2 != 0 else None
             )  # select odd layers
             gradient_checkpointing = True if i in self.checkpoint_layers else False
-            try:
-                hidden_states, aux_loss = self._create_forward(
-                    expert,
-                    router,
-                    hidden_states,
-                    attention_mask,
-                    gradient_checkpointing,
-                )
-                aux_losses.append(aux_loss)
+            hidden_states, aux_loss = self._create_forward(
+                expert,
+                router,
+                hidden_states,
+                attention_mask,
+                gradient_checkpointing,
+            )
+            aux_losses.append(aux_loss)
+            # try:
+            # hidden_states, aux_loss = self._create_forward(
+            #     expert,
+            #     router,
+            #     hidden_states,
+            #     attention_mask,
+            #     gradient_checkpointing,
+            # )
+            # aux_losses.append(aux_loss)
+            # if isinstance(expert, RemoteExpert):
+            #     hidden_states = expert(
+            #         hidden_states.to("cpu"), attention_mask.to("cpu")
+            #     ).to("cpu")
+            #     hidden_states = hidden_states.to(inputs.device)
+            # else:
+            #     hidden_states = expert(hidden_states, attention_mask)
+
             # except P2PDaemonError as e:
-            except Exception as e:
-                print(e)
-                print("pruning bad expert")
-                self.experts.pop(i)
-                if expert.uid in self.local_experts:
-                    self.local_experts.remove(expert.uid)
+            # except Exception as e:
+            #     print(e)
+            #     print("pruning bad expert")
+            #     self.experts.pop(i)
+            #     if expert.uid in self.local_experts:
+            #         self.local_experts.remove(expert.uid)
 
         return hidden_states, sum(aux_losses)
 

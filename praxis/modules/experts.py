@@ -12,7 +12,11 @@ from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
 
 
-input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
+# input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
+input_shape = lambda batch_size, hid_dim: (
+    torch.empty((batch_size, hid_dim)),
+    torch.empty((batch_size)),
+)
 
 
 @register_expert_class("praxis_block", input_shape)
@@ -32,7 +36,7 @@ class PraxisBlock(nn.Module):
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Tensor,
+        attention_mask: Optional[Tensor] = None,
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ):
