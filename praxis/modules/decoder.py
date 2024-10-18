@@ -61,6 +61,9 @@ class PraxisDecoder(nn.Module):
             router_weights = BatchTensorDescriptor(
                 1,
             )
+            token_indices = BatchTensorDescriptor(
+                None,
+            )
             self.backends = {}
             self.local_experts = []
             for i in range(config.num_layers):
@@ -73,6 +76,7 @@ class PraxisDecoder(nn.Module):
                         schema,
                         attn_schema,
                         router_weights,
+                        token_indices,
                     ),
                     outputs_schema=schema,
                     max_batch_size=64,  # should match the `target_batch_size`
