@@ -960,7 +960,7 @@ class TimeBasedCheckpoint(ModelCheckpoint):
     def on_train_batch_end(
         self,
         trainer,
-        pl_module,
+        lm,
         outputs,
         batch,
         batch_idx,
@@ -981,7 +981,8 @@ class TimeBasedCheckpoint(ModelCheckpoint):
             # Update last checkpoint time
             self.last_checkpoint_time = current_time
 
-        # return super().on_train_batch_end(trainer, pl_module, outputs, batch, batch_idx)
+            # Also save the model in Huggingface format
+            lm.model.save_pretrained(self.dirpath, safe_serialization=True)
 
     def on_train_epoch_end(self, trainer, pl_module):
         # Disable saving checkpoints at the end of every epoch
