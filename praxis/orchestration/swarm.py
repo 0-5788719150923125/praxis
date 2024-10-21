@@ -43,30 +43,26 @@ class PraxisHivemind(nn.Module):
         hidden_schema = BatchTensorDescriptor(
             config.num_dims,
         )
-        attn_schema = BatchTensorDescriptor(
+        attention_schema = BatchTensorDescriptor(
             1,
         )
         bit_tensor_schema = BatchTensorDescriptor(
             1,
         )
-        losses_schema = BatchTensorDescriptor(1, requires_grad=False)
         backends = {}
         self.local_experts = []
         for i in range(config.num_layers):
-            expert_name = self._generate_unique_name(k=10)
+            expert_name = self._generate_unique_name()
             self.local_experts.append(expert_name)
             expert = ModuleBackend(
                 name=expert_name,
                 module=name_to_block["praxis_expert"](config),
                 args_schema=(
                     hidden_schema,
-                    attn_schema,
+                    attention_schema,
                     bit_tensor_schema,
                 ),
-                outputs_schema=(
-                    hidden_schema,
-                    losses_schema,
-                ),
+                outputs_schema=(hidden_schema),
                 max_batch_size=64,  # should match the `target_batch_size`
                 start=True,
                 # timeout=5,
@@ -94,18 +90,18 @@ class PraxisHivemind(nn.Module):
             print(expert.uid)
             self.local_experts.remove(expert.uid)
 
-    def _generate_unique_name(self, k=100):
+    def _generate_unique_name(self, k=3):
         new_name = (
-            random.choice(PREFIXES[:3]) + "~" + random.choice(SUFFIXES[:3]) + ".0"
+            random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
         )
         if new_name not in self.local_experts:
             return new_name
         else:
             return self._generate_unique_name(k)
 
-    def _search_for_experts(self, chance=0.5):
+    def _search_for_experts(self, chance=0.1):
         if random.random() < chance:
-            new_name = self._generate_unique_name(k=10)
+            new_name = self._generate_unique_name()
             new_expert = get_experts(self.dht, [new_name])[0]
             if new_expert is not None and new_expert.uid not in self.local_experts:
                 self.experts.append(new_expert)

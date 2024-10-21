@@ -27,7 +27,7 @@ class PraxisDecoder(nn.Module):
         )
         if config.hivemind:
             self.swarm = PraxisHivemind(config)
-            self.experts = self.swarm.get_experts()
+            self.experts = nn.ModuleList(self.swarm.get_experts())
         else:
             self.experts = nn.ModuleList(
                 [PraxisExpert(config) for _ in range(config.num_layers)]
@@ -35,7 +35,7 @@ class PraxisDecoder(nn.Module):
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         # experts = self.experts.copy()
-        experts = self.experts
+        experts = list(self.experts)
         if self.shuffle:
             random.shuffle(experts)
 
@@ -50,14 +50,16 @@ class PraxisDecoder(nn.Module):
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
-                hidden_states, aux_loss = self._create_forward(
+                hidden_states = self._create_forward(
                     expert,
                     hidden_states,
                     attention_mask,
                     bit_tensor,
                     gradient_checkpointing,
                 )
-                aux_losses.append(aux_loss[0].item())
+                if hasattr(expert, "get_losses"):
+                    aux_loss = expert.get_losses()
+                    aux_losses.append(aux_loss)
             except P2PDaemonError as e:
                 self.swarm.handle_failure(expert)
             # except Exception as e:

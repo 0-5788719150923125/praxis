@@ -25,6 +25,7 @@ class PraxisExpert(nn.Module):
     A Hivemind expert has certain limitations, which make it difficult to work with:
     1. All inputs to the `forward()` method must be Tensors.
     2. No inputs may be empty.
+    3. All inputs/outputs must be a part of the computation graph (i.e. returning detached aux_loss tensors is invalid).
     Essentially, Hivemind experts must define static inputs/outputs - which negates
     the "dynamic" nature of Pytorch.
     """
@@ -40,7 +41,11 @@ class PraxisExpert(nn.Module):
             hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
         else:
             hidden_states, aux_loss = self.expert(inputs, attention_mask)
-        return hidden_states, torch.tensor([aux_loss])
+        self.losses = aux_loss
+        return hidden_states
+
+    def get_losses(self):
+        return self.losses
 
 
 class PraxisBlock(nn.Module):
