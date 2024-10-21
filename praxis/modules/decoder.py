@@ -4,10 +4,12 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from torch import Tensor
 
 from praxis import PraxisConfig
 from praxis.modules.experts import PraxisExpert
+from praxis.orchestration.swarm import PraxisHivemind
 
 
 class PraxisDecoder(nn.Module):
@@ -23,29 +25,42 @@ class PraxisDecoder(nn.Module):
         self.checkpoint_indices = self._checkpoint_strategy(
             config.memory_profile, config.num_layers
         )
-        self.experts = nn.ModuleList(
-            [PraxisExpert(config) for _ in range(config.num_layers)]
-        )
+        if config.hivemind:
+            self.swarm = PraxisHivemind(config)
+            self.experts = self.swarm.get_experts()
+        else:
+            self.experts = nn.ModuleList(
+                [PraxisExpert(config) for _ in range(config.num_layers)]
+            )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
+        experts = self.experts.copy()
         if self.shuffle:
-            random.shuffle(self.experts)
+            random.shuffle(experts)
+
+        if hasattr(self, "swarm"):
+            self.swarm._search_for_experts()
 
         hidden_states = inputs
         aux_losses = []
 
-        for i, expert in enumerate(self.experts):
+        for i, expert in enumerate(experts):
             use_router = True if self.sparse and i % 2 != 0 else False
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
-            hidden_states, aux_loss = self._create_forward(
-                expert,
-                hidden_states,
-                attention_mask,
-                bit_tensor,
-                gradient_checkpointing,
-            )
-            aux_losses.append(aux_loss)
+            try:
+                hidden_states, aux_loss = self._create_forward(
+                    expert,
+                    hidden_states,
+                    attention_mask,
+                    bit_tensor,
+                    gradient_checkpointing,
+                )
+                aux_losses.append(aux_loss)
+            except P2PDaemonError as e:
+                self.swarm.handle_failure(expert)
+            except Exception as e:
+                print(e)
 
         return hidden_states, sum(aux_losses)
 

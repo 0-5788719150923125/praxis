@@ -15,6 +15,7 @@ from praxis.modules.router import PraxisMixtureOfDepths
 input_shape = lambda batch_size, hid_dim: (
     torch.empty((batch_size, hid_dim)),
     torch.empty((batch_size)),
+    torch.empty((1)),
 )
 
 
