@@ -34,7 +34,8 @@ class PraxisDecoder(nn.Module):
             )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
-        experts = self.experts.copy()
+        # experts = self.experts.copy()
+        experts = self.experts
         if self.shuffle:
             random.shuffle(experts)
 
@@ -59,8 +60,8 @@ class PraxisDecoder(nn.Module):
                 aux_losses.append(aux_loss[0].item())
             except P2PDaemonError as e:
                 self.swarm.handle_failure(expert)
-            except Exception as e:
-                print(e)
+            # except Exception as e:
+            #     print(e)
 
         return hidden_states, sum(aux_losses)
 
