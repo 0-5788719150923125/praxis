@@ -30,13 +30,15 @@ class PraxisExpert(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
+        self.expert = PraxisBlock(config)
         if config.sparse:
-            self.expert = PraxisMixtureOfDepths(config, layer=PraxisBlock(config))
-        else:
-            self.expert = PraxisBlock(config)
+            self.router = PraxisMixtureOfDepths(config)
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor):
-        hidden_states, aux_loss = self.expert(inputs, attention_mask)
+    def forward(self, inputs: Tensor, attention_mask: Tensor, bit_tensor: Tensor):
+        if hasattr(self, "router") and bool(bit_tensor):
+            hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
+        else:
+            hidden_states, aux_loss = self.expert(inputs, attention_mask)
         return hidden_states, aux_loss
 
 

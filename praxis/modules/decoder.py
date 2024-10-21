@@ -18,8 +18,9 @@ class PraxisDecoder(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
+        self.sparse = config.sparse
         self.shuffle = config.shuffle
-        self.checkpoint_layers = self._checkpoint_strategy(
+        self.checkpoint_indices = self._checkpoint_strategy(
             config.memory_profile, config.num_layers
         )
         self.experts = nn.ModuleList(
@@ -34,11 +35,14 @@ class PraxisDecoder(nn.Module):
         aux_losses = []
 
         for i, expert in enumerate(self.experts):
-            gradient_checkpointing = True if i in self.checkpoint_layers else False
+            use_router = True if self.sparse and i % 2 != 0 else False
+            bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
+            gradient_checkpointing = True if i in self.checkpoint_indices else False
             hidden_states, aux_loss = self._create_forward(
                 expert,
                 hidden_states,
                 attention_mask,
+                bit_tensor,
                 gradient_checkpointing,
             )
             aux_losses.append(aux_loss)
@@ -61,6 +65,7 @@ class PraxisDecoder(nn.Module):
         expert: nn.Module,
         hidden_states: Tensor,
         attention_mask: Tensor,
+        bit_tensor: Tensor,
         gradient_checkpointing=False,
     ):
         def custom_forward(*inputs):
@@ -68,7 +73,11 @@ class PraxisDecoder(nn.Module):
 
         if gradient_checkpointing and self.training:
             return torch.utils.checkpoint.checkpoint(
-                custom_forward, hidden_states, attention_mask, use_reentrant=False
+                custom_forward,
+                hidden_states,
+                attention_mask,
+                bit_tensor,
+                use_reentrant=False,
             )
         else:
-            return custom_forward(hidden_states, attention_mask)
+            return custom_forward(hidden_states, attention_mask, bit_tensor)
