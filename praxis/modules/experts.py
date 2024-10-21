@@ -32,7 +32,7 @@ class PraxisExpert(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        # self.max_batch_size = 4 // will need to figure out how to handle the disparities in batch size/sequence length between experts
+        # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
         self.expert = PraxisBlock(config)
         if config.sparse:
             self.router = PraxisMixtureOfDepths(config)

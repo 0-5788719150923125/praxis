@@ -35,7 +35,6 @@ class PraxisDecoder(nn.Module):
             )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
-        # experts = self.experts.copy()
         experts = list(self.experts)
         if self.shuffle:
             random.shuffle(experts)
