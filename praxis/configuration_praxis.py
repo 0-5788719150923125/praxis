@@ -6,8 +6,8 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        num_embeds=540,
-        num_dims=180,
+        num_embeds=720,
+        num_dims=360,
         num_layers=7,
         num_heads=8,
         differential_heads=0,

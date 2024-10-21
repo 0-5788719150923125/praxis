@@ -62,11 +62,7 @@ from transformers import (
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-)
+from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -260,7 +256,6 @@ except Exception as e:
 # Transformers config
 config = PraxisConfig(
     num_layers=3 if dev else depth,
-    differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
