@@ -56,7 +56,7 @@ class PraxisDecoder(nn.Module):
                     bit_tensor,
                     gradient_checkpointing,
                 )
-                aux_losses.append(aux_loss)
+                aux_losses.append(aux_loss[0].item())
             except P2PDaemonError as e:
                 self.swarm.handle_failure(expert)
             except Exception as e:

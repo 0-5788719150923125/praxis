@@ -40,7 +40,7 @@ class PraxisExpert(nn.Module):
             hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
         else:
             hidden_states, aux_loss = self.expert(inputs, attention_mask)
-        return hidden_states, aux_loss
+        return hidden_states, torch.tensor([aux_loss])
 
 
 class PraxisBlock(nn.Module):

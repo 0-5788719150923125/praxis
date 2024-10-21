@@ -14,7 +14,7 @@ from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server import declare_experts
 from hivemind.moe.server.layers import name_to_block
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
-from hivemind.utils import BatchTensorDescriptor, get_dht_time
+from hivemind.utils import BatchTensorDescriptor, TensorDescriptor, get_dht_time
 from torch import Tensor
 
 from praxis import PraxisConfig
@@ -40,15 +40,16 @@ class PraxisHivemind(nn.Module):
             await_ready=True,
             # identity_path=os.path.join(os.getcwd(), "id.key"),
         )
-        schema = BatchTensorDescriptor(
+        hidden_schema = BatchTensorDescriptor(
             config.num_dims,
         )
         attn_schema = BatchTensorDescriptor(
             1,
         )
-        bit_tensor = BatchTensorDescriptor(
+        bit_tensor_schema = BatchTensorDescriptor(
             1,
         )
+        losses_schema = BatchTensorDescriptor(1, requires_grad=False)
         backends = {}
         self.local_experts = []
         for i in range(config.num_layers):
@@ -58,11 +59,14 @@ class PraxisHivemind(nn.Module):
                 name=expert_name,
                 module=name_to_block["praxis_expert"](config),
                 args_schema=(
-                    schema,
+                    hidden_schema,
                     attn_schema,
-                    bit_tensor,
+                    bit_tensor_schema,
                 ),
-                outputs_schema=schema,
+                outputs_schema=(
+                    hidden_schema,
+                    losses_schema,
+                ),
                 max_batch_size=64,  # should match the `target_batch_size`
                 start=True,
                 # timeout=5,
