@@ -1,4 +1,4 @@
-from typing import OrderedDict, Optional
+from typing import Optional, OrderedDict
 
 import torch
 import torch.nn as nn
@@ -10,18 +10,36 @@ from transformers.activations import ACT2FN
 from praxis import PraxisConfig
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
+from praxis.modules.router import PraxisMixtureOfDepths
 
-
-# input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 input_shape = lambda batch_size, hid_dim: (
     torch.empty((batch_size, hid_dim)),
-    torch.empty((batch_size)),
-    torch.empty((batch_size)),
     torch.empty((batch_size)),
 )
 
 
-@register_expert_class("praxis_block", input_shape)
+@register_expert_class("praxis_expert", input_shape)
+class PraxisExpert(nn.Module):
+    """
+    A Hivemind expert has certain limitations, which make it difficult to work with:
+    1. All inputs to the `forward()` method must be Tensors.
+    2. No inputs may be empty.
+    Essentially, Hivemind experts must define static inputs/outputs - which negates
+    the "dynamic" nature of Pytorch.
+    """
+
+    def __init__(self, config: PraxisConfig):
+        super().__init__()
+        if config.sparse:
+            self.expert = PraxisMixtureOfDepths(config, layer=PraxisBlock(config))
+        else:
+            self.expert = PraxisBlock(config)
+
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
+        hidden_states, aux_loss = self.expert(inputs, attention_mask)
+        return hidden_states, aux_loss
+
+
 class PraxisBlock(nn.Module):
     """
     A standard transformer block, with adjustable feedforward "experts".
@@ -38,7 +56,7 @@ class PraxisBlock(nn.Module):
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ):

@@ -6,7 +6,7 @@ from torch import Tensor
 from praxis import PraxisConfig
 
 
-class PraxisMixtureOfDepths(nn.Linear):
+class PraxisMixtureOfDepths(nn.Module):
     """
     This uses expert-choice routing, which was greatly preferred by the
     original authors of this research: https://arxiv.org/abs/2404.02258
@@ -15,18 +15,20 @@ class PraxisMixtureOfDepths(nn.Linear):
     def __init__(
         self,
         config: PraxisConfig,
+        layer: nn.Module,
         *args,
         **kwargs,
     ):
-        super().__init__(in_features=config.num_dims, out_features=1)
+        super().__init__()
         self.capacity = config.capacity
+        self.router = nn.Linear(in_features=config.num_dims, out_features=1)
+        self.layer = layer
         assert (
             self.capacity > 0 and self.capacity < 1.0
         ), "'capacity' must be set to a value between 0 and 1."
 
     def forward(
         self,
-        layer: nn.Module,
         inputs: Tensor,
         attention_mask: Tensor,
         *args,
@@ -37,7 +39,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         k = int(s * self.capacity)
 
         # emit scalar weights for each token
-        router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
+        router_logits = self.router(inputs)  # -> batch, seq_len, 1
 
         # the `b > 1` condition is required for sanity checking in Pytorch Lightning
         if self.training or b > 1:
@@ -86,7 +88,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        layer_outputs, _ = layer(
+        layer_outputs, _ = self.layer(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,
