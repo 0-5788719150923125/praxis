@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind import DHT
-from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
+from hivemind.moe import ModuleBackend, Server, get_experts
 from hivemind.moe.server.layers import name_to_block, name_to_input
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from hivemind.utils import BatchTensorDescriptor
@@ -15,81 +15,6 @@ from torch import Tensor
 from praxis import PraxisConfig
 from praxis.modules.experts import PraxisBlock
 from praxis.modules.router import PraxisMixtureOfDepths
-
-
-class PraxisServer(Server):
-
-    @classmethod
-    def create(
-        cls,
-        expert_uids: list = None,
-        expert_cls="ffn",
-        config: PraxisConfig = None,
-        num_handlers=None,
-        min_batch_size=1,
-        max_batch_size=4096,
-        device=None,
-        initial_peers=(),
-        stats_report_interval: Optional[int] = None,
-        update_period: float = 30,
-        expiration: Optional[float] = None,
-        *,
-        start: bool,
-        **kwargs,
-    ) -> Server:
-
-        assert expert_cls in name_to_block
-        assert (
-            expert_uids is not None
-        ), "Please provide a list of `expert_uids` to name experts with."
-
-        dht = DHT(initial_peers=initial_peers, start=True, **kwargs)
-
-        num_experts = len(expert_uids)
-        num_handlers = num_handlers if num_handlers is not None else num_experts * 8
-        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-        hidden_schema = BatchTensorDescriptor(
-            config.num_dims,
-        )
-        attention_schema = BatchTensorDescriptor(
-            1,
-        )
-        bit_tensor_schema = BatchTensorDescriptor(
-            1,
-        )
-
-        # initialize experts
-        backends = {}
-        experts = []
-        for expert_uid in expert_uids:
-            expert = name_to_block[expert_cls](config)
-            backends[expert_uid] = ModuleBackend(
-                name=expert_uid,
-                module=expert,
-                args_schema=(
-                    hidden_schema,
-                    attention_schema,
-                    bit_tensor_schema,
-                ),
-                outputs_schema=(hidden_schema),
-                min_batch_size=min_batch_size,
-                max_batch_size=max_batch_size,
-            )
-            experts.append(backends[expert_uid].module)
-
-        thread = cls(
-            dht,
-            backends,
-            num_connection_handlers=num_handlers,
-            device=device,
-            stats_report_interval=stats_report_interval,
-            update_period=update_period,
-            expiration=expiration,
-            start=start,
-        )
-
-        return thread, dht, experts
 
 
 class PraxisSwarm:
@@ -108,9 +33,6 @@ class PraxisSwarm:
             start=True,
             daemon=True,
             initial_peers=PUBLIC_INITIAL_PEERS,
-            use_auto_relay=True,
-            use_relay=True,
-            use_ipfs=False,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
             config=config,
             device=config.device_map,
@@ -148,6 +70,86 @@ class PraxisSwarm:
                 print(
                     f"A new expert joined the swarm! ({new_expert.uid.split('.')[0]})"
                 )
+
+
+class PraxisServer(Server):
+
+    @classmethod
+    def create(
+        cls,
+        expert_uids: list = None,
+        expert_cls="ffn",
+        config: PraxisConfig = None,
+        num_handlers=None,
+        min_batch_size=1,
+        max_batch_size=4096,
+        device=None,
+        initial_peers=(),
+        stats_report_interval: Optional[int] = None,
+        update_period: float = 30,
+        expiration: Optional[float] = None,
+        *,
+        start: bool,
+        **kwargs,
+    ) -> Server:
+
+        assert expert_cls in name_to_block
+        assert (
+            expert_uids is not None
+        ), "Please provide a list of `expert_uids` to name experts with."
+
+        hidden_dim = config.num_dims
+        dht = DHT(initial_peers=initial_peers, start=True, **kwargs)
+        # TODO: the mere act of using this method prevents bootstrap freezing
+        visible_maddrs_str = [str(a) for a in dht.get_visible_maddrs()]
+
+        num_experts = len(expert_uids)
+        num_handlers = num_handlers if num_handlers is not None else num_experts * 8
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+        hidden_schema = BatchTensorDescriptor(
+            config.num_dims,
+        )
+        attention_schema = BatchTensorDescriptor(
+            1,
+        )
+        bit_tensor_schema = BatchTensorDescriptor(
+            1,
+        )
+
+        # initialize experts
+        backends = {}
+        experts = []
+        for expert_uid in expert_uids:
+            expert = name_to_block[expert_cls](config)
+            backends[expert_uid] = ModuleBackend(
+                name=expert_uid,
+                module=expert,
+                args_schema=(
+                    hidden_schema,
+                    attention_schema,
+                    bit_tensor_schema,
+                ),
+                outputs_schema=(hidden_schema),
+                optimizer=None,
+                scheduler=None,
+                min_batch_size=min_batch_size,
+                max_batch_size=max_batch_size,
+            )
+            experts.append(backends[expert_uid].module)
+
+        thread = cls(
+            dht,
+            backends,
+            num_connection_handlers=num_handlers,
+            device=device,
+            stats_report_interval=stats_report_interval,
+            update_period=update_period,
+            expiration=expiration,
+            start=start,
+        )
+
+        return thread, dht, experts
 
 
 PUBLIC_INITIAL_PEERS = [
