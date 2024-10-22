@@ -10,7 +10,6 @@ class PraxisConfig(PretrainedConfig):
         num_dims=360,
         num_layers=7,
         num_heads=8,
-        differential_heads=0,
         dropout=0,
         epsilon=1e-5,
         capacity=0.125,
@@ -27,6 +26,7 @@ class PraxisConfig(PretrainedConfig):
         ),
         sparse=False,
         shuffle=False,
+        differential=False,
         hivemind=False,
         initial_peers=None,
         memory_profile="speed",
@@ -49,7 +49,7 @@ class PraxisConfig(PretrainedConfig):
         self.num_dims = num_dims
         self.num_layers = num_layers
         self.num_heads = num_heads
-        self.differential_heads = differential_heads
+        self.differential = differential
         self.dropout = dropout
         self.epsilon = epsilon
         self.capacity = capacity

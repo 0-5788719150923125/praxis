@@ -176,6 +176,12 @@ parser.add_argument(
     help="Shuffle layers at every forward pass",
 )
 parser.add_argument(
+    "--differential",
+    action="store_true",
+    default=False,
+    help="Use Differential Attention mechanism",
+)
+parser.add_argument(
     "--hivemind",
     action="store_true",
     default=False,
@@ -260,6 +266,7 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
     shuffle=shuffle,
+    differential=differential,
     hivemind=hivemind,
     expert_type=expert_type,
     memory_profile=memory_profile,
@@ -299,7 +306,7 @@ train_params = dict(
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=4096 * hparams["target_batch_size"] // hparams["batch_size"],
+    val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
