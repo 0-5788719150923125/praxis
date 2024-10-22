@@ -144,7 +144,7 @@ model = LmulMLP(input_size=2, hidden_size=64, output_size=2, mantissa_bits=10)
 
 # Define loss and optimizer
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Training loop
 num_epochs = 10000

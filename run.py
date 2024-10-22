@@ -354,10 +354,6 @@ if dev:
 if not dev:
     hparams["training_data"]["validation"].append(population[3])
 
-# Misc config
-predict_interval = 3  # seconds
-predict_tokens = 1
-
 # Optimizer configuration
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 optimizer_defaults = dict(
@@ -519,8 +515,8 @@ class TerminalInterface(Callback):
         self.initial_text = tokenizer.bos_token
         self.text = f"{self.initial_text}"
         self.max_length = 4096
-        self.interval = predict_interval
-        self.num_tokens = predict_tokens
+        self.interval = 3
+        self.num_tokens = 1
         self.host_count = 0
         self.dashboard = False
         if use_dashboard:

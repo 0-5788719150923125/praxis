@@ -1,9 +1,4 @@
-import asyncio
-import logging as logger
-import os
 import random
-import time
-from pathlib import Path
 from typing import Optional
 
 import hivemind
@@ -12,17 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from hivemind import DHT
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
-from hivemind.moe.server import declare_experts
-from hivemind.moe.server.layers import (
-    add_custom_models_from_file,
-    name_to_block,
-    name_to_input,
-    schedule_name_to_scheduler,
-)
+from hivemind.moe.server.layers import name_to_block, name_to_input
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
-from hivemind.proto.runtime_pb2 import CompressionType
-from hivemind.utils import BatchTensorDescriptor, TensorDescriptor, get_dht_time
-from hivemind.utils.tensor_descr import DUMMY_BATCH_SIZE, BatchTensorDescriptor
+from hivemind.utils import BatchTensorDescriptor
 from torch import Tensor
 
 from praxis import PraxisConfig
@@ -43,7 +30,6 @@ class PraxisServer(Server):
         max_batch_size=4096,
         device=None,
         initial_peers=(),
-        compression=CompressionType.NONE,
         stats_report_interval: Optional[int] = None,
         update_period: float = 30,
         expiration: Optional[float] = None,
@@ -53,15 +39,11 @@ class PraxisServer(Server):
     ) -> Server:
 
         assert expert_cls in name_to_block
+        assert (
+            expert_uids is not None
+        ), "Please provide a list of `expert_uids` to name experts with."
 
-        hidden_dim = config.num_dims
         dht = DHT(initial_peers=initial_peers, start=True, **kwargs)
-        visible_maddrs_str = [str(a) for a in dht.get_visible_maddrs()]
-        logger.info(
-            f"Running DHT node on {visible_maddrs_str}, initial peers = {initial_peers}"
-        )
-
-        assert expert_uids is not None, "Please provide expert_uids"
 
         num_experts = len(expert_uids)
         num_handlers = num_handlers if num_handlers is not None else num_experts * 8
@@ -79,7 +61,7 @@ class PraxisServer(Server):
 
         # initialize experts
         backends = {}
-        cls.experts = []
+        experts = []
         for expert_uid in expert_uids:
             expert = name_to_block[expert_cls](config)
             backends[expert_uid] = ModuleBackend(
@@ -91,14 +73,12 @@ class PraxisServer(Server):
                     bit_tensor_schema,
                 ),
                 outputs_schema=(hidden_schema),
-                optimizer=None,
-                scheduler=None,
                 min_batch_size=min_batch_size,
                 max_batch_size=max_batch_size,
             )
-            cls.experts.append(backends[expert_uid].module)
+            experts.append(backends[expert_uid].module)
 
-        return cls(
+        thread = cls(
             dht,
             backends,
             num_connection_handlers=num_handlers,
@@ -108,6 +88,8 @@ class PraxisServer(Server):
             expiration=expiration,
             start=start,
         )
+
+        return thread, dht, experts
 
 
 class PraxisSwarm:
@@ -120,18 +102,19 @@ class PraxisSwarm:
             for _ in range(config.num_layers)
         ]
 
-        server = PraxisServer.create(
+        self.server, self.dht, self.experts = PraxisServer.create(
             expert_uids=self.expert_uids,
             expert_cls="praxis_expert",
             start=True,
             daemon=True,
             initial_peers=PUBLIC_INITIAL_PEERS,
+            use_auto_relay=True,
+            use_relay=True,
+            use_ipfs=False,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
             config=config,
             device=config.device_map,
         )
-        self.dht = server.dht
-        self.experts = server.experts
 
     def get_experts(self):
         return self.experts

@@ -21,14 +21,14 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
+        self.differential = config.differential
         self.max_seq_len = config.context_length
         self.hidden_size = config.num_dims
         self.num_heads = config.num_heads
         self.head_dim = self.hidden_size // self.num_heads
-        self.differential = config.differential
 
         # Query and key projections for differential heads
-        multiplier = 2 if config.differential else 1
+        multiplier = 2 if self.differential else 1
         self.query = nn.Linear(
             self.hidden_size,
             self.num_heads * self.head_dim * multiplier,

@@ -46,6 +46,7 @@ class PraxisDecoder(nn.Module):
         aux_losses = []
 
         for i, expert in enumerate(experts):
+            print(i)
             use_router = True if self.sparse and i % 2 != 0 else False
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
