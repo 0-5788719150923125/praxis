@@ -35,26 +35,16 @@ class PraxisServer(Server):
     @classmethod
     def create(
         cls,
-        num_experts: int = None,
-        expert_uids: str = None,
-        expert_pattern: str = None,
+        expert_uids: list = None,
         expert_cls="ffn",
-        # hidden_dim=1024,
         config: PraxisConfig = None,
-        optim_cls=torch.optim.Adam,
-        scheduler: str = "none",
-        num_warmup_steps=None,
-        num_training_steps=None,
-        clip_grad_norm=None,
         num_handlers=None,
         min_batch_size=1,
         max_batch_size=4096,
         device=None,
         initial_peers=(),
-        checkpoint_dir: Optional[Path] = None,
         compression=CompressionType.NONE,
         stats_report_interval: Optional[int] = None,
-        custom_module_path=None,
         update_period: float = 30,
         expiration: Optional[float] = None,
         *,
@@ -62,8 +52,6 @@ class PraxisServer(Server):
         **kwargs,
     ) -> Server:
 
-        if custom_module_path is not None:
-            add_custom_models_from_file(custom_module_path)
         assert expert_cls in name_to_block
 
         hidden_dim = config.num_dims
@@ -73,72 +61,11 @@ class PraxisServer(Server):
             f"Running DHT node on {visible_maddrs_str}, initial peers = {initial_peers}"
         )
 
-        assert (
-            expert_pattern is None and num_experts is None and expert_uids is not None
-        ) or (
-            num_experts is not None and expert_uids is None
-        ), "Please provide either expert_uids *or* num_experts (possibly with expert_pattern), but not both"
-
-        if expert_uids is None:
-            if checkpoint_dir is not None:
-                assert is_directory(checkpoint_dir)
-                expert_uids = [
-                    child.name
-                    for child in checkpoint_dir.iterdir()
-                    if (child / "checkpoint_last.pt").exists()
-                ]
-                total_experts_in_checkpoint = len(expert_uids)
-                logger.info(
-                    f"Located {total_experts_in_checkpoint} checkpoints for experts {expert_uids}"
-                )
-
-                if total_experts_in_checkpoint > num_experts:
-                    raise ValueError(
-                        f"Found {total_experts_in_checkpoint} checkpoints, but num_experts is set to {num_experts}, "
-                        f"which is smaller. Either increase num_experts or remove unneeded checkpoints."
-                    )
-            else:
-                expert_uids = []
-
-            uids_to_generate = num_experts - len(expert_uids)
-            if uids_to_generate > 0:
-                logger.info(
-                    f"Generating {uids_to_generate} expert uids from pattern {expert_pattern}"
-                )
-                expert_uids.extend(
-                    _generate_uids(uids_to_generate, expert_pattern, dht)
-                )
+        assert expert_uids is not None, "Please provide expert_uids"
 
         num_experts = len(expert_uids)
         num_handlers = num_handlers if num_handlers is not None else num_experts * 8
         device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-        DUMMY_BATCH_SIZE = 1
-        DUMMY_SEQUENCE_LENGTH = 1
-        # sample_input = name_to_input[expert_cls](
-        #     (
-        #         (DUMMY_BATCH_SIZE, DUMMY_SEQUENCE_LENGTH, hidden_dim),
-        #         (DUMMY_BATCH_SIZE, DUMMY_SEQUENCE_LENGTH),
-        #         (DUMMY_BATCH_SIZE),
-        #     )
-        # )
-        # if isinstance(sample_input, tuple):
-        #     args_schema = tuple(
-        #         BatchTensorDescriptor.from_tensor(arg, compression)
-        #         for arg in sample_input
-        #     )
-        # else:
-        #     args_schema = (
-        #         BatchTensorDescriptor.from_tensor(sample_input, compression),
-        #     )
-
-        scheduler_cls = schedule_name_to_scheduler[scheduler]
-        if scheduler_cls is not None:
-            scheduler_cls = partial(
-                scheduler_cls,
-                num_warmup_steps=num_warmup_steps,
-                num_training_steps=num_training_steps,
-            )
 
         hidden_schema = BatchTensorDescriptor(
             config.num_dims,
@@ -155,38 +82,27 @@ class PraxisServer(Server):
         cls.experts = []
         for expert_uid in expert_uids:
             expert = name_to_block[expert_cls](config)
-            optimizer = (
-                optim_cls(expert.parameters()) if optim_cls is not None else None
-            )
-            scheduler = scheduler_cls(optimizer) if scheduler_cls is not None else None
-            if clip_grad_norm is not None:
-                optimizer = ClippingWrapper(optimizer, clip_grad_norm)
             backends[expert_uid] = ModuleBackend(
                 name=expert_uid,
                 module=expert,
-                # args_schema=args_schema,
                 args_schema=(
                     hidden_schema,
                     attention_schema,
                     bit_tensor_schema,
                 ),
                 outputs_schema=(hidden_schema),
-                optimizer=optimizer,
-                scheduler=scheduler,
+                optimizer=None,
+                scheduler=None,
                 min_batch_size=min_batch_size,
                 max_batch_size=max_batch_size,
             )
             cls.experts.append(backends[expert_uid].module)
-
-        if checkpoint_dir is not None:
-            load_experts(backends, checkpoint_dir)
 
         return cls(
             dht,
             backends,
             num_connection_handlers=num_handlers,
             device=device,
-            checkpoint_dir=checkpoint_dir,
             stats_report_interval=stats_report_interval,
             update_period=update_period,
             expiration=expiration,
@@ -197,17 +113,16 @@ class PraxisServer(Server):
 class PraxisSwarm:
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        # self.experts = nn.ModuleList()
 
         self.expert_uids = []
-        self.expert_uids = [
-            self._generate_unique_name() for _ in range(config.num_layers)
+        [
+            self.expert_uids.append(self._generate_unique_name())
+            for _ in range(config.num_layers)
         ]
 
         server = PraxisServer.create(
             expert_uids=self.expert_uids,
             expert_cls="praxis_expert",
-            optim_cls=None,
             start=True,
             daemon=True,
             initial_peers=PUBLIC_INITIAL_PEERS,
@@ -216,7 +131,7 @@ class PraxisSwarm:
             device=config.device_map,
         )
         self.dht = server.dht
-        self.experts = nn.ModuleList(server.experts)
+        self.experts = server.experts
 
     def get_experts(self):
         return self.experts
