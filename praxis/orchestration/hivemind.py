@@ -18,6 +18,10 @@ from praxis.modules.router import PraxisMixtureOfDepths
 
 
 class PraxisSwarm:
+    """
+    A helper class, with convenience methods for Hivemind swarm management.
+    """
+
     def __init__(self, config: PraxisConfig):
         super().__init__()
 
@@ -27,7 +31,8 @@ class PraxisSwarm:
             for _ in range(config.num_layers)
         ]
 
-        self.server, self.dht, self.experts = PraxisServer.create(
+        self.active_remote_experts = []
+        self.server, self.dht, self.active_local_experts = PraxisServer.create(
             expert_uids=self.expert_uids,
             expert_cls="praxis_expert",
             start=True,
@@ -38,14 +43,19 @@ class PraxisSwarm:
             device=config.device_map,
         )
 
-    def get_experts(self):
-        return self.experts
+    @property
+    def local_experts(self):
+        return self.active_local_experts
+
+    @property
+    def remote_experts(self):
+        return self.active_remote_experts
 
     def get_visible_maddrs(self):
         return self.dht.get_visible_maddrs()
 
     def handle_failure(self, expert):
-        self.experts.remove(expert)
+        self.active_remote_experts.remove(expert)
         print("removing:")
         if expert.uid in self.expert_uids:
             print(expert.uid)
@@ -65,7 +75,7 @@ class PraxisSwarm:
             new_name = self._generate_unique_name()
             new_expert = get_experts(self.dht, [new_name])[0]
             if new_expert is not None and new_expert.uid not in self.expert_uids:
-                self.experts.append(new_expert)
+                self.active_remote_experts.append(new_expert)
                 self.expert_uids.append(new_expert.uid)
                 print(
                     f"A new expert joined the swarm! ({new_expert.uid.split('.')[0]})"
@@ -73,6 +83,9 @@ class PraxisSwarm:
 
 
 class PraxisServer(Server):
+    """
+    Overwrites the Hivemind `Server` class, making it more flexible.
+    """
 
     @classmethod
     def create(

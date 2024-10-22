@@ -82,6 +82,8 @@ class TerminalDashboard:
         self.total_params = "0M"
         self.num_faults = 0
         self.mode = "train"
+        self.local_experts = 0
+        self.remote_experts = 0
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -191,6 +193,11 @@ class TerminalDashboard:
     def update_rate(self, seconds):
         with self.lock:
             self.rate = seconds
+
+    def update_expert_count(self, num_local, num_remote):
+        with self.lock:
+            self.local_experts = num_local
+            self.remote_experts = num_remote
 
     def update_url(self, url):
         with self.lock:
@@ -389,7 +396,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, RATE: {self.rate:.2f}s | {self.url}",
+                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, RATE: {self.rate:.2f}s | EXPERTS: {self.local_experts} local, {self.remote_experts} remote | {self.url}",
                     width,
                 )
             )

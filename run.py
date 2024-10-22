@@ -557,10 +557,15 @@ class TerminalInterface(Callback):
         self._generate_sample_text(lm, batch_idx, self.interval)
 
         batch_size, _ = batch.shape
+        swarm_info = lm.model.get_info()
+        local_experts = swarm_info["experts"].get("local", 0)
+        remote_experts = swarm_info["experts"].get("remote", 0)
 
         self.log_dict(
             {
                 "step": int(batch_idx // trainer.accumulate_grad_batches),
+                "local_experts": int(local_experts),
+                "remote_experts": int(remote_experts),
             },
             on_step=True,
             logger=True,
@@ -576,7 +581,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_step(step.item())
             self.dashboard.update_rate(rate.item())
             self.dashboard.update_loss(self.ema_loss)
-            self.dashboard.fake_log(chance=0.000001)
+            self.dashboard.update_expert_count(local_experts, remote_experts)
+            self.dashboard.fake_log(chance=0.00001)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(

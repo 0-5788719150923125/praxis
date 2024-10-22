@@ -54,6 +54,14 @@ class PraxisModel(PreTrainedModel):
         else:
             return []
 
+    def get_info(self):
+        return dict(
+            experts=dict(
+                local=len(self.decoder.local_experts),
+                remote=len(self.decoder.remote_experts),
+            )
+        )
+
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):
     model_type = "praxis"

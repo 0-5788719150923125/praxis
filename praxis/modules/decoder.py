@@ -26,16 +26,18 @@ class PraxisDecoder(nn.Module):
         self.checkpoint_indices = self._checkpoint_strategy(
             config.memory_profile, config.num_layers
         )
+        self.remote_experts = []
         if config.hivemind:
             self.swarm = PraxisSwarm(config)
-            self.experts = self.swarm.get_experts()
+            self.local_experts = nn.ModuleList(self.swarm.active_local_experts)
+            self.remote_experts = self.swarm.active_remote_experts
         else:
-            self.experts = nn.ModuleList(
+            self.local_experts = nn.ModuleList(
                 [PraxisExpert(config) for _ in range(config.num_layers)]
             )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
-        experts = list(self.experts)
+        experts = list(self.local_experts) + list(self.remote_experts)
         if self.shuffle:
             random.shuffle(experts)
 
@@ -46,7 +48,6 @@ class PraxisDecoder(nn.Module):
         aux_losses = []
 
         for i, expert in enumerate(experts):
-            print(i)
             use_router = True if self.sparse and i % 2 != 0 else False
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
@@ -61,10 +62,11 @@ class PraxisDecoder(nn.Module):
                 if hasattr(expert, "get_losses"):
                     aux_loss = expert.get_losses()
                     aux_losses.append(aux_loss)
+            # except P2PDaemonError as e:
+            #     self.swarm.handle_failure(expert)
             except P2PDaemonError as e:
+                print(e)
                 self.swarm.handle_failure(expert)
-            # except Exception as e:
-            #     print(e)
 
         return hidden_states, sum(aux_losses)
 
