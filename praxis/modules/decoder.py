@@ -10,7 +10,7 @@ from torch import Tensor
 
 from praxis import PraxisConfig
 from praxis.modules.experts import PraxisExpert
-from praxis.orchestration.swarm import PraxisHivemind
+from praxis.orchestration.hivemind import PraxisSwarm
 
 
 class PraxisDecoder(nn.Module):
@@ -27,7 +27,7 @@ class PraxisDecoder(nn.Module):
             config.memory_profile, config.num_layers
         )
         if config.hivemind:
-            self.swarm = PraxisHivemind(config)
+            self.swarm = PraxisSwarm(config)
             self.experts = self.swarm.get_experts()
         else:
             self.experts = nn.ModuleList(

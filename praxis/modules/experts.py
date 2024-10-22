@@ -12,9 +12,14 @@ from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths
 
-input_shape = lambda batch_size, seq_len, hid_dim: (
-    torch.empty((batch_size, seq_len, hid_dim)),
-    torch.empty((batch_size, seq_len)),
+# input_shape = lambda batch_size, seq_len, hid_dim: (
+#     torch.empty((batch_size, seq_len, hid_dim)),
+#     torch.empty((batch_size, seq_len)),
+#     torch.empty((1)),
+# )
+input_shape = lambda batch_size, hid_dim: (
+    torch.empty((batch_size, hid_dim)),
+    torch.empty((batch_size)),
     torch.empty((1)),
 )
 

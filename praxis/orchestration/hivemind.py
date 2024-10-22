@@ -115,18 +115,22 @@ class PraxisServer(Server):
 
         DUMMY_BATCH_SIZE = 1
         DUMMY_SEQUENCE_LENGTH = 1
-        sample_input = name_to_input[expert_cls](
-            DUMMY_BATCH_SIZE, DUMMY_SEQUENCE_LENGTH, hidden_dim
-        )
-        if isinstance(sample_input, tuple):
-            args_schema = tuple(
-                BatchTensorDescriptor.from_tensor(arg, compression)
-                for arg in sample_input
-            )
-        else:
-            args_schema = (
-                BatchTensorDescriptor.from_tensor(sample_input, compression),
-            )
+        # sample_input = name_to_input[expert_cls](
+        #     (
+        #         (DUMMY_BATCH_SIZE, DUMMY_SEQUENCE_LENGTH, hidden_dim),
+        #         (DUMMY_BATCH_SIZE, DUMMY_SEQUENCE_LENGTH),
+        #         (DUMMY_BATCH_SIZE),
+        #     )
+        # )
+        # if isinstance(sample_input, tuple):
+        #     args_schema = tuple(
+        #         BatchTensorDescriptor.from_tensor(arg, compression)
+        #         for arg in sample_input
+        #     )
+        # else:
+        #     args_schema = (
+        #         BatchTensorDescriptor.from_tensor(sample_input, compression),
+        #     )
 
         scheduler_cls = schedule_name_to_scheduler[scheduler]
         if scheduler_cls is not None:
@@ -135,6 +139,16 @@ class PraxisServer(Server):
                 num_warmup_steps=num_warmup_steps,
                 num_training_steps=num_training_steps,
             )
+
+        hidden_schema = BatchTensorDescriptor(
+            config.num_dims,
+        )
+        attention_schema = BatchTensorDescriptor(
+            1,
+        )
+        bit_tensor_schema = BatchTensorDescriptor(
+            1,
+        )
 
         # initialize experts
         backends = {}
@@ -150,7 +164,13 @@ class PraxisServer(Server):
             backends[expert_uid] = ModuleBackend(
                 name=expert_uid,
                 module=expert,
-                args_schema=args_schema,
+                # args_schema=args_schema,
+                args_schema=(
+                    hidden_schema,
+                    attention_schema,
+                    bit_tensor_schema,
+                ),
+                outputs_schema=(hidden_schema),
                 optimizer=optimizer,
                 scheduler=scheduler,
                 min_batch_size=min_batch_size,
@@ -174,7 +194,7 @@ class PraxisServer(Server):
         )
 
 
-class PraxisHivemind:
+class PraxisSwarm:
     def __init__(self, config: PraxisConfig):
         super().__init__()
         # self.experts = nn.ModuleList()
