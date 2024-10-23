@@ -176,6 +176,12 @@ parser.add_argument(
     help="Shuffle layers at every forward pass",
 )
 parser.add_argument(
+    "--compression",
+    action="store_true",
+    default=False,
+    help="Compress sequence length by a factor of 2",
+)
+parser.add_argument(
     "--differential",
     action="store_true",
     default=False,
@@ -267,6 +273,7 @@ config = PraxisConfig(
     sparse=True if sparse else not dense,
     shuffle=shuffle,
     differential=differential,
+    compression=compression,
     hivemind=hivemind,
     expert_type=expert_type,
     memory_profile=memory_profile,

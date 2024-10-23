@@ -27,6 +27,7 @@ class PraxisConfig(PretrainedConfig):
         sparse=False,
         shuffle=False,
         differential=False,
+        compression=False,
         hivemind=False,
         initial_peers=None,
         memory_profile="speed",
@@ -61,6 +62,7 @@ class PraxisConfig(PretrainedConfig):
         self.expert = expert
         self.sparse = sparse
         self.shuffle = shuffle
+        self.compression = compression
         self.hivemind = hivemind
         self.initial_peers = initial_peers
         self.memory_profile = memory_profile

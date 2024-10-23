@@ -10,6 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
+from praxis.modules.compression import PraxisCompressor
 from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.embeddings import PraxisEmbedding
 
@@ -20,6 +21,11 @@ class PraxisModel(PreTrainedModel):
     def __init__(self, config: PraxisConfig):
         super().__init__(config)
         self.embeds = PraxisEmbedding(config)
+        self.compression = (
+            PraxisCompressor(config.num_dims, 2, config.num_dims // 3)
+            if config.compression
+            else nn.Identity()
+        )
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
@@ -33,11 +39,12 @@ class PraxisModel(PreTrainedModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         inputs = self.embeds(input_ids)
+        symbols = self.compression(inputs)
 
         if not torch.is_tensor(attention_mask):
-            attention_mask = torch.ones(input_ids.shape, device=inputs.device)
+            attention_mask = torch.ones(symbols.shape[:2], device=symbols.device)
 
-        last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
+        last_hidden_state, aux_loss = self.decoder(symbols, attention_mask)
         self.aux_losses.append(aux_loss)
 
         return BaseModelOutputWithPast(
@@ -100,6 +107,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
+            seq_len = logits.shape[1]
+            if self.config.compression:
+                labels = labels.view(labels.shape[0], -1, 2)[:, :, 0]
+
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss = F.cross_entropy(

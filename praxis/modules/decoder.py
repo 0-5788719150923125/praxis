@@ -50,15 +50,16 @@ class PraxisDecoder(nn.Module):
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
-                hidden_states = self._create_forward(
+                new_states = self._create_forward(
                     expert,
                     hidden_states,
                     attention_mask,
                     bit_tensor,
                     gradient_checkpointing,
                 ).to(inputs.device)
-                if hasattr(self, "swarm") and self._is_zero_tensor(hidden_states):
+                if hasattr(self, "swarm") and self._is_zero_tensor(new_states):
                     raise Exception("received a zero tensor; pruning expert")
+                hidden_states = new_states
                 if hasattr(expert, "retrieve_loss"):
                     aux_loss = expert.retrieve_loss()
                     aux_losses.append(aux_loss)
