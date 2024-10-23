@@ -86,7 +86,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        layer_outputs, _ = layer(
+        layer_outputs = layer(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
             router_weights=token_weights,

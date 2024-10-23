@@ -57,11 +57,12 @@ class PraxisDecoder(nn.Module):
                     bit_tensor,
                     gradient_checkpointing,
                 ).to(inputs.device)
-                if hasattr(expert, "get_losses"):
-                    aux_loss = expert.get_losses()
+                if hasattr(self, "swarm") and self._is_zero_tensor(hidden_states):
+                    raise Exception("received a zero tensor; pruning expert")
+                if hasattr(expert, "retrieve_loss"):
+                    aux_loss = expert.retrieve_loss()
                     aux_losses.append(aux_loss)
             except Exception as e:
-                print(e)
                 self.swarm.handle_failure(expert)
 
         return hidden_states, sum(aux_losses)
@@ -103,3 +104,7 @@ class PraxisDecoder(nn.Module):
             )
         else:
             return custom_forward(hidden_states, attention_mask, bit_tensor)
+
+    def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
+        """Check if a tensor is filled with zeros (within numerical tolerance)"""
+        return torch.abs(tensor).max().item() < tolerance

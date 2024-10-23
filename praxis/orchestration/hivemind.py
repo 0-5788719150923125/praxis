@@ -1,20 +1,63 @@
+import logging
 import random
 from typing import Optional
 
 import hivemind
+import hivemind.moe
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind import DHT
-from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
+from hivemind.moe import RemoteExpert
+from hivemind.moe.client.expert import _RemoteModuleCall
 from hivemind.moe.server.layers import name_to_block, name_to_input
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from hivemind.utils import BatchTensorDescriptor
+from hivemind.utils.nested import nested_compare, nested_flatten, nested_pack
 from torch import Tensor
+from torch.autograd.function import once_differentiable
 
 from praxis import PraxisConfig
 from praxis.modules.experts import PraxisBlock
 from praxis.modules.router import PraxisMixtureOfDepths
+
+
+class FaultTolerantRemoteModuleCall(_RemoteModuleCall):
+    """A monkey-patch of _RemoteModuleCall that handles failures gracefully"""
+
+    @staticmethod
+    def forward(ctx, dummy, uid, stub, info, *inputs):
+        try:
+            return _RemoteModuleCall.forward(ctx, dummy, uid, stub, info, *inputs)
+        except Exception as e:
+            # Return zeros matching input shape
+            return tuple(
+                torch.zeros_like(inputs[0])
+                for _ in nested_flatten(info["outputs_schema"])
+            )
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, *grad_outputs):
+        try:
+            return _RemoteModuleCall.backward(ctx, *grad_outputs)
+        except Exception as e:
+            # Return zero grads matching input shapes
+            return (
+                torch.empty(0, requires_grad=True),
+                None,
+                None,
+                None,
+                *(
+                    torch.zeros_like(x) if x.requires_grad else None
+                    for x in ctx.saved_tensors
+                ),
+            )
+
+
+# Apply the patch early
+hivemind.moe.client.expert._RemoteModuleCall = FaultTolerantRemoteModuleCall
+from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 
 
 class PraxisSwarm:

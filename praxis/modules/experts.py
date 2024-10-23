@@ -41,12 +41,13 @@ class PraxisExpert(nn.Module):
         if hasattr(self, "router") and bool(bit_tensor):
             hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
         else:
-            hidden_states, aux_loss = self.expert(inputs, attention_mask)
-        self.losses = aux_loss
+            hidden_states = self.expert(inputs, attention_mask)
+            aux_loss = 0
+        self.loss = aux_loss
         return hidden_states
 
-    def get_losses(self):
-        return self.losses
+    def retrieve_loss(self):
+        return self.loss
 
 
 class PraxisBlock(nn.Module):
@@ -80,9 +81,8 @@ class PraxisBlock(nn.Module):
         outputs = self.dropout(outputs)
         if torch.is_tensor(router_weights):
             outputs *= router_weights
-        aux_loss = 0
         outputs = outputs + residual
-        return outputs, aux_loss
+        return outputs
 
 
 class PraxisMLP(nn.Sequential):
