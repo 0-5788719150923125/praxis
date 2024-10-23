@@ -4,8 +4,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from hivemind.moe import RemoteExpert
-from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from torch import Tensor
 
 from praxis import PraxisConfig
@@ -62,9 +60,7 @@ class PraxisDecoder(nn.Module):
                 if hasattr(expert, "get_losses"):
                     aux_loss = expert.get_losses()
                     aux_losses.append(aux_loss)
-            # except P2PDaemonError as e:
-            #     self.swarm.handle_failure(expert)
-            except P2PDaemonError as e:
+            except Exception as e:
                 print(e)
                 self.swarm.handle_failure(expert)
 
@@ -92,7 +88,7 @@ class PraxisDecoder(nn.Module):
         def custom_forward(*inputs):
             return expert(*inputs)
 
-        if isinstance(expert, RemoteExpert):
+        if hasattr(self, "swarm") and self.swarm.is_remote(expert):
             hidden_states = hidden_states.to("cpu")
             attention_mask = attention_mask.to("cpu")
             bit_tensor = bit_tensor.to("cpu")

@@ -62,7 +62,7 @@ from transformers import (
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
+from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -153,7 +153,7 @@ parser.add_argument(
 parser.add_argument(
     "--expert_type",
     type=str,
-    choices=["mlp", "glu", "peer"],
+    choices=EXPERT_REGISTRY.keys(),
     default="glu",
     help="The module to use for feedforward networks",
 )

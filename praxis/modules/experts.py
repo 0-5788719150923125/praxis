@@ -59,7 +59,7 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
-        self.mlp = EXPERT_DICT[config.expert_type](config)
+        self.mlp = EXPERT_REGISTRY[config.expert_type](config)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
@@ -120,4 +120,4 @@ class PraxisGLU(nn.Module):
         return self.down(self.dropout(a * self.act(b)))
 
 
-EXPERT_DICT = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}
+EXPERT_REGISTRY = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}

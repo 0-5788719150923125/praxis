@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind import DHT
-from hivemind.moe import ModuleBackend, Server, get_experts
+from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server.layers import name_to_block, name_to_input
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from hivemind.utils import BatchTensorDescriptor
@@ -37,10 +37,14 @@ class PraxisSwarm:
             expert_cls="praxis_expert",
             start=True,
             daemon=True,
+            use_relay=True,
+            use_auto_relay=True,
+            use_ipfs=False,
+            ensure_bootstrap_success=True,
             initial_peers=PUBLIC_INITIAL_PEERS,
+            # initial_peers=IPFS_INITIAL_PEERS,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
             config=config,
-            device=config.device_map,
         )
 
     @property
@@ -54,11 +58,13 @@ class PraxisSwarm:
     def get_visible_maddrs(self):
         return self.dht.get_visible_maddrs()
 
+    def is_remote(self, expert: Optional[RemoteExpert]):
+        return isinstance(expert, RemoteExpert)
+
     def handle_failure(self, expert):
         self.active_remote_experts.remove(expert)
-        print("removing:")
         if expert.uid in self.expert_uids:
-            print(expert.uid)
+            print("removing:", expert.uid)
             self.expert_uids.remove(expert.uid)
 
     def _generate_unique_name(self, k=3):
@@ -96,7 +102,6 @@ class PraxisServer(Server):
         num_handlers=None,
         min_batch_size=1,
         max_batch_size=4096,
-        device=None,
         initial_peers=(),
         stats_report_interval: Optional[int] = None,
         update_period: float = 30,
@@ -118,7 +123,7 @@ class PraxisServer(Server):
 
         num_experts = len(expert_uids)
         num_handlers = num_handlers if num_handlers is not None else num_experts * 8
-        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        device = config.device_map or ("cuda" if torch.cuda.is_available() else "cpu")
 
         hidden_schema = BatchTensorDescriptor(
             config.num_dims,
@@ -185,6 +190,12 @@ IPFS_INITIAL_PEERS = [
     "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
     "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
     "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+    # "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+    # "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+    # "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+    # "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+    # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+    # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
 ]
 
 PREFIXES = [
