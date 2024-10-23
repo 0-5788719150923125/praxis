@@ -15,7 +15,7 @@ class PraxisConfig(PretrainedConfig):
         capacity=0.125,
         vocab_size=4096,
         context_length=4096,
-        activation="mish",
+        activation="serf",
         expert_type="peer",
         expert=dict(
             num_experts=32**2,

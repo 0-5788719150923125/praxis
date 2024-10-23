@@ -55,7 +55,7 @@ class FaultTolerantRemoteModuleCall(_RemoteModuleCall):
             )
 
 
-# Apply the patch early
+# Apply the patch
 hivemind.moe.client.expert._RemoteModuleCall = FaultTolerantRemoteModuleCall
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 

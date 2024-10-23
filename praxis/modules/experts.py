@@ -5,9 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
-from transformers.activations import ACT2FN
 
 from praxis import PraxisConfig
+from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths

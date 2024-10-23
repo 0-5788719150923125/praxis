@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers.activations import ACT2FN
 
 from praxis import PraxisConfig
+from praxis.activations import ACT2FN
 
 
 class PraxisPEER(nn.Module):
