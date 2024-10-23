@@ -1,27 +1,55 @@
-from typing import OrderedDict, Optional
+from typing import Optional, OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
-from transformers.activations import ACT2FN
 
 from praxis import PraxisConfig
+from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
+from praxis.modules.router import PraxisMixtureOfDepths
 
-
-# input_shape = lambda batch_size, hid_dim: torch.empty((batch_size, hid_dim))
 input_shape = lambda batch_size, hid_dim: (
     torch.empty((batch_size, hid_dim)),
     torch.empty((batch_size)),
-    torch.empty((batch_size)),
-    torch.empty((batch_size)),
+    torch.empty((1)),
 )
 
 
-@register_expert_class("praxis_block", input_shape)
+@register_expert_class("praxis_expert", input_shape)
+class PraxisExpert(nn.Module):
+    """
+    A Hivemind expert has certain limitations, which make it difficult to work with:
+    1. All inputs to the `forward()` method must be Tensors.
+    2. No inputs may be empty.
+    3. All inputs/outputs must be a part of the computation graph (i.e. returning detached aux_loss tensors is invalid).
+    Essentially, Hivemind experts must define static inputs/outputs - which negates
+    the "dynamic" nature of Pytorch.
+    """
+
+    def __init__(self, config: PraxisConfig):
+        super().__init__()
+        # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
+        self.expert = PraxisBlock(config)
+        if config.sparse:
+            self.router = PraxisMixtureOfDepths(config)
+
+    def forward(self, inputs: Tensor, attention_mask: Tensor, bit_tensor: Tensor):
+        if hasattr(self, "router") and bool(bit_tensor):
+            hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
+        else:
+            hidden_states = self.expert(inputs, attention_mask)
+            aux_loss = 0
+        self.loss = aux_loss
+        return hidden_states
+
+    def retrieve_loss(self):
+        return self.loss
+
+
 class PraxisBlock(nn.Module):
     """
     A standard transformer block, with adjustable feedforward "experts".
@@ -32,13 +60,13 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
-        self.mlp = EXPERT_DICT[config.expert_type](config)
+        self.mlp = EXPERT_REGISTRY[config.expert_type](config)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ):
@@ -53,9 +81,8 @@ class PraxisBlock(nn.Module):
         outputs = self.dropout(outputs)
         if torch.is_tensor(router_weights):
             outputs *= router_weights
-        aux_loss = 0
         outputs = outputs + residual
-        return outputs, aux_loss
+        return outputs
 
 
 class PraxisMLP(nn.Sequential):
@@ -93,4 +120,4 @@ class PraxisGLU(nn.Module):
         return self.down(self.dropout(a * self.act(b)))
 
 
-EXPERT_DICT = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}
+EXPERT_REGISTRY = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}

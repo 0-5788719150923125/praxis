@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, GenerationMixin
+from transformers import GenerationMixin, PreTrainedModel
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -48,11 +48,19 @@ class PraxisModel(PreTrainedModel):
         )
 
     def get_addr(self):
-        if self.decoder.dht:
-            addr1 = str(self.decoder.dht.get_visible_maddrs()[0])
+        if hasattr(self.decoder, "dht"):
+            addr1 = str(self.decoder.swarm.get_visible_maddrs()[0])
             return "/p2p" + addr1.split("/p2p")[1]
         else:
             return []
+
+    def get_info(self):
+        return dict(
+            experts=dict(
+                local=len(self.decoder.local_experts),
+                remote=len(self.decoder.remote_experts),
+            )
+        )
 
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):

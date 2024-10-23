@@ -20,11 +20,15 @@ host_requirements = [
     "werkzeug",
 ]
 
+# Requirements primarily for IDE-related tooling
+dev_requirements = ["isort", "lsprotocol", "pygls"]
+
 setup(
     name="praxis",
     packages=find_packages(),
     install_requires=base_requirements,
     extras_require={
-        "all": base_requirements + host_requirements,
+        "all": base_requirements + host_requirements + dev_requirements,
+        "dev": dev_requirements,
     },
 )

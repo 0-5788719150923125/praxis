@@ -62,11 +62,7 @@ from transformers import (
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (
-    PraxisConfig,
-    PraxisForCausalLM,
-    PraxisModel,
-)
+from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -157,7 +153,7 @@ parser.add_argument(
 parser.add_argument(
     "--expert_type",
     type=str,
-    choices=["mlp", "glu", "peer"],
+    choices=EXPERT_REGISTRY.keys(),
     default="glu",
     help="The module to use for feedforward networks",
 )
@@ -178,6 +174,12 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="Shuffle layers at every forward pass",
+)
+parser.add_argument(
+    "--differential",
+    action="store_true",
+    default=False,
+    help="Use Differential Attention mechanism",
 )
 parser.add_argument(
     "--hivemind",
@@ -260,11 +262,11 @@ except Exception as e:
 # Transformers config
 config = PraxisConfig(
     num_layers=3 if dev else depth,
-    differential_heads=1,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
     shuffle=shuffle,
+    differential=differential,
     hivemind=hivemind,
     expert_type=expert_type,
     memory_profile=memory_profile,
@@ -304,7 +306,7 @@ train_params = dict(
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=4096 * hparams["target_batch_size"] // hparams["batch_size"],
+    val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
@@ -351,10 +353,6 @@ if dev:
 
 if not dev:
     hparams["training_data"]["validation"].append(population[3])
-
-# Misc config
-predict_interval = 3  # seconds
-predict_tokens = 1
 
 # Optimizer configuration
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
@@ -517,8 +515,8 @@ class TerminalInterface(Callback):
         self.initial_text = tokenizer.bos_token
         self.text = f"{self.initial_text}"
         self.max_length = 4096
-        self.interval = predict_interval
-        self.num_tokens = predict_tokens
+        self.interval = 3
+        self.num_tokens = 1
         self.host_count = 0
         self.dashboard = False
         if use_dashboard:
@@ -559,10 +557,15 @@ class TerminalInterface(Callback):
         self._generate_sample_text(lm, batch_idx, self.interval)
 
         batch_size, _ = batch.shape
+        swarm_info = lm.model.get_info()
+        local_experts = swarm_info["experts"].get("local", 0)
+        remote_experts = swarm_info["experts"].get("remote", 0)
 
         self.log_dict(
             {
                 "step": int(batch_idx // trainer.accumulate_grad_batches),
+                "local_experts": int(local_experts),
+                "remote_experts": int(remote_experts),
             },
             on_step=True,
             logger=True,
@@ -578,7 +581,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_step(step.item())
             self.dashboard.update_rate(rate.item())
             self.dashboard.update_loss(self.ema_loss)
-            self.dashboard.fake_log(chance=0.000001)
+            self.dashboard.update_expert_count(local_experts, remote_experts)
+            self.dashboard.fake_log(chance=0.00001)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
@@ -1329,40 +1333,3 @@ trainer.fit(
 
 # # for peer in list(set(my_ids)):
 # #     print(f"PEER-ID: {peer}")
-
-
-# class MinerModelSaver(Callback):
-#     """Periodically save the model during training."""
-
-#     def __init__(
-#         self,
-#         save_every,
-#         output_dir,
-#     ):
-#         super().__init__()
-#         self.step = 0
-#         self.last_step = 0
-#         self.save_every = save_every
-#         self.output_dir = output_dir
-
-#     @property
-#     def save_every_check(self):
-#         return (
-#             self.step > 0
-#             and self.save_every > 0
-#             and self.last_step != self.step
-#             and self.step % self.save_every == 0
-#         )
-
-#     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
-#         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
-
-#         self.step = int(trainer.callback_metrics.get("global_step", 0))
-
-#         if self.save_every_check:
-#             self.save_pytorch_model(trainer, lm)
-
-#         self.last_step = self.step
-
-#     def save_pytorch_model(self, trainer, lm):
-#         lm.model.save_pretrained(self.output_dir, safe_serialization=True)
