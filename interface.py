@@ -78,7 +78,6 @@ class TerminalDashboard:
         self.start_time = datetime.now()
         self.rate = 0
         self.url = "N/A"
-        self.experts = ""
         self.total_params = "0M"
         self.num_faults = 0
         self.mode = "train"
@@ -202,17 +201,6 @@ class TerminalDashboard:
     def update_url(self, url):
         with self.lock:
             self.url = url
-
-    def update_utilization(self, utilization_percentages):
-        with self.lock:
-            self.experts = ", Experts: " + (
-                "[ "
-                + ", ".join(
-                    f"'{i}': {percentage:.1f}%"
-                    for i, percentage in enumerate(utilization_percentages)
-                )
-                + " ]"
-            )
 
     def add_log(self, message):
         with self.lock:
@@ -396,7 +384,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, RATE: {self.rate:.2f}s | EXPERTS: {self.local_experts} local, {self.remote_experts} remote | {self.url}",
+                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, RATE: {self.rate:.2f}s | {self.local_experts} local experts, {self.remote_experts} remote | {self.url}",
                     width,
                 )
             )

@@ -1,6 +1,6 @@
+import math
 from typing import OrderedDict
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,18 +21,26 @@ class PraxisPEER(nn.Module):
 
         num_dims = config.num_dims
         key_dims = config.expert["key_dims"]
+        self.k = config.expert["k"]
         self.num_heads = config.expert["num_heads"]
         self.offset_heads = config.expert["offset_heads"]
         self.num_experts = config.expert["num_experts"]
-        self.num_keys = int(math.sqrt(self.num_experts))
-        self.k = config.expert["k"]
+
+        # Product-Key retrieval requires keys to be a perfect square of the total queries
+        self.num_keys = int(
+            math.sqrt(
+                self.num_experts // self.num_heads
+                if self.offset_heads
+                else self.num_experts
+            )
+        )
 
         # Use Gated Linear Units (instead of a regular MLP)
         self.glu = True
 
         assert (
             self.num_experts**0.5
-        ).is_integer(), "`self.num_experts` needs to be a square"
+        ).is_integer(), "`self.num_experts` needs to be a perfect square"
         assert (num_dims % 2) == 0, "`num_dims` should be divisible by 2"
 
         class Permute(nn.Module):
@@ -60,17 +68,20 @@ class PraxisPEER(nn.Module):
             Permute(),
         )
 
-        scale = 0.02
         self.keys = nn.Parameter(
-            torch.randn(self.num_heads, self.num_keys, 2, key_dims) * scale
+            torch.randn(self.num_heads, self.num_keys, 2, key_dims)
         )
+        nn.init.normal_(self.keys, std=0.02)
 
         self.down = nn.Embedding(self.num_experts, num_dims)
+        nn.init.xavier_normal_(self.down.weight)
         if self.glu:
             self.gates = nn.Embedding(self.num_experts, num_dims)
+            nn.init.xavier_normal_(self.gates.weight)
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
         self.up = nn.Embedding(self.num_experts, num_dims)
+        nn.init.xavier_normal_(self.up.weight)
 
     def forward(self, inputs: Tensor):
         # Generate queries
@@ -101,8 +112,9 @@ class PraxisPEER(nn.Module):
         indices = all_indices.gather(-1, pk_indices)
 
         if self.offset_heads:
-            head_expert_offsets = torch.arange(self.num_heads, device=inputs.device) * (
-                self.num_heads // self.num_experts
+            experts_per_head = self.num_experts // self.num_heads
+            head_expert_offsets = (
+                torch.arange(self.num_heads, device=inputs.device) * experts_per_head
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
