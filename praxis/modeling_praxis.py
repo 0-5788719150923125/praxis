@@ -41,7 +41,9 @@ class PraxisModel(PreTrainedModel):
         inputs = self.embeds(input_ids)
         symbols = self.compression(inputs)
 
-        if not torch.is_tensor(attention_mask):
+        if self.config.compression or not torch.is_tensor(attention_mask):
+            # We cannot compress an attention mask yet, so if using compression - we simply
+            # generate a new one for now.
             attention_mask = torch.ones(symbols.shape[:2], device=symbols.device)
 
         last_hidden_state, aux_loss = self.decoder(symbols, attention_mask)
