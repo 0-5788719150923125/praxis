@@ -20,9 +20,9 @@ class PraxisConfig(PretrainedConfig):
         expert=dict(
             num_experts=32**2,
             num_heads=4,
-            k=3,
-            key_dims=45,
-            offset_heads=True,
+            k=8,
+            key_dims=90,
+            offset_heads=False,
         ),
         sparse=False,
         shuffle=False,

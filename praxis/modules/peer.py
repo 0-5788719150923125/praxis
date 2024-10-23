@@ -25,15 +25,10 @@ class PraxisPEER(nn.Module):
         self.num_heads = config.expert["num_heads"]
         self.offset_heads = config.expert["offset_heads"]
         self.num_experts = config.expert["num_experts"]
+        self.num_sets = 1 if not self.offset_heads else self.num_heads
 
-        # Product-Key retrieval requires keys to be a perfect square of the total queries
-        self.num_keys = int(
-            math.sqrt(
-                self.num_experts // self.num_heads
-                if self.offset_heads
-                else self.num_experts
-            )
-        )
+        # Product-Key retrieval requires keys to be a perfect square of the total experts
+        self.num_keys = int(math.sqrt(self.num_experts))
 
         # Use Gated Linear Units (instead of a regular MLP)
         self.glu = True
@@ -73,15 +68,15 @@ class PraxisPEER(nn.Module):
         )
         nn.init.normal_(self.keys, std=0.02)
 
-        self.down = nn.Embedding(self.num_experts, num_dims)
-        nn.init.xavier_normal_(self.down.weight)
+        self.down = nn.Embedding(self.num_experts * self.num_sets, num_dims)
+        nn.init.xavier_uniform_(self.down.weight)
         if self.glu:
-            self.gates = nn.Embedding(self.num_experts, num_dims)
-            nn.init.xavier_normal_(self.gates.weight)
+            self.gates = nn.Embedding(self.num_experts * self.num_sets, num_dims)
+            nn.init.xavier_uniform_(self.gates.weight)
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
-        self.up = nn.Embedding(self.num_experts, num_dims)
-        nn.init.xavier_normal_(self.up.weight)
+        self.up = nn.Embedding(self.num_experts * self.num_sets, num_dims)
+        nn.init.xavier_uniform_(self.up.weight)
 
     def forward(self, inputs: Tensor):
         # Generate queries
@@ -112,9 +107,8 @@ class PraxisPEER(nn.Module):
         indices = all_indices.gather(-1, pk_indices)
 
         if self.offset_heads:
-            experts_per_head = self.num_experts // self.num_heads
             head_expert_offsets = (
-                torch.arange(self.num_heads, device=inputs.device) * experts_per_head
+                torch.arange(self.num_heads, device=inputs.device) * self.num_experts
             )
             indices = indices + head_expert_offsets.view(1, 1, -1, 1)
 
@@ -135,8 +129,8 @@ class PraxisPEER(nn.Module):
         outputs = F.sigmoid(scores) * outputs
 
         # Force sparse ensembling of intermediate states
-        weights_up = self.dropout(self.up(indices))
         outputs = self.dropout(outputs)
+        weights_up = self.dropout(self.up(indices))
 
         # Aggregate expert outputs
         outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
