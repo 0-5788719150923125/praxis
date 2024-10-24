@@ -11,6 +11,7 @@ from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.modules.smear import PraxisSMEAR
 
 input_shape = lambda batch_size, hid_dim: (
     torch.empty((batch_size, hid_dim)),
@@ -120,4 +121,9 @@ class PraxisGLU(nn.Module):
         return self.down(self.dropout(a * self.act(b)))
 
 
-EXPERT_REGISTRY = {"mlp": PraxisMLP, "glu": PraxisGLU, "peer": PraxisPEER}
+EXPERT_REGISTRY = {
+    "mlp": PraxisMLP,
+    "glu": PraxisGLU,
+    "peer": PraxisPEER,
+    "smear": PraxisSMEAR,
+}
