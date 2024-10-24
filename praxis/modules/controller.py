@@ -22,6 +22,8 @@ class PraxisController(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size // 2, max_num_experts * 2),
         )
+        nn.init.normal_(self.predictor[-1].weight, mean=0.0, std=0.01)
+        nn.init.constant_(self.predictor[-1].bias, 0.1)
 
         self.tracker = DynamicExpertTracker(max_num_experts=max_num_experts)
 
@@ -78,7 +80,8 @@ class PraxisController(nn.Module):
         next_conf = next_probs.max(dim=-1)[0]  # Confidence in next prediction
 
         # Combine current and next confidences
-        scaling_factor = (current_conf * next_conf).view(-1, 1, 1)
+        # scaling_factor = (current_conf * next_conf).view(-1, 1, 1)
+        scaling_factor = current_conf.view(-1, 1, 1)
         new_states = expert_output * scaling_factor
 
         # Combined loss
