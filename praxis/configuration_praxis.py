@@ -1,5 +1,7 @@
 from transformers import PretrainedConfig
 
+from praxis.modules import DEFAULT_EXPERT_CONFIGS
+
 
 class PraxisConfig(PretrainedConfig):
     model_type = "praxis"
@@ -16,14 +18,7 @@ class PraxisConfig(PretrainedConfig):
         vocab_size=4096,
         context_length=4096,
         activation="serf",
-        expert_type="peer",
-        expert=dict(
-            num_experts=32**2,
-            num_heads=4,
-            k=8,
-            key_dims=90,
-            offset_heads=False,
-        ),
+        expert="glu",
         sparse=False,
         shuffle=False,
         differential=False,
@@ -58,8 +53,7 @@ class PraxisConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.context_length = context_length
         self.activation = activation
-        self.expert_type = expert_type
-        self.expert = expert
+        self.expert = self._register_experts(expert)
         self.sparse = sparse
         self.shuffle = shuffle
         self.compression = compression
@@ -68,3 +62,14 @@ class PraxisConfig(PretrainedConfig):
         self.memory_profile = memory_profile
         self.device_map = device_map
         self.causal = False
+
+    def _register_experts(self, expert: str or dict):
+        # Handle expert configuration
+        if isinstance(expert, str):
+            if expert not in DEFAULT_EXPERT_CONFIGS:
+                raise ValueError(f"Unknown expert type: {expert}")
+            return {"type": expert, **DEFAULT_EXPERT_CONFIGS[expert]}
+        elif isinstance(expert, dict):
+            return expert
+        else:
+            raise ValueError("Expert must be either a string or a dictionary")

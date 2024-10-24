@@ -14,7 +14,7 @@ class PraxisSMEAR(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        num_experts = 3
+        num_experts = config.expert["num_experts"]
         self.num_dims = config.num_dims
 
         # Router network: simple linear -> softmax
@@ -26,27 +26,25 @@ class PraxisSMEAR(nn.Module):
         # Create pool of experts (all sharing same architecture)
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
-        self.experts = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Linear(self.num_dims, self.num_dims * 8),
-                    nn.Linear(self.num_dims * 4, self.num_dims),
-                )
-                for _ in range(num_experts)
-            ]
+        self.experts_up = nn.ModuleList(
+            [nn.Linear(self.num_dims, self.num_dims * 8) for _ in range(num_experts)]
+        )
+        self.experts_down = nn.ModuleList(
+            [nn.Linear(self.num_dims * 4, self.num_dims) for _ in range(num_experts)]
         )
 
-    def forward(self, x):
+    def forward(self, inputs):
         # Get merged parameters for this batch
         up_weights, up_biases, down_weights, down_biases = (
-            self._merge_expert_parameters(x)
+            self._merge_expert_parameters(inputs)
         )
 
         # Forward pass through merged expert
-        a, b = F.linear(x, up_weights, up_biases).chunk(2, dim=-1)
-        y = F.linear(self.dropout(a * self.act(b)), down_weights, down_biases)
+        linear, gated = F.linear(inputs, up_weights, up_biases).chunk(2, dim=-1)
+        sparsified = self.dropout(linear * self.act(gated))
+        outputs = F.linear(sparsified, down_weights, down_biases)
 
-        return y
+        return outputs
 
     def _merge_expert_parameters(self, x):
         # Average sequence dimension for routing
@@ -56,27 +54,27 @@ class PraxisSMEAR(nn.Module):
         routing_probs = self.router(x_mean)  # [batch_size, num_experts]
 
         # Initialize merged parameters for both layers
-        merged_layer1_weight = torch.zeros_like(self.experts[0][0].weight)
-        merged_layer1_bias = torch.zeros_like(self.experts[0][0].bias)
-        merged_layer2_weight = torch.zeros_like(self.experts[0][1].weight)
-        merged_layer2_bias = torch.zeros_like(self.experts[0][1].bias)
+        up_weights = torch.zeros_like(self.experts_up[0].weight)
+        up_biases = torch.zeros_like(self.experts_up[0].bias)
+        down_weights = torch.zeros_like(self.experts_down[0].weight)
+        down_biases = torch.zeros_like(self.experts_down[0].bias)
 
         # Weighted average of expert parameters
-        for i, expert in enumerate(self.experts):
+        for i in range(len(self.experts_up)):
             # Get batch-specific routing weights for this expert
             expert_weights = routing_probs[:, i].mean()  # Average over batch
 
             # Merge parameters for first layer
-            merged_layer1_weight += expert[0].weight * expert_weights
-            merged_layer1_bias += expert[0].bias * expert_weights
+            up_weights += self.experts_up[i].weight * expert_weights
+            up_biases += self.experts_up[i].bias * expert_weights
 
             # Merge parameters for second layer
-            merged_layer2_weight += expert[1].weight * expert_weights
-            merged_layer2_bias += expert[1].bias * expert_weights
+            down_weights += self.experts_down[i].weight * expert_weights
+            down_biases += self.experts_down[i].bias * expert_weights
 
         return (
-            merged_layer1_weight,
-            merged_layer1_bias,
-            merged_layer2_weight,
-            merged_layer2_bias,
+            up_weights,
+            up_biases,
+            down_weights,
+            down_biases,
         )

@@ -61,7 +61,7 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
-        self.mlp = EXPERT_REGISTRY[config.expert_type](config)
+        self.mlp = EXPERT_REGISTRY[config.expert["type"]](config)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
