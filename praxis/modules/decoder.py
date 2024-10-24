@@ -57,7 +57,6 @@ class PraxisDecoder(nn.Module):
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
-                residual = hidden_states
                 new_states = self._create_forward(
                     expert,
                     hidden_states,
@@ -80,8 +79,8 @@ class PraxisDecoder(nn.Module):
                     new_states, aux_loss = self.pilot(experts, expert, new_states)
                     aux_losses.append(aux_loss)
 
-                # Commit to self
-                hidden_states = new_states + residual
+                # Add residuals and commit to self
+                hidden_states = new_states + hidden_states
 
             except Exception as e:
                 # Prune dead peers
