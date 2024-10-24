@@ -23,9 +23,7 @@ class PraxisModel(PreTrainedModel):
         super().__init__(config)
         self.embeds = PraxisEmbedding(config)
         self.compression = (
-            PraxisCompressor(config.num_dims, 256)
-            if config.compression
-            else MultiIdentity()
+            PraxisCompressor(config) if config.compression else MultiIdentity()
         )
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []

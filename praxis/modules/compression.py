@@ -5,22 +5,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis import PraxisConfig
+
 
 class PraxisCompressor(nn.Module):
     """
     Compresses inputs along the sequence length.
     """
 
-    def __init__(self, num_features, target_len=256, hidden_size=256):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.target_len = target_len
-        self.hidden_size = hidden_size
+        num_features = config.num_dims
+        self.target_len = 256
+        self.hidden_size = num_features // 2
 
         self.recurrent = nn.GRU(
-            input_size=num_features, hidden_size=hidden_size, batch_first=True
+            input_size=num_features, hidden_size=self.hidden_size, batch_first=True
         )
 
-        self.projection = nn.Linear(hidden_size, num_features)
+        self.projection = nn.Linear(self.hidden_size, num_features)
 
     def forward(self, x: Tensor, attention_mask: Tensor):
         residual = x
