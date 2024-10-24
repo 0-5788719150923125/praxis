@@ -46,12 +46,12 @@ class PraxisSMEAR(nn.Module):
 
         return outputs
 
-    def _merge_expert_parameters(self, x):
+    def _merge_expert_parameters(self, inputs):
         # Average sequence dimension for routing
-        x_mean = x.mean(dim=1)  # [batch_size, num_dims]
+        reduced_inputs = inputs.mean(dim=1)  # [batch_size, num_dims]
 
         # Get routing probabilities
-        routing_probs = self.router(x_mean)  # [batch_size, num_experts]
+        routing_probs = self.router(reduced_inputs)  # [batch_size, num_experts]
 
         # Initialize merged parameters for both layers
         up_weights = torch.zeros_like(self.experts_up[0].weight)
