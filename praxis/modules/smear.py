@@ -65,12 +65,12 @@ class PraxisSMEAR(nn.Module):
             expert_weights = routing_probs[:, i].mean()  # Average over batch
 
             # Merge parameters for first layer
-            up_weights += self.experts_up[i].weight * expert_weights
-            up_biases += self.experts_up[i].bias * expert_weights
+            up_weights += self.dropout(self.experts_up[i].weight) * expert_weights
+            up_biases += self.dropout(self.experts_up[i].bias) * expert_weights
 
             # Merge parameters for second layer
-            down_weights += self.experts_down[i].weight * expert_weights
-            down_biases += self.experts_down[i].bias * expert_weights
+            down_weights += self.dropout(self.experts_down[i].weight) * expert_weights
+            down_biases += self.dropout(self.experts_down[i].bias) * expert_weights
 
         return (
             up_weights,
