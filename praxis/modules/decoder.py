@@ -64,9 +64,10 @@ class PraxisDecoder(nn.Module):
                     bit_tensor,
                     gradient_checkpointing,
                 ).to(inputs.device)
+
+                # Dead peers will return a zero tensor
                 if hasattr(self, "swarm") and self._is_zero_tensor(new_states):
                     raise Exception("received a zero tensor; pruning expert")
-                hidden_states = new_states
 
                 # Hivemind forces expert outputs to require gradients, so we retrieve dummy tensors differently
                 if hasattr(expert, "retrieve_loss"):
@@ -78,11 +79,16 @@ class PraxisDecoder(nn.Module):
                     new_states, aux_loss = self.pilot(experts, expert, new_states)
                     aux_losses.append(aux_loss)
 
+                # Commit to self
+                hidden_states = new_states
+
             except Exception as e:
+                # Prune dead peers
                 if hasattr(self, "swarm"):
                     self.swarm.handle_failure(expert)
-                else:
-                    raise Exception(e)
+                    continue
+                # Crash on unhandled exceptions
+                raise Exception(e)
 
         return hidden_states, sum(aux_losses)
 
