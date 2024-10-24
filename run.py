@@ -30,39 +30,36 @@ import re
 import shutil
 import time
 import traceback
+import uuid
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
 from glob import glob
-from typing import Dict, List, Optional
+from queue import Queue
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
+from praxis import (EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM,
+                    PraxisModel)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -432,6 +429,7 @@ class PraxisTrainer(LightningModule):
         self.last_train_step_time = datetime.now()
 
     def training_step(self, batch, batch_idx):
+
         current_time = datetime.now()
 
         outputs = self.model(input_ids=batch, labels=batch)
@@ -613,7 +611,7 @@ class TerminalInterface(Callback):
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
 
-        self.text = generator.generate(
+        request_id = generator.request_generation(
             self.text,
             dict(
                 max_new_tokens=self.num_tokens,
@@ -623,6 +621,13 @@ class TerminalInterface(Callback):
                 ],  # else the model tends to degenerate into 100% [EOS] or [PAD] tokens
             ),
         )
+        while True:
+            generator.fulfill_requests(max_requests=5)
+            result = generator.get_result(request_id)
+            if result is not None:
+                self.text = result
+                break
+            time.sleep(0.1)
 
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
@@ -887,14 +892,24 @@ class GunChatDataset(PraxisDataSampler):
         )
 
 
+@dataclass
+class GenerationRequest:
+    id: str
+    prompt: str
+    kwargs: Dict[str, Any]
+    result: Optional[str] = None
+
+
 class Generator:
     """
-    Wraps a model in a simplified generation API.
+    Wraps a model in a simplified generation API with request queuing.
     """
 
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer
+        self.request_queue = Queue()
+        self.results = {}
 
     @contextlib.contextmanager
     def _eval_mode(self):
@@ -905,15 +920,36 @@ class Generator:
         finally:
             self.model.train(training)
 
-    def generate(self, prompt, kwargs={}):
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt")
+    def request_generation(self, prompt: str, kwargs={}) -> str:
+        """
+        Submit a generation request and return a request ID.
+        """
+        request_id = str(uuid.uuid4())
+        request = GenerationRequest(id=request_id, prompt=prompt, kwargs=kwargs)
+        self.request_queue.put(request)
+        return request_id
+
+    def get_result(self, request_id: str) -> Optional[str]:
+        """
+        Check if a result is ready for a given request ID.
+        Returns None if the result isn't ready yet.
+        """
+        result = self.results.get(request_id)
+        if result is not None:
+            del self.results[request_id]
+        return result
+
+    def _process_single_request(self, request: GenerationRequest):
+        """
+        Process a single generation request.
+        """
+        input_ids = self.tokenizer.encode(request.prompt, return_tensors="pt")
 
         if device.startswith("cuda"):
             if isinstance(input_ids, list):
                 input_ids = torch.tensor([input_ids], dtype=torch.long)
             input_ids = input_ids.to(device)
 
-        # https://huggingface.co/docs/transformers/v4.22.2/en/main_classes/text_generation
         defaults = dict(
             do_sample=True,
             max_new_tokens=1,
@@ -925,22 +961,20 @@ class Generator:
             renormalize_logits=True,
             remove_invalid_values=True,
         )
-        combined = {**defaults, **kwargs}
+        combined = {**defaults, **request.kwargs}
         if "prompt" in combined:
             del combined["prompt"]
 
-        return_text = prompt
-        max_attempts = 30  # Prevent infinite loops
+        return_text = request.prompt
+        max_attempts = 30
         attempts = 0
 
         with self._eval_mode():
             while attempts < max_attempts:
                 outputs = self.model.generate(input_ids, **combined)
-                decoded_new = self.tokenizer.decode(
-                    outputs[0], skip_special_tokens=True
-                )
+                decoded_new = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-                if decoded_new != prompt:
+                if decoded_new != request.prompt:
                     return_text = decoded_new
                     break
                 else:
@@ -948,9 +982,28 @@ class Generator:
                     attempts += 1
 
         if attempts == max_attempts:
-            print("Warning: Reached maximum attempts without generating a valid token")
+            print(
+                f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
+            )
 
         return return_text
+
+    def fulfill_requests(self, max_requests: int = None) -> int:
+        """
+        Process pending generation requests. Should be called from inside the training loop.
+        Returns the number of requests processed.
+        """
+        processed = 0
+        while not self.request_queue.empty():
+            if max_requests is not None and processed >= max_requests:
+                break
+
+            request = self.request_queue.get()
+            result = self._process_single_request(request)
+            self.results[request.id] = result
+            processed += 1
+
+        return processed
 
 
 class TimeBasedCheckpoint(ModelCheckpoint):

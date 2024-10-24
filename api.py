@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import time
 from threading import Event, Thread
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -64,7 +65,13 @@ def generate():
 
         prompt = kwargs.get("prompt", "")
         generator = app.config["generator"]
-        output = generator.generate(prompt, kwargs)
+        request_id = generator.request_generation(prompt, kwargs)
+        while True:
+            result = generator.get_result(request_id)
+            if result is not None:
+                output = result
+                break
+            time.sleep(0.1)
 
         if not output:
             raise Exception("Failed to generate an output from this API.")
