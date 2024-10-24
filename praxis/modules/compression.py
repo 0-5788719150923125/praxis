@@ -53,6 +53,7 @@ class PraxisCompressor(nn.Module):
         # Process each window
         windows_reshaped = windows.reshape(-1, window_size, num_features)
         _, (hidden, _) = self.recurrent(windows_reshaped)
+        hidden = hidden.squeeze(0)
 
         # Reshape to target length
         hidden = hidden.view(batch_size, self.target_len, self.hidden_size)
