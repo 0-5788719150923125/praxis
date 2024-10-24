@@ -1,9 +1,11 @@
+from typing import List
+
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 
-class ExpertIndexPredictor(nn.Module):
+class PraxisController(nn.Module):
     def __init__(self, hidden_size, num_experts):
         super().__init__()
         self.hidden_size = hidden_size
@@ -16,16 +18,54 @@ class ExpertIndexPredictor(nn.Module):
             nn.Linear(hidden_size // 2, num_experts),
         )
 
-    def forward(self, expert_output: torch.Tensor):
+        self.tracker = ExpertPredictionTracker(num_experts=num_experts)
+
+    def forward(
+        self, experts: List[nn.Module], expert: nn.Module, expert_output: torch.Tensor
+    ):
+
         # Average pooling across sequence length if needed
         if len(expert_output.shape) == 3:
             pooled = torch.mean(expert_output, dim=1)
         else:
             pooled = expert_output
 
-        # Predict expert index probabilities
+        # Get raw logits
         logits = self.predictor(pooled)
-        return F.log_softmax(logits, dim=-1)
+
+        # Get probabilities for scaling factor
+        pred_probs = F.softmax(logits, dim=-1)
+
+        # Get the expert index
+        expert_idx = experts.index(expert)
+        # Create tensor with same expert index repeated for each item in batch
+        true_index = torch.full((logits.size(0),), expert_idx, device=logits.device)
+
+        # Use cross_entropy which combines log_softmax and nll_loss
+        aux_loss = F.cross_entropy(logits, true_index)
+
+        # Use pred_probs for scaling
+        correct_prob = pred_probs[:, expert_idx]
+
+        # Reshape for broadcasting
+        scaling_factor = correct_prob.view(-1, 1, 1)  # [16, 1, 1]
+
+        # Scale hidden states by prediction confidence
+        new_states = expert_output * scaling_factor
+
+        if not self.training:  # Only track during evaluation
+            self.tracker.update(expert_idx, logits, true_index)
+
+        return new_states, aux_loss
+
+    def get_expert_accuracy(self):
+        return self.tracker.get_expert_accuracy()
+
+    def get_mean_accuracy(self):
+        return self.tracker.get_mean_accuracy()
+
+    def get_all_accuracies(self):
+        return self.tracker.get_all_accuracies()
 
 
 class ExpertPredictionTracker:

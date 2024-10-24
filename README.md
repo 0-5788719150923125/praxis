@@ -155,6 +155,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [novel activations](https://gist.github.com/ronaldoaf/427887efe44f12d4bdccc46ad73404eb)
 - [Infini-Attention](https://github.com/jlamprou/Infini-Attention) (a neat idea, but perhaps not worth the effort)
 - [xLSTM](https://github.com/NX-AI/xlstm)
+- Denny Zhou (Founded & lead reasoning team at Google DeepMind) - "We have mathematically proven that transformers can solve any problem, provided they are allowed to generate as many intermediate reasoning tokens as needed. Remarkably, constant depth is sufficient." [source](https://www.reddit.com/r/mlscaling/comments/1fijajw/denny_zhou_founded_lead_reasoning_team_at_google/) At first pass, this may sound stupid, because everyone knows that transformers are "universal function approximators" already; the problem is that the search space becomes so large as to be computationally infeasible. However, the more-meaningful takeaway here is this: with human guidance (i.e. prompting, iteration, development, persistence, re-focusing), a human/AI team can solve any problem... including AGI.
 
 ## won't do
 

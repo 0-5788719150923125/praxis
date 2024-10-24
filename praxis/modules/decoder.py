@@ -7,8 +7,8 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis import PraxisConfig
+from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
-from praxis.modules.predictor import ExpertIndexPredictor, ExpertPredictionTracker
 from praxis.orchestration.hivemind import PraxisSwarm
 
 
@@ -34,14 +34,11 @@ class PraxisDecoder(nn.Module):
             self.local_experts = nn.ModuleList(
                 [PraxisExpert(config) for _ in range(config.num_layers)]
             )
-        self.use_predictor = config.prediction
-        if self.use_predictor:
-            self.predictor = ExpertIndexPredictor(
+        self.use_autopilot = config.autopilot
+        if self.use_autopilot:
+            self.pilot = PraxisController(
                 hidden_size=config.num_dims,
                 num_experts=len(self.local_experts) + len(self.remote_experts),
-            )
-            self.tracker = ExpertPredictionTracker(
-                num_experts=len(self.local_experts) + len(self.remote_experts)
             )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
@@ -73,30 +70,11 @@ class PraxisDecoder(nn.Module):
                 if hasattr(expert, "retrieve_loss"):
                     aux_loss = expert.retrieve_loss()
                     aux_losses.append(aux_loss)
-                if self.use_predictor:
-                    # Predict expert index
-                    pred_logits = self.predictor(new_states)
-                    # Get the expert index
-                    expert_idx = experts.index(expert)
-                    # Create tensor with same expert index repeated for each item in batch
-                    true_index = torch.full(
-                        (pred_logits.size(0),), expert_idx, device=pred_logits.device
-                    )
-                    pred_loss = F.nll_loss(pred_logits, true_index)
-                    aux_losses.append(pred_loss)
 
-                    # Get prediction confidences through softmax
-                    pred_probs = F.softmax(pred_logits, dim=-1)  # [16, 3]
-                    # Get the probability assigned to the correct expert
-                    correct_prob = pred_probs[:, expert_idx]  # [16]
-                    # Reshape for broadcasting
-                    scaling_factor = correct_prob.view(-1, 1, 1)  # [16, 1, 1]
-
-                    # Scale hidden states by prediction confidence
-                    new_states = new_states * scaling_factor
-
-                    if not self.training:  # Only track during evaluation
-                        self.tracker.update(expert_idx, pred_logits, true_index)
+                # Predict the "true" index of each expert
+                if self.use_autopilot:
+                    new_states, aux_loss = self.pilot(experts, expert, new_states)
+                    aux_losses.append(aux_loss)
 
             except Exception as e:
                 if hasattr(self, "swarm"):
@@ -108,10 +86,10 @@ class PraxisDecoder(nn.Module):
 
     def get_prediction_accuracies(self):
         """Return current prediction accuracies"""
-        if self.use_predictor:
+        if self.use_autopilot:
             return {
-                "mean": self.tracker.get_mean_accuracy(),
-                "per_expert": self.tracker.get_all_accuracies(),
+                "mean": self.pilot.get_mean_accuracy(),
+                "per_expert": self.pilot.get_all_accuracies(),
             }
         return None
 

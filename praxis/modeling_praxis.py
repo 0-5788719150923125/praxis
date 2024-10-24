@@ -69,7 +69,7 @@ class PraxisModel(PreTrainedModel):
             ),
             predictions=(
                 self.decoder.get_prediction_accuracies()
-                if self.decoder.use_predictor
+                if self.decoder.use_autopilot
                 else False
             ),
         )
