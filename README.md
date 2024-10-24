@@ -154,6 +154,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping)
 - [novel activations](https://gist.github.com/ronaldoaf/427887efe44f12d4bdccc46ad73404eb)
 - [Infini-Attention](https://github.com/jlamprou/Infini-Attention) (a neat idea, but perhaps not worth the effort)
+- [xLSTM](https://github.com/NX-AI/xlstm)
 
 ## won't do
 
