@@ -21,6 +21,7 @@ class PraxisConfig(PretrainedConfig):
         expert="glu",
         sparse=False,
         shuffle=False,
+        prediction=False,
         differential=False,
         compression=False,
         hivemind=False,
@@ -56,6 +57,7 @@ class PraxisConfig(PretrainedConfig):
         self.expert = self._register_experts(expert)
         self.sparse = sparse
         self.shuffle = shuffle
+        self.prediction = prediction
         self.compression = compression
         self.hivemind = hivemind
         self.initial_peers = initial_peers

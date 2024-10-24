@@ -83,6 +83,7 @@ class TerminalDashboard:
         self.mode = "train"
         self.local_experts = 0
         self.remote_experts = 0
+        self.accuracy = None
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -176,6 +177,10 @@ class TerminalDashboard:
     def update_loss(self, train_loss):
         with self.lock:
             self.train_losses.append(train_loss) if train_loss is not None else None
+
+    def update_accuracy(self, accuracy):
+        with self.lock:
+            self.accuracy = accuracy
 
     def update_validator(self, val_loss):
         with self.lock:
@@ -334,9 +339,10 @@ class TerminalDashboard:
 
             if i == 0:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
-                right_content = self._visual_ljust(
-                    f" ERROR: {train_loss:.4f}", right_width
-                )
+                text = f" ERROR: {train_loss:.4f}"
+                if self.accuracy is not None:
+                    text += f" || ACC: {self.accuracy:.3f}"
+                right_content = self._visual_ljust(text, right_width)
                 left_content = self._visual_ljust(
                     f" HOST {self.num_faults}", half_width
                 )

@@ -179,6 +179,12 @@ parser.add_argument(
     help="Shuffle layers at every forward pass",
 )
 parser.add_argument(
+    "--prediction",
+    action="store_true",
+    default=False,
+    help="Train the model to predict the optimal order of expert layers",
+)
+parser.add_argument(
     "--compression",
     action="store_true",
     default=False,
@@ -275,6 +281,7 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
     shuffle=shuffle,
+    prediction=prediction if shuffle else False,
     differential=differential,
     compression=compression,
     hivemind=hivemind,
@@ -572,12 +579,16 @@ class TerminalInterface(Callback):
         local_experts = swarm_info["experts"].get("local", 0)
         remote_experts = swarm_info["experts"].get("remote", 0)
 
+        data = {
+            "step": int(batch_idx // trainer.accumulate_grad_batches),
+            "local_experts": int(local_experts),
+            "remote_experts": int(remote_experts),
+        }
+        if swarm_info["predictions"]:
+            data.update({"acc": swarm_info["predictions"]["mean"]})
+
         self.log_dict(
-            {
-                "step": int(batch_idx // trainer.accumulate_grad_batches),
-                "local_experts": int(local_experts),
-                "remote_experts": int(remote_experts),
-            },
+            data,
             on_step=True,
             logger=True,
             batch_size=batch_size,
@@ -593,6 +604,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_rate(rate.item())
             self.dashboard.update_loss(self.ema_loss)
             self.dashboard.update_expert_count(local_experts, remote_experts)
+            if "acc" in data:
+                self.dashboard.update_accuracy(data["acc"])
             self.dashboard.fake_log(chance=0.00001)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
