@@ -12,12 +12,6 @@ class PraxisCompressor(nn.Module):
     """
 
     def __init__(self, num_features, target_len=256, hidden_size=256):
-        """
-        Args:
-            num_features: Number of features in input sequence
-            target_len: Desired output sequence length
-            hidden_size: Size of GRU hidden state
-        """
         super().__init__()
         self.target_len = target_len
         self.hidden_size = hidden_size
@@ -50,16 +44,7 @@ class PraxisCompressor(nn.Module):
 
         # Reshape hidden state
         hidden = hidden.squeeze(0).view(batch_size, -1, self.hidden_size)
-        # # If we got more segments than target_len, truncate
-        # if hidden.size(1) > self.target_len:
-        #     hidden = hidden[:, : self.target_len, :]
-        # # If we got fewer segments than target_len, pad
-        # elif hidden.size(1) < self.target_len:
-        #     pad_size = self.target_len - hidden.size(1)
-        #     padding = torch.zeros(
-        #         batch_size, pad_size, self.hidden_size, device=hidden.device
-        #     )
-        #     hidden = torch.cat([hidden, padding], dim=1)
+
         # Handle sequence length adjustment with front padding
         if hidden.size(1) < self.target_len:
             pad_size = self.target_len - hidden.size(1)
