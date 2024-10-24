@@ -10,8 +10,8 @@ class PraxisConfig(PretrainedConfig):
         self,
         num_embeds=720,
         num_dims=360,
-        num_layers=7,
         num_heads=8,
+        depth=7,
         dropout=0,
         epsilon=1e-5,
         capacity=0.125,
@@ -45,8 +45,8 @@ class PraxisConfig(PretrainedConfig):
         # Praxis args
         self.num_embeds = num_embeds
         self.num_dims = num_dims
-        self.num_layers = num_layers
         self.num_heads = num_heads
+        self.depth = depth
         self.differential = differential
         self.dropout = dropout
         self.epsilon = epsilon

@@ -23,7 +23,7 @@ class PraxisDecoder(nn.Module):
         self.sparse = config.sparse
         self.shuffle = config.shuffle
         self.checkpoint_indices = self._checkpoint_strategy(
-            config.memory_profile, config.num_layers
+            config.memory_profile, config.depth
         )
         self.remote_experts = []
         if config.hivemind:
@@ -32,7 +32,7 @@ class PraxisDecoder(nn.Module):
             self.remote_experts = self.swarm.active_remote_experts
         else:
             self.local_experts = nn.ModuleList(
-                [PraxisExpert(config) for _ in range(config.num_layers)]
+                [PraxisExpert(config) for _ in range(config.depth)]
             )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
