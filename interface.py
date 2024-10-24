@@ -178,9 +178,9 @@ class TerminalDashboard:
         with self.lock:
             self.train_losses.append(train_loss) if train_loss is not None else None
 
-    def update_accuracy(self, accuracy):
+    def update_accuracy(self, acc0, acc1):
         with self.lock:
-            self.accuracy = accuracy
+            self.accuracy = [acc0, acc1]
 
     def update_validator(self, val_loss):
         with self.lock:
@@ -341,7 +341,7 @@ class TerminalDashboard:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
                 text = f" ERROR: {train_loss:.4f}"
                 if self.accuracy is not None:
-                    text += f" || ACC: {self.accuracy:.3f}"
+                    text += f" || ACC: {self.accuracy[0]:.3f} || ACC+1: {self.accuracy[1]:.3f}"
                 right_content = self._visual_ljust(text, right_width)
                 left_content = self._visual_ljust(
                     f" HOST {self.num_faults}", half_width

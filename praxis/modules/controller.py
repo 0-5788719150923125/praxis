@@ -11,11 +11,16 @@ class PraxisController(nn.Module):
         self.hidden_size = hidden_size
         self.max_num_experts = max_num_experts
 
-        # Prediction network with max capacity
+        # Store previous predictions with batch dimension
+        self.register_buffer(
+            "previous_logits", torch.zeros(1, max_num_experts)  # [1, max_num_experts]
+        )
+        self.first_forward = True
+
         self.predictor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(),
-            nn.Linear(hidden_size // 2, max_num_experts),
+            nn.Linear(hidden_size // 2, max_num_experts * 2),
         )
 
         self.tracker = DynamicExpertTracker(max_num_experts=max_num_experts)
@@ -24,39 +29,73 @@ class PraxisController(nn.Module):
         self, experts: List[nn.Module], expert: nn.Module, expert_output: torch.Tensor
     ):
         current_num_experts = len(experts)
+        batch_size = expert_output.size(0)
 
-        # Average pooling across sequence length if needed
         if len(expert_output.shape) == 3:
             pooled = torch.mean(expert_output, dim=1)
         else:
             pooled = expert_output
 
-        # Get raw logits for all possible experts
-        full_logits = self.predictor(pooled)  # [batch_size, max_num_experts]
+        # Get raw logits for current expert identification and next expert prediction
+        full_logits = self.predictor(pooled)  # [batch_size, max_num_experts * 2]
+        current_logits, next_logits = torch.split(
+            full_logits, self.max_num_experts, dim=1
+        )
 
         # Slice to only get active experts
-        logits = full_logits[
-            :, :current_num_experts
-        ]  # [batch_size, current_num_experts]
+        current_logits = current_logits[:, :current_num_experts]
+        next_logits = next_logits[:, :current_num_experts]
 
-        # Get probabilities for scaling factor (only for active experts)
-        pred_probs = F.softmax(logits, dim=-1)
-
-        # Get the expert index
+        # Current expert prediction and loss
+        current_probs = F.softmax(current_logits, dim=-1)
         expert_idx = experts.index(expert)
-        true_index = torch.full((logits.size(0),), expert_idx, device=logits.device)
+        current_true_index = torch.full(
+            (batch_size,), expert_idx, device=current_logits.device
+        )
+        current_loss = F.cross_entropy(current_logits, current_true_index)
 
-        aux_loss = F.cross_entropy(logits, true_index)
+        # Next expert prediction
+        next_probs = F.softmax(next_logits, dim=-1)
+        next_pred = torch.argmax(next_logits, dim=-1)
 
-        # Use pred_probs for scaling
-        correct_prob = pred_probs[:, expert_idx]
-        scaling_factor = correct_prob.view(-1, 1, 1)
+        # If this isn't the first forward pass, compute loss for previous prediction
+        next_loss = torch.tensor(0.0, device=current_logits.device)
+        if not self.first_forward:
+            # Expand previous prediction to match current batch size
+            prev_expanded = self.previous_logits[:, :current_num_experts].expand(
+                batch_size, -1
+            )
+            next_loss = F.cross_entropy(prev_expanded, current_true_index)
+        else:
+            self.first_forward = False
+
+        # Store current next_logits for future comparison
+        # Keep only the first item in batch for inference consistency
+        self.previous_logits = next_logits[0:1].detach()
+
+        # Scale hidden states using both current confidence and next prediction
+        current_conf = current_probs[:, expert_idx]
+        next_conf = next_probs.max(dim=-1)[0]  # Confidence in next prediction
+
+        # Combine current and next confidences
+        scaling_factor = (current_conf * next_conf).view(-1, 1, 1)
         new_states = expert_output * scaling_factor
 
-        if not self.training:
-            self.tracker.update(expert_idx, logits, true_index, current_num_experts)
+        # Combined loss
+        # aux_loss = current_loss + next_loss
+        aux_loss = current_loss
 
-        return new_states, aux_loss
+        if not self.training:
+            self.tracker.update(
+                expert_idx=expert_idx,
+                current_logits=current_logits,
+                next_logits=next_logits,
+                true_index=current_true_index,
+                current_num_experts=current_num_experts,
+                previous_prediction=self.previous_logits,
+            )
+
+        return new_states, aux_loss, next_pred
 
     def get_expert_accuracy(self):
         return self.tracker.get_expert_accuracy()
@@ -72,46 +111,80 @@ class DynamicExpertTracker:
     def __init__(self, max_num_experts: int, decay: float = 0.99):
         self.max_num_experts = max_num_experts
         self.decay = decay
-        self.expert_accuracies = {i: 0.0 for i in range(max_num_experts)}
+        # Rename to match original API but store both types
+        self.expert_accuracies = {
+            "current": {i: 0.0 for i in range(max_num_experts)},
+            "future": {i: 0.0 for i in range(max_num_experts)},
+        }
         self.update_counts = {i: 0 for i in range(max_num_experts)}
-        self.active_experts = set()  # Track which experts are currently active
+        self.active_experts = set()
 
     def update(
         self,
         expert_idx: int,
-        pred_logits: torch.Tensor,
-        true_indices: torch.Tensor,
+        current_logits: torch.Tensor,
+        next_logits: torch.Tensor,
+        true_index: torch.Tensor,
         current_num_experts: int,
-    ) -> float:
-        # Update set of active experts
+        previous_prediction: torch.Tensor,
+    ):
         self.active_experts = set(range(current_num_experts))
 
-        predictions = torch.argmax(pred_logits, dim=-1)
-        correct = (predictions == true_indices).float().mean().item()
+        # Current expert identification accuracy
+        current_pred = torch.argmax(current_logits, dim=-1)
+        current_correct = (current_pred == true_index).float().mean().item()
 
+        # Previous prediction accuracy (how well we predicted this expert)
+        prev_pred = torch.argmax(previous_prediction, dim=-1)
+        pred_correct = (prev_pred == true_index).float().mean().item()
+
+        # Update EMAs
         if self.update_counts[expert_idx] == 0:
-            self.expert_accuracies[expert_idx] = correct
+            self.expert_accuracies["current"][expert_idx] = current_correct
+            self.expert_accuracies["future"][expert_idx] = pred_correct
         else:
-            self.expert_accuracies[expert_idx] = (
-                self.decay * self.expert_accuracies[expert_idx]
-                + (1 - self.decay) * correct
+            self.expert_accuracies["current"][expert_idx] = (
+                self.decay * self.expert_accuracies["current"][expert_idx]
+                + (1 - self.decay) * current_correct
+            )
+            self.expert_accuracies["future"][expert_idx] = (
+                self.decay * self.expert_accuracies["future"][expert_idx]
+                + (1 - self.decay) * pred_correct
             )
 
         self.update_counts[expert_idx] += 1
-        return self.expert_accuracies[expert_idx]
 
-    def get_expert_accuracy(self, expert_idx: int) -> float:
+    def get_expert_accuracy(self, expert_idx: int) -> dict:
+        """Returns both current and future accuracies for given expert"""
         if expert_idx not in self.active_experts:
-            return 0.0
-        return self.expert_accuracies[expert_idx]
+            return {"current": 0.0, "future": 0.0}
+        return {
+            "current": self.expert_accuracies["current"][expert_idx],
+            "future": self.expert_accuracies["future"][expert_idx],
+        }
 
-    def get_mean_accuracy(self) -> float:
-        """Get mean accuracy across only active experts"""
+    def get_mean_accuracy(self) -> dict:
+        """Returns mean accuracy for both current and future predictions"""
         if not self.active_experts:
-            return 0.0
-        active_accuracies = [self.expert_accuracies[i] for i in self.active_experts]
-        return sum(active_accuracies) / len(self.active_experts)
+            return {"current": 0.0, "future": 0.0}
+
+        current_accs = [
+            self.expert_accuracies["current"][i] for i in self.active_experts
+        ]
+        future_accs = [self.expert_accuracies["future"][i] for i in self.active_experts]
+
+        return {
+            "current": sum(current_accs) / len(self.active_experts),
+            "future": sum(future_accs) / len(self.active_experts),
+        }
 
     def get_all_accuracies(self) -> dict:
-        """Get dictionary of accuracies for active experts only"""
-        return {i: self.expert_accuracies[i] for i in self.active_experts}
+        """Returns all accuracies for active experts only"""
+        return {
+            "current": {
+                i: self.expert_accuracies["current"][i] for i in self.active_experts
+            },
+            "future": {
+                i: self.expert_accuracies["future"][i] for i in self.active_experts
+            },
+        }
