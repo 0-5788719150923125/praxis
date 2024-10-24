@@ -38,7 +38,7 @@ class PraxisDecoder(nn.Module):
         if self.use_autopilot:
             self.pilot = PraxisController(
                 hidden_size=config.num_dims,
-                num_experts=len(self.local_experts) + len(self.remote_experts),
+                max_num_experts=len(self.local_experts) * 3,
             )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
@@ -67,6 +67,8 @@ class PraxisDecoder(nn.Module):
                 if hasattr(self, "swarm") and self._is_zero_tensor(new_states):
                     raise Exception("received a zero tensor; pruning expert")
                 hidden_states = new_states
+
+                # Hivemind forces expert outputs to require gradients, so we retrieve dummy tensors differently
                 if hasattr(expert, "retrieve_loss"):
                     aux_loss = expert.retrieve_loss()
                     aux_losses.append(aux_loss)
