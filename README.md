@@ -138,6 +138,10 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale)
 - embed training code within the model architecture itself, such that loading a model automatically starts the training, as well
 - cascading assistant models via hivemind (speculative decoding)
+- [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450)
+- [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
+- [Linear Recurrent Units](https://arxiv.org/abs/2303.06349)
+- [DualFormer](https://arxiv.org/html/2410.09918v1)
 
 ## won't do
 

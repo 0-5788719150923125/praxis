@@ -1,5 +1,9 @@
+import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
 
 
 class PraxisCompressor(nn.Module):
@@ -7,63 +11,51 @@ class PraxisCompressor(nn.Module):
     Compresses inputs along the sequence length.
     """
 
-    def __init__(
-        self, num_features, compression_ratio=2, hidden_size=256, threshold=64
-    ):
+    def __init__(self, num_features, target_len=256, hidden_size=256):
         """
         Args:
             num_features: Number of features in input sequence
-            compression_ratio: How much to compress sequence (e.g., 2 means half length)
-            hidden_size: Size of GRU hidden state
-            threshold: Omit inputs under this sequence length.
+            target_len: Desired output sequence length
+            hidden_size: Size of LSTM hidden state
         """
         super().__init__()
-        self.compression_ratio = compression_ratio
+        self.target_len = target_len
         self.hidden_size = hidden_size
-        self.threshold = threshold
 
-        # GRU layer to process sequence windows
-        self.recurrent = nn.GRU(
+        self.recurrent = nn.LSTM(
             input_size=num_features, hidden_size=hidden_size, batch_first=True
         )
 
-        # Project back to original feature dimension
         self.projection = nn.Linear(hidden_size, num_features)
 
-    def forward(self, x):
-        """
-        Args:
-            x: Input tensor of shape [batch_size, seq_len, num_features]
-        Returns:
-            Compressed tensor of shape [batch_size, seq_len//compression_ratio, num_features]
-        """
+    def forward(self, x: Tensor, attention_mask: Tensor):
         batch_size, seq_len, num_features = x.shape
-        window_size = self.compression_ratio
 
-        if seq_len < self.threshold:
-            return x
+        # Calculate adaptive window size
+        window_size = max(1, seq_len // self.target_len)
 
-        # Reshape sequence into windows
-        num_windows = seq_len // window_size
-        windows = x[:, : (num_windows * window_size), :].view(
-            batch_size, num_windows, window_size, num_features
-        )
+        # Apply mask before compression
+        x = x * attention_mask.unsqueeze(-1)
 
-        # Reshape to (batch_size * num_windows, window_size, num_features)
+        # Create new mask for compressed sequence
+        attention_mask = torch.ones((batch_size, self.target_len), device=x.device)
+
+        # Pad sequence if needed
+        pad_len = (window_size * self.target_len) - seq_len
+        if pad_len > 0:
+            padding = torch.zeros(batch_size, pad_len, num_features, device=x.device)
+            x = torch.cat([x, padding], dim=1)
+            seq_len = x.shape[1]
+
+        # Reshape into windows
+        windows = x.view(batch_size, self.target_len, window_size, num_features)
+
+        # Process each window
         windows_reshaped = windows.reshape(-1, window_size, num_features)
+        _, (hidden, _) = self.recurrent(windows_reshaped)
 
-        # Run GRU and take final hidden state for each window
-        _, hidden = self.recurrent(
-            windows_reshaped
-        )  # hidden shape: [1, batch_size * num_windows, hidden_size]
-        hidden = hidden.squeeze(0)  # shape: [batch_size * num_windows, hidden_size]
+        # Reshape to target length
+        hidden = hidden.view(batch_size, self.target_len, self.hidden_size)
+        output = self.projection(hidden)
 
-        # Reshape back to batch dimension
-        hidden = hidden.view(batch_size, num_windows, self.hidden_size)
-
-        # Project back to original feature dimension
-        output = self.projection(
-            hidden
-        )  # shape: [batch_size, seq_len//compression_ratio, num_features]
-
-        return output
+        return output, attention_mask

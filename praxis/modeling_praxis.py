@@ -10,6 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
+from praxis.modules import MultiIdentity
 from praxis.modules.compression import PraxisCompressor
 from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.embeddings import PraxisEmbedding
@@ -22,9 +23,9 @@ class PraxisModel(PreTrainedModel):
         super().__init__(config)
         self.embeds = PraxisEmbedding(config)
         self.compression = (
-            PraxisCompressor(config.num_dims, 2, config.num_dims // 3)
+            PraxisCompressor(config.num_dims, 256)
             if config.compression
-            else nn.Identity()
+            else MultiIdentity()
         )
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
@@ -39,12 +40,11 @@ class PraxisModel(PreTrainedModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         inputs = self.embeds(input_ids)
-        symbols = self.compression(inputs)
 
-        if self.config.compression or not torch.is_tensor(attention_mask):
-            # We cannot compress an attention mask yet, so if using compression - we simply
-            # generate a new one for now.
-            attention_mask = torch.ones(symbols.shape[:2], device=symbols.device)
+        if not torch.is_tensor(attention_mask):
+            attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
+
+        symbols, attention_mask = self.compression(inputs, attention_mask)
 
         last_hidden_state, aux_loss = self.decoder(symbols, attention_mask)
         self.aux_losses.append(aux_loss)
@@ -109,9 +109,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            seq_len = logits.shape[1]
             if self.config.compression:
-                labels = labels.view(labels.shape[0], -1, 2)[:, :, 0]
+                # Calculate window size as in compressor
+                seq_len = labels.shape[1]
+                target_len = self.compression.target_len
+                window_size = max(1, seq_len // target_len)
+                # Reshape labels to match compression windows and take first token of each window
+                labels = labels.view(labels.shape[0], target_len, window_size)[:, :, 0]
 
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
