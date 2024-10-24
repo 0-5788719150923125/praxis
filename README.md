@@ -52,6 +52,16 @@ To view all supported command-line arguments:
 python run.py --help
 ```
 
+## recommendations
+
+We recommend you use a `batch_size` of at least 16, if possible:
+
+```sh
+python run.py --batch_size 16
+```
+
+The reason for this is that we have implemented an oversampling mechanism, which can expose your model to longer sequences during training (improving generalization and maximum supported sequence length). This oversampling mechanism periodically doubles the sequence length, and scales quadratically at batch sizes of 1, 4, and 16.
+
 ## do inference
 
 Send a JSON-encoded payload via POST to:
@@ -140,9 +150,10 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - cascading assistant models via hivemind (speculative decoding)
 - [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450)
 - [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
-- [Linear Recurrent Units](https://arxiv.org/abs/2303.06349)
+- [Linear Recurrent Units](https://arxiv.org/abs/2303.06349) (not recommended; they are extremely slow without specialized kernels)
 - [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping)
 - [novel activations](https://gist.github.com/ronaldoaf/427887efe44f12d4bdccc46ad73404eb)
+- [Infinit-Attention](https://github.com/jlamprou/Infini-Attention) (a neat idea, but perhaps not worth the effort)
 
 ## won't do
 

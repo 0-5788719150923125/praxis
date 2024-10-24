@@ -64,7 +64,10 @@ class PraxisDecoder(nn.Module):
                     aux_loss = expert.retrieve_loss()
                     aux_losses.append(aux_loss)
             except Exception as e:
-                self.swarm.handle_failure(expert)
+                if hasattr(self, "swarm"):
+                    self.swarm.handle_failure(expert)
+                else:
+                    raise Exception(e)
 
         return hidden_states, sum(aux_losses)
 
