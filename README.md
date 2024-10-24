@@ -142,6 +142,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
 - [Linear Recurrent Units](https://arxiv.org/abs/2303.06349)
 - [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping)
+- [novel activations](https://gist.github.com/ronaldoaf/427887efe44f12d4bdccc46ad73404eb)
 
 ## won't do
 
