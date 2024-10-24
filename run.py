@@ -1166,6 +1166,17 @@ if wandb:
     import wandb
     from lightning.pytorch.loggers import WandbLogger
 
+    class CustomWandbLogger(WandbLogger):
+        def log_hyperparams(self, params):
+            # Create new dict with all non-hparams entries
+            cleaned_params = {k: v for k, v in params.items() if k != "hparams"}
+
+            # Update with contents of hparams dict if it exists
+            if "hparams" in params:
+                cleaned_params.update(params["hparams"])
+
+            super().log_hyperparams(cleaned_params)
+
     wandb.login()
 
     wandb_opts = dict(project="praxis", save_dir=cache_dir)
@@ -1180,7 +1191,7 @@ if wandb:
 
         wandb_opts["resume"] = "must"
 
-    wandb_logger = WandbLogger(**wandb_opts)
+    wandb_logger = CustomWandbLogger(**wandb_opts)
 
     # log gradients and model topology
     wandb_logger.watch(model, log="all", log_freq=100, log_graph=True)

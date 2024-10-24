@@ -141,7 +141,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450)
 - [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
 - [Linear Recurrent Units](https://arxiv.org/abs/2303.06349)
-- [DualFormer](https://arxiv.org/html/2410.09918v1)
+- [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping)
 
 ## won't do
 

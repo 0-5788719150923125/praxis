@@ -16,23 +16,24 @@ class PraxisCompressor(nn.Module):
         Args:
             num_features: Number of features in input sequence
             target_len: Desired output sequence length
-            hidden_size: Size of LSTM hidden state
+            hidden_size: Size of GRU hidden state
         """
         super().__init__()
         self.target_len = target_len
         self.hidden_size = hidden_size
 
-        self.recurrent = nn.LSTM(
+        self.recurrent = nn.GRU(
             input_size=num_features, hidden_size=hidden_size, batch_first=True
         )
 
         self.projection = nn.Linear(hidden_size, num_features)
 
     def forward(self, x: Tensor, attention_mask: Tensor):
+        residual = x
         batch_size, seq_len, num_features = x.shape
 
-        # Calculate adaptive window size
-        window_size = max(1, seq_len // self.target_len)
+        # Calculate adaptive window size using ceil to ensure we cover the sequence
+        window_size = math.ceil(seq_len / self.target_len)
 
         # Apply mask before compression
         x = x * attention_mask.unsqueeze(-1)
@@ -40,23 +41,45 @@ class PraxisCompressor(nn.Module):
         # Create new mask for compressed sequence
         attention_mask = torch.ones((batch_size, self.target_len), device=x.device)
 
-        # Pad sequence if needed
-        pad_len = (window_size * self.target_len) - seq_len
-        if pad_len > 0:
-            padding = torch.zeros(batch_size, pad_len, num_features, device=x.device)
-            x = torch.cat([x, padding], dim=1)
-            seq_len = x.shape[1]
-
         # Reshape into windows
-        windows = x.view(batch_size, self.target_len, window_size, num_features)
+        windows = x.unfold(dimension=1, size=window_size, step=window_size)
 
         # Process each window
         windows_reshaped = windows.reshape(-1, window_size, num_features)
-        _, (hidden, _) = self.recurrent(windows_reshaped)
-        hidden = hidden.squeeze(0)
+        _, hidden = self.recurrent(windows_reshaped)
 
-        # Reshape to target length
-        hidden = hidden.view(batch_size, self.target_len, self.hidden_size)
+        # Reshape hidden state
+        hidden = hidden.squeeze(0).view(batch_size, -1, self.hidden_size)
+        # # If we got more segments than target_len, truncate
+        # if hidden.size(1) > self.target_len:
+        #     hidden = hidden[:, : self.target_len, :]
+        # # If we got fewer segments than target_len, pad
+        # elif hidden.size(1) < self.target_len:
+        #     pad_size = self.target_len - hidden.size(1)
+        #     padding = torch.zeros(
+        #         batch_size, pad_size, self.hidden_size, device=hidden.device
+        #     )
+        #     hidden = torch.cat([hidden, padding], dim=1)
+        # Handle sequence length adjustment with front padding
+        if hidden.size(1) < self.target_len:
+            pad_size = self.target_len - hidden.size(1)
+            padding = torch.zeros(
+                batch_size, pad_size, self.hidden_size, device=hidden.device
+            )
+            hidden = torch.cat([padding, hidden], dim=1)  # Pad at front
+        else:
+            # If we got more segments, take the last target_len ones
+            hidden = hidden[:, -self.target_len :, :]
+
+        # Main projection
         output = self.projection(hidden)
+
+        # Simple average pooling for residual
+        residual = F.adaptive_avg_pool1d(
+            residual.transpose(1, 2), self.target_len
+        ).transpose(1, 2)
+
+        # Add residual
+        output = output + residual
 
         return output, attention_mask
