@@ -42,6 +42,11 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
+        if autopilot:
+            assert (
+                autopilot == shuffle
+            ), "To use `autopilot`, you must also use `shuffle`."
+
         # Praxis args
         self.num_embeds = num_embeds
         self.num_dims = num_dims
