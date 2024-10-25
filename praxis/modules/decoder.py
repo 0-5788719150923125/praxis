@@ -76,7 +76,7 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    _, aux_loss, next_pred = self.pilot(experts, expert, new_states)
+                    aux_loss, next_pred = self.pilot(experts, expert, new_states)
                     aux_losses.append(aux_loss)
 
                 # Commit to self

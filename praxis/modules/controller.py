@@ -25,7 +25,13 @@ class PraxisController(nn.Module):
         nn.init.normal_(self.predictor[-1].weight, mean=0.0, std=0.01)
         nn.init.constant_(self.predictor[-1].bias, 0.1)
 
-        self.tracker = DynamicExpertTracker(max_num_experts=max_num_experts)
+        self.decay = 0.99
+        self.expert_accuracies = {
+            "current": {i: 0.0 for i in range(max_num_experts)},
+            "future": {i: 0.0 for i in range(max_num_experts)},
+        }
+        self.update_counts = {i: 0 for i in range(max_num_experts)}
+        self.active_experts = set()
 
     def forward(
         self, experts: List[nn.Module], expert: nn.Module, expert_output: torch.Tensor
@@ -75,21 +81,13 @@ class PraxisController(nn.Module):
         # Keep only the first item in batch for inference consistency
         self.previous_logits = next_logits[0:1].detach()
 
-        # Scale hidden states using both current confidence and next prediction
-        current_conf = current_probs[:, expert_idx]
-        next_conf = next_probs.max(dim=-1)[0]  # Confidence in next prediction
-
-        # Combine current and next confidences
-        # scaling_factor = (current_conf * next_conf).view(-1, 1, 1)
-        scaling_factor = current_conf.view(-1, 1, 1)
-        new_states = expert_output * scaling_factor
-
         # Combined loss
         # aux_loss = current_loss + next_loss
-        aux_loss = current_loss
+        loss_scale = 0.01
+        aux_loss = current_loss * loss_scale
 
         if not self.training:
-            self.tracker.update(
+            self.update_tracking(
                 expert_idx=expert_idx,
                 current_logits=current_logits,
                 next_logits=next_logits,
@@ -98,31 +96,9 @@ class PraxisController(nn.Module):
                 previous_prediction=self.previous_logits,
             )
 
-        return new_states, aux_loss, next_pred
+        return aux_loss, next_pred
 
-    def get_expert_accuracy(self):
-        return self.tracker.get_expert_accuracy()
-
-    def get_mean_accuracy(self):
-        return self.tracker.get_mean_accuracy()
-
-    def get_all_accuracies(self):
-        return self.tracker.get_all_accuracies()
-
-
-class DynamicExpertTracker:
-    def __init__(self, max_num_experts: int, decay: float = 0.99):
-        self.max_num_experts = max_num_experts
-        self.decay = decay
-        # Rename to match original API but store both types
-        self.expert_accuracies = {
-            "current": {i: 0.0 for i in range(max_num_experts)},
-            "future": {i: 0.0 for i in range(max_num_experts)},
-        }
-        self.update_counts = {i: 0 for i in range(max_num_experts)}
-        self.active_experts = set()
-
-    def update(
+    def update_tracking(
         self,
         expert_idx: int,
         current_logits: torch.Tensor,
