@@ -51,12 +51,17 @@ class PraxisDecoder(nn.Module):
 
         hidden_states = inputs
         aux_losses = []
+        next_expert_idx = None
 
         for i, expert in enumerate(experts):
             use_router = True if self.sparse and i % 2 != 0 else False
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
+                if not self.training and next_expert_idx is not None:
+                    print(next_expert_idx)
+                    expert = experts[next_expert_idx]
+
                 new_states = self._create_forward(
                     expert,
                     hidden_states,
@@ -76,7 +81,14 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    aux_loss, next_pred = self.pilot(experts, expert, new_states)
+                    next_expert = (
+                        experts[i + 1]
+                        if i < len(experts) - 1 and self.training
+                        else None
+                    )
+                    aux_loss, next_expert_idx = self.pilot(
+                        experts, expert, new_states, next_expert
+                    )
                     aux_losses.append(aux_loss)
 
                 # Commit to self
