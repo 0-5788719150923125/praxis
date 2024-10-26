@@ -44,6 +44,11 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
+        if sparse:
+            assert (
+                depth % 2 != 0
+            ), "When using `sparse=True`, `depth` should be an odd number."
+
         if autopilot:
             assert (
                 autopilot == shuffle
