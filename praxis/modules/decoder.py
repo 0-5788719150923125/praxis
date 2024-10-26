@@ -21,10 +21,11 @@ class PraxisDecoder(nn.Module):
     def __init__(self, config: PraxisConfig):
         super().__init__()
         self.debug = config.debug
+        self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
         self.checkpoint_indices = self._checkpoint_strategy(
-            config.memory_profile, config.depth
+            config.memory_profile, self.depth
         )
         self.remote_experts = []
         if config.hivemind:
@@ -33,7 +34,7 @@ class PraxisDecoder(nn.Module):
             self.remote_experts = self.swarm.active_remote_experts
         else:
             self.local_experts = nn.ModuleList(
-                [PraxisExpert(config) for _ in range(config.depth)]
+                [PraxisExpert(config) for _ in range(self.depth)]
             )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
@@ -56,11 +57,12 @@ class PraxisDecoder(nn.Module):
 
         route = []
 
-        for i, expert in enumerate(experts):
+        for i in range(self.depth):
             use_router = True if self.sparse and i % 2 != 0 else False
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
+                expert = experts[i]
                 if not self.training and next_expert_idx is not None:
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
@@ -84,13 +86,8 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    next_expert = (
-                        experts[i + 1]
-                        if i < len(experts) - 1 and self.training
-                        else None
-                    )
                     aux_loss, next_expert_idx = self.copilot(
-                        experts, expert, new_states, next_expert
+                        experts, expert, new_states, i
                     )
                     aux_losses.append(aux_loss)
 

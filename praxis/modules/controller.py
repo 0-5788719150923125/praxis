@@ -50,7 +50,7 @@ class PraxisController(nn.Module):
         experts: List[nn.Module],
         expert: nn.Module,
         expert_output: torch.Tensor,
-        next_expert: Optional[nn.Module] = None,
+        actual_index: int,
     ):
         current_num_experts = len(experts)
         batch_size = expert_output.size(0)
@@ -78,6 +78,13 @@ class PraxisController(nn.Module):
             (batch_size,), expert_idx, device=current_logits.device
         )
         current_loss = F.cross_entropy(current_logits, current_true_index)
+
+        # Get the next expert, if one exists
+        next_expert = (
+            experts[actual_index + 1]
+            if actual_index < len(experts) - 1 and self.training
+            else None
+        )
 
         # During training: learn from randomly selected next expert
         if self.training and next_expert is not None:
