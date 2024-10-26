@@ -13,15 +13,35 @@ from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.modules.smear import PraxisSMEAR
 
+# from praxis.orchestration.hivemind import PraxisSwarm
+
+
+class PraxisExpert(nn.Module):
+    def __init__(self, config: PraxisConfig, swarm):
+        super().__init__()
+        self.swarm = swarm
+        self.expert = swarm.register_expert(config) if swarm else PraxisBlock(config)
+        if config.sparse:
+            self.router = PraxisMixtureOfDepths(config)
+
+    def forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
+        if use_router:
+            hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
+        else:
+            hidden_states = self.expert(inputs, attention_mask)
+            aux_loss = 0
+        return hidden_states, aux_loss
+
+
 input_shape = lambda batch_size, hid_dim: (
-    torch.empty((batch_size, hid_dim)),
-    torch.empty((batch_size)),
-    torch.empty((1)),
+    torch.empty((batch_size, 1, hid_dim)),
+    torch.empty((batch_size, 1)),
+    # torch.empty((1)),
 )
 
 
-@register_expert_class("praxis_expert", input_shape)
-class PraxisExpert(nn.Module):
+@register_expert_class("hivemind_expert", input_shape)
+class HivemindExpert(nn.Module):
     """
     A Hivemind expert has certain limitations, which make it difficult to work with:
     1. All inputs to the `forward()` method must be Tensors.
@@ -35,20 +55,10 @@ class PraxisExpert(nn.Module):
         super().__init__()
         # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
         self.expert = PraxisBlock(config)
-        if config.sparse:
-            self.router = PraxisMixtureOfDepths(config)
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor, bit_tensor: Tensor):
-        if hasattr(self, "router") and bool(bit_tensor):
-            hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
-        else:
-            hidden_states = self.expert(inputs, attention_mask)
-            aux_loss = 0
-        self.loss = aux_loss
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
+        hidden_states = self.expert(inputs, attention_mask)
         return hidden_states
-
-    def retrieve_loss(self):
-        return self.loss
 
 
 class PraxisBlock(nn.Module):

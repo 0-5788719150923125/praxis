@@ -24,19 +24,20 @@ class PraxisDecoder(nn.Module):
         self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
+        self.swarm = False
         self.remote_experts = []
         if config.hivemind:
             self.swarm = PraxisSwarm(config)
-            self.local_experts = nn.ModuleList(self.swarm.active_local_experts)
             self.remote_experts = self.swarm.active_remote_experts
-        else:
-            self.local_experts = nn.ModuleList(
-                [PraxisExpert(config) for _ in range(config.num_experts)]
-            )
+        self.local_experts = nn.ModuleList(
+            [PraxisExpert(config, self.swarm) for _ in range(config.num_experts)]
+        )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
             self.copilot = PraxisController(config, len(self.local_experts) * 3)
         self._define_checkpoints(config.memory_profile, self.depth)
+        if self.swarm:
+            self.swarm.serve_experts(config)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
@@ -44,7 +45,7 @@ class PraxisDecoder(nn.Module):
         if self.shuffle:
             random.shuffle(experts)
 
-        if hasattr(self, "swarm"):
+        if self.swarm:
             self.swarm._search_for_experts()
 
         hidden_states = inputs
@@ -58,7 +59,6 @@ class PraxisDecoder(nn.Module):
 
         for i in range(self.depth):
             use_router = True if self.sparse and i % 2 != 0 else False
-            bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
                 expert = experts[i]
@@ -66,22 +66,20 @@ class PraxisDecoder(nn.Module):
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
 
-                new_states = self._create_forward(
+                new_states, aux_loss = self._create_forward(
                     expert,
                     hidden_states,
                     attention_mask,
-                    bit_tensor,
+                    use_router,
                     gradient_checkpointing,
-                ).to(inputs.device)
+                )
+                new_states = new_states.to(inputs.device)
+
+                aux_losses.append(aux_loss)
 
                 # Dead peers will return a zero tensor
-                if hasattr(self, "swarm") and self._is_zero_tensor(new_states):
+                if self.swarm and self._is_zero_tensor(new_states):
                     raise Exception("received a zero tensor; pruning expert")
-
-                # Hivemind forces expert outputs to require gradients, so we retrieve dummy tensors differently
-                if hasattr(expert, "retrieve_loss"):
-                    aux_loss = expert.retrieve_loss()
-                    aux_losses.append(aux_loss)
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
@@ -99,7 +97,9 @@ class PraxisDecoder(nn.Module):
 
             except Exception as e:
                 # Prune dead peers
-                if hasattr(self, "swarm"):
+                if self.swarm:
+                    if self.debug:
+                        print(e)
                     self.swarm.handle_failure(expert)
                     continue
                 # Crash on unhandled exceptions
@@ -135,27 +135,26 @@ class PraxisDecoder(nn.Module):
         expert: nn.Module,
         hidden_states: Tensor,
         attention_mask: Tensor,
-        bit_tensor: Tensor,
+        use_router: bool,
         gradient_checkpointing=False,
     ):
         def custom_forward(*inputs):
             return expert(*inputs)
 
-        if hasattr(self, "swarm") and self.swarm.is_remote(expert):
+        if self.swarm and self.swarm.is_remote(expert):
             hidden_states = hidden_states.to("cpu")
             attention_mask = attention_mask.to("cpu")
-            bit_tensor = bit_tensor.to("cpu")
 
         if gradient_checkpointing and self.training:
             return torch.utils.checkpoint.checkpoint(
                 custom_forward,
                 hidden_states,
                 attention_mask,
-                bit_tensor,
+                use_router,
                 use_reentrant=False,
             )
         else:
-            return custom_forward(hidden_states, attention_mask, bit_tensor)
+            return custom_forward(hidden_states, attention_mask, use_router)
 
     def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
         """Check if a tensor is filled with zeros (within numerical tolerance)"""
