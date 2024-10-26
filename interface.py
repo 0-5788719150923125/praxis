@@ -341,7 +341,7 @@ class TerminalDashboard:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
                 text = f" ERROR: {train_loss:.4f}"
                 if self.accuracy is not None:
-                    text += f" || ACC: {self.accuracy[0]:.3f} || ACC+1: {self.accuracy[1]:.3f}"
+                    text += f" || ACCURACY: {self.accuracy[0]:.3f} || CONFIDENCE: {self.accuracy[1]:.3f}"
                 right_content = self._visual_ljust(text, right_width)
                 left_content = self._visual_ljust(
                     f" HOST {self.num_faults}", half_width

@@ -32,7 +32,7 @@ class PraxisController(nn.Module):
         self.decay = 0.99
         self.expert_accuracies = {
             "current": {i: 0.0 for i in range(max_num_experts)},
-            "routing": {i: 0.0 for i in range(max_num_experts)},
+            "confidence": {i: 0.0 for i in range(max_num_experts)},
         }
         self.update_counts = {i: 0 for i in range(max_num_experts)}
         self.active_experts = set()
@@ -127,60 +127,65 @@ class PraxisController(nn.Module):
         current_pred = torch.argmax(current_logits, dim=-1)
         current_correct = (current_pred == true_index).float().mean().item()
 
-        # Get routing prediction
-        routing_pred = torch.argmax(routing_logits, dim=-1)
+        # Measure routing confidence/decisiveness
+        routing_probs = F.softmax(routing_logits, dim=-1)
 
-        # Use transition counts to determine optimal route
-        transition_probs = self.transition_counts[from_expert, :current_num_experts]
-        if transition_probs.sum() > 0:  # If we've seen any transitions
-            transition_probs = transition_probs / transition_probs.sum()
-            optimal_route = torch.argmax(transition_probs)
-            routing_correct = (routing_pred == optimal_route).float().mean().item()
-        else:
-            routing_correct = 0.0
+        # Get the confidence score for the chosen route
+        chosen_route = torch.argmax(routing_logits, dim=-1)
+        route_confidence = (
+            routing_probs.gather(1, chosen_route.unsqueeze(1)).mean().item()
+        )
 
+        # Normalize confidence to [0, 1]
+        # At random: confidence = 1/num_experts (minimum)
+        # At perfect confidence: confidence = 1.0 (maximum)
         self.active_experts = set(range(current_num_experts))
+        random_confidence = 1.0 / current_num_experts
+        normalized_confidence = (route_confidence - (random_confidence)) / (
+            1.0 - (random_confidence)
+        )
+        relative_confidence = max(
+            0.0, min(1.0, normalized_confidence)
+        )  # Clamp to [0, 1]
 
         # Update EMAs
         if self.update_counts[expert_idx] == 0:
             self.expert_accuracies["current"][expert_idx] = current_correct
-            self.expert_accuracies["routing"][expert_idx] = routing_correct
+            self.expert_accuracies["confidence"][expert_idx] = relative_confidence
         else:
             self.expert_accuracies["current"][expert_idx] = (
                 self.decay * self.expert_accuracies["current"][expert_idx]
                 + (1 - self.decay) * current_correct
             )
-            self.expert_accuracies["routing"][expert_idx] = (
-                self.decay * self.expert_accuracies["routing"][expert_idx]
-                + (1 - self.decay) * routing_correct
+            self.expert_accuracies["confidence"][expert_idx] = (
+                self.decay * self.expert_accuracies["confidence"][expert_idx]
+                + (1 - self.decay) * relative_confidence
             )
 
-        self.update_counts[expert_idx] += 1
-
     def get_expert_accuracy(self, expert_idx: int) -> dict:
-        """Returns both current and routing accuracies for given expert"""
+        """Returns both current and confidence accuracies for given expert"""
         if expert_idx not in self.active_experts:
-            return {"current": 0.0, "routing": 0.0}
+            return {"current": 0.0, "confidence": 0.0}
         return {
             "current": self.expert_accuracies["current"][expert_idx],
-            "routing": self.expert_accuracies["routing"][expert_idx],
+            "confidence": self.expert_accuracies["confidence"][expert_idx],
         }
 
     def get_mean_accuracy(self) -> dict:
-        """Returns mean accuracy for both current and routing predictions"""
+        """Returns mean accuracy for both current and confidence predictions"""
         if not self.active_experts:
-            return {"current": 0.0, "routing": 0.0}
+            return {"current": 0.0, "confidence": 0.0}
 
         current_accs = [
             self.expert_accuracies["current"][i] for i in self.active_experts
         ]
-        routing_accs = [
-            self.expert_accuracies["routing"][i] for i in self.active_experts
+        confidence_accs = [
+            self.expert_accuracies["confidence"][i] for i in self.active_experts
         ]
 
         return {
             "current": sum(current_accs) / len(self.active_experts),
-            "routing": sum(routing_accs) / len(self.active_experts),
+            "confidence": sum(confidence_accs) / len(self.active_experts),
         }
 
     def get_all_accuracies(self) -> dict:
@@ -189,7 +194,7 @@ class PraxisController(nn.Module):
             "current": {
                 i: self.expert_accuracies["current"][i] for i in self.active_experts
             },
-            "routing": {
-                i: self.expert_accuracies["routing"][i] for i in self.active_experts
+            "confidence": {
+                i: self.expert_accuracies["confidence"][i] for i in self.active_experts
             },
         }

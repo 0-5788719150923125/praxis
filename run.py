@@ -589,7 +589,7 @@ class TerminalInterface(Callback):
             data.update(
                 {
                     "acc0": swarm_info["predictions"]["mean"]["current"],
-                    "acc1": swarm_info["predictions"]["mean"]["routing"],
+                    "acc1": swarm_info["predictions"]["mean"]["confidence"],
                 }
             )
 
