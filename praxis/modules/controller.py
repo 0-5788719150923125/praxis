@@ -10,9 +10,9 @@ from praxis.activations import ACT2FN
 
 class PraxisController(nn.Module):
     """
-    This controller implements an expert-prediction mechanism, which trains
-    the network to learn how to intelligently route through layers in the network.
-    It also implements an early-exit strategy, inspired by CALM:
+    This controller implements an expert-prediction mechanism, which trains a small
+    router to intelligently route through layers in the network. It also implements
+    an early-exit strategy, inspired by CALM:
     https://arxiv.org/abs/2207.07061
     """
 
@@ -34,7 +34,7 @@ class PraxisController(nn.Module):
         self.predictor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),
-            ACT2FN["sinlu"],
+            ACT2FN["relu"],
             nn.Linear(hidden_size // 2, max_num_experts * 3),
         )
 
