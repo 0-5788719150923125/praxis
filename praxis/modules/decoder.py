@@ -74,7 +74,6 @@ class PraxisDecoder(nn.Module):
                     gradient_checkpointing,
                 )
                 new_states = new_states.to(inputs.device)
-
                 aux_losses.append(aux_loss)
 
                 # Dead peers will return a zero tensor
