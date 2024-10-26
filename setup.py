@@ -26,7 +26,7 @@ dev_requirements = ["isort", "lsprotocol", "pygls"]
 setup(
     name="praxis",
     version="0.1.0",
-    decription="a labor of love",
+    decription="as above, so below",
     author="Ryan Brooks",
     author_email="ryan@src.eco",
     url="https://src.eco",

@@ -1,7 +1,7 @@
 {
   "name": "praxis",
   "version": "0.1.0",
-  "description": "a labor of love",
+  "description": "as above, so below",
   "source": "web/index.html",
   "scripts": {
     "start": "parcel",
