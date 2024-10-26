@@ -44,22 +44,28 @@ import torch.nn as nn
 from datasets import load_dataset
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.core.datamodule import LightningDataModule
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
 from torch.utils.data import DataLoader, IterableDataset
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from interface import TerminalDashboard
-from praxis import (EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM,
-                    PraxisModel)
+from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -275,7 +281,7 @@ config = PraxisConfig(
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
     shuffle=shuffle,
-    autopilot=autopilot if shuffle else False,
+    autopilot=autopilot,
     differential=differential,
     compression=compression,
     hivemind=hivemind,
@@ -583,7 +589,7 @@ class TerminalInterface(Callback):
             data.update(
                 {
                     "acc0": swarm_info["predictions"]["mean"]["current"],
-                    "acc1": swarm_info["predictions"]["mean"]["future"],
+                    "acc1": swarm_info["predictions"]["mean"]["confidence"],
                 }
             )
 
@@ -606,7 +612,7 @@ class TerminalInterface(Callback):
             self.dashboard.update_expert_count(local_experts, remote_experts)
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
-            self.dashboard.fake_log(chance=0.00001)
+            self.dashboard.fake_log(chance=0.000001)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(

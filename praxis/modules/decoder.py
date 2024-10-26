@@ -20,10 +20,12 @@ class PraxisDecoder(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
+        self.debug = config.debug
+        self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
         self.checkpoint_indices = self._checkpoint_strategy(
-            config.memory_profile, config.depth
+            config.memory_profile, self.depth
         )
         self.remote_experts = []
         if config.hivemind:
@@ -32,11 +34,11 @@ class PraxisDecoder(nn.Module):
             self.remote_experts = self.swarm.active_remote_experts
         else:
             self.local_experts = nn.ModuleList(
-                [PraxisExpert(config) for _ in range(config.depth)]
+                [PraxisExpert(config) for _ in range(self.depth)]
             )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
-            self.pilot = PraxisController(
+            self.copilot = PraxisController(
                 hidden_size=config.num_dims,
                 max_num_experts=len(self.local_experts) * 3,
             )
@@ -51,12 +53,20 @@ class PraxisDecoder(nn.Module):
 
         hidden_states = inputs
         aux_losses = []
+        next_expert_idx = None
 
-        for i, expert in enumerate(experts):
+        route = []
+
+        for i in range(self.depth):
             use_router = True if self.sparse and i % 2 != 0 else False
             bit_tensor = torch.tensor([1 if use_router else 0], dtype=torch.bool)
             gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
+                expert = experts[i]
+                if not self.training and next_expert_idx is not None:
+                    expert = experts[next_expert_idx]
+                    route.append(str(next_expert_idx))
+
                 new_states = self._create_forward(
                     expert,
                     hidden_states,
@@ -76,7 +86,9 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    aux_loss, next_pred = self.pilot(experts, expert, new_states)
+                    aux_loss, next_expert_idx = self.copilot(
+                        experts, expert, new_states, i
+                    )
                     aux_losses.append(aux_loss)
 
                 # Commit to self
@@ -90,14 +102,17 @@ class PraxisDecoder(nn.Module):
                 # Crash on unhandled exceptions
                 raise Exception(e)
 
+        if self.debug and not self.training:
+            print(f"DEBUG: Routing through ({' -> '.join(route)})")
+
         return hidden_states, sum(aux_losses)
 
     def get_prediction_accuracies(self):
         """Return current prediction accuracies"""
         if self.use_autopilot:
             return {
-                "mean": self.pilot.get_mean_accuracy(),
-                "per_expert": self.pilot.get_all_accuracies(),
+                "mean": self.copilot.get_mean_accuracy(),
+                "per_expert": self.copilot.get_all_accuracies(),
             }
         return None
 

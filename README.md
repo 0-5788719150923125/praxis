@@ -13,10 +13,11 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 ## architecture
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
-- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. ~~We take this a step further, and implement a controller that predicts an optimized layer order.~~ The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
+- [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. We take this a step further, and implement the `PraxisController`, which teaches the model how to predict an optimal route through expert layers during inference. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
 - [Attention with Linear Biases (ALiBi)](https://arxiv.org/abs/2108.12409) for length extrapolation, because it's easy, it works well at sane contexts lengths, and it requires no trainable parameters.
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
+- While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
 
 ## join us
 
@@ -141,9 +142,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - central and persistent relay peers, to act as global bootstrap nodes
 - helix, octopi, pyramids
 - multi-block, heirarchical experts
-- peer validation (zero knowledge proofs)
-- self-modeling of remote experts
-- [Soft Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745)
+- peer validation (zero knowledge proofs, differential privacy)
 - [T-FREE Tokenizer](https://github.com/aleph-alpha/trigrams)
 - [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale)
 - embed training code within the model architecture itself, such that loading a model automatically starts the training, as well
@@ -151,7 +150,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450)
 - [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
 - [Linear Recurrent Units](https://arxiv.org/abs/2303.06349) (not recommended; they are extremely slow without specialized kernels)
-- [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping)
+- [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping; i.e. data we don't have)
 - [novel activations](https://gist.github.com/ronaldoaf/427887efe44f12d4bdccc46ad73404eb)
 - [Infini-Attention](https://github.com/jlamprou/Infini-Attention) (a neat idea, but perhaps not worth the effort)
 - [xLSTM](https://github.com/NX-AI/xlstm)

@@ -32,6 +32,7 @@ class PraxisConfig(PretrainedConfig):
         bos_token_id=1,
         eos_token_id=2,
         unk_token_id=4,
+        debug=True,
         **kwargs,
     ):
         super().__init__(
@@ -41,6 +42,11 @@ class PraxisConfig(PretrainedConfig):
             unk_token_id=unk_token_id,
             **kwargs,
         )
+
+        if autopilot:
+            assert (
+                autopilot == shuffle
+            ), "To use `autopilot`, you must also use `shuffle`."
 
         # Praxis args
         self.num_embeds = num_embeds
@@ -63,6 +69,7 @@ class PraxisConfig(PretrainedConfig):
         self.initial_peers = initial_peers
         self.memory_profile = memory_profile
         self.device_map = device_map
+        self.debug = debug
         self.causal = False
 
     def _register_experts(self, expert: str or dict):
