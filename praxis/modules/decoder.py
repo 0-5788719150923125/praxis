@@ -31,7 +31,7 @@ class PraxisDecoder(nn.Module):
             self.remote_experts = self.swarm.active_remote_experts
         else:
             self.local_experts = nn.ModuleList(
-                [PraxisExpert(config) for _ in range(self.depth)]
+                [PraxisExpert(config) for _ in range(config.num_experts)]
             )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:

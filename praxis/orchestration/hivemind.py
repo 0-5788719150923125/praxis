@@ -71,7 +71,7 @@ class PraxisSwarm:
         self.expert_uids = []
         [
             self.expert_uids.append(self._generate_unique_name())
-            for _ in range(config.depth)
+            for _ in range(config.num_experts)
         ]
 
         self.active_remote_experts = []

@@ -112,7 +112,13 @@ parser.add_argument(
     "--depth",
     type=int,
     default=7,
-    help="Number of layers to use",
+    help="The max number of experts to route through",
+)
+parser.add_argument(
+    "--num_experts",
+    type=int,
+    default=7,
+    help="Number of experts to host",
 )
 parser.add_argument(
     "--memory_profile",
@@ -277,6 +283,7 @@ except Exception as e:
 # Transformers config
 config = PraxisConfig(
     depth=3 if dev else depth,
+    num_experts=3 if dev else num_experts,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,

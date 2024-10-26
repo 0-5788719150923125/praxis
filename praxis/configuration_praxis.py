@@ -12,6 +12,7 @@ class PraxisConfig(PretrainedConfig):
         num_dims=360,
         num_heads=8,
         depth=7,
+        num_experts=7,
         dropout=0,
         epsilon=1e-5,
         capacity=0.125,
@@ -48,11 +49,21 @@ class PraxisConfig(PretrainedConfig):
                 autopilot == shuffle
             ), "To use `autopilot`, you must also use `shuffle`."
 
+        assert (
+            num_experts >= depth
+        ), "`num_experts` should be at least as large as `depth`."
+
+        if not shuffle:
+            assert (
+                num_experts == depth
+            ), "There is no point in making `num_experts` greater than or less than `depth`, if `shuffle != True`. The additional experts would never be used."
+
         # Praxis args
         self.num_embeds = num_embeds
         self.num_dims = num_dims
         self.num_heads = num_heads
         self.depth = depth
+        self.num_experts = num_experts
         self.differential = differential
         self.dropout = dropout
         self.epsilon = epsilon
