@@ -49,14 +49,6 @@ class PraxisController(nn.Module):
         self.update_counts = {i: 0 for i in range(max_num_experts)}
         self.active_experts = set()
 
-    def _get_expert_idx(self, expert: nn.Module) -> int:
-        """Get or assign stable index for an expert"""
-        expert_id = id(expert)
-        if expert_id not in self.expert_to_idx:
-            self.expert_to_idx[expert_id] = self.next_free_idx
-            self.next_free_idx += 1
-        return self.expert_to_idx[expert_id]
-
     def forward(
         self,
         experts: List[nn.Module],
@@ -118,7 +110,7 @@ class PraxisController(nn.Module):
             recommended_next = torch.mode(batch_predictions)[0].item()
 
             # Update accuracy tracking
-            self.update_tracking(
+            self._update_tracking(
                 expert_idx=expert_idx,
                 current_logits=current_logits,
                 routing_logits=routing_logits,
@@ -156,7 +148,7 @@ class PraxisController(nn.Module):
 
         return aux_loss, recommended_next, exit_score
 
-    def update_tracking(
+    def _update_tracking(
         self,
         expert_idx: int,
         current_logits: torch.Tensor,
@@ -203,6 +195,14 @@ class PraxisController(nn.Module):
             )
 
         self.update_counts[expert_idx] += 1
+
+    def _get_expert_idx(self, expert: nn.Module) -> int:
+        """Get or assign stable index for an expert"""
+        expert_id = id(expert)
+        if expert_id not in self.expert_to_idx:
+            self.expert_to_idx[expert_id] = self.next_free_idx
+            self.next_free_idx += 1
+        return self.expert_to_idx[expert_id]
 
     def get_expert_accuracy(self, expert_idx: int) -> dict:
         """Returns both current and confidence accuracies for given expert"""
