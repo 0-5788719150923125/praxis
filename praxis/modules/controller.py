@@ -22,6 +22,7 @@ class PraxisController(nn.Module):
         self.max_num_experts = max_num_experts
         self.decay = 0.99
         self.loss_scale = 0.01
+        self.confidence_scale = 0.1
 
         # A single dict with tuple values for current/confidence
         self.expert_accuracies = {i: [0.0, 0.0] for i in range(max_num_experts)}
@@ -35,7 +36,6 @@ class PraxisController(nn.Module):
         self.predictor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),
-            # ACT2FN["prelu"],
             ACT2FN[
                 "relu"
             ],  # the sparsity of ReLU improves performance by an order of magnitude
@@ -43,8 +43,8 @@ class PraxisController(nn.Module):
         )
 
         # Initialize predictor weights
-        # nn.init.normal_(self.predictor[-1].weight, std=0.01)
-        # nn.init.constant_(self.predictor[-1].bias, 0.1)
+        nn.init.normal_(self.predictor[-1].weight, std=0.01)
+        nn.init.constant_(self.predictor[-1].bias, 0.1)
 
         # Transition tracking buffer
         self.register_buffer(
@@ -89,13 +89,31 @@ class PraxisController(nn.Module):
                 experts[actual_index + 1] if actual_index < depth - 1 else None
             )
 
+            # if next_expert is not None:
+            #     next_idx = self._get_expert_idx(next_expert)
+            #     routing_true_index = torch.full((batch_size,), next_idx, device=device)
+            #     aux_loss += (
+            #         F.cross_entropy(routing_logits, routing_true_index)
+            #         * self.loss_scale
+            #     )
+            #     self.transition_counts[expert_idx, next_idx] += 1
+
             if next_expert is not None:
                 next_idx = self._get_expert_idx(next_expert)
                 routing_true_index = torch.full((batch_size,), next_idx, device=device)
-                aux_loss += (
-                    F.cross_entropy(routing_logits, routing_true_index)
-                    * self.loss_scale
-                )
+                routing_loss = F.cross_entropy(routing_logits, routing_true_index)
+                aux_loss += routing_loss * self.loss_scale
+
+                # Add confidence loss by penalizing low max probabilities
+                routing_probs = F.softmax(routing_logits, dim=-1)
+                max_probs = routing_probs.max(dim=-1)[
+                    0
+                ]  # Get highest probability for each example
+                confidence_loss = (
+                    1.0 - max_probs
+                ).mean()  # Encourage max prob to be close to 1
+                aux_loss += confidence_loss * (self.loss_scale * self.confidence_scale)
+
                 self.transition_counts[expert_idx, next_idx] += 1
 
             # Compute exit loss

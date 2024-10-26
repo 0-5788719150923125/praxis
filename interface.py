@@ -402,7 +402,7 @@ class TerminalDashboard:
         wrapped_lines = []
         for line in text.splitlines():
             # Strip leading/trailing whitespace from each line
-            line = line.strip()
+            # line = line.strip()
             if not line:
                 wrapped_lines.append("")
                 continue
@@ -477,42 +477,40 @@ fake_system_messages = [
     "Info: Adjusted your thermostat for energy savings.",
 ]
 
-# Example usage
 if __name__ == "__main__":
     import random
+    import time
 
     dashboard = TerminalDashboard(42)
     dashboard.start()
 
-    step = 0
     try:
+        batch = 0
         for epoch in range(100):
-            step += 1
+            step = epoch
+            batch += 1
+
+            # Simulate some training metrics
             train_loss = 1 / (epoch + 1) + random.uniform(0, 0.1)
             val_loss = train_loss + random.uniform(0, 0.05)
-            dashboard.update_losses(train_loss)
+
+            # Update dashboard
+            dashboard.update_loss(train_loss)
+            dashboard.update_validator(val_loss)
             dashboard.update_status(f"Training... Epoch {epoch}")
             dashboard.update_batch(batch)
             dashboard.update_step(step)
+            dashboard.update_rate(0.5)  # Simulated processing rate
 
-            # Test logging at different levels
-            dashboard.logger.debug("This is a debug message")
-            dashboard.logger.info("This is an info message")
-            dashboard.logger.warning("This is a warning message")
-            dashboard.logger.error("This is an error message")
-
-            # Test warnings
-            warnings.warn("This is a test warning")
-
-            # Test exceptions
+            # Add some test logs
+            dashboard.logger.info(f"Processing epoch {epoch}")
             if epoch % 10 == 0:
-                try:
-                    raise ValueError("This is a test exception")
-                except Exception as e:
-                    dashboard.logger.exception("Caught an exception:")
+                dashboard.logger.warning("Milestone reached!")
 
+            # Simulate some processing time
             time.sleep(0.5)
+
     except KeyboardInterrupt:
-        pass
+        print("Shutting down gracefully...")
     finally:
         dashboard.stop()

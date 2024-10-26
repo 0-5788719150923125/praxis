@@ -86,7 +86,7 @@ class PraxisDecoder(nn.Module):
                         experts, expert, new_states, i
                     )
                     aux_losses.append(aux_loss)
-                    threshold = 0.55
+                    threshold = 0.5
                     should_exit = exit_score > threshold
                     if should_exit:
                         break
