@@ -34,7 +34,7 @@ class PraxisDecoder(nn.Module):
         )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
-            self.copilot = PraxisController(config, len(self.local_experts) * 3)
+            self.navigator = PraxisController(config, len(self.local_experts) * 3)
         self._define_checkpoints(config.memory_profile, self.depth)
         if self.swarm:
             self.swarm.serve_experts(config)
@@ -83,11 +83,11 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    aux_loss, next_expert_idx, exit_score = self.copilot(
+                    aux_loss, next_expert_idx, exit_score = self.navigator(
                         experts, expert, new_states, i
                     )
                     aux_losses.append(aux_loss)
-                    threshold = 0.66
+                    threshold = 0.55
                     should_exit = exit_score > threshold
                     if should_exit:
                         break
@@ -116,8 +116,8 @@ class PraxisDecoder(nn.Module):
         """Return current prediction accuracies"""
         if self.use_autopilot:
             return {
-                "mean": self.copilot.get_mean_accuracy(),
-                "per_expert": self.copilot.get_all_accuracies(),
+                "mean": self.navigator.get_mean_accuracy(),
+                "per_expert": self.navigator.get_all_accuracies(),
             }
         return None
 

@@ -18,6 +18,7 @@ class PraxisController(nn.Module):
 
     def __init__(self, config: PraxisConfig, max_num_experts):
         super().__init__()
+        self.depth = config.depth
         self.max_num_experts = max_num_experts
         self.decay = 0.99
         self.loss_scale = 0.01
@@ -34,13 +35,13 @@ class PraxisController(nn.Module):
         self.predictor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),
-            ACT2FN["relu"],
+            ACT2FN["prelu"],
             nn.Linear(hidden_size // 2, max_num_experts * 3),
         )
 
         # Initialize predictor weights
-        nn.init.normal_(self.predictor[-1].weight, std=0.01)
-        nn.init.constant_(self.predictor[-1].bias, 0.1)
+        # nn.init.normal_(self.predictor[-1].weight, std=0.01)
+        # nn.init.constant_(self.predictor[-1].bias, 0.1)
 
         # Transition tracking buffer
         self.register_buffer(
@@ -54,6 +55,7 @@ class PraxisController(nn.Module):
         expert_output: torch.Tensor,
         actual_index: int,
     ):
+        depth = self.depth
         current_num_experts = len(experts)
         device = expert_output.device
         batch_size = expert_output.size(0)
@@ -81,7 +83,7 @@ class PraxisController(nn.Module):
         if self.training:
             # Handle training mode
             next_expert = (
-                experts[actual_index + 1] if actual_index < len(experts) - 1 else None
+                experts[actual_index + 1] if actual_index < depth - 1 else None
             )
 
             if next_expert is not None:
@@ -94,7 +96,7 @@ class PraxisController(nn.Module):
                 self.transition_counts[expert_idx, next_idx] += 1
 
             # Compute exit loss
-            layer_progress = actual_index / len(experts)
+            layer_progress = actual_index / depth
             routing_confidence = (
                 F.softmax(routing_logits, dim=-1).max(dim=-1)[0].mean().item()
             )
@@ -134,13 +136,32 @@ class PraxisController(nn.Module):
             (torch.argmax(current_logits, dim=-1) == true_index).float().mean().item()
         )
 
-        # Route confidence
+        # Get routing prediction
+        routing_pred = torch.argmax(routing_logits, dim=-1)
         routing_probs = F.softmax(routing_logits, dim=-1)
-        route_confidence = (
-            routing_probs.gather(1, torch.argmax(routing_logits, dim=-1).unsqueeze(1))
-            .mean()
-            .item()
-        )
+
+        # Compute confidence based on both predicted route and historical transitions
+        transition_probs = self.transition_counts[expert_idx, :current_num_experts]
+        if transition_probs.sum() > 0:
+            # Historical confidence
+            transition_probs = transition_probs / transition_probs.sum()
+            optimal_route = torch.argmax(transition_probs)
+            historical_confidence = (
+                (routing_pred == optimal_route).float().mean().item()
+            )
+
+            # Current confidence from softmax
+            current_confidence = (
+                routing_probs.gather(1, routing_pred.unsqueeze(1)).mean().item()
+            )
+
+            # Blend historical and current confidence
+            route_confidence = (historical_confidence + current_confidence) / 2
+        else:
+            # If no transition history, use only current confidence
+            route_confidence = (
+                routing_probs.gather(1, routing_pred.unsqueeze(1)).mean().item()
+            )
 
         # Normalize confidence
         self.active_experts = set(range(current_num_experts))
