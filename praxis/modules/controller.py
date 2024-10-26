@@ -35,7 +35,10 @@ class PraxisController(nn.Module):
         self.predictor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),
-            ACT2FN["prelu"],
+            # ACT2FN["prelu"],
+            ACT2FN[
+                "relu"
+            ],  # the sparsity of ReLU improves performance by an order of magnitude
             nn.Linear(hidden_size // 2, max_num_experts * 3),
         )
 

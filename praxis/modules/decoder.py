@@ -106,7 +106,7 @@ class PraxisDecoder(nn.Module):
 
         if self.debug and not self.training and self.use_autopilot:
             print(
-                f"DEBUG: Routing through experts {' -> '.join(route)} (exit score: {exit_score.item():.4f})"
+                f"DEBUG: Routing through {' -> '.join(route)} (score: {exit_score.item():.4f})"
             )
 
         return hidden_states, sum(aux_losses)

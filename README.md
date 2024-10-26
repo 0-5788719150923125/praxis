@@ -14,6 +14,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
 - [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. We take this a step further, and implement the `PraxisController`, which teaches the model how to predict an optimal route through expert layers during inference. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
+- In addition to the shuffling, we implement a simplified version of [CALM](https://arxiv.org/abs/2207.07061), which allows the model to early-exit from computation.
 - [Attention with Linear Biases (ALiBi)](https://arxiv.org/abs/2108.12409) for length extrapolation, because it's easy, it works well at sane contexts lengths, and it requires no trainable parameters.
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
@@ -155,7 +156,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Infini-Attention](https://github.com/jlamprou/Infini-Attention) (a neat idea, but perhaps not worth the effort)
 - [xLSTM](https://github.com/NX-AI/xlstm)
 - Denny Zhou (Founded & lead reasoning team at Google DeepMind) - "We have mathematically proven that transformers can solve any problem, provided they are allowed to generate as many intermediate reasoning tokens as needed. Remarkably, constant depth is sufficient." [source](https://www.reddit.com/r/mlscaling/comments/1fijajw/denny_zhou_founded_lead_reasoning_team_at_google/) At first pass, this may sound stupid, because everyone knows that transformers are "universal function approximators" already; the problem is that the search space becomes so large as to be computationally infeasible. However, the more-meaningful takeaway here is this: with human guidance (i.e. prompting, iteration, development, persistence, re-focusing), a human/AI team can solve any problem... including AGI.
-- early exits ([CALM](https://arxiv.org/abs/2207.07061))
+- [Differentiable Lambda Calculus](https://github.com/neurallambda/neurallambda) (i.e. symbolic reasoning)
 
 ## won't do
 
