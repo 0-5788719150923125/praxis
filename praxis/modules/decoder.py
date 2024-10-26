@@ -38,10 +38,7 @@ class PraxisDecoder(nn.Module):
             )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
-            self.copilot = PraxisController(
-                hidden_size=config.num_dims,
-                max_num_experts=len(self.local_experts) * 3,
-            )
+            self.copilot = PraxisController(config, len(self.local_experts) * 3)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
@@ -56,6 +53,8 @@ class PraxisDecoder(nn.Module):
         next_expert_idx = None
 
         route = []
+
+        exit_score = 0
 
         for i in range(self.depth):
             use_router = True if self.sparse and i % 2 != 0 else False
@@ -86,10 +85,13 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    aux_loss, next_expert_idx = self.copilot(
+                    aux_loss, next_expert_idx, exit_score = self.copilot(
                         experts, expert, new_states, i
                     )
                     aux_losses.append(aux_loss)
+                    should_exit = exit_score > 0.55
+                    if should_exit:
+                        break
 
                 # Commit to self
                 hidden_states = new_states
@@ -103,7 +105,9 @@ class PraxisDecoder(nn.Module):
                 raise Exception(e)
 
         if self.debug and not self.training:
-            print(f"DEBUG: Routing through ({' -> '.join(route)})")
+            print(
+                f"DEBUG: Routing through ({' -> '.join(route)}) [score: {exit_score.item():.4f}]"
+            )
 
         return hidden_states, sum(aux_losses)
 

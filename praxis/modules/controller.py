@@ -4,12 +4,25 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from praxis import PraxisConfig
+from praxis.activations import ACT2FN
+
 
 class PraxisController(nn.Module):
-    def __init__(self, hidden_size, max_num_experts):
+    """
+    This controller implements an expert-prediction mechanism, which trains
+    the network to learn how to intelligently route through layers in the network.
+    It also implements an early-exit strategy, inspired by CALM:
+    https://arxiv.org/abs/2207.07061
+    """
+
+    def __init__(self, config: PraxisConfig, max_num_experts):
         super().__init__()
-        self.hidden_size = hidden_size
+        hidden_size = config.num_dims
         self.max_num_experts = max_num_experts
+
+        self.decay = 0.99
+        self.loss_scale = 0.01
 
         # Expert mapping dictionary: id(expert) -> index
         self.expert_to_idx = {}
@@ -17,8 +30,8 @@ class PraxisController(nn.Module):
 
         self.predictor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, max_num_experts * 2),
+            ACT2FN["sinlu"],
+            nn.Linear(hidden_size // 2, max_num_experts * 3),
         )
         nn.init.normal_(self.predictor[-1].weight, mean=0.0, std=0.01)
         nn.init.constant_(self.predictor[-1].bias, 0.1)
@@ -29,7 +42,6 @@ class PraxisController(nn.Module):
             torch.zeros(max_num_experts, max_num_experts),  # [from_expert, to_expert]
         )
 
-        self.decay = 0.99
         self.expert_accuracies = {
             "current": {i: 0.0 for i in range(max_num_experts)},
             "confidence": {i: 0.0 for i in range(max_num_experts)},
@@ -56,21 +68,19 @@ class PraxisController(nn.Module):
         batch_size = expert_output.size(0)
 
         # Pool hidden states
-        pooled = (
-            torch.mean(expert_output, dim=1)
-            if len(expert_output.shape) == 3
-            else expert_output
-        )
+        pooled = torch.mean(expert_output, dim=1)
 
         # Get predictions
         full_logits = self.predictor(pooled)
-        current_logits, routing_logits = torch.split(
+        current_logits, routing_logits, exit_logits = torch.split(
             full_logits, self.max_num_experts, dim=1
         )
 
         # Slice to active experts
         current_logits = current_logits[:, :current_num_experts]
         routing_logits = routing_logits[:, :current_num_experts]
+        exit_logits = exit_logits[:, :current_num_experts]
+        exit_score = exit_logits.sigmoid().mean()
 
         # Get stable index for current expert
         expert_idx = self._get_expert_idx(expert)
@@ -87,6 +97,7 @@ class PraxisController(nn.Module):
         )
 
         # During training: learn from randomly selected next expert
+        routing_loss = 0
         if self.training and next_expert is not None:
             next_idx = self._get_expert_idx(next_expert)
             routing_true_index = torch.full(
@@ -96,12 +107,9 @@ class PraxisController(nn.Module):
 
             # Update transition counts using stable indices
             self.transition_counts[expert_idx, next_idx] += 1
-        else:
-            routing_loss = torch.tensor(0.0, device=current_logits.device)
 
         # Combined loss with scaling
-        loss_scale = 0.01
-        aux_loss = (current_loss + routing_loss) * loss_scale
+        aux_loss = (current_loss + routing_loss) * self.loss_scale
 
         # During inference: recommend next expert
         recommended_next = None
@@ -119,7 +127,34 @@ class PraxisController(nn.Module):
                 from_expert=expert_idx,
             )
 
-        return aux_loss, recommended_next
+        if self.training:
+            # Option 1: Encourage later exits with layer-dependent target
+            layer_progress = actual_index / len(experts)  # 0 to 1
+
+            # Option 2: Get routing confidence from softmax probabilities
+            routing_probs = F.softmax(routing_logits, dim=-1)
+            routing_confidence = (
+                routing_probs.max(dim=-1)[0].mean().item()
+            )  # Convert to scalar with .item()
+
+            # Blend both signals - we want exits to be more likely when:
+            # 1. We're deeper in the network (layer_progress)
+            # 2. We're confident about routing (routing_confidence)
+            blended_target = (layer_progress + routing_confidence) / 2.0
+
+            # Clamp to ensure we stay in [0,1]
+            blended_target = max(
+                0.0, min(1.0, blended_target)
+            )  # Use regular min/max for scalars
+
+            # Create target tensor and compute loss
+            exit_target = torch.full_like(exit_score, blended_target)
+            exit_loss = F.binary_cross_entropy(exit_score, exit_target)
+
+            # Add to total loss
+            aux_loss = aux_loss + exit_loss * self.loss_scale
+
+        return aux_loss, recommended_next, exit_score
 
     def update_tracking(
         self,
@@ -143,9 +178,7 @@ class PraxisController(nn.Module):
             routing_probs.gather(1, chosen_route.unsqueeze(1)).mean().item()
         )
 
-        # Normalize confidence to [0, 1]
-        # At random: confidence = 1/num_experts (minimum)
-        # At perfect confidence: confidence = 1.0 (maximum)
+        # Normalize confidence
         self.active_experts = set(range(current_num_experts))
         random_confidence = 1.0 / current_num_experts
         normalized_confidence = (route_confidence - (random_confidence)) / (
@@ -168,6 +201,8 @@ class PraxisController(nn.Module):
                 self.decay * self.expert_accuracies["confidence"][expert_idx]
                 + (1 - self.decay) * relative_confidence
             )
+
+        self.update_counts[expert_idx] += 1
 
     def get_expert_accuracy(self, expert_idx: int) -> dict:
         """Returns both current and confidence accuracies for given expert"""
