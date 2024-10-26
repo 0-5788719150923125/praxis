@@ -1,7 +1,7 @@
 {
   "name": "praxis",
   "version": "0.1.0",
-  "description": "includes all the tricks",
+  "description": "a labor of love",
   "source": "web/index.html",
   "scripts": {
     "start": "parcel",

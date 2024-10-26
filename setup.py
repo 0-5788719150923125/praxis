@@ -25,7 +25,13 @@ dev_requirements = ["isort", "lsprotocol", "pygls"]
 
 setup(
     name="praxis",
+    version="0.1.0",
+    decription="a labor of love",
+    author="Ryan Brooks",
+    author_email="ryan@src.eco",
+    url="https://src.eco",
     packages=find_packages(),
+    license="MIT",
     install_requires=base_requirements,
     extras_require={
         "all": base_requirements + host_requirements + dev_requirements,

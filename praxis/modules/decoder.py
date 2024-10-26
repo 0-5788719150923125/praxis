@@ -105,7 +105,7 @@ class PraxisDecoder(nn.Module):
                 # Crash on unhandled exceptions
                 raise Exception(e)
 
-        if self.debug and not self.training:
+        if self.debug and not self.training and self.use_autopilot:
             print(
                 f"DEBUG: Routing through experts {' -> '.join(route)} (exit score: {exit_score.item():.4f})"
             )

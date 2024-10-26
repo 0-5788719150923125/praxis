@@ -1313,35 +1313,6 @@ if len(hparams["training_data"]["validation"]) > 0:
             HuggingfaceDataset(tokenizer, dataset_config, hparams["block_size"])
         )
 
-
-# Best practices is to ban weight decay for embeddings and bias layers
-def ban_weight_decay(
-    model: nn.Module,
-    wd_ban_list: List[str] = ("bias", "LayerNorm.weight", "LayerNorm.bias"),
-):
-    names_without_wd = []
-
-    for module_name, module in model.named_modules():
-        for param_name, param in module.named_parameters(recurse=False):
-            # Full parameter name includes module and parameter names
-            full_param_name = (
-                f"{module_name}.{param_name}" if module_name else param_name
-            )
-            # Check if any ban list substring is in the parameter name or module name
-            if (
-                any(banned in param_name for banned in wd_ban_list)
-                or any(banned in module_name for banned in wd_ban_list)
-                or any(banned in module._get_name() for banned in wd_ban_list)
-            ):
-                names_without_wd.append(full_param_name)
-
-    return names_without_wd
-
-
-hparams["optimizer"]["wd_ban_list"] = ban_weight_decay(
-    model, optimizer_defaults["wd_ban_list"]
-)
-
 # create the optimizer
 optimizer = create_optimizer(model, **hparams["optimizer"])
 
