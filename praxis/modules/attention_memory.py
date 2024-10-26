@@ -85,7 +85,7 @@ class PraxisAttention(nn.Module):
     ):
         batch_size, seq_len, _ = inputs.shape
 
-        # Compute queries, keys, and values
+        # Project Q/K/V as before
         multiplier = 2 if self.differential else 1
         q = (
             self.query(inputs)
@@ -103,111 +103,74 @@ class PraxisAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        # Track original sequence length before memory augmentation
-        orig_seq_len = seq_len
-
-        # Add episodic memory augmentation here - after Q/K/V projection but before attention
+        # Get augmented tensors and masks from memory module
         if self.memory:
-            (inputs, q, k, v, attention_mask, token_indices, seq_len, positions) = (
-                self.em(
-                    inputs, q, k, v, attention_mask, token_indices, seq_len_q=seq_len
-                )
-            )
-            # Get number of memory tokens added
-            num_memory_tokens = seq_len - orig_seq_len
+            # Add shape logging
+            print("Before memory - q shape:", q.shape)
+            print("Before memory - k shape:", k.shape)
+            print("Before memory - v shape:", v.shape)
 
+            (
+                inputs,
+                q,
+                k,
+                v,
+                attention_mask,
+                token_indices,
+                seq_len,
+                positions,
+                alibi_bias,
+                causal_mask,
+            ) = self.em(
+                inputs=inputs,
+                q=q,
+                k=k,
+                v=v,
+                attention_mask=attention_mask,
+                token_indices=token_indices,
+                seq_len_q=seq_len,
+                slopes=self.slopes,
+                positions=self.positions,
+                causal=self.causal,
+            )
+
+            # Add shape logging
+            print("After memory - q shape:", q.shape)
+            print("After memory - k shape:", k.shape)
+            print("After memory - v shape:", v.shape)
+
+        # Rest of attention computation with prepared masks
         reciprocal = 1.0 / math.sqrt(self.head_dim)
         if self.differential:
-            # Split queries and keys
             Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
             K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
-
-            # Compute differntial attention scores
             scores = [
                 torch.matmul(Q1, K1.transpose(-2, -1)) * reciprocal,
                 torch.matmul(Q2, K2.transpose(-2, -1)) * reciprocal,
             ]
         else:
-            # Compute attention scores
             scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
 
-        # Create ALiBi biases matching scores dimensions
-        if torch.is_tensor(token_indices):
-            orig_positions = self.positions[token_indices[..., :orig_seq_len]]
-        else:
-            orig_positions = (
-                self.positions[:orig_seq_len]
-                .unsqueeze(0)
-                .expand(batch_size, orig_seq_len)
-            )
+        # Apply masks (guaranteed to have correct shapes)
+        if alibi_bias is not None:
+            scores = [s - alibi_bias for s in scores]
 
-        # For memory tokens when present
-        if self.memory and num_memory_tokens > 0:
-            print("hit")
-            # Create full biases tensor
-            full_biases = torch.zeros(
-                batch_size,
-                self.num_heads,
-                orig_seq_len,  # Queries dimension (original)
-                seq_len,  # Keys dimension (augmented)
-                device=inputs.device,
-            )
-
-            # Compute ALiBi biases only for original sequence portion
-            pos_diff = orig_positions.unsqueeze(2) - orig_positions.unsqueeze(1)
-            orig_biases = self.slopes.view(
-                1, self.num_heads, 1, 1
-            ) * pos_diff.unsqueeze(1)
-
-            # Place biases in right portion of tensor (after memory tokens)
-            full_biases[..., num_memory_tokens:] = orig_biases
-            biases = full_biases
-        else:
-            # No memory tokens - just compute regular ALiBi
-            pos_diff = orig_positions.unsqueeze(2) - orig_positions.unsqueeze(1)
-            biases = self.slopes.view(1, self.num_heads, 1, 1) * pos_diff.unsqueeze(1)
-
-        # Apply biases
-        print("scores shape:", scores[0].shape)
-        print("biases shape:", biases.shape)
-        scores = [s - biases for s in scores]
-
-        # Apply masks
         if self.causal:
-            # Create causal mask matched to query-key dimensions
-            causal_mask = torch.full(
-                (orig_seq_len, seq_len), -1e9, device=inputs.device
-            )
-
-            if self.memory and num_memory_tokens > 0:
-                # Allow access to all memory tokens (they're from the past)
-                causal_mask[:, :num_memory_tokens].fill_(0)
-
-                # Regular causal masking for original sequence portion
-                causal_mask[:, num_memory_tokens:].triu_(diagonal=1)
+            if self.memory and causal_mask is not None:
+                scores = [s + causal_mask for s in scores]
             else:
-                # Regular causal masking when no memory
-                causal_mask.triu_(diagonal=1)
+                # Create standard causal mask when not using memory
+                causal_mask = (
+                    torch.triu(
+                        torch.full((seq_len, seq_len), -1e9, device=inputs.device),
+                        diagonal=1,
+                    )
+                    .unsqueeze(0)
+                    .unsqueeze(0)
+                )
+                scores = [s + causal_mask for s in scores]
 
-            # Add batch and head dimensions
-            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
-            scores = [s + causal_mask for s in scores]
-
-        # Handle attention mask
-        if self.memory and num_memory_tokens > 0:
-            # Create full attention mask including memory tokens
-            full_attention_mask = torch.ones(
-                batch_size, seq_len, device=attention_mask.device
-            )
-            # Memory tokens are always valid for attention
-            full_attention_mask[:, :num_memory_tokens] = 1
-            # Copy original attention mask for real tokens
-            full_attention_mask[:, num_memory_tokens:] = attention_mask
-        else:
-            full_attention_mask = attention_mask
-
-        # Apply attention mask
-        attention_mask = (1.0 - full_attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
         scores = [s + attention_mask for s in scores]
 
         # Compute attention weights
@@ -229,13 +192,25 @@ class PraxisAttention(nn.Module):
             diff_weights, v
         )  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
+        # Add logging for attention computation
+        print("Scores shape:", scores[0].shape)
+        print("Diff weights shape:", diff_weights.shape)
+        print("V shape for matmul:", v.shape)
+        print("Attention scores shape:", attention_scores.shape)
+
+        num_memory_tokens = 10
         if self.differential:
-            # Reshape for GroupNorm
+            # First handle differential dimension by taking sum - reduces to 4D
+            attention_scores = (
+                attention_scores[:, 0] - self.lambda_init * attention_scores[:, 1]
+            )
+
+            # Now reshape for GroupNorm as before
             attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
             # Shape: (batch_size, seq_len, num_heads, head_dim)
 
             attention_scores = attention_scores.view(
-                batch_size, seq_len, self.num_heads * self.head_dim
+                batch_size, seq_len - num_memory_tokens, self.num_heads * self.head_dim
             )
             # Shape: (batch_size, seq_len, num_heads * head_dim)
 
@@ -254,7 +229,7 @@ class PraxisAttention(nn.Module):
             attention_scores = attention_scores * (1 - self.lambda_init)
         else:
             attention_scores = attention_scores.transpose(1, 2).reshape(
-                batch_size, seq_len, self.hidden_size
+                batch_size, seq_len - num_memory_tokens, self.hidden_size
             )
 
         # Output projection
@@ -304,13 +279,28 @@ class EpisodicMemory(nn.Module):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        attention_mask: Tensor,
+        attention_mask: Tensor,  # [batch_size, seq_len]
         token_indices: Optional[Tensor],
         seq_len_q: int,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Optional[Tensor], int, Tensor]:
+        slopes: Tensor,  # ALiBi slopes
+        positions: Tensor,  # Position encodings
+        causal: bool = False,  # Whether to use causal masking
+    ) -> Tuple[
+        Tensor,
+        Tensor,
+        Tensor,
+        Tensor,
+        Tensor,
+        Optional[Tensor],
+        int,
+        Tensor,
+        Tensor,
+        Optional[Tensor],
+    ]:
         """Memory augmented attention forward pass"""
         batch_size = inputs.size(0)
         device = inputs.device
+        orig_seq_len = seq_len_q
 
         # Process each sequence in batch
         augmented_results = [
@@ -321,22 +311,39 @@ class EpisodicMemory(nn.Module):
                 attention_mask[i],
                 token_indices[i] if token_indices is not None else None,
                 seq_len_q,
+                slopes,
+                positions[i] if token_indices is not None else positions[:seq_len_q],
+                causal,
             )
             for i in range(batch_size)
         ]
 
         # Unpack and stack results
-        (aug_q, aug_k, aug_v, aug_mask, aug_positions) = zip(*augmented_results)
+        aug_q, aug_k, aug_v, aug_mask, aug_positions, aug_alibi, aug_causal = zip(
+            *augmented_results
+        )
+
+        # Stack consistently sized tensors
+        stacked_k = torch.stack(aug_k)  # [batch_size, num_heads, seq_len+mem, head_dim]
+        stacked_v = torch.stack(aug_v)  # [batch_size, num_heads, seq_len+mem, head_dim]
+        stacked_mask = torch.stack(aug_mask)  # [batch_size, seq_len+mem]
+        stacked_positions = torch.stack(aug_positions)  # [batch_size, seq_len+mem]
+
+        # Stack masks
+        stacked_alibi = torch.stack(aug_alibi)
+        stacked_causal = torch.stack(aug_causal) if causal else None
 
         return (
             inputs,
             torch.stack(aug_q),
-            torch.stack(aug_k),
-            torch.stack(aug_v),
-            torch.stack(aug_mask),
+            stacked_k,
+            stacked_v,
+            stacked_mask,
             token_indices,
-            aug_k[0].size(1),  # New sequence length
-            torch.stack(aug_positions),
+            stacked_k.size(2),
+            stacked_positions,
+            stacked_alibi,
+            stacked_causal,
         )
 
     def _process_sequence(
@@ -344,39 +351,79 @@ class EpisodicMemory(nn.Module):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        mask: Tensor,
+        mask: Tensor,  # [seq_len]
         indices: Optional[Tensor],
         seq_len: int,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+        slopes: Tensor,
+        positions: Tensor,
+        causal: bool = False,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Optional[Tensor]]:
         """Process single sequence"""
-        # Compute surprise scores
-        surprise_scores = self._compute_surprise(k)
+        orig_seq_len = seq_len
 
-        # Segment into events
-        boundaries = self._segment_events(surprise_scores)
-
-        # Update memory with new events
-        self._update_memory(k, v, boundaries)
-
-        # Retrieve relevant events
+        # Get memory events
         retrieved_k, retrieved_v, retrieved_pos = self._retrieve_events(
-            k[:, -1],  # Use last token as query
-            indices[-1] if indices is not None else seq_len - 1,
+            k[:, -1], indices[-1] if indices is not None else seq_len - 1
         )
 
-        # Augment sequence with retrieved events
+        # Handle padding
+        target_mem_size = self.k_similar + self.k_contiguous
+        actual_mem_size = retrieved_k.size(1)
+
+        if actual_mem_size < target_mem_size:
+            pad_size = target_mem_size - actual_mem_size
+            retrieved_k = F.pad(retrieved_k, (0, 0, 0, pad_size))
+            retrieved_v = F.pad(retrieved_v, (0, 0, 0, pad_size))
+            retrieved_pos = F.pad(retrieved_pos, (0, pad_size), value=float("-inf"))
+
+        num_mem_tokens = retrieved_k.size(1)
+        total_seq_len = orig_seq_len + num_mem_tokens
+
+        # Create augmented sequences
         aug_k = torch.cat([retrieved_k, k], dim=1)
         aug_v = torch.cat([retrieved_v, v], dim=1)
-        aug_mask = F.pad(mask, (retrieved_k.size(1), 0), value=1)
+
+        # Create attention mask with memory tokens
+        mem_mask = torch.ones(num_mem_tokens, device=mask.device)
+        aug_mask = torch.cat([mem_mask, mask])
 
         # Handle positions
-        if indices is not None:
-            positions = indices
-        else:
-            positions = torch.arange(seq_len, device=k.device)
         aug_positions = torch.cat([retrieved_pos, positions])
 
-        return q, aug_k, aug_v, aug_mask, aug_positions
+        # Compute ALiBi biases for original+memory sequence
+        pos_diff = positions.unsqueeze(1) - positions.unsqueeze(0)  # [seq_len, seq_len]
+        orig_biases = slopes.view(-1, 1, 1) * pos_diff  # [num_heads, seq_len, seq_len]
+
+        # Create padded ALiBi tensor
+        alibi = torch.zeros(
+            self.num_heads,
+            orig_seq_len,  # Query dimension
+            total_seq_len,  # Key dimension including memory
+            device=k.device,
+        )
+
+        # Memory tokens get zero bias
+        alibi[..., :num_mem_tokens] = 0
+
+        # Place original biases after memory tokens
+        alibi[..., num_mem_tokens:] = orig_biases
+
+        # Create causal mask if needed
+        causal_mask = None
+        if causal:
+            causal_mask = torch.full(
+                (1, 1, orig_seq_len, total_seq_len),  # Match original mask shape
+                -1e9,
+                device=k.device,
+            )
+
+            # Memory tokens always visible
+            causal_mask[..., :num_mem_tokens] = 0
+
+            # Regular causal masking for original sequence
+            causal_mask[..., num_mem_tokens:].triu_(diagonal=1)
+
+        return q, aug_k, aug_v, aug_mask, aug_positions, alibi, causal_mask
 
     def _compute_surprise(self, keys: Tensor) -> Tensor:
         """Compute token-wise surprise scores"""

@@ -24,9 +24,6 @@ class PraxisDecoder(nn.Module):
         self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
-        self.checkpoint_indices = self._checkpoint_strategy(
-            config.memory_profile, self.depth
-        )
         self.remote_experts = []
         if config.hivemind:
             self.swarm = PraxisSwarm(config)
@@ -39,9 +36,11 @@ class PraxisDecoder(nn.Module):
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
             self.copilot = PraxisController(config, len(self.local_experts) * 3)
+        self._define_checkpoints(config.memory_profile, self.depth)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
+        original_order = experts.copy()
         if self.shuffle:
             random.shuffle(experts)
 
@@ -52,7 +51,8 @@ class PraxisDecoder(nn.Module):
         aux_losses = []
         next_expert_idx = None
 
-        route = []
+        first_expert_idx = original_order.index(experts[0])
+        route = [str(first_expert_idx)]
 
         exit_score = 0
 
@@ -107,7 +107,7 @@ class PraxisDecoder(nn.Module):
 
         if self.debug and not self.training:
             print(
-                f"DEBUG: Routing through ({' -> '.join(route)}) [score: {exit_score.item():.4f}]"
+                f"DEBUG: Routing through experts {' -> '.join(route)} (exit score: {exit_score.item():.4f})"
             )
 
         return hidden_states, sum(aux_losses)
@@ -121,16 +121,14 @@ class PraxisDecoder(nn.Module):
             }
         return None
 
-    def _checkpoint_strategy(self, strategy="speed", num_layers=0):
+    def _define_checkpoints(self, strategy="speed", num_layers=0):
+        self.checkpoint_indices = []  # no gradient checkpointing
         if strategy == "aggressive":
             # every layer
-            return [i for i in range(num_layers)]
+            self.checkpoint_indices = [i for i in range(num_layers)]
         elif strategy == "balanced":
             # every fourth layer
-            return [i for i in range(num_layers) if i % 4 == 0]
-        else:
-            # no gradient checkpointing
-            return []
+            self.checkpoint_indices = [i for i in range(num_layers) if i % 4 == 0]
 
     def _create_forward(
         self,
