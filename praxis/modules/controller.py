@@ -106,7 +106,7 @@ class PraxisController(nn.Module):
                 confidence_loss = (
                     1.0 - max_probs
                 ).mean()  # Encourage max prob to be close to 1
-                aux_loss += confidence_loss * (self.loss_scale * self.confidence_scale)
+                aux_loss += confidence_loss * self.confidence_scale
 
                 self.transition_counts[expert_idx, next_idx] += 1
 

@@ -73,18 +73,18 @@ def format_persona_chat(document: Dict, keys: List[str]) -> str:
     conversation = document.get("Best Generated Conversation", "").split("\n")
 
     # Give them names
-    user1 = "INK"
-    user2 = "PEN"
+    user1 = "PEN"
+    user2 = "INK"
 
     # Format personas section
-    formatted = f"<BEGIN_PERSONAS>\n{user1}:\n"
+    formatted = f"[CTX]\n{user1}:\n"
     formatted += "".join(f"- {p.strip()}\n" for p in user1_personas if p.strip())
     formatted += f"\n{user2}:\n"
     formatted += "".join(f"- {p.strip()}\n" for p in user2_personas if p.strip())
-    formatted += "<END_PERSONAS>\n\n"
+    formatted += "[XTX]\n\n"
 
     # Format conversation section
-    formatted += "<BEGIN_CONVERSATION>\n"
+    formatted += "[CAT]\n"
     for i, utterance in enumerate(conversation):
         if ": " in utterance:
             speaker, text = utterance.split(": ", 1)
@@ -94,7 +94,7 @@ def format_persona_chat(document: Dict, keys: List[str]) -> str:
             speaker = user1 if i % 2 == 0 else user2
             text = utterance
         formatted += f"{speaker}: {text.strip()}\n"
-    formatted += "<END_CONVERSATION>"
+    formatted += "[TAC]"
 
     return formatted
 
