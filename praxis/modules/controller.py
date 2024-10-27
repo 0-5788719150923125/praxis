@@ -34,7 +34,7 @@ class PraxisController(nn.Module):
 
         # Predictor network
         hidden_size = config.num_dims
-        self.predictor = nn.Sequential(
+        self.prism = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),
             ACT2FN[
@@ -44,8 +44,8 @@ class PraxisController(nn.Module):
         )
 
         # Initialize predictor weights
-        nn.init.normal_(self.predictor[-1].weight, std=0.01)
-        nn.init.constant_(self.predictor[-1].bias, 0.1)
+        nn.init.normal_(self.prism[-1].weight, std=0.01)
+        nn.init.constant_(self.prism[-1].bias, 0.1)
 
         # Transition tracking buffer
         self.register_buffer(
@@ -65,7 +65,7 @@ class PraxisController(nn.Module):
         batch_size = expert_output.size(0)
 
         # Get all predictions at once and split
-        logits = self.predictor(expert_output.mean(dim=1))
+        logits = self.prism(expert_output.mean(dim=1))
         current_logits, routing_logits, exit_logits = torch.split(
             logits, self.max_num_experts, dim=1
         )
