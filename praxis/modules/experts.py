@@ -33,11 +33,12 @@ class PraxisExpert(nn.Module):
         return hidden_states, aux_loss
 
 
-input_shape = lambda batch_size, hid_dim: (
-    torch.empty((batch_size, 1, hid_dim)),
-    torch.empty((batch_size, 1)),
-    # torch.empty((1)),
-)
+# input_shape = lambda batch_size, hid_dim: (
+#     torch.empty((batch_size, 1, hid_dim)),
+#     torch.empty((batch_size, 1)),
+#     # torch.empty((1)),
+# )
+input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 
 
 @register_expert_class("hivemind_expert", input_shape)

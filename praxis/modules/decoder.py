@@ -66,15 +66,22 @@ class PraxisDecoder(nn.Module):
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
 
-                new_states, aux_loss = self._create_forward(
+                outputs = self._create_forward(
                     expert,
                     hidden_states,
                     attention_mask,
                     use_router,
                     gradient_checkpointing,
                 )
+
+                # This is confusing, blame hivemind
+                if isinstance(outputs, tuple):
+                    new_states = outputs[0].to(inputs.device)
+                    aux_losses.append(outputs[1])
+                else:
+                    new_states = outputs
+
                 new_states = new_states.to(inputs.device)
-                aux_losses.append(aux_loss)
 
                 # Dead peers will return a zero tensor
                 if self.swarm and self._is_zero_tensor(new_states):
@@ -82,12 +89,10 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    aux_loss, next_expert_idx, exit_score = self.navigator(
+                    aux_loss, next_expert_idx, exit_score, should_exit = self.navigator(
                         experts, expert, new_states, i
                     )
                     aux_losses.append(aux_loss)
-                    threshold = 0.5
-                    should_exit = exit_score > threshold
                     if should_exit:
                         break
 
@@ -137,8 +142,12 @@ class PraxisDecoder(nn.Module):
         use_router: bool,
         gradient_checkpointing=False,
     ):
-        def custom_forward(*inputs):
-            return expert(*inputs)
+        def custom_forward(hidden_states, attention_mask, use_router):
+            if self.swarm.is_remote(expert):
+                # because hivemind cannot receive undefined arguments in the forward pass
+                return expert(hidden_states, attention_mask)
+            else:
+                return expert(hidden_states, attention_mask, use_router)
 
         if self.swarm and self.swarm.is_remote(expert):
             hidden_states = hidden_states.to("cpu")

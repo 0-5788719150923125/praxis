@@ -114,26 +114,29 @@ class PraxisSwarm:
         assert expert_cls in name_to_block
         expert = name_to_block[expert_cls](config)
 
-        # hidden_schema = BatchTensorDescriptor(
-        #     config.num_dims,
-        # )
-        # attention_schema = BatchTensorDescriptor(
-        #     1,
-        # )
-        dummy_inputs = BatchTensorDescriptor.from_tensor(
-            torch.zeros([4, 1, config.num_dims])
+        hidden_schema = BatchTensorDescriptor(
+            4,
         )
-        dummy_attention = BatchTensorDescriptor.from_tensor(torch.zeros([4, 1]))
+        attention_schema = BatchTensorDescriptor(
+            4,
+        )
+        # dummy_inputs = BatchTensorDescriptor.from_tensor(
+        #     torch.zeros([4, 1, config.num_dims])
+        # )
+        # dummy_attention = BatchTensorDescriptor.from_tensor(torch.zeros([4, 1]))
 
         expert_uid = self._generate_unique_name()
         self.expert_uids.append(expert_uid)
         self.backends[expert_uid] = ModuleBackend(
             name=expert_uid,
             module=expert,
-            # args_schema=(hidden_schema, attention_schema),
-            # outputs_schema=(hidden_schema),
-            args_schema=(dummy_inputs, dummy_attention),
-            outputs_schema=(dummy_inputs),
+            args_schema=(
+                hidden_schema,
+                attention_schema,
+            ),
+            outputs_schema=(hidden_schema),
+            # args_schema=(dummy_inputs, dummy_attention),
+            # outputs_schema=(dummy_inputs),
             optimizer=None,
             scheduler=None,
             min_batch_size=1,

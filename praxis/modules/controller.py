@@ -24,6 +24,9 @@ class PraxisController(nn.Module):
         self.loss_scale = 0.01
         self.confidence_scale = 0.1
 
+        # A learnable threshold for early exits
+        self.threshold = nn.Parameter(torch.tensor(0.5))
+
         # A single dict with tuple values for current/confidence
         self.expert_accuracies = {i: [0.0, 0.0] for i in range(max_num_experts)}
         self.update_counts = {i: 0 for i in range(max_num_experts)}
@@ -81,22 +84,16 @@ class PraxisController(nn.Module):
 
         aux_loss = current_loss * self.loss_scale
         recommended_next = None
+
         exit_score = exit_logits.sigmoid().mean()
+        # should_exit = exit_score > self.threshold
+        should_exit = exit_score > self.threshold.sigmoid()
 
         if self.training:
             # Handle training mode
             next_expert = (
                 experts[actual_index + 1] if actual_index < depth - 1 else None
             )
-
-            # if next_expert is not None:
-            #     next_idx = self._get_expert_idx(next_expert)
-            #     routing_true_index = torch.full((batch_size,), next_idx, device=device)
-            #     aux_loss += (
-            #         F.cross_entropy(routing_logits, routing_true_index)
-            #         * self.loss_scale
-            #     )
-            #     self.transition_counts[expert_idx, next_idx] += 1
 
             if next_expert is not None:
                 next_idx = self._get_expert_idx(next_expert)
@@ -116,11 +113,13 @@ class PraxisController(nn.Module):
 
                 self.transition_counts[expert_idx, next_idx] += 1
 
-            # Compute exit loss
+            # Compute exit loss and routing confidence
             layer_progress = actual_index / depth
             routing_confidence = (
                 F.softmax(routing_logits, dim=-1).max(dim=-1)[0].mean().item()
             )
+            # Target slightly increases with routing confidence
+            # This encourages the model to exit when it's confident about routing
             blended_target = torch.full_like(
                 exit_score,
                 min(1.0, max(0.0, (layer_progress + routing_confidence) / 2.0)),
@@ -142,7 +141,7 @@ class PraxisController(nn.Module):
                 current_num_experts,
             )
 
-        return aux_loss, recommended_next, exit_score
+        return aux_loss, recommended_next, exit_score, should_exit
 
     def _update_tracking(
         self,
