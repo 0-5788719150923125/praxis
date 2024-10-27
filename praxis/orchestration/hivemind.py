@@ -107,12 +107,8 @@ class PraxisSwarm:
         hidden_schema = BatchTensorDescriptor(
             4,
         )
-        attention_schema = BatchTensorDescriptor(
-            4,
-        )
-        router_weights = BatchTensorDescriptor(
-            4,
-        )
+        attention_schema = hidden_schema
+        router_weights = hidden_schema
         token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
 
         expert_uid = self._generate_unique_name()
@@ -155,25 +151,34 @@ class PraxisSwarm:
             print("removing:", expert.uid)
             self.expert_uids.remove(expert.uid)
 
+    def _generate_random_name(self, k=3):
+        return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
+
     def _generate_unique_name(self, k=3):
-        new_name = (
-            random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
-        )
+        new_name = self._generate_random_name(k)
         if new_name not in self.expert_uids:
             return new_name
         else:
             return self._generate_unique_name(k)
 
     def _search_for_experts(self, chance=0.5):
-        if random.random() < chance:
-            new_name = self._generate_unique_name()
-            new_expert = get_experts(self.dht, [new_name])[0]
-            if new_expert is not None and new_expert.uid not in self.expert_uids:
-                self.active_remote_experts.append(new_expert)
-                self.expert_uids.append(new_expert.uid)
-                print(
-                    f"A new expert joined the swarm! ({new_expert.uid.split('.')[0]})"
-                )
+        if random.random() > chance:
+            return
+        new_name = self._generate_unique_name()
+        new_expert = get_experts(self.dht, [new_name])[0]
+        if (
+            isinstance(new_expert, RemoteExpert)
+            and new_expert.uid not in self.expert_uids
+        ):
+            self.active_remote_experts.append(new_expert)
+            self.expert_uids.append(new_expert.uid)
+            uid = new_expert.uid.split(".")[0]
+            messages = [
+                f"({uid}) has joined the swarm!",
+                f"Please welcome ({uid}) to the Fold!",
+                f"({uid}) slid into the hivemind!",
+            ]
+            print(random.choice(messages))
 
 
 PUBLIC_INITIAL_PEERS = [
@@ -188,21 +193,21 @@ PUBLIC_INITIAL_PEERS = [
     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
 ]
 
-IPFS_INITIAL_PEERS = [
-    # From running `ipfs bootstrap list` with Kubo
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-    "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-    "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-    # "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-    # "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-    # "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-    # "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-    # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-    # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-]
+# IPFS_INITIAL_PEERS = [
+#     # From running `ipfs bootstrap list` with Kubo
+#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+#     "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+#     "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+#     # "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+#     # "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+#     # "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+#     # "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+#     # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+#     # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+# ]
 
 PREFIXES = [
     "doz",
