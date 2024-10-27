@@ -231,6 +231,12 @@ parser.add_argument(
     help="Supplement training with instruction-tuning",
 )
 parser.add_argument(
+    "--quiet",
+    action="store_true",
+    default=False,
+    help="Suppress text generation in the terminal",
+)
+parser.add_argument(
     "--dev",
     action="store_true",
     default=False,
@@ -538,7 +544,8 @@ class TerminalInterface(Callback):
         loss = trainer.callback_metrics.get("loss", 0)
         self.ema_loss = self._compute_ema_loss(float(loss), self.ema_loss, self.alpha)
 
-        self._generate_sample_text(lm, batch_idx, self.interval)
+        if not quiet:
+            self._generate_sample_text(lm, batch_idx, self.interval)
 
         batch_size, _ = batch.shape
         swarm_info = lm.model.get_info()

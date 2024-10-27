@@ -80,7 +80,9 @@ def get_datamodules(
 
     validation_dataloader = None
     if len(validation_data) > 0:
-        validation_dataloader = PraxisDataModule(validation_data, hparams["batch_size"])
+        validation_dataloader = PraxisDataModule(
+            validation_data, tokenizer, hparams["batch_size"], hparams["block_size"]
+        )
 
     return train_dataloader, validation_dataloader
 
@@ -113,17 +115,26 @@ def get_dataset_configs(dev: bool, phi: bool, instruct: bool):
     return config
 
 
-class PraxisDataSampler:
+class PraxisSampler:
     def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
         self.tokenizer = tokenizer
         self.block_size = block_size
+        self.sequence_cache = []  # Store raw text sequences
+        self.token_cache = []  # Store tokenized batches
 
     @property
     def can_sample(self):
         return True
 
-    def fill_cache(self):
-        AssertionError("This method should be implemented by a child class.")
+    def fill_sequence_cache(self):
+        """Each dataset implementation should override this"""
+        raise NotImplementedError
+
+    def get_sequences(self, count: int = 1) -> List[str]:
+        """Get raw sequences from this dataset"""
+        while len(self.sequence_cache) < count:
+            self.fill_sequence_cache()
+        return [self.sequence_cache.pop(0) for _ in range(count)]
 
     def get_batch(
         self, oversample: bool = False, supersample: bool = False
@@ -134,13 +145,118 @@ class PraxisDataSampler:
         seq_factor = 4 if supersample else (2 if oversample else 1)
 
         while len(self.token_cache) < seq_factor:
-            self.fill_cache()
+            self.fill_token_cache()
 
         batch = torch.cat([self.token_cache.pop(0) for _ in range(seq_factor)], dim=0)
         return batch
 
 
-class HuggingfaceDataset(PraxisDataSampler):
+class InterleaveDataManager:
+    def __init__(
+        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000
+    ):
+        self.samplers = samplers
+        self.weights = weights
+        self.tokenizer = tokenizer
+        self.block_size = block_size
+        self.text_cache_size = text_cache_size
+        self.token_stream = torch.tensor(
+            [], dtype=torch.long
+        )  # Single continuous stream
+        self.debug = True
+
+    def extend_token_stream(self):
+        """Add more tokens to our stream when needed"""
+        interleaved = self.create_interleaved_sequence()
+        tokens = self.tokenizer(
+            text=interleaved,
+            padding=False,  # No padding needed since we're building a stream
+            return_tensors="pt",
+        )["input_ids"].squeeze(
+            0
+        )  # Get flat token sequence
+        self.token_stream = torch.cat([self.token_stream, tokens])
+
+    def get_batch(
+        self, batch_size: int, oversample: bool = False, supersample: bool = False
+    ) -> List[torch.Tensor]:
+        sequence_length = self.block_size
+        current_batch_size = batch_size
+
+        # Check if batch size supports the requested sampling mode
+        if supersample and batch_size >= 16:
+            current_batch_size = batch_size // 16
+            sequence_length = self.block_size * 4
+        elif oversample and batch_size >= 4:
+            current_batch_size = batch_size // 4
+            sequence_length = self.block_size * 2
+        else:
+            # If batch size isn't sufficient, fall back to normal sampling
+            oversample = False
+            supersample = False
+
+        # Calculate how many total tokens we need
+        tokens_needed = current_batch_size * sequence_length
+
+        # Make sure we have enough tokens
+        while len(self.token_stream) < tokens_needed:
+            self.extend_token_stream()
+
+        # Extract batch
+        batch = []
+        for i in range(current_batch_size):
+            start = i * sequence_length
+            end = start + sequence_length
+            batch.append(self.token_stream[start:end])
+
+        # Remove used tokens from the stream
+        self.token_stream = self.token_stream[tokens_needed:]
+
+        if self.debug:
+            batch_tensor = torch.stack(batch)
+            # print(f"\nBatch shape: {batch_tensor.shape}")
+
+            if random.random() < 0.05:
+                first_seq = batch_tensor[0].tolist()
+                decoded = self.tokenizer.decode(first_seq, skip_special_tokens=False)
+                print("\nSample sequence (with special tokens):")
+                print("-" * 50)
+                print(decoded)
+                print("-" * 50)
+
+        return batch
+
+    def create_interleaved_sequence(self) -> str:
+        """Create a single interleaved sequence from multiple samplers"""
+        sequence = ""
+        while len(sequence) < self.text_cache_size:
+            # Pick a sampler based on weights
+            sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
+            # Get a sequence from that sampler
+            new_sequences = sampler.get_sequences(1)
+            sequence += new_sequences[0] + self.tokenizer.eos_token
+        return sequence
+
+    def fill_token_cache(self):
+        """Fill token cache with interleaved sequences"""
+        interleaved = self.create_interleaved_sequence()
+
+        tokens = self.tokenizer(
+            text=interleaved,
+            max_length=self.block_size,
+            stride=0,
+            padding=True,
+            truncation=True,
+            return_overflowing_tokens=True,
+            return_tensors="pt",
+        )["input_ids"]
+
+        self.token_cache.extend(
+            [batch for batch in tokens if len(batch) == self.block_size]
+        )
+
+
+class HuggingfaceDataset(PraxisSampler):
     def __init__(
         self, tokenizer: PreTrainedTokenizer, block_size: int, seed: int, config: Dict
     ):
@@ -153,227 +269,105 @@ class HuggingfaceDataset(PraxisDataSampler):
             cache_dir=os.path.join(config.get("cache_dir", "data"), "datasets"),
             trust_remote_code=True,
         )
-
         if "name" in config:
             dataset_args["name"] = config["name"]
-
         self.dataset = load_dataset(**dataset_args)
         self.buffer_size = 1_000
-        self.text_cache_size = 100 * self.buffer_size
-        self.token_cache = []
         self.shuffled_dataset = self.dataset.shuffle(
             seed=seed, buffer_size=self.buffer_size
         )
         self.dataset_iterator = iter(self.shuffled_dataset)
 
-    def fill_cache(self):
-        cache_text = ""
-        while len(cache_text) < self.text_cache_size:
-            try:
-                if len(self.keys) == 3:
-                    formats = [
-                        ["SYSTEM", "INPUT", "OUTPUT"],
-                        ["SYSTEM", "USER", "ASSISTANT"],
-                    ]
-                    fmt = random.choice(formats)
-                elif len(self.keys) == 2:
-                    formats = [
-                        ["INPUT", "OUTPUT"],
-                        ["USER", "ASSISTANT"],
-                    ]
-                    fmt = random.choice(formats)
-                document = next(self.dataset_iterator)
-                for i, key in enumerate(self.keys):
-                    content = document.get(key)
-                    if len(self.keys) == 3:
-                        if i % 3 == 0:
-                            content = f"\n{fmt[0]}: " + content
-                        elif i % 3 == 1:
-                            content = f"\n{fmt[1]}: " + content
-                        elif i % 3 == 2:
-                            content = (
-                                f"\n{fmt[2]}: " + content + self.tokenizer.eos_token
-                            )
-                    elif len(self.keys) == 2:
-                        if i % 2 == 0:
-                            content = f"\n{fmt[0]}: " + content
-                        else:
-                            content = (
-                                f"\n{fmt[1]}: " + content + self.tokenizer.eos_token
-                            )
-                    else:
-                        content += self.tokenizer.eos_token
-                    cache_text += content
-            except StopIteration:
-                self.dataset_iterator = iter(self.shuffled_dataset)
+    def fill_sequence_cache(self):
+        try:
+            document = next(self.dataset_iterator)
+            formatted = self._format_document(document)
+            self.sequence_cache.append(formatted)
+        except StopIteration:
+            self.dataset_iterator = iter(self.shuffled_dataset)
+            self.fill_sequence_cache()
 
-        tokens = self.tokenizer(
-            text=cache_text,
-            max_length=self.block_size,
-            stride=0,
-            padding=True,
-            truncation=True,
-            return_overflowing_tokens=True,
-            return_tensors="pt",
-        )["input_ids"]
-
-        self.token_cache.extend(
-            [batch for batch in tokens if len(batch) == self.block_size]
-        )
+    def _format_document(self, document):
+        formatted = ""
+        for i, key in enumerate(self.keys):
+            content = document.get(key)
+            if len(self.keys) == 3:
+                formats = [
+                    ["SYSTEM", "INPUT", "OUTPUT"],
+                    ["SYSTEM", "USER", "ASSISTANT"],
+                ]
+                fmt = random.choice(formats)
+                formatted += f"\n{fmt[i]}: {content}"
+            elif len(self.keys) == 2:
+                formats = [["INPUT", "OUTPUT"], ["USER", "ASSISTANT"]]
+                fmt = random.choice(formats)
+                formatted += f"\n{fmt[i%2]}: {content}"
+            else:
+                formatted += content
+        return formatted
 
 
-class MultiDirectoryDataset(PraxisDataSampler):
+class MultiDirectoryDataset(PraxisSampler):
     def __init__(
         self, tokenizer: PreTrainedTokenizer, block_size: int, directories: List[str]
     ):
         super().__init__(tokenizer, block_size)
         self.directories = directories
-        self.cached_text = ""
-        self.token_cache = []
         self.file_list = self._get_file_list()
-        self.buffer_size = 10_000
-        self.text_cache_size = 10 * self.buffer_size
         random.shuffle(self.file_list)
         self.file_iterator = iter(self.file_list)
 
-    def _get_file_list(self) -> List[str]:
-        """Recursively get all files in all directories."""
-        file_list = []
-        for directory in self.directories:
-            for root, _, files in os.walk(directory):
-                for file in files:
-                    file_list.append(os.path.join(root, file))
-        return file_list
-
-    def _read_file(self, file_path: str) -> str:
-        """Read the contents of a file."""
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
-
-    def fill_cache(self):
-        while len(self.cached_text) < self.text_cache_size:
-            try:
-                file_path = next(self.file_iterator)
-                self.cached_text += (
-                    self._read_file(file_path) + self.tokenizer.eos_token
-                )
-            except StopIteration:
-                random.shuffle(self.file_list)
-                self.file_iterator = iter(self.file_list)
-
-        tokens = self.tokenizer(
-            text=self.cached_text,
-            max_length=self.block_size,
-            stride=0,
-            padding=True,
-            truncation=True,
-            return_overflowing_tokens=True,
-            return_tensors="pt",
-        )["input_ids"]
-
-        self.token_cache.extend(
-            [batch for batch in tokens if len(batch) == self.block_size]
-        )
-        self.cached_text = ""
+    def fill_sequence_cache(self):
+        try:
+            file_path = next(self.file_iterator)
+            content = self._read_file(file_path)
+            self.sequence_cache.append(content)
+        except StopIteration:
+            random.shuffle(self.file_list)
+            self.file_iterator = iter(self.file_list)
+            self.fill_sequence_cache()
 
 
-class GunChatDataset(PraxisDataSampler):
+class GunChatDataset(PraxisSampler):
     def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
         super().__init__(tokenizer, block_size)
-
         from adapters import GunAdapter as Gun
 
         self.gun = Gun()
-        self.token_cache = []
-        self._next_batch = []
 
-    @property
-    def can_sample(self):
-        self._next_batch = self._tokenize_text()
-        if len(self._next_batch) < 4:
-            return False
-        else:
-            return True
-
-    def _tokenize_text(self):
+    def fill_sequence_cache(self):
         text_list = self.gun.get_sample(250)
-        formatted = "\n".join(
-            [random.choice(["INPUT: ", "OUTPUT: "]) + entry for entry in text_list]
-        )
-
-        tokens = self.tokenizer(
-            text=formatted,
-            max_length=self.block_size,
-            stride=0,
-            padding=True,
-            truncation=True,
-            return_overflowing_tokens=True,
-            return_tensors="pt",
-        )["input_ids"]
-
-        return tokens
-
-    def fill_cache(self):
-        self.token_cache = []
-        self.token_cache.extend(
-            [batch for batch in self._next_batch if len(batch) == self.block_size]
-        )
+        for text in text_list:
+            formatted = random.choice(["INPUT: ", "OUTPUT: "]) + text
+            self.sequence_cache.append(formatted)
 
 
 class WeightedIterableDataset(IterableDataset):
     def __init__(
         self,
-        datasets: List[HuggingfaceDataset],
+        datasets: List[PraxisSampler],
         weights: List[float],
+        tokenizer: PreTrainedTokenizer,
+        block_size: int,
         batch_size: int,
         oversample_chance: float = 0,
         supersample_chance: float = 0,
     ):
-        assert len(datasets) == len(
-            weights
-        ), "Number of datasets and weights must match"
-        assert sum(weights) == 1, "Weights must sum to 1"
-
-        self.datasets = datasets
-        self.weights = weights
+        self.data_manager = InterleaveDataManager(
+            datasets, weights, tokenizer, block_size
+        )
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
         self.supersample_chance = supersample_chance
 
     def __iter__(self):
         while True:
-            oversample = False
-            supersample = False
-            rand = random.random()
-            current_batch_size = self.batch_size
-            if rand < self.supersample_chance:
-                if self.batch_size // 16 > 0:
-                    supersample = True
-                    current_batch_size = self.batch_size // 16
-            elif rand < self.oversample_chance:
-                if self.batch_size // 4 > 0:
-                    oversample = True
-                    current_batch_size = self.batch_size // 4
+            oversample = random.random() < self.oversample_chance
+            supersample = random.random() < self.supersample_chance
 
-            batch = []
-
-            available_datasets = []
-            available_weights = []
-            for i, dataset in enumerate(self.datasets):
-                if dataset.can_sample:
-                    available_datasets.append(dataset)
-                    available_weights.append(self.weights[i])
-
-            for _ in range(current_batch_size):
-                dataset_index = random.choices(
-                    range(len(available_datasets)), weights=available_weights
-                )[0]
-                item = available_datasets[dataset_index].get_batch(
-                    oversample,
-                    supersample,
-                )
-                batch.append(item)
-
+            batch = self.data_manager.get_batch(
+                self.batch_size, oversample, supersample
+            )
             yield torch.stack(batch)
 
 
@@ -403,7 +397,13 @@ class PraxisDataModule(LightningDataModule):
             weights.extend([0.78, 0.1, 0.1, 0.01, 0.01])
 
         self.weighted_dataset = WeightedIterableDataset(
-            train_datasets, weights, batch_size, oversample_chance, supersample_chance
+            train_datasets,
+            weights,
+            tokenizer,
+            block_size,
+            batch_size,
+            oversample_chance,
+            supersample_chance,
         )
 
     def train_dataloader(self):
