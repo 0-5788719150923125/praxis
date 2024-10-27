@@ -74,25 +74,15 @@ class PraxisSwarm:
             initial_peers=PUBLIC_INITIAL_PEERS,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
             start=True,
+            use_relay=True,
+            use_auto_relay=True,
+            use_ipfs=False,
+            ensure_bootstrap_success=True,
         )
         # TODO: the mere act of using this method prevents bootstrap freezing
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
         self.backends = {}
         self.active_local_experts = []
-        # self.server, self.dht, self.active_local_experts = PraxisServer.create(
-        #     expert_uids=self.expert_uids,
-        #     expert_cls="praxis_expert",
-        #     start=True,
-        #     daemon=True,
-        #     use_relay=True,
-        #     use_auto_relay=True,
-        #     use_ipfs=False,
-        #     ensure_bootstrap_success=True,
-        #     initial_peers=PUBLIC_INITIAL_PEERS,
-        #     # initial_peers=IPFS_INITIAL_PEERS,
-        #     host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
-        #     config=config,
-        # )
 
     @property
     def local_experts(self):
@@ -120,10 +110,10 @@ class PraxisSwarm:
         attention_schema = BatchTensorDescriptor(
             4,
         )
-        # router_weights = BatchTensorDescriptor(
-        #     4,
-        # )
-        # token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
+        router_weights = BatchTensorDescriptor(
+            4,
+        )
+        token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
 
         expert_uid = self._generate_unique_name()
         self.expert_uids.append(expert_uid)
@@ -133,8 +123,8 @@ class PraxisSwarm:
             args_schema=(
                 hidden_schema,
                 attention_schema,
-                # router_weights,
-                # token_indices,
+                router_weights,
+                token_indices,
             ),
             outputs_schema=(hidden_schema),
             optimizer=None,

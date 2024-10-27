@@ -17,27 +17,33 @@ from praxis.modules.smear import PraxisSMEAR
 
 
 class PraxisExpert(nn.Module):
-    def __init__(self, config: PraxisConfig, swarm):
+    def __init__(self, config: PraxisConfig, using_swarm: bool):
         super().__init__()
-        self.swarm = swarm
-        self.expert = swarm.register_expert(config) if swarm else PraxisBlock(config)
+        self.using_swarm = using_swarm
+        self.block = (
+            using_swarm.register_expert(config) if using_swarm else PraxisBlock(config)
+        )
         if config.sparse:
             self.router = PraxisMixtureOfDepths(config)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
         if use_router:
-            hidden_states, aux_loss = self.router(self.expert, inputs, attention_mask)
+            hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
         else:
-            hidden_states = self.expert(inputs, attention_mask)
+            dummy_router_weights = None
+            dummy_token_indices = None
+            if self.using_swarm:
+                dummy_router_weights = torch.zeros_like(inputs)
+                dummy_token_indices = torch.zeros_like(
+                    attention_mask, dtype=torch.int64
+                )
+            hidden_states = self.block(
+                inputs, attention_mask, dummy_router_weights, dummy_token_indices
+            )
             aux_loss = 0
         return hidden_states, aux_loss
 
 
-# input_shape = lambda batch_size, hid_dim: (
-#     torch.empty((batch_size, 1, hid_dim)),
-#     torch.empty((batch_size, 1)),
-#     # torch.empty((1)),
-# )
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 
 
@@ -46,19 +52,19 @@ class HivemindExpert(nn.Module):
     """
     A Hivemind expert has certain limitations, which make it difficult to work with:
     1. All inputs to the `forward()` method must be Tensors.
-    2. No inputs may be empty.
+    2. No inputs may be empty (None) types.
+    3. All inputs must be of a consistent shape.
     3. All inputs/outputs must be a part of the computation graph (i.e. returning detached aux_loss tensors is invalid).
-    Essentially, Hivemind experts must define static inputs/outputs - which negates
-    the "dynamic" nature of Pytorch.
+    Essentially, Hivemind experts must define static inputs/outputs - negating the "dynamic" nature of Pytorch.
     """
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
         # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
-        self.expert = PraxisBlock(config)
+        self.block = PraxisBlock(config)
 
     def forward(self, *args, **kwargs):
-        return self.expert(*args, **kwargs)
+        return self.block(*args, **kwargs)
 
 
 class PraxisBlock(nn.Module):
@@ -81,6 +87,11 @@ class PraxisBlock(nn.Module):
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ):
+        # this is a super hack because hivemind
+        if torch.is_tensor(router_weights) and self._is_zero_tensor(router_weights):
+            router_weights = None
+        if torch.is_tensor(token_indices) and self._is_zero_tensor(token_indices):
+            token_indices = None
         residual = inputs
         normalized = self.attn_norm(inputs)
         outputs = self.attn(normalized, attention_mask, token_indices)
@@ -94,6 +105,15 @@ class PraxisBlock(nn.Module):
             outputs *= router_weights
         outputs = outputs + residual
         return outputs
+
+    def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
+        """Check if a tensor is filled with zeros (within numerical tolerance)"""
+        try:
+            if tensor.dtype == torch.int64:
+                return torch.all(tensor == 0).item()
+            return torch.abs(tensor).max().item() < tolerance
+        except Exception as e:
+            return True
 
 
 class PraxisMLP(nn.Sequential):

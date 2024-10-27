@@ -141,7 +141,16 @@ class PraxisDecoder(nn.Module):
         def custom_forward(hidden_states, attention_mask, use_router):
             if self.swarm and self.swarm.is_remote(expert):
                 # because hivemind cannot receive undefined arguments in the forward pass
-                return expert(hidden_states, attention_mask)
+                dummy_router_weights = torch.zeros_like(hidden_states)
+                dummy_token_indices = torch.zeros_like(
+                    attention_mask, dtype=torch.int64
+                )
+                return expert(
+                    hidden_states,
+                    attention_mask,
+                    dummy_router_weights,
+                    dummy_token_indices,
+                )
             else:
                 return expert(hidden_states, attention_mask, use_router)
 
