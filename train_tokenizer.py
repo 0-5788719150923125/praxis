@@ -14,12 +14,12 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-num_examples = 5_000_000
+num_examples = 10_000_000
 
 save_path = "data/praxis"
 
 
-vocab_size = 4096
+vocab_size = 8192
 dropout = 0.1
 
 
@@ -27,6 +27,11 @@ pad_token = "[PAD]"
 bos_token = "[BOS]"
 eos_token = "[EOS]"
 unk_token = "[UNK]"
+start_ctx_token = "[CTX]"
+end_ctx_token = "[XTC]"
+start_cat_token = "[CAT]"
+end_cat_token = "[TAC]"
+
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
@@ -36,7 +41,7 @@ dataset = load_dataset(
     trust_remote_code=True,
     cache_dir="tmp",
 ).shuffle(
-    seed=44,
+    seed=59,
     buffer_size=10_000,
 )
 
@@ -51,6 +56,19 @@ tokenizer = Tokenizer(
     )
 )
 
+tokenizer.add_special_tokens(
+    [
+        unk_token,
+        pad_token,
+        bos_token,
+        eos_token,
+        start_ctx_token,
+        end_ctx_token,
+        start_cat_token,
+        end_cat_token,
+    ]
+)
+
 trainer = trainers.BpeTrainer(
     vocab_size=vocab_size,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
@@ -60,6 +78,10 @@ trainer = trainers.BpeTrainer(
         pad_token,
         bos_token,
         eos_token,
+        start_ctx_token,
+        end_ctx_token,
+        start_cat_token,
+        end_cat_token,
     ],
 )
 
@@ -87,7 +109,10 @@ trained_tokenizer.add_special_tokens(
         "eos_token": eos_token,
     }
 )
-
+custom_special_tokens = {
+    "additional_special_tokens": ["[CTX]", "[XTC]", "[CAT]", "[TAC]"]
+}
+trained_tokenizer.add_special_tokens(custom_special_tokens)
 archive_path = save_path + f"-{vocab_size}"
 
 os.makedirs(save_path, exist_ok=True)

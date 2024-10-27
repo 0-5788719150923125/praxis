@@ -319,14 +319,24 @@ class TerminalDashboard:
             )
             val_chart = self._draw_chart(self.val_losses, half_width, half_height - 1)
 
-        # Ensure status text and logs are wrapped appropriately without deleting newlines
-        status_lines = self._wrap_text(self.status_text, half_width)
+        # Wrap the entire status text
+        status_lines = self._wrap_text(
+            self.status_text, half_width
+        )  # Changed to half_width
+
+        # Calculate the maximum number of lines that can fit in the status section
+        max_status_lines = half_height - 3
+
+        # If status_lines exceed max_status_lines, keep only the most recent lines
+        if len(status_lines) > max_status_lines:
+            status_lines = status_lines[-max_status_lines:]
+
         log_text = "\n".join(list(self.log_buffer)[-half_height + 3 :])
         log_lines = self._wrap_text(log_text, right_width)
 
-        # Preserve empty lines or lines with just newlines in the "HOST" section
-        status_lines += [""] * (half_height - 2 - len(status_lines))
-        log_lines += [""] * (half_height - 2 - len(log_lines))
+        # Pad status_lines and log_lines if they're shorter than the available space
+        status_lines += [""] * (max_status_lines - len(status_lines))
+        log_lines += [""] * (half_height - 3 - len(log_lines))
 
         for i in range(height):
             left_content = " " * half_width
@@ -475,6 +485,7 @@ if __name__ == "__main__":
 
     try:
         batch = 0
+        statustext = ""
         for epoch in range(100):
             step = epoch
             batch += 1
@@ -486,9 +497,8 @@ if __name__ == "__main__":
             # Update dashboard
             dashboard.update_loss(train_loss)
             dashboard.update_validator(val_loss)
-            dashboard.update_status(
-                f"Training... Epoch {epoch}\n\nThis is a test\n\n\nPlease ignore."
-            )
+            statustext += f"Training... {epoch}\n\n"
+            dashboard.update_status(statustext)
             dashboard.update_batch(batch)
             dashboard.update_step(step)
             dashboard.update_rate(0.5)  # Simulated processing rate
