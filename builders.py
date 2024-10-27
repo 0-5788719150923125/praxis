@@ -15,6 +15,7 @@ debug = False
 class DataFormat(Enum):
     SIMPLE = "simple"
     INSTRUCTION = "instruction"
+    IO = "io"
     CONVERSATION = "conversation"
     QA = "qa"
     PERSONA_CHAT = "persona_chat"
@@ -32,6 +33,14 @@ def format_instruction(document: Dict, keys: List[str]) -> str:
     instruction = document.get(keys[0], "")
     output = document.get(keys[1], "")
     return f"\nINSTRUCTION: {instruction}\nOUTPUT: {output}"
+
+
+def format_input_output(document: Dict, keys: List[str]) -> str:
+    """Format as input/output pairs"""
+    assert len(keys) >= 2, "Autonomous system format requires at least 2 keys"
+    instruction = document.get(keys[0], "")
+    output = document.get(keys[1], "")
+    return f"\nINPUT: {instruction}\nOUTPUT: {output}"
 
 
 def format_conversation(document: Dict, keys: List[str]) -> str:
@@ -91,6 +100,7 @@ def format_persona_chat(document: Dict, keys: List[str]) -> str:
 FORMAT_HANDLERS = {
     DataFormat.SIMPLE: format_simple,
     DataFormat.INSTRUCTION: format_instruction,
+    DataFormat.IO: format_input_output,
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.QA: format_qa,
     DataFormat.PERSONA_CHAT: format_persona_chat,
@@ -103,21 +113,21 @@ HUGGINGFACE_DATASETS = [
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
-        weight=0.01,
+        weight=0.001,
     ),
     dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
-        format=DataFormat.INSTRUCTION,
-        weight=0.1,
+        format=DataFormat.IO,
+        weight=0.01,
     ),
     dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
-        weight=0.1,
+        weight=0.01,
     ),
     dict(
         path="google/Synthetic-Persona-Chat",
@@ -229,7 +239,7 @@ def get_dataset(format, tokenizer, block_size, seed, *args):
         return dataset
     elif format == "gun":
         dataset = GunChatDataset(tokenizer, block_size)
-        dataset.weight = 0.01  # Default weight for gun dataset
+        dataset.weight = 0.005  # Default weight for gun dataset
         return dataset
 
 
@@ -469,9 +479,11 @@ class GunChatDataset(PraxisSampler):
 
     def fill_sequence_cache(self):
         text_list = self.gun.get_sample(250)
+        prepared_list = []
         for text in text_list:
             formatted = random.choice(["INPUT: ", "OUTPUT: "]) + text
-            self.sequence_cache.append(formatted)
+            prepared_list.append(formatted)
+        self.sequence_cache.append("\n".join(prepared_list))
 
 
 class WeightedIterableDataset(IterableDataset):

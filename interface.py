@@ -271,7 +271,9 @@ class TerminalDashboard:
                 self.term.home
                 + self.term.clear
                 + self.term.white
-                + "\n".join(new_frame),
+                + "\n".join(new_frame).replace(
+                    "<newline>", "\n"
+                ),  # Replace <newline> with actual newlines
                 end="",
                 file=self.dashboard_output,
             )
@@ -279,6 +281,9 @@ class TerminalDashboard:
             for i, (old_line, new_line) in enumerate(
                 zip(self.previous_frame, new_frame)
             ):
+                new_line = new_line.replace(
+                    "<newline>", "\n"
+                )  # Ensure newlines are rendered
                 if old_line != new_line:
                     print(
                         self.term.move(i, 0) + self.term.white + new_line,
@@ -314,24 +319,14 @@ class TerminalDashboard:
             )
             val_chart = self._draw_chart(self.val_losses, half_width, half_height - 1)
 
-        # Wrap the entire status text
-        status_lines = self._wrap_text(
-            self.status_text, half_width
-        )  # Changed to half_width
-
-        # Calculate the maximum number of lines that can fit in the status section
-        max_status_lines = half_height - 3
-
-        # If status_lines exceed max_status_lines, keep only the most recent lines
-        if len(status_lines) > max_status_lines:
-            status_lines = status_lines[-max_status_lines:]
-
+        # Ensure status text and logs are wrapped appropriately without deleting newlines
+        status_lines = self._wrap_text(self.status_text, half_width)
         log_text = "\n".join(list(self.log_buffer)[-half_height + 3 :])
         log_lines = self._wrap_text(log_text, right_width)
 
-        # Pad status_lines and log_lines if they're shorter than the available space
-        status_lines += [""] * (max_status_lines - len(status_lines))
-        log_lines += [""] * (half_height - 3 - len(log_lines))
+        # Preserve empty lines or lines with just newlines in the "HOST" section
+        status_lines += [""] * (half_height - 2 - len(status_lines))
+        log_lines += [""] * (half_height - 2 - len(log_lines))
 
         for i in range(height):
             left_content = " " * half_width
@@ -373,12 +368,8 @@ class TerminalDashboard:
                     right_content = log_lines[log_index]
 
             # Ensure left and right content are exactly the right width and strip ANSI codes
-            left_content = self._strip_ansi(
-                self._truncate_to_width(left_content, half_width)
-            )
-            right_content = self._strip_ansi(
-                self._truncate_to_width(right_content, right_width)
-            )
+            left_content = self._truncate_to_width(left_content, half_width)
+            right_content = self._truncate_to_width(right_content, right_width)
             left_content = self._visual_ljust(left_content, half_width)
             right_content = self._visual_ljust(right_content, right_width)
 
@@ -398,19 +389,17 @@ class TerminalDashboard:
         return frame
 
     def _wrap_text(self, text, width):
-        """Wrap text to fit within a given width, handling newlines and extra whitespace."""
+        """Wrap text to fit within a given width, preserving newlines."""
         wrapped_lines = []
         for line in text.splitlines():
-            # Strip leading/trailing whitespace from each line
-            # line = line.strip()
-            if not line:
-                wrapped_lines.append("")
+            if line == "":  # Handle explicit empty lines (newlines)
+                wrapped_lines.append("")  # Just append an empty line
                 continue
-            # Use textwrap to handle word wrapping
+            # Wrap the text normally
             wrapped = textwrap.wrap(
                 line, width=width, break_long_words=True, replace_whitespace=False
             )
-            wrapped_lines.extend(wrapped or [""])
+            wrapped_lines.extend(wrapped)
         return wrapped_lines
 
     def _draw_chart(self, data, width, height):
@@ -497,7 +486,9 @@ if __name__ == "__main__":
             # Update dashboard
             dashboard.update_loss(train_loss)
             dashboard.update_validator(val_loss)
-            dashboard.update_status(f"Training... Epoch {epoch}")
+            dashboard.update_status(
+                f"Training... Epoch {epoch}\n\nThis is a test\n\n\nPlease ignore."
+            )
             dashboard.update_batch(batch)
             dashboard.update_step(step)
             dashboard.update_rate(0.5)  # Simulated processing rate
