@@ -399,22 +399,18 @@ class TerminalDashboard:
 
     def _wrap_text(self, text, width):
         """Wrap text to fit within a given width, handling newlines and extra whitespace."""
-        wrapper = textwrap.TextWrapper(
-            width=width,
-            break_long_words=True,
-            replace_whitespace=False,
-            drop_whitespace=False,  # Add this
-            expand_tabs=False,  # Add this
-        )
-
         wrapped_lines = []
-        for line in text.splitlines(keepends=True):  # Add keepends=True
-            if not line.strip():  # Only check if completely empty
+        for line in text.splitlines():
+            # Strip leading/trailing whitespace from each line
+            # line = line.strip()
+            if not line:
                 wrapped_lines.append("")
                 continue
-            # Use wrapper directly
-            this_lines = wrapper.wrap(line)
-            wrapped_lines.extend(this_lines or [""])
+            # Use textwrap to handle word wrapping
+            wrapped = textwrap.wrap(
+                line, width=width, break_long_words=True, replace_whitespace=False
+            )
+            wrapped_lines.extend(wrapped or [""])
         return wrapped_lines
 
     def _draw_chart(self, data, width, height):
