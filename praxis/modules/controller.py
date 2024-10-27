@@ -83,7 +83,7 @@ class PraxisController(nn.Module):
 
         # Compute the early exit score
         exit_score = exit_logits.sigmoid().mean()
-        should_exit = exit_score < self.exit_threshold
+        should_exit = exit_score > self.exit_threshold
 
         recommended_next = None
         if self.training:
