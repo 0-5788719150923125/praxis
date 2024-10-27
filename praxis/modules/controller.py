@@ -79,13 +79,13 @@ class PraxisController(nn.Module):
         expert_idx = self._get_expert_idx(expert)
         current_true_index = torch.full((batch_size,), expert_idx, device=device)
         current_loss = F.cross_entropy(current_logits, current_true_index)
-
         aux_loss = current_loss * self.loss_scale
-        recommended_next = None
 
+        # Compute the early exit score
         exit_score = exit_logits.sigmoid().mean()
         should_exit = exit_score < self.exit_threshold
 
+        recommended_next = None
         if self.training:
             # Handle training mode
             next_expert = (
