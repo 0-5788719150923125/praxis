@@ -72,10 +72,14 @@ def format_persona_chat(document: Dict, keys: List[str]) -> str:
     user2_personas = document.get("user 2 personas", "").split("\n")
     conversation = document.get("Best Generated Conversation", "").split("\n")
 
+    # Give them names
+    user1 = "INK"
+    user2 = "PEN"
+
     # Format personas section
-    formatted = "<BEGIN_PERSONAS>\nUser1:\n"
+    formatted = f"<BEGIN_PERSONAS>\n{user1}:\n"
     formatted += "".join(f"- {p.strip()}\n" for p in user1_personas if p.strip())
-    formatted += "\nUser2:\n"
+    formatted += f"\n{user2}:\n"
     formatted += "".join(f"- {p.strip()}\n" for p in user2_personas if p.strip())
     formatted += "<END_PERSONAS>\n\n"
 
@@ -84,12 +88,10 @@ def format_persona_chat(document: Dict, keys: List[str]) -> str:
     for i, utterance in enumerate(conversation):
         if ": " in utterance:
             speaker, text = utterance.split(": ", 1)
-            speaker = (
-                "User1" if speaker.upper() in ["A", "USER 1", "USER1"] else "User2"
-            )
+            speaker = user1 if speaker.upper() in ["A", "USER 1", "USER1"] else user2
         else:
             # Alternate speakers if no prefix
-            speaker = "User1" if i % 2 == 0 else "User2"
+            speaker = user1 if i % 2 == 0 else user2
             text = utterance
         formatted += f"{speaker}: {text.strip()}\n"
     formatted += "<END_CONVERSATION>"
@@ -133,7 +135,7 @@ HUGGINGFACE_DATASETS = [
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
         format=DataFormat.PERSONA_CHAT,
-        weight=0.1,
+        weight=0.01,
     ),
     dict(
         path="togethercomputer/RedPajama-Data-V2",
@@ -235,11 +237,11 @@ def get_dataset(format, tokenizer, block_size, seed, *args):
         return dataset
     elif format == "directory":
         dataset = MultiDirectoryDataset(tokenizer, block_size, *args)
-        dataset.weight = 0.3  # Default weight for directory datasets
+        dataset.weight = 0.1  # Default weight for directory datasets
         return dataset
     elif format == "gun":
         dataset = GunChatDataset(tokenizer, block_size)
-        dataset.weight = 0.005  # Default weight for gun dataset
+        dataset.weight = 0.001  # Default weight for gun dataset
         return dataset
 
 
