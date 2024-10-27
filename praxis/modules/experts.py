@@ -57,8 +57,16 @@ class HivemindExpert(nn.Module):
         # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
         self.expert = PraxisBlock(config)
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor):
-        hidden_states = self.expert(inputs, attention_mask)
+    def forward(
+        self,
+        *args,
+        **kwargs
+        # inputs: Tensor,
+        # attention_mask: Tensor,
+        # router_weights: Optional[Tensor],
+        # token_indices: Optional[Tensor],
+    ):
+        hidden_states = self.expert(*args, **kwargs)
         return hidden_states
 
 

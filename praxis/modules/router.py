@@ -86,8 +86,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        # print("token weights:", token_weights.shape)
-        # print("token indices:", token_indices.squeeze(-1).shape)
+        # print("token weights:", token_weights.dtype)
+        # print("token indices:", token_indices.squeeze(-1).dtype)
         layer_outputs = layer(
             filtered_inputs,
             attention_mask=filtered_attention_mask,

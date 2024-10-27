@@ -120,10 +120,10 @@ class PraxisSwarm:
         attention_schema = BatchTensorDescriptor(
             4,
         )
-        # dummy_inputs = BatchTensorDescriptor.from_tensor(
-        #     torch.zeros([4, 1, config.num_dims])
+        # router_weights = BatchTensorDescriptor(
+        #     4,
         # )
-        # dummy_attention = BatchTensorDescriptor.from_tensor(torch.zeros([4, 1]))
+        # token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
 
         expert_uid = self._generate_unique_name()
         self.expert_uids.append(expert_uid)
@@ -133,10 +133,10 @@ class PraxisSwarm:
             args_schema=(
                 hidden_schema,
                 attention_schema,
+                # router_weights,
+                # token_indices,
             ),
             outputs_schema=(hidden_schema),
-            # args_schema=(dummy_inputs, dummy_attention),
-            # outputs_schema=(dummy_inputs),
             optimizer=None,
             scheduler=None,
             min_batch_size=1,
