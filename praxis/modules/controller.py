@@ -23,7 +23,7 @@ class PraxisController(nn.Module):
         self.decay = 0.99
         self.loss_scale = 0.01
         self.confidence_scale = 0.1
-        self.exit_threshold = 0.5
+        self.exit_threshold = 0.59
 
         # A single dict with tuple values for current/confidence
         self.expert_accuracies = {i: [0.0, 0.0] for i in range(max_num_experts)}
