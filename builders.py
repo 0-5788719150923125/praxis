@@ -1,6 +1,7 @@
 import os
 import random
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 from datasets import load_dataset
@@ -8,29 +9,158 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
-HUGGINGFACE_PROBS = [0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
+debug = False
+
+
+class DataFormat(Enum):
+    SIMPLE = "simple"
+    INSTRUCTION = "instruction"
+    CONVERSATION = "conversation"
+    QA = "qa"
+    PERSONA_CHAT = "persona_chat"
+    CUSTOM = "custom"
+
+
+def format_simple(document: Dict, keys: List[str]) -> str:
+    """Just concatenate content with spaces"""
+    return " ".join(document.get(key, "") for key in keys)
+
+
+def format_instruction(document: Dict, keys: List[str]) -> str:
+    """Format as instruction/output pairs"""
+    assert len(keys) >= 2, "Instruction format requires at least 2 keys"
+    instruction = document.get(keys[0], "")
+    output = document.get(keys[1], "")
+    return f"\nINSTRUCTION: {instruction}\nOUTPUT: {output}"
+
+
+def format_conversation(document: Dict, keys: List[str]) -> str:
+    """Format as USER/ASSISTANT conversation"""
+    assert len(keys) >= 2, "Conversation format requires at least 2 keys"
+    parts = []
+    for i, key in enumerate(keys):
+        role = (
+            "SYSTEM"
+            if i == 0 and len(keys) > 2
+            else ("USER" if i % 2 == 0 else "ASSISTANT")
+        )
+        parts.append(f"\n{role}: {document.get(key, '')}")
+    return "".join(parts)
+
+
+def format_qa(document: Dict, keys: List[str]) -> str:
+    """Format as question/answer pairs"""
+    assert len(keys) >= 2, "QA format requires at least 2 keys"
+    question = document.get(keys[0], "")
+    answer = document.get(keys[1], "")
+    return f"\nQUESTION: {question}\nANSWER: {answer}"
+
+
+def format_persona_chat(document: Dict, keys: List[str]) -> str:
+    """Format persona chat conversations with personas"""
+    # Extract personas
+    user1_personas = document.get("user 1 personas", "").split("\n")
+    user2_personas = document.get("user 2 personas", "").split("\n")
+    conversation = document.get("Best Generated Conversation", "").split("\n")
+
+    # Format personas section
+    formatted = "<BEGIN_PERSONAS>\nUser1:\n"
+    formatted += "".join(f"- {p.strip()}\n" for p in user1_personas if p.strip())
+    formatted += "\nUser2:\n"
+    formatted += "".join(f"- {p.strip()}\n" for p in user2_personas if p.strip())
+    formatted += "<END_PERSONAS>\n\n"
+
+    # Format conversation section
+    formatted += "<BEGIN_CONVERSATION>\n"
+    for i, utterance in enumerate(conversation):
+        if ": " in utterance:
+            speaker, text = utterance.split(": ", 1)
+            speaker = (
+                "User1" if speaker.upper() in ["A", "USER 1", "USER1"] else "User2"
+            )
+        else:
+            # Alternate speakers if no prefix
+            speaker = "User1" if i % 2 == 0 else "User2"
+            text = utterance
+        formatted += f"{speaker}: {text.strip()}\n"
+    formatted += "<END_CONVERSATION>"
+
+    return formatted
+
+
+FORMAT_HANDLERS = {
+    DataFormat.SIMPLE: format_simple,
+    DataFormat.INSTRUCTION: format_instruction,
+    DataFormat.CONVERSATION: format_conversation,
+    DataFormat.QA: format_qa,
+    DataFormat.PERSONA_CHAT: format_persona_chat,
+}
+
+
+HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
 HUGGINGFACE_DATASETS = [
-    dict(path="open-phi/textbooks", keys=["markdown"]),
+    dict(
+        path="open-phi/textbooks",
+        keys=["markdown"],
+        format=DataFormat.SIMPLE,
+        weight=0.01,
+    ),
     dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
+        format=DataFormat.INSTRUCTION,
+        weight=0.1,
     ),
     dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
+        format=DataFormat.CONVERSATION,
+        weight=0.1,
+    ),
+    dict(
+        path="google/Synthetic-Persona-Chat",
+        keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
+        format=DataFormat.PERSONA_CHAT,
+        weight=0.1,
     ),
     dict(
         path="togethercomputer/RedPajama-Data-V2",
         name="sample-10B",
         snapshots=["2023-14"],
         keys=["raw_content"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
     ),
-    dict(path="HuggingFaceFW/fineweb-edu", name="sample-10BT", keys=["text"]),
-    dict(path="HuggingFaceFW/fineweb-edu", name="sample-100BT", keys=["text"]),
-    dict(path="HuggingFaceFW/fineweb-edu", name="sample-350BT", keys=["text"]),
-    dict(path="HuggingFaceFW/fineweb", name="default", keys=["text"]),
+    dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-10BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-100BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-350BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb",
+        name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
 ]
 
 
@@ -89,11 +219,18 @@ def get_datamodules(
 
 def get_dataset(format, tokenizer, block_size, seed, *args):
     if format == "huggingface":
-        return HuggingfaceDataset(tokenizer, block_size, seed, *args)
+        dataset = HuggingfaceDataset(tokenizer, block_size, seed, *args)
+        # First arg is config dict for huggingface
+        dataset.weight = args[0].get("weight", 1.0)
+        return dataset
     elif format == "directory":
-        return MultiDirectoryDataset(tokenizer, block_size, *args)
+        dataset = MultiDirectoryDataset(tokenizer, block_size, *args)
+        dataset.weight = 0.3  # Default weight for directory datasets
+        return dataset
     elif format == "gun":
-        return GunChatDataset(tokenizer, block_size)
+        dataset = GunChatDataset(tokenizer, block_size)
+        dataset.weight = 0.01  # Default weight for gun dataset
+        return dataset
 
 
 def get_dataset_configs(dev: bool, phi: bool, instruct: bool):
@@ -106,11 +243,12 @@ def get_dataset_configs(dev: bool, phi: bool, instruct: bool):
         config["primary"].append(HUGGINGFACE_DATASETS[1])
     if instruct:
         config["primary"].append(HUGGINGFACE_DATASETS[2])
+        config["primary"].append(HUGGINGFACE_DATASETS[3])
     if dev:
         # Overwrite with simpler dataset
         config["primary"] = [HUGGINGFACE_DATASETS[0]]
     else:
-        config["validation"].append(HUGGINGFACE_DATASETS[3])
+        config["validation"].append(HUGGINGFACE_DATASETS[4])
 
     return config
 
@@ -121,6 +259,7 @@ class PraxisSampler:
         self.block_size = block_size
         self.sequence_cache = []  # Store raw text sequences
         self.token_cache = []  # Store tokenized batches
+        self.weight = 1.0
 
     @property
     def can_sample(self):
@@ -163,7 +302,7 @@ class InterleaveDataManager:
         self.token_stream = torch.tensor(
             [], dtype=torch.long
         )  # Single continuous stream
-        self.debug = True
+        self.debug = debug
 
     def extend_token_stream(self):
         """Add more tokens to our stream when needed"""
@@ -262,6 +401,15 @@ class HuggingfaceDataset(PraxisSampler):
     ):
         super().__init__(tokenizer, block_size)
         self.keys = config.get("keys", ["text"])
+        self.format = config.get("format", DataFormat.SIMPLE)
+        if isinstance(self.format, str):
+            self.format = DataFormat(self.format)
+        # For custom formats, config should provide format_handler
+        self.format_handler = (
+            config.get("format_handler")
+            if self.format == DataFormat.CUSTOM
+            else FORMAT_HANDLERS[self.format]
+        )
         dataset_args = dict(
             path=config.get("path", "HuggingFaceFW/fineweb"),
             split="train",
@@ -288,23 +436,7 @@ class HuggingfaceDataset(PraxisSampler):
             self.fill_sequence_cache()
 
     def _format_document(self, document):
-        formatted = ""
-        for i, key in enumerate(self.keys):
-            content = document.get(key)
-            if len(self.keys) == 3:
-                formats = [
-                    ["SYSTEM", "INPUT", "OUTPUT"],
-                    ["SYSTEM", "USER", "ASSISTANT"],
-                ]
-                fmt = random.choice(formats)
-                formatted += f"\n{fmt[i]}: {content}"
-            elif len(self.keys) == 2:
-                formats = [["INPUT", "OUTPUT"], ["USER", "ASSISTANT"]]
-                fmt = random.choice(formats)
-                formatted += f"\n{fmt[i%2]}: {content}"
-            else:
-                formatted += content
-        return formatted
+        return self.format_handler(document, self.keys)
 
 
 class MultiDirectoryDataset(PraxisSampler):
@@ -383,18 +515,9 @@ class PraxisDataModule(LightningDataModule):
     ):
         super().__init__()
 
-        weights = []
-        # TODO: This is awful
-        if len(train_datasets) == 1:
-            weights.append(1.0)
-        elif len(train_datasets) == 2:
-            weights.extend([0.9, 0.1])
-        elif len(train_datasets) == 3:
-            weights.extend([0.8, 0.1, 0.1])
-        elif len(train_datasets) == 4:
-            weights.extend([0.79, 0.1, 0.1, 0.01])
-        elif len(train_datasets) >= 5:
-            weights.extend([0.78, 0.1, 0.1, 0.01, 0.01])
+        # Get weights and normalize them while preserving relative magnitudes
+        raw_weights = [dataset.weight for dataset in train_datasets]
+        weights = [w / sum(raw_weights) for w in raw_weights]
 
         self.weighted_dataset = WeightedIterableDataset(
             train_datasets,
