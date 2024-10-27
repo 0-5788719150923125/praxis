@@ -55,8 +55,6 @@ class PraxisDecoder(nn.Module):
         first_expert_idx = original_order.index(experts[0])
         route = [str(first_expert_idx)]
 
-        exit_score = 0
-
         for i in range(self.depth):
             use_router = True if self.sparse and i % 2 != 0 else False
             gradient_checkpointing = True if i in self.checkpoint_indices else False
@@ -89,7 +87,7 @@ class PraxisDecoder(nn.Module):
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
-                    aux_loss, next_expert_idx, exit_score, should_exit = self.navigator(
+                    aux_loss, next_expert_idx, should_exit = self.navigator(
                         experts, expert, new_states, i
                     )
                     aux_losses.append(aux_loss)
@@ -110,9 +108,7 @@ class PraxisDecoder(nn.Module):
                 raise Exception(e)
 
         if self.debug and not self.training and self.use_autopilot:
-            print(
-                f"DEBUG: Routing through {' -> '.join(route)} (score: {exit_score.item():.4f})"
-            )
+            print(f"DEBUG: Routing through {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 
@@ -143,7 +139,7 @@ class PraxisDecoder(nn.Module):
         gradient_checkpointing=False,
     ):
         def custom_forward(hidden_states, attention_mask, use_router):
-            if self.swarm.is_remote(expert):
+            if self.swarm and self.swarm.is_remote(expert):
                 # because hivemind cannot receive undefined arguments in the forward pass
                 return expert(hidden_states, attention_mask)
             else:

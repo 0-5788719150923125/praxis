@@ -23,9 +23,7 @@ class PraxisController(nn.Module):
         self.decay = 0.99
         self.loss_scale = 0.01
         self.confidence_scale = 0.1
-
-        # A learnable threshold for early exits
-        self.threshold = nn.Parameter(torch.tensor(0.5))
+        self.exit_threshold = 0.5
 
         # A single dict with tuple values for current/confidence
         self.expert_accuracies = {i: [0.0, 0.0] for i in range(max_num_experts)}
@@ -86,8 +84,7 @@ class PraxisController(nn.Module):
         recommended_next = None
 
         exit_score = exit_logits.sigmoid().mean()
-        # should_exit = exit_score > self.threshold
-        should_exit = exit_score > self.threshold.sigmoid()
+        should_exit = exit_score < self.exit_threshold
 
         if self.training:
             # Handle training mode
@@ -141,7 +138,7 @@ class PraxisController(nn.Module):
                 current_num_experts,
             )
 
-        return aux_loss, recommended_next, exit_score, should_exit
+        return aux_loss, recommended_next, should_exit
 
     def _update_tracking(
         self,
