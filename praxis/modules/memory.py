@@ -11,15 +11,13 @@ from transformers import PretrainedConfig
 class PraxisMemory(nn.Module):
     def __init__(self, config: PretrainedConfig):
         super().__init__()
-        # Components
         self.hidden_dim = config.num_dims
         self.dropout = config.dropout
-        self.vocab_size = config.vocab_size
         self.surprise_threshold = 0.5
-        self.max_memory_length = 16
+        self.max_memory_length = 32
         self.num_total_memories = 256
-        self.similarity_buffer_size = 8  # number of similar memories retrieved
-        self.contiguity_buffer_size = 4  # number of temporally-close memories retrieved
+        self.similarity_buffer_size = 3  # number of similar memories retrieved
+        self.contiguity_buffer_size = 2  # number of temporally-close memories retrieved
         self.window_size = (
             20  # used in event boundary detection for computing rolling statistics
         )
@@ -27,29 +25,26 @@ class PraxisMemory(nn.Module):
 
         # Memory integration
         self.storage = nn.Sequential(
-            # nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
 
         # Language modeling head
-        self.brain = nn.Linear(self.hidden_dim, self.vocab_size, bias=False)
+        self.cluster = nn.Linear(self.hidden_dim, config.vocab_size, bias=False)
 
         # Initialize memory stores
         self.current_timestamp = 0
 
         # Networks for surprise computation and similarity projection
         self.surprise = nn.Sequential(
-            # nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.hidden_dim // 2),
             nn.ReLU(),
-            # nn.Linear(self.hidden_dim // 2, 1),
+            nn.Linear(self.hidden_dim // 2, 1),
             nn.Sigmoid(),
         )
 
         self.similarity = nn.Sequential(
-            # nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
 
@@ -61,9 +56,6 @@ class PraxisMemory(nn.Module):
             torch.zeros(
                 self.num_total_memories, self.max_memory_length, self.hidden_dim
             ),
-        )
-        self.register_buffer(
-            "memory_lengths", torch.zeros(self.num_total_memories, dtype=torch.long)
         )
         self.register_buffer(
             "memory_timestamps",
@@ -84,7 +76,7 @@ class PraxisMemory(nn.Module):
         self.current_timestamp += 1
 
         # Generate logits for the next token predictions
-        logits = self.brain(query)
+        logits = self.cluster(query)
 
         # Compute surprise scores
         if target_tokens is not None:
@@ -224,31 +216,8 @@ class PraxisMemory(nn.Module):
         # Update memory buffers
         self.memory_keys[indices] = representative_tokens.detach()
         self.memory_values[indices] = events.detach()
-        self.memory_lengths[indices] = event_lengths
         self.memory_timestamps[indices] = timestamp
         self.memory_index = (self.memory_index + num_events) % self.num_total_memories
-
-    def compute_surprise_threshold(self, surprise_values: torch.Tensor) -> torch.Tensor:
-        """Compute dynamic surprise threshold based on local statistics."""
-        # Ensure enough context for window
-        if surprise_values.size(1) < self.window_size:
-            return self.surprise_threshold * torch.ones_like(surprise_values)
-
-        # Calculate rolling statistics
-        windows = surprise_values.unfold(1, self.window_size, 1)
-        mu = windows.mean(dim=-1, keepdim=True)
-        sigma = windows.std(dim=-1, keepdim=True)
-
-        # Compute threshold
-        threshold = mu + self.gamma * sigma
-
-        # Pad beginning where we don't have enough context
-        pad_size = self.window_size - 1
-        if pad_size > 0:
-            padding = threshold[:, :1].expand(-1, pad_size, -1)
-            threshold = torch.cat([padding, threshold], dim=1)
-
-        return threshold
 
     def compute_modularity_batch(self, similarity_matrices, boundaries):
         batch_size, N, _ = similarity_matrices.shape
@@ -407,54 +376,94 @@ class PraxisMemory(nn.Module):
         batch_size, seq_length = boundaries.shape
         min_size = 3
 
-        for b in range(batch_size):
-            # Get positions of boundaries
-            boundary_positions = boundaries[b].nonzero().squeeze(-1)
-            # Include start and end positions
-            event_starts = torch.cat(
-                [torch.tensor([0], device=boundaries.device), boundary_positions + 1]
-            )
-            event_ends = torch.cat(
-                [
-                    boundary_positions,
-                    torch.tensor([seq_length - 1], device=boundaries.device),
-                ]
-            )
-            event_sizes = event_ends - event_starts + 1
+        # Compute event labels
+        event_labels = torch.cumsum(
+            boundaries, dim=1
+        ).long()  # [batch_size, seq_length]
 
-            # Find events smaller than min_size
-            small_events = (event_sizes < min_size).nonzero().squeeze(-1)
+        # Compute number of events per batch
+        num_events_per_batch = event_labels.max(dim=1)[0] + 1  # [batch_size]
+        max_num_events = num_events_per_batch.max().item()
 
-            # Merge small events
-            for idx in small_events:
-                pos = boundary_positions[idx - 1] if idx > 0 else 0
-                if pos < seq_length:
-                    boundaries[b, pos] = 0
+        # Compute event sizes
+        event_sizes = torch.zeros(batch_size, max_num_events, device=boundaries.device)
+        event_sizes.scatter_add_(
+            1, event_labels, torch.ones_like(event_labels, dtype=event_sizes.dtype)
+        )
+
+        # Identify small events
+        small_events_mask = event_sizes < min_size  # [batch_size, max_num_events]
+        small_events_indices = small_events_mask.nonzero(
+            as_tuple=False
+        )  # [num_small_events, 2], each row is [batch_index, event_index]
+
+        # Compute boundary positions per event
+        # boundaries == 1 at positions where event_labels increase
+        event_labels_padded = torch.cat(
+            [
+                torch.zeros(
+                    batch_size, 1, device=boundaries.device, dtype=event_labels.dtype
+                ),
+                event_labels,
+            ],
+            dim=1,
+        )  # [batch_size, seq_length + 1]
+        diff_event_labels = torch.diff(
+            event_labels_padded, dim=1
+        )  # [batch_size, seq_length]
+        boundary_positions = (diff_event_labels == 1).nonzero(
+            as_tuple=False
+        )  # [num_boundaries, 2]
+
+        # Map event indices to boundary positions
+        boundary_positions_per_event = torch.full(
+            (batch_size, max_num_events), -1, device=boundaries.device, dtype=torch.long
+        )
+        boundary_positions_per_event[
+            boundary_positions[:, 0],
+            event_labels[boundary_positions[:, 0], boundary_positions[:, 1]],
+        ] = boundary_positions[:, 1]
+
+        # Remove boundaries before small events
+        small_events_boundary_positions = boundary_positions_per_event[
+            small_events_indices[:, 0], small_events_indices[:, 1]
+        ]
+        valid_mask = small_events_boundary_positions >= 0
+        batch_indices_to_update = small_events_indices[valid_mask][:, 0]
+        positions_to_update = small_events_boundary_positions[valid_mask]
+
+        # Set boundaries at these positions to 0
+        boundaries[batch_indices_to_update, positions_to_update] = 0
 
         return boundaries
 
-    def compute_surprise(self, logits: torch.Tensor) -> torch.Tensor:
-        """
-        Compute surprise as the entropy of the model's prediction distribution.
-        logits: (batch_size, seq_length, vocab_size)
-        """
-        probs = F.softmax(logits, dim=-1)  # Shape: (batch_size, seq_length, vocab_size)
+    def compute_surprise(self, logits):
+        probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
-        entropy = -torch.sum(
-            probs * log_probs, dim=-1
-        )  # Shape: (batch_size, seq_length)
+        entropy = -torch.sum(probs * log_probs, dim=-1)
         return entropy
 
-    def compute_surprise_with_targets(
-        self, logits: torch.Tensor, target_tokens: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Compute surprise as negative log-likelihood of the target tokens.
-        """
+    def compute_surprise_with_targets(self, logits, target_tokens):
         log_probs = F.log_softmax(logits, dim=-1)
         target_log_probs = log_probs.gather(-1, target_tokens.unsqueeze(-1)).squeeze(-1)
         surprise = -target_log_probs
         return surprise
+
+    def identify_event_boundaries(self, surprise_scores):
+        T = self.compute_surprise_threshold(surprise_scores)
+        boundaries = (surprise_scores > T).float()
+        return boundaries
+
+    def compute_surprise_threshold(self, surprise_values):
+        batch_size, seq_length = surprise_values.shape
+        # Calculate rolling statistics
+        pad_size = self.window_size - 1
+        padded_surprise = F.pad(surprise_values, (pad_size, 0), mode="replicate")
+        windows = padded_surprise.unfold(1, self.window_size, 1)
+        mu = windows.mean(dim=2)
+        sigma = windows.std(dim=2, unbiased=False)
+        threshold = mu + self.gamma * sigma
+        return threshold
 
     def compute_modularity_batch(self, similarity_matrices, boundaries):
         """
@@ -533,39 +542,6 @@ class PraxisMemory(nn.Module):
 
         return average_conductance
 
-    def identify_event_boundaries(
-        self, surprise_scores: torch.Tensor, window_size: int = 10, gamma: float = 1.0
-    ) -> torch.Tensor:
-        batch_size, seq_length = surprise_scores.shape
-        # Pad surprise_scores to handle the window at the start
-        pad_size = window_size - 1
-        padded_surprise = F.pad(surprise_scores, (pad_size, 0), mode="replicate")
-        # Compute rolling mean and std
-        unfolded = padded_surprise.unfold(
-            1, window_size, 1
-        )  # Shape: (batch_size, seq_length, window_size)
-        mu = unfolded.mean(dim=2)
-        sigma = unfolded.std(dim=2, unbiased=False)
-        T = mu + gamma * sigma
-        boundaries = (surprise_scores > T).float()
-        return boundaries
-
-    def pad_sequence(self, sequence: torch.Tensor) -> Tuple[torch.Tensor, int]:
-        batch_size, seq_len, embed_dim = sequence.shape
-        actual_length = seq_len
-        if seq_len < self.max_memory_length:
-            padding = torch.zeros(
-                batch_size,
-                self.max_memory_length - seq_len,
-                embed_dim,
-                device=sequence.device,
-            )
-            sequence = torch.cat([sequence, padding], dim=1)
-        elif seq_len > self.max_memory_length:
-            sequence = sequence[:, : self.max_memory_length, :]
-            actual_length = self.max_memory_length
-        return sequence, actual_length
-
     def retrieve_memories(
         self, query: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -582,19 +558,14 @@ class PraxisMemory(nn.Module):
         ]  # Shape: [num_memories, max_seq_length, embed_dim]
         memory_timestamps = self.memory_timestamps[:num_memories]
 
-        # Normalize query and compute similarity
-        # query_mean = F.layer_norm(query.mean(dim=1), query.shape[-1:])
+        # Compute similarity
         query_mean = query.mean(dim=1)
         query_proj = self.similarity(query_mean)
-        # query_proj_norm = F.normalize(query_proj, p=2, dim=-1)
-        query_proj_norm = query_proj
         keys_proj = self.similarity(memory_keys)
-        # keys_proj_norm = F.normalize(keys_proj, p=2, dim=-1)
-        keys_proj_norm = keys_proj
 
         # Compute cosine similarities
         similarity_scores = torch.matmul(
-            query_proj_norm, keys_proj_norm.T
+            query_proj, keys_proj.T
         )  # [batch_size, num_memories]
 
         # Get top-k similar memories
@@ -638,10 +609,6 @@ class PraxisMemory(nn.Module):
         )
         # contiguity_buffer has shape: [batch_size, k_temporal * max_seq_length, embed_dim]
 
-        # return (
-        #     F.layer_norm(similarity_buffer, similarity_buffer.shape[-1:]),
-        #     F.layer_norm(contiguity_buffer, contiguity_buffer.shape[-1:]),
-        # )
         return similarity_buffer, contiguity_buffer
 
     def extend_attention_mask(
