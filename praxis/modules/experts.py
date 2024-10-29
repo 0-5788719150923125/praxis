@@ -9,6 +9,7 @@ from torch import Tensor
 from praxis import PraxisConfig
 from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
+from praxis.modules.memory import PraxisMemory
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.modules.smear import PraxisSMEAR
@@ -74,6 +75,7 @@ class PraxisBlock(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
+        self.memory = PraxisMemory(config)
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from attention import PraxisAttention
 
 
-class EpisodicMemory(nn.Module):
+class PraxisMemory(nn.Module):
     def __init__(
         self,
         embed_dim: int,
@@ -405,7 +405,7 @@ class EMLLMLayer(nn.Module):
 
         self.attention = PraxisAttention(config)
 
-        self.episodic_memory = EpisodicMemory(
+        self.episodic_memory = PraxisMemory(
             embed_dim=embed_dim,
             max_seq_length=max_seq_length,
             similarity_buffer_size=32,  # As per paper
@@ -557,7 +557,7 @@ def test_em_llm():
     attention_mask = create_attention_mask(batch_size, seq_length, x.device)
 
     # Initialize memory module
-    memory = EpisodicMemory(embed_dim)
+    memory = PraxisMemory(embed_dim)
 
     print("\nTesting event storage...")
     # Test storing events of different lengths
