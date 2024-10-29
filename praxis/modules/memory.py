@@ -131,65 +131,84 @@ class PraxisMemory(nn.Module):
         # Append a boundary at the end to capture the last event
         boundaries = torch.cat(
             [boundaries, torch.ones(batch_size, 1, device=boundaries.device)], dim=1
+        )  # Shape: [batch_size, seq_length + 1]
+
+        # Compute event labels
+        event_labels = torch.cumsum(boundaries, dim=1)[
+            :, :-1
+        ].long()  # Shape: [batch_size, seq_length]
+
+        # Flatten batch and sequence dimensions
+        flat_tokens = token_representations.reshape(
+            -1, embed_dim
+        )  # Shape: [batch_size * seq_length, embed_dim]
+        flat_event_labels = event_labels.reshape(-1)  # Shape: [batch_size * seq_length]
+        flat_batch_indices = (
+            torch.arange(batch_size, device=token_representations.device)
+            .unsqueeze(1)
+            .expand(-1, seq_length)
+            .reshape(-1)
+        )  # Shape: [batch_size * seq_length]
+
+        # Combine batch indices and event labels to create unique event IDs
+        max_event_label = event_labels.max() + 1
+        unique_event_ids = (
+            flat_batch_indices * max_event_label + flat_event_labels
+        )  # Shape: [batch_size * seq_length]
+
+        # Get unique event IDs and inverse indices
+        unique_event_ids, inverse_indices = unique_event_ids.unique(return_inverse=True)
+        num_events = unique_event_ids.size(0)
+
+        # Sort inverse_indices to group tokens by event
+        sorted_indices = torch.argsort(inverse_indices)
+        sorted_inverse_indices = inverse_indices[sorted_indices]
+
+        # Count tokens per event
+        event_counts = torch.bincount(
+            inverse_indices, minlength=num_events
+        )  # Shape: [num_events]
+
+        # Compute positions within events
+        positions_in_events = torch.zeros_like(inverse_indices)
+        positions_in_events[sorted_indices] = torch.arange(
+            inverse_indices.size(0), device=inverse_indices.device
+        ) - torch.cumsum(
+            torch.cat(
+                [torch.tensor([0], device=event_counts.device), event_counts[:-1]]
+            ),
+            dim=0,
+        ).repeat_interleave(
+            event_counts
         )
 
-        # Prepare lists to collect events and lengths
-        all_events = []
-        all_event_lengths = []
+        # Prepare events tensor
+        max_event_length = event_counts.max().item()
+        events = torch.zeros(
+            num_events, max_event_length, embed_dim, device=token_representations.device
+        )  # Shape: [num_events, max_event_length, embed_dim]
 
-        for b in range(batch_size):
-            # Find positions where boundaries are 1
-            boundary_positions = boundaries[b].nonzero(as_tuple=False).squeeze(-1)
-            if boundary_positions.numel() == 0:
-                continue  # Skip if no boundaries
+        # Scatter tokens into events tensor
+        events[inverse_indices, positions_in_events] = flat_tokens
 
-            # Event starts and ends
-            event_starts = torch.cat(
-                [
-                    torch.tensor([0], device=boundaries.device),
-                    boundary_positions[:-1] + 1,
-                ]
+        # Get event lengths
+        event_lengths = event_counts
+
+        # Pad or truncate events to self.max_memory_length
+        if max_event_length < self.max_memory_length:
+            padding = torch.zeros(
+                num_events,
+                self.max_memory_length - max_event_length,
+                embed_dim,
+                device=events.device,
             )
-            event_ends = boundary_positions
+            events = torch.cat([events, padding], dim=1)
+        elif max_event_length > self.max_memory_length:
+            events = events[:, : self.max_memory_length, :]
+            event_lengths = torch.clamp(event_lengths, max=self.max_memory_length)
 
-            # Collect events
-            events_in_batch = []
-            event_lengths = []
-            for start, end in zip(event_starts.tolist(), event_ends.tolist()):
-                event = token_representations[b, start : end + 1, :]
-                events_in_batch.append(event)
-                event_lengths.append(event.size(0))
-
-            if events_in_batch:
-                all_events.extend(events_in_batch)
-                all_event_lengths.extend(event_lengths)
-
-        if all_events:
-            # **Pad all events to self.max_memory_length**
-            max_event_length = (
-                self.max_memory_length
-            )  # Force padding to max_memory_length
-
-            # Pad all events to self.max_memory_length
-            padded_events = torch.stack(
-                [
-                    F.pad(
-                        e[:max_event_length],
-                        (0, 0, 0, max_event_length - min(e.size(0), max_event_length)),
-                        mode="constant",
-                        value=0,
-                    )
-                    for e in all_events
-                ]
-            )
-
-            event_lengths = torch.tensor(
-                [min(l, max_event_length) for l in all_event_lengths],
-                device=boundaries.device,
-            )
-
-            # Store events
-            self.store_event(padded_events, event_lengths, timestamp)
+        # Store events
+        self.store_event(events, event_lengths, timestamp)
 
     def store_event(self, events, event_lengths, timestamp):
         num_events = events.size(0)
@@ -314,27 +333,31 @@ class PraxisMemory(nn.Module):
         current_conductance = self.compute_conductance_batch(sim_matrices, boundaries)
 
         # Find boundary positions
-        boundary_positions = (boundaries == 1).nonzero(as_tuple=False)
+        boundary_positions = (boundaries == 1).nonzero(
+            as_tuple=False
+        )  # Shape: [num_boundaries, 2]
 
         if boundary_positions.size(0) == 0:
             # No boundaries to refine
             return refined_boundaries
 
-        num_boundaries = boundary_positions.size(0)
-
         # Prepare new boundary configurations
-        temp_boundaries = boundaries.unsqueeze(0).repeat(num_boundaries, 1, 1)
+        temp_boundaries = boundaries.unsqueeze(0).repeat(
+            boundary_positions.size(0), 1, 1
+        )
         temp_boundaries[
-            torch.arange(num_boundaries),
+            torch.arange(boundary_positions.size(0)),
             boundary_positions[:, 0],
             boundary_positions[:, 1],
         ] = 0
 
         # Reshape tensors for batch processing
-        sim_matrices_expanded = sim_matrices[boundary_positions[:, 0]]
+        sim_matrices_expanded = sim_matrices[
+            boundary_positions[:, 0]
+        ]  # [num_boundaries, seq_length, seq_length]
         temp_boundaries_expanded = temp_boundaries[
-            torch.arange(num_boundaries), boundary_positions[:, 0], :
-        ]
+            torch.arange(boundary_positions.size(0)), boundary_positions[:, 0], :
+        ]  # [num_boundaries, seq_length]
 
         # Compute new modularity and conductance
         new_modularity = self.compute_modularity_batch(
@@ -345,15 +368,15 @@ class PraxisMemory(nn.Module):
         )
 
         # Compare and update boundaries
-        for idx in range(num_boundaries):
-            b = boundary_positions[idx, 0]
-            pos = boundary_positions[idx, 1]
-            if (new_modularity[idx] > current_modularity[b]) or (
-                new_conductance[idx] < current_conductance[b]
-            ):
-                refined_boundaries[b, pos] = 0
-                current_modularity[b] = new_modularity[idx]
-                current_conductance[b] = new_conductance[idx]
+        improvements = (
+            new_modularity > current_modularity[boundary_positions[:, 0]]
+        ) | (new_conductance < current_conductance[boundary_positions[:, 0]])
+
+        # Update refined boundaries in a vectorized way
+        refined_boundaries[
+            boundary_positions[improvements][:, 0],
+            boundary_positions[improvements][:, 1],
+        ] = 0
 
         # Enforce minimum event size
         refined_boundaries = self.enforce_minimum_event_size(refined_boundaries)
