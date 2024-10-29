@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis import PraxisConfig
+# from praxis import PraxisConfig
 
 
 class PraxisAttention(nn.Module):
@@ -18,7 +18,7 @@ class PraxisAttention(nn.Module):
     https://arxiv.org/abs/2108.12409
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config):
         super().__init__()
         self.causal = config.causal
         self.differential = config.differential
@@ -73,24 +73,30 @@ class PraxisAttention(nn.Module):
         )
 
     def forward(
-        self, inputs: Tensor, attention_mask: Tensor, token_indices: Optional[Tensor]
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attention_mask: Tensor,
+        token_indices: Optional[Tensor] = None,
     ):
-        batch_size, seq_len, _ = inputs.shape
+        batch_size, query_seq_len, _ = query.shape
+        _, key_seq_len, _ = key.shape
 
         # Compute queries, keys, and values
         multiplier = 2 if self.differential else 1
         q = (
-            self.query(inputs)
+            self.query(query)
             .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
             .transpose(1, 2)
         )
         k = (
-            self.key(inputs)
+            self.key(key)
             .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
             .transpose(1, 2)
         )
         v = (
-            self.value(inputs)
+            self.value(value)
             .view(batch_size, -1, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
@@ -110,23 +116,49 @@ class PraxisAttention(nn.Module):
             # Compute attention scores
             scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
 
-        # Compute ALiBi biases
+        # Start with standard ALiBi positions
         if torch.is_tensor(token_indices):
+            # Use provided token indices
             positions = self.positions[token_indices]
         else:
+            # Use standard sequence positions
             positions = (
-                self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
+                self.positions[:query_seq_len]
+                .unsqueeze(0)
+                .expand(batch_size, query_seq_len)
             )
 
+        # Compute initial position differences
         pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
         biases = self.slopes.view(1, self.num_heads, 1, 1) * pos_diff.unsqueeze(1)
+
+        # Handle memory tokens if present
+        if key_seq_len != query_seq_len:
+            memory_len = key_seq_len - query_seq_len
+
+            # Create empty biases tensor of full size
+            padded_biases = torch.zeros(
+                batch_size,
+                self.num_heads,
+                query_seq_len,
+                key_seq_len,
+                device=query.device,
+                dtype=query.dtype,
+            )
+
+            # Place the computed biases in the correct position after memory tokens
+            padded_biases[..., :, memory_len:] = biases.expand(
+                -1, -1, -1, query_seq_len
+            )
+            biases = padded_biases
+
         scores = [score - biases for score in scores]
 
         # Apply masks
         if self.causal:
             causal_mask = (
                 torch.triu(
-                    torch.full((seq_len, seq_len), -1e9, device=inputs.device),
+                    torch.full((query_seq_len, key_seq_len), -1e9, device=query.device),
                     diagonal=1,
                 )
                 .unsqueeze(0)
@@ -134,7 +166,12 @@ class PraxisAttention(nn.Module):
             )
             scores = [score + causal_mask for score in scores]
 
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+        if len(attention_mask.shape) == 2:
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        elif len(attention_mask.shape) == 3:
+            attention_mask = attention_mask.unsqueeze(1)
+
+        attention_mask = (1.0 - attention_mask) * -1e9
         scores = [score + attention_mask for score in scores]
 
         # Compute attention weights
@@ -162,7 +199,7 @@ class PraxisAttention(nn.Module):
             # Shape: (batch_size, seq_len, num_heads, head_dim)
 
             attention_scores = attention_scores.view(
-                batch_size, seq_len, self.num_heads * self.head_dim
+                batch_size, query_seq_len, self.num_heads * self.head_dim
             )
             # Shape: (batch_size, seq_len, num_heads * head_dim)
 
@@ -181,7 +218,7 @@ class PraxisAttention(nn.Module):
             attention_scores = attention_scores * (1 - self.lambda_init)
         else:
             attention_scores = attention_scores.transpose(1, 2).reshape(
-                batch_size, seq_len, self.hidden_size
+                batch_size, -1, self.hidden_size
             )
 
         # Output projection

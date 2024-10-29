@@ -94,7 +94,8 @@ class PraxisBlock(nn.Module):
             token_indices = None
         residual = inputs
         normalized = self.attn_norm(inputs)
-        outputs = self.attn(normalized, attention_mask, token_indices)
+        query, key, value = normalized, normalized, normalized
+        outputs = self.attn(query, key, value, attention_mask, token_indices)
         outputs = self.dropout(outputs)
         outputs = outputs + residual
         residual = outputs
