@@ -14,44 +14,53 @@ class PraxisMemory(nn.Module):
         self.hidden_dim = config.num_dims
         self.dropout = config.dropout
         self.surprise_threshold = 0.5
-        self.max_memory_length = 32
-        self.max_num_memories = 1024
+        self.max_memory_length = 16
+        self.max_num_memories = 512
+        self.max_retrieval_size = 128  # Set an appropriate limit
         self.similarity_buffer_size = 3  # number of similar memories retrieved
         self.contiguity_buffer_size = 2  # number of temporally-close memories retrieved
         self.window_size = (
-            100  # used in event boundary detection for computing rolling statistics
+            32  # used in event boundary detection for computing rolling statistics
         )
         self.gamma = 2.0  # changes event segmentation granularity
 
+        self.compressed = True
+        if self.compressed:
+            self.memory_dim = self.hidden_dim // 8
+            self.compress = nn.Linear(self.hidden_dim, self.memory_dim)
+            self.decompress = nn.Linear(self.memory_dim, self.hidden_dim)
+        else:
+            self.memory_dim = self.hidden_dim
+
         # Memory integration
         self.storage = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.Linear(self.memory_dim, self.memory_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.Linear(self.memory_dim, self.memory_dim),
         )
 
         # Language modeling head
-        self.clustering = nn.Linear(self.hidden_dim, config.vocab_size, bias=False)
+        self.clustering = nn.Linear(self.memory_dim, config.vocab_size, bias=False)
 
         # Initialize memory stores
         self.current_timestamp = 0
 
         # Networks for surprise computation and similarity projection
         self.surprise = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim // 2),
+            nn.Linear(self.memory_dim, self.memory_dim // 2),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim // 2, 1),
+            nn.Linear(self.memory_dim // 2, 1),
             nn.Sigmoid(),
         )
 
-        self.similarity = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.similarity = nn.Linear(self.memory_dim, self.memory_dim)
 
         self.register_buffer(
-            "memory_keys", torch.zeros(self.max_num_memories, self.hidden_dim)
+            "memory_keys", torch.zeros(self.max_num_memories, self.memory_dim)
         )
         self.register_buffer(
             "memory_values",
-            torch.zeros(self.max_num_memories, self.max_memory_length, self.hidden_dim),
+            torch.zeros(self.max_num_memories, self.max_memory_length, self.memory_dim),
         )
         self.register_buffer(
             "memory_timestamps",
@@ -70,6 +79,11 @@ class PraxisMemory(nn.Module):
         # Generate timestamp dynamically
         timestamp = self.current_timestamp
         self.current_timestamp += 1
+
+        if self.compressed:
+            # Project to lower dimension for memory operations
+            query = self.compress(query)
+            key = self.compress(key)
 
         # Generate logits for the next token predictions
         logits = self.clustering(query)
@@ -101,14 +115,19 @@ class PraxisMemory(nn.Module):
             context = torch.cat([sim_buffer, cont_buffer, key], dim=1)
 
             # Extend attention mask
-            extended_attention_mask = self.extend_attention_mask(
+            attention_mask = self.extend_attention_mask(
                 attention_mask, query.size(1), context.size(1), query.device
             )
 
             # Update key and value
             key = context
             value = context
-            attention_mask = extended_attention_mask
+
+        if self.compressed:
+            query = self.decompress(query)
+            key = self.decompress(key)
+            if value.shape != key.shape:
+                value = self.decompress(value)
 
         # Return modified query, key, value, attention_mask
         return query, key, value, attention_mask
@@ -200,19 +219,17 @@ class PraxisMemory(nn.Module):
 
     def store_event(self, events, event_lengths, timestamp):
         num_events = events.size(0)
-
-        # Compute indices for storing events in the memory buffers
         indices = (
             torch.arange(num_events, device=events.device) + self.memory_index
         ) % self.max_num_memories
 
-        # Select representative tokens (e.g., the first token of each event)
         representative_tokens = events[:, 0, :]
 
         # Update memory buffers
-        self.memory_keys[indices] = representative_tokens.detach()
+        self.memory_keys[indices] = representative_tokens
         self.memory_values[indices] = events.detach()
         self.memory_timestamps[indices] = timestamp
+
         self.memory_index = (self.memory_index + num_events) % self.max_num_memories
 
     def compute_conductance(
@@ -526,8 +543,10 @@ class PraxisMemory(nn.Module):
         if self.memory_index == 0:
             return None, None
 
-        # Get valid memory entries
-        num_memories = min(self.memory_index, self.max_num_memories)
+        # Limit the number of memories retrieved
+        num_memories = min(
+            self.memory_index, self.max_num_memories, self.max_retrieval_size
+        )
         memory_keys = self.memory_keys[
             :num_memories
         ]  # Shape: [num_memories, embed_dim]
@@ -560,7 +579,7 @@ class PraxisMemory(nn.Module):
         )  # Shape: [batch_size, k, max_seq_length, embed_dim]
 
         # Reshape and return
-        similarity_buffer = selected_memories.view(query.size(0), -1, self.hidden_dim)
+        similarity_buffer = selected_memories.view(query.size(0), -1, self.memory_dim)
 
         # Process temporal contiguity
         timestamps = memory_timestamps  # Shape: [num_memories]
@@ -583,7 +602,7 @@ class PraxisMemory(nn.Module):
             query.size(0), -1, -1, -1
         )
         contiguity_buffer = contiguity_buffer.reshape(
-            query.size(0), -1, self.hidden_dim
+            query.size(0), -1, self.memory_dim
         )
         # contiguity_buffer has shape: [batch_size, k_temporal * max_seq_length, embed_dim]
 
