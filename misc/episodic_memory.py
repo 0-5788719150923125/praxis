@@ -16,14 +16,11 @@ class SelfAttention(nn.Module):
         self.num_heads = num_heads
         self.dropout = dropout
         self.head_dim = embed_dim // num_heads
-        assert (
-            self.head_dim * num_heads == self.embed_dim
-        ), "embed_dim must be divisible by num_heads"
 
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, embed_dim)
-        self.v_proj = nn.Linear(embed_dim, embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.q_proj = nn.Linear(embed_dim, num_heads * self.head_dim)
+        self.k_proj = nn.Linear(embed_dim, num_heads * self.head_dim)
+        self.v_proj = nn.Linear(embed_dim, num_heads * self.head_dim)
+        self.out_proj = nn.Linear(num_heads * self.head_dim, embed_dim)
 
     def forward(
         self,

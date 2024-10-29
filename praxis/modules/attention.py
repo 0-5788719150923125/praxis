@@ -81,17 +81,17 @@ class PraxisAttention(nn.Module):
         multiplier = 2 if self.differential else 1
         q = (
             self.query(inputs)
-            .view(batch_size, seq_len, self.num_heads, multiplier * self.head_dim)
+            .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
             .transpose(1, 2)
         )
         k = (
             self.key(inputs)
-            .view(batch_size, seq_len, self.num_heads, multiplier * self.head_dim)
+            .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
             .transpose(1, 2)
         )
         v = (
             self.value(inputs)
-            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .view(batch_size, -1, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
 
@@ -120,7 +120,7 @@ class PraxisAttention(nn.Module):
 
         pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
         biases = self.slopes.view(1, self.num_heads, 1, 1) * pos_diff.unsqueeze(1)
-        scores = [s - biases for s in scores]
+        scores = [score - biases for score in scores]
 
         # Apply masks
         if self.causal:
@@ -132,13 +132,13 @@ class PraxisAttention(nn.Module):
                 .unsqueeze(0)
                 .unsqueeze(0)
             )
-            scores = [s + causal_mask for s in scores]
+            scores = [score + causal_mask for score in scores]
 
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-        scores = [s + attention_mask for s in scores]
+        scores = [score + attention_mask for score in scores]
 
         # Compute attention weights
-        weights = [self.dropout(F.softmax(s, dim=-1)) for s in scores]
+        weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
 
         # Compute attention weights
         diff_weights = weights[0]
