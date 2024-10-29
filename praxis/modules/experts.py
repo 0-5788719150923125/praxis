@@ -111,7 +111,9 @@ class PraxisBlock(nn.Module):
         normalized = self.attn_norm(inputs)
         query, key, value = normalized, normalized, normalized
         if self.memory:
-            query, key, value = self.memory(query, key, value, attention_mask, labels)
+            query, key, value, attention_mask = self.memory(
+                query, key, value, attention_mask, labels
+            )
         outputs = self.attn(query, key, value, attention_mask, token_indices)
         outputs = self.dropout(outputs)
         outputs = outputs + residual

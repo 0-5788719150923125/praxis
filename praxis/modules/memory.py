@@ -15,17 +15,14 @@ class PraxisMemory(nn.Module):
         self.hidden_dim = config.num_dims
         self.num_heads = config.num_heads
         self.dropout = config.dropout
-        self.max_seq_length = config.context_length
         self.vocab_size = config.vocab_size
+        self.max_seq_length = 64
         self.surprise_threshold = 0.5
-        self.max_memory_size = 1000
+        self.max_memory_size = 1024
         self.similarity_buffer_size = 32
         self.contiguity_buffer_size = 16
         self.window_size = 100
         self.gamma = 2.0
-
-        # Normalization and residual components
-        self.layer_norm1 = nn.LayerNorm(self.hidden_dim)
 
         # Memory integration
         self.memory_proj = nn.Sequential(
@@ -71,11 +68,8 @@ class PraxisMemory(nn.Module):
         timestamp = self.current_timestamp
         self.current_timestamp += 1
 
-        residual = query
-        x = self.layer_norm1(query)
-
         # Generate logits for the next token predictions
-        logits = self.lm_head(x)
+        logits = self.lm_head(query)
 
         # Compute surprise scores
         if target_tokens is not None:
@@ -89,10 +83,10 @@ class PraxisMemory(nn.Module):
         boundaries = self.identify_event_boundaries(surprise_scores)
 
         # Store events based on boundaries
-        self.store_events(x, boundaries, timestamp)
+        self.store_events(query, boundaries, timestamp)
 
         # Memory retrieval and integration
-        sim_buffer, cont_buffer = self.retrieve_memories(x)
+        sim_buffer, cont_buffer = self.retrieve_memories(query)
 
         if sim_buffer is not None and cont_buffer is not None:
             sim_buffer = self.memory_proj(sim_buffer)
@@ -110,9 +104,6 @@ class PraxisMemory(nn.Module):
             key = context
             value = context
             attention_mask = extended_attention_mask
-        else:
-            # No changes needed
-            pass
 
         # Return modified query, key, value, attention_mask
         return query, key, value, attention_mask
@@ -358,9 +349,10 @@ class PraxisMemory(nn.Module):
                 single_event_tokens.unsqueeze(0)
             )
 
-            self.memory_keys.append(event_key)  # Shape: [embed_dim]
+            # Detach tensors before storing
+            self.memory_keys.append(event_key.detach())  # Shape: [embed_dim]
             self.memory_values.append(
-                padded_event
+                padded_event.detach()
             )  # Shape: [1, max_seq_length, embed_dim]
             self.memory_lengths.append(actual_length)
             self.memory_timestamps.append(timestamp)
@@ -467,6 +459,19 @@ class PraxisMemory(nn.Module):
         extended_attention_mask = torch.zeros(
             (batch_size, seq_len, key_len), device=device
         )
+
+        # Adjust attention_mask to 3D if it's 2D
+        if attention_mask.dim() == 2:
+            # attention_mask: [batch_size, seq_len]
+            # Expand to [batch_size, seq_len, seq_len]
+            attention_mask = attention_mask[:, None, :].expand(-1, seq_len, -1)
+            # Create additive mask
+            attention_mask = (1.0 - attention_mask) * -1e9
+        elif attention_mask.dim() == 3:
+            # attention_mask is already 3D
+            pass
+        else:
+            raise ValueError("attention_mask must be 2D or 3D tensor")
 
         # Copy the original attention mask into positions corresponding to the original sequence
         extended_attention_mask[:, :, memory_len:] = attention_mask
