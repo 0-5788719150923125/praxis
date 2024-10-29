@@ -241,16 +241,22 @@ class EpisodicMemory(nn.Module):
 
             # Try removing each boundary and keep if it improves modularity
             current_modularity = compute_modularity(sim_matrix, boundaries[b])
+            current_conductance = compute_conductance(sim_matrix, boundaries[b])
 
             for pos in boundary_positions:
                 temp_boundaries = boundaries[b].clone()
                 temp_boundaries[pos] = 0
                 new_modularity = compute_modularity(sim_matrix, temp_boundaries)
+                new_conductance = compute_conductance(sim_matrix, temp_boundaries)
 
-                # Keep boundary removal if it improves modularity
-                if new_modularity > current_modularity:
+                # Keep boundary removal if it improves modularity or conductance
+                if (
+                    new_modularity > current_modularity
+                    or new_conductance < current_conductance
+                ):
                     refined_boundaries[b, pos] = 0
                     current_modularity = new_modularity
+                    current_conductance = new_conductance
 
             # Ensure minimum event size
             event_sizes = torch.diff(

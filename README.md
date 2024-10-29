@@ -158,7 +158,8 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - Denny Zhou (Founded & lead reasoning team at Google DeepMind) - "We have mathematically proven that transformers can solve any problem, provided they are allowed to generate as many intermediate reasoning tokens as needed. Remarkably, constant depth is sufficient." [source](https://www.reddit.com/r/mlscaling/comments/1fijajw/denny_zhou_founded_lead_reasoning_team_at_google/) At first pass, this may sound stupid, because everyone knows that transformers are "universal function approximators" already; the problem is that the search space becomes so large as to be computationally infeasible. However, the more-meaningful takeaway here is this: with human guidance (i.e. prompting, iteration, development, persistence, re-focusing), a human/AI team can solve any problem... including AGI.
 - [Differentiable Lambda Calculus](https://github.com/neurallambda/neurallambda) (i.e. symbolic reasoning)
 - the way that Mixture of Depths token indices interact with ALiBi is potentially interesting and worth evaluating.
-- [Simple Recurrent Units](https://github.com/asappresearch/sru)
+- [Simple Recurrent Units](https://gist.github.com/calclavia/bb64b2f9dd3920ff6ad9546a606718e1)
+- [Forward-mode automatic differentiation](https://pytorch.org/tutorials/intermediate/forward_ad_usage.html)
 
 ## won't do
 

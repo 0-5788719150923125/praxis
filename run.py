@@ -43,21 +43,27 @@ import torch
 import torch.nn as nn
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from builders import get_datamodules
 from interface import TerminalDashboard
-from praxis import (EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM,
-                    PraxisModel)
+from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -268,9 +274,9 @@ seed_everything(seed)
 # An important warning
 if gun and seed:
     print(
-        "WARNING: GUN data is never deterministic, and cannot be reliably-reproduced when using a defined `seed`. You should omit the `--gun` argument for experiments."
+        "WARNING: GUN data is never deterministic, and cannot be reliably-reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
     )
-    time.sleep(3)
+    time.sleep(5)
 
 # Global configuration
 vocab_size = 8192
