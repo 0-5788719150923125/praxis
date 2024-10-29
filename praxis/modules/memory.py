@@ -9,14 +9,20 @@ from transformers import PretrainedConfig
 
 
 class PraxisMemory(nn.Module):
+    """
+    This module implements human-like Episodic Memory, which allows for nearly-
+    infinite contexts lengths:
+    https://arxiv.org/abs/2407.09450
+    """
+
     def __init__(self, config: PretrainedConfig):
         super().__init__()
         self.hidden_dim = config.num_dims
         self.dropout = config.dropout
         self.surprise_threshold = 0.5
         self.max_memory_length = 16
-        self.max_num_memories = 512
-        self.max_retrieval_size = 128  # Set an appropriate limit
+        self.max_num_memories = 256
+        self.max_retrieval_size = 32  # Set an appropriate limit
         self.similarity_buffer_size = 3  # number of similar memories retrieved
         self.contiguity_buffer_size = 2  # number of temporally-close memories retrieved
         self.window_size = (
@@ -84,6 +90,7 @@ class PraxisMemory(nn.Module):
             # Project to lower dimension for memory operations
             query = self.compress(query)
             key = self.compress(key)
+            value = self.compress(value)
 
         # Generate logits for the next token predictions
         logits = self.clustering(query)
@@ -112,22 +119,22 @@ class PraxisMemory(nn.Module):
             cont_buffer = self.storage(cont_buffer)
 
             # Combine buffers with adaptive weighting
-            context = torch.cat([sim_buffer, cont_buffer, key], dim=1)
+            key_context = torch.cat([sim_buffer, cont_buffer, key], dim=1)
+            value_context = torch.cat([sim_buffer, cont_buffer, value], dim=1)
 
             # Extend attention mask
             attention_mask = self.extend_attention_mask(
-                attention_mask, query.size(1), context.size(1), query.device
+                attention_mask, query.size(1), key_context.size(1), query.device
             )
 
             # Update key and value
-            key = context
-            value = context
+            key = key_context
+            value = value_context
 
         if self.compressed:
             query = self.decompress(query)
             key = self.decompress(key)
-            if value.shape != key.shape:
-                value = self.decompress(value)
+            value = self.decompress(value)
 
         # Return modified query, key, value, attention_mask
         return query, key, value, attention_mask

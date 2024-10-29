@@ -19,6 +19,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
+- We also implement a simplified version of [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450).
 
 ## join us
 
@@ -148,7 +149,6 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Mini-Sequence Transformer](https://github.com/wdlctc/mini-s/tree/main) (probably not worth it on the smaller scale)
 - embed training code within the model architecture itself, such that loading a model automatically starts the training, as well
 - cascading assistant models via hivemind (speculative decoding)
-- [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450)
 - [TokenMonster](https://github.com/alasdairforsythe/tokenmonster)
 - [Linear Recurrent Units](https://arxiv.org/abs/2303.06349) (not recommended; they are extremely slow without specialized kernels)
 - [DualFormer](https://arxiv.org/html/2410.09918v1) (this one would be tough to do, because it seems to require detailed reasoning steps and structured trace dropping; i.e. data we don't have)
