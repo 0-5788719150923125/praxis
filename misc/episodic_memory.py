@@ -25,19 +25,6 @@ class SelfAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
-        self._reset_parameters()
-
-    def _reset_parameters(self):
-        nn.init.xavier_uniform_(self.q_proj.weight)
-        nn.init.xavier_uniform_(self.k_proj.weight)
-        nn.init.xavier_uniform_(self.v_proj.weight)
-        nn.init.xavier_uniform_(self.out_proj.weight)
-
-        nn.init.constant_(self.q_proj.bias, 0.0)
-        nn.init.constant_(self.k_proj.bias, 0.0)
-        nn.init.constant_(self.v_proj.bias, 0.0)
-        nn.init.constant_(self.out_proj.bias, 0.0)
-
     def forward(
         self,
         query: torch.Tensor,
@@ -313,17 +300,6 @@ class EpisodicMemory(nn.Module):
                 boundaries[b, t] = (surprise_scores[b, t] > T).float()
 
         return boundaries
-
-    def _reset_parameters(self):
-        nn.init.xavier_uniform_(self.q_proj.weight)
-        nn.init.xavier_uniform_(self.k_proj.weight)
-        nn.init.xavier_uniform_(self.v_proj.weight)
-        nn.init.xavier_uniform_(self.out_proj.weight)
-
-        nn.init.constant_(self.q_proj.bias, 0.0)
-        nn.init.constant_(self.k_proj.bias, 0.0)
-        nn.init.constant_(self.v_proj.bias, 0.0)
-        nn.init.constant_(self.out_proj.bias, 0.0)
 
     def pad_sequence(self, sequence: torch.Tensor) -> Tuple[torch.Tensor, int]:
         batch_size, seq_len, embed_dim = sequence.shape

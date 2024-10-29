@@ -3,17 +3,15 @@ import random
 from typing import Optional
 
 import hivemind
-import hivemind.moe
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind import DHT
-from hivemind.moe import RemoteExpert
 from hivemind.moe.client.expert import _RemoteModuleCall
-from hivemind.moe.server.layers import name_to_block, name_to_input
+from hivemind.moe.server.layers import name_to_block
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from hivemind.utils import BatchTensorDescriptor
-from hivemind.utils.nested import nested_compare, nested_flatten, nested_pack
+from hivemind.utils.nested import nested_flatten
 from torch import Tensor
 from torch.autograd.function import once_differentiable
 
@@ -60,13 +58,15 @@ hivemind.moe.client.expert._RemoteModuleCall = FaultTolerantRemoteModuleCall
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 
 
-class PraxisSwarm:
+class PraxisSwarmManagement:
     """
     A helper class, with convenience methods for Hivemind swarm management.
     """
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
+
+        self.config = config
 
         self.expert_uids = []
         self.active_remote_experts = []
@@ -132,8 +132,10 @@ class PraxisSwarm:
         self.active_local_experts.append(module)
         return module
 
-    def serve_experts(self, config: PraxisConfig):
-        device = config.device_map or ("cuda" if torch.cuda.is_available() else "cpu")
+    def serve_experts(self):
+        device = self.config.device_map or (
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
         thread = Server(
             self.dht,
             self.backends,
@@ -161,7 +163,7 @@ class PraxisSwarm:
         else:
             return self._generate_unique_name(k)
 
-    def _search_for_experts(self, chance=0.5):
+    def search_for_experts(self, chance=0.5):
         if random.random() > chance:
             return
         new_name = self._generate_unique_name()

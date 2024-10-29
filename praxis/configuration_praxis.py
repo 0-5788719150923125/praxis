@@ -33,6 +33,7 @@ class PraxisConfig(PretrainedConfig):
         bos_token_id=1,
         eos_token_id=2,
         unk_token_id=4,
+        seed=42,
         debug=True,
         **kwargs,
     ):
@@ -85,6 +86,7 @@ class PraxisConfig(PretrainedConfig):
         self.initial_peers = initial_peers
         self.memory_profile = memory_profile
         self.device_map = device_map
+        self.seed = seed
         self.debug = debug
         self.causal = False
 

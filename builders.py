@@ -3,6 +3,7 @@ import random
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+import numpy as np
 import torch
 from datasets import load_dataset
 from lightning.pytorch.core.datamodule import LightningDataModule
@@ -177,13 +178,13 @@ HUGGINGFACE_DATASETS = [
 
 
 def get_datamodules(
+    seed: int,
     dev: bool,
     phi: bool,
     instruct: bool,
     gun: bool,
     tokenizer,
     hparams,
-    seed,
     data_path,
     *args,
 ):
@@ -223,7 +224,10 @@ def get_datamodules(
     validation_dataloader = None
     if len(validation_data) > 0:
         validation_dataloader = PraxisDataModule(
-            validation_data, tokenizer, hparams["batch_size"], hparams["block_size"]
+            validation_data,
+            tokenizer,
+            hparams["batch_size"],
+            hparams["block_size"],
         )
 
     return train_dataloader, validation_dataloader

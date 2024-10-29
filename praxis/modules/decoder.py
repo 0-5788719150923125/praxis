@@ -9,7 +9,7 @@ from torch import Tensor
 from praxis import PraxisConfig
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
-from praxis.orchestration.hivemind import PraxisSwarm
+from praxis.orchestration.hivemind import PraxisSwarmManagement
 
 
 class PraxisDecoder(nn.Module):
@@ -24,10 +24,11 @@ class PraxisDecoder(nn.Module):
         self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
+        self.random = random.Random(config.seed)
         self.swarm = False
         self.remote_experts = []
         if config.hivemind:
-            self.swarm = PraxisSwarm(config)
+            self.swarm = PraxisSwarmManagement(config)
             self.remote_experts = self.swarm.active_remote_experts
         self.local_experts = nn.ModuleList(
             [PraxisExpert(config, self.swarm) for _ in range(config.num_experts)]
@@ -37,16 +38,16 @@ class PraxisDecoder(nn.Module):
             self.navigator = PraxisController(config, len(self.local_experts) * 3)
         self._define_checkpoints(config.memory_profile, self.depth)
         if self.swarm:
-            self.swarm.serve_experts(config)
+            self.swarm.serve_experts()
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
         original_order = experts.copy()
         if self.shuffle:
-            random.shuffle(experts)
+            self.random.shuffle(experts)
 
         if self.swarm:
-            self.swarm._search_for_experts()
+            self.swarm.search_for_experts()
 
         hidden_states = inputs
         aux_losses = []

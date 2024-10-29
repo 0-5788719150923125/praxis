@@ -269,7 +269,7 @@ def exception_to_file(exc_type, exc_value, exc_traceback):
 sys.excepthook = exception_to_file
 
 # Set seeds for reproducibility
-seed_everything(seed)
+seed_everything(seed, workers=True)
 
 # An important warning
 if gun and seed:
@@ -311,11 +311,11 @@ config = PraxisConfig(
     unk_token_id=tokenizer.unk_token_id,
     device_map=device,
     cache_dir=cache_dir,
+    seed=seed,
 )
 
 # Misc hyperparameters
 hparams = dict(
-    seed=seed,
     batch_size=batch_size if batch_size else 1,
     target_batch_size=64,
     block_size=512,
@@ -337,6 +337,7 @@ train_params = dict(
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
+    deterministic=False,
     enable_checkpointing=True,
     enable_progress_bar=False if use_dashboard else True,
     enable_model_summary=False,
@@ -957,7 +958,7 @@ api_server.start()
 
 # Load datasets
 train_datamodule, validation_datamodule = get_datamodules(
-    dev, phi, instruct, gun, tokenizer, hparams, seed, data_path
+    seed, dev, phi, instruct, gun, tokenizer, hparams, data_path
 )
 
 # create the optimizer
