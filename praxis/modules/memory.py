@@ -6,49 +6,112 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from attention import PraxisAttention
+from transformers import PretrainedConfig
 
 
 class PraxisMemory(nn.Module):
-    def __init__(
-        self,
-        embed_dim: int,
-        surprise_threshold: float = 0.5,
-        max_memory_size: int = 1000,
-        similarity_buffer_size: int = 32,
-        contiguity_buffer_size: int = 16,
-        max_seq_length: int = 512,
-        window_size: int = 100,
-        gamma: float = 2.0,
-    ):
+    def __init__(self, config: PretrainedConfig):
         super().__init__()
-        self.embed_dim = embed_dim
-        self.surprise_threshold = surprise_threshold
-        self.max_memory_size = max_memory_size
-        self.similarity_buffer_size = similarity_buffer_size
-        self.contiguity_buffer_size = contiguity_buffer_size
-        self.max_seq_length = max_seq_length
-        self.window_size = window_size
-        self.gamma = gamma
+        # Components
+        self.hidden_dim = config.num_dims
+        self.num_heads = config.num_heads
+        self.dropout = config.dropout
+        self.max_seq_length = config.context_length
+        self.vocab_size = config.vocab_size
+        self.surprise_threshold = 0.5
+        self.max_memory_size = 1000
+        self.similarity_buffer_size = 32
+        self.contiguity_buffer_size = 16
+        self.window_size = 100
+        self.gamma = 2.0
 
-        # Memory stores
+        # Normalization and residual components
+        self.layer_norm1 = nn.LayerNorm(self.hidden_dim)
+
+        # Memory integration
+        self.memory_proj = nn.Sequential(
+            nn.LayerNorm(self.hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+        )
+
+        # Language modeling head
+        self.lm_head = nn.Linear(self.hidden_dim, self.vocab_size, bias=False)
+
+        # Initialize memory stores
         self.memory_keys = []
         self.memory_values = []
         self.memory_lengths = []
         self.memory_timestamps = []
+        self.current_timestamp = 0
 
-        # Networks
+        # Networks for surprise computation and similarity projection
         self.surprise_network = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim // 2),
+            nn.LayerNorm(self.hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim // 2),
             nn.ReLU(),
-            nn.Linear(embed_dim // 2, 1),
+            nn.Linear(self.hidden_dim // 2, 1),
             nn.Sigmoid(),
         )
 
         self.similarity_proj = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim),
+            nn.LayerNorm(self.hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
         )
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attention_mask: torch.Tensor,
+        target_tokens: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Generate timestamp dynamically
+        timestamp = self.current_timestamp
+        self.current_timestamp += 1
+
+        residual = query
+        x = self.layer_norm1(query)
+
+        # Generate logits for the next token predictions
+        logits = self.lm_head(x)
+
+        # Compute surprise using logits and target_tokens
+        surprise_scores = self.compute_surprise(logits, target_tokens)
+
+        # Identify event boundaries using surprise_scores
+        boundaries = self.identify_event_boundaries(surprise_scores)
+
+        # Store events based on boundaries
+        self.store_events(x, boundaries, timestamp)
+
+        # Memory retrieval and integration
+        sim_buffer, cont_buffer = self.retrieve_memories(x)
+
+        if sim_buffer is not None and cont_buffer is not None:
+            sim_buffer = self.memory_proj(sim_buffer)
+            cont_buffer = self.memory_proj(cont_buffer)
+
+            # Combine buffers with adaptive weighting
+            context = torch.cat([sim_buffer, cont_buffer, key], dim=1)
+
+            # Extend attention mask
+            extended_attention_mask = self.extend_attention_mask(
+                attention_mask, query.size(1), context.size(1), query.device
+            )
+
+            # Update key and value
+            key = context
+            value = context
+            attention_mask = extended_attention_mask
+        else:
+            # No changes needed
+            pass
+
+        # Return modified query, key, value, attention_mask
+        return query, key, value, attention_mask
 
     def store_events(
         self,
@@ -338,7 +401,9 @@ class PraxisMemory(nn.Module):
         similarity_buffer = selected_memories.unsqueeze(0).expand(
             query.size(0), -1, -1, -1
         )
-        similarity_buffer = similarity_buffer.reshape(query.size(0), -1, self.embed_dim)
+        similarity_buffer = similarity_buffer.reshape(
+            query.size(0), -1, self.hidden_dim
+        )
         # Now similarity_buffer has shape: [batch_size, k * max_seq_length, embed_dim]
 
         # Process temporal contiguity
@@ -365,129 +430,15 @@ class PraxisMemory(nn.Module):
         contiguity_buffer = temporal_memories.unsqueeze(0).expand(
             query.size(0), -1, -1, -1
         )
-        contiguity_buffer = contiguity_buffer.reshape(query.size(0), -1, self.embed_dim)
+        contiguity_buffer = contiguity_buffer.reshape(
+            query.size(0), -1, self.hidden_dim
+        )
         # contiguity_buffer has shape: [batch_size, k_temporal * max_seq_length, embed_dim]
 
         return (
             F.layer_norm(similarity_buffer, similarity_buffer.shape[-1:]),
             F.layer_norm(contiguity_buffer, contiguity_buffer.shape[-1:]),
         )
-
-
-class EMLLMLayer(nn.Module):
-    def __init__(
-        self,
-        embed_dim: int = 256,
-        num_heads: int = 8,
-        dropout: float = 0.1,
-        max_seq_length: int = 512,
-        vocab_size: int = 30522,  # Set this to your vocabulary size
-        **kwargs,
-    ):
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.dropout = dropout
-        self.max_seq_length = max_seq_length
-        self.vocab_size = vocab_size
-
-        # Components
-        from transformers import PretrainedConfig
-
-        config = PretrainedConfig(
-            causal=True,
-            differential=True,
-            num_dims=embed_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            context_length=8192,
-        )
-
-        self.attention = PraxisAttention(config)
-
-        self.episodic_memory = PraxisMemory(
-            embed_dim=embed_dim,
-            max_seq_length=max_seq_length,
-            similarity_buffer_size=32,  # As per paper
-            contiguity_buffer_size=16,  # As per paper
-        )
-
-        # Normalization and residual components
-        self.layer_norm1 = nn.LayerNorm(embed_dim)
-        self.layer_norm2 = nn.LayerNorm(embed_dim)
-        self.dropout = nn.Dropout(dropout)
-
-        # Memory integration
-        self.memory_proj = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim, embed_dim),
-            nn.ReLU(),
-            nn.Linear(embed_dim, embed_dim),
-        )
-
-        self.pos_embeddings = nn.Embedding(max_seq_length, embed_dim)
-
-        # **Add a language modeling head**
-        self.lm_head = nn.Linear(embed_dim, vocab_size, bias=False)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        attention_mask: torch.Tensor,
-        target_tokens: torch.Tensor,
-        timestamp: int = 0,
-    ):
-        """
-        Forward pass with memory integration and surprise computation.
-
-        x: Input embeddings (batch_size, seq_length, embed_dim)
-        target_tokens: Target token IDs (batch_size, seq_length)
-        timestamp: Current timestamp or token position
-        """
-        residual = x
-        x = self.layer_norm1(x)
-
-        # **Generate logits for the next token predictions**
-        logits = self.lm_head(x)  # (batch_size, seq_length, vocab_size)
-
-        # **Compute surprise using logits and target_tokens**
-        surprise_scores = self.episodic_memory.compute_surprise(logits, target_tokens)
-
-        # **Identify event boundaries using surprise_scores**
-        boundaries = self.episodic_memory.identify_event_boundaries(surprise_scores)
-
-        # **Store events based on boundaries**
-        self.episodic_memory.store_events(x, boundaries, timestamp)
-
-        # Memory retrieval and integration
-        sim_buffer, cont_buffer = self.episodic_memory.retrieve_memories(x)
-
-        if sim_buffer is not None and cont_buffer is not None:
-            sim_buffer = self.memory_proj(sim_buffer)
-            cont_buffer = self.memory_proj(cont_buffer)
-
-            # Combine buffers with adaptive weighting
-            context = torch.cat([sim_buffer, cont_buffer, x], dim=1)
-
-            # Extend attention mask
-            extended_attention_mask = self.extend_attention_mask(
-                attention_mask, x.size(1), context.size(1), x.device
-            )
-        else:
-            context = x
-            extended_attention_mask = attention_mask
-
-        # Apply attention with improved normalization
-        attn_output = self.attention(
-            self.layer_norm2(x),
-            self.layer_norm2(context),
-            self.layer_norm2(context),
-            extended_attention_mask,
-        )
-
-        x = residual + self.dropout(attn_output)
-
-        return x, logits
 
     def extend_attention_mask(
         self,
@@ -530,7 +481,31 @@ class EMLLMLayer(nn.Module):
         return extended_attention_mask
 
 
-def test_em_llm():
+def test_praxis_memory():
+    class SimpleBlock(nn.Module):
+        def __init__(self, config):
+            super().__init__()
+            self.memory = PraxisMemory(config)
+            self.attn_norm = nn.LayerNorm(config.num_dims)
+            self.attn = PraxisAttention(config)
+
+        def forward(
+            self,
+            inputs: torch.Tensor,
+            attention_mask: torch.Tensor,
+            target_tokens: torch.Tensor,
+        ):
+
+            residual = inputs
+            normalized = self.attn_norm(inputs)
+            query, key, value = normalized, normalized, normalized
+            if self.memory:
+                query, key, value, attention_mask = self.memory(
+                    query, key, value, attention_mask, target_tokens
+                )
+
+            outputs = self.attn(query, key, value, attention_mask)
+            return outputs + residual
 
     def create_attention_mask(batch_size, seq_len, device):
         # Create causal mask
@@ -549,6 +524,8 @@ def test_em_llm():
     batch_size = 2
     seq_length = 10
     embed_dim = 256
+    num_heads = 8
+    dropout = 0.1
 
     # Create random input
     x = torch.randn(batch_size, seq_length, embed_dim)
@@ -556,88 +533,35 @@ def test_em_llm():
     # Create attention mask
     attention_mask = create_attention_mask(batch_size, seq_length, x.device)
 
-    # Initialize memory module
-    memory = PraxisMemory(embed_dim)
-
-    print("\nTesting event storage...")
-    # Test storing events of different lengths
-    event1 = torch.randn(batch_size, 3, embed_dim)
-    event2 = torch.randn(batch_size, 5, embed_dim)
-
-    memory.store_event(event1, timestamp=1)
-    memory.store_event(event2, timestamp=2)
-
-    print(f"Number of stored events: {len(memory.memory_values)}")
-    print(f"Stored sequence lengths: {memory.memory_lengths}")
-
-    print("\nTesting memory retrieval...")
-    sim_buffer, cont_buffer = memory.retrieve_memories(x)
-
-    print("\nMemory retrieval results:")
-    if sim_buffer is not None:
-        print(f"Similarity buffer shape: {sim_buffer.shape}")
-    if cont_buffer is not None:
-        print(f"Contiguity buffer shape: {cont_buffer.shape}")
-
-    print("\nTesting event boundary detection...")
-    # Generate dummy surprise scores
-    surprise_scores = torch.randn(batch_size, seq_length)
-    boundaries = memory.identify_event_boundaries(surprise_scores)
-    print(f"Boundary tensor shape: {boundaries.shape}")
-    print(f"Number of events detected: {boundaries.sum().item()}")
-
-    print("Initializing integrated test...")
-
-    # Test parameters
-    batch_size = 2
-    seq_length = 10
-    embed_dim = 256
-    num_heads = 8
-
     # Initialize model with proper parameters
-    model = EMLLMLayer(
-        embed_dim=embed_dim, num_heads=num_heads, dropout=0.1, max_seq_length=512
+    config = PretrainedConfig(
+        num_dims=embed_dim,
+        num_heads=num_heads,
+        dropout=dropout,
+        context_length=512,
+        causal=True,
+        differential=False,
+        vocab_size=8192,
     )
-
-    # Create random input
-    x = torch.randn(batch_size, seq_length, embed_dim)
+    model = SimpleBlock(config)
 
     print("\nTesting forward pass...")
 
-    target_tokens = torch.randint(0, model.vocab_size, (batch_size, seq_length))
+    target_tokens = torch.randint(0, config.vocab_size, (batch_size, seq_length))
 
     # First forward pass
-    output1, logits1 = model(x, attention_mask, target_tokens, timestamp=1)
-    print(f"First forward pass output shape: {output1.shape}")
-
-    # Create new input and target tokens
-    x2 = torch.randn(batch_size, seq_length, embed_dim)
-    target_tokens2 = torch.randint(0, model.vocab_size, (batch_size, seq_length))
+    outputs = model(x, attention_mask, target_tokens)
+    print(f"First forward pass output shape: {outputs.shape}")
 
     # Second forward pass
-    output2, logits2 = model(x2, attention_mask, target_tokens2, timestamp=2)
-    print(f"Second forward pass output shape: {output2.shape}")
-
-    # Test attention mask
-    print("\nTesting attention mask...")
-    query_len = 5
-    key_len = 15  # query_len + memory_len
-    test_batch_size = 2
-    test_num_heads = 8
-    mask = attention_mask
-    print(f"Attention mask shape: {mask.shape}")
-    print(f"Attention mask example (first head):\n{mask[0, 0]}")
-
-    # Print memory statistics
-    print("\nMemory statistics:")
-    print(f"Number of stored events: {len(model.episodic_memory.memory_values)}")
-    print(f"Stored sequence lengths: {model.episodic_memory.memory_lengths}")
+    outputs2 = model(x, attention_mask, target_tokens)
+    print(f"Second forward pass output shape: {outputs2.shape}")
 
     # Test if outputs are different (they should be due to memory)
     print("\nChecking if memory affects outputs:")
-    output_diff = (output1 - output2).abs().mean().item()
+    output_diff = (outputs - outputs2).abs().mean().item()
     print(f"Average difference between outputs: {output_diff:.6f}")
 
 
 if __name__ == "__main__":
-    test_em_llm()
+    test_praxis_memory()
