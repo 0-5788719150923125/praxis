@@ -237,7 +237,7 @@ class TerminalDashboard:
 
     def _visual_ljust(self, string, width):
         """Left-justify a string to a specified width, considering character display width."""
-        visual_width = sum(wcwidth.wcwidth(char) for char in string)
+        visual_width = sum(max(wcwidth.wcwidth(char), 0) for char in string)
         padding = max(0, width - visual_width)
         return string + " " * padding
 
@@ -247,6 +247,8 @@ class TerminalDashboard:
         result = []
         for char in text:
             char_width = wcwidth.wcwidth(char)
+            if char_width < 0:
+                char_width = 0  # Treat non-printable characters as zero width
             if current_width + char_width > width:
                 break
             result.append(char)
@@ -257,23 +259,29 @@ class TerminalDashboard:
         """Correct any misaligned borders in the frame."""
         width = len(frame[0])
         for i in range(1, len(frame) - 1):
-            if frame[i][0] != "║" or frame[i][-1] != "║":
-                frame[i] = "║" + frame[i][1:-1] + "║"
-            if len(frame[i]) != width:
-                frame[i] = frame[i][: width - 1] + "║"
+            line = frame[i]
+            if len(line) < width:
+                line = line.ljust(width)
+            elif len(line) > width:
+                line = line[:width]
+            if line[0] != "║":
+                line = "║" + line[1:]
+            if line[-1] != "║":
+                line = line[:-1] + "║"
+            frame[i] = line
         return frame
 
     def _update_screen(self, new_frame):
         new_frame = self._correct_borders(new_frame)
+
+        frame_width = len(new_frame[0])  # Get the width of the frame
 
         if self.previous_frame is None or len(self.previous_frame) != len(new_frame):
             print(
                 self.term.home
                 + self.term.clear
                 + self.term.white
-                + "\n".join(new_frame).replace(
-                    "<newline>", "\n"
-                ),  # Replace <newline> with actual newlines
+                + "\n".join(new_frame).replace("<newline>", "\n"),
                 end="",
                 file=self.dashboard_output,
             )
@@ -281,12 +289,12 @@ class TerminalDashboard:
             for i, (old_line, new_line) in enumerate(
                 zip(self.previous_frame, new_frame)
             ):
-                new_line = new_line.replace(
-                    "<newline>", "\n"
-                )  # Ensure newlines are rendered
+                new_line = new_line.replace("<newline>", "\n")
                 if old_line != new_line:
+                    # Pad the new line to ensure it overwrites the old content
+                    padded_new_line = new_line.ljust(frame_width)
                     print(
-                        self.term.move(i, 0) + self.term.white + new_line,
+                        self.term.move(i, 0) + self.term.white + padded_new_line,
                         end="",
                         file=self.dashboard_output,
                     )
@@ -347,10 +355,13 @@ class TerminalDashboard:
                 text = f" ERROR: {train_loss:.4f}"
                 if self.accuracy is not None:
                     text += f" || ACCURACY: {self.accuracy[0]:.3f} || CONFIDENCE: {self.accuracy[1]:.3f}"
-                right_content = self._visual_ljust(text, right_width)
-                left_content = self._visual_ljust(
+                # Truncate before padding
+                right_content = self._truncate_to_width(text, right_width)
+                right_content = self._visual_ljust(right_content, right_width)
+                left_content = self._truncate_to_width(
                     f" HOST {self.num_faults}", half_width
                 )
+                left_content = self._visual_ljust(left_content, half_width)
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -384,6 +395,10 @@ class TerminalDashboard:
             right_content = self._visual_ljust(right_content, right_width)
 
             frame.append(f"║{left_content}║{right_content}║")
+
+        frame_width = len(frame[0])
+        for i in range(len(frame)):
+            frame[i] = frame[i].ljust(frame_width)
 
         frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
 

@@ -760,7 +760,7 @@ class Generator:
             repetition_penalty=1.35,
             renormalize_logits=True,
             remove_invalid_values=True,
-            token_healing=True,
+            # token_healing=True,
         )
         combined = {**defaults, **request.kwargs}
         if "prompt" in combined:

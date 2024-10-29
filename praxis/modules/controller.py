@@ -24,8 +24,9 @@ class PraxisController(nn.Module):
         self.loss_scale = 0.01
 
         # Early exit logic
-        self.calm = False
-        self.exit_threshold = 0.55
+        self.calm = True
+        # especially important during training, when the threshold is an average across all examples.
+        self.exit_threshold = 0.7
 
         # Simplify tracking to just accuracy
         self.expert_accuracies = {i: 0.0 for i in range(max_num_experts)}

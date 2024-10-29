@@ -7,49 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def compute_modularity(
-    similarity_matrix: torch.Tensor, boundaries: torch.Tensor
-) -> torch.Tensor:
-    """Compute modularity score for given boundaries in similarity matrix."""
-    N = similarity_matrix.size(0)
-    total_edge_weight = similarity_matrix.sum()
-
-    # Create community assignments based on boundaries
-    communities = torch.cumsum(boundaries, dim=0)
-
-    modularity = 0.0
-    for i in range(N):
-        for j in range(N):
-            if communities[i] == communities[j]:
-                # Actual edge weight minus expected edge weight
-                modularity += (
-                    similarity_matrix[i, j]
-                    - similarity_matrix[i].sum()
-                    * similarity_matrix[j].sum()
-                    / total_edge_weight
-                )
-
-    return modularity / total_edge_weight
-
-
-def compute_conductance(
-    similarity_matrix: torch.Tensor, boundaries: torch.Tensor
-) -> torch.Tensor:
-    """Compute conductance for given boundaries in similarity matrix."""
-    N = similarity_matrix.size(0)
-    communities = torch.cumsum(boundaries, dim=0)
-    unique_communities = torch.unique(communities)
-
-    total_conductance = 0.0
-    for comm in unique_communities:
-        comm_mask = communities == comm
-        within_edges = similarity_matrix[comm_mask][:, comm_mask].sum()
-        between_edges = similarity_matrix[comm_mask][:, ~comm_mask].sum()
-        total_conductance += between_edges / (2 * within_edges + between_edges + 1e-10)
-
-    return total_conductance / len(unique_communities)
-
-
 class SelfAttention(nn.Module):
     def __init__(
         self, embed_dim: int = 256, num_heads: int = 8, dropout: float = 0.1, **kwargs
@@ -240,14 +197,14 @@ class EpisodicMemory(nn.Module):
             boundary_positions = boundaries[b].nonzero().squeeze(-1)
 
             # Try removing each boundary and keep if it improves modularity
-            current_modularity = compute_modularity(sim_matrix, boundaries[b])
-            current_conductance = compute_conductance(sim_matrix, boundaries[b])
+            current_modularity = self.compute_modularity(sim_matrix, boundaries[b])
+            current_conductance = self.compute_conductance(sim_matrix, boundaries[b])
 
             for pos in boundary_positions:
                 temp_boundaries = boundaries[b].clone()
                 temp_boundaries[pos] = 0
-                new_modularity = compute_modularity(sim_matrix, temp_boundaries)
-                new_conductance = compute_conductance(sim_matrix, temp_boundaries)
+                new_modularity = self.compute_modularity(sim_matrix, temp_boundaries)
+                new_conductance = self.compute_conductance(sim_matrix, temp_boundaries)
 
                 # Keep boundary removal if it improves modularity or conductance
                 if (
@@ -287,6 +244,49 @@ class EpisodicMemory(nn.Module):
         target_log_probs = log_probs.gather(-1, target_tokens.unsqueeze(-1)).squeeze(-1)
         surprise = -target_log_probs  # Negative log-likelihood
         return surprise
+
+    def compute_modularity(
+        self, similarity_matrix: torch.Tensor, boundaries: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute modularity score for given boundaries in similarity matrix."""
+        N = similarity_matrix.size(0)
+        total_edge_weight = similarity_matrix.sum()
+
+        # Create community assignments based on boundaries
+        communities = torch.cumsum(boundaries, dim=0)
+
+        modularity = 0.0
+        for i in range(N):
+            for j in range(N):
+                if communities[i] == communities[j]:
+                    # Actual edge weight minus expected edge weight
+                    modularity += (
+                        similarity_matrix[i, j]
+                        - similarity_matrix[i].sum()
+                        * similarity_matrix[j].sum()
+                        / total_edge_weight
+                    )
+
+        return modularity / total_edge_weight
+
+    def compute_conductance(
+        self, similarity_matrix: torch.Tensor, boundaries: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute conductance for given boundaries in similarity matrix."""
+        N = similarity_matrix.size(0)
+        communities = torch.cumsum(boundaries, dim=0)
+        unique_communities = torch.unique(communities)
+
+        total_conductance = 0.0
+        for comm in unique_communities:
+            comm_mask = communities == comm
+            within_edges = similarity_matrix[comm_mask][:, comm_mask].sum()
+            between_edges = similarity_matrix[comm_mask][:, ~comm_mask].sum()
+            total_conductance += between_edges / (
+                2 * within_edges + between_edges + 1e-10
+            )
+
+        return total_conductance / len(unique_communities)
 
     def identify_event_boundaries(
         self, surprise_scores: torch.Tensor, window_size: int = 10, gamma: float = 1.0
@@ -627,7 +627,46 @@ class EMLLMLayer(nn.Module):
         return pos_encodings
 
 
-def test_em_llm_integrated():
+def test_em_llm():
+    print("Initializing test...")
+    # Test parameters
+    batch_size = 2
+    seq_length = 10
+    embed_dim = 256
+
+    # Create random input
+    x = torch.randn(batch_size, seq_length, embed_dim)
+
+    # Initialize memory module
+    memory = EpisodicMemory(embed_dim)
+
+    print("\nTesting event storage...")
+    # Test storing events of different lengths
+    event1 = torch.randn(batch_size, 3, embed_dim)
+    event2 = torch.randn(batch_size, 5, embed_dim)
+
+    memory.store_event(event1, timestamp=1)
+    memory.store_event(event2, timestamp=2)
+
+    print(f"Number of stored events: {len(memory.memory_values)}")
+    print(f"Stored sequence lengths: {memory.memory_lengths}")
+
+    print("\nTesting memory retrieval...")
+    sim_buffer, cont_buffer = memory.retrieve_memories(x)
+
+    print("\nMemory retrieval results:")
+    if sim_buffer is not None:
+        print(f"Similarity buffer shape: {sim_buffer.shape}")
+    if cont_buffer is not None:
+        print(f"Contiguity buffer shape: {cont_buffer.shape}")
+
+    print("\nTesting event boundary detection...")
+    # Generate dummy surprise scores
+    surprise_scores = torch.randn(batch_size, seq_length)
+    boundaries = memory.identify_event_boundaries(surprise_scores)
+    print(f"Boundary tensor shape: {boundaries.shape}")
+    print(f"Number of events detected: {boundaries.sum().item()}")
+
     print("Initializing integrated test...")
 
     # Test parameters
@@ -687,47 +726,5 @@ def test_em_llm_integrated():
     print(f"Average difference between outputs: {output_diff:.6f}")
 
 
-def test_em_llm():
-    print("Initializing test...")
-    # Test parameters
-    batch_size = 2
-    seq_length = 10
-    embed_dim = 256
-
-    # Create random input
-    x = torch.randn(batch_size, seq_length, embed_dim)
-
-    # Initialize memory module
-    memory = EpisodicMemory(embed_dim)
-
-    print("\nTesting event storage...")
-    # Test storing events of different lengths
-    event1 = torch.randn(batch_size, 3, embed_dim)
-    event2 = torch.randn(batch_size, 5, embed_dim)
-
-    memory.store_event(event1, timestamp=1)
-    memory.store_event(event2, timestamp=2)
-
-    print(f"Number of stored events: {len(memory.memory_values)}")
-    print(f"Stored sequence lengths: {memory.memory_lengths}")
-
-    print("\nTesting memory retrieval...")
-    sim_buffer, cont_buffer = memory.retrieve_memories(x)
-
-    print("\nMemory retrieval results:")
-    if sim_buffer is not None:
-        print(f"Similarity buffer shape: {sim_buffer.shape}")
-    if cont_buffer is not None:
-        print(f"Contiguity buffer shape: {cont_buffer.shape}")
-
-    print("\nTesting event boundary detection...")
-    # Generate dummy surprise scores
-    surprise_scores = torch.randn(batch_size, seq_length)
-    boundaries = memory.identify_event_boundaries(surprise_scores)
-    print(f"Boundary tensor shape: {boundaries.shape}")
-    print(f"Number of events detected: {boundaries.sum().item()}")
-
-
 if __name__ == "__main__":
     test_em_llm()
-    test_em_llm_integrated()
