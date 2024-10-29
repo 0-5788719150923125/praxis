@@ -27,7 +27,7 @@ class PraxisMemory(nn.Module):
 
         # Memory integration
         self.storage = nn.Sequential(
-            nn.LayerNorm(self.hidden_dim),
+            # nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
@@ -41,15 +41,15 @@ class PraxisMemory(nn.Module):
 
         # Networks for surprise computation and similarity projection
         self.surprise = nn.Sequential(
-            nn.LayerNorm(self.hidden_dim),
+            # nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.hidden_dim // 2),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim // 2, 1),
+            # nn.Linear(self.hidden_dim // 2, 1),
             nn.Sigmoid(),
         )
 
         self.similarity = nn.Sequential(
-            nn.LayerNorm(self.hidden_dim),
+            # nn.LayerNorm(self.hidden_dim),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
 
@@ -97,8 +97,10 @@ class PraxisMemory(nn.Module):
         # Identify event boundaries using surprise_scores
         boundaries = self.identify_event_boundaries(surprise_scores)
 
+        refined_boundaries = self.refine_boundaries(boundaries, query)
+
         # Store events based on boundaries
-        self.store_events(query, boundaries, timestamp)
+        self.store_events(query, refined_boundaries, timestamp)
 
         # Memory retrieval and integration
         sim_buffer, cont_buffer = self.retrieve_memories(query)
@@ -172,48 +174,138 @@ class PraxisMemory(nn.Module):
 
         return threshold
 
+    def compute_modularity_batch(
+        self, similarity_matrices: torch.Tensor, boundaries: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute modularity score for given boundaries in similarity matrix for all batches at once."""
+        batch_size = similarity_matrices.size(0)
+        N = similarity_matrices.size(1)
+
+        # [batch_size, N]
+        degrees = similarity_matrices.sum(dim=2)
+        # [batch_size, 1]
+        total_edge_weights = degrees.sum(dim=1, keepdim=True)
+
+        # [batch_size, N]
+        communities = torch.cumsum(boundaries, dim=1)
+
+        # [batch_size, N, N]
+        expected_weights = torch.bmm(
+            degrees.unsqueeze(2), degrees.unsqueeze(1)
+        ) / total_edge_weights.unsqueeze(1)
+        modularity_matrices = similarity_matrices - expected_weights
+
+        # [batch_size, N, N]
+        community_masks = communities.unsqueeze(2) == communities.unsqueeze(1)
+
+        # [batch_size]
+        Q = (modularity_matrices * community_masks).sum(
+            dim=(1, 2)
+        ) / total_edge_weights.squeeze(1)
+
+        return Q
+
+    def compute_conductance_batch(
+        self, similarity_matrices: torch.Tensor, boundaries: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute conductance for all batches at once."""
+        batch_size = similarity_matrices.size(0)
+        N = similarity_matrices.size(1)
+
+        # [batch_size, N]
+        degrees = similarity_matrices.sum(dim=2)
+        # [batch_size]
+        total_volumes = degrees.sum(dim=1)
+
+        # [batch_size, N]
+        communities = torch.cumsum(boundaries, dim=1)
+
+        # Remap community IDs to be consecutive integers starting from 0
+        for b in range(batch_size):
+            # Get unique values and create mapping
+            unique_vals = communities[b].unique()
+            mapping = torch.zeros(
+                int(unique_vals.max().item()) + 1,
+                dtype=torch.long,
+                device=communities.device,
+            )
+            mapping[unique_vals.long()] = torch.arange(
+                len(unique_vals), dtype=torch.long, device=communities.device
+            )
+            # Apply mapping
+            communities[b] = mapping[communities[b].long()]
+
+        num_communities = communities.max().long() + 1
+
+        # [batch_size, N, num_communities]
+        community_one_hot = F.one_hot(
+            communities.long(), num_classes=int(num_communities)
+        ).float()
+
+        # Rest of the function remains the same
+        volumes = torch.bmm(degrees.unsqueeze(1), community_one_hot).squeeze(1)
+
+        inter_community = torch.bmm(
+            torch.bmm(community_one_hot.transpose(1, 2), similarity_matrices),
+            community_one_hot,
+        )
+
+        inter_community.diagonal(dim1=1, dim2=2).zero_()
+        cuts = inter_community.sum(dim=2)
+
+        other_volumes = total_volumes.unsqueeze(1) - volumes
+        min_volumes = torch.min(volumes, other_volumes)
+        conductance = cuts / (min_volumes + 1e-10)
+
+        average_conductance = conductance.mean(dim=1)
+
+        return average_conductance
+
     def refine_boundaries(
         self, boundaries: torch.Tensor, representations: torch.Tensor
     ) -> torch.Tensor:
-        """Refine event boundaries using graph-theoretic metrics."""
         batch_size = representations.size(0)
         refined_boundaries = boundaries.clone()
 
+        # Batch compute similarity matrices
+        sim_matrices = torch.bmm(representations, representations.transpose(1, 2))
+        sim_matrices = F.normalize(sim_matrices, p=2, dim=-1)
+
+        # Pre-compute initial modularity/conductance for all batches
+        current_modularity = self.compute_modularity_batch(sim_matrices, boundaries)
+        current_conductance = self.compute_conductance_batch(sim_matrices, boundaries)
+
+        # Still need some iteration for boundary refinement
+        diff_tensor = torch.tensor([0], device=boundaries.device)
         for b in range(batch_size):
-            # Compute similarity matrix for this batch
-            sim_matrix = torch.matmul(
-                representations[b], representations[b].transpose(-2, -1)
-            )
-
-            # Normalize similarity matrix
-            sim_matrix = F.normalize(sim_matrix, p=2, dim=-1)
-
-            # Get initial boundary positions
             boundary_positions = boundaries[b].nonzero().squeeze(-1)
-
-            # Try removing each boundary and keep if it improves modularity
-            current_modularity = self.compute_modularity(sim_matrix, boundaries[b])
-            current_conductance = self.compute_conductance(sim_matrix, boundaries[b])
-
             for pos in boundary_positions:
-                temp_boundaries = boundaries[b].clone()
-                temp_boundaries[pos] = 0
-                new_modularity = self.compute_modularity(sim_matrix, temp_boundaries)
-                new_conductance = self.compute_conductance(sim_matrix, temp_boundaries)
+                temp_boundaries = boundaries.clone()
+                temp_boundaries[b, pos] = 0
 
-                # Keep boundary removal if it improves modularity or conductance
+                # These would now operate on all batches at once
+                new_modularity = self.compute_modularity_batch(
+                    sim_matrices, temp_boundaries
+                )
+                new_conductance = self.compute_conductance_batch(
+                    sim_matrices, temp_boundaries
+                )
+
                 if (
-                    new_modularity > current_modularity
-                    or new_conductance < current_conductance
+                    new_modularity[b] > current_modularity[b]
+                    or new_conductance[b] < current_conductance[b]
                 ):
                     refined_boundaries[b, pos] = 0
-                    current_modularity = new_modularity
-                    current_conductance = new_conductance
+                    current_modularity[b] = new_modularity[b]
+                    current_conductance[b] = new_conductance[b]
 
             # Ensure minimum event size
             event_sizes = torch.diff(
                 torch.cat(
-                    [torch.tensor([0]), refined_boundaries[b].nonzero().squeeze(-1)]
+                    [
+                        diff_tensor,
+                        refined_boundaries[b].nonzero().squeeze(-1),
+                    ]
                 )
             )
             min_size = 3  # Minimum event size
@@ -376,7 +468,8 @@ class PraxisMemory(nn.Module):
             representative_token = single_event_tokens[0, :]  # Shape: [embed_dim]
 
             # Normalize event representation
-            event_key = F.layer_norm(representative_token, representative_token.shape)
+            # event_key = F.layer_norm(representative_token, representative_token.shape)
+            event_key = representative_token
             padded_event, actual_length = self.pad_sequence(
                 single_event_tokens.unsqueeze(0)
             )
@@ -405,11 +498,14 @@ class PraxisMemory(nn.Module):
         memory_timestamps = self.memory_timestamps[:num_memories]
 
         # Normalize query and compute similarity
-        query_mean = F.layer_norm(query.mean(dim=1), query.shape[-1:])
+        # query_mean = F.layer_norm(query.mean(dim=1), query.shape[-1:])
+        query_mean = query.mean(dim=1)
         query_proj = self.similarity(query_mean)
-        query_proj_norm = F.normalize(query_proj, p=2, dim=-1)
+        # query_proj_norm = F.normalize(query_proj, p=2, dim=-1)
+        query_proj_norm = query_proj
         keys_proj = self.similarity(memory_keys)
-        keys_proj_norm = F.normalize(keys_proj, p=2, dim=-1)
+        # keys_proj_norm = F.normalize(keys_proj, p=2, dim=-1)
+        keys_proj_norm = keys_proj
 
         # Compute cosine similarities
         similarity_scores = torch.matmul(
@@ -457,10 +553,11 @@ class PraxisMemory(nn.Module):
         )
         # contiguity_buffer has shape: [batch_size, k_temporal * max_seq_length, embed_dim]
 
-        return (
-            F.layer_norm(similarity_buffer, similarity_buffer.shape[-1:]),
-            F.layer_norm(contiguity_buffer, contiguity_buffer.shape[-1:]),
-        )
+        # return (
+        #     F.layer_norm(similarity_buffer, similarity_buffer.shape[-1:]),
+        #     F.layer_norm(contiguity_buffer, contiguity_buffer.shape[-1:]),
+        # )
+        return {similarity_buffer, contiguity_buffer}
 
     def extend_attention_mask(
         self,
