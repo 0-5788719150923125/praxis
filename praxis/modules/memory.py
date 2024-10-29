@@ -289,37 +289,57 @@ class PraxisMemory(nn.Module):
         communities = torch.cumsum(boundaries, dim=1).long()  # [batch_size, N]
         num_communities = communities.max(dim=1)[0] + 1  # [batch_size]
 
-        conductance_list = []
-        for i in range(batch_size):
-            num_com = num_communities[i].item()
-            com = communities[i]
-            degree = degrees[i]
-            sim_matrix = similarity_matrices[i]
-            total_volume = total_volumes[i]
+        max_num_communities = num_communities.max().item()
 
-            # One-hot encoding
-            community_one_hot = F.one_hot(
-                com, num_classes=num_com
-            ).float()  # [N, num_com]
+        # One-hot encoding of communities
+        # Shape: [batch_size, N, max_num_communities]
+        community_one_hot = F.one_hot(
+            communities, num_classes=max_num_communities
+        ).float()
 
-            # Volumes
-            volumes = community_one_hot.t().matmul(degree)  # [num_com]
+        # Compute volumes: [batch_size, max_num_communities]
+        volumes = torch.bmm(
+            community_one_hot.transpose(1, 2), degrees.unsqueeze(2)
+        ).squeeze(2)
 
-            # Cuts
-            inter_community = (
-                community_one_hot.t().matmul(sim_matrix).matmul(community_one_hot)
-            )
-            inter_community.fill_diagonal_(0)
-            cuts = inter_community.sum(dim=1)  # [num_com]
+        # Compute inter-community edge weights: [batch_size, max_num_communities, max_num_communities]
+        inter_community = torch.bmm(
+            torch.bmm(community_one_hot.transpose(1, 2), similarity_matrices),
+            community_one_hot,
+        )
 
-            # Conductance
-            min_volumes = torch.min(volumes, total_volume - volumes)
-            cond = cuts / (min_volumes + 1e-10)
-            conductance_list.append(cond.mean())
+        # Zero out the diagonal (intra-community edges)
+        inter_community = inter_community - torch.diag_embed(
+            torch.diagonal(inter_community, dim1=1, dim2=2)
+        )
 
-        conductance = torch.stack(conductance_list)  # [batch_size]
+        # Compute cuts: [batch_size, max_num_communities]
+        cuts = inter_community.sum(dim=2)
 
-        return conductance
+        # Compute min_volumes: [batch_size, max_num_communities]
+        total_volumes = total_volumes.unsqueeze(1)  # [batch_size, 1]
+        min_volumes = torch.min(volumes, total_volumes - volumes)
+
+        # Compute conductance for each community
+        cond = cuts / (min_volumes + 1e-10)  # [batch_size, max_num_communities]
+
+        # Create a mask for valid communities
+        # Shape: [batch_size, max_num_communities]
+        valid_communities_mask = (
+            torch.arange(max_num_communities, device=communities.device)
+            .unsqueeze(0)
+            .expand(batch_size, -1)
+        ) < num_communities.unsqueeze(1)
+
+        # Mask invalid communities
+        cond = cond * valid_communities_mask.float()
+
+        # Sum conductance over valid communities and compute the average
+        cond_sum = cond.sum(dim=1)  # [batch_size]
+        num_valid_communities = num_communities.float()  # [batch_size]
+        conductance = cond_sum / num_valid_communities
+
+        return conductance  # [batch_size]
 
     def refine_boundaries(self, boundaries, representations):
         batch_size, seq_length, _ = representations.shape
