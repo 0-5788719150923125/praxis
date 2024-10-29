@@ -19,7 +19,7 @@ num_examples = 10_000_000
 save_path = "data/praxis"
 
 
-vocab_size = 4096
+vocab_size = 8192
 dropout = 0.1
 
 
@@ -93,7 +93,7 @@ tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
     ]
 )
 
-tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC(), normalizers.Strip()])
+tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC()])
 
 tokenizer.decoder = decoders.ByteLevel()
 tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
