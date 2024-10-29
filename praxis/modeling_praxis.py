@@ -32,6 +32,7 @@ class PraxisModel(PreTrainedModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -44,7 +45,7 @@ class PraxisModel(PreTrainedModel):
 
         symbols, attention_mask = self.compression(inputs, attention_mask)
 
-        last_hidden_state, aux_loss = self.decoder(symbols, attention_mask)
+        last_hidden_state, aux_loss = self.decoder(symbols, attention_mask, labels)
         self.aux_losses.append(aux_loss)
 
         return BaseModelOutputWithPast(
@@ -102,6 +103,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            labels=labels,
             past_key_values=past_key_values,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,

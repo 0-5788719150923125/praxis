@@ -201,6 +201,12 @@ parser.add_argument(
     help="Use Differential Attention mechanism",
 )
 parser.add_argument(
+    "--memory",
+    action="store_true",
+    default=False,
+    help="Use a long-term episodic memory module",
+)
+parser.add_argument(
     "--hivemind",
     action="store_true",
     default=False,
@@ -302,6 +308,7 @@ config = PraxisConfig(
     autopilot=autopilot,
     differential=differential,
     compression=compression,
+    memory=memory,
     hivemind=hivemind,
     expert=expert_type,
     memory_profile=memory_profile,

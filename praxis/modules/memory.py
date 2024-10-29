@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from attention import PraxisAttention
 from transformers import PretrainedConfig
 
 
@@ -66,7 +65,7 @@ class PraxisMemory(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         attention_mask: torch.Tensor,
-        target_tokens: torch.Tensor,
+        target_tokens: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # Generate timestamp dynamically
         timestamp = self.current_timestamp
@@ -78,8 +77,13 @@ class PraxisMemory(nn.Module):
         # Generate logits for the next token predictions
         logits = self.lm_head(x)
 
-        # Compute surprise using logits and target_tokens
-        surprise_scores = self.compute_surprise(logits, target_tokens)
+        # Compute surprise scores
+        if target_tokens is not None:
+            # Training: Use target_tokens to compute negative log-likelihood
+            surprise_scores = self.compute_surprise_with_targets(logits, target_tokens)
+        else:
+            # Inference: Use entropy-based surprise
+            surprise_scores = self.compute_surprise(logits)
 
         # Identify event boundaries using surprise_scores
         boundaries = self.identify_event_boundaries(surprise_scores)
@@ -216,18 +220,27 @@ class PraxisMemory(nn.Module):
 
         return refined_boundaries
 
-    def compute_surprise(
+    def compute_surprise(self, logits: torch.Tensor) -> torch.Tensor:
+        """
+        Compute surprise as the entropy of the model's prediction distribution.
+        logits: (batch_size, seq_length, vocab_size)
+        """
+        probs = F.softmax(logits, dim=-1)  # Shape: (batch_size, seq_length, vocab_size)
+        log_probs = F.log_softmax(logits, dim=-1)
+        entropy = -torch.sum(
+            probs * log_probs, dim=-1
+        )  # Shape: (batch_size, seq_length)
+        return entropy
+
+    def compute_surprise_with_targets(
         self, logits: torch.Tensor, target_tokens: torch.Tensor
     ) -> torch.Tensor:
         """
         Compute surprise as negative log-likelihood of the target tokens.
-        logits: (batch_size, seq_length, vocab_size)
-        target_tokens: (batch_size, seq_length)
         """
         log_probs = F.log_softmax(logits, dim=-1)
-        # Gather log-probabilities of the target tokens
         target_log_probs = log_probs.gather(-1, target_tokens.unsqueeze(-1)).squeeze(-1)
-        surprise = -target_log_probs  # Negative log-likelihood
+        surprise = -target_log_probs
         return surprise
 
     def compute_modularity(
@@ -482,6 +495,8 @@ class PraxisMemory(nn.Module):
 
 
 def test_praxis_memory():
+    from attention import PraxisAttention
+
     class SimpleBlock(nn.Module):
         def __init__(self, config):
             super().__init__()
@@ -493,7 +508,7 @@ def test_praxis_memory():
             self,
             inputs: torch.Tensor,
             attention_mask: torch.Tensor,
-            target_tokens: torch.Tensor,
+            target_tokens: torch.Tensor = None,
         ):
 
             residual = inputs
@@ -547,14 +562,13 @@ def test_praxis_memory():
 
     print("\nTesting forward pass...")
 
+    # Simulate training
     target_tokens = torch.randint(0, config.vocab_size, (batch_size, seq_length))
-
-    # First forward pass
     outputs = model(x, attention_mask, target_tokens)
     print(f"First forward pass output shape: {outputs.shape}")
 
-    # Second forward pass
-    outputs2 = model(x, attention_mask, target_tokens)
+    # Simulate inference
+    outputs2 = model(x, attention_mask)
     print(f"Second forward pass output shape: {outputs2.shape}")
 
     # Test if outputs are different (they should be due to memory)

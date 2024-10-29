@@ -25,6 +25,7 @@ class PraxisConfig(PretrainedConfig):
         autopilot=False,
         differential=False,
         compression=False,
+        memory=False,
         hivemind=False,
         initial_peers=None,
         memory_profile="speed",
@@ -82,6 +83,7 @@ class PraxisConfig(PretrainedConfig):
         self.shuffle = shuffle
         self.autopilot = autopilot
         self.compression = compression
+        self.memory = memory
         self.hivemind = hivemind
         self.initial_peers = initial_peers
         self.memory_profile = memory_profile
