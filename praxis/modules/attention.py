@@ -5,8 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-
-from praxis import PraxisConfig
+from transformers import AutoConfig
 
 
 class PraxisAttention(nn.Module):
@@ -16,12 +15,9 @@ class PraxisAttention(nn.Module):
 
     We implement ALiBi for length extrapolation, to keep parameter counts low:
     https://arxiv.org/abs/2108.12409
-
-    We also implement a simplified version of Infini-Attention, which omits the chunking:
-    https://arxiv.org/abs/2404.07143
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
         self.causal = config.causal
         self.differential = config.differential
@@ -67,26 +63,7 @@ class PraxisAttention(nn.Module):
         # Add memory-related parameters
         self.use_memory = config.memory
         if self.use_memory:
-            self.segment_len = getattr(config, "segment_len", 512)
-            self.memory_update = getattr(config, "memory_update", "linear")
-            self.memory = nn.ParameterDict(
-                {
-                    # memory gating
-                    "betas": nn.Parameter(
-                        torch.ones(1, self.num_heads, 1, self.head_dim)
-                    ),
-                    # states
-                    "states": nn.Parameter(
-                        torch.ones(1, self.num_heads, self.head_dim, self.head_dim)
-                    ),
-                    # normalization term
-                    "z": nn.Parameter(
-                        torch.ones(1, self.num_heads, self.head_dim, 1) / self.head_dim
-                    ),
-                }
-            )
-            nn.init.normal_(self.memory["betas"], std=1.0 / self.num_heads)
-            nn.init.kaiming_uniform_(self.memory["states"])
+            self.memory = PraxisMemory(config)
 
         # Standard output projection
         self.output = nn.Linear(
@@ -180,7 +157,7 @@ class PraxisAttention(nn.Module):
             attention_weights = weights[0] - lambda_scalar * weights[1]
 
         # Compute attention output
-        attention_scores = (
+        attention_output = (
             attention_weights @ v
         )  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
@@ -188,79 +165,108 @@ class PraxisAttention(nn.Module):
         if self.differential:
             # Apply GroupNorm to attention scores before memory computation
             # Reshape for GroupNorm
-            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+            attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
             # Shape: (batch_size, seq_len, num_heads, head_dim)
-            attention_scores = attention_scores.view(
+            attention_output = attention_output.view(
                 batch_size, seq_len, self.num_heads * self.head_dim
             )
             # Shape: (batch_size, seq_len, num_heads * head_dim)
             # Permute to (batch_size, num_channels, seq_len)
-            attention_scores = attention_scores.permute(0, 2, 1).contiguous()
+            attention_output = attention_output.permute(0, 2, 1).contiguous()
             # Shape: (batch_size, num_heads * head_dim, seq_len)
             # Apply GroupNorm
-            attention_scores = self.norm(attention_scores)
+            attention_output = self.norm(attention_output)
             # Permute back to (batch_size, seq_len, num_heads * head_dim)
-            attention_scores = attention_scores.permute(0, 2, 1).contiguous()
+            attention_output = attention_output.permute(0, 2, 1).contiguous()
             # Shape: (batch_size, seq_len, num_heads * head_dim)
             # Apply scaling factor
-            attention_scores = attention_scores * (1 - self.lambda_init)
+            attention_output = attention_output * (1 - self.lambda_init)
             # Reshape back to (batch_size, num_heads, seq_len, head_dim)
-            attention_scores = attention_scores.view(
+            attention_output = attention_output.view(
                 batch_size, seq_len, self.num_heads, self.head_dim
             )
-            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+            attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
             # Shape: (batch_size, num_heads, seq_len, head_dim)
 
-        # Add memory-based attention if enabled
+        # Add memory-based attention
         if self.use_memory:
-            # Get the first head_dim components for memory computation
-            q_mem = q[..., : self.head_dim] if self.differential else q
-            k_mem = k[..., : self.head_dim] if self.differential else k
-            v_mem = v[..., : self.head_dim] if self.differential else v
-
-            # Initialize mem and z
-            mem = self.memory["states"]
-            z = self.memory["z"]
-
-            # Compute memory components
-            sigma_q = F.elu(q_mem) + 1.0
-            sigma_k = F.elu(k_mem) + 1.0
-
-            # Memory retrieval
-            attn_mem = (sigma_q @ mem) / (sigma_q @ z)
-
-            # # This would only matter if we used chunking
-            # # Update memory
-            # if self.memory_update == "linear":
-            #     mem = mem + sigma_k.transpose(-2, -1) @ v_mem
-            # else:  # delta update
-            #     mem = mem + sigma_k.transpose(-2, -1) @ (
-            #         v_mem - (sigma_k @ mem) / (sigma_k @ z)
-            #     )
-
-            # # Update normalization term
-            # z = z + (sigma_k.sum(dim=-2, keepdim=True).transpose(-2, -1))
-
-            # Combine with standard attention
-            gate = torch.sigmoid(self.memory["betas"])
-            if self.differential:
-                # Use the normalized attention scores
-                attention_scores = gate * attn_mem + (1 - gate) * attention_scores
-            else:
-                attention_scores = gate * attn_mem + (1 - gate) * (
-                    attention_weights @ v_mem
-                )
+            attention_output = self.memory(q, k, v, attention_output)
 
         if not self.differential:
-            attention_scores = attention_scores.transpose(1, 2).reshape(
+            attention_output = attention_output.transpose(1, 2).reshape(
                 batch_size, seq_len, self.hidden_size
             )
         else:
             # Reshape to (batch_size, seq_len, num_heads * head_dim)
-            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
-            attention_scores = attention_scores.view(
+            attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
+            attention_output = attention_output.view(
                 batch_size, seq_len, self.num_heads * self.head_dim
             )
 
         # Output projection
-        return self.output(attention_scores)
+        return self.output(attention_output)
+
+
+class PraxisMemory(nn.Module):
+    """
+    We also implement a simplified version of Infini-Attention, which omits the chunking:
+    https://arxiv.org/abs/2404.07143
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+        self.epsilon = 1e-8
+        self.use_delta = True
+        self.num_heads = config.num_heads
+        multiplier = 2 if config.differential else 1
+        self.head_dim = config.num_dims // self.num_heads
+        self.betas = nn.Parameter(torch.ones(self.num_heads, 1, self.head_dim))
+        self.init_states = nn.Parameter(
+            torch.zeros(self.num_heads, self.head_dim * multiplier, self.head_dim)
+        )
+        self.init_z = nn.Parameter(
+            torch.ones(self.num_heads, self.head_dim * multiplier) / self.head_dim
+        )
+        nn.init.kaiming_uniform_(self.init_states)
+
+    def forward(self, query: Tensor, key: Tensor, value: Tensor, output: Tensor):
+        # Start with an initial state
+        current_states, current_z = self.init_states, self.init_z
+        # Blend with intermediate states
+        memory_states, memory_z = self._compute_updates(
+            key, value, current_states, current_z
+        )
+        # Retrieve using accumulated state
+        memory_output = self._retrieve_memory(query, memory_states, memory_z)
+        # Combine with attention
+        return self._focus_attention(memory_output, output)
+
+    def _retrieve_memory(self, query, memory_states, memory_z):
+        # Retrieve using accumulated state
+        sigma_q = F.elu(query) + 1.0
+        retrieved_memories = torch.matmul(sigma_q, memory_states)
+        norm_factor = torch.matmul(sigma_q, memory_z.unsqueeze(-1)) + self.epsilon
+        return retrieved_memories / norm_factor
+
+    def _compute_updates(self, key, value, current_states, current_z):
+        # Compute memory updates
+        sigma_k = F.elu(key) + 1.0
+        if self.use_delta:
+            retrieved_value = torch.matmul(sigma_k, current_states) / (
+                torch.matmul(sigma_k, current_z.unsqueeze(-1)) + self.epsilon
+            )
+            delta_value = value - retrieved_value
+            updates = current_states + torch.matmul(
+                sigma_k.transpose(-2, -1), delta_value
+            )
+        else:
+            updates = torch.matmul(sigma_k.transpose(-2, -1), value)
+        z_updates = sigma_k.sum(dim=-2)
+        # Accumulate states
+        memory_states = current_states + updates
+        memory_z = current_z + z_updates
+        return memory_states, memory_z
+
+    def _focus_attention(self, memory_output, attention_output):
+        gate = torch.sigmoid(self.betas)
+        return gate * memory_output + (1 - gate) * attention_output
