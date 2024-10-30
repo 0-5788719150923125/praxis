@@ -169,7 +169,7 @@ class PraxisAttention(nn.Module):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
 
         # Compute attention weights
-        diff_weights = weights[0]
+        attention_weights = weights[0]
         if self.differential:
             # Compute scalar lambda
             lambda_scalar = (
@@ -177,7 +177,39 @@ class PraxisAttention(nn.Module):
                 - torch.exp(torch.dot(self.lambdas["q2"], self.lambdas["k2"]))
                 + self.lambda_init
             )
-            diff_weights = weights[0] - lambda_scalar * weights[1]
+            attention_weights = weights[0] - lambda_scalar * weights[1]
+
+        # Compute attention output
+        attention_scores = (
+            attention_weights @ v
+        )  # Shape: (batch_size, num_heads, seq_len, head_dim)
+
+        # Use differential attention
+        if self.differential:
+            # Apply GroupNorm to attention scores before memory computation
+            # Reshape for GroupNorm
+            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+            # Shape: (batch_size, seq_len, num_heads, head_dim)
+            attention_scores = attention_scores.view(
+                batch_size, seq_len, self.num_heads * self.head_dim
+            )
+            # Shape: (batch_size, seq_len, num_heads * head_dim)
+            # Permute to (batch_size, num_channels, seq_len)
+            attention_scores = attention_scores.permute(0, 2, 1).contiguous()
+            # Shape: (batch_size, num_heads * head_dim, seq_len)
+            # Apply GroupNorm
+            attention_scores = self.norm(attention_scores)
+            # Permute back to (batch_size, seq_len, num_heads * head_dim)
+            attention_scores = attention_scores.permute(0, 2, 1).contiguous()
+            # Shape: (batch_size, seq_len, num_heads * head_dim)
+            # Apply scaling factor
+            attention_scores = attention_scores * (1 - self.lambda_init)
+            # Reshape back to (batch_size, num_heads, seq_len, head_dim)
+            attention_scores = attention_scores.view(
+                batch_size, seq_len, self.num_heads, self.head_dim
+            )
+            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+            # Shape: (batch_size, num_heads, seq_len, head_dim)
 
         # Add memory-based attention if enabled
         if self.use_memory:
@@ -211,39 +243,23 @@ class PraxisAttention(nn.Module):
 
             # Combine with standard attention
             gate = torch.sigmoid(self.memory["betas"])
-            attention_scores = gate * attn_mem + (1 - gate) * (diff_weights @ v_mem)
-        else:
-            # Compute attention output
-            attention_scores = (
-                diff_weights @ v
-            )  # Shape: (batch_size, num_heads, seq_len, head_dim)
+            if self.differential:
+                # Use the normalized attention scores
+                attention_scores = gate * attn_mem + (1 - gate) * attention_scores
+            else:
+                attention_scores = gate * attn_mem + (1 - gate) * (
+                    attention_weights @ v_mem
+                )
 
-        if self.differential:
-            # Reshape for GroupNorm
-            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
-            # Shape: (batch_size, seq_len, num_heads, head_dim)
-
-            attention_scores = attention_scores.view(
-                batch_size, seq_len, self.num_heads * self.head_dim
-            )
-            # Shape: (batch_size, seq_len, num_heads * head_dim)
-
-            # Permute to (batch_size, num_channels, seq_len)
-            attention_scores = attention_scores.permute(0, 2, 1).contiguous()
-            # Shape: (batch_size, num_heads * head_dim, seq_len)
-
-            # Apply GroupNorm
-            attention_scores = self.norm(attention_scores)
-
-            # Permute back to (batch_size, seq_len, num_heads * head_dim)
-            attention_scores = attention_scores.permute(0, 2, 1).contiguous()
-            # Shape: (batch_size, seq_len, num_heads * head_dim)
-
-            # Apply scaling factor
-            attention_scores = attention_scores * (1 - self.lambda_init)
-        else:
+        if not self.differential:
             attention_scores = attention_scores.transpose(1, 2).reshape(
                 batch_size, seq_len, self.hidden_size
+            )
+        else:
+            # Reshape to (batch_size, seq_len, num_heads * head_dim)
+            attention_scores = attention_scores.permute(0, 2, 1, 3).contiguous()
+            attention_scores = attention_scores.view(
+                batch_size, seq_len, self.num_heads * self.head_dim
             )
 
         # Output projection

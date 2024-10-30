@@ -416,7 +416,6 @@ class PraxisTrainer(LightningModule):
         super(PraxisTrainer, self).__init__()
         self.model, self.optimizer, self.scheduler = (model, optimizer, scheduler)
         self.automatic_optimization = True
-        self.num_params = sum(p.numel() for p in self.model.parameters())
         self.num_tokens = 0
         self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
         self.last_train_step_time = None
@@ -907,8 +906,9 @@ print("model:", model)
 
 # Print the total parameter count
 total_params = sum(p.numel() for p in model.parameters())
-reduced = int(total_params / 10**6)
-print(f"parameters: {reduced}M")
+reduced = str(int(total_params / 10**6)) + "M"
+hparams["num_params"] = reduced
+print(f"parameters: {reduced}")
 
 # File cleanup
 if reset:

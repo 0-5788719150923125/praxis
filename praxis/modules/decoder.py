@@ -109,7 +109,7 @@ class PraxisDecoder(nn.Module):
                 raise Exception(e)
 
         if self.debug and not self.training and self.use_autopilot:
-            print(f"DEBUG: Routing through || {' -> '.join(route)}")
+            print(f"DEBUG: Routing through {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 
