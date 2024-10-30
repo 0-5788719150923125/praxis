@@ -41,12 +41,18 @@ class PraxisController(nn.Module):
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),
             ACT2FN["relu"],
-            nn.Linear(hidden_size // 2, max_num_experts * 3),
+            nn.Linear(hidden_size // 2, max_num_experts * 4),
         )
 
         # Initialize predictor weights
         nn.init.normal_(self.prism[-1].weight, std=0.01)
         nn.init.constant_(self.prism[-1].bias, 0.1)
+
+        self.map = nn.Parameter(torch.randn(1, 1, hidden_size))
+        self.position = nn.Parameter(torch.randn(1, 1, hidden_size))
+        self.merges = nn.Linear(hidden_size, 1)
+        self.scale = nn.LayerNorm(hidden_size)
+        self.state = 0
 
     def forward(self, experts, expert, expert_output, actual_index):
         depth = self.depth
@@ -56,20 +62,30 @@ class PraxisController(nn.Module):
 
         # Get all predictions at once and split
         logits = self.prism(expert_output.mean(dim=1))
-        current_logits, routing_logits, exit_logits = torch.split(
+        current_logits, routing_logits, exit_logits, gating_logits = torch.split(
             logits, self.max_num_experts, dim=1
         )
 
         # Slice active experts
         current_logits = current_logits[:, :current_num_experts]
         routing_logits = routing_logits[:, :current_num_experts]
+        exit_logits = exit_logits[:, :current_num_experts]
+        gating_logits = gating_logits[:, :current_num_experts]
 
         should_exit = False
         if self.calm:
             # Compute the early exit score
-            exit_logits = exit_logits[:, :current_num_experts]
             exit_score = exit_logits.sigmoid().mean()
             should_exit = exit_score > self.exit_threshold
+
+        self._accumulate_state(
+            expert_output,
+            actual_index,
+            current_logits,
+            routing_logits,
+            exit_logits,
+            gating_logits,
+        )
 
         # Get expert index and compute current loss
         expert_idx = self._get_expert_idx(expert)
@@ -110,6 +126,57 @@ class PraxisController(nn.Module):
             )
 
         return aux_loss, recommended_next, should_exit
+
+    # return expert_contribution
+    def _accumulate_state(
+        self,
+        expert_output,
+        actual_index,
+        current_logits,
+        routing_logits,
+        exit_logits,
+        gating_logits,
+    ):
+
+        B, S, H = expert_output.size()
+        num_experts = current_logits.size(1)
+
+        # Add dimension for matmul
+        logits = current_logits.unsqueeze(-1)  # [B, E, 1]
+        routes = routing_logits.unsqueeze(-1)  # [B, E, 1]
+        exits = exit_logits.unsqueeze(-1)  # [B, E, 1]
+        gates = gating_logits.unsqueeze(-1)  # [B, E, 1]
+
+        # Combine current and routing predictions
+        entries = torch.matmul(logits * routes, self.map)  # [B, E, H]
+
+        # Normalize by exit predictions and reduce across experts
+        reduced = torch.var(entries / (exits + 1e-6), dim=1, keepdim=True)  # [B, 1, H]
+
+        # Apply gating
+        gated = torch.sigmoid(gates.mean(dim=1, keepdim=True)) * reduced  # [B, 1, H]
+
+        # Add positional modulation
+        pos = torch.arange(S, device=expert_output.device).float()
+        pos = pos.view(1, -1, 1) / S  # Normalize to [0,1]
+        pos_signal = torch.sin(2.0 * torch.pi * pos) * self.position
+
+        expert_contribution = expert_output * gated + pos_signal  # [B, S, H]
+
+        # Smooth accumulation using exponential moving average
+        if actual_index == 0:
+            self.state = expert_contribution
+        else:
+            alpha = torch.sigmoid(torch.tensor(actual_index / self.depth))
+            self.state = (1 - alpha) * self.state + alpha * expert_contribution
+
+    def merge_states(self, inputs):
+        # Compute adaptive mixing ratio
+        gate = torch.sigmoid(self.merges(inputs))
+        # Normalize accumulated state
+        normalized = self.scale(self.state)
+        # Gated addition with residual connection
+        return inputs + gate * F.relu(normalized)
 
     def _update_tracking(
         self,

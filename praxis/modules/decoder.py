@@ -108,6 +108,9 @@ class PraxisDecoder(nn.Module):
                 # Crash on unhandled exceptions
                 raise Exception(e)
 
+        if self.use_autopilot:
+            hidden_states = self.navigator.merge_states(hidden_states)
+
         if self.debug and not self.training and self.use_autopilot:
             print(f"DEBUG: Routing through {' -> '.join(route)}")
 

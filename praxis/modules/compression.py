@@ -4,8 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-
-from praxis import PraxisConfig
+from transformers import AutoConfig
 
 
 class PraxisCompressor(nn.Module):
@@ -13,10 +12,10 @@ class PraxisCompressor(nn.Module):
     Compresses inputs along the sequence length.
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig, target_len: int = 256):
         super().__init__()
         num_features = config.num_dims
-        self.target_len = 256
+        self.target_len = target_len
         self.hidden_size = num_features // 2
 
         self.recurrent = nn.GRU(
@@ -71,3 +70,40 @@ class PraxisCompressor(nn.Module):
         output = output + residual
 
         return output, attention_mask
+
+
+if __name__ == "__main__":
+    # Create a config class with required attributes
+    class DummyConfig:
+        num_dims = 16
+
+    config = DummyConfig()
+
+    # Create manual input tensor with shape [1, 4, 16]
+    # Each row will have increasing values from 0.1 to 0.4
+    x = torch.tensor(
+        [
+            [  # Batch dimension (1)
+                [0.1] * 16,  # First sequence position
+                [0.2] * 16,  # Second sequence position
+                [0.3] * 16,  # Third sequence position
+                [0.4] * 16,  # Fourth sequence position
+            ]
+        ],
+        dtype=torch.float32,
+    )
+
+    # Create attention mask
+    attention_mask = torch.ones(1, 4)
+
+    # Initialize compressor
+    compressor = PraxisCompressor(config, target_len=2)
+
+    # Forward pass
+    output, output_mask = compressor(x, attention_mask)
+
+    # Print shapes and values
+    print(f"Input shape: {x.shape}")
+    print(f"Output shape: {output.shape}")
+    print(f"Input values:\n{x[0]}")  # Remove batch dimension for readability
+    print(f"Output values:\n{output[0]}")  # Remove batch dimension for readability
