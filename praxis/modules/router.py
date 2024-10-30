@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,7 +29,6 @@ class PraxisMixtureOfDepths(nn.Linear):
         layer: nn.Module,
         inputs: Tensor,
         attention_mask: Tensor,
-        labels: Optional[Tensor],
         *args,
         **kwargs,
     ):
@@ -92,7 +89,6 @@ class PraxisMixtureOfDepths(nn.Linear):
         layer_outputs = layer(
             filtered_inputs,
             attention_mask=filtered_attention_mask,
-            labels=labels,
             router_weights=token_weights,
             token_indices=token_indices.squeeze(-1),
         )

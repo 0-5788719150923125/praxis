@@ -9,7 +9,6 @@ from torch import Tensor
 from praxis import PraxisConfig
 from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
-from praxis.modules.memory import PraxisMemory
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.modules.smear import PraxisSMEAR
@@ -27,17 +26,9 @@ class PraxisExpert(nn.Module):
         if config.sparse:
             self.router = PraxisMixtureOfDepths(config)
 
-    def forward(
-        self,
-        inputs: Tensor,
-        attention_mask: Tensor,
-        labels: Optional[Tensor],
-        use_router: bool,
-    ):
+    def forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
         if use_router:
-            hidden_states, aux_loss = self.router(
-                self.block, inputs, attention_mask, labels
-            )
+            hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
         else:
             dummy_router_weights = None
             dummy_token_indices = None
@@ -47,11 +38,7 @@ class PraxisExpert(nn.Module):
                     attention_mask, dtype=torch.int64
                 )
             hidden_states = self.block(
-                inputs,
-                attention_mask,
-                labels,
-                dummy_router_weights,
-                dummy_token_indices,
+                inputs, attention_mask, dummy_router_weights, dummy_token_indices
             )
             aux_loss = 0
         return hidden_states, aux_loss
@@ -87,7 +74,6 @@ class PraxisBlock(nn.Module):
 
     def __init__(self, config: PraxisConfig):
         super().__init__()
-        self.memory = PraxisMemory(config) if config.memory else False
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
@@ -98,7 +84,6 @@ class PraxisBlock(nn.Module):
         self,
         inputs: Tensor,
         attention_mask: Tensor,
-        labels: Optional[Tensor],
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ):
@@ -109,12 +94,7 @@ class PraxisBlock(nn.Module):
             token_indices = None
         residual = inputs
         normalized = self.attn_norm(inputs)
-        query, key, value = normalized, normalized, normalized
-        if self.memory:
-            query, key, value, attention_mask = self.memory(
-                query, key, value, attention_mask, labels
-            )
-        outputs = self.attn(query, key, value, attention_mask, token_indices)
+        outputs = self.attn(normalized, attention_mask, token_indices)
         outputs = self.dropout(outputs)
         outputs = outputs + residual
         residual = outputs

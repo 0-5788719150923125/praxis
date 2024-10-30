@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-# from praxis import PraxisConfig
+from praxis import PraxisConfig
 
 
 class PraxisAttention(nn.Module):
@@ -18,7 +18,7 @@ class PraxisAttention(nn.Module):
     https://arxiv.org/abs/2108.12409
     """
 
-    def __init__(self, config):
+    def __init__(self, config: PraxisConfig):
         super().__init__()
         self.causal = config.causal
         self.differential = config.differential
@@ -72,31 +72,40 @@ class PraxisAttention(nn.Module):
             "positions", torch.arange(self.max_seq_len, dtype=torch.float32)
         )
 
+        # Add memory-related parameters
+        self.use_memory = config.memory
+        if self.use_memory:
+            self.segment_len = getattr(config, "segment_len", 512)
+            self.memory_update = getattr(config, "memory_update", "linear")
+            # Beta parameter for memory gating
+            self.memory_gate = nn.Parameter(
+                torch.randn(1, self.num_heads, 1, self.head_dim)
+            )
+            # Initialize memory states as buffers
+            self.register_buffer(
+                "mem", torch.zeros(1, self.num_heads, self.head_dim, self.head_dim)
+            )
+            self.register_buffer("z", torch.ones(1, self.num_heads, self.head_dim, 1))
+
     def forward(
-        self,
-        query: Tensor,
-        key: Tensor,
-        value: Tensor,
-        attention_mask: Tensor,
-        token_indices: Optional[Tensor] = None,
+        self, inputs: Tensor, attention_mask: Tensor, token_indices: Optional[Tensor]
     ):
-        batch_size, query_seq_len, _ = query.shape
-        _, key_seq_len, _ = key.shape
+        batch_size, seq_len, _ = inputs.shape
 
         # Compute queries, keys, and values
         multiplier = 2 if self.differential else 1
         q = (
-            self.query(query)
+            self.query(inputs)
             .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
             .transpose(1, 2)
         )
         k = (
-            self.key(key)
+            self.key(inputs)
             .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
             .transpose(1, 2)
         )
         v = (
-            self.value(value)
+            self.value(inputs)
             .view(batch_size, -1, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
@@ -107,7 +116,7 @@ class PraxisAttention(nn.Module):
             Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
             K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
 
-            # Compute differntial attention scores
+            # Compute differential attention scores
             scores = [
                 torch.matmul(Q1, K1.transpose(-2, -1)) * reciprocal,
                 torch.matmul(Q2, K2.transpose(-2, -1)) * reciprocal,
@@ -116,49 +125,23 @@ class PraxisAttention(nn.Module):
             # Compute attention scores
             scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
 
-        # Start with standard ALiBi positions
+        # Compute ALiBi biases
         if torch.is_tensor(token_indices):
-            # Use provided token indices
             positions = self.positions[token_indices]
         else:
-            # Use standard sequence positions
             positions = (
-                self.positions[:query_seq_len]
-                .unsqueeze(0)
-                .expand(batch_size, query_seq_len)
+                self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
             )
 
-        # Compute initial position differences
         pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
         biases = self.slopes.view(1, self.num_heads, 1, 1) * pos_diff.unsqueeze(1)
-
-        # Handle memory tokens if present
-        if key_seq_len != query_seq_len:
-            memory_len = key_seq_len - query_seq_len
-
-            # Create empty biases tensor of full size
-            padded_biases = torch.zeros(
-                batch_size,
-                self.num_heads,
-                query_seq_len,
-                key_seq_len,
-                device=query.device,
-                dtype=query.dtype,
-            )
-
-            # Place the computed biases in the correct position after memory tokens
-            padded_biases[..., :, memory_len:] = biases.expand(
-                -1, -1, -1, query_seq_len
-            )
-            biases = padded_biases
-
         scores = [score - biases for score in scores]
 
         # Apply masks
         if self.causal:
             causal_mask = (
                 torch.triu(
-                    torch.full((query_seq_len, key_seq_len), -1e9, device=query.device),
+                    torch.full((seq_len, seq_len), -1e9, device=inputs.device),
                     diagonal=1,
                 )
                 .unsqueeze(0)
@@ -166,12 +149,7 @@ class PraxisAttention(nn.Module):
             )
             scores = [score + causal_mask for score in scores]
 
-        if len(attention_mask.shape) == 2:
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-        elif len(attention_mask.shape) == 3:
-            attention_mask = attention_mask.unsqueeze(1)
-
-        attention_mask = (1.0 - attention_mask) * -1e9
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
         scores = [score + attention_mask for score in scores]
 
         # Compute attention weights
@@ -188,10 +166,59 @@ class PraxisAttention(nn.Module):
             )
             diff_weights = weights[0] - lambda_scalar * weights[1]
 
-        # Compute attention output
-        attention_scores = torch.matmul(
-            diff_weights, v
-        )  # Shape: (batch_size, num_heads, seq_len, head_dim)
+        # Add memory-based attention if enabled
+        if self.use_memory:
+            # Get the first head_dim components for memory computation
+            q_mem = q[..., : self.head_dim] if self.differential else q
+            k_mem = k[..., : self.head_dim] if self.differential else k
+
+            # Get actual batch size from input
+            actual_batch_size = q_mem.size(0)
+
+            # Clone memory matrices for gradient computation
+            mem_expanded = self.mem.clone().expand(actual_batch_size, -1, -1, -1)
+            z_expanded = self.z.clone().expand(actual_batch_size, -1, -1, -1)
+
+            # Compute memory components
+            sigma_q = F.elu(q_mem) + 1.0
+            sigma_k = F.elu(k_mem) + 1.0
+
+            # Memory retrieval with explicit batch size
+            mem_values = (sigma_q @ mem_expanded) / (sigma_q @ z_expanded)
+
+            # Update memory (with clones)
+            if self.memory_update == "linear":
+                new_mem = self.mem.clone() + (
+                    sigma_k.mean(dim=0, keepdim=True).transpose(-2, -1)
+                    @ v.mean(dim=0, keepdim=True)
+                )
+            else:  # delta update
+                new_mem = self.mem.clone() + (
+                    sigma_k.mean(dim=0, keepdim=True).transpose(-2, -1)
+                    @ (
+                        v.mean(dim=0, keepdim=True)
+                        - (sigma_k.mean(dim=0, keepdim=True) @ self.mem)
+                        / (sigma_k.mean(dim=0, keepdim=True) @ self.z)
+                    )
+                )
+
+            # Update normalization term (with clone)
+            new_z = self.z.clone() + sigma_k.mean(dim=0, keepdim=True).sum(
+                dim=-2, keepdim=True
+            ).transpose(-2, -1)
+
+            # Update buffers after computation
+            self.mem.copy_(new_mem.detach())
+            self.z.copy_(new_z.detach())
+
+            # Combine with standard attention
+            gate = torch.sigmoid(self.memory_gate)
+            attention_scores = gate * mem_values + (1 - gate) * (diff_weights @ v)
+        else:
+            # Compute attention output
+            attention_scores = (
+                diff_weights @ v
+            )  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
         if self.differential:
             # Reshape for GroupNorm
@@ -199,7 +226,7 @@ class PraxisAttention(nn.Module):
             # Shape: (batch_size, seq_len, num_heads, head_dim)
 
             attention_scores = attention_scores.view(
-                batch_size, query_seq_len, self.num_heads * self.head_dim
+                batch_size, seq_len, self.num_heads * self.head_dim
             )
             # Shape: (batch_size, seq_len, num_heads * head_dim)
 
@@ -218,7 +245,7 @@ class PraxisAttention(nn.Module):
             attention_scores = attention_scores * (1 - self.lambda_init)
         else:
             attention_scores = attention_scores.transpose(1, 2).reshape(
-                batch_size, -1, self.hidden_size
+                batch_size, seq_len, self.hidden_size
             )
 
         # Output projection

@@ -40,9 +40,7 @@ class PraxisDecoder(nn.Module):
         if self.swarm:
             self.swarm.serve_experts()
 
-    def forward(
-        self, inputs: Tensor, attention_mask: Tensor, labels: Optional[Tensor] = None
-    ):
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
         original_order = experts.copy()
         if self.shuffle:
@@ -71,7 +69,6 @@ class PraxisDecoder(nn.Module):
                     expert,
                     hidden_states,
                     attention_mask,
-                    labels,
                     use_router,
                     gradient_checkpointing,
                 )
@@ -139,11 +136,10 @@ class PraxisDecoder(nn.Module):
         expert: nn.Module,
         hidden_states: Tensor,
         attention_mask: Tensor,
-        labels: Optional[Tensor],
         use_router: bool,
         gradient_checkpointing=False,
     ):
-        def custom_forward(hidden_states, attention_mask, labels, use_router):
+        def custom_forward(hidden_states, attention_mask, use_router):
             if self.swarm and self.swarm.is_remote(expert):
                 # because hivemind cannot receive undefined arguments in the forward pass
                 dummy_router_weights = torch.zeros_like(hidden_states)
@@ -153,12 +149,11 @@ class PraxisDecoder(nn.Module):
                 return expert(
                     hidden_states,
                     attention_mask,
-                    labels,
                     dummy_router_weights,
                     dummy_token_indices,
                 )
             else:
-                return expert(hidden_states, attention_mask, labels, use_router)
+                return expert(hidden_states, attention_mask, use_router)
 
         if self.swarm and self.swarm.is_remote(expert):
             hidden_states = hidden_states.to("cpu")
@@ -169,12 +164,11 @@ class PraxisDecoder(nn.Module):
                 custom_forward,
                 hidden_states,
                 attention_mask,
-                labels,
                 use_router,
                 use_reentrant=False,
             )
         else:
-            return custom_forward(hidden_states, attention_mask, labels, use_router)
+            return custom_forward(hidden_states, attention_mask, use_router)
 
     def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
         """Check if a tensor is filled with zeros (within numerical tolerance)"""
