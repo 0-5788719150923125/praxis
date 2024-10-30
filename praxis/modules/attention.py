@@ -197,7 +197,7 @@ class PraxisAttention(nn.Module):
 
 class PraxisMemory(nn.Module):
     """
-    We also implement a simplified version of Infini-Attention, which omits the chunking:
+    This module implements a simplified version of Infini-Attention (minus the segmentation):
     https://arxiv.org/abs/2404.07143
     """
 
@@ -209,13 +209,14 @@ class PraxisMemory(nn.Module):
         multiplier = 2 if config.differential else 1
         self.head_dim = config.num_dims // self.num_heads
         self.betas = nn.Parameter(torch.ones(self.num_heads, 1, self.head_dim))
+        nn.init.xavier_normal_(self.betas, gain=self.num_heads * multiplier)
         self.init_states = nn.Parameter(
             torch.zeros(self.num_heads, self.head_dim * multiplier, self.head_dim)
         )
+        nn.init.kaiming_uniform_(self.init_states, mode="fan_out")
         self.init_z = nn.Parameter(
             torch.ones(self.num_heads, self.head_dim * multiplier) / self.head_dim
         )
-        nn.init.kaiming_uniform_(self.init_states)
 
     def forward(self, query: Tensor, key: Tensor, value: Tensor, output: Tensor):
         # Start with an initial state
