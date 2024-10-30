@@ -16,6 +16,9 @@ class PraxisAttention(nn.Module):
 
     We implement ALiBi for length extrapolation, to keep parameter counts low:
     https://arxiv.org/abs/2108.12409
+
+    We also implement a simplified version of Infini-Attention, which omits the chunking:
+    https://arxiv.org/abs/2404.07143
     """
 
     def __init__(self, config: PraxisConfig):
@@ -78,9 +81,7 @@ class PraxisAttention(nn.Module):
             self.segment_len = getattr(config, "segment_len", 512)
             self.memory_update = getattr(config, "memory_update", "linear")
             # Beta parameter for memory gating
-            self.memory_gate = nn.Parameter(
-                torch.randn(1, self.num_heads, 1, self.head_dim)
-            )
+            self.betas = nn.Parameter(torch.randn(1, self.num_heads, 1, self.head_dim))
             # Initialize memory states as learnable parameters
             self.mem = nn.Parameter(
                 torch.zeros(1, self.num_heads, self.head_dim, self.head_dim)
@@ -173,43 +174,32 @@ class PraxisAttention(nn.Module):
             k_mem = k[..., : self.head_dim] if self.differential else k
             v_mem = v[..., : self.head_dim] if self.differential else v
 
-            # Get actual batch size from input
-            actual_batch_size = q_mem.size(0)
-
             # Initialize mem and z
-            mem = self.mem.expand(actual_batch_size, -1, -1, -1)
-            z = self.z.expand(actual_batch_size, -1, -1, -1)
+            mem = self.mem
+            z = self.z
 
             # Compute memory components
             sigma_q = F.elu(q_mem) + 1.0
             sigma_k = F.elu(k_mem) + 1.0
 
-            # Memory retrieval with explicit batch size
-            mem_values = (sigma_q @ mem) / (sigma_q @ z)
+            # Memory retrieval
+            attn_mem = (sigma_q @ mem) / (sigma_q @ z)
 
-            # Update memory
-            if self.memory_update == "linear":
-                mem = mem + sigma_k.mean(dim=0, keepdim=True).transpose(
-                    -2, -1
-                ) @ v_mem.mean(dim=0, keepdim=True)
-            else:  # delta update
-                mem = mem + sigma_k.mean(dim=0, keepdim=True).transpose(-2, -1) @ (
-                    v_mem.mean(dim=0, keepdim=True)
-                    - (sigma_k.mean(dim=0, keepdim=True) @ mem)
-                    / (sigma_k.mean(dim=0, keepdim=True) @ z)
-                )
+            # # This would only matter if we used chunking
+            # # Update memory
+            # if self.memory_update == "linear":
+            #     mem = mem + sigma_k.transpose(-2, -1) @ v_mem
+            # else:  # delta update
+            #     mem = mem + sigma_k.transpose(-2, -1) @ (
+            #         v_mem - (sigma_k @ mem) / (sigma_k @ z)
+            #     )
 
-            # Update normalization term
-            # This would only matter if we were using chunking
-            # z = z + (
-            #     sigma_k.mean(dim=0, keepdim=True)
-            #     .sum(dim=-2, keepdim=True)
-            #     .transpose(-2, -1)
-            # )
+            # # Update normalization term
+            # z = z + (sigma_k.sum(dim=-2, keepdim=True).transpose(-2, -1))
 
             # Combine with standard attention
-            gate = torch.sigmoid(self.memory_gate)
-            attention_scores = gate * mem_values + (1 - gate) * (diff_weights @ v_mem)
+            gate = torch.sigmoid(self.betas)
+            attention_scores = gate * attn_mem + (1 - gate) * (diff_weights @ v_mem)
         else:
             # Compute attention output
             attention_scores = (

@@ -19,7 +19,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
-- We also implement a simplified version of [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450).
+- We also implement a simplified version of Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143).
 
 ## join us
 
@@ -160,6 +160,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - the way that Mixture of Depths token indices interact with ALiBi is potentially interesting and worth evaluating.
 - [Simple Recurrent Units](https://gist.github.com/calclavia/bb64b2f9dd3920ff6ad9546a606718e1)
 - [Forward-mode automatic differentiation](https://pytorch.org/tutorials/intermediate/forward_ad_usage.html)
+- [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450) (we tried a version of this, located at misc/episodic_memory.py, but it was terrible, slow, didn't work, used a ton of memory, and was horribly complex)
 
 ## won't do
 
