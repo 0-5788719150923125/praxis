@@ -83,15 +83,15 @@ class PraxisAttention(nn.Module):
         batch_size, seq_len, _ = inputs.shape
 
         # Compute queries, keys, and values
-        multiplier = 2 if self.differential else 1
+        multiplier = (self.query.weight.size(0) // self.num_heads) // self.head_dim
         q = (
             self.query(inputs)
-            .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
+            .view(batch_size, -1, self.num_heads, self.head_dim * multiplier)
             .transpose(1, 2)
         )
         k = (
             self.key(inputs)
-            .view(batch_size, -1, self.num_heads, multiplier * self.head_dim)
+            .view(batch_size, -1, self.num_heads, self.head_dim * multiplier)
             .transpose(1, 2)
         )
         v = (
