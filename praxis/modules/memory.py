@@ -40,31 +40,31 @@ class PraxisMemory(nn.Module):
         # Combine with attention
         return self._focus_attention(memory_output, output)
 
+    def _compute_updates(self, key, value, current_states, current_z):
+        # Compute memory updates
+        sigma_k = F.elu(key) + 1.0
+        value_update = value
+        if self.use_delta:
+            # Retrieve compressed memory states
+            retrieved_value = torch.matmul(sigma_k, current_states) / (
+                torch.matmul(sigma_k, current_z.unsqueeze(-1)) + self.epsilon
+            )
+            value_update = value - retrieved_value
+        # Update the memory states
+        memory_update = current_states + torch.matmul(
+            sigma_k.transpose(-2, -1), value_update
+        )
+        # Accumulate states
+        z_update = sigma_k.sum(dim=-2)
+        memory_z = current_z + z_update
+        return memory_update, memory_z
+
     def _retrieve_memory(self, query, memory_states, memory_z):
         # Retrieve using accumulated state
         sigma_q = F.elu(query) + 1.0
         retrieved_memories = torch.matmul(sigma_q, memory_states)
         norm_factor = torch.matmul(sigma_q, memory_z.unsqueeze(-1)) + self.epsilon
         return retrieved_memories / norm_factor
-
-    def _compute_updates(self, key, value, current_states, current_z):
-        # Compute memory updates
-        sigma_k = F.elu(key) + 1.0
-        if self.use_delta:
-            retrieved_value = torch.matmul(sigma_k, current_states) / (
-                torch.matmul(sigma_k, current_z.unsqueeze(-1)) + self.epsilon
-            )
-            delta_value = value - retrieved_value
-            updates = current_states + torch.matmul(
-                sigma_k.transpose(-2, -1), delta_value
-            )
-        else:
-            updates = torch.matmul(sigma_k.transpose(-2, -1), value)
-        z_updates = sigma_k.sum(dim=-2)
-        # Accumulate states
-        memory_states = current_states + updates
-        memory_z = current_z + z_updates
-        return memory_states, memory_z
 
     def _focus_attention(self, memory_output, attention_output):
         gate = torch.sigmoid(self.betas)
