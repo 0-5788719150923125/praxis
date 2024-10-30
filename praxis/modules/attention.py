@@ -81,11 +81,11 @@ class PraxisAttention(nn.Module):
             self.memory_gate = nn.Parameter(
                 torch.randn(1, self.num_heads, 1, self.head_dim)
             )
-            # Initialize memory states as buffers
-            self.register_buffer(
-                "mem", torch.zeros(1, self.num_heads, self.head_dim, self.head_dim)
+            # Initialize memory states as learnable parameters
+            self.mem = nn.Parameter(
+                torch.zeros(1, self.num_heads, self.head_dim, self.head_dim)
             )
-            self.register_buffer("z", torch.ones(1, self.num_heads, self.head_dim, 1))
+            self.z = nn.Parameter(torch.ones(1, self.num_heads, self.head_dim, 1))
 
     def forward(
         self, inputs: Tensor, attention_mask: Tensor, token_indices: Optional[Tensor]
@@ -171,49 +171,45 @@ class PraxisAttention(nn.Module):
             # Get the first head_dim components for memory computation
             q_mem = q[..., : self.head_dim] if self.differential else q
             k_mem = k[..., : self.head_dim] if self.differential else k
+            v_mem = v[..., : self.head_dim] if self.differential else v
 
             # Get actual batch size from input
             actual_batch_size = q_mem.size(0)
 
-            # Clone memory matrices for gradient computation
-            mem_expanded = self.mem.clone().expand(actual_batch_size, -1, -1, -1)
-            z_expanded = self.z.clone().expand(actual_batch_size, -1, -1, -1)
+            # Initialize mem and z
+            mem = self.mem.expand(actual_batch_size, -1, -1, -1)
+            z = self.z.expand(actual_batch_size, -1, -1, -1)
 
             # Compute memory components
             sigma_q = F.elu(q_mem) + 1.0
             sigma_k = F.elu(k_mem) + 1.0
 
             # Memory retrieval with explicit batch size
-            mem_values = (sigma_q @ mem_expanded) / (sigma_q @ z_expanded)
+            mem_values = (sigma_q @ mem) / (sigma_q @ z)
 
-            # Update memory (with clones)
+            # Update memory
             if self.memory_update == "linear":
-                new_mem = self.mem.clone() + (
-                    sigma_k.mean(dim=0, keepdim=True).transpose(-2, -1)
-                    @ v.mean(dim=0, keepdim=True)
-                )
+                mem = mem + sigma_k.mean(dim=0, keepdim=True).transpose(
+                    -2, -1
+                ) @ v_mem.mean(dim=0, keepdim=True)
             else:  # delta update
-                new_mem = self.mem.clone() + (
-                    sigma_k.mean(dim=0, keepdim=True).transpose(-2, -1)
-                    @ (
-                        v.mean(dim=0, keepdim=True)
-                        - (sigma_k.mean(dim=0, keepdim=True) @ self.mem)
-                        / (sigma_k.mean(dim=0, keepdim=True) @ self.z)
-                    )
+                mem = mem + sigma_k.mean(dim=0, keepdim=True).transpose(-2, -1) @ (
+                    v_mem.mean(dim=0, keepdim=True)
+                    - (sigma_k.mean(dim=0, keepdim=True) @ mem)
+                    / (sigma_k.mean(dim=0, keepdim=True) @ z)
                 )
 
-            # Update normalization term (with clone)
-            new_z = self.z.clone() + sigma_k.mean(dim=0, keepdim=True).sum(
-                dim=-2, keepdim=True
-            ).transpose(-2, -1)
-
-            # Update buffers after computation
-            self.mem.copy_(new_mem.detach())
-            self.z.copy_(new_z.detach())
+            # Update normalization term
+            # This would only matter if we were using chunking
+            # z = z + (
+            #     sigma_k.mean(dim=0, keepdim=True)
+            #     .sum(dim=-2, keepdim=True)
+            #     .transpose(-2, -1)
+            # )
 
             # Combine with standard attention
             gate = torch.sigmoid(self.memory_gate)
-            attention_scores = gate * mem_values + (1 - gate) * (diff_weights @ v)
+            attention_scores = gate * mem_values + (1 - gate) * (diff_weights @ v_mem)
         else:
             # Compute attention output
             attention_scores = (
