@@ -163,45 +163,33 @@ class PraxisAttention(nn.Module):
 
         # Use differential attention
         if self.differential:
-            # Apply GroupNorm to attention scores before memory computation
             # Reshape for GroupNorm
-            attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
-            # Shape: (batch_size, seq_len, num_heads, head_dim)
-            attention_output = attention_output.view(
-                batch_size, seq_len, self.num_heads * self.head_dim
-            )
-            # Shape: (batch_size, seq_len, num_heads * head_dim)
-            # Permute to (batch_size, num_channels, seq_len)
-            attention_output = attention_output.permute(0, 2, 1).contiguous()
-            # Shape: (batch_size, num_heads * head_dim, seq_len)
+            attention_output = (
+                attention_output.permute(0, 2, 1, 3)
+                .reshape(batch_size, seq_len, self.num_heads * self.head_dim)
+                .permute(0, 2, 1)
+                .contiguous()
+            )  # Shape: (batch_size, num_heads * head_dim, seq_len)
             # Apply GroupNorm
             attention_output = self.norm(attention_output)
             # Permute back to (batch_size, seq_len, num_heads * head_dim)
-            attention_output = attention_output.permute(0, 2, 1).contiguous()
-            # Shape: (batch_size, seq_len, num_heads * head_dim)
+            attention_output = (
+                attention_output.permute(0, 2, 1)
+                .view(batch_size, seq_len, self.num_heads, self.head_dim)
+                .permute(0, 2, 1, 3)
+                .contiguous()
+            )  # Shape: (batch_size, num_heads, seq_len, head_dim)
             # Apply scaling factor
             attention_output = attention_output * (1 - self.lambda_init)
-            # Reshape back to (batch_size, num_heads, seq_len, head_dim)
-            attention_output = attention_output.view(
-                batch_size, seq_len, self.num_heads, self.head_dim
-            )
-            attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
-            # Shape: (batch_size, num_heads, seq_len, head_dim)
 
         # Add memory-based attention
         if self.use_memory:
             attention_output = self.memory(q, k, v, attention_output)
 
-        if not self.differential:
-            attention_output = attention_output.transpose(1, 2).reshape(
-                batch_size, seq_len, self.hidden_size
-            )
-        else:
-            # Reshape to (batch_size, seq_len, num_heads * head_dim)
-            attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
-            attention_output = attention_output.view(
-                batch_size, seq_len, self.num_heads * self.head_dim
-            )
+        # Reshape for output projection
+        attention_output = attention_output.transpose(1, 2).reshape(
+            batch_size, seq_len, self.hidden_size
+        )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
         # Output projection
         return self.output(attention_output)
