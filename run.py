@@ -416,6 +416,7 @@ class PraxisTrainer(LightningModule):
         super(PraxisTrainer, self).__init__()
         self.model, self.optimizer, self.scheduler = (model, optimizer, scheduler)
         self.automatic_optimization = True
+        self.num_params = sum(p.numel() for p in self.model.parameters())
         self.num_tokens = 0
         self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
         self.last_train_step_time = None

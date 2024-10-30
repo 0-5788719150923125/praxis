@@ -73,11 +73,11 @@ class PraxisAttention(nn.Module):
                 {
                     # memory gating
                     "betas": nn.Parameter(
-                        torch.randn(1, self.num_heads, 1, self.head_dim)
+                        torch.ones(1, self.num_heads, 1, self.head_dim)
                     ),
                     # states
                     "states": nn.Parameter(
-                        torch.randn(1, self.num_heads, self.head_dim, self.head_dim)
+                        torch.ones(1, self.num_heads, self.head_dim, self.head_dim)
                     ),
                     # normalization term
                     "z": nn.Parameter(
@@ -85,6 +85,8 @@ class PraxisAttention(nn.Module):
                     ),
                 }
             )
+            nn.init.normal_(self.memory["betas"], std=1.0 / self.num_heads)
+            nn.init.kaiming_uniform_(self.memory["states"])
 
         # Standard output projection
         self.output = nn.Linear(
