@@ -1,3 +1,4 @@
+import random
 from typing import List, Optional
 
 import torch
@@ -18,6 +19,7 @@ class PraxisController(nn.Module):
 
     def __init__(self, config: PraxisConfig, max_num_experts):
         super().__init__()
+        self.debug = config.debug
         self.depth = config.depth
         self.max_num_experts = max_num_experts
         self.decay = 0.99
@@ -25,7 +27,6 @@ class PraxisController(nn.Module):
 
         # Early exit logic
         self.calm = True
-        # especially important during training, when the threshold is an average across all examples.
         self.exit_threshold = 0.7
 
         # Simplify tracking to just accuracy
@@ -52,6 +53,7 @@ class PraxisController(nn.Module):
         self.position = nn.Parameter(torch.randn(1, 1, hidden_size))
         self.merges = nn.Linear(hidden_size, 1)
         self.scale = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(config.dropout)
         self.state = 0
 
     def forward(self, experts, expert, expert_output, actual_index):
@@ -161,7 +163,9 @@ class PraxisController(nn.Module):
         pos = pos.view(1, -1, 1) / S  # Normalize to [0,1]
         pos_signal = torch.sin(2.0 * torch.pi * pos) * self.position
 
+        # Normalize before accumulation
         expert_contribution = expert_output * gated + pos_signal  # [B, S, H]
+        expert_contribution = self.scale(expert_contribution)
 
         # Smooth accumulation using exponential moving average
         if actual_index == 0:
@@ -171,12 +175,26 @@ class PraxisController(nn.Module):
             self.state = (1 - alpha) * self.state + alpha * expert_contribution
 
     def merge_states(self, inputs):
-        # Compute adaptive mixing ratio
-        gate = torch.sigmoid(self.merges(inputs))
         # Normalize accumulated state
         normalized = self.scale(self.state)
+        # Activate the expert routes
+        activated = F.tanh(normalized)
+        # Ensure the routes are an ensemble network
+        routes = self.dropout(activated)
+        # Compute adaptive mixing ratio
+        gate = torch.sigmoid(self.merges(inputs))
+        # Ensure some routes are gated
+        gated = routes * gate
+        if self.debug and random.random() < 0.01:
+            mean = gated.flatten().mean().item()
+            mode = gated.flatten().mode()[0].item()
+            summed = gated.flatten().sum().item()
+            variance = gated.flatten().var().item()
+            print("Controller:")
+            print(f"mean: {mean:.6f}, var: {variance:.6f}")
+            print(f"mode: {mode:.6f}, sum: {summed:.6f}")
         # Gated addition with residual connection
-        return inputs + gate * F.relu(normalized)
+        return inputs + gated
 
     def _update_tracking(
         self,
