@@ -20,9 +20,9 @@ class PraxisMemory(nn.Module):
         self.hidden_dim = config.num_dims
         self.dropout = config.dropout
         self.surprise_threshold = 0.5
-        self.max_memory_length = 16
-        self.max_num_memories = 256
-        self.max_retrieval_size = 32  # Set an appropriate limit
+        self.max_memory_length = 32
+        self.max_num_memories = 512
+        self.max_retrieval_size = 128  # Set an appropriate limit
         self.similarity_buffer_size = 3  # number of similar memories retrieved
         self.contiguity_buffer_size = 2  # number of temporally-close memories retrieved
         self.window_size = (
@@ -30,7 +30,7 @@ class PraxisMemory(nn.Module):
         )
         self.gamma = 2.0  # changes event segmentation granularity
 
-        self.compressed = True
+        self.compressed = False
         if self.compressed:
             self.memory_dim = self.hidden_dim // 8
             self.compress = nn.Linear(self.hidden_dim, self.memory_dim)
