@@ -64,6 +64,29 @@ class PraxisAttention(nn.Module):
                 num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
             )
 
+        # Add memory-related parameters
+        self.use_memory = config.memory
+        if self.use_memory:
+            self.segment_len = getattr(config, "segment_len", 512)
+            self.memory_update = getattr(config, "memory_update", "linear")
+            self.memory = nn.ParameterDict(
+                {
+                    # memory gating
+                    "betas": nn.Parameter(
+                        torch.randn(1, self.num_heads, 1, self.head_dim)
+                    ),
+                    # states
+                    "states": nn.Parameter(
+                        torch.randn(1, self.num_heads, self.head_dim, self.head_dim)
+                    ),
+                    # normalization term
+                    "z": nn.Parameter(
+                        torch.ones(1, self.num_heads, self.head_dim, 1) / self.head_dim
+                    ),
+                }
+            )
+
+        # Standard output projection
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
@@ -74,19 +97,6 @@ class PraxisAttention(nn.Module):
         self.register_buffer(
             "positions", torch.arange(self.max_seq_len, dtype=torch.float32)
         )
-
-        # Add memory-related parameters
-        self.use_memory = config.memory
-        if self.use_memory:
-            self.segment_len = getattr(config, "segment_len", 512)
-            self.memory_update = getattr(config, "memory_update", "linear")
-            # Beta parameter for memory gating
-            self.betas = nn.Parameter(torch.randn(1, self.num_heads, 1, self.head_dim))
-            # Initialize memory states as learnable parameters
-            self.mem = nn.Parameter(
-                torch.zeros(1, self.num_heads, self.head_dim, self.head_dim)
-            )
-            self.z = nn.Parameter(torch.ones(1, self.num_heads, self.head_dim, 1))
 
     def forward(
         self, inputs: Tensor, attention_mask: Tensor, token_indices: Optional[Tensor]
@@ -175,8 +185,8 @@ class PraxisAttention(nn.Module):
             v_mem = v[..., : self.head_dim] if self.differential else v
 
             # Initialize mem and z
-            mem = self.mem
-            z = self.z
+            mem = self.memory["states"]
+            z = self.memory["z"]
 
             # Compute memory components
             sigma_q = F.elu(q_mem) + 1.0
@@ -198,7 +208,7 @@ class PraxisAttention(nn.Module):
             # z = z + (sigma_k.sum(dim=-2, keepdim=True).transpose(-2, -1))
 
             # Combine with standard attention
-            gate = torch.sigmoid(self.betas)
+            gate = torch.sigmoid(self.memory["betas"])
             attention_scores = gate * attn_mem + (1 - gate) * (diff_weights @ v_mem)
         else:
             # Compute attention output
