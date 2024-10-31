@@ -19,7 +19,7 @@ class DataFormat(Enum):
     IO = "io"
     CONVERSATION = "conversation"
     QA = "qa"
-    PERSONA_CHAT = "persona_chat"
+    PERSONACHAT = "persona_chat"
     CUSTOM = "custom"
 
 
@@ -66,7 +66,7 @@ def format_qa(document: Dict, keys: List[str]) -> str:
     return f"\nQUESTION: {question}\nANSWER: {answer}"
 
 
-def format_persona_chat(document: Dict, keys: List[str]) -> str:
+def format_personachat(document: Dict, keys: List[str]) -> str:
     """Format persona chat conversations with personas"""
     # Extract personas
     user1_personas = document.get("user 1 personas", "").split("\n")
@@ -106,7 +106,7 @@ FORMAT_HANDLERS = {
     DataFormat.IO: format_input_output,
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.QA: format_qa,
-    DataFormat.PERSONA_CHAT: format_persona_chat,
+    DataFormat.PERSONACHAT: format_personachat,
 }
 
 
@@ -135,7 +135,7 @@ HUGGINGFACE_DATASETS = [
     dict(
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
-        format=DataFormat.PERSONA_CHAT,
+        format=DataFormat.PERSONACHAT,
         weight=0.01,
     ),
     dict(

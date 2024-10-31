@@ -78,16 +78,16 @@ class PraxisController(nn.Module):
         aux_loss = 0
         should_exit = False
         if self.calm:
+            # Compute the early exit score and threshold
+            exit_score = exit_logits.sigmoid().mean()
+            exit_threshold = torch.sigmoid(self.exit_beta)
+            should_exit = exit_score > exit_threshold
             # Layer progress from 1.0 (first layer) to 0.0 (last layer)
             layer_progress = 1.0 - (actual_index / self.depth)
-            # Compute the early exit score
-            exit_threshold = torch.sigmoid(self.exit_beta)
             # Multiply by both threshold and a progress factor
             # This encourages higher exit scores in earlier layers
             # But the effect diminishes in later layers
             exit_logits = exit_logits * exit_threshold * layer_progress
-            exit_score = exit_logits.sigmoid().mean()
-            should_exit = exit_score > exit_threshold
             if self.debug and random.random() < self.log_chance:
                 print(f"DEBUG: exit score: {exit_score.item():.6f}")
                 print(f"DEBUG: exit threshold: {exit_threshold.item():.6f}")
