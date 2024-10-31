@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from transformers import AutoConfig
 
-from praxis import PraxisConfig
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
 from praxis.orchestration.hivemind import PraxisSwarmManagement
@@ -18,7 +18,7 @@ class PraxisDecoder(nn.Module):
     in a single class.
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth

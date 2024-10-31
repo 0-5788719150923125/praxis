@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-
-from praxis import PraxisConfig
+from transformers import AutoConfig
 
 
 class PraxisMixtureOfDepths(nn.Linear):
@@ -14,7 +13,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     def __init__(
         self,
-        config: PraxisConfig,
+        config: AutoConfig,
         *args,
         **kwargs,
     ):

@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
+from transformers import AutoConfig
 
-from praxis import PraxisConfig
 from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.peer import PraxisPEER
@@ -17,7 +17,7 @@ from praxis.modules.smear import PraxisSMEAR
 
 
 class PraxisExpert(nn.Module):
-    def __init__(self, config: PraxisConfig, using_swarm: bool):
+    def __init__(self, config: AutoConfig, using_swarm: bool):
         super().__init__()
         self.using_swarm = using_swarm
         self.block = (
@@ -58,7 +58,7 @@ class HivemindExpert(nn.Module):
     Essentially, Hivemind experts must define static inputs/outputs - negating the "dynamic" nature of Pytorch.
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
         # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
         self.block = PraxisBlock(config)
@@ -72,7 +72,7 @@ class PraxisBlock(nn.Module):
     A standard transformer block, with adjustable feedforward "experts".
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
@@ -121,7 +121,7 @@ class PraxisMLP(nn.Sequential):
     A standard Multi-Layer Perceptron.
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__(
             OrderedDict(
                 [
@@ -139,7 +139,7 @@ class PraxisGLU(nn.Module):
     A standard MLP, augmented with a Gated Linear Units.
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
         self.up = nn.Linear(config.num_dims, 8 * config.num_dims)
         self.act = ACT2FN[config.activation]

@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import AutoConfig
 
-from praxis import PraxisConfig
 from praxis.activations import ACT2FN
 
 
@@ -12,7 +12,7 @@ class PraxisSMEAR(nn.Module):
     https://arxiv.org/abs/2306.03745
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
         num_experts = config.expert["num_experts"]
         self.num_dims = config.num_dims

@@ -4,8 +4,8 @@ from typing import List, Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
+from transformers import AutoConfig
 
-from praxis import PraxisConfig
 from praxis.activations import ACT2FN
 
 
@@ -17,10 +17,10 @@ class PraxisController(nn.Module):
     https://arxiv.org/abs/2207.07061
     """
 
-    def __init__(self, config: PraxisConfig, max_num_experts):
+    def __init__(self, config: AutoConfig, max_num_experts: int):
         super().__init__()
         self.debug = config.debug
-        self.log_chance = 0.005
+        self.log_chance = 0.002
         self.depth = config.depth
         self.max_num_experts = max_num_experts
         self.decay = 0.99
@@ -78,20 +78,19 @@ class PraxisController(nn.Module):
         aux_loss = 0
         should_exit = False
         if self.calm:
+            # Layer progress from 1.0 (first layer) to 0.0 (last layer)
+            layer_progress = 1.0 - (actual_index / self.depth)
             # Compute the early exit score
-            exit_score = exit_logits.sigmoid().mean()
             exit_threshold = torch.sigmoid(self.exit_beta)
+            # Multiply by both threshold and a progress factor
+            # This encourages higher exit scores in earlier layers
+            # But the effect diminishes in later layers
+            exit_logits = exit_logits * exit_threshold * layer_progress
+            exit_score = exit_logits.sigmoid().mean()
             should_exit = exit_score > exit_threshold
-            if self.training:
-                # Layer progress from 1.0 (first layer) to 0.0 (last layer)
-                layer_progress = 1.0 - (actual_index / self.depth)
-                # Multiply by both threshold and a progress factor
-                # This encourages higher exit scores in earlier layers
-                # But the effect diminishes in later layers
-                exit_logits = exit_logits * exit_threshold * layer_progress
-                if self.debug and random.random() < self.log_chance:
-                    print(f"DEBUG: exit score: {exit_score.item():.6f}")
-                    print(f"DEBUG: exit threshold: {exit_threshold.item():.6f}")
+            if self.debug and random.random() < self.log_chance:
+                print(f"DEBUG: exit score: {exit_score.item():.6f}")
+                print(f"DEBUG: exit threshold: {exit_threshold.item():.6f}")
 
         self._accumulate_state(
             expert_output,

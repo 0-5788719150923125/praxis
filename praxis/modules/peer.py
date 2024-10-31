@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from transformers import AutoConfig
 
-from praxis import PraxisConfig
 from praxis.activations import ACT2FN
 
 
@@ -15,7 +15,7 @@ class PraxisPEER(nn.Module):
     https://arxiv.org/abs/2407.04153v1
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
 
         num_dims = config.num_dims

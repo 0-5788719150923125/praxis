@@ -14,8 +14,8 @@ from hivemind.utils import BatchTensorDescriptor
 from hivemind.utils.nested import nested_flatten
 from torch import Tensor
 from torch.autograd.function import once_differentiable
+from transformers import AutoConfig
 
-from praxis import PraxisConfig
 from praxis.modules.experts import PraxisBlock
 from praxis.modules.router import PraxisMixtureOfDepths
 
@@ -63,7 +63,7 @@ class PraxisSwarmManagement:
     A helper class, with convenience methods for Hivemind swarm management.
     """
 
-    def __init__(self, config: PraxisConfig):
+    def __init__(self, config: AutoConfig):
         super().__init__()
 
         self.config = config
@@ -98,9 +98,7 @@ class PraxisSwarmManagement:
     def is_remote(self, expert: Optional[RemoteExpert]):
         return isinstance(expert, RemoteExpert)
 
-    def register_expert(
-        self, config: PraxisConfig, expert_cls: str = "hivemind_expert"
-    ):
+    def register_expert(self, config: AutoConfig, expert_cls: str = "hivemind_expert"):
         assert expert_cls in name_to_block
         expert = name_to_block[expert_cls](config)
 
