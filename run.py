@@ -1,5 +1,6 @@
 import os
 import signal
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -19,6 +20,56 @@ os.setpgrp()
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
 
+
+def check_for_updates():
+    try:
+        # First, fetch the latest changes from remote
+        subprocess.run(["git", "fetch"], check=True, capture_output=True)
+
+        # Try to get the current branch name
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Get commit counts ahead and behind
+        status = (
+            subprocess.run(
+                [
+                    "git",
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    f"HEAD...origin/{branch}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            .stdout.strip()
+            .split()
+        )
+
+        commits_behind = int(status[1])
+
+        if commits_behind > 0:
+            print(
+                f"\nUpdate available: Your machine is {commits_behind} commit(s) behind the Praxis git repository."
+            )
+            print("\nTo update, use the command: 'git pull'")
+            return time.sleep(10)
+        else:
+            return "Up to date: Your repository is synchronized with the Praxis git repository."
+
+    except subprocess.CalledProcessError as e:
+        return f"Error checking for updates: {str(e)}"
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"
+
+
+check_for_updates()
 
 import argparse
 import contextlib
@@ -43,27 +94,21 @@ import torch
 import torch.nn as nn
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (
-    Callback,
-    GradientAccumulationScheduler,
-    ModelCheckpoint,
-)
+from lightning.pytorch.callbacks import (Callback,
+                                         GradientAccumulationScheduler,
+                                         ModelCheckpoint)
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedTokenizer,
-)
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer, PreTrainedTokenizer)
 
 from api import APIServer
 from builders import get_datamodules
 from interface import TerminalDashboard
-from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
+from praxis import (EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM,
+                    PraxisModel)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
