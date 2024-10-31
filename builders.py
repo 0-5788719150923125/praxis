@@ -181,7 +181,6 @@ def get_datamodules(
     seed: int,
     dev: bool,
     phi: bool,
-    instruct: bool,
     gun: bool,
     tokenizer,
     hparams,
@@ -189,7 +188,7 @@ def get_datamodules(
     *args,
 ):
     train_data = []
-    config = get_dataset_configs(dev, phi, instruct)
+    config = get_dataset_configs(dev, phi)
     for c in config["primary"]:
         train_data.append(
             get_dataset("huggingface", tokenizer, hparams["block_size"], seed, c, *args)
@@ -249,7 +248,7 @@ def get_dataset(format, tokenizer, block_size, seed, *args):
         return dataset
 
 
-def get_dataset_configs(dev: bool, phi: bool, instruct: bool):
+def get_dataset_configs(dev: bool, phi: bool):
     config = {"primary": [], "validation": []}
     config["primary"].append(
         random.choices(HUGGINGFACE_DATASETS, HUGGINGFACE_PROBS, k=1)[0]
@@ -257,7 +256,6 @@ def get_dataset_configs(dev: bool, phi: bool, instruct: bool):
     if phi:
         config["primary"].append(HUGGINGFACE_DATASETS[0])
         config["primary"].append(HUGGINGFACE_DATASETS[1])
-    if instruct:
         config["primary"].append(HUGGINGFACE_DATASETS[2])
         config["primary"].append(HUGGINGFACE_DATASETS[3])
     if dev:

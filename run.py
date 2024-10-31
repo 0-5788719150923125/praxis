@@ -276,12 +276,6 @@ parser.add_argument(
     help="Supplement training with chat data from https://src.eco",
 )
 parser.add_argument(
-    "--instruct",
-    action="store_true",
-    default=False,
-    help="Supplement training with instruction-tuning",
-)
-parser.add_argument(
     "--quiet",
     action="store_true",
     default=False,
@@ -1011,7 +1005,7 @@ api_server.start()
 
 # Load datasets
 train_datamodule, validation_datamodule = get_datamodules(
-    seed, dev, phi, instruct, gun, tokenizer, hparams, data_path
+    seed, dev, phi, gun, tokenizer, hparams, data_path
 )
 
 # create the optimizer
