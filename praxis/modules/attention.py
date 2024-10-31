@@ -174,7 +174,7 @@ class PraxisAttention(nn.Module):
             )  # Shape: (batch_size, num_heads * head_dim, seq_len)
             # Apply GroupNorm
             attention_output = self.norm(attention_output)
-            # Permute back to (batch_size, seq_len, num_heads * head_dim)
+            # Permute to original shape
             attention_output = (
                 attention_output.permute(0, 2, 1)
                 .view(batch_size, seq_len, self.num_heads, self.head_dim)

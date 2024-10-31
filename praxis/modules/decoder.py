@@ -112,7 +112,7 @@ class PraxisDecoder(nn.Module):
             hidden_states = self.navigator.merge_states(hidden_states)
 
         if self.debug and not self.training and self.use_autopilot:
-            print(f"DEBUG: Routing through {' -> '.join(route)}")
+            print(f"DEBUG: routing through: {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 

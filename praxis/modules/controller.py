@@ -20,6 +20,7 @@ class PraxisController(nn.Module):
     def __init__(self, config: PraxisConfig, max_num_experts):
         super().__init__()
         self.debug = config.debug
+        self.log_chance = 0.005
         self.depth = config.depth
         self.max_num_experts = max_num_experts
         self.decay = 0.99
@@ -27,7 +28,7 @@ class PraxisController(nn.Module):
 
         # Early exit logic
         self.calm = True
-        self.exit_threshold = 0.7
+        self.exit_beta = nn.Parameter(torch.tensor(0.5))
 
         # Simplify tracking to just accuracy
         self.expert_accuracies = {i: 0.0 for i in range(max_num_experts)}
@@ -74,11 +75,23 @@ class PraxisController(nn.Module):
         exit_logits = exit_logits[:, :current_num_experts]
         gating_logits = gating_logits[:, :current_num_experts]
 
+        aux_loss = 0
         should_exit = False
         if self.calm:
             # Compute the early exit score
             exit_score = exit_logits.sigmoid().mean()
-            should_exit = exit_score > self.exit_threshold
+            exit_threshold = torch.sigmoid(self.exit_beta)
+            should_exit = exit_score > exit_threshold
+            if self.training:
+                # Layer progress from 1.0 (first layer) to 0.0 (last layer)
+                layer_progress = 1.0 - (actual_index / self.depth)
+                # Multiply by both threshold and a progress factor
+                # This encourages higher exit scores in earlier layers
+                # But the effect diminishes in later layers
+                exit_logits = exit_logits * exit_threshold * layer_progress
+                if self.debug and random.random() < self.log_chance:
+                    print(f"DEBUG: exit score: {exit_score.item():.6f}")
+                    print(f"DEBUG: exit threshold: {exit_threshold.item():.6f}")
 
         self._accumulate_state(
             expert_output,
@@ -185,14 +198,13 @@ class PraxisController(nn.Module):
         gate = torch.sigmoid(self.merges(inputs))
         # Ensure some routes are gated
         gated = routes * gate
-        if self.debug and random.random() < 0.01:
+        if self.debug and random.random() < self.log_chance:
             mean = gated.flatten().mean().item()
             mode = gated.flatten().mode()[0].item()
             summed = gated.flatten().sum().item()
             variance = gated.flatten().var().item()
-            print("Controller:")
-            print(f"mean: {mean:.6f}, var: {variance:.6f}")
-            print(f"mode: {mode:.6f}, sum: {summed:.6f}")
+            print(f"DEBUG: mean: {mean:.6f}, variance: {variance:.6f}")
+            print(f"DEBUG: mode: {mode:.6f}, sum: {summed:.6f}")
         # Gated addition with residual connection
         return inputs + gated
 
