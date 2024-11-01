@@ -65,9 +65,9 @@ class PraxisAttention(nn.Module):
             )
 
         # Add memory-related parameters
-        # self.use_memory = config.memory
-        # if self.use_memory:
-        #     self.memory = PraxisMemory(config)
+        self.use_memory = config.memory
+        if self.use_memory:
+            self.memory = PraxisMemory(config)
 
         # Standard output projection
         self.output = nn.Linear(
@@ -187,8 +187,8 @@ class PraxisAttention(nn.Module):
             attention_output = attention_output * (1 - self.lambda_init)
 
         # Add memory-based attention
-        # if self.use_memory:
-        #     attention_output = self.memory(q, k, v, attention_output)
+        if self.use_memory:
+            attention_output = self.memory(inputs, q, k, v, attention_output)
 
         # Reshape for output projection
         attention_output = attention_output.transpose(1, 2).reshape(
