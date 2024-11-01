@@ -114,21 +114,23 @@ class PraxisMemory(nn.Module):
 
         return combined_output
 
-    def _normalize_vectors(self, x: Tensor) -> Tensor:
-        return x / (x.norm(dim=-1, keepdim=True) + self.epsilon)
-
     def _find_knn(self, queries: Tensor) -> tuple:
         """
-        Finds the k-nearest neighbors for each query across all heads.
+        Finds the k-nearest neighbors for each query across all heads using cosine similarity.
         """
         if self.key_memories.size(1) == 0:
             return None, None
 
-        # Normalize queries and keys
-        queries_norm = self._normalize_vectors(queries)  # [num_heads, Q, dim]
-        keys_norm = self._normalize_vectors(self.key_memories)  # [num_heads, K, dim]
+        # Normalize queries and keys using F.normalize for numerical stability
+        queries_norm = F.normalize(
+            queries, p=2, dim=-1, eps=self.epsilon
+        )  # [num_heads, Q, dim]
+        keys_norm = F.normalize(
+            self.key_memories, p=2, dim=-1, eps=self.epsilon
+        )  # [num_heads, K, dim]
 
         # Compute cosine similarity: [num_heads, Q, K]
+        # Since vectors are normalized, cosine similarity is equivalent to the dot product
         similarities = torch.bmm(queries_norm, keys_norm.transpose(1, 2)) / math.sqrt(
             self.head_dim
         )
