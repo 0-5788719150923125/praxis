@@ -19,7 +19,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
-- We also implement a simplified version of Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143).
+- We also implement a simplistic KNN-based external memory module, akin to [Memorizing Transformers](https://arxiv.org/abs/2203.08913).
 
 ## join us
 
@@ -167,3 +167,4 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 - cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
 - half-precision; [there is research](https://sambanova.ai/blog/alibi-interpolation-vs-extrapolation) that suggests a detrimental interaction between ALiBi and low-precision. So, until we have replaced ALiBi - operations use full (32-bit) precision for now.
+- We implemented a simplified version of Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143), but found it to be ineffective. Particularly, we were looking for long-term memory, whereas this is primarly used for extremely long context lengths (i.e. "memories" do not persist between forward passes).
