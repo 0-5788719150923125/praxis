@@ -207,8 +207,7 @@ class PraxisController(nn.Module):
             print(f"DEBUG: mean: {mean:.6f}, variance: {variance:.6f}")
             print(f"DEBUG: mode: {mode:.6f}, sum: {summed:.6f}")
         # Gated addition with residual connection
-        scaling = 0.0001
-        return inputs + (gated * scaling)
+        return inputs + gated
 
     def _update_tracking(
         self,

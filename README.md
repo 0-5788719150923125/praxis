@@ -161,6 +161,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Simple Recurrent Units](https://gist.github.com/calclavia/bb64b2f9dd3920ff6ad9546a606718e1)
 - [Forward-mode automatic differentiation](https://pytorch.org/tutorials/intermediate/forward_ad_usage.html)
 - [Human-like Episodic Memory for Infinite Context LLMs](https://arxiv.org/abs/2407.09450) (we tried a version of this, located at misc/episodic_memory.py, but it was terrible, slow, didn't work, used a ton of memory, and was horribly complex)
+- [Facts as Experts: Adaptable and Interpretable Neural Memory over Symbolic Knowledge](https://arxiv.org/abs/2007.00849)
 
 ## won't do
 

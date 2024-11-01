@@ -7,7 +7,10 @@ from transformers import AutoConfig
 
 class PraxisMemory(nn.Module):
     """
-    This module implements a simplified version of Infini-Attention (minus the segmentation):
+    This module implements a simplified version of Infini-Attention. Whereas the original
+    research would initialize a new "memory state" for every forward pass, and use segmentation
+    to process iterations over a sequence length (in chunks), our approach attempts to persist
+    memory between entirely different sequences:
     https://arxiv.org/abs/2404.07143
     """
 
@@ -21,24 +24,23 @@ class PraxisMemory(nn.Module):
         self.head_dim = config.num_dims // self.num_heads
         multiplier = 2 if config.differential else 1
         self.betas = nn.Parameter(torch.ones(self.num_heads, 1, self.head_dim))
-        nn.init.xavier_normal_(self.betas, gain=self.num_heads * multiplier)
-        self.init_states = nn.Parameter(
+        self.memory_states = nn.Parameter(
             torch.zeros(self.num_heads, self.head_dim * multiplier, self.head_dim)
         )
-        nn.init.kaiming_uniform_(self.init_states, mode="fan_out", nonlinearity="relu")
-        self.init_z = nn.Parameter(
+        self.memory_z = nn.Parameter(
             torch.ones(self.num_heads, self.head_dim * multiplier) / self.head_dim
         )
 
     def forward(self, query: Tensor, key: Tensor, value: Tensor, output: Tensor):
-        # Start with an initial state
-        current_states, current_z = self.init_states, self.init_z
+        # Expand memory states and z to match the batch size
+        current_states, current_z = self.memory_states, self.memory_z
         # Blend with intermediate states
-        memory_states, memory_z = self._compute_updates(
-            key, value, current_states, current_z
-        )
-        # Retrieve using accumulated state
-        memory_output = self._retrieve_memory(query, memory_states, memory_z)
+        new_states, new_z = self._compute_updates(key, value, current_states, current_z)
+        # Retrieve compressed memories from the memory state
+        memory_output = self._retrieve_memory(query, new_states, new_z)
+        # Accumulated memory states to persist representations between forward passes
+        self.memory_states.add(new_states)
+        self.memory_z.add(new_z)
         # Combine with attention
         return self._focus_attention(memory_output, output)
 
