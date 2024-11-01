@@ -27,7 +27,7 @@ class PraxisMemory(nn.Module):
         # Gating parameter: one gate per head
         self.gate = nn.Parameter(torch.zeros(self.num_heads))
         # Initialize key_memories and value_memories for each head
-        multiplier = 2 if config.differentiable else 1
+        multiplier = 2 if config.differential else 1
         self.register_buffer(
             "key_memories", torch.empty(self.num_heads, 0, self.head_dim * multiplier)
         )
