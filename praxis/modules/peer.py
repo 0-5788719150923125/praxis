@@ -15,6 +15,8 @@ class PraxisPEER(nn.Module):
     https://arxiv.org/abs/2407.04153v1
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__()
 

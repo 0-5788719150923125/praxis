@@ -19,6 +19,8 @@ class PraxisAttention(nn.Module):
     https://arxiv.org/abs/2108.12409
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.causal = config.causal

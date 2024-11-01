@@ -11,6 +11,8 @@ class PraxisMemory(nn.Module):
     https://arxiv.org/abs/2404.07143
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.epsilon = 1e-8

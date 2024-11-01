@@ -12,10 +12,12 @@ from praxis.activations import ACT2FN
 class PraxisController(nn.Module):
     """
     This controller implements an expert-prediction mechanism, which trains a small
-    router to intelligently route through layers in the network. It also implements
-    an early-exit strategy, inspired by CALM:
+    router to intelligently-route through layers in the network. It also implements
+    an early exit strategy, loosely-inspired by CALM:
     https://arxiv.org/abs/2207.07061
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: AutoConfig, max_num_experts: int):
         super().__init__()
@@ -205,7 +207,8 @@ class PraxisController(nn.Module):
             print(f"DEBUG: mean: {mean:.6f}, variance: {variance:.6f}")
             print(f"DEBUG: mode: {mode:.6f}, sum: {summed:.6f}")
         # Gated addition with residual connection
-        return inputs + gated
+        scaling = 0.0001
+        return inputs + (gated * scaling)
 
     def _update_tracking(
         self,

@@ -17,6 +17,8 @@ from praxis.modules.smear import PraxisSMEAR
 
 
 class PraxisExpert(nn.Module):
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig, using_swarm: bool):
         super().__init__()
         self.using_swarm = using_swarm
@@ -58,6 +60,8 @@ class HivemindExpert(nn.Module):
     Essentially, Hivemind experts must define static inputs/outputs - negating the "dynamic" nature of Pytorch.
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__()
         # self.max_batch_size = 4 // TODO: will need to figure out how to handle the disparities in batch size/sequence length between experts
@@ -71,6 +75,8 @@ class PraxisBlock(nn.Module):
     """
     A standard transformer block, with adjustable feedforward "experts".
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: AutoConfig):
         super().__init__()
@@ -121,6 +127,8 @@ class PraxisMLP(nn.Sequential):
     A standard Multi-Layer Perceptron.
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__(
             OrderedDict(
@@ -138,6 +146,8 @@ class PraxisGLU(nn.Module):
     """
     A standard MLP, augmented with a Gated Linear Units.
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: AutoConfig):
         super().__init__()

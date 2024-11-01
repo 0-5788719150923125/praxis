@@ -11,6 +11,8 @@ class PraxisMixtureOfDepths(nn.Linear):
     original authors of this research: https://arxiv.org/abs/2404.02258
     """
 
+    __version__ = "0.1.0"
+
     def __init__(
         self,
         config: AutoConfig,

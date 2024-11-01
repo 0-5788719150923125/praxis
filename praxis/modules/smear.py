@@ -12,6 +12,8 @@ class PraxisSMEAR(nn.Module):
     https://arxiv.org/abs/2306.03745
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__()
         num_experts = config.expert["num_experts"]

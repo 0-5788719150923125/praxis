@@ -12,6 +12,8 @@ class PraxisCompressor(nn.Module):
     Compresses inputs along the sequence length.
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig, target_len: int = 256):
         super().__init__()
         num_features = config.num_dims

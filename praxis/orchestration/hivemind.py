@@ -23,6 +23,8 @@ from praxis.modules.router import PraxisMixtureOfDepths
 class FaultTolerantRemoteModuleCall(_RemoteModuleCall):
     """A monkey-patch of _RemoteModuleCall that handles failures gracefully"""
 
+    __version__ = "0.1.0"
+
     @staticmethod
     def forward(ctx, dummy, uid, stub, info, *inputs):
         try:
@@ -62,6 +64,8 @@ class PraxisSwarmManagement:
     """
     A helper class, with convenience methods for Hivemind swarm management.
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: AutoConfig):
         super().__init__()

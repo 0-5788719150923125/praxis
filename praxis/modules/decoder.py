@@ -18,6 +18,8 @@ class PraxisDecoder(nn.Module):
     in a single class.
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.debug = config.debug
@@ -126,7 +128,7 @@ class PraxisDecoder(nn.Module):
         return None
 
     def _define_checkpoints(self, strategy="speed", num_layers=0):
-        self.checkpoint_indices = []  # no gradient checkpointing
+        self.checkpoint_indices = []  # speed / no gradient checkpointing
         if strategy == "aggressive":
             # every layer
             self.checkpoint_indices = [i for i in range(num_layers)]
