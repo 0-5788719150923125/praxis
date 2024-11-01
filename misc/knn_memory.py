@@ -113,9 +113,9 @@ class MultiHeadAttention(nn.Module):
 
         # Memory operations using the same q/k/v projections
         # Reshape for memory operations [batch*heads*seq_len, d_k]
-        flat_q = q.permute(0, 1, 2, 3).reshape(-1, self.d_k)
-        flat_k = k.permute(0, 1, 2, 3).reshape(-1, self.d_k)
-        flat_v = v.permute(0, 1, 2, 3).reshape(-1, self.d_k)
+        flat_q = q.contiguous().view(-1, self.d_k)
+        flat_k = k.contiguous().view(-1, self.d_k)
+        flat_v = v.contiguous().view(-1, self.d_k)
 
         # Get memory output
         scores, indices = self.memory.find_knn(flat_q)
@@ -153,81 +153,70 @@ class KNNMemory(nn.Module):
         self.dim = dim
         self.k = k
 
-        self.key_memories = []
-        self.value_memories = []
-        self.gate = nn.Parameter(torch.zeros(1))
+        # Initialize key_memories and value_memories as empty tensors and register as buffers
+        self.register_buffer("key_memories", torch.empty(0, dim))
+        self.register_buffer("value_memories", torch.empty(0, dim))
 
     @property
     def current_size(self):
-        return len(self.key_memories)
+        return self.key_memories.size(0)
 
     def normalize_vectors(self, x: torch.Tensor) -> torch.Tensor:
-        return x / (torch.norm(x, dim=-1, keepdim=True) + 1e-8)
+        return x / (x.norm(dim=-1, keepdim=True) + 1e-8)
 
     def find_knn(self, query: torch.Tensor) -> tuple:
         """
         Args:
-            query: shape [batch_size * seq_len, d_model]
+            query: shape [batch_size * seq_len * num_heads, d_k]
         """
-        if len(self.key_memories) == 0:
+        if self.key_memories.size(0) == 0:
             return None, None
 
-        # Stack all memories and ensure 2D shape
-        keys = torch.stack(self.key_memories).view(
-            -1, self.dim
-        )  # [num_memories, d_model]
+        # keys: [num_memories, dim]
+        keys = self.key_memories
 
         # Normalize query and keys
         query = self.normalize_vectors(query)
         keys = self.normalize_vectors(keys)
 
         # Compute similarities
-        similarities = torch.matmul(query, keys.t())  # [batch*seq_len, num_memories]
+        similarities = torch.matmul(
+            query, keys.t()
+        )  # [batch*seq_len*num_heads, num_memories]
 
         # Get top k scores and indices
-        scores, indices = torch.topk(
-            similarities, min(self.k, len(self.key_memories)), dim=-1
-        )
+        k = min(self.k, self.key_memories.size(0))
+        scores, indices = torch.topk(similarities, k, dim=-1)
 
         return scores, indices
 
     def get_values(self, indices: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            indices: shape [batch*seq_len, k]
+            indices: shape [batch*seq_len*num_heads, k]
         Returns:
-            values: shape [batch*seq_len, k, d_model]
+            values: shape [batch*seq_len*num_heads, k, d_k]
         """
-        # Stack values and ensure correct shape
-        values = torch.stack(self.value_memories).view(
-            -1, self.dim
-        )  # [num_memories, d_model]
+        # values: [num_memories, dim]
+        values = self.value_memories
 
         # Gather values for each query's top k indices
-        gathered_values = values[indices]  # [batch*seq_len, k, d_model]
+        gathered_values = values[indices]  # [batch*seq_len*num_heads, k, dim]
 
         return gathered_values
 
     def update_memory(self, keys: torch.Tensor, values: torch.Tensor):
         """
         Args:
-            keys: shape [batch*seq_len, d_model]
-            values: shape [batch*seq_len, d_model]
+            keys: shape [batch*seq_len*num_heads, d_k]
+            values: shape [batch*seq_len*num_heads, d_k]
         """
-        batch_size = keys.shape[0]
+        # Concatenate new keys and values
+        self.key_memories = torch.cat([self.key_memories, keys], dim=0)
+        self.value_memories = torch.cat([self.value_memories, values], dim=0)
 
-        # Convert to list of memories, keeping each as a 2D tensor [1, d_model]
-        new_keys = list(keys.view(-1, self.dim).unsqueeze(0).chunk(batch_size, dim=0))
-        new_values = list(
-            values.view(-1, self.dim).unsqueeze(0).chunk(batch_size, dim=0)
-        )
-
-        # Add new memories
-        self.key_memories.extend(new_keys)
-        self.value_memories.extend(new_values)
-
-        # Remove oldest memories if we exceed capacity
-        if len(self.key_memories) > self.max_memories:
+        # If exceed max_memories, keep the latest max_memories
+        if self.key_memories.size(0) > self.max_memories:
             self.key_memories = self.key_memories[-self.max_memories :]
             self.value_memories = self.value_memories[-self.max_memories :]
 
