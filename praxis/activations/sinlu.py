@@ -13,7 +13,6 @@ class SinLU(nn.Module):
         super().__init__()
         self.a = nn.Parameter(torch.empty(1))
         self.b = nn.Parameter(torch.empty(1))
-
         nn.init.constant_(self.a, 1.0)
         nn.init.constant_(self.b, 1.0)
 
