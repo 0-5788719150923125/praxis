@@ -21,5 +21,5 @@ class NMDA(nn.Module):
         nn.init.constant_(self.beta, 1.0)
 
     def forward(self, x):
-        a = 0 if self.alpha <= 0 else self.alpha.log()
-        return x * torch.sigmoid(self.beta * x - a)
+        alpha = 0 if self.alpha <= 0 else self.alpha.log()
+        return x * torch.sigmoid(self.beta * x - alpha)
