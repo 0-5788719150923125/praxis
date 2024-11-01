@@ -42,7 +42,7 @@ class KNNMemory(nn.Module):
         """
         super().__init__()
         self.num_heads = num_heads
-        self.dim = dim
+        self.dim = dim  # per-head dimension
         self.k = k
         self.max_memories = max_memories
 
@@ -159,17 +159,44 @@ class KNNMemory(nn.Module):
             self.key_memories = self.key_memories[:, excess:, :]
             self.value_memories = self.value_memories[:, excess:, :]
 
-    def forward(self, queries: torch.Tensor, attn_out: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attn_out: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        Performs kNN lookup, applies gating, and combines memory-based attention with standard attention.
+        Performs kNN lookup, applies gating, combines memory-based attention with standard attention,
+        and updates memory.
 
         Args:
             queries (torch.Tensor): Queries of shape [num_heads, Q, dim].
+            keys (torch.Tensor): Keys of shape [num_heads, Q, dim].
+            values (torch.Tensor): Values of shape [num_heads, Q, dim].
             attn_out (torch.Tensor): Standard attention output of shape [batch_size, num_heads, seq_len, dim].
 
         Returns:
             torch.Tensor: Combined attention output of shape [batch_size, num_heads, seq_len, dim].
         """
+        batch_size, seq_len, d_model = x.size()
+        # Prepare queries, keys, and values for memory: [num_heads, Q, dim]
+        queries = (
+            q.view(batch_size, self.num_heads, seq_len, -1)
+            .transpose(0, 1)
+            .reshape(self.num_heads, batch_size * seq_len, -1)
+        )  # [num_heads, Q, d_k]
+        keys = (
+            k.view(batch_size, self.num_heads, seq_len, -1)
+            .transpose(0, 1)
+            .reshape(self.num_heads, batch_size * seq_len, -1)
+        )  # [num_heads, Q, d_k]
+        values = (
+            v.view(batch_size, self.num_heads, seq_len, -1)
+            .transpose(0, 1)
+            .reshape(self.num_heads, batch_size * seq_len, -1)
+        )  # [num_heads, Q, d_k]
         scores_mem, indices_mem = self.find_knn(queries)
 
         if scores_mem is not None:
@@ -186,7 +213,7 @@ class KNNMemory(nn.Module):
             seq_len = attn_out.size(2)
             weighted_memory = weighted_memory.view(
                 self.num_heads, batch_size, seq_len, self.dim
-            )
+            )  # [num_heads, batch_size, seq_len, dim]
 
             # Permute to [batch_size, num_heads, seq_len, dim] to align with attn_out
             weighted_memory = weighted_memory.permute(
@@ -207,6 +234,9 @@ class KNNMemory(nn.Module):
         else:
             # If no memory found, use standard attention output
             combined_output = attn_out  # [batch_size, num_heads, seq_len, dim]
+
+        # Update memory with current keys and values
+        self.update_memory(keys, values)  # Correct dimensions: [num_heads, Q, dim]
 
         return combined_output
 
@@ -275,7 +305,9 @@ class MultiHeadAttention(nn.Module):
         mask = mask.to(device)
         return mask
 
-    def attention(self, q, k, v, mask=None):
+    def attention(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask=None
+    ) -> torch.Tensor:
         """
         Computes scaled dot-product attention.
 
@@ -301,7 +333,7 @@ class MultiHeadAttention(nn.Module):
         attn_out = torch.bmm(attn, v)  # [batch_heads, Q, d_k]
         return attn_out
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for MultiHeadAttention.
 
@@ -347,51 +379,12 @@ class MultiHeadAttention(nn.Module):
             .contiguous()
         )  # [batch_size, num_heads, seq_len, d_k]
 
-        if not self.use_memory:
-            # Combine heads: [batch_size, seq_len, num_heads * d_k]
-            attn_out_combined = (
-                attn_out.contiguous()
-                .view(batch_size, self.num_heads * self.d_k, seq_len)
-                .transpose(1, 2)
-                .contiguous()
-            )  # [batch_size, seq_len, d_model]
-            attn_out_combined = self.out_linear(
-                attn_out_combined
-            )  # [batch_size, seq_len, d_model]
-            return attn_out_combined
-
-        # Memory operations
-        # Reshape q, k, v to [num_heads, batch_size * seq_len, d_k]
-        q_mem = (
-            q.contiguous()
-            .view(batch_size, self.num_heads, seq_len, self.d_k)
-            .transpose(0, 1)  # [num_heads, batch_size, seq_len, d_k]
-            .reshape(
-                self.num_heads, batch_size * seq_len, self.d_k
-            )  # [num_heads, Q, d_k]
-        )  # [num_heads, Q, d_k]
-        k_mem = (
-            k.contiguous()
-            .view(batch_size, self.num_heads, seq_len, self.d_k)
-            .transpose(0, 1)  # [num_heads, batch_size, seq_len, d_k]
-            .reshape(
-                self.num_heads, batch_size * seq_len, self.d_k
-            )  # [num_heads, Q, d_k]
-        )  # [num_heads, Q, d_k]
-        v_mem = (
-            v.contiguous()
-            .view(batch_size, self.num_heads, seq_len, self.d_k)
-            .transpose(0, 1)  # [num_heads, batch_size, seq_len, d_k]
-            .reshape(
-                self.num_heads, batch_size * seq_len, self.d_k
-            )  # [num_heads, Q, d_k]
-        )  # [num_heads, Q, d_k]
-
-        # Pass queries and attn_out to KNNMemory for gating and combination
-        # attn_out: [batch_size, num_heads, seq_len, d_k]
-        combined_attn_out = self.memory(
-            q_mem, attn_out
-        )  # [batch_size, num_heads, seq_len, d_k]
+        combined_attn_out = attn_out  # [batch_size, num_heads, seq_len, d_k]
+        if self.use_memory:
+            # Pass queries, keys, values, and attn_out to KNNMemory for gating and combination
+            combined_attn_out = self.memory(
+                x, q, k, v, attn_out
+            )  # [batch_size, num_heads, seq_len, d_k]
 
         # Combine heads: [batch_size, seq_len, num_heads * d_k]
         output = (
@@ -399,12 +392,8 @@ class MultiHeadAttention(nn.Module):
             .contiguous()
             .view(batch_size, seq_len, self.num_heads * self.d_k)
         )  # [batch_size, seq_len, d_model]
-        output = self.out_linear(output)  # [batch_size, seq_len, d_model]
 
-        # Update memory with current keys and values
-        self.memory.update_memory(
-            k_mem, v_mem
-        )  # Correct dimensions: [num_heads, Q, dim]
+        output = self.out_linear(output)  # [batch_size, seq_len, d_model]
 
         return output
 
