@@ -19,12 +19,10 @@ from praxis.modules.smear import PraxisSMEAR
 class PraxisExpert(nn.Module):
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, using_swarm: bool):
+    def __init__(self, config: AutoConfig, manager: bool):
         super().__init__()
-        self.using_swarm = using_swarm
-        self.block = (
-            using_swarm.register_expert(config) if using_swarm else PraxisBlock(config)
-        )
+        self.manager = manager
+        self.block = manager.register_expert(config) if manager else PraxisBlock(config)
         if config.sparse:
             self.router = PraxisMixtureOfDepths(config)
 
@@ -34,7 +32,7 @@ class PraxisExpert(nn.Module):
         else:
             dummy_router_weights = None
             dummy_token_indices = None
-            if self.using_swarm:
+            if self.manager:
                 dummy_router_weights = torch.zeros_like(inputs)
                 dummy_token_indices = torch.zeros_like(
                     attention_mask, dtype=torch.int64

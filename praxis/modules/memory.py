@@ -21,9 +21,9 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.num_heads = config.num_heads
         self.head_dim = config.num_dims // config.num_heads
-        self.epsilon = 1e-8
         self.k = 16  # max KNN vectors to lookup
         self.max_memories = 1024  # max k/v vectors to store
+        self.epsilon = 1e-8  # for numerical stability
         # Gating parameter: one gate per head
         self.gate = nn.Parameter(torch.zeros(self.num_heads))
         # Initialize key_memories and value_memories for each head

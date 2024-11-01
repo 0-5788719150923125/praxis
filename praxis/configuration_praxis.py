@@ -35,7 +35,7 @@ class PraxisConfig(PretrainedConfig):
         eos_token_id=2,
         unk_token_id=4,
         seed=42,
-        debug=True,
+        debug=False,
         **kwargs,
     ):
         super().__init__(

@@ -94,21 +94,27 @@ import torch
 import torch.nn as nn
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import (Callback,
-                                         GradientAccumulationScheduler,
-                                         ModelCheckpoint)
+from lightning.pytorch.callbacks import (
+    Callback,
+    GradientAccumulationScheduler,
+    ModelCheckpoint,
+)
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer, PreTrainedTokenizer)
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedTokenizer,
+)
 
 from api import APIServer
 from builders import get_datamodules
 from interface import TerminalDashboard
-from praxis import (EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM,
-                    PraxisModel)
+from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -288,6 +294,12 @@ parser.add_argument(
     help="Bootstrap faster (with 3 layers, a smaller dataset, etc.)",
 )
 parser.add_argument(
+    "--debug",
+    action="store_true",
+    default=False,
+    help="Print debug logs to the terminal",
+)
+parser.add_argument(
     "--reset",
     action="store_true",
     default=False,
@@ -357,6 +369,7 @@ config = PraxisConfig(
     unk_token_id=tokenizer.unk_token_id,
     device_map=device,
     cache_dir=cache_dir,
+    debug=debug,
     seed=seed,
 )
 

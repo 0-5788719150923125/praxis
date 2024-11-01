@@ -27,20 +27,20 @@ class PraxisDecoder(nn.Module):
         self.sparse = config.sparse
         self.shuffle = config.shuffle
         self.random = random.Random(config.seed)
-        self.swarm = False
+        self.manager = False
         self.remote_experts = []
         if config.hivemind:
-            self.swarm = PraxisSwarmManagement(config)
-            self.remote_experts = self.swarm.active_remote_experts
+            self.manager = PraxisSwarmManagement(config)
+            self.remote_experts = self.manager.active_remote_experts
         self.local_experts = nn.ModuleList(
-            [PraxisExpert(config, self.swarm) for _ in range(config.num_experts)]
+            [PraxisExpert(config, self.manager) for _ in range(config.num_experts)]
         )
         self.use_autopilot = config.autopilot
         if self.use_autopilot:
             self.navigator = PraxisController(config, len(self.local_experts) * 3)
         self._define_checkpoints(config.memory_profile, self.depth)
-        if self.swarm:
-            self.swarm.serve_experts()
+        if self.manager:
+            self.manager.serve_experts()
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
@@ -48,8 +48,8 @@ class PraxisDecoder(nn.Module):
         if self.shuffle:
             self.random.shuffle(experts)
 
-        if self.swarm:
-            self.swarm.search_for_experts()
+        if self.manager:
+            self.manager.search_for_experts()
 
         hidden_states = inputs
         aux_losses = []
@@ -85,7 +85,7 @@ class PraxisDecoder(nn.Module):
                 new_states = new_states.to(inputs.device)
 
                 # Dead peers will return a zero tensor
-                if self.swarm and self._is_zero_tensor(new_states):
+                if self.manager and self._is_zero_tensor(new_states):
                     raise Exception("received a zero tensor; pruning expert")
 
                 # Predict the "true" index of each expert
@@ -102,10 +102,10 @@ class PraxisDecoder(nn.Module):
 
             except Exception as e:
                 # Prune dead peers
-                if self.swarm:
+                if self.manager:
                     if self.debug:
                         print(e)
-                    self.swarm.handle_failure(expert)
+                    self.manager.handle_failure(expert)
                     continue
                 # Crash on unhandled exceptions
                 raise Exception(e)
@@ -145,7 +145,7 @@ class PraxisDecoder(nn.Module):
         gradient_checkpointing=False,
     ):
         def custom_forward(hidden_states, attention_mask, use_router):
-            if self.swarm and self.swarm.is_remote(expert):
+            if self.manager and self.manager.is_remote(expert):
                 # because hivemind cannot receive undefined arguments in the forward pass
                 dummy_router_weights = torch.zeros_like(hidden_states)
                 dummy_token_indices = torch.zeros_like(
@@ -160,7 +160,7 @@ class PraxisDecoder(nn.Module):
             else:
                 return expert(hidden_states, attention_mask, use_router)
 
-        if self.swarm and self.swarm.is_remote(expert):
+        if self.manager and self.manager.is_remote(expert):
             hidden_states = hidden_states.to("cpu")
             attention_mask = attention_mask.to("cpu")
 
