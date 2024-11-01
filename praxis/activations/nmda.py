@@ -17,8 +17,8 @@ class NMDA(nn.Module):
         super().__init__()
         self.alpha = nn.Parameter(torch.empty(1))
         self.beta = nn.Parameter(torch.empty(1))
-        nn.init.constant_(self.a, 1.0)
-        nn.init.constant_(self.b, 1.0)
+        nn.init.constant_(self.alpha, 1.0)
+        nn.init.constant_(self.beta, 1.0)
 
     def forward(self, x):
         a = 0 if self.alpha <= 0 else self.alpha.log()
