@@ -23,6 +23,73 @@ class DataFormat(Enum):
     CUSTOM = "custom"
 
 
+HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
+HUGGINGFACE_DATASETS = [
+    dict(
+        path="open-phi/textbooks",
+        keys=["markdown"],
+        format=DataFormat.SIMPLE,
+        weight=0.001,
+    ),
+    dict(
+        path="HuggingFaceTB/smollm-corpus",
+        name="cosmopedia-v2",
+        keys=["prompt", "text"],
+        format=DataFormat.IO,
+        weight=0.01,
+    ),
+    dict(
+        path="Muennighoff/natural-instructions",
+        name="default",
+        keys=["definition", "inputs", "targets"],
+        format=DataFormat.CONVERSATION,
+        weight=0.01,
+    ),
+    dict(
+        path="google/Synthetic-Persona-Chat",
+        keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
+        format=DataFormat.PERSONACHAT,
+        weight=0.01,
+    ),
+    dict(
+        path="togethercomputer/RedPajama-Data-V2",
+        name="sample-10B",
+        snapshots=["2023-14"],
+        keys=["raw_content"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-10BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-100BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-350BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    dict(
+        path="HuggingFaceFW/fineweb",
+        name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+]
+
+
 def format_simple(document: Dict, keys: List[str]) -> str:
     """Just concatenate content with spaces"""
     return " ".join(document.get(key, "") for key in keys)
@@ -108,73 +175,6 @@ FORMAT_HANDLERS = {
     DataFormat.QA: format_qa,
     DataFormat.PERSONACHAT: format_personachat,
 }
-
-
-HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
-HUGGINGFACE_DATASETS = [
-    dict(
-        path="open-phi/textbooks",
-        keys=["markdown"],
-        format=DataFormat.SIMPLE,
-        weight=0.001,
-    ),
-    dict(
-        path="HuggingFaceTB/smollm-corpus",
-        name="cosmopedia-v2",
-        keys=["prompt", "text"],
-        format=DataFormat.IO,
-        weight=0.01,
-    ),
-    dict(
-        path="Muennighoff/natural-instructions",
-        name="default",
-        keys=["definition", "inputs", "targets"],
-        format=DataFormat.CONVERSATION,
-        weight=0.01,
-    ),
-    dict(
-        path="google/Synthetic-Persona-Chat",
-        keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
-        format=DataFormat.PERSONACHAT,
-        weight=0.01,
-    ),
-    dict(
-        path="togethercomputer/RedPajama-Data-V2",
-        name="sample-10B",
-        snapshots=["2023-14"],
-        keys=["raw_content"],
-        format=DataFormat.SIMPLE,
-        weight=1.0,
-    ),
-    dict(
-        path="HuggingFaceFW/fineweb-edu",
-        name="sample-10BT",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-        weight=1.0,
-    ),
-    dict(
-        path="HuggingFaceFW/fineweb-edu",
-        name="sample-100BT",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-        weight=1.0,
-    ),
-    dict(
-        path="HuggingFaceFW/fineweb-edu",
-        name="sample-350BT",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-        weight=1.0,
-    ),
-    dict(
-        path="HuggingFaceFW/fineweb",
-        name="default",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-        weight=1.0,
-    ),
-]
 
 
 def get_datamodules(
