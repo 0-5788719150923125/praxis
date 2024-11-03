@@ -83,7 +83,8 @@ class PraxisManagement:
         assert expert_cls in name_to_block
 
         hidden_schema = BatchTensorDescriptor(
-            4, compression=CompressionType.QUANTILE_8BIT
+            4,
+            # compression=CompressionType.QUANTILE_8BIT
         )
         attention_schema = hidden_schema
         router_weights = hidden_schema
