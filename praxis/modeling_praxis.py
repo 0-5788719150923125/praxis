@@ -55,11 +55,8 @@ class PraxisModel(PreTrainedModel):
         )
 
     def get_addr(self):
-        if hasattr(self.decoder, "dht"):
-            addr1 = str(self.decoder.manager.get_visible_maddrs()[0])
-            return "/p2p" + addr1.split("/p2p")[1]
-        else:
-            return []
+        if hasattr(self.decoder, "manager"):
+            self.decoder.manager.get_visible_maddrs()
 
     def get_info(self):
         return dict(

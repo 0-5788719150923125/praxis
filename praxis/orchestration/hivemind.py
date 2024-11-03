@@ -15,6 +15,7 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils import BatchTensorDescriptor
+from hivemind.utils.networking import log_visible_maddrs
 from torch import Tensor
 from transformers import AutoConfig
 
@@ -38,13 +39,15 @@ class PraxisManagement:
         self.expert_uids = []
         self.active_remote_experts = []
         self.dht = DHT(
-            initial_peers=PUBLIC_INITIAL_PEERS,
+            # initial_peers=PUBLIC_INITIAL_PEERS,
+            initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
+            # initial_peers=config.initial_peers,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
             start=True,
             use_relay=True,
             use_auto_relay=True,
-            use_ipfs=False,
-            ensure_bootstrap_success=True,
+            use_ipfs=True,
+            ensure_bootstrap_success=False,
         )
         # TODO: the mere act of using this method prevents bootstrap freezing
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
@@ -77,7 +80,7 @@ class PraxisManagement:
         return self.active_remote_experts
 
     def get_visible_maddrs(self):
-        return self.dht.get_visible_maddrs()
+        log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
 
     def register_expert(self, config: AutoConfig, expert_cls: str = "hivemind_expert"):
         assert expert_cls in name_to_block
@@ -188,21 +191,21 @@ PUBLIC_INITIAL_PEERS = [
     "/ip4/159.203.156.48/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
 ]
 
-# IPFS_INITIAL_PEERS = [
-#     # From running `ipfs bootstrap list` with Kubo
-#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-#     "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-#     "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-#     "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-#     "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-#     "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-#     "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-#     "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-#     "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-#     "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-# ]
+IPFS_INITIAL_PEERS = [
+    # From running `ipfs bootstrap list` with Kubo
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+    "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+    "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+    "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+    "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+    "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+    "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+    "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+    "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+]
 
 PREFIXES = [
     "doz",

@@ -266,7 +266,7 @@ parser.add_argument(
 parser.add_argument(
     "--initial_peers",
     nargs="*",
-    default=None,
+    default=[],
     help="Provide a list of Hivemind bootstrap peers",
 )
 parser.add_argument(
@@ -361,6 +361,7 @@ config = PraxisConfig(
     compression=compression,
     memory=memory,
     hivemind=hivemind,
+    initial_peers=initial_peers,
     expert=expert_type,
     memory_profile=memory_profile,
     pad_token_id=tokenizer.pad_token_id,
@@ -588,9 +589,7 @@ class TerminalInterface(Callback):
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
-        addr = lm.model.get_addr()
-        if len(addr) > 0:
-            print("hivemind address:", addr)
+        lm.model.get_addr()
         if self.dashboard:
             total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)

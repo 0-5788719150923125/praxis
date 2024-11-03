@@ -27,7 +27,7 @@ class PraxisConfig(PretrainedConfig):
         compression=False,
         memory=False,
         hivemind=False,
-        initial_peers=None,
+        initial_peers=[],
         memory_profile="speed",
         device_map="cpu",
         pad_token_id=0,
