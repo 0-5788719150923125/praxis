@@ -124,7 +124,7 @@ class PraxisPEER(nn.Module):
         if self.glu:
             weights_gated = self.gates(indices)
             gated = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_gated)
-            outputs *= gated
+            outputs = outputs * gated
 
         # Apply sigmoid to scores
         outputs = F.sigmoid(scores) * outputs

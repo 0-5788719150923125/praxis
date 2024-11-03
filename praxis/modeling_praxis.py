@@ -125,7 +125,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.shape[-1]), shift_labels.view(-1)
             )
-            loss += sum(self.aux_losses)
+            loss = loss + sum(self.aux_losses)
 
         self.aux_losses = []
 

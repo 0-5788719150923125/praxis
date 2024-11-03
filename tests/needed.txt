@@ -1,1 +1,2 @@
 - model determinism (seeding)
+- prevent in-place operations (*=, +=, etc.) for distributed/hivemind operations

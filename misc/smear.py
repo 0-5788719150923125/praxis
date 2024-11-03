@@ -97,7 +97,7 @@ class PraxisSMEAR(nn.Module):
                 if merged_param is None:
                     merged_param = weighted_param
                 else:
-                    merged_param += weighted_param
+                    merged_param = merged_param + weighted_param
 
             merged_state_dict[param_name] = merged_param
 

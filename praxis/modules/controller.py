@@ -120,12 +120,12 @@ class PraxisController(nn.Module):
                 next_idx = self._get_expert_idx(next_expert)
                 routing_true_index = torch.full((batch_size,), next_idx, device=device)
                 routing_loss = F.cross_entropy(routing_logits, routing_true_index)
-                aux_loss += routing_loss * self.loss_scale
+                aux_loss = aux_loss + routing_loss * self.loss_scale
 
                 # Simple exit loss based on progress
                 if self.calm:
                     exit_target = torch.full_like(exit_score, actual_index / depth)
-                    aux_loss += (
+                    aux_loss = aux_loss + (
                         F.binary_cross_entropy(exit_score, exit_target)
                         * self.loss_scale
                     )

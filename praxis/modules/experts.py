@@ -106,7 +106,7 @@ class PraxisBlock(nn.Module):
         outputs = self.mlp(normalized)
         outputs = self.dropout(outputs)
         if torch.is_tensor(router_weights):
-            outputs *= router_weights
+            outputs = outputs + router_weights
         outputs = outputs + residual
         return outputs
 
