@@ -31,6 +31,7 @@ class PraxisManagement:
 
         self.config = config
 
+        self.pool_size = 3
         self.expert_uids = []
         self.active_remote_experts = []
         self.dht = DHT(
@@ -72,7 +73,7 @@ class PraxisManagement:
         router_weights = hidden_schema
         token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
 
-        expert_uid, _ = self._generate_unique_name()
+        expert_uid, _ = self._generate_unique_name(self.pool_size)
         self.expert_uids.append(expert_uid)
         self.backends[expert_uid] = ModuleBackend(
             name=expert_uid,
@@ -118,24 +119,27 @@ class PraxisManagement:
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
     def _generate_unique_name(self, k=3, run_once=False):
-        new_name = self._generate_random_name(k)
+        new_name = self._generate_random_name(self.pool_size)
         try:
             if new_name in self.expert_uids:
-                return self._generate_unique_name(k)
+                return self._generate_unique_name(self.pool_size, run_once)
             new_expert = get_experts(self.dht, [new_name])[0]
             if isinstance(new_expert, RemoteExpert) and not run_once:
-                return self._generate_unique_name(k)
+                return self._generate_unique_name(self.pool_size, run_once)
             else:
                 return new_name, new_expert
         except RecursionError as e:
-            raise Exception(
-                "Caught a RecursionError when trying to generate a unique expert name. This is very likely because the pool of available names is not large enough."
+            self.pool_size += 1
+            print(
+                f"Caught a RecursionError when trying to generate a unique expert name. Expanding the pool size to: {self.pool_size}"
             )
+            # TODO: this doesn't work right; it can fire a hundred times before succeeding - which makes the pool much too large
+            return self._generate_unique_name(self.pool_size, run_once)
 
     def search_for_experts(self, chance=0.5):
         if random.random() > chance:
             return
-        new_name, new_expert = self._generate_unique_name(run_once=True)
+        _, new_expert = self._generate_unique_name(self.pool_size, run_once=True)
         if new_expert is None:
             return
         if new_expert.uid not in self.expert_uids:
