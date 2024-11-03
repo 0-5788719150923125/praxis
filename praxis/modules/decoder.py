@@ -151,12 +151,14 @@ class PraxisDecoder(nn.Module):
                 dummy_token_indices = torch.zeros_like(
                     attention_mask, dtype=torch.int64
                 )
-                return expert(
-                    hidden_states,
-                    attention_mask,
-                    dummy_router_weights,
-                    dummy_token_indices,
-                )
+                # because we do not backpropagate through remote experts
+                with torch.no_grad():
+                    return expert(
+                        hidden_states,
+                        attention_mask,
+                        dummy_router_weights,
+                        dummy_token_indices,
+                    )
             else:
                 return expert(hidden_states, attention_mask, use_router)
 
