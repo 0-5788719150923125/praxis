@@ -23,16 +23,24 @@ class PraxisExpert(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, manager, create_block=True):
+    def __init__(
+        self,
+        config: AutoConfig,
+        manager,
+        block: nn.Module = False,
+        router: nn.Module = False,
+        is_remote=False,
+    ):
         super().__init__()
         self.manager = manager
-        self.is_remote = False
-        if create_block:
-            self.block: PraxisBlock = (
-                manager.register_expert(config) if manager else PraxisBlock(config)
-            )
+        self.is_remote = is_remote
+        self.block = (
+            block
+            if block
+            else (manager.register_expert(config) if manager else PraxisBlock(config))
+        )
         if config.sparse:
-            self.router = PraxisMixtureOfDepths(config)
+            self.router = router if router else PraxisMixtureOfDepths(config)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
         if self.is_remote:
@@ -77,17 +85,6 @@ class PraxisExpert(nn.Module):
         # because we would otherwise break gradient flow
         hidden_states = hidden_states + residual
         return hidden_states, aux_loss
-
-    def __copy__(self):
-        # Create new instance without calling __init__
-        new_instance = type(self).__new__(self.__class__)
-        # Copy the dictionary
-        new_instance.__dict__.update(self.__dict__)
-        return new_instance
-
-    def register_block(self, block: nn.Module):
-        self.block = block
-        self.is_remote = True
 
 
 @register_expert_class("hivemind_expert", input_shape)

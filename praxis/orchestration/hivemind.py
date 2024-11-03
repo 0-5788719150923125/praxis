@@ -1,7 +1,6 @@
 import logging
 import random
 import time
-from copy import copy
 from threading import Thread
 from typing import Optional
 
@@ -20,6 +19,7 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.experts import PraxisExpert
+from praxis.modules.router import PraxisMixtureOfDepths
 
 
 class PraxisManagement:
@@ -51,7 +51,7 @@ class PraxisManagement:
         self.backends = {}
         self.active_local_experts = []
 
-        self.parent = PraxisExpert(config, self, create_block=False)
+        self.router = PraxisMixtureOfDepths(config)
 
         self.running = False
         self.thread = None
@@ -161,9 +161,10 @@ class PraxisManagement:
         if new_expert is None:
             return
         if new_expert.uid not in self.expert_uids:
-            cloned_expert = copy(self.parent)
-            cloned_expert.register_block(new_expert)
-            self.active_remote_experts.append(cloned_expert)
+            expert = PraxisExpert(
+                self.config, self, new_expert, self.router, is_remote=True
+            )
+            self.active_remote_experts.append(expert)
             self.expert_uids.append(new_expert.uid)
             uid = new_expert.uid.split(".")[0]
             messages = [
