@@ -14,6 +14,7 @@ from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server.layers import name_to_block
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
+from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils import BatchTensorDescriptor
 from torch import Tensor
 from transformers import AutoConfig
@@ -82,11 +83,15 @@ class PraxisManagement:
         assert expert_cls in name_to_block
 
         hidden_schema = BatchTensorDescriptor(
-            4,
+            4, compression=CompressionType.QUANTILE_8BIT
         )
         attention_schema = hidden_schema
         router_weights = hidden_schema
-        token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
+        token_indices = BatchTensorDescriptor(
+            4,
+            dtype=torch.int64,
+            # compression=CompressionType.UNIFORM_8BIT
+        )
 
         expert_uid, _ = self._generate_unique_name(self.pool_size)
         self.expert_uids.append(expert_uid)

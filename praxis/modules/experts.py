@@ -58,6 +58,7 @@ class PraxisExpert(nn.Module):
         return hidden_states, aux_loss
 
     def _remote_forward(self, inputs, attention_mask, use_router):
+        # TODO: we should probably add some differentiable noise here
         residual = inputs
         inputs = inputs.to("cpu")
         attention_mask = attention_mask.to("cpu")
