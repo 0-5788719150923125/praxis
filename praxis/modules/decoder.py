@@ -104,7 +104,6 @@ class PraxisDecoder(nn.Module):
                 # Commit to self
                 hidden_states = new_states
 
-            # except Exception as e:
             except (P2PDaemonError, P2PHandlerError) as e:
                 # Prune dead peers
                 if self.manager:
@@ -112,8 +111,6 @@ class PraxisDecoder(nn.Module):
                         print(e)
                     self.manager.handle_failure(expert)
                     continue
-                # # Crash on unhandled exceptions
-                # raise Exception(e)
 
         if self.use_autopilot:
             hidden_states = self.navigator.merge_states(hidden_states)
