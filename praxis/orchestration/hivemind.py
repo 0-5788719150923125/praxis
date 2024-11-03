@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+from threading import Thread
 from typing import Optional
 
 import hivemind
@@ -47,6 +48,21 @@ class PraxisManagement:
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
         self.backends = {}
         self.active_local_experts = []
+
+        self.running = False
+        self.thread = None
+        self.task_manager(interval=30)
+
+    def task_manager(self, interval):
+        self.running = True
+        self.thread = Thread(target=self._run_task, args=(interval,))
+        self.thread.daemon = True
+        self.thread.start()
+
+    def _run_task(self, interval):
+        while self.running:
+            self.search_for_experts()
+            time.sleep(interval)
 
     @property
     def local_experts(self):
@@ -136,9 +152,7 @@ class PraxisManagement:
             # TODO: this doesn't work right; it can fire a hundred times before succeeding - which makes the pool much too large
             return self._generate_unique_name(self.pool_size, run_once)
 
-    def search_for_experts(self, chance=0.5):
-        if random.random() > chance:
-            return
+    def search_for_experts(self):
         _, new_expert = self._generate_unique_name(self.pool_size, run_once=True)
         if new_expert is None:
             return

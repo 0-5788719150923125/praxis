@@ -52,9 +52,6 @@ class PraxisDecoder(nn.Module):
         if self.shuffle:
             self.random.shuffle(experts)
 
-        if self.manager:
-            self.manager.search_for_experts()
-
         hidden_states = inputs
         aux_losses = []
         next_expert_idx = None
