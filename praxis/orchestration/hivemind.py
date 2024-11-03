@@ -179,7 +179,7 @@ class PraxisSwarmManagement:
             uid = new_expert.uid.split(".")[0]
             messages = [
                 f"({uid}) has joined the swarm!",
-                f"Please welcome ({uid}) to the Fold!",
+                f"Please welcome ({uid}) into the fold!",
                 f"({uid}) slid into the hivemind!",
             ]
             print(random.choice(messages))
