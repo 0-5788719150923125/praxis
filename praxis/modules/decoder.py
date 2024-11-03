@@ -9,7 +9,11 @@ from transformers import AutoConfig
 
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
-from praxis.orchestration.hivemind import PraxisSwarmManagement
+from praxis.orchestration.hivemind import (
+    P2PDaemonError,
+    P2PHandlerError,
+    PraxisManagement,
+)
 
 
 class PraxisDecoder(nn.Module):
@@ -30,7 +34,7 @@ class PraxisDecoder(nn.Module):
         self.manager = False
         self.remote_experts = []
         if config.hivemind:
-            self.manager = PraxisSwarmManagement(config)
+            self.manager = PraxisManagement(config)
             self.remote_experts = self.manager.active_remote_experts
         self.local_experts = nn.ModuleList(
             [PraxisExpert(config, self.manager) for _ in range(config.num_experts)]
@@ -100,15 +104,16 @@ class PraxisDecoder(nn.Module):
                 # Commit to self
                 hidden_states = new_states
 
-            except Exception as e:
+            # except Exception as e:
+            except (P2PDaemonError, P2PHandlerError) as e:
                 # Prune dead peers
                 if self.manager:
                     if self.debug:
                         print(e)
                     self.manager.handle_failure(expert)
                     continue
-                # Crash on unhandled exceptions
-                raise Exception(e)
+                # # Crash on unhandled exceptions
+                # raise Exception(e)
 
         if self.use_autopilot:
             hidden_states = self.navigator.merge_states(hidden_states)
