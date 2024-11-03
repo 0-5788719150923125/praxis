@@ -7,7 +7,6 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.activations import ACT2FN
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.peer import PraxisPEER
@@ -34,13 +33,12 @@ class PraxisExpert(nn.Module):
     def __init__(
         self,
         config: AutoConfig,
-        manager,
+        manager: Optional = False,
         block: nn.Module = False,
         router: nn.Module = False,
         is_remote=False,
     ):
         super().__init__()
-        self.manager = manager
         self.is_remote = is_remote
         self.block = (
             block
@@ -57,42 +55,38 @@ class PraxisExpert(nn.Module):
             return self._local_forward(inputs, attention_mask, use_router)
 
     def _local_forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
+        aux_losses = []
         if use_router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
+            aux_losses.append(aux_loss)
         else:
-            dummy_router_weights = None
-            dummy_token_indices = None
-            if self.manager:
-                dummy_router_weights = torch.zeros_like(inputs)
-                dummy_token_indices = torch.zeros_like(
-                    attention_mask, dtype=torch.int64
-                )
-            hidden_states = self.block(
-                inputs, attention_mask, dummy_router_weights, dummy_token_indices
-            )
-            aux_loss = 0
-        return hidden_states, aux_loss
+            hidden_states = self.block(inputs, attention_mask)
+        return hidden_states, sum(aux_losses)
 
     def _remote_forward(self, inputs, attention_mask, use_router):
-        # TODO: we should probably add some differentiable noise here
-        residual = inputs
-        inputs = inputs.to("cpu")
-        attention_mask = attention_mask.to("cpu")
-        # because hivemind cannot receive undefined arguments in the forward pass
-        dummy_router_weights = torch.zeros_like(inputs)
-        dummy_token_indices = torch.zeros_like(attention_mask, dtype=torch.int64)
-        # because we do not backpropagate through remote experts
-        with torch.no_grad():
-            hidden_states = self.block(
-                inputs,
-                attention_mask,
-                dummy_router_weights,
-                dummy_token_indices,
-            ).to(residual.device)
-        aux_loss = 0
         # because we would otherwise break gradient flow
+        residual = inputs
+        aux_losses = []
+        if use_router:
+            hidden_states, aux_loss = self.router(
+                self.block, inputs, attention_mask, safe_grad=True
+            )
+            aux_losses.append(aux_loss)
+        else:
+            # because hivemind cannot receive undefined arguments in the forward pass
+            dummy_router_weights = torch.zeros_like(inputs)
+            dummy_token_indices = torch.zeros_like(attention_mask, dtype=torch.int64)
+            # because we do not backpropagate through remote experts
+            with torch.no_grad():
+                hidden_states = self.block(
+                    inputs.to("cpu"),
+                    attention_mask.to("cpu"),
+                    dummy_router_weights.to("cpu"),
+                    dummy_token_indices.to("cpu"),
+                ).to(residual.device)
+        # TODO: we could possibly add some differentiable noise here; perhaps as a penalty on slow experts?
         hidden_states = hidden_states + residual
-        return hidden_states, aux_loss
+        return hidden_states, sum(aux_losses)
 
 
 @register_expert_class("hivemind_expert", input_shape)

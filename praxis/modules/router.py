@@ -30,6 +30,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         layer: nn.Module,
         inputs: Tensor,
         attention_mask: Tensor,
+        safe_grad=False,
         *args,
         **kwargs,
     ):
@@ -87,12 +88,23 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        layer_outputs = layer(
-            filtered_inputs,
-            attention_mask=filtered_attention_mask,
-            router_weights=token_weights,
-            token_indices=token_indices.squeeze(-1),
-        )
+        if safe_grad:
+            # we do not perform backpropagation when sending to remote/hivemind experts
+            # TODO: there is almost certainly a better way to write this code
+            with torch.no_grad():
+                layer_outputs = layer(
+                    filtered_inputs.to("cpu"),
+                    filtered_attention_mask.to("cpu"),
+                    token_weights.to("cpu"),
+                    token_indices.squeeze(-1).to("cpu"),
+                ).to(inputs.device)
+        else:
+            layer_outputs = layer(
+                filtered_inputs,
+                filtered_attention_mask,
+                token_weights,
+                token_indices.squeeze(-1),
+            )
 
         # re-integrate the activated tokens with our residual stream
         hidden_states = torch.scatter(
