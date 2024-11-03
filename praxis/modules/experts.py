@@ -63,6 +63,7 @@ class PraxisExpert(nn.Module):
         return hidden_states, aux_loss
 
     def _remote_forward(self, inputs, attention_mask, use_router):
+        residual = inputs
         inputs = inputs.to("cpu")
         attention_mask = attention_mask.to("cpu")
         # because hivemind cannot receive undefined arguments in the forward pass
@@ -70,12 +71,16 @@ class PraxisExpert(nn.Module):
         dummy_token_indices = torch.zeros_like(attention_mask, dtype=torch.int64)
         # because we do not backpropagate through remote experts
         with torch.no_grad():
-            return self.block(
+            hidden_states = self.block(
                 inputs,
                 attention_mask,
                 dummy_router_weights,
                 dummy_token_indices,
-            )
+            ).to(residual.device)
+        aux_loss = 0
+        # because we would otherwise break gradient flow
+        hidden_states = hidden_states + residual
+        return hidden_states, aux_loss
 
     def __copy__(self):
         # Create new instance without calling __init__

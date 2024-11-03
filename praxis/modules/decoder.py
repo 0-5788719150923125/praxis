@@ -68,7 +68,7 @@ class PraxisDecoder(nn.Module):
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
 
-                outputs = self._create_forward(
+                new_states, aux_loss = self._create_forward(
                     expert,
                     hidden_states,
                     attention_mask,
@@ -76,18 +76,7 @@ class PraxisDecoder(nn.Module):
                     gradient_checkpointing,
                 )
 
-                # This is confusing, blame hivemind
-                if isinstance(outputs, tuple):
-                    new_states = outputs[0].to(inputs.device)
-                    aux_losses.append(outputs[1])
-                else:
-                    new_states = outputs
-
-                new_states = new_states.to(inputs.device)
-
-                # Dead peers will return a zero tensor
-                if self.manager and self._is_zero_tensor(new_states):
-                    raise Exception("received a zero tensor; pruning expert")
+                aux_losses.append(aux_loss)
 
                 # Predict the "true" index of each expert
                 if self.use_autopilot:
@@ -156,7 +145,3 @@ class PraxisDecoder(nn.Module):
             )
         else:
             return custom_forward(hidden_states, attention_mask, use_router)
-
-    def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
-        """Check if a tensor is filled with zeros (within numerical tolerance)"""
-        return torch.abs(tensor).max().item() < tolerance
