@@ -12,7 +12,7 @@ from praxis.activations import ACT2FN
 class PraxisController(nn.Module):
     """
     This controller implements an expert-prediction mechanism, which trains a small
-    router to intelligently-route through layers in the network. It also implements
+    router to intelligently-navigate through layers in the network. It also implements
     an early exit strategy, loosely-inspired by CALM:
     https://arxiv.org/abs/2207.07061
     """
