@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from hivemind import DHT
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
 from hivemind.moe.server.layers import name_to_block
+from hivemind.moe.server.layers.custom_experts import register_expert_class
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
 from hivemind.utils import BatchTensorDescriptor
 from torch import Tensor
