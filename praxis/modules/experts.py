@@ -13,16 +13,16 @@ from praxis.modules.peer import PraxisPEER
 from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.modules.smear import PraxisSMEAR
 
-# from praxis.orchestration.hivemind import PraxisSwarm
-
 
 class PraxisExpert(nn.Module):
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, manager: bool):
+    def __init__(self, config: AutoConfig, manager):
         super().__init__()
         self.manager = manager
-        self.block = manager.register_expert(config) if manager else PraxisBlock(config)
+        self.block: PraxisBlock or HivemindExpert = (
+            manager.register_expert(config) if manager else PraxisBlock(config)
+        )
         if config.sparse:
             self.router = PraxisMixtureOfDepths(config)
 
