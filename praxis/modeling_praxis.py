@@ -55,7 +55,7 @@ class PraxisModel(PreTrainedModel):
         )
 
     def get_addr(self):
-        if hasattr(self.decoder, "manager"):
+        if self.decoder.manager:
             self.decoder.manager.get_visible_maddrs()
 
     def get_info(self):

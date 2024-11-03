@@ -604,6 +604,11 @@ class TerminalInterface(Callback):
         if self.dashboard:
             self.dashboard.set_mode("validation")
 
+    def on_validation_batch_end(self, trainer, lm, outputs, batch, batch_idx):
+        super().on_validation_batch_end(trainer, lm, outputs, batch, batch_idx)
+        if not quiet:
+            self._generate_text(lm, batch_idx, self.interval)
+
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
 
@@ -611,7 +616,7 @@ class TerminalInterface(Callback):
         self.ema_loss = self._compute_ema_loss(float(loss), self.ema_loss, self.alpha)
 
         if not quiet:
-            self._generate_sample_text(lm, batch_idx, self.interval)
+            self._generate_text(lm, batch_idx, self.interval)
 
         batch_size, _ = batch.shape
         swarm_info = lm.model.get_info()
@@ -670,7 +675,7 @@ class TerminalInterface(Callback):
         super().on_load_checkpoint(trainer, lm, checkpoint)
         self.host_count = checkpoint.get("host_count", 0)
 
-    def _generate_sample_text(self, lm, batch_idx=0, interval=10):
+    def _generate_text(self, lm, batch_idx=0, interval=10):
 
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
@@ -696,8 +701,8 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        n_gram_size = 9
-        frequency = 20
+        n_gram_size = 7
+        frequency = 10
         if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
             self.text = f"{self.initial_text}"
             if self.dashboard:
@@ -711,7 +716,7 @@ class TerminalInterface(Callback):
 
         # allow for multiple tokens
         if random.random() < 0.1:
-            return self._generate_sample_text(lm)
+            return self._generate_text(lm)
 
         self.last_time = datetime.now()
 
