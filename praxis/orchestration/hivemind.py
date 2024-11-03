@@ -62,7 +62,7 @@ class PraxisManagement:
 
     def _run_task(self, interval):
         while self.running:
-            self.search_for_experts()
+            self._search_for_experts()
             time.sleep(interval)
 
     @property
@@ -153,7 +153,7 @@ class PraxisManagement:
             # TODO: this doesn't work right; it can fire a hundred times before succeeding - which makes the pool much too large
             return self._generate_unique_name(self.pool_size, run_once)
 
-    def search_for_experts(self):
+    def _search_for_experts(self):
         _, new_expert = self._generate_unique_name(self.pool_size, run_once=True)
         if new_expert is None:
             return
