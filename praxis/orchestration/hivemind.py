@@ -1,5 +1,6 @@
 import logging
 import random
+import time
 from typing import Optional
 
 import hivemind
@@ -71,7 +72,7 @@ class PraxisManagement:
         router_weights = hidden_schema
         token_indices = BatchTensorDescriptor(4, dtype=torch.int64)
 
-        expert_uid = self._generate_unique_name()
+        expert_uid, _ = self._generate_unique_name()
         self.expert_uids.append(expert_uid)
         self.backends[expert_uid] = ModuleBackend(
             name=expert_uid,
@@ -113,25 +114,31 @@ class PraxisManagement:
             print("removing:", expert.uid)
             self.expert_uids.remove(expert.uid)
 
-    def _generate_random_name(self, k=3):
+    def _generate_random_name(self, k: int):
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
-    def _generate_unique_name(self, k=3):
+    def _generate_unique_name(self, k=3, run_once=False):
         new_name = self._generate_random_name(k)
-        if new_name not in self.expert_uids:
-            return new_name
-        else:
-            return self._generate_unique_name(k)
+        try:
+            if new_name in self.expert_uids:
+                return self._generate_unique_name(k)
+            new_expert = get_experts(self.dht, [new_name])[0]
+            if isinstance(new_expert, RemoteExpert) and not run_once:
+                return self._generate_unique_name(k)
+            else:
+                return new_name, new_expert
+        except RecursionError as e:
+            raise Exception(
+                "Caught a RecursionError when trying to generate a unique expert name. This is very likely because the pool of available names is not large enough."
+            )
 
     def search_for_experts(self, chance=0.5):
         if random.random() > chance:
             return
-        new_name = self._generate_unique_name()
-        new_expert = get_experts(self.dht, [new_name])[0]
-        if (
-            isinstance(new_expert, RemoteExpert)
-            and new_expert.uid not in self.expert_uids
-        ):
+        new_name, new_expert = self._generate_unique_name(run_once=True)
+        if new_expert is None:
+            return
+        if new_expert.uid not in self.expert_uids:
             self.active_remote_experts.append(new_expert)
             self.expert_uids.append(new_expert.uid)
             uid = new_expert.uid.split(".")[0]
