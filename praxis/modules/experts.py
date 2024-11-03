@@ -18,12 +18,7 @@ input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim
 
 class PraxisExpert(nn.Module):
     """
-    A Hivemind expert has certain limitations, which make it difficult to work with:
-    1. All inputs to the `forward()` method must be Tensors.
-    2. No inputs may be empty (None) types.
-    3. All inputs must be of a consistent shape.
-    3. All inputs/outputs must be a part of the computation graph (i.e. returning detached aux_loss tensors is invalid).
-    Essentially, Hivemind experts must define static inputs/outputs - negating the "dynamic" nature of Pytorch.
+    This class is a wrapper around the orchestration of both local and remote experts.
     """
 
     __version__ = "0.1.0"
@@ -98,6 +93,15 @@ class PraxisExpert(nn.Module):
 class PraxisBlock(nn.Module):
     """
     A standard transformer block, with adjustable feedforward "experts".
+
+    When using Hivemind, there are certain limitations:
+
+    1. All inputs to the `forward()` method must be Tensors.
+    2. No inputs are allowed to be empty (None) types.
+    3. All inputs must be of a constant shape.
+    3. All inputs/outputs must be a part of the computation graph (i.e. returning detached aux_loss tensors is invalid).
+
+    Essentially, Hivemind experts have static inputs/outputs - in contrast to the "dynamic" nature of Pytorch.
     """
 
     __version__ = "0.1.0"

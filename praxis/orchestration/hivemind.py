@@ -78,9 +78,6 @@ class PraxisManagement:
     def get_visible_maddrs(self):
         return self.dht.get_visible_maddrs()
 
-    def is_remote(self, expert: Optional[RemoteExpert]):
-        return isinstance(expert, RemoteExpert)
-
     def register_expert(self, config: AutoConfig, expert_cls: str = "hivemind_expert"):
         assert expert_cls in name_to_block
 
