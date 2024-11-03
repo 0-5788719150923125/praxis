@@ -28,16 +28,24 @@ class PraxisExpert(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, manager):
+    def __init__(self, config: AutoConfig, manager, create_block=True):
         super().__init__()
         self.manager = manager
-        self.block: PraxisBlock = (
-            manager.register_expert(config) if manager else PraxisBlock(config)
-        )
+        self.is_remote = False
+        if create_block:
+            self.block: PraxisBlock = (
+                manager.register_expert(config) if manager else PraxisBlock(config)
+            )
         if config.sparse:
             self.router = PraxisMixtureOfDepths(config)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
+        if self.is_remote:
+            return self._remote_forward(inputs, attention_mask, use_router)
+        else:
+            return self._local_forward(inputs, attention_mask, use_router)
+
+    def _local_forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
         if use_router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
         else:
@@ -53,6 +61,32 @@ class PraxisExpert(nn.Module):
             )
             aux_loss = 0
         return hidden_states, aux_loss
+
+    def _remote_forward(self, inputs, attention_mask, use_router):
+        inputs = inputs.to("cpu")
+        attention_mask = attention_mask.to("cpu")
+        # because hivemind cannot receive undefined arguments in the forward pass
+        dummy_router_weights = torch.zeros_like(inputs)
+        dummy_token_indices = torch.zeros_like(attention_mask, dtype=torch.int64)
+        # because we do not backpropagate through remote experts
+        with torch.no_grad():
+            return self.block(
+                inputs,
+                attention_mask,
+                dummy_router_weights,
+                dummy_token_indices,
+            )
+
+    def __copy__(self):
+        # Create new instance without calling __init__
+        new_instance = type(self).__new__(self.__class__)
+        # Copy the dictionary
+        new_instance.__dict__.update(self.__dict__)
+        return new_instance
+
+    def register_block(self, block: nn.Module):
+        self.block = block
+        self.is_remote = True
 
 
 @register_expert_class("hivemind_expert", input_shape)

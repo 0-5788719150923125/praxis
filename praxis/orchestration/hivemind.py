@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+from copy import copy
 from threading import Thread
 from typing import Optional
 
@@ -17,8 +18,7 @@ from hivemind.utils import BatchTensorDescriptor
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.modules.experts import PraxisBlock
-from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.modules.experts import PraxisExpert
 
 
 class PraxisManagement:
@@ -49,6 +49,8 @@ class PraxisManagement:
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
         self.backends = {}
         self.active_local_experts = []
+
+        self.parent = PraxisExpert(config, self, create_block=False)
 
         self.running = False
         self.thread = None
@@ -81,7 +83,6 @@ class PraxisManagement:
 
     def register_expert(self, config: AutoConfig, expert_cls: str = "hivemind_expert"):
         assert expert_cls in name_to_block
-        expert = name_to_block[expert_cls](config)
 
         hidden_schema = BatchTensorDescriptor(
             4,
@@ -94,7 +95,7 @@ class PraxisManagement:
         self.expert_uids.append(expert_uid)
         self.backends[expert_uid] = ModuleBackend(
             name=expert_uid,
-            module=expert,
+            module=name_to_block[expert_cls](config),
             args_schema=(
                 hidden_schema,
                 attention_schema,
@@ -128,9 +129,9 @@ class PraxisManagement:
 
     def handle_failure(self, expert):
         self.active_remote_experts.remove(expert)
-        if expert.uid in self.expert_uids:
-            print("removing:", expert.uid)
-            self.expert_uids.remove(expert.uid)
+        if expert.block.uid in self.expert_uids:
+            print("removing:", expert.block.uid)
+            self.expert_uids.remove(expert.block.uid)
 
     def _generate_random_name(self, k: int):
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
@@ -158,7 +159,9 @@ class PraxisManagement:
         if new_expert is None:
             return
         if new_expert.uid not in self.expert_uids:
-            self.active_remote_experts.append(new_expert)
+            cloned_expert = copy(self.parent)
+            cloned_expert.register_block(new_expert)
+            self.active_remote_experts.append(cloned_expert)
             self.expert_uids.append(new_expert.uid)
             uid = new_expert.uid.split(".")[0]
             messages = [
@@ -189,12 +192,12 @@ PUBLIC_INITIAL_PEERS = [
 #     "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 #     "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
 #     "/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-#     # "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-#     # "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-#     # "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-#     # "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-#     # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
-#     # "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+#     "/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+#     "/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+#     "/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+#     "/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+#     "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
+#     "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
 # ]
 
 PREFIXES = [

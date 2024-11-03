@@ -144,26 +144,7 @@ class PraxisDecoder(nn.Module):
         gradient_checkpointing=False,
     ):
         def custom_forward(hidden_states, attention_mask, use_router):
-            if self.manager and self.manager.is_remote(expert):
-                # because hivemind cannot receive undefined arguments in the forward pass
-                dummy_router_weights = torch.zeros_like(hidden_states)
-                dummy_token_indices = torch.zeros_like(
-                    attention_mask, dtype=torch.int64
-                )
-                # because we do not backpropagate through remote experts
-                with torch.no_grad():
-                    return expert(
-                        hidden_states,
-                        attention_mask,
-                        dummy_router_weights,
-                        dummy_token_indices,
-                    )
-            else:
-                return expert(hidden_states, attention_mask, use_router)
-
-        if self.manager and self.manager.is_remote(expert):
-            hidden_states = hidden_states.to("cpu")
-            attention_mask = attention_mask.to("cpu")
+            return expert(hidden_states, attention_mask, use_router)
 
         if gradient_checkpointing and self.training:
             return torch.utils.checkpoint.checkpoint(
