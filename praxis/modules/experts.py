@@ -52,6 +52,7 @@ class PraxisExpert(nn.Module):
         is_remote=False,
     ):
         super().__init__()
+        self.sparse = config.sparse
         self.is_remote = is_remote
         self.block = (
             block
@@ -61,7 +62,8 @@ class PraxisExpert(nn.Module):
         if config.sparse:
             self.router = router if router else PraxisMixtureOfDepths(config)
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
+    def forward(self, inputs: Tensor, attention_mask: Tensor, current_depth: int):
+        use_router = True if self.sparse and current_depth % 2 != 0 else False
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask, use_router)
         else:

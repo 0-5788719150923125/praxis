@@ -51,7 +51,7 @@ class PraxisMemory(nn.Module):
     def forward(
         self, inputs: Tensor, query: Tensor, key: Tensor, value: Tensor, outputs: Tensor
     ) -> Tensor:
-        batch_size, seq_len, d_model = inputs.size()
+        batch_size, seq_len, _ = inputs.size()
 
         # Prepare queries, keys, and values for memory: [num_heads, Q, dim]
         multiplier = query.size(-1) // self.head_dim

@@ -53,14 +53,12 @@ class PraxisDecoder(nn.Module):
 
         hidden_states = inputs
         aux_losses = []
-        next_expert_idx = None
 
         first_expert_idx = original_order.index(experts[0])
         route = [str(first_expert_idx)]
 
+        next_expert_idx = None
         for i in range(self.depth):
-            use_router = True if self.sparse and i % 2 != 0 else False
-            gradient_checkpointing = True if i in self.checkpoint_indices else False
             try:
                 expert = experts[i]
                 if not self.training and next_expert_idx is not None:
@@ -68,22 +66,16 @@ class PraxisDecoder(nn.Module):
                     route.append(str(next_expert_idx))
 
                 new_states, aux_loss = self._create_forward(
-                    expert,
-                    hidden_states,
-                    attention_mask,
-                    use_router,
-                    gradient_checkpointing,
+                    expert, hidden_states, attention_mask, i
                 )
                 aux_losses.append(aux_loss)
 
-                # Predict the "true" index of each expert
                 if self.navigator:
+                    # Predict the optimal next-expert index
                     aux_loss, next_expert_idx = self.navigator(
                         original_order, experts, expert, new_states
                     )
                     aux_losses.append(aux_loss)
-                    # if should_exit:
-                    #     break
 
                 # Commit to self
                 hidden_states = new_states
@@ -124,19 +116,19 @@ class PraxisDecoder(nn.Module):
         expert: nn.Module,
         hidden_states: Tensor,
         attention_mask: Tensor,
-        use_router: bool,
-        gradient_checkpointing=False,
+        current_depth: int,
     ):
-        def custom_forward(hidden_states, attention_mask, use_router):
-            return expert(hidden_states, attention_mask, use_router)
+        def custom_forward(hidden_states, attention_mask, current_depth):
+            return expert(hidden_states, attention_mask, current_depth)
 
-        if gradient_checkpointing and self.training:
+        do_checkpoint = True if current_depth in self.checkpoint_indices else False
+        if do_checkpoint and self.training:
             return torch.utils.checkpoint.checkpoint(
                 custom_forward,
                 hidden_states,
                 attention_mask,
-                use_router,
+                current_depth,
                 use_reentrant=False,
             )
         else:
-            return custom_forward(hidden_states, attention_mask, use_router)
+            return custom_forward(hidden_states, attention_mask, current_depth)
