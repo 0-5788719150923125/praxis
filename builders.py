@@ -141,8 +141,8 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
     conversation = document.get("Best Generated Conversation", "").split("\n")
 
     # Give them names
-    user1 = "PEN"
-    user2 = "INK"
+    user1 = "INK"
+    user2 = "PEN"
 
     # Format personas section
     formatted = f"[CTX]\n{user1}:\n"

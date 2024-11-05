@@ -829,6 +829,11 @@ class Generator:
         combined = {**defaults, **request.kwargs}
         if "prompt" in combined:
             del combined["prompt"]
+        skip_special_tokens = True
+        if "skip_special_tokens" in combined:
+            if combined["skip_special_tokens"] == False:
+                skip_special_tokens = False
+            del combined["skip_special_tokens"]
 
         return_text = request.prompt
         max_attempts = 30
@@ -836,9 +841,11 @@ class Generator:
 
         with self._eval_mode():
             while attempts < max_attempts:
-                outputs = self.model.generate(input_ids, **combined)
+                outputs = self.model.generate(
+                    input_ids, **combined, tokenizer=self.tokenizer
+                )
                 decoded_new = self.tokenizer.decode(
-                    outputs[0], skip_special_tokens=True
+                    outputs[0], skip_special_tokens=skip_special_tokens
                 )
 
                 if decoded_new != request.prompt:

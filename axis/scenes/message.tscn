@@ -1,0 +1,14 @@
+[gd_scene load_steps=2 format=3 uid="uid://c08nq424cox4g"]
+
+[ext_resource type="Script" path="res://scripts/message.gd" id="1_ir8se"]
+
+[node name="Message" type="PanelContainer"]
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("1_ir8se")
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="MarginContainer"]
+layout_mode = 2

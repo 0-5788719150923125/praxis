@@ -1,0 +1,41 @@
+[gd_scene load_steps=2 format=3 uid="uid://kkoitcxefsgc"]
+
+[ext_resource type="Script" path="res://scripts/chat_interface.gd" id="1_v8f8w"]
+
+[node name="ChatInterface" type="CanvasLayer"]
+script = ExtResource("1_v8f8w")
+
+[node name="UIRoot" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="ScrollContainer" type="ScrollContainer" parent="UIRoot"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+grow_horizontal = 2
+
+[node name="MessageContainer" type="VBoxContainer" parent="UIRoot/ScrollContainer"]
+layout_mode = 2
+
+[node name="InputContainer" type="HBoxContainer" parent="UIRoot"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = 320.0
+offset_top = 1200.0
+offset_right = 360.0
+offset_bottom = 1240.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="TextEdit" type="TextEdit" parent="UIRoot/InputContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HTTPRequest" type="HTTPRequest" parent="UIRoot"]
