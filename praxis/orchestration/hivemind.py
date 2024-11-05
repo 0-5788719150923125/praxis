@@ -1,10 +1,12 @@
 import logging
 import random
 import time
+from ipaddress import ip_address
 from threading import Thread
 from typing import Optional
 
 import hivemind
+import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,16 +40,27 @@ class PraxisManagement:
         self.pool_size = 3
         self.expert_uids = []
         self.active_remote_experts = []
+        self.use_ipfs = False
+
+        # request = requests.get("https://api.ipify.org")
+        # request.raise_for_status()
+
+        # address = request.text
+        # print(f"Received public IP address of this machine: {address}")
+        # version = ip_address(address).version
+        # announce_maddrs = [f"/ip{version}/{address}/tcp/0"]
         self.dht = DHT(
             # initial_peers=PUBLIC_INITIAL_PEERS,
-            initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
+            # initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
+            initial_peers=PUBLIC_INITIAL_PEERS + config.initial_peers,
             # initial_peers=config.initial_peers,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
+            # announce_maddrs=announce_maddrs,
             start=True,
             use_relay=True,
             use_auto_relay=True,
-            use_ipfs=True,
-            ensure_bootstrap_success=False,
+            use_ipfs=self.use_ipfs,
+            ensure_bootstrap_success=True,
         )
         # TODO: the mere act of using this method prevents bootstrap freezing
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
@@ -80,7 +93,7 @@ class PraxisManagement:
         return self.active_remote_experts
 
     def get_visible_maddrs(self):
-        log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=True)
+        log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=self.use_ipfs)
 
     def register_expert(self, config: AutoConfig, expert_cls: str = "hivemind_expert"):
         assert expert_cls in name_to_block
