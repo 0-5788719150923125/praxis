@@ -18,8 +18,7 @@ from praxis.orchestration.hivemind import (
 
 class PraxisDecoder(nn.Module):
     """
-    A module that wraps the entire decoder block (and all intermediate layers)
-    in a single class.
+    A module that wraps the entire transformer decoder block.
     """
 
     __version__ = "0.1.0"

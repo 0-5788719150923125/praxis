@@ -1,11 +1,34 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 
-from praxis.activations.nmda import NMDA
-from praxis.activations.serf import SERF
-from praxis.activations.sinlu import SinLU
+# from praxis.activations.nmda import NMDA
+# from praxis.activations.serf import SERF
+# from praxis.activations.sinlu import SinLU
+
+
+class PeriodicReLU(nn.Module):
+    def __init__(self, period=2 * math.pi):
+        """
+        Initialize PeriodicReLU with given period.
+        Args:
+            period (float): The period of the sine function. Default: 2π
+        """
+        super().__init__()
+        self.period = period
+
+    def forward(self, x):
+        """
+        Forward pass of PeriodicReLU.
+        f(x) = max(0, sin(2πx/period))
+        """
+        return torch.maximum(
+            torch.zeros_like(x), torch.sin(2 * math.pi * x / self.period)
+        )
+
 
 # Define activation functions
 activation_functions = {
@@ -14,9 +37,10 @@ activation_functions = {
     "Tanh": nn.Tanh(),
     "Leaky ReLU": nn.LeakyReLU(),
     # "ELU": nn.ELU(),
-    "NMDA": NMDA(),
-    "SERF": SERF(),
-    "SinLU": SinLU(),
+    # "NMDA": NMDA(),
+    # "SERF": SERF(),
+    # "SinLU": SinLU(),
+    "PeriodicReLU": PeriodicReLU(),
 }
 
 # Generate input data for activation curves
