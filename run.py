@@ -629,7 +629,7 @@ class TerminalInterface(Callback):
             "remote_experts": int(remote_experts),
         }
 
-        if swarm_info["predictions"]:
+        if "predictions" in swarm_info:
             data.update(
                 {
                     "acc0": swarm_info["predictions"]["mean"],

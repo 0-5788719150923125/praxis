@@ -1,6 +1,6 @@
 from transformers import PretrainedConfig
 
-from praxis.modules import DEFAULT_EXPERT_CONFIGS
+from praxis.modules import EXPERT_CONFIGS
 
 
 class PraxisConfig(PretrainedConfig):
@@ -95,9 +95,9 @@ class PraxisConfig(PretrainedConfig):
     def _register_experts(self, expert: str or dict):
         # Handle expert configuration
         if isinstance(expert, str):
-            if expert not in DEFAULT_EXPERT_CONFIGS:
+            if expert not in EXPERT_CONFIGS:
                 raise ValueError(f"Unknown expert type: {expert}")
-            return {"type": expert, **DEFAULT_EXPERT_CONFIGS[expert]}
+            return {"type": expert, **EXPERT_CONFIGS[expert]}
         elif isinstance(expert, dict):
             return expert
         else:

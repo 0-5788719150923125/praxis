@@ -39,8 +39,8 @@ class PraxisDecoder(nn.Module):
         self.local_experts = nn.ModuleList(
             [PraxisExpert(config, self.manager) for _ in range(config.num_experts)]
         )
-        self.use_autopilot = config.autopilot
-        if self.use_autopilot:
+        self.navigator = False
+        if config.autopilot:
             self.navigator = PraxisController(config, len(self.local_experts) * 3)
         self._define_checkpoints(config.memory_profile, self.depth)
         if self.manager:
@@ -75,17 +75,16 @@ class PraxisDecoder(nn.Module):
                     use_router,
                     gradient_checkpointing,
                 )
-
                 aux_losses.append(aux_loss)
 
                 # Predict the "true" index of each expert
-                if self.use_autopilot:
-                    aux_loss, next_expert_idx, should_exit = self.navigator(
-                        experts, expert, new_states, i
+                if self.navigator:
+                    aux_loss, next_expert_idx = self.navigator(
+                        original_order, experts, expert, new_states
                     )
                     aux_losses.append(aux_loss)
-                    if should_exit:
-                        break
+                    # if should_exit:
+                    #     break
 
                 # Commit to self
                 hidden_states = new_states
@@ -98,17 +97,14 @@ class PraxisDecoder(nn.Module):
                     self.manager.handle_failure(expert)
                     continue
 
-        if self.use_autopilot:
-            hidden_states = self.navigator.merge_states(hidden_states)
-
-        if self.debug and not self.training and self.use_autopilot:
+        if self.debug and not self.training and self.navigator:
             print(f"DEBUG: routing through: {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 
     def get_prediction_accuracies(self):
         """Return current prediction accuracies"""
-        if self.use_autopilot:
+        if self.navigator:
             return {
                 "mean": self.navigator.get_mean_accuracy(),
                 "per_expert": self.navigator.get_all_accuracies(),

@@ -64,11 +64,11 @@ class PraxisModel(PreTrainedModel):
                 local=len(self.decoder.local_experts),
                 remote=len(self.decoder.remote_experts),
             ),
-            predictions=(
-                self.decoder.get_prediction_accuracies()
-                if self.decoder.use_autopilot
-                else False
-            ),
+            # predictions=(
+            #     self.decoder.get_prediction_accuracies()
+            #     if self.decoder.use_autopilot
+            #     else False
+            # ),
         )
 
 
