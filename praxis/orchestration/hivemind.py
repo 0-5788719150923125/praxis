@@ -40,7 +40,6 @@ class PraxisManagement:
         self.pool_size = 3
         self.expert_uids = []
         self.active_remote_experts = []
-        self.use_ipfs = False
 
         # request = requests.get("https://api.ipify.org")
         # request.raise_for_status()
@@ -49,10 +48,11 @@ class PraxisManagement:
         # print(f"Received public IP address of this machine: {address}")
         # version = ip_address(address).version
         # announce_maddrs = [f"/ip{version}/{address}/tcp/0"]
+        self.use_ipfs = True
         self.dht = DHT(
             # initial_peers=PUBLIC_INITIAL_PEERS,
-            # initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
-            initial_peers=PUBLIC_INITIAL_PEERS + config.initial_peers,
+            initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
+            # initial_peers=PUBLIC_INITIAL_PEERS + config.initial_peers,
             # initial_peers=config.initial_peers,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
             # announce_maddrs=announce_maddrs,
@@ -62,7 +62,8 @@ class PraxisManagement:
             use_relay=True,
             use_auto_relay=True,
             use_ipfs=self.use_ipfs,
-            ensure_bootstrap_success=True,
+            ensure_bootstrap_success=False,
+            # quic=True,
         )
         # TODO: the mere act of using this method prevents bootstrap freezing
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
