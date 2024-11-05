@@ -93,15 +93,6 @@ class PraxisDecoder(nn.Module):
 
         return hidden_states, sum(aux_losses)
 
-    def get_prediction_accuracies(self):
-        """Return current prediction accuracies"""
-        if self.navigator:
-            return {
-                "mean": self.navigator.get_mean_accuracy(),
-                "per_expert": self.navigator.get_all_accuracies(),
-            }
-        return None
-
     def _define_checkpoints(self, strategy="speed", num_layers=0):
         self.checkpoint_indices = []  # speed / no gradient checkpointing
         if strategy == "aggressive":
@@ -132,3 +123,12 @@ class PraxisDecoder(nn.Module):
             )
         else:
             return custom_forward(hidden_states, attention_mask, current_depth)
+
+    def get_prediction_accuracies(self):
+        """Return current prediction accuracies"""
+        if self.navigator:
+            return {
+                "mean": self.navigator.get_mean_accuracy(),
+                "per_expert": self.navigator.get_all_accuracies(),
+            }
+        return None

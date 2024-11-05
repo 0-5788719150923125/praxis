@@ -1,13 +1,9 @@
-import random
 from typing import List, Optional
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from transformers import AutoConfig
-
-from praxis.activations import ACT2FN
 
 
 class PraxisController(nn.Module):
