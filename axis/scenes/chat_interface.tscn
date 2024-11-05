@@ -5,6 +5,15 @@
 [node name="ChatInterface" type="CanvasLayer"]
 script = ExtResource("1_v8f8w")
 
+[node name="BackgroundTouch" type="Control" parent="."]
+process_mode = 3
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
 [node name="UIRoot" type="Control" parent="."]
 layout_mode = 3
 anchors_preset = 0
