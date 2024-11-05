@@ -10,6 +10,12 @@ var prompt_manager = PromptManager.new()
 @onready var input_field = $UIRoot/InputContainer/TextEdit
 @onready var http_request = $UIRoot/HTTPRequest
 
+# Add these after your existing variables
+var is_keyboard_visible: bool = false
+var initial_viewport_height: float = 0.0
+var original_input_bottom: float = 0.0
+
+# Modify _ready to store initial heights
 func _ready():
 	if not _are_nodes_ready():
 		push_error("Not all nodes are ready!")
@@ -17,6 +23,10 @@ func _ready():
 		
 	# Connect HTTP request signal
 	http_request.request_completed.connect(_on_request_completed)
+	
+	# Store initial heights
+	initial_viewport_height = get_viewport().get_visible_rect().size.y
+	original_input_bottom = 10  # The default bottom margin we set in _setup_layout
 	
 	# Set up the UI layout
 	_setup_layout()
@@ -30,6 +40,64 @@ func _ready():
 	# Make sure TextEdit doesn't create new lines with Enter
 	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	input_field.scroll_fit_content_height = true
+	
+	# Add keyboard handling for mobile
+	if OS.has_feature("mobile"):
+		input_field.focus_entered.connect(_on_focus_entered)
+		input_field.focus_exited.connect(_on_focus_exited)
+
+# Alternative _on_focus_entered function using fixed offset
+func _on_focus_entered() -> void:
+	if OS.has_feature("mobile"):
+		await get_tree().create_timer(0.05).timeout
+		
+		is_keyboard_visible = true
+		var input_container = $UIRoot/InputContainer
+		
+		# Use a fixed large offset that works for most keyboards
+		var keyboard_offset = 1000  # Adjust this value based on testing
+		
+		# Move input container up
+		input_container.offset_bottom = -keyboard_offset - 10
+		input_container.offset_top = -keyboard_offset - 50
+		
+		# Adjust scroll container
+		scroll_container.offset_bottom = -keyboard_offset - 50
+
+func _on_focus_exited() -> void:
+	if OS.has_feature("mobile") and is_keyboard_visible:
+		is_keyboard_visible = false
+		var input_container = $UIRoot/InputContainer
+		
+		# Reset to original positions from _setup_layout
+		input_container.offset_bottom = -original_input_bottom
+		input_container.offset_top = -50
+		scroll_container.offset_bottom = -60
+
+# Modify _on_window_resize to handle keyboard state
+func _on_window_resize():
+	var current_height = get_viewport().get_visible_rect().size.y
+	
+	# If height increased significantly, keyboard probably closed
+	if current_height >= initial_viewport_height and is_keyboard_visible:
+		_on_focus_exited()
+	
+	_setup_layout()
+	
+	# Update all existing messages
+	for message in message_container.get_children():
+		if message.has_method("set_message"):
+			message.custom_minimum_size.x = min(get_viewport().size.x * 0.8, 600)
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_WM_GO_BACK_REQUEST:
+			if is_keyboard_visible:
+				input_field.release_focus()
+				get_viewport().set_input_as_handled()
+		NOTIFICATION_APPLICATION_FOCUS_OUT:
+			if is_keyboard_visible:
+				_on_focus_exited()
 
 func _setup_layout():
 	# UIRoot should fill the viewport
@@ -63,15 +131,6 @@ func _setup_layout():
 	# TextEdit should expand horizontally
 	input_field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	input_field.custom_minimum_size.y = 40
-
-func _on_window_resize():
-	_setup_layout()
-	
-	# Update all existing messages
-	for message in message_container.get_children():
-		if message.has_method("set_message"):
-			# Reapply the message settings to update the width
-			message.custom_minimum_size.x = min(get_viewport().size.x * 0.8, 600)
 
 func _are_nodes_ready() -> bool:
 	return ui_root != null and \
