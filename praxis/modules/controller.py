@@ -21,20 +21,13 @@ class PraxisController(nn.Module):
     def __init__(self, config, max_num_experts: int):
         super().__init__()
         hidden_size = config.num_dims
-        intermediate_size = hidden_size * 2
         self.loss_scale = 0.001
 
         # Learn embeddings for all possible experts
         self.representations = nn.Parameter(torch.randn(max_num_experts, hidden_size))
 
         # Simple prediction network
-        self.predictor = nn.Sequential(
-            nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, intermediate_size),
-            ACT2FN["gelu"],
-            nn.Dropout(config.dropout),
-            nn.Linear(intermediate_size, hidden_size),
-        )
+        self.predictor = nn.Linear(hidden_size, hidden_size)
 
     def forward(
         self,
@@ -57,9 +50,6 @@ class PraxisController(nn.Module):
         # Project state to embedding space
         projected_state = self.predictor(state)  # [batch_size, hidden_size]
 
-        # Residuals
-        final_state = projected_state + state
-
         # Get embeddings for current expert pool
         available_embeddings = self.representations[
             current_indices
@@ -67,7 +57,7 @@ class PraxisController(nn.Module):
 
         # Compute similarities only with available experts
         logits = torch.matmul(
-            final_state, available_embeddings.t()
+            projected_state, available_embeddings.t()
         )  # [batch_size, num_current]
 
         if self.training:
