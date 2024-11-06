@@ -74,17 +74,17 @@ def format_messages_to_chatml(messages):
 
 def extract_assistant_reply(generated_text):
     """Extract the assistant's reply from the generated text."""
-    # Split the generated text based on the ChatML tokens
+    # Tokens used in ChatML
     start_token = "<|im_start|>assistant\n"
     end_token = "<|im_end|>"
-    # Find the position where the assistant's reply starts
-    start_index = generated_text.find(start_token)
+    # Find the last occurrence of the assistant's start token
+    start_index = generated_text.rfind(start_token)
     if start_index == -1:
         # If the start token is not found, return the whole text
         return generated_text.strip()
     else:
         start_index += len(start_token)
-    # Find the position where the assistant's reply ends
+    # Find the end token after the start_index
     end_index = generated_text.find(end_token, start_index)
     if end_index == -1:
         # If the end token is not found, return everything after the start token

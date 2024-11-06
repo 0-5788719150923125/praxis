@@ -9,6 +9,7 @@ var initial_viewport_height: float = 0.0
 @onready var scroll_container = $UIRoot/ScrollContainer
 @onready var message_container = $UIRoot/ScrollContainer/MessageContainer
 @onready var input_field = $UIRoot/InputContainer/TextEdit
+@onready var clear_button = $UIRoot/InputContainer/ClearButton
 @onready var http_request = $UIRoot/HTTPRequest
 @onready var background_touch = $BackgroundTouch
 @onready var input_container = $UIRoot/InputContainer
@@ -29,14 +30,6 @@ func _initialize_components():
 	# Make sure background touch can receive input
 	background_touch.mouse_filter = Control.MOUSE_FILTER_STOP
 
-func _on_window_resize():
-	var current_height = get_viewport().get_visible_rect().size.y
-	if current_height >= initial_viewport_height and is_keyboard_visible:
-		_on_focus_exited()
-	
-	_setup_layout()
-	_update_message_sizes()
-
 func _setup_signals():
 	http_request.request_completed.connect(_on_request_completed)
 	get_tree().root.size_changed.connect(_on_window_resize)
@@ -44,6 +37,28 @@ func _setup_signals():
 	input_field.focus_entered.connect(_on_focus_entered)
 	input_field.focus_exited.connect(_on_focus_exited)
 	background_touch.gui_input.connect(_on_background_touch)
+	clear_button.pressed.connect(_on_clear_button_pressed)
+
+func _on_clear_button_pressed() -> void:
+	# Clear the conversation history
+	clear_chat_history()
+
+func clear_chat_history() -> void:
+	# Clear all messages from the UI
+	for child in message_container.get_children():
+		child.queue_free()
+	# Clear the prompt manager history
+	prompt_manager.clear_history()
+	# Clear the input field if it has any text
+	input_field.text = ""
+
+func _on_window_resize():
+	var current_height = get_viewport().get_visible_rect().size.y
+	if current_height >= initial_viewport_height and is_keyboard_visible:
+		_on_focus_exited()
+	
+	_setup_layout()
+	_update_message_sizes()
 
 func _setup_layout():
 	_update_input_position(is_keyboard_visible)
@@ -123,7 +138,7 @@ func send_to_api(messages: Array):
 		"top_k": 4,
 		"repetition_penalty": 1.35
 	})
-	
+
 	var error = http_request.request(
 		"http://192.168.5.94:2100/input/",
 		["Content-Type: application/json"],
@@ -133,21 +148,6 @@ func send_to_api(messages: Array):
 	
 	if error != OK:
 		add_message("Error connecting to server", false)
-
-func _extract_last_response(full_response: String) -> String:
-	if full_response.strip_edges().is_empty():
-		return "Error: Empty response from server"
-	
-	var parts = full_response.split("PEN:", false)
-	if parts.size() <= 0:
-		return "Error: Malformed response"
-	
-	var response = parts[-1].strip_edges()
-	var ink_index = response.find("INK:")
-	if ink_index != -1:
-		response = response.substr(0, ink_index).strip_edges()
-	
-	return "Error: No valid response content" if response.strip_edges().is_empty() else response
 
 func _on_request_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
 	if result != HTTPRequest.RESULT_SUCCESS:
@@ -160,7 +160,7 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 	
 	var json = JSON.new()
 	var response_text = body.get_string_from_utf8()
-	
+
 	if json.parse(response_text) != OK or not json.get_data().has("response"):
 		add_message("Failed to parse response: " + json.get_error_message(), false)
 		return
@@ -168,8 +168,3 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 	var response = json.get_data().get("response")
 	prompt_manager.add_message("PEN", response)
 	add_message(response, false)
-
-func clear_chat_history():
-	for child in message_container.get_children():
-		child.queue_free()
-	prompt_manager.clear_history()
