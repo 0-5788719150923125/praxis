@@ -120,6 +120,8 @@ def generate():
                 prompt = format_messages_to_chatml(messages)
                 is_chatml = True
                 kwargs["stop_strings"] = ["<|im_end|>"]
+                kwargs["skip_special_tokens"] = False
+                del kwargs["messages"]
             except ValueError as ve:
                 logging.error(ve)
                 return jsonify({"error": str(ve)}), 400
