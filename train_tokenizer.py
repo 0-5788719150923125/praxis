@@ -23,14 +23,12 @@ vocab_size = 8192
 dropout = 0.1
 
 
-pad_token = "[PAD]"
-bos_token = "[BOS]"
-eos_token = "[EOS]"
-unk_token = "[UNK]"
-start_ctx_token = "[CTX]"
-end_ctx_token = "[XTC]"
-start_cat_token = "[CAT]"
-end_cat_token = "[TAC]"
+pad_token = "<|pad|>"
+bos_token = "<|bos|>"
+eos_token = "<|eos|>"
+unk_token = "<|unk|>"
+start_token = "<|im_start|>"
+end_token = "<|im_end|>"
 
 
 dataset = load_dataset(
@@ -39,7 +37,7 @@ dataset = load_dataset(
     split="train",
     streaming=True,
     trust_remote_code=True,
-    cache_dir="tmp",
+    cache_dir="data/datasets",
 ).shuffle(
     seed=59,
     buffer_size=10_000,
@@ -62,10 +60,8 @@ tokenizer.add_special_tokens(
         pad_token,
         bos_token,
         eos_token,
-        start_ctx_token,
-        end_ctx_token,
-        start_cat_token,
-        end_cat_token,
+        start_token,
+        end_token,
     ]
 )
 
@@ -78,10 +74,8 @@ trainer = trainers.BpeTrainer(
         pad_token,
         bos_token,
         eos_token,
-        start_ctx_token,
-        end_ctx_token,
-        start_cat_token,
-        end_cat_token,
+        start_token,
+        end_token,
     ],
 )
 
@@ -109,9 +103,7 @@ trained_tokenizer.add_special_tokens(
         "eos_token": eos_token,
     }
 )
-custom_special_tokens = {
-    "additional_special_tokens": ["[CTX]", "[XTC]", "[CAT]", "[TAC]"]
-}
+custom_special_tokens = {"additional_special_tokens": ["<|im_start|>", "<|im_end|>"]}
 trained_tokenizer.add_special_tokens(custom_special_tokens)
 archive_path = save_path + f"-{vocab_size}"
 

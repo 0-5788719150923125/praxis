@@ -57,13 +57,73 @@ def serve_static(filename):
         return send_from_directory(app.static_folder, filename)
 
 
+def format_messages_to_chatml(messages):
+    """Format a list of message objects into a ChatML-formatted string."""
+    formatted = ""
+    for message in messages:
+        role = message.get("role", "").strip()
+        content = message.get("content", "").strip()
+        if role not in {"system", "user", "assistant"}:
+            raise ValueError(f"Invalid role: {role}")
+        formatted += f"<|im_start|>{role}\n{content}\n<|im_end|>\n"
+    # Ensure the prompt ends with the assistant's role
+    if not formatted.strip().endswith("<|im_start|>assistant"):
+        formatted += "<|im_start|>assistant\n"
+    return formatted
+
+
+def extract_assistant_reply(generated_text):
+    """Extract the assistant's reply from the generated text."""
+    # Split the generated text based on the ChatML tokens
+    start_token = "<|im_start|>assistant\n"
+    end_token = "<|im_end|>"
+    # Find the position where the assistant's reply starts
+    start_index = generated_text.find(start_token)
+    if start_index == -1:
+        # If the start token is not found, return the whole text
+        return generated_text.strip()
+    else:
+        start_index += len(start_token)
+    # Find the position where the assistant's reply ends
+    end_index = generated_text.find(end_token, start_index)
+    if end_index == -1:
+        # If the end token is not found, return everything after the start token
+        assistant_reply = generated_text[start_index:].strip()
+    else:
+        assistant_reply = generated_text[start_index:end_index].strip()
+    return assistant_reply
+
+
 @app.route("/input/", methods=["GET", "POST"])
 def generate():
     try:
         kwargs = request.get_json()
         logging.info("Received a valid request via REST.")
 
-        prompt = kwargs.get("prompt", "")
+        prompt = kwargs.get("prompt")
+        messages = kwargs.get("messages")
+
+        if (prompt is not None) and (messages is not None):
+            return (
+                jsonify(
+                    {"error": "Please provide either 'prompt' or 'messages', not both."}
+                ),
+                400,
+            )
+        if (prompt is None) and (messages is None):
+            return jsonify({"error": "Please provide 'prompt' or 'messages'."}), 400
+
+        is_chatml = False
+        if messages is not None:
+            # Format messages into ChatML format
+            try:
+                prompt = format_messages_to_chatml(messages)
+                is_chatml = True
+                kwargs["stop_strings"] = ["<|im_end|>"]
+            except ValueError as ve:
+                logging.error(ve)
+                return jsonify({"error": str(ve)}), 400
+
         generator = app.config["generator"]
         request_id = generator.request_generation(prompt, kwargs)
         while True:
@@ -75,8 +135,17 @@ def generate():
 
         if not output:
             raise Exception("Failed to generate an output from this API.")
+
+        if is_chatml:
+            # Extract only the assistant's reply
+            assistant_reply = extract_assistant_reply(output)
+            response = {"response": assistant_reply}
+        else:
+            # Return the full output as before
+            response = {"response": output}
+
     except Exception as e:
         logging.error(e)
-        return jsonify(str(e)), 400
+        return jsonify({"error": str(e)}), 400
     logging.info("Successfully responded to REST request.")
-    return jsonify({"response": output}), 200
+    return jsonify(response), 200

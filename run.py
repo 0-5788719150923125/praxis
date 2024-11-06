@@ -687,7 +687,7 @@ class TerminalInterface(Callback):
                 suppress_tokens=[
                     tokenizer.eos_token_id,
                     tokenizer.pad_token_id,
-                ],  # else the model tends to degenerate into 100% [EOS] or [PAD] tokens
+                ],  # else the model tends to degenerate into 100% <|eos|> or <|pad|> tokens
             ),
         )
         while True:
@@ -708,7 +708,7 @@ class TerminalInterface(Callback):
             if self.dashboard:
                 self.host_count += 1
                 self.dashboard.set_host_count(self.host_count)
-                self.dashboard.update_status("[ERR]")
+                self.dashboard.update_status("<|err|>")
         elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:
