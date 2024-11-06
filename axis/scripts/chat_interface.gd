@@ -15,7 +15,6 @@ var initial_viewport_height: float = 0.0
 
 const KEYBOARD_OFFSET = 1000
 const INPUT_MARGIN = 10
-const SPECIAL_TOKENS = ["[EOS]", "[TAC]", "[CAT]", "[CTX]", "[XTC]", "[BOS]", "[PAD]"]
 
 func _ready():
 	_initialize_components()
@@ -26,14 +25,17 @@ func _initialize_components():
 	initial_viewport_height = get_viewport().get_visible_rect().size.y
 	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	input_field.scroll_fit_content_height = true
-	input_field.set_script(preload("res://scripts/input_field.gd"))
 	
-	# Configure background touch panel
-	var panel = Panel.new()
-	background_touch.add_child(panel)
-	panel.anchor_right = 1.0
-	panel.anchor_bottom = 1.0
-	panel.add_theme_stylebox_override("panel", StyleBoxFlat.new())
+	# Make sure background touch can receive input
+	background_touch.mouse_filter = Control.MOUSE_FILTER_STOP
+
+func _on_window_resize():
+	var current_height = get_viewport().get_visible_rect().size.y
+	if current_height >= initial_viewport_height and is_keyboard_visible:
+		_on_focus_exited()
+	
+	_setup_layout()
+	_update_message_sizes()
 
 func _setup_signals():
 	http_request.request_completed.connect(_on_request_completed)
@@ -44,42 +46,13 @@ func _setup_signals():
 	background_touch.gui_input.connect(_on_background_touch)
 
 func _setup_layout():
-	# Set up main container
-	ui_root.anchor_right = 1.0
-	ui_root.anchor_bottom = 1.0
-	ui_root.offset_right = 0
-	ui_root.offset_bottom = 0
-	
-	# Configure scroll container
-	scroll_container.anchor_right = 1.0
-	scroll_container.anchor_bottom = 1.0
-	scroll_container.offset_bottom = -60
-	scroll_container.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	
-	# Configure message container
-	message_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	message_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	message_container.add_theme_constant_override("separation", 10)
-	
-	# Configure input container
-	input_container.anchor_top = 1.0
-	input_container.anchor_right = 1.0
-	input_container.anchor_bottom = 1.0
-	input_container.offset_left = 10
-	input_container.offset_right = -10
-	
-	# Configure input field
-	input_field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	input_field.custom_minimum_size.y = 40
-	
 	_update_input_position(is_keyboard_visible)
 
 func _update_input_position(keyboard_visible: bool):
 	var offset = KEYBOARD_OFFSET if keyboard_visible and OS.has_feature("mobile") else 0
 	input_container.offset_top = -50 - offset
 	input_container.offset_bottom = -INPUT_MARGIN - offset
-	scroll_container.offset_bottom = -(50 + INPUT_MARGIN) - offset  # Match input container height
+	scroll_container.offset_bottom = -(50 + INPUT_MARGIN) - offset
 
 func _on_focus_entered() -> void:
 	is_keyboard_visible = true
@@ -92,18 +65,12 @@ func _on_focus_exited() -> void:
 	_update_input_position(false)
 
 func _on_background_touch(event: InputEvent) -> void:
-	if (event is InputEventMouseButton or event is InputEventScreenTouch) and event.pressed:
-		if not Rect2(input_field.global_position, input_field.size).has_point(event.global_position):
-			input_field.release_focus()
-			get_viewport().set_input_as_handled()
-
-func _on_window_resize():
-	var current_height = get_viewport().get_visible_rect().size.y
-	if current_height >= initial_viewport_height and is_keyboard_visible:
-		_on_focus_exited()
-	
-	_setup_layout()
-	_update_message_sizes()
+	if event is InputEventMouseButton and event.pressed:
+		input_field.release_focus()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventScreenTouch and event.pressed:
+		input_field.release_focus()
+		get_viewport().set_input_as_handled()
 
 func _update_message_sizes():
 	var max_width = min(get_viewport().size.x - 40, 600)  # 20px padding on each side
@@ -180,14 +147,7 @@ func _extract_last_response(full_response: String) -> String:
 	if ink_index != -1:
 		response = response.substr(0, ink_index).strip_edges()
 	
-	response = _strip_special_tokens(response)
 	return "Error: No valid response content" if response.strip_edges().is_empty() else response
-
-func _strip_special_tokens(text: String) -> String:
-	var cleaned_text = text
-	for token in SPECIAL_TOKENS:
-		cleaned_text = cleaned_text.replace(token, "")
-	return cleaned_text.strip_edges()
 
 func _on_request_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
 	if result != HTTPRequest.RESULT_SUCCESS:
