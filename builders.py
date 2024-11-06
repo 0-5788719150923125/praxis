@@ -16,9 +16,7 @@ debug = False
 class DataFormat(Enum):
     SIMPLE = "simple"
     INSTRUCTION = "instruction"
-    IO = "io"
     CONVERSATION = "conversation"
-    QA = "qa"
     PERSONACHAT = "persona_chat"
     CUSTOM = "custom"
 
@@ -35,7 +33,7 @@ HUGGINGFACE_DATASETS = [
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
-        format=DataFormat.IO,
+        format=DataFormat.INSTRUCTION,
         weight=0.01,
     ),
     dict(
@@ -96,73 +94,73 @@ def format_simple(document: Dict, keys: List[str]) -> str:
 
 
 def format_instruction(document: Dict, keys: List[str]) -> str:
-    """Format as instruction/output pairs"""
-    assert len(keys) >= 2, "Instruction format requires at least 2 keys"
+    """Format as instruction/output pairs in ChatML format."""
+    assert len(keys) == 2, "Instruction format requires exactly 2 keys"
     instruction = document.get(keys[0], "")
     output = document.get(keys[1], "")
-    return f"\nINSTRUCTION: {instruction}\nOUTPUT: {output}"
-
-
-def format_input_output(document: Dict, keys: List[str]) -> str:
-    """Format as input/output pairs"""
-    assert len(keys) >= 2, "Autonomous system format requires at least 2 keys"
-    instruction = document.get(keys[0], "")
-    output = document.get(keys[1], "")
-    return f"\nINPUT: {instruction}\nOUTPUT: {output}"
+    return (
+        f"<|im_start|>user\n{instruction}\n<|im_end|>\n"
+        f"<|im_start|>assistant\n{output}\n<|im_end|>\n"
+    )
 
 
 def format_conversation(document: Dict, keys: List[str]) -> str:
-    """Format as USER/ASSISTANT conversation"""
-    assert len(keys) >= 2, "Conversation format requires at least 2 keys"
+    """Format as a conversation in ChatML format."""
+    assert len(keys) == 3, "Conversation format requires exactly 3 keys"
     parts = []
     for i, key in enumerate(keys):
-        role = (
-            "SYSTEM"
-            if i == 0 and len(keys) > 2
-            else ("USER" if i % 2 == 0 else "ASSISTANT")
-        )
-        parts.append(f"\n{role}: {document.get(key, '')}")
+        if i == 0:
+            role = "system"
+        elif i == 1:
+            role = "user"
+        elif i == 2:
+            role = "assistant"
+        message = document.get(key, "")
+        parts.append(f"<|im_start|>{role}\n{message}\n<|im_end|>\n")
     return "".join(parts)
 
 
-def format_qa(document: Dict, keys: List[str]) -> str:
-    """Format as question/answer pairs"""
-    assert len(keys) >= 2, "QA format requires at least 2 keys"
-    question = document.get(keys[0], "")
-    answer = document.get(keys[1], "")
-    return f"\nQUESTION: {question}\nANSWER: {answer}"
-
-
 def format_personachat(document: Dict, keys: List[str]) -> str:
-    """Format persona chat conversations with personas"""
+    """Format persona chat conversations into ChatML format."""
     # Extract personas
-    user1_personas = document.get("user 1 personas", "").split("\n")
-    user2_personas = document.get("user 2 personas", "").split("\n")
+    user_personas = document.get("user 1 personas", "").split("\n")
+    assistant_personas = document.get("user 2 personas", "").split("\n")
     conversation = document.get("Best Generated Conversation", "").split("\n")
 
-    # Give them names
-    user1 = "INK"
-    user2 = "PEN"
+    # Include personas in system message
+    system_message = ""
+    if user_personas:
+        system_message += "".join(
+            f"- {p.strip()}\n" for p in user_personas if p.strip()
+        )
+    if assistant_personas:
+        system_message += "".join(
+            f"- {p.strip()}\n" for p in assistant_personas if p.strip()
+        )
 
-    # Format personas section
-    formatted = f"[CTX]\n{user1}:\n"
-    formatted += "".join(f"- {p.strip()}\n" for p in user1_personas if p.strip())
-    formatted += f"\n{user2}:\n"
-    formatted += "".join(f"- {p.strip()}\n" for p in user2_personas if p.strip())
-    formatted += "[XTX]\n\n"
+    # Initialize the formatted text with system message
+    formatted = f"<|im_start|>system\n{system_message.strip()}\n<|im_end|>\n"
 
-    # Format conversation section
-    formatted += "[CAT]\n"
+    # Map speaker labels to ChatML roles
+    speaker_map = {
+        "A": "user",
+        "B": "assistant",
+        "USER 1": "user",
+        "USER1": "user",
+        "USER 2": "assistant",
+        "USER2": "assistant",
+    }
+
+    # Format the conversation using "user" and "assistant"
     for i, utterance in enumerate(conversation):
         if ": " in utterance:
-            speaker, text = utterance.split(": ", 1)
-            speaker = user1 if speaker.upper() in ["A", "USER 1", "USER1"] else user2
+            speaker_label, text = utterance.split(": ", 1)
+            role = speaker_map.get(speaker_label.strip().upper(), "user")
         else:
-            # Alternate speakers if no prefix
-            speaker = user1 if i % 2 == 0 else user2
+            # Alternate speakers if no prefix is present
+            role = "user" if i % 2 == 0 else "assistant"
             text = utterance
-        formatted += f"{speaker}: {text.strip()}\n"
-    formatted += "[TAC]"
+        formatted += f"<|im_start|>{role}\n{text.strip()}\n<|im_end|>\n"
 
     return formatted
 
@@ -170,9 +168,7 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
 FORMAT_HANDLERS = {
     DataFormat.SIMPLE: format_simple,
     DataFormat.INSTRUCTION: format_instruction,
-    DataFormat.IO: format_input_output,
     DataFormat.CONVERSATION: format_conversation,
-    DataFormat.QA: format_qa,
     DataFormat.PERSONACHAT: format_personachat,
 }
 
