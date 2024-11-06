@@ -103,7 +103,7 @@ trained_tokenizer.add_special_tokens(
         "eos_token": eos_token,
     }
 )
-custom_special_tokens = {"additional_special_tokens": ["<|im_start|>", "<|im_end|>"]}
+custom_special_tokens = {"additional_special_tokens": [start_token, end_token]}
 trained_tokenizer.add_special_tokens(custom_special_tokens)
 archive_path = save_path + f"-{vocab_size}"
 
