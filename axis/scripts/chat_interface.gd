@@ -133,7 +133,7 @@ func _send_message():
 	if text.length() > 0:
 		add_message(text, true)
 		prompt_manager.add_message("INK", text)
-		send_to_api(prompt_manager.build_prompt())
+		send_to_api(prompt_manager.get_messages())
 		input_field.text = ""
 		if is_keyboard_visible:
 			input_field.release_focus()
@@ -145,18 +145,16 @@ func add_message(text: String, is_user: bool):
 	await get_tree().process_frame
 	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
 
-func send_to_api(text: String):
+func send_to_api(messages: Array):
 	var body = JSON.stringify({
-		"prompt": text,
+		"messages": messages,
 		"do_sample": true,
 		"temperature": 0.45,
 		"max_new_tokens": 128,
 		"eta_cutoff": 0.002,
 		"penalty_alpha": 0.4,
 		"top_k": 4,
-		"repetition_penalty": 1.35,
-		"stop_strings": ["\nINK:", "\nPEN:"],
-		"skip_special_tokens": false
+		"repetition_penalty": 1.35
 	})
 	
 	var error = http_request.request(
@@ -207,11 +205,9 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		add_message("Failed to parse response: " + json.get_error_message(), false)
 		return
 	
-	var clean_response = _extract_last_response(json.get_data().get("response"))
-	if not clean_response.begins_with("Error:"):
-		prompt_manager.add_message("PEN", clean_response)
-	
-	add_message(clean_response, false)
+	var response = json.get_data().get("response")
+	prompt_manager.add_message("PEN", response)
+	add_message(response, false)
 
 func clear_chat_history():
 	for child in message_container.get_children():
