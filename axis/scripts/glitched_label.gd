@@ -1,3 +1,5 @@
+# This code was essentially ported from here:
+# https://github.com/thetarnav/glitched-writer
 extends Label
 class_name GlitchedLabel
 
@@ -10,14 +12,14 @@ const NOISE_CHARS = "※｜－×￣￤○◎●△▲▽▼☉☐☑☒☢☣☠
 const ALL_GLITCH_CHARS = GLITCH_CHARS + COMPLEX_CHARS + NOISE_CHARS
 
 var glitch_config = {
-	"steps": Vector2(2, 5),
-	"interval": Vector2(30, 80),
-	"delay": Vector2(5, 15),
-	"change_chance": 0.7,
-	"ghost_chance": 0.3,
-	"max_ghosts": 0.3,
-	"one_at_a_time": true,
-	"extra_glitch_chars": 8  # How many extra characters to add for glitching
+    "steps": Vector2(2, 5), # Reduced steps range
+    "interval": Vector2(30, 80), # Significantly faster intervals
+    "delay": Vector2(5, 15), # Reduced delays
+    "change_chance": 0.7, # Keep this for visual interest
+    "ghost_chance": 0.3, # Keep this for visual interest
+    "max_ghosts": 0.3, # Keep this for visual interest
+    "one_at_a_time": true,
+	"extra_glitch_chars": 8 # How many extra characters to append to the end
 }
 
 var target_text: String = ""
@@ -26,13 +28,13 @@ var is_writing: bool = false
 var current_char_index: int = 0
 
 class GlitchChar:
-	var writer              # Reference to main node
-	var current: String     # Current visible character
-	var target: String     # Target final character
-	var ghosts: Array      # Ghost characters [before, after]
-	var steps_left: int    # Steps before settling
-	var revealed: bool = false  # Whether this character has started revealing
-	var is_extra: bool = false  # Whether this is an extra character for glitching
+	var writer # Reference to main node
+	var current: String # Current visible character
+	var target: String # Target final character
+	var ghosts: Array # Ghost characters [before, after]
+	var steps_left: int # Steps before settling
+	var revealed: bool = false # Whether this character has started revealing
+	var is_extra: bool = false # Whether this is an extra character for glitching
 	
 	func _init(_writer, _target: String, _is_extra: bool = false) -> void:
 		writer = _writer
@@ -41,7 +43,7 @@ class GlitchChar:
 		current = writer._get_random_glyph(true) if is_extra else ""
 		ghosts = [[], []]
 		steps_left = writer._get_random_from_range(writer.glitch_config.steps)
-		revealed = is_extra  # Extra characters start revealed
+		revealed = is_extra # Extra characters start revealed
 		
 	func get_display_text() -> String:
 		if not revealed:
@@ -60,7 +62,7 @@ class GlitchChar:
 			
 		if is_extra:
 			# Extra characters should eventually disappear
-			if randf() < 0.2:  # Chance to start disappearing
+			if randf() < 0.2: # Chance to start disappearing
 				current = ""
 			else:
 				current = writer._get_random_glyph(true)

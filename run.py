@@ -158,6 +158,12 @@ parser.add_argument(
     help="Batch size to use for training",
 )
 parser.add_argument(
+    "--target_batch_size",
+    type=int,
+    default=64,
+    help="The actual batch size to use, including accumulation steps.",
+)
+parser.add_argument(
     "--depth",
     type=int,
     default=7,
@@ -377,7 +383,7 @@ config = PraxisConfig(
 # Misc hyperparameters
 hparams = dict(
     batch_size=batch_size if batch_size else 1,
-    target_batch_size=64,
+    target_batch_size=target_batch_size,
     block_size=512,
     oversample_chance=0.1,  # double the block_size
     supersample_chance=0.01,  # quadruple the block_size
