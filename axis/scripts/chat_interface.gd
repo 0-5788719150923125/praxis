@@ -25,7 +25,7 @@ const DESKTOP_FONT_SIZE = 16
 const KEYBOARD_OFFSET = 1000
 const INPUT_MARGIN = 10
 
-var server_url
+var server_url = "http://192.168.5.94:2100"
 
 func _ready():
 	var config = ConfigFile.new()

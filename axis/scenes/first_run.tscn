@@ -27,22 +27,20 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -100.0
+offset_left = -75.0
 offset_top = -44.0
-offset_right = 100.0
+offset_right = 75.0
 offset_bottom = 44.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 20
 
 [node name="DemoButton" type="Button" parent="VBoxContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 32
 text = "DEMO"
 
 [node name="AddButton" type="Button" parent="VBoxContainer"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 32
 text = "ADD"
 
 [connection signal="pressed" from="VBoxContainer/DemoButton" to="." method="_on_demo_button_pressed"]
