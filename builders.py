@@ -478,12 +478,51 @@ class GunChatDataset(PraxisSampler):
         self.gun = Gun()
 
     def fill_sequence_cache(self):
+        # Get a list of text samples
         text_list = self.gun.get_sample(250)
-        prepared_list = []
+
+        # Prepare the system prompt with arbitrary descriptions
+        user_description = random.choice(
+            [
+                "The user is interested in technology and gadgets.",
+                "The user loves discussing philosophy and life.",
+                "The user is curious about the latest news.",
+                "The user enjoys learning about history.",
+                "The user is seeking advice on personal development.",
+                "The user is passionate about art and creativity.",
+                "The user is looking for travel recommendations.",
+                "The user is studying computer science.",
+                "The user wants to learn new cooking recipes.",
+                "The user is enthusiastic about sports and fitness.",
+            ]
+        )
+        assistant_description = random.choice(
+            [
+                "The assistant is a knowledgeable and helpful AI.",
+                "The assistant provides clear and concise answers.",
+                "The assistant is friendly and supportive.",
+                "The assistant offers detailed explanations.",
+                "The assistant helps users understand complex topics.",
+                "The assistant is skilled in problem-solving.",
+                "The assistant is patient and understanding.",
+                "The assistant excels in educational guidance.",
+                "The assistant is adept at providing creative ideas.",
+                "The assistant is resourceful and informative.",
+            ]
+        )
+
+        system_prompt = f"{user_description}\n{assistant_description}"
+
+        # Initialize the formatted text with system message
+        formatted = f"<|im_start|>system\n{system_prompt}\n<|im_end|>\n"
+
+        # Build the conversation by randomly assigning text to user or assistant
         for text in text_list:
-            formatted = random.choice(["INPUT: ", "OUTPUT: "]) + text
-            prepared_list.append(formatted)
-        self.sequence_cache.append("\n".join(prepared_list))
+            role = random.choice(["user", "assistant"])
+            formatted += f"<|im_start|>{role}\n{text.strip()}\n<|im_end|>\n"
+
+        # Add the conversation to the sequence cache
+        self.sequence_cache.append(formatted)
 
 
 class WeightedIterableDataset(IterableDataset):
