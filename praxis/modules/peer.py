@@ -31,9 +31,6 @@ class PraxisPEER(nn.Module):
         # Product-Key retrieval requires keys to be a perfect square of the total experts
         self.num_keys = int(math.sqrt(self.num_experts))
 
-        # Use Gated Linear Units (instead of a regular MLP)
-        self.glu = True
-
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a perfect square"
@@ -71,9 +68,6 @@ class PraxisPEER(nn.Module):
 
         self.down = nn.Embedding(self.num_experts * self.num_sets, num_dims)
         nn.init.xavier_uniform_(self.down.weight)
-        if self.glu:
-            self.gates = nn.Embedding(self.num_experts * self.num_sets, num_dims)
-            nn.init.xavier_uniform_(self.gates.weight)
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
         self.up = nn.Embedding(self.num_experts * self.num_sets, num_dims)
@@ -117,17 +111,8 @@ class PraxisPEER(nn.Module):
         weights_down = self.down(indices)
         outputs = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_down)
 
-        # Activate the inputs
-        outputs = self.act(outputs)
-
-        # Multiply by linear gating weights
-        if self.glu:
-            weights_gated = self.gates(indices)
-            gated = torch.einsum("b n d, b n h k d -> b n h k", inputs, weights_gated)
-            outputs = outputs * gated
-
-        # Apply sigmoid to scores
-        outputs = F.sigmoid(scores) * outputs
+        # Apply sigmoid scores to activated outputs
+        outputs = F.sigmoid(scores) * self.act(outputs)
 
         # Force sparse ensembling of intermediate states
         outputs = self.dropout(outputs)
