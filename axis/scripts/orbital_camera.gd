@@ -105,26 +105,35 @@ func _handle_rotation(delta: Vector2) -> void:
 	last_input_direction = input_direction
 
 func _apply_rotation(rotation_amount: Vector2) -> void:
-	# Handle horizontal rotation
-	var horizontal_rotation = Quaternion(up_vector, -rotation_amount.x)
+	# Create rotation in camera's local space
+	var pitch = Basis().rotated(Vector3.RIGHT, -rotation_amount.y)
+	var yaw = Basis().rotated(Vector3.UP, -rotation_amount.x)
 	
-	# Handle vertical rotation with limits
-	var right_vector = rotation_quaternion * Vector3.RIGHT
-	var current_up = rotation_quaternion * Vector3.UP
-	var angle_to_up = current_up.angle_to(Vector3.UP)
+	# Convert to quaternions and combine with existing rotation
+	var pitch_quat = Quaternion(pitch)
+	var yaw_quat = Quaternion(yaw)
 	
-	# Limit vertical rotation to avoid gimbal lock
-	var vertical_amount = rotation_amount.y
-	if angle_to_up < 0.1 and vertical_amount > 0:
-		vertical_amount *= (angle_to_up / 0.1)
-	elif angle_to_up > PI - 0.1 and vertical_amount < 0:
-		vertical_amount *= ((PI - angle_to_up) / 0.1)
-	
-	var vertical_rotation = Quaternion(right_vector, -vertical_amount)
-	
-	# Apply rotations
-	rotation_quaternion = horizontal_rotation * rotation_quaternion * vertical_rotation
+	# Yaw in world space, pitch in local space
+	rotation_quaternion = yaw_quat * rotation_quaternion * pitch_quat
 	rotation_quaternion = rotation_quaternion.normalized()
+
+func _update_camera_position() -> void:
+	var target_pos = focus_target.global_position if focus_target else Vector3.ZERO
+	
+	# Get our current orientation as a basis
+	var basis = Basis(rotation_quaternion)
+	
+	# Calculate camera position using basis
+	var offset = basis * Vector3(0, 0, camera_distance)
+	position = target_pos + offset
+	
+	# Calculate a stable up vector based on our current orientation
+	var forward = -basis.z
+	var right = basis.x
+	var new_up = right.cross(forward).normalized()
+	
+	# Look at target with our calculated up vector
+	look_at(target_pos, new_up)
 
 func set_focus_target(new_target: Node3D) -> void:
 	if focus_target == new_target:
@@ -283,16 +292,3 @@ func _get_touch_distance() -> float:
 		return 0.0
 	var points = touch_points.values()
 	return points[0].distance_to(points[1])
-
-func _update_camera_position() -> void:
-	var target_pos = focus_target.global_position if focus_target else Vector3.ZERO
-	
-	# Start with the base offset
-	var offset = Vector3(0, 0, camera_distance)
-	
-	# Apply rotation
-	offset = rotation_quaternion * offset
-	
-	# Set camera position and look at target
-	position = target_pos + offset
-	look_at(target_pos, up_vector)
