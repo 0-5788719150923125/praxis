@@ -10,10 +10,9 @@ var previous_keyboard_height: int = 0  # New variable
 var keyboard_height: int = 0  # New variable
 
 # UI scaling constants
-const MOBILE_SCALE_FACTOR = 2.5
 const MIN_BUTTON_HEIGHT = 70
 const MIN_INPUT_HEIGHT = 70
-const MOBILE_FONT_SIZE = 24
+const MOBILE_FONT_SIZE = 32
 const DESKTOP_FONT_SIZE = 16
 
 @onready var ui_root = $UIRoot
@@ -37,10 +36,107 @@ func _ready():
 		server_url = config.get_value("Server", "url", "http://192.168.5.94:2100")
 		print("Server URL: ", server_url)
 	_initialize_components()
+	_create_base_theme()  # New function to create a consistent theme
 	_setup_signals()
 	_setup_layout()
 	_apply_platform_scaling()
 	hide_chat_interface()
+
+func _create_base_theme():
+	# Create a base theme that will be used throughout the interface
+	var base_theme = Theme.new()
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	# Set default font size
+	base_theme.set_default_font_size(font_size)
+	
+	# Store the theme for reuse
+	ui_root.theme = base_theme
+	
+	# Ensure the theme propagates to all children
+	for child in ui_root.get_children():
+		if child is Control:
+			child.theme = base_theme
+
+func _apply_platform_scaling():
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	# Apply scaling to main UI elements
+	if is_mobile:
+		# Set minimum sizes for buttons and input
+		toggle_button.custom_minimum_size.y = MIN_BUTTON_HEIGHT
+		clear_button.custom_minimum_size.y = MIN_BUTTON_HEIGHT
+		input_field.custom_minimum_size.y = MIN_INPUT_HEIGHT
+		
+		# Make buttons wider
+		toggle_button.custom_minimum_size.x = 180
+		clear_button.custom_minimum_size.x = 120
+		
+		# Increase spacing
+		input_container.add_theme_constant_override("separation", 20)
+	
+	# Apply font sizes explicitly to ensure they take effect
+	_apply_font_size_to_control(toggle_button, font_size)
+	_apply_font_size_to_control(clear_button, font_size)
+	_apply_font_size_to_control(input_field, font_size)
+	
+	# Scale existing messages
+	_update_message_sizes()
+
+func _apply_font_size_to_control(control: Control, size: int):
+	# Create font settings
+	control.add_theme_font_size_override("font_size", size)
+	
+	# Special handling for TextEdit
+	if control is TextEdit:
+		# Override additional font size properties specific to TextEdit
+		control.add_theme_font_size_override("normal_font_size", size)
+		control.add_theme_font_size_override("bold_font_size", size)
+		control.add_theme_font_size_override("italic_font_size", size)
+		control.add_theme_font_size_override("bold_italic_font_size", size)
+
+func add_message(text: String, is_user: bool):
+	var message = message_scene.instantiate()
+	message_container.add_child(message)
+	
+	# Apply theme and font scaling before setting the message
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	# Apply theme from parent
+	message.theme = ui_root.theme
+	
+	# Ensure the label inside the message gets proper font size
+	var label = message.get_node_or_null("MarginContainer/Label")
+	if label:
+		_apply_font_size_to_control(label, font_size)
+	
+	message.set_message(text, is_user)
+	await get_tree().process_frame
+	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
+
+func _update_message_sizes():
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	# Update all existing messages
+	for message in message_container.get_children():
+		message.theme = ui_root.theme
+		var label = message.get_node_or_null("MarginContainer/Label")
+		if label:
+			_apply_font_size_to_control(label, font_size)
+
+func _on_window_resize():
+	var current_height = get_viewport().get_visible_rect().size.y
+	if current_height >= initial_viewport_height and is_keyboard_visible:
+		_on_focus_exited()
+	
+	# Reapply scaling when window size changes
+	_create_base_theme()
+	_setup_layout()
+	_apply_platform_scaling()
 
 
 func _process(_delta: float) -> void:
@@ -93,9 +189,6 @@ func _update_layout_positions(button_height: int, input_margin: int, keyboard_of
 	
 	# Adjust scroll container
 	scroll_container.offset_bottom = -(button_height + input_margin * 2) - keyboard_offset
-
-func _apply_platform_scaling():
-	var is_mobile = OS.has_feature("mobile")
 	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
 	
 	if is_mobile:
@@ -149,32 +242,9 @@ func _update_font_size(control: Control, size: int):
 		control.add_theme_font_size_override("font_size", size)
 		control.theme = theme
 
-func _update_message_sizes():
-	var is_mobile = OS.has_feature("mobile")
-	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
-	
-	for message in message_container.get_children():
-		if message.has_method("set_message"):
-			var label = message.get_node_or_null("MarginContainer/Label")
-			if label:
-				_update_font_size(label, font_size)
-
 # Variables to store layout values
 var base_button_height: int
 var base_input_margin: int
-
-func add_message(text: String, is_user: bool):
-	var message = message_scene.instantiate()
-	message_container.add_child(message)
-	
-	# Apply font scaling before setting the message
-	var font_size = MOBILE_FONT_SIZE if OS.has_feature("mobile") else DESKTOP_FONT_SIZE
-	if message.get_node_or_null("MarginContainer/Label"):
-		_update_font_size(message.get_node("MarginContainer/Label"), font_size)
-	
-	message.set_message(text, is_user)
-	await get_tree().process_frame
-	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
 
 func _setup_signals():
 	http_request.request_completed.connect(_on_request_completed)
@@ -244,14 +314,6 @@ func clear_chat_history() -> void:
 	prompt_manager.clear_history()
 	# Clear the input field if it has any text
 	input_field.text = ""
-
-func _on_window_resize():
-	var current_height = get_viewport().get_visible_rect().size.y
-	if current_height >= initial_viewport_height and is_keyboard_visible:
-		_on_focus_exited()
-	
-	_setup_layout()
-	_update_message_sizes()
 
 func _on_background_touch(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:

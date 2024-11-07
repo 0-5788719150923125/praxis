@@ -13,11 +13,18 @@ func set_message(text: String, is_user: bool):
 	
 	margin_container.add_child(label)
 	
+	# Inherit theme from parent
+	label.theme = get_parent().theme
+	
+	# Apply font size explicitly
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = 32 if is_mobile else 16  # Match the MOBILE_FONT_SIZE and DESKTOP_FONT_SIZE constants
+	label.add_theme_font_size_override("font_size", font_size)
+	
 	# Set initial properties
 	if is_user:
 		label.text = text
 	else:
-		# Start empty and trigger glitch effect
 		label.text = ""
 		label.write(text)
 	
@@ -25,7 +32,6 @@ func set_message(text: String, is_user: bool):
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	
 	# Adjust base sizing for mobile
-	var is_mobile = OS.has_feature("mobile")
 	var base_margin = 20 if is_mobile else 10
 	var max_width = get_viewport().size.x * (0.9 if is_mobile else 0.8)
 	max_width = min(max_width, 800 if is_mobile else 600)
