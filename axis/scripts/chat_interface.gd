@@ -4,6 +4,10 @@ var message_scene = preload("res://scenes/message.tscn")
 var prompt_manager = PromptManager.new()
 var is_keyboard_visible: bool = false
 var initial_viewport_height: float = 0.0
+var ignore_next_focus_exited: bool = false
+
+var previous_keyboard_height: int = 0  # New variable
+var keyboard_height: int = 0  # New variable
 
 # UI scaling constants
 const MOBILE_SCALE_FACTOR = 2.5
@@ -37,6 +41,23 @@ func _ready():
 	_setup_layout()
 	_apply_platform_scaling()
 	hide_chat_interface()
+
+
+func _process(_delta: float) -> void:
+	if OS.has_feature("mobile") and ui_root.visible:
+		previous_keyboard_height = keyboard_height
+		keyboard_height = DisplayServer.virtual_keyboard_get_height()
+
+		# Detect if the keyboard was closed by the user
+		if previous_keyboard_height > 0 and keyboard_height == 0:
+			# Keyboard was closed
+			print("Keyboard closed - closing chat interface")
+			hide_chat_interface()
+
+		# Optionally, detect if the keyboard was opened
+		elif previous_keyboard_height == 0 and keyboard_height > 0:
+			is_keyboard_visible = true
+			_update_input_position(true)
 
 func _initialize_components():
 	initial_viewport_height = get_viewport().get_visible_rect().size.y
@@ -138,10 +159,6 @@ func _update_message_sizes():
 			if label:
 				_update_font_size(label, font_size)
 
-func _update_input_position(keyboard_visible: bool):
-	var offset = KEYBOARD_OFFSET if keyboard_visible and OS.has_feature("mobile") else 0
-	_update_layout_positions(base_button_height, base_input_margin, offset)
-
 # Variables to store layout values
 var base_button_height: int
 var base_input_margin: int
@@ -179,22 +196,45 @@ func show_chat_interface() -> void:
 	ui_root.show()
 	background_touch.show()
 	toggle_button.text = "CLOSE"
+	is_keyboard_visible = true
+	ignore_next_focus_exited = true  # Ignore the next focus_exited signal
+	input_field.grab_focus()
+	if OS.has_feature("mobile"):
+		DisplayServer.virtual_keyboard_show("default")
+		await get_tree().create_timer(0.05).timeout
+		_update_input_position(true)
 
 func hide_chat_interface() -> void:
 	ui_root.hide()
 	background_touch.hide()
 	toggle_button.text = "OPEN"
-	# Make sure to release focus when hiding
+	is_keyboard_visible = false
+	ignore_next_focus_exited = false  # Reset the flag
 	if input_field.has_focus():
 		input_field.release_focus()
+	if OS.has_feature("mobile"):
+		DisplayServer.virtual_keyboard_hide()
+		await get_tree().create_timer(0.05).timeout
+		_update_input_position(false)
+
+func _update_input_position(keyboard_visible: bool):
+	var offset = KEYBOARD_OFFSET if keyboard_visible and OS.has_feature("mobile") else 0
+	_update_layout_positions(base_button_height, base_input_margin, offset)
+
+func _on_focus_entered() -> void:
+	is_keyboard_visible = true
+	if OS.has_feature("mobile"):
+		await get_tree().create_timer(0.05).timeout
+		_update_input_position(true)
 
 func _on_focus_exited() -> void:
+	if ignore_next_focus_exited:
+		ignore_next_focus_exited = false  # Reset the flag
+		return  # Ignore this focus_exited event
 	is_keyboard_visible = false
 	_update_input_position(false)
-
-func _on_clear_button_pressed() -> void:
-	# Clear the conversation history
-	clear_chat_history()
+	if ui_root.visible:
+		hide_chat_interface()
 
 func clear_chat_history() -> void:
 	# Clear all messages from the UI
@@ -212,12 +252,6 @@ func _on_window_resize():
 	
 	_setup_layout()
 	_update_message_sizes()
-
-func _on_focus_entered() -> void:
-	is_keyboard_visible = true
-	if OS.has_feature("mobile"):
-		await get_tree().create_timer(0.05).timeout
-		_update_input_position(true)
 
 func _on_background_touch(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
@@ -237,6 +271,10 @@ func _notification(what: int) -> void:
 			if is_keyboard_visible:
 				_on_focus_exited()
 
+func _on_clear_button_pressed() -> void:
+	# Clear the conversation history
+	clear_chat_history()
+
 func _on_input_gui_input(event: InputEvent):
 	if event is InputEventKey and event.pressed and not event.shift_pressed:
 		if event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
@@ -250,8 +288,8 @@ func _send_message():
 		prompt_manager.add_message("INK", text)
 		send_to_api(prompt_manager.get_messages())
 		input_field.text = ""
-		if is_keyboard_visible:
-			input_field.release_focus()
+		# Retain focus to keep the keyboard open
+		input_field.grab_focus()
 
 func send_to_api(messages: Array):
 	var body = JSON.stringify({
