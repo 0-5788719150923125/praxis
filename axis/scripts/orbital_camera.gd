@@ -74,7 +74,9 @@ func _process(delta: float) -> void:
 			current_orbit_point = target_orbit_point
 			position = _calculate_camera_position(current_orbit_point)
 	
-	look_at(current_orbit_point, up_vector)
+	# Set the camera's transform directly to avoid gimbal lock at poles
+	transform = Transform3D(Basis(rotation_quaternion), position)
+
 
 func _calculate_exponential_falloff(value: float, base: float, exponent: float) -> float:
 	return 1.0 - pow(base, -value * exponent)
