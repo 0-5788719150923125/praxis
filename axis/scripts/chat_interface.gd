@@ -5,6 +5,13 @@ var prompt_manager = PromptManager.new()
 var is_keyboard_visible: bool = false
 var initial_viewport_height: float = 0.0
 
+# UI scaling constants
+const MOBILE_SCALE_FACTOR = 2.5
+const MIN_BUTTON_HEIGHT = 70
+const MIN_INPUT_HEIGHT = 70
+const MOBILE_FONT_SIZE = 24
+const DESKTOP_FONT_SIZE = 16
+
 @onready var ui_root = $UIRoot
 @onready var scroll_container = $UIRoot/ScrollContainer
 @onready var message_container = $UIRoot/ScrollContainer/MessageContainer
@@ -22,7 +29,7 @@ func _ready():
 	_initialize_components()
 	_setup_signals()
 	_setup_layout()
-	# Start with chat interface hidden
+	_apply_platform_scaling()
 	hide_chat_interface()
 
 func _initialize_components():
@@ -30,6 +37,121 @@ func _initialize_components():
 	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	input_field.scroll_fit_content_height = true
 	background_touch.mouse_filter = Control.MOUSE_FILTER_STOP
+
+func _setup_layout():
+	var is_mobile = OS.has_feature("mobile")
+	var base_button_height = MIN_BUTTON_HEIGHT if is_mobile else 40
+	var base_input_margin = 20 if is_mobile else 10
+	
+	# Store these as instance variables for use in _update_input_position
+	self.base_button_height = base_button_height
+	self.base_input_margin = base_input_margin
+	
+	_update_layout_positions(base_button_height, base_input_margin)
+
+func _update_layout_positions(button_height: int, input_margin: int, keyboard_offset: int = 0):
+	var is_mobile = OS.has_feature("mobile")
+	
+	# Adjust toggle button positioning
+	toggle_button.offset_left = 20
+	toggle_button.offset_top = -button_height - input_margin - keyboard_offset
+	toggle_button.offset_right = 20 + (180 if is_mobile else 120)
+	toggle_button.offset_bottom = -input_margin - keyboard_offset
+	
+	# Adjust input container positioning
+	input_container.offset_left = toggle_button.offset_right + (20 if is_mobile else 10)
+	input_container.offset_top = -button_height - input_margin - keyboard_offset
+	input_container.offset_right = -input_margin
+	input_container.offset_bottom = -input_margin - keyboard_offset
+	
+	# Adjust scroll container
+	scroll_container.offset_bottom = -(button_height + input_margin * 2) - keyboard_offset
+
+func _apply_platform_scaling():
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	if is_mobile:
+		# Set minimum sizes for buttons
+		toggle_button.custom_minimum_size.y = MIN_BUTTON_HEIGHT
+		clear_button.custom_minimum_size.y = MIN_BUTTON_HEIGHT
+		input_field.custom_minimum_size.y = MIN_INPUT_HEIGHT
+		
+		# Make buttons wider
+		toggle_button.custom_minimum_size.x = 180
+		clear_button.custom_minimum_size.x = 120
+		
+		# Increase spacing
+		input_container.add_theme_constant_override("separation", 20)
+	
+	# Create a theme for text scaling
+	var theme = Theme.new()
+	theme.set_default_font_size(font_size)
+	
+	# Apply theme to input field
+	input_field.theme = theme
+	
+	# Update font sizes for all UI elements
+	_update_font_size(toggle_button, font_size)
+	_update_font_size(clear_button, font_size)
+	_update_font_size(input_field, font_size)
+	
+	# Scale any additional text elements
+	_scale_all_text_elements(ui_root, font_size)
+
+func _scale_all_text_elements(node: Node, font_size: int):
+	for child in node.get_children():
+		if child is Control:
+			_update_font_size(child, font_size)
+		
+		if child.get_child_count() > 0:
+			_scale_all_text_elements(child, font_size)
+
+func _update_font_size(control: Control, size: int):
+	# Create a theme for consistent text scaling
+	var theme = Theme.new()
+	theme.set_default_font_size(size)
+	
+	if control is Button:
+		control.add_theme_font_size_override("font_size", size)
+		control.theme = theme
+	elif control is TextEdit:
+		control.add_theme_font_size_override("font_size", size)
+		control.theme = theme
+	elif control is Label:
+		control.add_theme_font_size_override("font_size", size)
+		control.theme = theme
+
+func _update_message_sizes():
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	for message in message_container.get_children():
+		if message.has_method("set_message"):
+			var label = message.get_node_or_null("MarginContainer/Label")
+			if label:
+				_update_font_size(label, font_size)
+
+func _update_input_position(keyboard_visible: bool):
+	var offset = KEYBOARD_OFFSET if keyboard_visible and OS.has_feature("mobile") else 0
+	_update_layout_positions(base_button_height, base_input_margin, offset)
+
+# Variables to store layout values
+var base_button_height: int
+var base_input_margin: int
+
+func add_message(text: String, is_user: bool):
+	var message = message_scene.instantiate()
+	message_container.add_child(message)
+	
+	# Apply font scaling before setting the message
+	var font_size = MOBILE_FONT_SIZE if OS.has_feature("mobile") else DESKTOP_FONT_SIZE
+	if message.get_node_or_null("MarginContainer/Label"):
+		_update_font_size(message.get_node("MarginContainer/Label"), font_size)
+	
+	message.set_message(text, is_user)
+	await get_tree().process_frame
+	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
 
 func _setup_signals():
 	http_request.request_completed.connect(_on_request_completed)
@@ -85,15 +207,6 @@ func _on_window_resize():
 	_setup_layout()
 	_update_message_sizes()
 
-func _setup_layout():
-	_update_input_position(is_keyboard_visible)
-
-func _update_input_position(keyboard_visible: bool):
-	var offset = KEYBOARD_OFFSET if keyboard_visible and OS.has_feature("mobile") else 0
-	input_container.offset_top = -50 - offset
-	input_container.offset_bottom = -INPUT_MARGIN - offset
-	scroll_container.offset_bottom = -(50 + INPUT_MARGIN) - offset
-
 func _on_focus_entered() -> void:
 	is_keyboard_visible = true
 	if OS.has_feature("mobile"):
@@ -107,13 +220,6 @@ func _on_background_touch(event: InputEvent) -> void:
 	elif event is InputEventScreenTouch and event.pressed:
 		input_field.release_focus()
 		get_viewport().set_input_as_handled()
-
-func _update_message_sizes():
-	var max_width = min(get_viewport().size.x - 40, 600)  # 20px padding on each side
-	for message in message_container.get_children():
-		if message.has_method("set_message"):
-			message.custom_minimum_size.x = max_width
-			message.size.x = max_width
 
 func _notification(what: int) -> void:
 	match what:
@@ -140,13 +246,6 @@ func _send_message():
 		input_field.text = ""
 		if is_keyboard_visible:
 			input_field.release_focus()
-
-func add_message(text: String, is_user: bool):
-	var message = message_scene.instantiate()
-	message_container.add_child(message)
-	message.set_message(text, is_user)
-	await get_tree().process_frame
-	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
 
 func send_to_api(messages: Array):
 	var body = JSON.stringify({
