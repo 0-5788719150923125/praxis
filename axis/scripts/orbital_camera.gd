@@ -7,7 +7,13 @@ extends Camera3D
 @export var initial_distance := 4.0
 @export var touch_zoom_sensitivity := 0.01
 @export var transition_duration := 0.5
-@export var bounce_overshoot := 0.1
+@export var bounce_overshoot := 0.0
+
+# Physics parameters
+@export var rotation_damping := 0.98  # How quickly rotation slows down
+@export var min_rotation_speed := 0.001  # When to stop rotating
+@export var max_rotation_speed := 0.05  # Cap on rotation speed
+@export var rotation_acceleration := 0.2  # How quickly rotation speeds up
 
 var camera_distance: float
 var rotation_quaternion: Quaternion
@@ -19,6 +25,12 @@ var current_orbit_point := Vector3.ZERO
 var target_orbit_point := Vector3.ZERO
 var transition_tween: Tween
 
+# Movement physics
+var rotation_velocity := Vector2.ZERO  # Current rotation speed
+var last_mouse_delta := Vector2.ZERO  # For calculating acceleration
+var current_zoom_velocity := 0.0  # For smooth zooming
+var zoom_damping := 0.85  # How quickly zoom slows down
+
 # Touch zoom variables
 var touch_points := {}
 var previous_touch_distance := 0.0
@@ -28,6 +40,93 @@ func _ready() -> void:
 	camera_distance = initial_distance
 	rotation_quaternion = Quaternion.IDENTITY
 	_update_camera_position()
+
+func _process(delta: float) -> void:
+	# Apply rotation physics when not transitioning between targets
+	if not transition_tween or not transition_tween.is_running():
+		if rotation_velocity.length() > min_rotation_speed:
+			_apply_rotation(rotation_velocity * delta)
+			rotation_velocity *= rotation_damping
+		
+		# Apply zoom physics
+		if abs(current_zoom_velocity) > 0.001:
+			_zoom_camera(current_zoom_velocity)
+			current_zoom_velocity *= zoom_damping
+	
+	if focus_target:
+		target_orbit_point = focus_target.global_position
+		if not transition_tween or not transition_tween.is_running():
+			current_orbit_point = target_orbit_point
+			position = _calculate_camera_position(current_orbit_point)
+	
+	look_at(current_orbit_point, up_vector)
+
+func _handle_rotation(delta: Vector2) -> void:
+	# Calculate acceleration based on input change
+	var acceleration = delta - last_mouse_delta
+	last_mouse_delta = delta
+	
+	# Update rotation velocity with acceleration
+	if is_orbiting:
+		rotation_velocity += delta * orbit_speed * 0.01
+		if acceleration.length() > 0:
+			rotation_velocity *= rotation_acceleration
+		
+		# Clamp rotation velocity
+		if rotation_velocity.length() > max_rotation_speed:
+			rotation_velocity = rotation_velocity.normalized() * max_rotation_speed
+		
+		_apply_rotation(rotation_velocity)
+
+func _apply_rotation(rotation_amount: Vector2) -> void:
+	# Handle horizontal rotation
+	var horizontal_rotation = Quaternion(up_vector, -rotation_amount.x)
+	
+	# Handle vertical rotation with limits
+	var right_vector = rotation_quaternion * Vector3.RIGHT
+	var current_up = rotation_quaternion * Vector3.UP
+	var angle_to_up = current_up.angle_to(Vector3.UP)
+	
+	# Limit vertical rotation to avoid gimbal lock
+	var vertical_amount = rotation_amount.y
+	if angle_to_up < 0.1 and vertical_amount > 0:
+		vertical_amount *= (angle_to_up / 0.1)
+	elif angle_to_up > PI - 0.1 and vertical_amount < 0:
+		vertical_amount *= ((PI - angle_to_up) / 0.1)
+	
+	var vertical_rotation = Quaternion(right_vector, -vertical_amount)
+	
+	# Apply rotations
+	rotation_quaternion = horizontal_rotation * rotation_quaternion * vertical_rotation
+	rotation_quaternion = rotation_quaternion.normalized()
+
+func set_focus_target(new_target: Node3D) -> void:
+	if focus_target == new_target:
+		return
+		
+	focus_target = new_target
+	target_orbit_point = new_target.global_position
+	
+	# Kill existing tween
+	if transition_tween and transition_tween.is_valid():
+		transition_tween.kill()
+	
+	# Calculate transition parameters based on distance
+	var distance = position.distance_to(target_orbit_point)
+	var travel_time = clamp(distance * 0.1, 0.2, 1.0)  # Longer transitions for longer distances
+	var bounce_factor = clamp(distance * 0.01, 0.0, bounce_overshoot)  # More bounce for longer distances
+	
+	# Create transition
+	transition_tween = create_tween()
+	transition_tween.set_ease(Tween.EASE_OUT)
+	transition_tween.set_trans(Tween.TRANS_CUBIC)
+	
+	var final_position = _calculate_camera_position(target_orbit_point)
+	var bounce_position = final_position + (final_position - position) * bounce_factor
+	
+	transition_tween.tween_property(self, "current_orbit_point", target_orbit_point, travel_time * 0.7)
+	transition_tween.parallel().tween_property(self, "position", bounce_position, travel_time * 0.7)
+	transition_tween.chain().tween_property(self, "position", final_position, travel_time * 0.3)
 
 func _unhandled_input(event: InputEvent) -> void:  # Changed from _input to _unhandled_input
 	# Handle desktop zoom
@@ -84,52 +183,10 @@ func _unhandled_input(event: InputEvent) -> void:  # Changed from _input to _unh
 				touch_start_position = event.position
 				get_viewport().set_input_as_handled()
 
-func set_focus_target(new_target: Node3D) -> void:
-	print("Camera focusing on new target: ", new_target.name)  # Debug print
-	
-	if focus_target == new_target:
-		print("Already focused on this target")
-		return
-		
-	focus_target = new_target
-	target_orbit_point = new_target.global_position
-	print("Target orbit point set to: ", target_orbit_point)  # Debug print
-	
-	# Kill existing tween if any
-	if transition_tween and transition_tween.is_valid():
-		transition_tween.kill()
-	
-	# Create new tween for smooth transition
-	transition_tween = create_tween()
-	transition_tween.set_ease(Tween.EASE_OUT)
-	transition_tween.set_trans(Tween.TRANS_CUBIC)
-	
-	# Add position tween with slight bounce
-	var final_position = _calculate_camera_position(target_orbit_point)
-	var bounce_position = final_position + (final_position - position) * bounce_overshoot
-	
-	print("Starting camera transition")  # Debug print
-	transition_tween.tween_property(self, "current_orbit_point", target_orbit_point, transition_duration * 0.7)
-	transition_tween.parallel().tween_property(self, "position", bounce_position, transition_duration * 0.7)
-	transition_tween.chain().tween_property(self, "position", final_position, transition_duration * 0.3)
-
 func _calculate_camera_position(orbit_point: Vector3) -> Vector3:
 	# Calculate desired camera position based on orbit point
 	var offset = rotation_quaternion * Vector3(0, 0, camera_distance)
 	return orbit_point + offset
-
-func _process(_delta: float) -> void:
-	if focus_target:
-		# Update target position in case the target moves
-		target_orbit_point = focus_target.global_position
-		
-		if not transition_tween or not transition_tween.is_running():
-			# No transition running, just update normally
-			current_orbit_point = target_orbit_point
-			position = _calculate_camera_position(current_orbit_point)
-	
-	# Always look at current orbit point
-	look_at(current_orbit_point, up_vector)
 
 func _input(event: InputEvent) -> void:
 	# Handle desktop zoom
@@ -190,18 +247,6 @@ func _input(event: InputEvent) -> void:
 		_handle_rotation(event.position - touch_start_position)
 		touch_start_position = event.position
 		get_viewport().set_input_as_handled()
-
-func _handle_rotation(delta: Vector2) -> void:
-	# Convert screen delta to rotation angles
-	var horizontal_rotation = Quaternion(up_vector, -delta.x * orbit_speed * 0.01)
-	
-	# Create rotation around the right vector (for vertical rotation)
-	var right_vector = rotation_quaternion * Vector3.RIGHT
-	var vertical_rotation = Quaternion(right_vector, -delta.y * orbit_speed * 0.01)
-	
-	# Apply rotations
-	rotation_quaternion = horizontal_rotation * rotation_quaternion * vertical_rotation
-	rotation_quaternion = rotation_quaternion.normalized()  # Prevent accumulated errors
 
 func _zoom_camera(zoom_delta: float) -> void:
 	camera_distance = clamp(camera_distance + zoom_delta, min_zoom, max_zoom)
