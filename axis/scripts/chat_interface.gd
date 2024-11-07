@@ -41,6 +41,13 @@ func _ready():
 	_setup_layout()
 	_apply_platform_scaling()
 	hide_chat_interface()
+	# Set mouse_filter properties
+	scroll_container.mouse_filter = Control.MOUSE_FILTER_PASS
+	message_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_root.mouse_filter = Control.MOUSE_FILTER_PASS  # Ensure root passes events
+	#scroll_container.scroll_v_smoothing_enabled = true
+	#scroll_container.scroll_v_smoothing = 0.2  # Adjust smoothing factor as needed
+	#scroll_container.scroll_v_visible = false
 
 func _create_base_theme():
 	# Create a base theme that will be used throughout the interface
@@ -252,9 +259,16 @@ func _setup_signals():
 	input_field.gui_input.connect(_on_input_gui_input)
 	input_field.focus_entered.connect(_on_focus_entered)
 	input_field.focus_exited.connect(_on_focus_exited)
-	background_touch.gui_input.connect(_on_background_touch)
 	clear_button.pressed.connect(_on_clear_button_pressed)
 	toggle_button.pressed.connect(_on_toggle_button_pressed)
+	scroll_container.gui_input.connect(_on_scroll_container_gui_input)
+
+func _on_scroll_container_gui_input(event):
+	if event is InputEventMouseButton and event.is_pressed():
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			scroll_container.scroll_vertical -= 20
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			scroll_container.scroll_vertical += 20
 
 func _on_toggle_button_pressed() -> void:
 	if ui_root.visible:
@@ -314,14 +328,6 @@ func clear_chat_history() -> void:
 	prompt_manager.clear_history()
 	# Clear the input field if it has any text
 	input_field.text = ""
-
-func _on_background_touch(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
-		input_field.release_focus()
-		get_viewport().set_input_as_handled()
-	elif event is InputEventScreenTouch and event.pressed:
-		input_field.release_focus()
-		get_viewport().set_input_as_handled()
 
 func _notification(what: int) -> void:
 	match what:

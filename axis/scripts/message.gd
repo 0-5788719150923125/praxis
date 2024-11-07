@@ -70,6 +70,11 @@ func set_message(text: String, is_user: bool):
 	
 	# Ensure the label has enough width to display text properly
 	label.custom_minimum_size.x = needed_width - (base_margin * 4)
+	
+	# Set mouse_filter to MOUSE_FILTER_IGNORE
+	self.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func create_styled_panel(border_color: Color, border_width: int) -> StyleBoxFlat:
 	var style = StyleBoxFlat.new()
