@@ -15,10 +15,8 @@ emission_energy_multiplier = 2.0
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_xp6ht"]
 
-[node name="Atom" type="RigidBody3D"]
-gravity_scale = 0.0
-lock_rotation = true
-linear_damp = 1.0
+[node name="Atom" type="Area3D"]
+monitoring = false
 script = ExtResource("1_atom")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
