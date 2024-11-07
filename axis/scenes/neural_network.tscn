@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://bgo7ackrcjpw3"]
+[gd_scene load_steps=3 format=3 uid="uid://bgo7ackrcjpw3"]
 
 [ext_resource type="Script" path="res://scripts/neural_network.gd" id="1_neural"]
+[ext_resource type="Script" path="res://scripts/synapse_manager.gd" id="2_synapse"]
 
 [node name="NeuralNetwork" type="Node3D"]
 script = ExtResource("1_neural")
@@ -15,3 +16,6 @@ light_energy = 2.0
 omni_range = 10.0
 
 [node name="Atoms" type="Node3D" parent="."]
+
+[node name="SynapseManager" type="Node3D" parent="."]
+script = ExtResource("2_synapse")
