@@ -1,8 +1,9 @@
-[gd_scene load_steps=5 format=3 uid="uid://br51t5kjmr3r2"]
+[gd_scene load_steps=6 format=3 uid="uid://br51t5kjmr3r2"]
 
 [ext_resource type="PackedScene" uid="uid://kkoitcxefsgc" path="res://scenes/chat_interface.tscn" id="1_s1yu4"]
 [ext_resource type="PackedScene" uid="uid://bgo7ackrcjpw3" path="res://scenes/neural_network.tscn" id="2_mdfsc"]
 [ext_resource type="Script" path="res://scripts/orbital_camera.gd" id="3_orbital"]
+[ext_resource type="Script" path="res://scripts/starfield_sky.gd" id="4_3dn7x"]
 
 [sub_resource type="Environment" id="Environment_7l4kd"]
 background_mode = 1
@@ -32,6 +33,9 @@ physics_object_picking = true
 physics_object_picking_sort = true
 size = Vector2i(720, 1280)
 render_target_update_mode = 4
+
+[node name="Skybox" type="Node3D" parent="SubViewportContainer/SubViewport"]
+script = ExtResource("4_3dn7x")
 
 [node name="Camera3D" type="Camera3D" parent="SubViewportContainer/SubViewport"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
