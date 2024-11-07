@@ -10,13 +10,14 @@ const NOISE_CHARS = "※｜－×￣￤○◎●△▲▽▼☉☐☑☒☢☣☠
 const ALL_GLITCH_CHARS = GLITCH_CHARS + COMPLEX_CHARS + NOISE_CHARS
 
 var glitch_config = {
-	"steps": Vector2(2, 5),        # Increased minimum steps for more visible effect
-	"interval": Vector2(30, 80),  # Slightly slower intervals
-	"delay": Vector2(5, 15),      # Short delays between characters
-	"change_chance": 0.7,          # Increased chance to change characters
-	"ghost_chance": 0.3,           # Increased ghost chance
-	"max_ghosts": 0.3,            # Slightly more ghosts allowed
-	"one_at_a_time": true         # Process characters sequentially
+	"steps": Vector2(2, 5),
+	"interval": Vector2(30, 80),
+	"delay": Vector2(5, 15),
+	"change_chance": 0.7,
+	"ghost_chance": 0.3,
+	"max_ghosts": 0.3,
+	"one_at_a_time": true,
+	"extra_glitch_chars": 8  # How many extra characters to add for glitching
 }
 
 var target_text: String = ""
@@ -31,20 +32,25 @@ class GlitchChar:
 	var ghosts: Array      # Ghost characters [before, after]
 	var steps_left: int    # Steps before settling
 	var revealed: bool = false  # Whether this character has started revealing
+	var is_extra: bool = false  # Whether this is an extra character for glitching
 	
-	func _init(_writer, _target: String) -> void:
+	func _init(_writer, _target: String, _is_extra: bool = false) -> void:
 		writer = _writer
 		target = _target
-		current = writer._get_random_glyph(true)  # Start with a complex character
+		is_extra = _is_extra
+		current = writer._get_random_glyph(true) if is_extra else ""
 		ghosts = [[], []]
 		steps_left = writer._get_random_from_range(writer.glitch_config.steps)
+		revealed = is_extra  # Extra characters start revealed
 		
 	func get_display_text() -> String:
 		if not revealed:
-			return ""  # Hidden until it's this character's turn
+			return ""
 		return "".join(ghosts[0]) + current + "".join(ghosts[1])
 		
 	func is_finished() -> bool:
+		if is_extra:
+			return current == "" and ghosts[0].size() == 0 and ghosts[1].size() == 0
 		return revealed and current == target and ghosts[0].size() == 0 and ghosts[1].size() == 0
 		
 	func step() -> void:
@@ -52,9 +58,15 @@ class GlitchChar:
 			current = writer._get_random_glyph(true)
 			return
 			
-		if steps_left > 0:
+		if is_extra:
+			# Extra characters should eventually disappear
+			if randf() < 0.2:  # Chance to start disappearing
+				current = ""
+			else:
+				current = writer._get_random_glyph(true)
+		elif steps_left > 0:
 			if randf() < writer.glitch_config.change_chance:
-				if steps_left < 3:  # As we get closer to finishing, use simpler chars
+				if steps_left < 3:
 					current = writer._get_random_glyph(false)
 				else:
 					current = writer._get_random_glyph(true)
@@ -64,7 +76,7 @@ class GlitchChar:
 				var total_ghosts = ghosts[0].size() + ghosts[1].size()
 				
 				if total_ghosts < max_ghosts:
-					var ghost = writer._get_random_glyph(true)  # Use complex chars for ghosts
+					var ghost = writer._get_random_glyph(true)
 					if randf() < 0.5:
 						ghosts[0].append(ghost)
 					else:
@@ -95,10 +107,8 @@ func _get_random_from_range(range_value: Vector2) -> int:
 
 func _get_random_glyph(use_complex: bool = false) -> String:
 	if use_complex:
-		# Use the full character set including complex characters
 		return ALL_GLITCH_CHARS[randi() % ALL_GLITCH_CHARS.length()]
 	else:
-		# Use only basic characters when getting close to the final state
 		return GLITCH_CHARS[randi() % GLITCH_CHARS.length()]
 
 func _get_random_interval() -> float:
@@ -110,8 +120,20 @@ func write(text: String) -> void:
 	
 	# Initialize characters - all hidden initially
 	chars.clear()
+	
+	# Add some extra characters at the start for glitching
+	var num_extra_start = glitch_config.extra_glitch_chars / 2
+	for _i in range(num_extra_start):
+		chars.append(GlitchChar.new(self, "", true))
+	
+	# Add actual text characters
 	for i in range(text.length()):
 		chars.append(GlitchChar.new(self, text[i]))
+	
+	# Add some extra characters at the end for glitching
+	var num_extra_end = glitch_config.extra_glitch_chars - num_extra_start
+	for _i in range(num_extra_end):
+		chars.append(GlitchChar.new(self, "", true))
 	
 	is_writing = true
 	timer.start(_get_random_interval())
@@ -124,15 +146,20 @@ func _on_timer_timeout() -> void:
 	var all_finished = true
 	var display_text = ""
 	
+	# Calculate the valid range for glitch effects
+	var glitch_start = max(0, current_char_index - glitch_config.extra_glitch_chars)
+	var glitch_end = min(chars.size(), current_char_index + glitch_config.extra_glitch_chars)
+	
 	# Reveal and update characters
 	for i in range(chars.size()):
 		var char = chars[i]
 		
-		# Start revealing characters progressively
-		if i <= current_char_index and not char.revealed:
+		# Start revealing characters progressively, including some ahead
+		if i <= current_char_index + 2 and not char.revealed and not char.is_extra:
 			char.revealed = true
 		
-		if char.revealed:
+		# Update characters within glitch range
+		if char.revealed or (i >= glitch_start and i <= glitch_end):
 			if not char.is_finished():
 				all_finished = false
 				char.step()
@@ -149,8 +176,7 @@ func _on_timer_timeout() -> void:
 	if all_finished:
 		is_writing = false
 		timer.stop()
-		# Safety check - ensure final text matches target
-		text = target_text  # Add this line
+		text = target_text
 		glitch_completed.emit()
 	else:
 		timer.start(_get_random_interval())
