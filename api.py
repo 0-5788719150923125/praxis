@@ -7,6 +7,9 @@ from threading import Event, Thread
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from werkzeug.serving import make_server
 
+logger = logging.getLogger("werkzeug")
+logger.setLevel(logging.ERROR)
+
 app = Flask(__name__)
 app.static_folder = "templates"
 
