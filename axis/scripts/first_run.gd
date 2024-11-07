@@ -18,9 +18,14 @@ func _ready():
 	add_child(http_request)
 	http_request.request_completed.connect(_on_ping_completed)
 	
+	_apply_platform_scaling()
+	
+	# Defer the settings check to avoid the busy parent error
+	call_deferred("_check_settings")
+
+func _check_settings():
 	if load_settings():
 		_start_main_scene()
-	_apply_platform_scaling()
 
 func _apply_platform_scaling():
 	var is_mobile = OS.has_feature("mobile")
@@ -121,6 +126,7 @@ func _on_url_submitted(dialog: LineEdit):
 	pending_url = processed_url
 	_show_loading("Checking server connection...")
 	
+	# Simply ping the root URL
 	var error = http_request.request(
 		pending_url,
 		["Content-Type: application/json"],
@@ -173,16 +179,25 @@ func _show_error(message: String):
 	popup.confirmed.connect(popup.queue_free)
 
 func _on_ping_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+	# Clean up loading dialog
 	for child in get_children():
 		if child is AcceptDialog and child.title == "Checking Connection":
 			child.queue_free()
 	
 	if result != HTTPRequest.RESULT_SUCCESS:
-		_show_error("Failed to connect to server.\nPlease check the URL and try again.")
+		var error_msg = "Failed to connect to server.\n"
+		if result == HTTPRequest.RESULT_CANT_CONNECT:
+			error_msg += "Could not establish connection. Check if server is running."
+		elif result == HTTPRequest.RESULT_CANT_RESOLVE:
+			error_msg += "Could not resolve hostname."
+		else:
+			error_msg += "Error code: " + str(result)
+		_show_error(error_msg)
 		return
 	
 	if response_code != 200:
-		_show_error("Server returned error code: " + str(response_code) + "\nPlease verify the server is running.")
+		_show_error("Server returned error code: " + str(response_code) + 
+				   "\nPlease verify the server is running and accessible.")
 		return
 	
 	_show_success("Server connection successful!")
@@ -190,6 +205,10 @@ func _on_ping_completed(result: int, response_code: int, headers: PackedStringAr
 	config.set_value("Server", "url", pending_url)
 	config.save(CONFIG_PATH)
 	
+	# Use call_deferred for scene change to avoid busy parent errors
+	call_deferred("_transition_to_main")
+
+func _transition_to_main():
 	await get_tree().create_timer(1.0).timeout
 	_start_main_scene()
 
