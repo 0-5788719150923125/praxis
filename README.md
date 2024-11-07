@@ -20,6 +20,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, and continuous
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
 - We also implement a simplistic KNN-based external memory module, akin to [Memorizing Transformers](https://arxiv.org/abs/2203.08913).
+- There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
 
 ## join us
 
