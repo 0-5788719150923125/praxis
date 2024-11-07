@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Axis"
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/first_run.tscn"
 config/features=PackedStringArray("4.3", "Mobile")
 boot_splash/show_image=false
 config/icon="res://icon.png"

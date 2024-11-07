@@ -25,7 +25,13 @@ const DESKTOP_FONT_SIZE = 16
 const KEYBOARD_OFFSET = 1000
 const INPUT_MARGIN = 10
 
+var server_url
+
 func _ready():
+	var config = ConfigFile.new()
+	if config.load("user://settings.cfg") == OK:
+		server_url = config.get_value("Server", "url", "http://192.168.5.94:2100")
+		print("Server URL: ", server_url)
 	_initialize_components()
 	_setup_signals()
 	_setup_layout()
@@ -260,7 +266,7 @@ func send_to_api(messages: Array):
 	})
 
 	var error = http_request.request(
-		"http://192.168.5.94:2100/input/",
+		server_url + "/input/",
 		["Content-Type: application/json"],
 		HTTPClient.METHOD_POST,
 		body
