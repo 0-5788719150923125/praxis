@@ -105,16 +105,17 @@ func _handle_rotation(delta: Vector2) -> void:
 	last_input_direction = input_direction
 
 func _apply_rotation(rotation_amount: Vector2) -> void:
-	# Create rotation in camera's local space
-	var pitch = Basis().rotated(Vector3.RIGHT, -rotation_amount.y)
-	var yaw = Basis().rotated(Vector3.UP, -rotation_amount.x)
+	# Get our current orientation vectors
+	var basis = Basis(rotation_quaternion)
+	var camera_right = basis.x
+	var camera_up = basis.y
 	
-	# Convert to quaternions and combine with existing rotation
-	var pitch_quat = Quaternion(pitch)
-	var yaw_quat = Quaternion(yaw)
+	# Create a rotation for each axis using our stable camera vectors
+	var vertical_rotation = Quaternion(camera_right, -rotation_amount.y)
+	var horizontal_rotation = Quaternion(camera_up, -rotation_amount.x)
 	
-	# Yaw in world space, pitch in local space
-	rotation_quaternion = yaw_quat * rotation_quaternion * pitch_quat
+	# Apply in a fixed order (horizontal first)
+	rotation_quaternion = horizontal_rotation * vertical_rotation * rotation_quaternion
 	rotation_quaternion = rotation_quaternion.normalized()
 
 func _update_camera_position() -> void:
@@ -127,13 +128,8 @@ func _update_camera_position() -> void:
 	var offset = basis * Vector3(0, 0, camera_distance)
 	position = target_pos + offset
 	
-	# Calculate a stable up vector based on our current orientation
-	var forward = -basis.z
-	var right = basis.x
-	var new_up = right.cross(forward).normalized()
-	
-	# Look at target with our calculated up vector
-	look_at(target_pos, new_up)
+	# Look at target with current camera up
+	look_at(target_pos, basis.y)
 
 func set_focus_target(new_target: Node3D) -> void:
 	if focus_target == new_target:
