@@ -9,6 +9,3 @@ script = ExtResource("1_ir8se")
 
 [node name="MarginContainer" type="MarginContainer" parent="."]
 layout_mode = 2
-
-[node name="Label" type="Label" parent="MarginContainer"]
-layout_mode = 2
