@@ -10,11 +10,13 @@ extends Camera3D
 @export var bounce_overshoot := 0.0
 
 # Physics parameters
-@export var rotation_damping := 0.98  # How quickly rotation slows down
+@export var base_damping := 0.995  # Base damping factor (higher = less friction)
+@export var velocity_dependent_damping := 0.02  # Additional damping based on velocity
+@export var input_sensitivity := 0.005  # How much input affects rotation
 @export var min_rotation_speed := 0.001  # When to stop rotating
-@export var max_rotation_speed := 0.05  # Cap on rotation speed
-@export var rotation_acceleration := 0.2  # How quickly rotation speeds up
+@export var input_acceleration_factor := 1.2  # How much sequential inputs compound
 
+# State variables
 var camera_distance: float
 var rotation_quaternion: Quaternion
 var up_vector := Vector3.UP
@@ -25,8 +27,13 @@ var current_orbit_point := Vector3.ZERO
 var target_orbit_point := Vector3.ZERO
 var transition_tween: Tween
 
-# Movement physics
+# Physics state
 var rotation_velocity := Vector2.ZERO  # Current rotation speed
+var last_input_time := 0.0  # Track timing of inputs
+var input_chain_multiplier := 1.0  # Tracks sequential input momentum
+var last_input_direction := Vector2.ZERO  # For comparing input directions
+
+# Movement physics
 var last_mouse_delta := Vector2.ZERO  # For calculating acceleration
 var current_zoom_velocity := 0.0  # For smooth zooming
 var zoom_damping := 0.85  # How quickly zoom slows down
@@ -45,8 +52,16 @@ func _process(delta: float) -> void:
 	# Apply rotation physics when not transitioning between targets
 	if not transition_tween or not transition_tween.is_running():
 		if rotation_velocity.length() > min_rotation_speed:
-			_apply_rotation(rotation_velocity * delta)
-			rotation_velocity *= rotation_damping
+			# Calculate velocity-dependent damping
+			var speed = rotation_velocity.length()
+			var total_damping = base_damping - (velocity_dependent_damping * speed)
+			total_damping = clamp(total_damping, 0.9, 0.999)  # Ensure reasonable bounds
+			
+			# Apply damping
+			rotation_velocity *= total_damping
+		
+		# Apply rotation
+		_apply_rotation(rotation_velocity * delta)
 		
 		# Apply zoom physics
 		if abs(current_zoom_velocity) > 0.001:
@@ -61,22 +76,33 @@ func _process(delta: float) -> void:
 	
 	look_at(current_orbit_point, up_vector)
 
+func _calculate_exponential_falloff(value: float, base: float, exponent: float) -> float:
+	return 1.0 - pow(base, -value * exponent)
+
 func _handle_rotation(delta: Vector2) -> void:
-	# Calculate acceleration based on input change
-	var acceleration = delta - last_mouse_delta
-	last_mouse_delta = delta
+	var current_time = Time.get_ticks_msec() / 1000.0
+	var time_since_last_input = current_time - last_input_time
 	
-	# Update rotation velocity with acceleration
-	if is_orbiting:
-		rotation_velocity += delta * orbit_speed * 0.01
-		if acceleration.length() > 0:
-			rotation_velocity *= rotation_acceleration
-		
-		# Clamp rotation velocity
-		if rotation_velocity.length() > max_rotation_speed:
-			rotation_velocity = rotation_velocity.normalized() * max_rotation_speed
-		
-		_apply_rotation(rotation_velocity)
+	# Calculate input direction correlation with current velocity
+	var input_direction = delta.normalized()
+	var direction_alignment = input_direction.dot(last_input_direction) if last_input_direction.length() > 0 else 0.0
+	
+	# Reset or increase chain multiplier based on timing and direction
+	if time_since_last_input > 0.5 or direction_alignment < 0.7:
+		input_chain_multiplier = 1.0
+	else:
+		# Increase multiplier for sequential inputs in similar directions
+		input_chain_multiplier = min(input_chain_multiplier * input_acceleration_factor, 5.0)
+	
+	# Calculate input force with chain multiplier
+	var input_force = delta * input_sensitivity * input_chain_multiplier
+	
+	# Add to current velocity
+	rotation_velocity += input_force
+	
+	# Update state tracking
+	last_input_time = current_time
+	last_input_direction = input_direction
 
 func _apply_rotation(rotation_amount: Vector2) -> void:
 	# Handle horizontal rotation
