@@ -1,0 +1,17 @@
+[gd_scene load_steps=2 format=3 uid="uid://bgo7ackrcjpw3"]
+
+[ext_resource type="Script" path="res://scripts/neural_network.gd" id="1_neural"]
+
+[node name="NeuralNetwork" type="Node3D"]
+script = ExtResource("1_neural")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 2, 5, 2)
+shadow_enabled = true
+shadow_opacity = 0.75
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+light_energy = 2.0
+omni_range = 10.0
+
+[node name="Atoms" type="Node3D" parent="."]

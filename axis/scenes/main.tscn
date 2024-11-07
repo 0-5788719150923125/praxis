@@ -1,9 +1,32 @@
-[gd_scene load_steps=2 format=3 uid="uid://br51t5kjmr3r2"]
+[gd_scene load_steps=4 format=3 uid="uid://br51t5kjmr3r2"]
 
 [ext_resource type="PackedScene" uid="uid://kkoitcxefsgc" path="res://scenes/chat_interface.tscn" id="1_s1yu4"]
+[ext_resource type="PackedScene" uid="uid://bgo7ackrcjpw3" path="res://scenes/neural_network.tscn" id="2_mdfsc"]
+
+[sub_resource type="Environment" id="Environment_7l4kd"]
+background_mode = 1
+background_color = Color(0.0862745, 0.0862745, 0.0862745, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.317647, 0.317647, 0.317647, 1)
+tonemap_mode = 2
+glow_enabled = true
+glow_intensity = 0.5
+glow_bloom = 0.2
+glow_blend_mode = 0
 
 [node name="Main" type="Node3D"]
 
 [node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
+current = true
+
+[node name="NeuralNetwork" parent="." instance=ExtResource("2_mdfsc")]
 
 [node name="ChatInterface" parent="." instance=ExtResource("1_s1yu4")]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_7l4kd")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 5, 0)
+shadow_enabled = true
