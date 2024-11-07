@@ -13,6 +13,7 @@ var initial_viewport_height: float = 0.0
 @onready var http_request = $UIRoot/HTTPRequest
 @onready var background_touch = $BackgroundTouch
 @onready var input_container = $UIRoot/InputContainer
+@onready var toggle_button = $ToggleButton
 
 const KEYBOARD_OFFSET = 1000
 const INPUT_MARGIN = 10
@@ -21,13 +22,13 @@ func _ready():
 	_initialize_components()
 	_setup_signals()
 	_setup_layout()
+	# Start with chat interface hidden
+	hide_chat_interface()
 
 func _initialize_components():
 	initial_viewport_height = get_viewport().get_visible_rect().size.y
 	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	input_field.scroll_fit_content_height = true
-	
-	# Make sure background touch can receive input
 	background_touch.mouse_filter = Control.MOUSE_FILTER_STOP
 
 func _setup_signals():
@@ -38,6 +39,30 @@ func _setup_signals():
 	input_field.focus_exited.connect(_on_focus_exited)
 	background_touch.gui_input.connect(_on_background_touch)
 	clear_button.pressed.connect(_on_clear_button_pressed)
+	toggle_button.pressed.connect(_on_toggle_button_pressed)
+
+func _on_toggle_button_pressed() -> void:
+	if ui_root.visible:
+		hide_chat_interface()
+	else:
+		show_chat_interface()
+
+func show_chat_interface() -> void:
+	ui_root.show()
+	background_touch.show()
+	toggle_button.text = "CLOSE"
+
+func hide_chat_interface() -> void:
+	ui_root.hide()
+	background_touch.hide()
+	toggle_button.text = "OPEN"
+	# Make sure to release focus when hiding
+	if input_field.has_focus():
+		input_field.release_focus()
+
+func _on_focus_exited() -> void:
+	is_keyboard_visible = false
+	_update_input_position(false)
 
 func _on_clear_button_pressed() -> void:
 	# Clear the conversation history
@@ -74,10 +99,6 @@ func _on_focus_entered() -> void:
 	if OS.has_feature("mobile"):
 		await get_tree().create_timer(0.05).timeout
 		_update_input_position(true)
-
-func _on_focus_exited() -> void:
-	is_keyboard_visible = false
-	_update_input_position(false)
 
 func _on_background_touch(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:

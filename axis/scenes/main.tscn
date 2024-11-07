@@ -1,7 +1,8 @@
-[gd_scene load_steps=4 format=3 uid="uid://br51t5kjmr3r2"]
+[gd_scene load_steps=5 format=3 uid="uid://br51t5kjmr3r2"]
 
 [ext_resource type="PackedScene" uid="uid://kkoitcxefsgc" path="res://scenes/chat_interface.tscn" id="1_s1yu4"]
 [ext_resource type="PackedScene" uid="uid://bgo7ackrcjpw3" path="res://scenes/neural_network.tscn" id="2_mdfsc"]
+[ext_resource type="Script" path="res://scripts/orbital_camera.gd" id="3_orbital"]
 
 [sub_resource type="Environment" id="Environment_7l4kd"]
 background_mode = 1
@@ -16,17 +17,34 @@ glow_blend_mode = 0
 
 [node name="Main" type="Node3D"]
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="SubViewportContainer" type="SubViewportContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="SubViewportContainer"]
+handle_input_locally = false
+size = Vector2i(720, 1280)
+render_target_update_mode = 4
+
+[node name="Camera3D" type="Camera3D" parent="SubViewportContainer/SubViewport"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
 current = true
+script = ExtResource("3_orbital")
+orbit_speed = 0.8
+max_zoom = 8.0
+zoom_speed = 0.25
 
-[node name="NeuralNetwork" parent="." instance=ExtResource("2_mdfsc")]
+[node name="NeuralNetwork" parent="SubViewportContainer/SubViewport" instance=ExtResource("2_mdfsc")]
 
-[node name="ChatInterface" parent="." instance=ExtResource("1_s1yu4")]
-
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_7l4kd")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="SubViewportContainer/SubViewport"]
 transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 0, 5, 0)
 shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="SubViewportContainer/SubViewport"]
+environment = SubResource("Environment_7l4kd")
+
+[node name="ChatInterface" parent="." instance=ExtResource("1_s1yu4")]
