@@ -12,13 +12,13 @@ const NOISE_CHARS = "※｜－×￣￤○◎●△▲▽▼☉☐☑☒☢☣☠
 const ALL_GLITCH_CHARS = GLITCH_CHARS + COMPLEX_CHARS + NOISE_CHARS
 
 var glitch_config = {
-    "steps": Vector2(2, 5), # Reduced steps range
-    "interval": Vector2(30, 80), # Significantly faster intervals
-    "delay": Vector2(5, 15), # Reduced delays
-    "change_chance": 0.7, # Keep this for visual interest
-    "ghost_chance": 0.3, # Keep this for visual interest
-    "max_ghosts": 0.3, # Keep this for visual interest
-    "one_at_a_time": true,
+	"steps": Vector2(2, 5), # Reduced steps range
+	"interval": Vector2(30, 80), # Significantly faster intervals
+	"delay": Vector2(5, 15), # Reduced delays
+	"change_chance": 0.7, # Keep this for visual interest
+	"ghost_chance": 0.3, # Keep this for visual interest
+	"max_ghosts": 0.3, # Keep this for visual interest
+	"one_at_a_time": true,
 	"extra_glitch_chars": 8 # How many extra characters to append to the end
 }
 
