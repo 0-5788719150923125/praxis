@@ -8,6 +8,7 @@ var ignore_next_focus_exited: bool = false
 
 var previous_keyboard_height: int = 0  # New variable
 var keyboard_height: int = 0  # New variable
+var is_toggling: bool = false  # Add this at the top of your script
 
 # UI scaling constants
 const MIN_BUTTON_HEIGHT = 70
@@ -48,6 +49,8 @@ func _ready():
 	#scroll_container.scroll_v_smoothing_enabled = true
 	#scroll_container.scroll_v_smoothing = 0.2  # Adjust smoothing factor as needed
 	#scroll_container.scroll_v_visible = false
+	toggle_button.z_index = 1
+	background_touch.z_index = 0
 
 func _create_base_theme():
 	# Create a base theme that will be used throughout the interface
@@ -166,7 +169,7 @@ func _initialize_components():
 	initial_viewport_height = get_viewport().get_visible_rect().size.y
 	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	input_field.scroll_fit_content_height = true
-	background_touch.mouse_filter = Control.MOUSE_FILTER_STOP
+	background_touch.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _setup_layout():
 	var is_mobile = OS.has_feature("mobile")
@@ -271,21 +274,26 @@ func _on_scroll_container_gui_input(event):
 			scroll_container.scroll_vertical += 20
 
 func _on_toggle_button_pressed() -> void:
+	if is_toggling:
+		return
+	is_toggling = true
 	if ui_root.visible:
-		hide_chat_interface()
+		await hide_chat_interface()
 	else:
-		show_chat_interface()
+		await show_chat_interface()
+	is_toggling = false
+
 
 func show_chat_interface() -> void:
 	ui_root.show()
 	background_touch.show()
 	toggle_button.text = "CLOSE"
 	is_keyboard_visible = true
-	ignore_next_focus_exited = true  # Ignore the next focus_exited signal
+	ignore_next_focus_exited = true
 	input_field.grab_focus()
 	if OS.has_feature("mobile"):
 		DisplayServer.virtual_keyboard_show("default")
-		await get_tree().create_timer(0.05).timeout
+		await get_tree().process_frame
 		_update_input_position(true)
 
 func hide_chat_interface() -> void:
@@ -293,12 +301,12 @@ func hide_chat_interface() -> void:
 	background_touch.hide()
 	toggle_button.text = "OPEN"
 	is_keyboard_visible = false
-	ignore_next_focus_exited = false  # Reset the flag
+	ignore_next_focus_exited = false
 	if input_field.has_focus():
 		input_field.release_focus()
 	if OS.has_feature("mobile"):
 		DisplayServer.virtual_keyboard_hide()
-		await get_tree().create_timer(0.05).timeout
+		await get_tree().process_frame
 		_update_input_position(false)
 
 func _update_input_position(keyboard_visible: bool):
@@ -313,12 +321,14 @@ func _on_focus_entered() -> void:
 
 func _on_focus_exited() -> void:
 	if ignore_next_focus_exited:
-		ignore_next_focus_exited = false  # Reset the flag
-		return  # Ignore this focus_exited event
+		ignore_next_focus_exited = false
+		return
+	# Only hide the chat interface if we are not toggling
+	if is_toggling:
+		return
 	is_keyboard_visible = false
 	_update_input_position(false)
-	if ui_root.visible:
-		hide_chat_interface()
+	# Do not automatically hide the chat interface here
 
 func clear_chat_history() -> void:
 	# Clear all messages from the UI
