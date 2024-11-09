@@ -46,17 +46,12 @@ class PraxisNano(nn.Module):
         self.fft["w1"].register_hook(lambda grad: grad * self.base_mask)
         self.fft["w2"].register_hook(lambda grad: grad * self.base_mask)
 
-        # class SineActivation(nn.Module):
-        #     def forward(self, x):
-        #         return torch.sin(x)
-
         # Layer norms and FFN
         self.ln1 = nn.LayerNorm(hidden_dim)
         self.ln2 = nn.LayerNorm(hidden_dim)
         self.ffw = nn.Sequential(
             nn.Linear(hidden_dim, embed_dim),
-            # SineActivation(),
-            ACT2FN["sinlu"],
+            ACT2FN["sin"],
             nn.Linear(embed_dim, hidden_dim),
         )
 
