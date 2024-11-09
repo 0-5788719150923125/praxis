@@ -20,7 +20,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-mouse_filter = 2
+mouse_filter = 1
 
 [node name="ScrollContainer" type="ScrollContainer" parent="UIRoot"]
 layout_mode = 1
@@ -30,7 +30,6 @@ anchor_bottom = 1.0
 offset_bottom = -60.0
 grow_horizontal = 2
 grow_vertical = 2
-mouse_filter = 2
 
 [node name="MessageContainer" type="VBoxContainer" parent="UIRoot/ScrollContainer"]
 layout_mode = 2
@@ -65,6 +64,7 @@ wrap_mode = 1
 [node name="HTTPRequest" type="HTTPRequest" parent="UIRoot"]
 
 [node name="ToggleButton" type="Button" parent="."]
+z_index = 1
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0

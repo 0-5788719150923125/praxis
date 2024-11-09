@@ -2,13 +2,13 @@ extends CanvasLayer
 
 var message_scene = preload("res://scenes/message.tscn")
 var prompt_manager = PromptManager.new()
-var is_keyboard_visible: bool = false
 var initial_viewport_height: float = 0.0
-var ignore_next_focus_exited: bool = false
 
-var previous_keyboard_height: int = 0  # New variable
-var keyboard_height: int = 0  # New variable
-var is_toggling: bool = false  # Add this at the top of your script
+var keyboard_height: int = 0
+
+# Variables to store layout values
+var base_button_height: int
+var base_input_margin: int
 
 # UI scaling constants
 const MIN_BUTTON_HEIGHT = 70
@@ -42,15 +42,40 @@ func _ready():
 	_setup_layout()
 	_apply_platform_scaling()
 	hide_chat_interface()
-	# Set mouse_filter properties
-	scroll_container.mouse_filter = Control.MOUSE_FILTER_PASS
-	message_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui_root.mouse_filter = Control.MOUSE_FILTER_PASS  # Ensure root passes events
-	#scroll_container.scroll_v_smoothing_enabled = true
-	#scroll_container.scroll_v_smoothing = 0.2  # Adjust smoothing factor as needed
-	#scroll_container.scroll_v_visible = false
-	toggle_button.z_index = 1
-	background_touch.z_index = 0
+
+func _process(_delta: float) -> void:
+	if OS.has_feature("mobile") and ui_root.visible:
+		keyboard_height = DisplayServer.virtual_keyboard_get_height()
+		_update_input_position(keyboard_height)
+
+func _update_input_position(keyboard_visible: bool):
+	var offset = keyboard_height + 50
+	_update_layout_positions(base_button_height, base_input_margin, offset)
+
+func _initialize_components():
+	initial_viewport_height = get_viewport().get_visible_rect().size.y
+	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	input_field.scroll_fit_content_height = true
+	background_touch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+func _setup_signals():
+	http_request.request_completed.connect(_on_request_completed)
+	get_tree().root.size_changed.connect(_on_window_resize)
+	input_field.gui_input.connect(_on_input_gui_input)
+	clear_button.pressed.connect(_on_clear_button_pressed)
+	toggle_button.pressed.connect(_on_toggle_button_pressed)
+	scroll_container.gui_input.connect(_on_scroll_container_gui_input)
+
+func _setup_layout():
+	var is_mobile = OS.has_feature("mobile")
+	var base_button_height = MIN_BUTTON_HEIGHT if is_mobile else 40
+	var base_input_margin = 20 if is_mobile else 10
+	
+	# Store these as instance variables for use in _update_input_position
+	self.base_button_height = base_button_height
+	self.base_input_margin = base_input_margin
+	
+	_update_layout_positions(base_button_height, base_input_margin)
 
 func _create_base_theme():
 	# Create a base theme that will be used throughout the interface
@@ -107,26 +132,6 @@ func _apply_font_size_to_control(control: Control, size: int):
 		control.add_theme_font_size_override("italic_font_size", size)
 		control.add_theme_font_size_override("bold_italic_font_size", size)
 
-func add_message(text: String, is_user: bool):
-	var message = message_scene.instantiate()
-	message_container.add_child(message)
-	
-	# Apply theme and font scaling before setting the message
-	var is_mobile = OS.has_feature("mobile")
-	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
-	
-	# Apply theme from parent
-	message.theme = ui_root.theme
-	
-	# Ensure the label inside the message gets proper font size
-	var label = message.get_node_or_null("MarginContainer/Label")
-	if label:
-		_apply_font_size_to_control(label, font_size)
-	
-	message.set_message(text, is_user)
-	await get_tree().process_frame
-	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
-
 func _update_message_sizes():
 	var is_mobile = OS.has_feature("mobile")
 	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
@@ -140,47 +145,11 @@ func _update_message_sizes():
 
 func _on_window_resize():
 	var current_height = get_viewport().get_visible_rect().size.y
-	if current_height >= initial_viewport_height and is_keyboard_visible:
-		_on_focus_exited()
 	
 	# Reapply scaling when window size changes
 	_create_base_theme()
 	_setup_layout()
 	_apply_platform_scaling()
-
-
-func _process(_delta: float) -> void:
-	if OS.has_feature("mobile") and ui_root.visible:
-		previous_keyboard_height = keyboard_height
-		keyboard_height = DisplayServer.virtual_keyboard_get_height()
-
-		# Detect if the keyboard was closed by the user
-		if previous_keyboard_height > 0 and keyboard_height == 0:
-			# Keyboard was closed
-			print("Keyboard closed - closing chat interface")
-			hide_chat_interface()
-
-		# Optionally, detect if the keyboard was opened
-		elif previous_keyboard_height == 0 and keyboard_height > 0:
-			is_keyboard_visible = true
-			_update_input_position(true)
-
-func _initialize_components():
-	initial_viewport_height = get_viewport().get_visible_rect().size.y
-	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	input_field.scroll_fit_content_height = true
-	background_touch.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-func _setup_layout():
-	var is_mobile = OS.has_feature("mobile")
-	var base_button_height = MIN_BUTTON_HEIGHT if is_mobile else 40
-	var base_input_margin = 20 if is_mobile else 10
-	
-	# Store these as instance variables for use in _update_input_position
-	self.base_button_height = base_button_height
-	self.base_input_margin = base_input_margin
-	
-	_update_layout_positions(base_button_height, base_input_margin)
 
 func _update_layout_positions(button_height: int, input_margin: int, keyboard_offset: int = 0):
 	var is_mobile = OS.has_feature("mobile")
@@ -252,20 +221,6 @@ func _update_font_size(control: Control, size: int):
 		control.add_theme_font_size_override("font_size", size)
 		control.theme = theme
 
-# Variables to store layout values
-var base_button_height: int
-var base_input_margin: int
-
-func _setup_signals():
-	http_request.request_completed.connect(_on_request_completed)
-	get_tree().root.size_changed.connect(_on_window_resize)
-	input_field.gui_input.connect(_on_input_gui_input)
-	input_field.focus_entered.connect(_on_focus_entered)
-	input_field.focus_exited.connect(_on_focus_exited)
-	clear_button.pressed.connect(_on_clear_button_pressed)
-	toggle_button.pressed.connect(_on_toggle_button_pressed)
-	scroll_container.gui_input.connect(_on_scroll_container_gui_input)
-
 func _on_scroll_container_gui_input(event):
 	if event is InputEventMouseButton and event.is_pressed():
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -274,61 +229,27 @@ func _on_scroll_container_gui_input(event):
 			scroll_container.scroll_vertical += 20
 
 func _on_toggle_button_pressed() -> void:
-	if is_toggling:
-		return
-	is_toggling = true
 	if ui_root.visible:
 		await hide_chat_interface()
 	else:
 		await show_chat_interface()
-	is_toggling = false
-
 
 func show_chat_interface() -> void:
 	ui_root.show()
 	background_touch.show()
 	toggle_button.text = "CLOSE"
-	is_keyboard_visible = true
-	ignore_next_focus_exited = true
 	input_field.grab_focus()
 	if OS.has_feature("mobile"):
 		DisplayServer.virtual_keyboard_show("default")
-		await get_tree().process_frame
-		_update_input_position(true)
 
 func hide_chat_interface() -> void:
 	ui_root.hide()
 	background_touch.hide()
 	toggle_button.text = "OPEN"
-	is_keyboard_visible = false
-	ignore_next_focus_exited = false
 	if input_field.has_focus():
 		input_field.release_focus()
 	if OS.has_feature("mobile"):
 		DisplayServer.virtual_keyboard_hide()
-		await get_tree().process_frame
-		_update_input_position(false)
-
-func _update_input_position(keyboard_visible: bool):
-	var offset = KEYBOARD_OFFSET if keyboard_visible and OS.has_feature("mobile") else 0
-	_update_layout_positions(base_button_height, base_input_margin, offset)
-
-func _on_focus_entered() -> void:
-	is_keyboard_visible = true
-	if OS.has_feature("mobile"):
-		await get_tree().create_timer(0.05).timeout
-		_update_input_position(true)
-
-func _on_focus_exited() -> void:
-	if ignore_next_focus_exited:
-		ignore_next_focus_exited = false
-		return
-	# Only hide the chat interface if we are not toggling
-	if is_toggling:
-		return
-	is_keyboard_visible = false
-	_update_input_position(false)
-	# Do not automatically hide the chat interface here
 
 func clear_chat_history() -> void:
 	# Clear all messages from the UI
@@ -339,25 +260,35 @@ func clear_chat_history() -> void:
 	# Clear the input field if it has any text
 	input_field.text = ""
 
-func _notification(what: int) -> void:
-	match what:
-		NOTIFICATION_WM_GO_BACK_REQUEST:
-			if is_keyboard_visible:
-				input_field.release_focus()
-				get_viewport().set_input_as_handled()
-		NOTIFICATION_APPLICATION_FOCUS_OUT:
-			if is_keyboard_visible:
-				_on_focus_exited()
-
 func _on_clear_button_pressed() -> void:
-	# Clear the conversation history
 	clear_chat_history()
+	input_field.grab_focus()
 
 func _on_input_gui_input(event: InputEvent):
 	if event is InputEventKey and event.pressed and not event.shift_pressed:
 		if event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
 			_send_message()
 			get_viewport().set_input_as_handled()
+
+func add_message(text: String, is_user: bool):
+	var message = message_scene.instantiate()
+	message_container.add_child(message)
+	
+	# Apply theme and font scaling before setting the message
+	var is_mobile = OS.has_feature("mobile")
+	var font_size = MOBILE_FONT_SIZE if is_mobile else DESKTOP_FONT_SIZE
+	
+	# Apply theme from parent
+	message.theme = ui_root.theme
+	
+	# Ensure the label inside the message gets proper font size
+	var label = message.get_node_or_null("MarginContainer/Label")
+	if label:
+		_apply_font_size_to_control(label, font_size)
+	
+	message.set_message(text, is_user)
+	await get_tree().process_frame
+	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
 
 func _send_message():
 	var text = input_field.text.strip_edges()
