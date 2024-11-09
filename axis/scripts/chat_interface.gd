@@ -41,10 +41,13 @@ func _ready():
 	_apply_platform_scaling()
 	hide_chat_interface()
 
+var last_keyboard_height = 0
 func _process(_delta: float) -> void:
 	if OS.has_feature("mobile") and ui_root.visible:
 		var keyboard_height = DisplayServer.virtual_keyboard_get_height()
-		_update_input_position(keyboard_height)
+		if keyboard_height != last_keyboard_height:
+			_update_input_position(keyboard_height)
+		last_keyboard_height = keyboard_height
 
 func _update_input_position(keyboard_height: float):
 	var offset_amount = keyboard_height + 50
