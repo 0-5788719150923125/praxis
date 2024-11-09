@@ -36,10 +36,10 @@ From a Linux shell, run these commands:
 source make-venv.sh
 
 # Install core model dependencies
-pip install .
+pip install -e .
 
 # Install training dependencies
-pip install .[all]
+pip install -e .[all]
 ```
 
 ## contribute to the swarm

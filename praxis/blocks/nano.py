@@ -150,6 +150,7 @@ if __name__ == "__main__":
         num_embeds: int = 768
         context_length: int = 2048
         vocab_size: int = 50257
+        causal: bool = True
 
     # Configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
