@@ -15,17 +15,18 @@ class PraxisNano(nn.Module):
     https://github.com/timurgepard/nanoFFT
     """
 
-    def __init__(self, config: AutoConfig, chunk_size: int = 256):
+    def __init__(self, config: AutoConfig, chunk_size: int = 64):
         super().__init__()
         assert (
             config.causal
         ), "The PraxisNano module was designed for causal language modeling. It wouldn't make sense to use it for other tasks."
         hidden_dim = config.num_dims
         embed_dim = config.num_embeds
+        epsilon = 1e-6
         self.chunk_size = chunk_size
 
         # Core weight matrices
-        self.fft_norm = nn.LayerNorm(hidden_dim)
+        self.fft_norm = nn.LayerNorm(hidden_dim, eps=epsilon)
         self.fft = nn.ParameterDict(
             {
                 "w1": nn.Parameter(torch.Tensor(self.chunk_size, self.chunk_size)),
@@ -35,24 +36,27 @@ class PraxisNano(nn.Module):
 
         # Initialize weights with triangular structure
         with torch.no_grad():
-            nn.init.xavier_uniform_(self.fft["w1"])
-            nn.init.xavier_uniform_(self.fft["w2"])
-            self.fft["w1"].copy_(torch.tril(self.fft["w1"]))
-            self.fft["w2"].copy_(torch.tril(self.fft["w2"]))
+            bound = 1.0 / (self.chunk_size**0.5)
+            nn.init.uniform_(self.fft["w1"], -bound, bound)
+            nn.init.uniform_(self.fft["w2"], -bound, bound)
+            # Apply triangular mask during initialization
+            mask = torch.tril(torch.ones(self.chunk_size, self.chunk_size))
+            self.fft["w1"].copy_(self.fft["w1"] * mask)
+            self.fft["w2"].copy_(self.fft["w2"] * mask)
 
         # Create mask for gradient hooks
         mask = torch.tril(torch.ones(self.chunk_size, self.chunk_size))
-        row_sums = mask.sum(dim=1, keepdim=True)
-        self.register_buffer("base_mask", mask / row_sums)
+        self.register_buffer("causal_mask", mask)
 
         # Register gradient hooks
-        self.fft["w1"].register_hook(lambda grad: grad * self.base_mask)
-        self.fft["w2"].register_hook(lambda grad: grad * self.base_mask)
+        self.fft["w1"].register_hook(lambda grad: grad * self.causal_mask)
+        self.fft["w2"].register_hook(lambda grad: grad * self.causal_mask)
 
         # Layer norms and FFN
-        self.ffw_norm = nn.LayerNorm(hidden_dim)
+        self.ffw_norm = nn.LayerNorm(hidden_dim, eps=epsilon)
         self.ffw = nn.Sequential(
             nn.Linear(hidden_dim, embed_dim),
+            nn.Dropout(config.dropout),
             ACT2FN["sin"],
             nn.Linear(embed_dim, hidden_dim),
         )
@@ -127,10 +131,16 @@ class PraxisNano(nn.Module):
             x = F.pad(x, (0, 0, pad_left, pad_right))
 
         # Process through FFT in BTE format
-        x = x.permute(0, 2, 1)  # BET -> BTE
-        x = x @ self.fft["w1"][: x.size(2), : x.size(2)]
-        x = x @ self.fft["w2"][: x.size(2), : x.size(2)]
         x = x.permute(0, 2, 1)  # BTE -> BET
+
+        # Apply first transformation with causal mask
+        Tx = x.size(2)
+        x = x @ (self.fft["w1"][:Tx, :Tx] * self.causal_mask[:Tx, :Tx])
+
+        # Apply second transformation with causal mask
+        x = x @ (self.fft["w2"][:Tx, :Tx] * self.causal_mask[:Tx, :Tx])
+
+        x = x.permute(0, 2, 1)  # BET -> BTE
 
         # Remove padding
         if pad_left > 0:
@@ -151,6 +161,7 @@ if __name__ == "__main__":
         context_length: int = 2048
         vocab_size: int = 50257
         causal: bool = True
+        dropout: float = 0.1
 
     # Configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
