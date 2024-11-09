@@ -15,140 +15,81 @@ class PraxisNano(nn.Module):
     https://github.com/timurgepard/nanoFFT
     """
 
-    def __init__(self, config: AutoConfig, chunk_size: int = 64):
+    def __init__(self, config: AutoConfig, chunk_size: int = 128):
         super().__init__()
-        assert (
-            config.causal
-        ), "The PraxisNano module was designed for causal language modeling. It wouldn't make sense to use it for other tasks."
-        hidden_dim = config.num_dims
-        embed_dim = config.num_embeds
-        epsilon = 1e-6
         self.chunk_size = chunk_size
+        embed_dim = config.num_embeds
+        hidden_dim = config.num_dims
 
-        # Core weight matrices
-        self.fft_norm = nn.LayerNorm(hidden_dim, eps=epsilon)
+        # Core FFT matrices
+        self.ln1 = nn.LayerNorm(hidden_dim)
         self.fft = nn.ParameterDict(
             {
-                "w1": nn.Parameter(torch.Tensor(self.chunk_size, self.chunk_size)),
-                "w2": nn.Parameter(torch.Tensor(self.chunk_size, self.chunk_size)),
+                "w1": nn.Parameter(torch.Tensor(chunk_size, chunk_size)),
+                "w2": nn.Parameter(torch.Tensor(chunk_size, chunk_size)),
             }
         )
 
-        # Initialize weights with triangular structure
-        with torch.no_grad():
-            bound = 1.0 / (self.chunk_size**0.5)
-            nn.init.uniform_(self.fft["w1"], -bound, bound)
-            nn.init.uniform_(self.fft["w2"], -bound, bound)
-            # Apply triangular mask during initialization
-            mask = torch.tril(torch.ones(self.chunk_size, self.chunk_size))
-            self.fft["w1"].copy_(self.fft["w1"] * mask)
-            self.fft["w2"].copy_(self.fft["w2"] * mask)
+        # Initialize weights
+        nn.init.xavier_uniform_(self.fft["w1"])
+        nn.init.xavier_uniform_(self.fft["w2"])
 
-        # Create mask for gradient hooks
-        mask = torch.tril(torch.ones(self.chunk_size, self.chunk_size))
-        self.register_buffer("causal_mask", mask)
-
-        # Register gradient hooks
-        self.fft["w1"].register_hook(lambda grad: grad * self.causal_mask)
-        self.fft["w2"].register_hook(lambda grad: grad * self.causal_mask)
-
-        # Layer norms and FFN
-        self.ffw_norm = nn.LayerNorm(hidden_dim, eps=epsilon)
+        # Layer norms and FFW - these operate on full sequence
+        self.ln2 = nn.LayerNorm(hidden_dim)
         self.ffw = nn.Sequential(
             nn.Linear(hidden_dim, embed_dim),
+            ACT2FN["sinlu"],
             nn.Dropout(config.dropout),
-            ACT2FN["sin"],
             nn.Linear(embed_dim, hidden_dim),
         )
 
-    def forward(
-        self,
-        x: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        router_weights: Optional[Tensor] = None,
-        token_indices: Optional[Tensor] = None,
-    ) -> Tensor:
+    def forward(self, x: Tensor, attention_mask: Optional[Tensor] = None) -> Tensor:
         B, T, E = x.shape
 
+        # Create causal mask for full sequence
+        mask = torch.tril(torch.ones(T, T, device=x.device))
+        mask = mask / mask.sum(dim=1, keepdim=True)
+
+        # First residual branch
         residual = x
+        x = self.ln1(x)
 
-        x = self.fft_norm(x)
+        # FFT processing in chunks
+        x = self._process_fft_chunks(x, mask)
 
-        if T <= self.chunk_size:
-            x_fft = self._process_sequence(x)
-        else:
-            # Generate random initial offset
-            offset = torch.randint(0, self.chunk_size, (1,)).item()
-            chunks = []
+        # Add residual
+        x = x + residual
 
-            # Process first chunk
-            first_chunk_size = min(self.chunk_size - offset, T)
-            if first_chunk_size > 0:
-                first_chunk = x[:, :first_chunk_size, :]
-                chunk_out = self._process_sequence(
-                    first_chunk,
-                    pad_left=offset,
-                    pad_right=self.chunk_size - offset - first_chunk_size,
-                )
-                chunks.append(chunk_out)
-
-            # Process middle chunks
-            for start_idx in range(
-                first_chunk_size, T - self.chunk_size + 1, self.chunk_size
-            ):
-                chunk = x[:, start_idx : start_idx + self.chunk_size, :]
-                chunks.append(self._process_sequence(chunk))
-
-            # Process last chunk if needed
-            remaining = T - (
-                first_chunk_size
-                + ((T - first_chunk_size) // self.chunk_size) * self.chunk_size
-            )
-            if remaining > 0:
-                last_chunk = x[:, T - remaining :, :]
-                chunk_out = self._process_sequence(
-                    last_chunk, pad_right=self.chunk_size - remaining
-                )
-                chunks.append(chunk_out)
-
-            x_fft = torch.cat(chunks, dim=1)
-
-        assert x.shape == x_fft.shape, f"Shape mismatch: {x.shape} vs {x_fft.shape}"
-        x = x_fft + residual
+        # FFW branch
         residual = x
-        x = self.ffw_norm(x)
+        x = self.ln2(x)
         x = self.ffw(x) + residual
+
         return x
 
-    def _process_sequence(
-        self, x: Tensor, pad_left: int = 0, pad_right: int = 0
-    ) -> Tensor:
-        """Process a sequence with optional padding."""
+    def _process_fft_chunks(self, x: Tensor, full_seq_mask: Tensor) -> Tensor:
+        """Process sequence through FFT weights in chunks."""
         B, T, E = x.shape
+        chunks_out = []
 
-        # Handle padding
-        if pad_left > 0 or pad_right > 0:
-            x = F.pad(x, (0, 0, pad_left, pad_right))
+        for chunk_start in range(0, T, self.chunk_size):
+            chunk_end = min(chunk_start + self.chunk_size, T)
+            chunk = x[:, chunk_start:chunk_end, :]
 
-        # Process through FFT in BTE format
-        x = x.permute(0, 2, 1)  # BTE -> BET
+            # Get the mask slice that represents this chunk's visibility of the full sequence
+            # Each position in chunk can see all previous positions globally
+            chunk_len = chunk_end - chunk_start
+            mask_slice = full_seq_mask[chunk_start:chunk_end, chunk_start:chunk_end]
 
-        # Apply first transformation with causal mask
-        Tx = x.size(2)
-        x = x @ (self.fft["w1"][:Tx, :Tx] * self.causal_mask[:Tx, :Tx])
+            # Process chunk
+            chunk = chunk.permute(0, 2, 1)  # [B, E, T_chunk]
+            chunk = chunk @ (self.fft["w1"][:chunk_len, :chunk_len] * mask_slice)
+            chunk = chunk @ (self.fft["w2"][:chunk_len, :chunk_len] * mask_slice)
+            chunk = chunk.permute(0, 2, 1)  # Back to [B, T_chunk, E]
 
-        # Apply second transformation with causal mask
-        x = x @ (self.fft["w2"][:Tx, :Tx] * self.causal_mask[:Tx, :Tx])
+            chunks_out.append(chunk)
 
-        x = x.permute(0, 2, 1)  # BET -> BTE
-
-        # Remove padding
-        if pad_left > 0:
-            x = x[:, pad_left:, :]
-        if pad_right > 0:
-            x = x[:, :-pad_right, :]
-
-        return x
+        return torch.cat(chunks_out, dim=1)
 
 
 if __name__ == "__main__":
