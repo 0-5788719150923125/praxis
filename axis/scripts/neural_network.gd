@@ -113,6 +113,11 @@ func _on_atom_selected(selected_atom: Area3D) -> void:
 	if camera:
 		print("Moving camera to focus on: ", selected_atom.name)
 		camera.set_focus_target(selected_atom)
+		
+		# Get interior system and handle atom selection
+		var interior_system = get_node("../InteriorAtomSystem")
+		if interior_system:
+			interior_system.handle_atom_selection(selected_atom)
 	else:
 		print("ERROR: Camera not found in _on_atom_selected")
 
