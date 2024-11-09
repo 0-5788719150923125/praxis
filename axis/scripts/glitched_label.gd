@@ -116,8 +116,8 @@ func _get_random_glyph(use_complex: bool = false) -> String:
 func _get_random_interval() -> float:
 	return randf_range(glitch_config.interval.x, glitch_config.interval.y) / 1000.0
 
-func write(text: String) -> void:
-	target_text = text
+func write(string: String) -> void:
+	target_text = string
 	current_char_index = 0
 	
 	# Initialize characters - all hidden initially
@@ -129,8 +129,8 @@ func write(text: String) -> void:
 		chars.append(GlitchChar.new(self, "", true))
 	
 	# Add actual text characters
-	for i in range(text.length()):
-		chars.append(GlitchChar.new(self, text[i]))
+	for i in range(string.length()):
+		chars.append(GlitchChar.new(self, string[i]))
 	
 	# Add some extra characters at the end for glitching
 	var num_extra_end = glitch_config.extra_glitch_chars - num_extra_start
@@ -154,19 +154,19 @@ func _on_timer_timeout() -> void:
 	
 	# Reveal and update characters
 	for i in range(chars.size()):
-		var char = chars[i]
+		var ch = chars[i]
 		
 		# Start revealing characters progressively, including some ahead
-		if i <= current_char_index + 2 and not char.revealed and not char.is_extra:
-			char.revealed = true
+		if i <= current_char_index + 2 and not ch.revealed and not ch.is_extra:
+			ch.revealed = true
 		
 		# Update characters within glitch range
-		if char.revealed or (i >= glitch_start and i <= glitch_end):
-			if not char.is_finished():
+		if ch.revealed or (i >= glitch_start and i <= glitch_end):
+			if not ch.is_finished():
 				all_finished = false
-				char.step()
+				ch.step()
 		
-		display_text += char.get_display_text()
+		display_text += ch.get_display_text()
 	
 	# Update display
 	text = display_text

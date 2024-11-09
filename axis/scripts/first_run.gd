@@ -20,7 +20,6 @@ func _ready():
 	
 	_apply_platform_scaling()
 	
-	# Defer the settings check to avoid the busy parent error
 	call_deferred("_check_settings")
 
 func _check_settings():
@@ -178,7 +177,7 @@ func _show_error(message: String):
 	popup.popup_centered()
 	popup.confirmed.connect(popup.queue_free)
 
-func _on_ping_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+func _on_ping_completed(result: int, response_code: int, _headers: PackedStringArray, _body: PackedByteArray):
 	# Clean up loading dialog
 	for child in get_children():
 		if child is AcceptDialog and child.title == "Checking Connection":

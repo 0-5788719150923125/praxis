@@ -48,11 +48,11 @@ func _ready() -> void:
 	
 	# Create surrounding atoms
 	for orbit_range in orbit_distributions:
-		var position = _get_random_position_in_orbit(orbit_range)
-		var atom = _create_atom(position)
+		var pos = _get_random_position_in_orbit(orbit_range)
+		var atom = _create_atom(pos)
 		
 		# Randomize size based on distance
-		var distance_factor = position.length() / OUTER_ORBIT.y
+		var distance_factor = pos.length() / OUTER_ORBIT.y
 		var size_variation = randf_range(-0.2, 0.2)
 		var radius = lerp(MIN_RADIUS, MAX_RADIUS, distance_factor + size_variation)
 		atom.set_radius(radius)
@@ -73,10 +73,10 @@ func _ready() -> void:
 	
 	print("Neural network initialized with ", atoms.size(), " atoms")
 
-func _create_atom(position: Vector3) -> Node3D:
+func _create_atom(pos: Vector3) -> Node3D:
 	var atom = atom_scene.instantiate()
 	atoms_container.add_child(atom)
-	atom.global_position = position
+	atom.global_position = pos
 	
 	# Connect the signal with error checking
 	var connect_result = atom.connect("atom_selected", _on_atom_selected)

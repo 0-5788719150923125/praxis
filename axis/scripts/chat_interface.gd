@@ -4,8 +4,6 @@ var message_scene = preload("res://scenes/message.tscn")
 var prompt_manager = PromptManager.new()
 var initial_viewport_height: float = 0.0
 
-var keyboard_height: int = 0
-
 # Variables to store layout values
 var base_button_height: int
 var base_input_margin: int
@@ -37,7 +35,7 @@ func _ready():
 		server_url = config.get_value("Server", "url", "http://192.168.5.94:2100")
 		print("Server URL: ", server_url)
 	_initialize_components()
-	_create_base_theme()  # New function to create a consistent theme
+	_create_base_theme()
 	_setup_signals()
 	_setup_layout()
 	_apply_platform_scaling()
@@ -45,12 +43,12 @@ func _ready():
 
 func _process(_delta: float) -> void:
 	if OS.has_feature("mobile") and ui_root.visible:
-		keyboard_height = DisplayServer.virtual_keyboard_get_height()
+		var keyboard_height = DisplayServer.virtual_keyboard_get_height()
 		_update_input_position(keyboard_height)
 
-func _update_input_position(keyboard_visible: bool):
-	var offset = keyboard_height + 50
-	_update_layout_positions(base_button_height, base_input_margin, offset)
+func _update_input_position(keyboard_height: float):
+	var offset_amount = keyboard_height + 50
+	_update_layout_positions(base_button_height, base_input_margin, offset_amount)
 
 func _initialize_components():
 	initial_viewport_height = get_viewport().get_visible_rect().size.y
@@ -68,13 +66,8 @@ func _setup_signals():
 
 func _setup_layout():
 	var is_mobile = OS.has_feature("mobile")
-	var base_button_height = MIN_BUTTON_HEIGHT if is_mobile else 40
-	var base_input_margin = 20 if is_mobile else 10
-	
-	# Store these as instance variables for use in _update_input_position
-	self.base_button_height = base_button_height
-	self.base_input_margin = base_input_margin
-	
+	base_button_height = MIN_BUTTON_HEIGHT if is_mobile else 40
+	base_input_margin = 20 if is_mobile else 10
 	_update_layout_positions(base_button_height, base_input_margin)
 
 func _create_base_theme():
@@ -144,9 +137,6 @@ func _update_message_sizes():
 			_apply_font_size_to_control(label, font_size)
 
 func _on_window_resize():
-	var current_height = get_viewport().get_visible_rect().size.y
-	
-	# Reapply scaling when window size changes
 	_create_base_theme()
 	_setup_layout()
 	_apply_platform_scaling()
@@ -230,9 +220,9 @@ func _on_scroll_container_gui_input(event):
 
 func _on_toggle_button_pressed() -> void:
 	if ui_root.visible:
-		await hide_chat_interface()
+		hide_chat_interface()
 	else:
-		await show_chat_interface()
+		show_chat_interface()
 
 func show_chat_interface() -> void:
 	ui_root.show()
@@ -322,7 +312,7 @@ func send_to_api(messages: Array):
 	if error != OK:
 		add_message("Error connecting to server", false)
 
-func _on_request_completed(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+func _on_request_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray):
 	if result != HTTPRequest.RESULT_SUCCESS:
 		add_message("Failed to get response from server (Result Error)", false)
 		return

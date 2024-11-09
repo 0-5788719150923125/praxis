@@ -143,9 +143,9 @@ func _handle_rotation(delta: Vector2) -> void:
 	last_input_direction = input_direction
 
 func _apply_rotation(rotation_amount: Vector2) -> void:
-	var basis = Basis(rotation_quaternion)
-	var camera_right = basis.x
-	var camera_up = basis.y
+	var b = Basis(rotation_quaternion)
+	var camera_right = b.x
+	var camera_up = b.y
 	
 	var vertical_rotation = Quaternion(camera_right, -rotation_amount.y)
 	var horizontal_rotation = Quaternion(camera_up, -rotation_amount.x)
