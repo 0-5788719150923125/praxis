@@ -10,10 +10,9 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
-from praxis.modules import MultiIdentity
+from praxis.modules import MultiIdentity, EMBEDDING_REGISTRY
 from praxis.modules.compression import PraxisCompressor
 from praxis.modules.decoder import PraxisDecoder
-from praxis.modules.embeddings import PraxisEmbedding
 
 
 class PraxisModel(PreTrainedModel):
@@ -21,7 +20,7 @@ class PraxisModel(PreTrainedModel):
 
     def __init__(self, config: PraxisConfig):
         super().__init__(config)
-        self.embeds = PraxisEmbedding(config)
+        self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.compression = (
             PraxisCompressor(config) if config.compression else MultiIdentity()
         )

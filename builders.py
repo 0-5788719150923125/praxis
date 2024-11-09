@@ -34,20 +34,20 @@ HUGGINGFACE_DATASETS = [
         name="cosmopedia-v2",
         keys=["prompt", "text"],
         format=DataFormat.INSTRUCTION,
-        weight=0.01,
+        weight=0.005,
     ),
     dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
-        weight=0.01,
+        weight=0.005,
     ),
     dict(
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
         format=DataFormat.PERSONACHAT,
-        weight=0.01,
+        weight=0.005,
     ),
     dict(
         path="togethercomputer/RedPajama-Data-V2",

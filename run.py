@@ -114,7 +114,13 @@ from transformers import (
 from api import APIServer
 from builders import get_datamodules
 from interface import TerminalDashboard
-from praxis import EXPERT_REGISTRY, PraxisConfig, PraxisForCausalLM, PraxisModel
+from praxis import (
+    BLOCK_REGISTRY,
+    EXPERT_REGISTRY,
+    PraxisConfig,
+    PraxisForCausalLM,
+    PraxisModel,
+)
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -213,6 +219,13 @@ parser.add_argument(
     choices=["adamw", "soap"],
     default="adamw",
     help="The optimizer profile to use",
+)
+parser.add_argument(
+    "--block_type",
+    type=str,
+    choices=BLOCK_REGISTRY.keys(),
+    default="default",
+    help="The type of block to use for every intermediate decoder layer",
 )
 parser.add_argument(
     "--expert_type",
@@ -368,6 +381,7 @@ config = PraxisConfig(
     memory=memory,
     hivemind=hivemind,
     initial_peers=initial_peers,
+    block=block_type,
     expert=expert_type,
     memory_profile=memory_profile,
     pad_token_id=tokenizer.pad_token_id,

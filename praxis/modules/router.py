@@ -41,36 +41,18 @@ class PraxisMixtureOfDepths(nn.Linear):
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
 
-        # the `b > 1` condition is required for sanity checking in Pytorch Lightning
-        if self.training or b > 1:
-            #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
-            token_weights, token_indices = torch.topk(
-                router_logits,
-                k,
-                dim=1,
-                sorted=False,
-            )
-        else:
-            # top-k can see into the future, breaking causality; a sigmoid operation
-            # allows us to sample autoregressively during inference
-            token_mask = torch.sigmoid(router_logits) > 0.5
-            token_indices = torch.nonzero(token_mask, as_tuple=True)[1].view(b, -1)
+        prepared_logits = router_logits
+        if not self.training:
+            # Always select exactly k tokens, even during inference
+            prepared_logits = torch.sigmoid(router_logits)
 
-            if token_indices.numel() > 0:
-                token_weights = (
-                    router_logits.squeeze(-1).gather(1, token_indices).unsqueeze(-1)
-                )
-            else:
-                # if no tokens were selected by the router, just use the most recent k tokens
-                selected_tokens = min(k, s)
-                token_indices = (
-                    torch.arange(s - selected_tokens, s, device=inputs.device)
-                    .view(1, -1)
-                    .expand(b, -1)
-                )
-                token_weights = torch.ones(b, selected_tokens, 1, device=inputs.device)
-
-            token_indices = token_indices.unsqueeze(-1)
+        #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
+        token_weights, token_indices = torch.topk(
+            prepared_logits,
+            k,
+            dim=1,
+            sorted=False,
+        )
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
@@ -81,10 +63,11 @@ class PraxisMixtureOfDepths(nn.Linear):
         )  # -> batch, capacity, 1
 
         # slice an attention mask that matches the top-k selections
+        squeezed_indices = token_indices.squeeze(-1)
         filtered_attention_mask = torch.gather(
             input=attention_mask,
             dim=1,
-            index=token_indices.squeeze(-1),
+            index=squeezed_indices,
         )
 
         # pass the selected tokens through a transformer block
@@ -96,18 +79,18 @@ class PraxisMixtureOfDepths(nn.Linear):
                     filtered_inputs.to("cpu"),
                     filtered_attention_mask.to("cpu"),
                     token_weights.to("cpu"),
-                    token_indices.squeeze(-1).to("cpu"),
+                    squeezed_indices.to("cpu"),
                 ).to(inputs.device)
         else:
             layer_outputs = layer(
                 filtered_inputs,
                 filtered_attention_mask,
                 token_weights,
-                token_indices.squeeze(-1),
+                squeezed_indices,
             )
 
-        # re-integrate the activated tokens with our residual stream
-        hidden_states = torch.scatter(
+        # reintegrate the processed tokens with our residual stream
+        outputs = torch.scatter(
             input=inputs,
             dim=1,
             index=indices_expanded,
@@ -117,7 +100,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         # compute aux loss, in order to teach the router about causality
         aux_loss = self.aux_loss(router_logits, token_indices)
 
-        return hidden_states, aux_loss
+        return outputs, aux_loss
 
     def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
         router_targets = torch.zeros_like(router_logits)

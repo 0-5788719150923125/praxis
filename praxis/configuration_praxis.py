@@ -19,6 +19,7 @@ class PraxisConfig(PretrainedConfig):
         vocab_size=4096,
         context_length=4096,
         activation="serf",
+        block="default",
         expert="glu",
         sparse=False,
         shuffle=False,
@@ -78,6 +79,7 @@ class PraxisConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.context_length = context_length
         self.activation = activation
+        self.block_type = block
         self.expert = self._register_experts(expert)
         self.sparse = sparse
         self.shuffle = shuffle
