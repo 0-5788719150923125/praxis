@@ -25,7 +25,7 @@ class PraxisEmbedding(nn.Sequential):
         )
 
 
-class PraxisUniformEmbedding(nn.Module):
+class PraxisLearnedPositionEmbedding(nn.Module):
     """
     Learned positional embeddings with a uniform projection.
     """
@@ -36,16 +36,17 @@ class PraxisUniformEmbedding(nn.Module):
         super().__init__()
         self.wte = nn.Embedding(config.vocab_size, config.num_embeds)
         self.wpe = nn.Embedding(config.context_length, config.num_embeds)
-        self.norm = nn.LayerNorm(config.num_embeds)
-        self.uniform = nn.Linear(config.num_embeds, config.num_dims)
+        self.reduction = nn.Linear(config.num_embeds, config.num_dims)
 
     def forward(self, x: Tensor):
         B, T = x.shape
         tokens = self.wte(x)
         position = self.wpe(torch.arange(T, device=x.device))
         y = tokens + position
-        y = self.uniform(self.norm(y))
-        return y
+        return self.reduction(y)
 
 
-EMBEDDING_REGISTRY = {"default": PraxisEmbedding, "nano": PraxisUniformEmbedding}
+EMBEDDING_REGISTRY = {
+    "default": PraxisEmbedding,
+    "nano": PraxisLearnedPositionEmbedding,
+}
