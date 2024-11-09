@@ -1,6 +1,9 @@
 extends Node3D
 
 var atom_scene = preload("res://scenes/atom.tscn")
+
+signal atom_created(atom: Node3D)
+
 @onready var atoms_container = $Atoms
 @onready var camera = get_node("../Camera3D")
 
@@ -78,12 +81,15 @@ func _create_atom(pos: Vector3) -> Node3D:
 	atoms_container.add_child(atom)
 	atom.global_position = pos
 	
-	# Connect the signal with error checking
+	# Connect signals
 	var connect_result = atom.connect("atom_selected", _on_atom_selected)
 	if connect_result == OK:
 		print("Successfully connected signal for atom: ", atom.name)
 	else:
 		print("Failed to connect signal for atom: ", atom.name, " Error: ", connect_result)
+	
+	# Emit signal for new atom
+	atom_created.emit(atom)
 	
 	return atom
 

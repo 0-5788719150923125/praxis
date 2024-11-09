@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://63n75a0cytbt"]
+[gd_scene load_steps=7 format=3 uid="uid://63n75a0cytbt"]
 
 [ext_resource type="Script" path="res://scripts/atom.gd" id="1_atom"]
 
@@ -13,6 +13,17 @@ emission_enabled = true
 emission = Color(0.4, 0.6, 1, 1)
 emission_energy_multiplier = 2.0
 
+[sub_resource type="SphereMesh" id="SphereMesh_nucleus"]
+radius = 0.1
+height = 0.2
+radial_segments = 32
+rings = 16
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_nucleus"]
+albedo_color = Color(0.1, 0.1, 0.1, 1)
+metallic = 0.9
+roughness = 0.2
+
 [sub_resource type="SphereShape3D" id="SphereShape3D_xp6ht"]
 
 [node name="Atom" type="Area3D"]
@@ -22,6 +33,10 @@ script = ExtResource("1_atom")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_k8j3d")
 surface_material_override/0 = SubResource("StandardMaterial3D_n4r2d")
+
+[node name="Nucleus" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_nucleus")
+surface_material_override/0 = SubResource("StandardMaterial3D_nucleus")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("SphereShape3D_xp6ht")

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://2ali8nrts021"]
+
+[ext_resource type="Script" path="res://scripts/interior_atom_system.gd" id="1_onvab"]
+
+[node name="InteriorAtomSystem" type="Node3D"]
+script = ExtResource("1_onvab")
