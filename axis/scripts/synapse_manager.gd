@@ -1,7 +1,9 @@
 extends Node3D
 
 # Line properties
-const LINE_COLOR = Color.WHITE
+var line_color: Color = Color.WHITE  # Changed from const to var
+const EXTERIOR_COLOR = Color.WHITE
+const INTERIOR_COLOR = Color.BLACK
 const LINE_WIDTH = 2.0
 
 # Timing properties
@@ -11,13 +13,33 @@ const NUM_CONNECTIONS = 3
 
 var next_update_time: float = 0.0
 var current_lines: Array[MeshInstance3D] = []
-var atoms: Array = []  # Removed strict typing since we need mixed Node types
+var atoms: Array = []
+var is_interior: bool = false
 
 func _ready() -> void:
 	_schedule_next_update()
+	# Find the AtomInteriorSystem and connect to it
+	var root = get_tree().root
+	var main = root.get_node("Main")
+	if main:
+		var interior_system = main.find_child("InteriorAtomSystem", true, false)
+		if interior_system:
+			# Connect to transition progress property
+			interior_system.connect("is_inside_changed", _on_interior_state_changed)
 
-func initialize(atom_list: Array) -> void:  # Removed strict typing
+func initialize(atom_list: Array) -> void:
 	atoms = atom_list
+
+func _on_interior_state_changed(is_inside: bool) -> void:
+	is_interior = is_inside
+	line_color = INTERIOR_COLOR if is_inside else EXTERIOR_COLOR
+	_update_line_colors()
+
+func _update_line_colors() -> void:
+	for line in current_lines:
+		var material = line.material_override as StandardMaterial3D
+		if material:
+			material.albedo_color = line_color
 
 func _process(_delta: float) -> void:
 	if Time.get_unix_time_from_system() >= next_update_time:
@@ -60,7 +82,7 @@ func _create_line(start_pos: Vector3, end_pos: Vector3) -> void:
 	# Create the material
 	var material = StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = LINE_COLOR
+	material.albedo_color = line_color  # Use current line_color
 	material.vertex_color_use_as_albedo = true
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	

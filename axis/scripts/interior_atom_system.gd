@@ -45,6 +45,8 @@ var world_environment: WorldEnvironment = null
 var base_environment: Environment = null
 var interior_environment: Environment = null
 
+signal is_inside_changed(is_inside: bool)
+
 func _ready() -> void:
 	# Get references
 	await get_tree().create_timer(0.1).timeout  # Give other nodes time to initialize
@@ -173,6 +175,8 @@ func _enter_atom(atom: Node3D) -> void:
 	is_inside_atom = true
 	current_atom = atom
 	
+	emit_signal("is_inside_changed", true)
+	
 	# Cancel any existing transition
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
@@ -209,6 +213,8 @@ func _exit_atom() -> void:
 		
 	print("Exiting atom interior...")
 	is_transitioning = true
+	
+	emit_signal("is_inside_changed", false)
 	
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
