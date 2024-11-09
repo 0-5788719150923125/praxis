@@ -1,6 +1,6 @@
 [gd_scene load_steps=7 format=3 uid="uid://br51t5kjmr3r2"]
 
-[ext_resource type="PackedScene" uid="uid://2ali8nrts021" path="res://scenes/interior_atom_system.tscn" id="1_iw0kr"]
+[ext_resource type="PackedScene" uid="uid://2ali8nrts021" path="res://scenes/atom_interior.tscn" id="1_iw0kr"]
 [ext_resource type="PackedScene" uid="uid://kkoitcxefsgc" path="res://scenes/chat_interface.tscn" id="1_s1yu4"]
 [ext_resource type="PackedScene" uid="uid://bgo7ackrcjpw3" path="res://scenes/neural_network.tscn" id="2_mdfsc"]
 [ext_resource type="Script" path="res://scripts/orbital_camera.gd" id="3_orbital"]
