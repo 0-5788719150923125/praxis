@@ -52,6 +52,12 @@ var touch_points := {}
 var previous_touch_distance := 0.0
 var is_zooming := false
 
+var is_in_interior_mode := false
+const INTERIOR_APPROACH_FACTOR := 2.0  # Controls difficulty of approaching nucleus
+const MIN_APPROACH_SPEED := 0.001      # Minimum movement speed
+const NUCLEUS_DISTANCE := 0.999          # Distance at which nucleus effects start
+
+
 func _ready() -> void:
 	camera_distance = initial_distance
 	rotation_quaternion = Quaternion.IDENTITY
@@ -91,6 +97,15 @@ func _process(delta: float) -> void:
 	# Set the camera's transform
 	transform = Transform3D(Basis(rotation_quaternion), position)
 
+# Add method to enter/exit interior mode
+func set_interior_mode(enabled: bool) -> void:
+	is_in_interior_mode = enabled
+	if not enabled:
+		# Reset zoom physics when exiting
+		zoom_velocity = 0.0
+		zoom_chain_multiplier = 1.0
+
+# Modify _handle_zoom_input to handle interior mode
 func _handle_zoom_input(delta: float) -> void:
 	var current_time = Time.get_ticks_msec() / 1000.0
 	var time_since_last_zoom = current_time - last_zoom_time
@@ -104,14 +119,29 @@ func _handle_zoom_input(delta: float) -> void:
 		zoom_chain_multiplier = min(zoom_chain_multiplier * zoom_acceleration_factor, 10.0)
 	
 	var zoom_force = delta * zoom_input_sensitivity * zoom_chain_multiplier
+	
+	if is_in_interior_mode:
+		# Apply logarithmic slowdown when close to nucleus
+		var distance_to_center = position.length()
+		if distance_to_center < NUCLEUS_DISTANCE:
+			var approach_factor = log(distance_to_center / NUCLEUS_DISTANCE + 1.0)
+			zoom_force *= max(approach_factor, MIN_APPROACH_SPEED)
+	
 	zoom_velocity += zoom_force
 	
 	last_zoom_time = current_time
 	last_zoom_direction = zoom_direction
 
+# Modify _apply_zoom to handle interior mode
 func _apply_zoom(zoom_delta: float) -> void:
 	var zoom_factor = 1.0
-	if camera_distance > 10.0:
+	
+	if is_in_interior_mode:
+		var distance_to_center = position.length()
+		if distance_to_center < NUCLEUS_DISTANCE:
+			zoom_factor = pow(distance_to_center / NUCLEUS_DISTANCE, INTERIOR_APPROACH_FACTOR)
+			zoom_factor = max(zoom_factor, MIN_APPROACH_SPEED)
+	elif camera_distance > 10.0:
 		zoom_factor = pow(camera_distance, 0.3)
 	
 	var move_amount = zoom_delta * zoom_factor

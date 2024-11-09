@@ -210,14 +210,10 @@ func _exit_atom() -> void:
 	print("Exiting atom interior...")
 	is_transitioning = true
 	
-	# Cancel any existing transition
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
 	
-	# Create transition effect
 	transition_tween = create_tween()
-	
-	# Properly tween the transition_progress property
 	transition_tween.tween_property(
 		self, 
 		"transition_progress", 
@@ -225,13 +221,15 @@ func _exit_atom() -> void:
 		TRANSITION_DURATION
 	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	
-	# Connect to transition completion
 	transition_tween.connect("finished", _on_exit_transition_complete)
 	
 	# Restore original environment
 	world_environment.environment = base_environment
 	
-	# Reset camera parameters without moving the camera
+	# Reset camera mode
+	camera.set_interior_mode(false)
+	
+	# Restore original parameters
 	_reset_camera()
 
 
@@ -252,11 +250,8 @@ func _modify_camera_for_interior() -> void:
 	if not camera.has_meta("original_zoom_speed"):
 		camera.set_meta("original_zoom_speed", camera.zoom_speed)
 	
-	# Set initial zoom speed
 	camera.zoom_speed = BASE_ZOOM_SPEED
-	
-	# Add our custom distance-based zoom speed calculation
-	camera.set_script(load("res://scripts/interior_orbital_camera.gd"))
+	camera.set_interior_mode(true)  # Enable interior mode
 
 func _on_atom_created(atom: Node3D) -> void:
 	print("New atom registered with interior system:", atom.name)
