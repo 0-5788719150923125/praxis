@@ -3,16 +3,29 @@ class_name AtomInteriorSystem
 
 # Constants for transition and scaling
 const TRANSITION_DURATION := 1.0
+const INTERIOR_ENTRY_THRESHOLD := 1.2
+const INTERIOR_EXIT_THRESHOLD := 3.0
+const INTERIOR_SCALE_FACTOR := 200.0   # Increased from 50.0 to 200.0
+const MIN_INTERIOR_DISTANCE := 0.001    # Decreased from 0.1 to 0.001
+const INVERSE_ZOOM_FACTOR := 4.0       # Increased from 2.0 to 4.0
+
+# Add these new constants
+const DISTANCE_SCALE_FACTOR := 10.0    # Controls how quickly distance affects zoom
+const BASE_ZOOM_SPEED := 0.25          # Original zoom speed
+const MIN_ZOOM_SPEED := 0.001          # Minimum zoom speed
+
+# Constants for transition and scaling
+#const TRANSITION_DURATION := 1.0
 # Modify these constants
 #const INTERIOR_ENTRY_THRESHOLD := 0.5  # When camera distance is this times atom radius
 #const INTERIOR_EXIT_THRESHOLD := 4.0   # When interior camera distance exceeds this
 #const INTERIOR_SCALE_FACTOR := 100.0   # How much bigger the interior feels
 #const MIN_INTERIOR_DISTANCE := 0.05    # Allow closer zoom
-const INTERIOR_ENTRY_THRESHOLD := 1.2  # Made it easier to enter again
-const INTERIOR_EXIT_THRESHOLD := 3.0   # Reduced exit threshold
-const INTERIOR_SCALE_FACTOR := 50.0    # Made scaling less extreme
-const MIN_INTERIOR_DISTANCE := 0.1     # Increased minimum distance
-const INVERSE_ZOOM_FACTOR := 2.0     # Controls how "infinite" the interior zoom feels
+#const INTERIOR_ENTRY_THRESHOLD := 1.2  # Made it easier to enter again
+#const INTERIOR_EXIT_THRESHOLD := 3.0   # Reduced exit threshold
+#const INTERIOR_SCALE_FACTOR := 50.0    # Made scaling less extreme
+#const MIN_INTERIOR_DISTANCE := 0.1     # Increased minimum distance
+#const INVERSE_ZOOM_FACTOR := 2.0     # Controls how "infinite" the interior zoom feels
 
 # Initial camera values to restore
 const INITIAL_MIN_ZOOM := 1.0  # Changed from 2.0 to match your debug output
@@ -239,8 +252,11 @@ func _modify_camera_for_interior() -> void:
 	if not camera.has_meta("original_zoom_speed"):
 		camera.set_meta("original_zoom_speed", camera.zoom_speed)
 	
-	# Modify zoom behavior to create "infinite" feeling
-	camera.zoom_speed = camera.zoom_speed / INVERSE_ZOOM_FACTOR
+	# Set initial zoom speed
+	camera.zoom_speed = BASE_ZOOM_SPEED
+	
+	# Add our custom distance-based zoom speed calculation
+	camera.set_script(load("res://scripts/interior_orbital_camera.gd"))
 
 func _on_atom_created(atom: Node3D) -> void:
 	print("New atom registered with interior system:", atom.name)
