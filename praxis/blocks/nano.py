@@ -53,7 +53,7 @@ class PraxisNano(nn.Module):
         self.ffw_norm = nn.LayerNorm(hidden_dim)
         self.ffw = nn.Sequential(
             nn.Linear(hidden_dim, embed_dim),
-            ACT2FN["sinlu"],
+            ACT2FN["sin"],
             nn.Linear(embed_dim, hidden_dim),
         )
 
