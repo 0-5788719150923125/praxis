@@ -56,7 +56,11 @@ var is_in_interior_mode := false
 const INTERIOR_APPROACH_FACTOR := 2.0  # Controls difficulty of approaching nucleus
 const MIN_APPROACH_SPEED := 0.001      # Minimum movement speed
 const NUCLEUS_DISTANCE := 0.999          # Distance at which nucleus effects start
+const INTERIOR_SCALE_FACTOR := 1.0  # Match this with your atom system's scale factor
 
+# Add transition smoothing
+var interior_mode_blend := 0.0
+var mode_transition_tween: Tween
 
 func _ready() -> void:
 	camera_distance = initial_distance
@@ -98,12 +102,28 @@ func _process(delta: float) -> void:
 	transform = Transform3D(Basis(rotation_quaternion), position)
 
 # Add method to enter/exit interior mode
+
 func set_interior_mode(enabled: bool) -> void:
 	is_in_interior_mode = enabled
-	if not enabled:
-		# Reset zoom physics when exiting
+	
+	# Kill existing tween
+	if mode_transition_tween and mode_transition_tween.is_valid():
+		mode_transition_tween.kill()
+	
+	# For entry, we don't need a tween since we're setting values directly
+	if enabled:
+		interior_mode_blend = 1.0
+		const ENTRY_SAFE_DISTANCE := 2.0
+		camera_distance = ENTRY_SAFE_DISTANCE
 		zoom_velocity = 0.0
 		zoom_chain_multiplier = 1.0
+		return
+	
+	# Only create and set up tween for exit
+	mode_transition_tween = create_tween()
+	mode_transition_tween.set_trans(Tween.TRANS_CUBIC)
+	mode_transition_tween.set_ease(Tween.EASE_IN_OUT)
+	mode_transition_tween.tween_property(self, "interior_mode_blend", 0.0, 0.5)
 
 # Modify _handle_zoom_input to handle interior mode
 func _handle_zoom_input(delta: float) -> void:
@@ -120,27 +140,32 @@ func _handle_zoom_input(delta: float) -> void:
 	
 	var zoom_force = delta * zoom_input_sensitivity * zoom_chain_multiplier
 	
-	if is_in_interior_mode:
-		# Apply logarithmic slowdown when close to nucleus
-		var distance_to_center = position.length()
-		if distance_to_center < NUCLEUS_DISTANCE:
-			var approach_factor = log(distance_to_center / NUCLEUS_DISTANCE + 1.0)
+	if interior_mode_blend > 0.0:
+		# Scale the distance check by the interior scale factor
+		var scaled_distance = position.length() / INTERIOR_SCALE_FACTOR
+		if scaled_distance < NUCLEUS_DISTANCE:
+			var approach_factor = log(scaled_distance / NUCLEUS_DISTANCE + 1.0)
 			zoom_force *= max(approach_factor, MIN_APPROACH_SPEED)
+		
+		# Blend between normal and interior behavior
+		zoom_force = lerp(zoom_force, zoom_force * 0.5, interior_mode_blend)
 	
 	zoom_velocity += zoom_force
 	
 	last_zoom_time = current_time
 	last_zoom_direction = zoom_direction
 
-# Modify _apply_zoom to handle interior mode
 func _apply_zoom(zoom_delta: float) -> void:
 	var zoom_factor = 1.0
 	
-	if is_in_interior_mode:
-		var distance_to_center = position.length()
-		if distance_to_center < NUCLEUS_DISTANCE:
-			zoom_factor = pow(distance_to_center / NUCLEUS_DISTANCE, INTERIOR_APPROACH_FACTOR)
+	if interior_mode_blend > 0.0:
+		var scaled_distance = position.length() / INTERIOR_SCALE_FACTOR
+		if scaled_distance < NUCLEUS_DISTANCE:
+			zoom_factor = pow(scaled_distance / NUCLEUS_DISTANCE, INTERIOR_APPROACH_FACTOR)
 			zoom_factor = max(zoom_factor, MIN_APPROACH_SPEED)
+			
+			# Apply scaling factor to the actual movement
+			zoom_factor *= lerp(1.0, 0.5, interior_mode_blend)
 	elif camera_distance > 10.0:
 		zoom_factor = pow(camera_distance, 0.3)
 	
@@ -149,6 +174,19 @@ func _apply_zoom(zoom_delta: float) -> void:
 	
 	camera_distance = max(min_zoom, new_distance)
 	_update_camera_position()
+
+func _calculate_camera_position(orbit_point: Vector3) -> Vector3:
+	var offset = rotation_quaternion * Vector3(0, 0, camera_distance)
+	
+	# Scale the position check when in interior mode
+	if interior_mode_blend > 0.0:
+		var scaled_offset = offset / INTERIOR_SCALE_FACTOR
+		if scaled_offset.length() < NUCLEUS_DISTANCE:
+			# Apply logarithmic scaling to prevent clipping
+			var scale_factor = log(scaled_offset.length() / NUCLEUS_DISTANCE + 1.0)
+			offset *= max(scale_factor, MIN_APPROACH_SPEED)
+	
+	return orbit_point + offset
 
 func _handle_touch_zoom(distance_delta: float) -> void:
 	var normalized_delta = distance_delta * touch_zoom_sensitivity * 5.0
@@ -283,10 +321,6 @@ func _unhandled_input(event: InputEvent) -> void:
 				_handle_touch_zoom(zoom_delta)
 				previous_touch_distance = new_touch_distance
 				get_viewport().set_input_as_handled()
-
-func _calculate_camera_position(orbit_point: Vector3) -> Vector3:
-	var offset = rotation_quaternion * Vector3(0, 0, camera_distance)
-	return orbit_point + offset
 
 func _get_touch_distance() -> float:
 	if touch_points.size() < 2:
