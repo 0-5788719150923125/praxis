@@ -284,7 +284,7 @@ func _send_message():
 	var text = input_field.text.strip_edges()
 	if text.length() > 0:
 		add_message(text, true)
-		prompt_manager.add_message("INK", text)
+		prompt_manager.add_message("user", text)
 		send_to_api(prompt_manager.get_messages())
 		input_field.text = ""
 		# Retain focus to keep the keyboard open
@@ -296,10 +296,10 @@ func send_to_api(messages: Array):
 		"do_sample": true,
 		"temperature": 0.45,
 		"max_new_tokens": 128,
-		"eta_cutoff": 0.002,
-		"penalty_alpha": 0.4,
-		"top_k": 4,
-		"repetition_penalty": 1.35
+		#"eta_cutoff": 0.002,
+		#"penalty_alpha": 0.4,
+		#"top_k": 4,
+		"repetition_penalty": 1.1
 	})
 
 	var error = http_request.request(
@@ -329,5 +329,5 @@ func _on_request_completed(result: int, response_code: int, _headers: PackedStri
 		return
 	
 	var response = json.get_data().get("response")
-	prompt_manager.add_message("PEN", response)
+	prompt_manager.add_message("assistant", response)
 	add_message(response, false)

@@ -11,10 +11,8 @@ Instructions:
 var conversation_history: Array[Dictionary] = []
 
 func add_message(role: String, content: String) -> void:
-	# Convert INK/PEN to user/assistant
-	var chatml_role = "user" if role == "INK" else "assistant"
 	conversation_history.append({
-		"role": chatml_role,
+		"role": role,
 		"content": content
 	})
 

@@ -580,7 +580,6 @@ class TerminalInterface(Callback):
         self.text = f"{self.initial_text}"
         self.max_length = 4096
         self.interval = 3
-        self.num_tokens = 1
         self.host_count = 0
         self.dashboard = False
         if use_dashboard:
@@ -689,7 +688,12 @@ class TerminalInterface(Callback):
         request_id = generator.request_generation(
             self.text,
             dict(
-                max_new_tokens=self.num_tokens,
+                max_new_tokens=1,
+                temperature=0.45,
+                eta_cutoff=0.002,
+                penalty_alpha=0.6,
+                top_k=4,
+                repetition_penalty=1.35,
                 suppress_tokens=[
                     tokenizer.eos_token_id,
                     tokenizer.pad_token_id,
@@ -822,12 +826,6 @@ class Generator:
 
         defaults = dict(
             do_sample=True,
-            max_new_tokens=1,
-            temperature=0.45,
-            eta_cutoff=0.002,
-            penalty_alpha=0.6,
-            top_k=4,
-            repetition_penalty=1.35,
             renormalize_logits=True,
             remove_invalid_values=True,
             # token_healing=True,
