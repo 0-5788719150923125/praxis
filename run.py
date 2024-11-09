@@ -167,7 +167,7 @@ parser.add_argument(
     "--target_batch_size",
     type=int,
     default=64,
-    help="The actual batch size to use, including accumulation steps.",
+    help="The actual batch size to use, including accumulation steps",
 )
 parser.add_argument(
     "--depth",
@@ -292,7 +292,7 @@ parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
-    help="Supplement training with a mix of expert data.",
+    help="Supplement training with a mix of expert data",
 )
 parser.add_argument(
     "--gun",
