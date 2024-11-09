@@ -34,10 +34,10 @@ class PraxisUniformEmbedding(nn.Module):
 
     def __init__(self, config: AutoConfig):
         super().__init__()
-        self.wte = nn.Embedding(config.vocab_size, config.num_dims)
-        self.wpe = nn.Embedding(config.context_length, config.num_dims)
-        self.norm = nn.LayerNorm(config.num_dims)
-        self.uniform = nn.Linear(config.num_dims, config.num_dims)
+        self.wte = nn.Embedding(config.vocab_size, config.num_embeds)
+        self.wpe = nn.Embedding(config.context_length, config.num_embeds)
+        self.norm = nn.LayerNorm(config.num_embeds)
+        self.uniform = nn.Linear(config.num_embeds, config.num_dims)
 
     def forward(self, x: Tensor):
         B, T = x.shape
