@@ -16,10 +16,23 @@ extends Camera3D
 # Zoom physics parameters
 @export var zoom_base_damping = 0.98
 @export var zoom_velocity_damping = 0.01
-@export var zoom_acceleration_factor =1.2
+@export var zoom_acceleration_factor = 1.2
 @export var zoom_input_sensitivity = 0.5
 @export var min_zoom_speed = 0.001
 @export var zoom_chain_timeout = 0.3
+
+# Interior mode parameters
+const BASE_APPROACH_FACTOR = 2.0
+const BASE_MIN_APPROACH_SPEED = 0.001
+const BASE_NUCLEUS_DISTANCE = 0.999
+const BASE_INTERIOR_SCALE = 1.0
+
+# Dynamic scaling parameters (adjusted during interior mode)
+var current_approach_factor = BASE_APPROACH_FACTOR
+var current_min_approach_speed = BASE_MIN_APPROACH_SPEED
+var current_nucleus_distance = BASE_NUCLEUS_DISTANCE
+var current_interior_scale = BASE_INTERIOR_SCALE
+var atom_radius: float = 1.0  # Will store current atom's radius
 
 # State variables
 var camera_distance: float
@@ -49,19 +62,12 @@ var previous_touch_distance = 0.0
 var is_zooming = false
 
 var is_in_interior_mode = false
-const INTERIOR_APPROACH_FACTOR = 2.0  # Controls difficulty of approaching nucleus
-const MIN_APPROACH_SPEED = 0.001      # Minimum movement speed
-const NUCLEUS_DISTANCE = 0.999          # Distance at which nucleus effects start
-const INTERIOR_SCALE_FACTOR = 1.0  # Match this with your atom system's scale factor
-
-# Add transition smoothing
 var interior_mode_blend = 0.0
 var mode_transition_tween: Tween
 
 func _ready() -> void:
 	camera_distance = initial_distance
 	rotation_quaternion = Quaternion.IDENTITY
-	# Initialize current_orbit_point if focus_target is set
 	if focus_target:
 		current_orbit_point = focus_target.global_position
 
@@ -97,29 +103,42 @@ func _process(delta: float) -> void:
 	transform = Transform3D(Basis(rotation_quaternion), position)
 
 # enter/exit interior mode
-func set_interior_mode(enabled: bool) -> void:
+func set_interior_mode(enabled: bool, atom_params: Dictionary = {}) -> void:
 	is_in_interior_mode = enabled
 	
-	# Kill existing tween
 	if mode_transition_tween and mode_transition_tween.is_valid():
 		mode_transition_tween.kill()
 	
-	# For entry, we don't need a tween since we're setting values directly
 	if enabled:
+		# Update scaling parameters based on atom size
+		atom_radius = atom_params.get("radius", 1.0)
+		var scale_factor = atom_radius
+		
+		# Scale parameters based on atom size
+		current_approach_factor = BASE_APPROACH_FACTOR / scale_factor  # Easier approach for small atoms
+		current_min_approach_speed = BASE_MIN_APPROACH_SPEED * scale_factor  # Slower minimum speed for small atoms
+		current_nucleus_distance = BASE_NUCLEUS_DISTANCE  # This stays constant as it's a relative value
+		current_interior_scale = BASE_INTERIOR_SCALE / scale_factor  # Smaller atoms feel bigger inside
+		
+		# Set initial state
 		interior_mode_blend = 1.0
-		const ENTRY_SAFE_DISTANCE = 2.0
-		camera_distance = ENTRY_SAFE_DISTANCE
+		var safe_distance = atom_radius * 2.0  # Scale safe distance with atom
+		camera_distance = safe_distance
 		zoom_velocity = 0.0
 		zoom_chain_multiplier = 1.0
 		return
 	
-	# Only create and set up tween for exit
+	# Reset to base values when exiting
+	current_approach_factor = BASE_APPROACH_FACTOR
+	current_min_approach_speed = BASE_MIN_APPROACH_SPEED
+	current_nucleus_distance = BASE_NUCLEUS_DISTANCE
+	current_interior_scale = BASE_INTERIOR_SCALE
+	
 	mode_transition_tween = create_tween()
 	mode_transition_tween.set_trans(Tween.TRANS_CUBIC)
 	mode_transition_tween.set_ease(Tween.EASE_IN_OUT)
 	mode_transition_tween.tween_property(self, "interior_mode_blend", 0.0, 0.5)
 
-# Modify _handle_zoom_input to handle interior mode
 func _handle_zoom_input(delta: float) -> void:
 	var current_time = Time.get_ticks_msec() / 1000.0
 	var time_since_last_zoom = current_time - last_zoom_time
@@ -135,14 +154,14 @@ func _handle_zoom_input(delta: float) -> void:
 	var zoom_force = delta * zoom_input_sensitivity * zoom_chain_multiplier
 	
 	if interior_mode_blend > 0.0:
-		# Scale the distance check by the interior scale factor
-		var scaled_distance = position.length() / INTERIOR_SCALE_FACTOR
-		if scaled_distance < NUCLEUS_DISTANCE:
-			var approach_factor = log(scaled_distance / NUCLEUS_DISTANCE + 1.0)
-			zoom_force *= max(approach_factor, MIN_APPROACH_SPEED)
+		# Scale distances based on current atom size
+		var scaled_distance = position.length() / (atom_radius * current_interior_scale)
+		if scaled_distance < current_nucleus_distance:
+			var approach_factor = log(scaled_distance / current_nucleus_distance + 1.0)
+			zoom_force *= max(approach_factor, current_min_approach_speed)
 		
-		# Blend between normal and interior behavior
-		zoom_force = lerp(zoom_force, zoom_force * 0.5, interior_mode_blend)
+		# Scale force based on atom size
+		zoom_force = lerp(zoom_force, zoom_force * (0.5 * atom_radius), interior_mode_blend)
 	
 	zoom_velocity += zoom_force
 	
@@ -153,13 +172,11 @@ func _apply_zoom(zoom_delta: float) -> void:
 	var zoom_factor = 1.0
 	
 	if interior_mode_blend > 0.0:
-		var scaled_distance = position.length() / INTERIOR_SCALE_FACTOR
-		if scaled_distance < NUCLEUS_DISTANCE:
-			zoom_factor = pow(scaled_distance / NUCLEUS_DISTANCE, INTERIOR_APPROACH_FACTOR)
-			zoom_factor = max(zoom_factor, MIN_APPROACH_SPEED)
-			
-			# Apply scaling factor to the actual movement
-			zoom_factor *= lerp(1.0, 0.5, interior_mode_blend)
+		var scaled_distance = position.length() / (atom_radius * current_interior_scale)
+		if scaled_distance < current_nucleus_distance:
+			zoom_factor = pow(scaled_distance / current_nucleus_distance, current_approach_factor)
+			zoom_factor = max(zoom_factor, current_min_approach_speed)
+			zoom_factor *= lerp(1.0, 0.5 * atom_radius, interior_mode_blend)
 	elif camera_distance > 10.0:
 		zoom_factor = pow(camera_distance, 0.3)
 	
@@ -171,13 +188,11 @@ func _apply_zoom(zoom_delta: float) -> void:
 func _calculate_camera_position(orbit_point: Vector3) -> Vector3:
 	var offset = rotation_quaternion * Vector3(0, 0, camera_distance)
 	
-	# Scale the position check when in interior mode
 	if interior_mode_blend > 0.0:
-		var scaled_offset = offset / INTERIOR_SCALE_FACTOR
-		if scaled_offset.length() < NUCLEUS_DISTANCE:
-			# Apply logarithmic scaling to prevent clipping
-			var scale_factor = log(scaled_offset.length() / NUCLEUS_DISTANCE + 1.0)
-			offset *= max(scale_factor, MIN_APPROACH_SPEED)
+		var scaled_offset = offset / (atom_radius * current_interior_scale)
+		if scaled_offset.length() < current_nucleus_distance:
+			var scale_factor = log(scaled_offset.length() / current_nucleus_distance + 1.0)
+			offset *= max(scale_factor, current_min_approach_speed)
 	
 	return orbit_point + offset
 
