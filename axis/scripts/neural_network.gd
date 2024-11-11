@@ -94,10 +94,6 @@ func _on_atom_selected(selected_atom: Area3D) -> void:
 	print("Moving camera to focus on: ", selected_atom.name)
 
 	camera.set_focus_target(selected_atom)
-	
-	# Get interior system and handle atom selection
-	var interior_system = get_node("../InteriorAtomSystem")
-	interior_system.handle_atom_selection(selected_atom)
 
 func _get_random_position_in_orbit(orbit_range: Vector2) -> Vector3:
 	var max_attempts = 50

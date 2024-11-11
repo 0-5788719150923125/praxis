@@ -15,15 +15,14 @@ const BASE_ZOOM_SPEED = 0.25          # Original zoom speed
 const MIN_ZOOM_SPEED = 0.001          # Minimum zoom speed 
 
 # Initial camera values to restore
-const INITIAL_MIN_ZOOM = 1.0  # Changed from 2.0 to match your debug output
-const INITIAL_MAX_ZOOM = 30.0 # Changed from 8.0 to match your debug output
+const INITIAL_MIN_ZOOM = 1.0
+const INITIAL_MAX_ZOOM = 30.0
 const INITIAL_ZOOM_SPEED = 0.25
 
 # State tracking
 var is_inside_atom = false
 var is_transitioning = false
 var current_atom: Node3D = null
-var original_skybox: Node3D = null
 var camera: Camera3D = null
 var transition_tween: Tween
 var transition_progress: float = 0.0
@@ -35,11 +34,7 @@ var interior_environment: Environment = null
 signal is_inside_changed(is_inside: bool)
 
 func _ready() -> void:
-	# Get references
-	await get_tree().create_timer(0.1).timeout  # Give other nodes time to initialize
-	
 	camera = get_node("../Camera3D")
-	original_skybox = get_node("../Skybox")
 	neural_network = get_node("../NeuralNetwork")
 	world_environment = get_node("../WorldEnvironment")
 	
@@ -51,6 +46,124 @@ func _ready() -> void:
 	_setup_inverse_skybox()
 	print("AtomInteriorSystem initialized!")
 	print("Initial camera settings - min_zoom:", camera.min_zoom, " max_zoom:", camera.max_zoom)
+
+func _process(_delta: float) -> void:
+	if not camera or not world_environment:
+		return
+		
+	# Don't check for entry conditions if we're transitioning
+	if is_transitioning:
+		return
+		
+	# Check all atoms for proximity
+	if neural_network:
+		var atoms_node = neural_network.get_node("Atoms")
+		if atoms_node:
+			for atom in atoms_node.get_children():
+				var distance_factor = _get_atom_distance_factor(atom)
+				
+				# If we're inside an atom
+				if is_inside_atom:
+					if atom == current_atom and distance_factor > INTERIOR_EXIT_THRESHOLD:
+						print("Distance factor:", distance_factor, " - Exiting atom")
+						_exit_atom()
+						break
+				# If we're outside atoms
+				else:
+					if distance_factor < INTERIOR_ENTRY_THRESHOLD:
+						print("Distance factor:", distance_factor, " - Entering atom")
+						_enter_atom(atom)
+						break
+
+func _enter_atom(atom: Node3D) -> void:
+	if is_transitioning:
+		return
+		
+	print("Entering atom interior...")
+	is_transitioning = true
+	is_inside_atom = true
+	current_atom = atom
+	
+	# Get all atoms from the neural network
+	if neural_network:
+		# Set interior view for all atoms
+		for other_atom in neural_network.atoms:
+			other_atom.set_interior_view(true, other_atom == atom)
+			
+		# Update highlight if needed
+		var highlighted_atom = neural_network.current_focused_atom
+		if highlighted_atom:
+			highlighted_atom.set_highlight(true)
+	
+	# Switch to interior environment
+	world_environment.environment = interior_environment
+	
+	# Update camera settings
+	var target_max_zoom = current_atom.get_radius() * INTERIOR_SCALE_FACTOR
+	camera.min_zoom = MIN_INTERIOR_DISTANCE
+	camera.max_zoom = target_max_zoom
+	_modify_camera_for_interior()
+	
+	is_inside_changed.emit(true)
+	
+	# Create transition effect
+	if transition_tween and transition_tween.is_valid():
+		transition_tween.kill()
+	
+	transition_tween = create_tween()
+	transition_tween.tween_property(
+		self, 
+		"transition_progress", 
+		1.0, 
+		TRANSITION_DURATION
+	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	
+	transition_tween.connect("finished", _on_enter_transition_complete)
+
+func _exit_atom() -> void:
+	if is_transitioning:
+		return
+		
+	print("Exiting atom interior...")
+	is_transitioning = true
+	
+	# Get all atoms from the neural network
+	if neural_network:
+		# Store current highlighted atom
+		var highlighted_atom = neural_network.current_focused_atom
+		
+		# Restore all atoms to normal view
+		for atom in neural_network.atoms:
+			atom.set_interior_view(false)
+		
+		# Ensure highlight state is maintained
+		if highlighted_atom:
+			highlighted_atom.set_highlight(true)
+	
+	# Emit signal for interior state change
+	is_inside_changed.emit(false)
+	
+	if transition_tween and transition_tween.is_valid():
+		transition_tween.kill()
+	
+	transition_tween = create_tween()
+	transition_tween.tween_property(
+		self, 
+		"transition_progress", 
+		0.0, 
+		TRANSITION_DURATION
+	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	
+	transition_tween.connect("finished", _on_exit_transition_complete)
+	
+	# Restore original environment
+	world_environment.environment = base_environment
+	
+	# Reset camera mode
+	camera.set_interior_mode(false)
+	
+	# Restore original parameters
+	_reset_camera()
 
 func _setup_inverse_skybox() -> void:
 	var image = Image.create(2048, 1024, false, Image.FORMAT_RGBA8)
@@ -108,39 +221,6 @@ func _reset_camera() -> void:
 	
 	print("Camera parameters reset - min_zoom:", camera.min_zoom, " max_zoom:", camera.max_zoom)
 
-func _can_enter_atom() -> bool:
-	# Simpler check - we just care if we're transitioning
-	return not is_transitioning
-
-# Modify _process to use the new helper:
-func _process(_delta: float) -> void:
-	if not camera or not world_environment:
-		return
-		
-	# Don't check for entry conditions if we're transitioning
-	if is_transitioning:
-		return
-		
-	# Check all atoms for proximity
-	if neural_network:
-		var atoms_node = neural_network.get_node("Atoms")
-		if atoms_node:
-			for atom in atoms_node.get_children():
-				var distance_factor = _get_atom_distance_factor(atom)
-				
-				# If we're inside an atom
-				if is_inside_atom:
-					if atom == current_atom and distance_factor > INTERIOR_EXIT_THRESHOLD:
-						print("Distance factor:", distance_factor, " - Exiting atom")
-						_exit_atom()
-						break
-				# If we're outside atoms
-				else:
-					if distance_factor < INTERIOR_ENTRY_THRESHOLD:
-						print("Distance factor:", distance_factor, " - Entering atom")
-						_enter_atom(atom)
-						break
-
 # Modify _get_atom_distance_factor to be more lenient:
 func _get_atom_distance_factor(atom: Node3D) -> float:
 	var distance = camera.global_position.distance_to(atom.global_position)
@@ -148,63 +228,15 @@ func _get_atom_distance_factor(atom: Node3D) -> float:
 	# Add some padding to make entry easier
 	return (distance - 0.1) / (radius + 0.2)  # Added padding to both distance and radius
 
-func _exit_atom() -> void:
-	if is_transitioning:
-		return
-		
-	print("Exiting atom interior...")
-	is_transitioning = true
-	
-	# Get all atoms from the neural network
-	if neural_network:
-		# Store current highlighted atom
-		var highlighted_atom = neural_network.current_focused_atom
-		
-		# Restore all atoms to normal view
-		for atom in neural_network.atoms:
-			atom.set_interior_view(false)
-		
-		# Ensure highlight state is maintained
-		if highlighted_atom:
-			highlighted_atom.set_highlight(true)
-	
-	# Emit signal for interior state change
-	is_inside_changed.emit(false)
-	
-	if transition_tween and transition_tween.is_valid():
-		transition_tween.kill()
-	
-	transition_tween = create_tween()
-	transition_tween.tween_property(
-		self, 
-		"transition_progress", 
-		0.0, 
-		TRANSITION_DURATION
-	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	
-	transition_tween.connect("finished", _on_exit_transition_complete)
-	
-	# Restore original environment
-	world_environment.environment = base_environment
-	
-	# Reset camera mode
-	camera.set_interior_mode(false)
-	
-	# Restore original parameters
-	_reset_camera()
-
-
 func _on_enter_transition_complete() -> void:
 	is_transitioning = false
 	print("Enter transition complete!")
-	print("Current environment:", "interior" if world_environment.environment == interior_environment else "base")
 
 func _on_exit_transition_complete() -> void:
 	is_transitioning = false
 	is_inside_atom = false
 	current_atom = null
 	print("Exit transition complete!")
-	print("Current environment:", "interior" if world_environment.environment == interior_environment else "base")
 
 func _modify_camera_for_interior() -> void:
 	# Store original zoom speed if not already stored
@@ -213,87 +245,3 @@ func _modify_camera_for_interior() -> void:
 	
 	camera.zoom_speed = BASE_ZOOM_SPEED
 	camera.set_interior_mode(true)  # Enable interior mode
-	
-# Modified to handle the atom selection from network.gd
-func handle_atom_selection(selected_atom: Node3D) -> void:
-	# If we're inside an atom and it's not the one we're selecting
-	if is_inside_atom and current_atom != selected_atom:
-		# Force an exit and wait for it to complete before doing anything else
-		_force_exit()
-		# After exit completes, attempt to enter the new atom
-		await get_tree().create_timer(TRANSITION_DURATION).timeout
-		_try_enter_selected_atom(selected_atom)
-
-func _force_exit() -> void:
-	# Similar to _exit_atom but ensures we reset everything
-	is_transitioning = true
-	
-	# Reset all atoms immediately
-	if neural_network:
-		for atom in neural_network.atoms:
-			atom.set_interior_view(false)
-	
-	# Reset camera immediately
-	camera.set_interior_mode(false)
-	_reset_camera()
-	
-	# Reset environment
-	world_environment.environment = base_environment
-	
-	# Reset state
-	is_inside_atom = false
-	current_atom = null
-	is_transitioning = false
-	
-	is_inside_changed.emit(false)
-
-func _try_enter_selected_atom(atom: Node3D) -> void:
-	# Calculate distance factor to see if we're close enough to enter
-	var distance_factor = _get_atom_distance_factor(atom)
-	if distance_factor < INTERIOR_ENTRY_THRESHOLD:
-		_enter_atom(atom)
-
-func _enter_atom(atom: Node3D) -> void:
-	if is_transitioning:
-		return
-		
-	print("Entering atom interior...")
-	is_transitioning = true
-	is_inside_atom = true
-	current_atom = atom
-	
-	# Get all atoms from the neural network
-	if neural_network:
-		# Set interior view for all atoms
-		for other_atom in neural_network.atoms:
-			other_atom.set_interior_view(true, other_atom == atom)
-			
-		# Update highlight if needed
-		var highlighted_atom = neural_network.current_focused_atom
-		if highlighted_atom:
-			highlighted_atom.set_highlight(true)
-	
-	# Switch to interior environment
-	world_environment.environment = interior_environment
-	
-	# Update camera settings
-	var target_max_zoom = current_atom.get_radius() * INTERIOR_SCALE_FACTOR
-	camera.min_zoom = MIN_INTERIOR_DISTANCE
-	camera.max_zoom = target_max_zoom
-	_modify_camera_for_interior()
-	
-	is_inside_changed.emit(true)
-	
-	# Create transition effect
-	if transition_tween and transition_tween.is_valid():
-		transition_tween.kill()
-	
-	transition_tween = create_tween()
-	transition_tween.tween_property(
-		self, 
-		"transition_progress", 
-		1.0, 
-		TRANSITION_DURATION
-	).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	
-	transition_tween.connect("finished", _on_enter_transition_complete)
