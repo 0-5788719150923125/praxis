@@ -116,19 +116,20 @@ func set_interior_mode(enabled: bool, atom_params: Dictionary = {}) -> void:
 		mode_transition_tween.kill()
 	
 	if enabled:
-		# Update scaling parameters based on atom size
 		atom_radius = atom_params.get("radius", 1.0)
-		var scale_factor = atom_radius
+		var transfer_from_interior = atom_params.get("transfer_from_interior", false)
 		
 		# Scale parameters based on atom size
-		current_approach_factor = BASE_APPROACH_FACTOR / scale_factor  # Easier approach for small atoms
-		current_min_approach_speed = BASE_MIN_APPROACH_SPEED * scale_factor  # Slower minimum speed for small atoms
-		current_nucleus_distance = BASE_NUCLEUS_DISTANCE  # This stays constant as it's a relative value
-		current_interior_scale = BASE_INTERIOR_SCALE / scale_factor  # Smaller atoms feel bigger inside
+		current_approach_factor = BASE_APPROACH_FACTOR / atom_radius
+		current_min_approach_speed = BASE_MIN_APPROACH_SPEED * atom_radius
+		current_nucleus_distance = BASE_NUCLEUS_DISTANCE
+		current_interior_scale = BASE_INTERIOR_SCALE / atom_radius
 		
 		# Set initial state
 		interior_mode_blend = 1.0
-		var safe_distance = atom_radius * 2.0  # Scale safe distance with atom
+		
+		# If transferring between atoms, start closer to nucleus
+		var safe_distance = atom_radius * (1.0 if transfer_from_interior else 2.0)
 		camera_distance = safe_distance
 		zoom_velocity = 0.0
 		zoom_chain_multiplier = 1.0

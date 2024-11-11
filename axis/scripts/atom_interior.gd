@@ -69,8 +69,10 @@ func _get_scaled_parameters(atom: Node3D) -> Dictionary:
 		"nucleus_distance": distance_to_nucleus
 	}
 
+var is_transferring_interior = false
+
 func _process(_delta: float) -> void:
-	if not camera or not world_environment or is_transitioning:
+	if not camera or not world_environment or is_transitioning or is_transferring_interior:
 		return
 		
 	if neural_network:
@@ -82,17 +84,19 @@ func _process(_delta: float) -> void:
 				
 				if is_inside_atom:
 					if atom == current_atom and distance_factor > params.exit_threshold:
-						print("Distance factor:", distance_factor, " - Exiting atom")
-						_exit_atom()
+						# Only exit if we're not in transfer
+						if not is_transferring_interior:
+							print("Distance factor:", distance_factor, " - Exiting atom")
+							_exit_atom()
 				else:
 					if distance_factor < params.entry_threshold:
-						print("Distance factor:", distance_factor, " - Entering atom with radius:", atom.get_radius())
+						print("Distance factor:", distance_factor, " - Entering atom:", atom.get_radius())
 						_enter_atom(atom)
 
-func _enter_atom(atom: Node3D) -> void:
+func _enter_atom(atom: Node3D, transfer_from_interior: bool = false) -> void:
 	if is_transitioning:
 		return
-		
+	
 	print("Entering atom interior...")
 	is_transitioning = true
 	is_inside_atom = true
@@ -109,17 +113,19 @@ func _enter_atom(atom: Node3D) -> void:
 		if highlighted_atom:
 			highlighted_atom.set_highlight(true)
 	
-	if starfield:
+	# Only toggle skybox if not transferring from another atom's interior
+	if starfield and not transfer_from_interior:
 		starfield.toggle_inverse_mode(true)
 	
-	# Update camera settings with atom-specific parameters
+	# Update camera settings
 	const BASE_MIN_DISTANCE = 0.2
 	camera.min_zoom = BASE_MIN_DISTANCE * atom_radius
 	camera.max_zoom = atom_radius * BASE_INTERIOR_SCALE
 	
-	# Set interior mode with atom parameters
+	# Set interior mode
 	camera.set_interior_mode(true, {
-		"radius": atom_radius
+		"radius": atom_radius,
+		"transfer_from_interior": transfer_from_interior  # Pass this to camera
 	})
 	
 	is_inside_changed.emit(true)
@@ -137,10 +143,57 @@ func _enter_atom(atom: Node3D) -> void:
 	
 	transition_tween.connect("finished", _on_enter_transition_complete)
 
-func _exit_atom() -> void:
-	if is_transitioning:
+func _switch_atom_interior(new_atom: Node3D) -> void:
+	if new_atom == current_atom:
 		return
 		
+	print("Starting interior transfer...")
+	is_transferring_interior = true
+	
+	# Update visuals for previous atom
+	if current_atom:
+		current_atom.set_interior_view(false)
+	
+	# Set up new atom
+	current_atom = new_atom
+	current_atom.set_interior_view(true, true)
+	
+	# Update camera settings
+	const BASE_MIN_DISTANCE = 0.2
+	var atom_radius = new_atom.get_radius()
+	camera.min_zoom = BASE_MIN_DISTANCE * atom_radius
+	camera.max_zoom = atom_radius * BASE_INTERIOR_SCALE
+	
+	# Move camera to new atom
+	if camera:
+		camera.set_focus_target(new_atom)
+	
+	# Set up safe initial position inside new atom
+	var safe_distance = atom_radius * 0.5  # Start closer to ensure we're inside
+	camera.camera_distance = safe_distance
+	
+	# Update camera's interior mode for new atom
+	camera.set_interior_mode(true, {
+		"radius": atom_radius
+	})
+	
+	# Clear transfer state after a short delay
+	await get_tree().create_timer(0.1).timeout
+	is_transferring_interior = false
+	print("Interior transfer complete")
+
+# Modify neural network's atom selection handling
+func on_atom_selected(selected_atom: Node3D) -> void:
+	if is_inside_atom:
+		_switch_atom_interior(selected_atom)
+	else:
+		_enter_atom(selected_atom)
+
+# Modify _exit_atom to be more explicit about when to toggle skybox
+func _exit_atom(force_skybox_toggle: bool = true) -> void:
+	if is_transitioning:
+		return
+	
 	print("Exiting atom interior...")
 	is_transitioning = true
 	
@@ -153,7 +206,8 @@ func _exit_atom() -> void:
 		if highlighted_atom:
 			highlighted_atom.set_highlight(true)
 	
-	if starfield:
+	# Only toggle skybox if forced (normal exit) or if actually exiting to exterior
+	if starfield and force_skybox_toggle:
 		starfield.toggle_inverse_mode(false)
 	
 	is_inside_changed.emit(false)
