@@ -1,65 +1,61 @@
 extends Camera3D
 
-@export var orbit_speed := 1.0
-@export var min_zoom := 2.0
-@export var max_zoom := INF  # Allow zooming out infinitely
-@export var zoom_speed := 0.5
-@export var initial_distance := 4.0
-@export var touch_zoom_sensitivity := 0.01
-@export var transition_duration := 0.5
-@export var bounce_overshoot := 0.0
+@export var min_zoom = 2.0
+@export var max_zoom = INF
+@export var zoom_speed = 0.5
+@export var initial_distance = 4.0
+@export var touch_zoom_sensitivity = 0.01
 
 # Physics parameters
-@export var base_damping := 0.995
-@export var velocity_dependent_damping := 0.02
-@export var input_sensitivity := 0.005
-@export var min_rotation_speed := 0.001
-@export var input_acceleration_factor := 1.2
+@export var base_damping = 0.995
+@export var velocity_dependent_damping = 0.02
+@export var input_sensitivity = 0.005
+@export var min_rotation_speed = 0.001
+@export var input_acceleration_factor = 1.2
 
 # Zoom physics parameters
-@export var zoom_base_damping := 0.98
-@export var zoom_velocity_damping := 0.01
-@export var zoom_acceleration_factor := 1.2
-@export var zoom_input_sensitivity := 0.5
-@export var min_zoom_speed := 0.001
-@export var zoom_chain_timeout := 0.3
+@export var zoom_base_damping = 0.98
+@export var zoom_velocity_damping = 0.01
+@export var zoom_acceleration_factor =1.2
+@export var zoom_input_sensitivity = 0.5
+@export var min_zoom_speed = 0.001
+@export var zoom_chain_timeout = 0.3
 
 # State variables
 var camera_distance: float
 var rotation_quaternion: Quaternion
-var up_vector := Vector3.UP
-var is_orbiting := false
-var touch_start_position := Vector2.ZERO
+var is_orbiting = false
+var touch_start_position = Vector2.ZERO
 var focus_target: Node3D = null
-var current_orbit_point := Vector3.ZERO
-var target_orbit_point := Vector3.ZERO
+var current_orbit_point = Vector3.ZERO
+var target_orbit_point = Vector3.ZERO
 var transition_tween: Tween
 
 # Physics state
-var rotation_velocity := Vector2.ZERO
-var last_input_time := 0.0
-var input_chain_multiplier := 1.0
-var last_input_direction := Vector2.ZERO
+var rotation_velocity = Vector2.ZERO
+var last_input_time = 0.0
+var input_chain_multiplier = 1.0
+var last_input_direction = Vector2.ZERO
 
 # Zoom physics state
-var zoom_velocity := 0.0
-var last_zoom_time := 0.0
-var zoom_chain_multiplier := 1.0
-var last_zoom_direction := 0.0
+var zoom_velocity = 0.0
+var last_zoom_time = 0.0
+var zoom_chain_multiplier = 1.0
+var last_zoom_direction = 0.0
 
 # Touch zoom variables
-var touch_points := {}
-var previous_touch_distance := 0.0
-var is_zooming := false
+var touch_points = {}
+var previous_touch_distance = 0.0
+var is_zooming = false
 
-var is_in_interior_mode := false
-const INTERIOR_APPROACH_FACTOR := 2.0  # Controls difficulty of approaching nucleus
-const MIN_APPROACH_SPEED := 0.001      # Minimum movement speed
-const NUCLEUS_DISTANCE := 0.999          # Distance at which nucleus effects start
-const INTERIOR_SCALE_FACTOR := 1.0  # Match this with your atom system's scale factor
+var is_in_interior_mode = false
+const INTERIOR_APPROACH_FACTOR = 2.0  # Controls difficulty of approaching nucleus
+const MIN_APPROACH_SPEED = 0.001      # Minimum movement speed
+const NUCLEUS_DISTANCE = 0.999          # Distance at which nucleus effects start
+const INTERIOR_SCALE_FACTOR = 1.0  # Match this with your atom system's scale factor
 
 # Add transition smoothing
-var interior_mode_blend := 0.0
+var interior_mode_blend = 0.0
 var mode_transition_tween: Tween
 
 func _ready() -> void:
@@ -68,7 +64,6 @@ func _ready() -> void:
 	# Initialize current_orbit_point if focus_target is set
 	if focus_target:
 		current_orbit_point = focus_target.global_position
-	_update_camera_position()
 
 func _process(delta: float) -> void:
 	# Always apply rotation physics
@@ -101,8 +96,7 @@ func _process(delta: float) -> void:
 	# Set the camera's transform
 	transform = Transform3D(Basis(rotation_quaternion), position)
 
-# Add method to enter/exit interior mode
-
+# enter/exit interior mode
 func set_interior_mode(enabled: bool) -> void:
 	is_in_interior_mode = enabled
 	
@@ -113,7 +107,7 @@ func set_interior_mode(enabled: bool) -> void:
 	# For entry, we don't need a tween since we're setting values directly
 	if enabled:
 		interior_mode_blend = 1.0
-		const ENTRY_SAFE_DISTANCE := 2.0
+		const ENTRY_SAFE_DISTANCE = 2.0
 		camera_distance = ENTRY_SAFE_DISTANCE
 		zoom_velocity = 0.0
 		zoom_chain_multiplier = 1.0
@@ -173,7 +167,6 @@ func _apply_zoom(zoom_delta: float) -> void:
 	var new_distance = camera_distance + move_amount
 	
 	camera_distance = max(min_zoom, new_distance)
-	_update_camera_position()
 
 func _calculate_camera_position(orbit_point: Vector3) -> Vector3:
 	var offset = rotation_quaternion * Vector3(0, 0, camera_distance)
@@ -221,10 +214,6 @@ func _apply_rotation(rotation_amount: Vector2) -> void:
 	rotation_quaternion = horizontal_rotation * vertical_rotation * rotation_quaternion
 	rotation_quaternion = rotation_quaternion.normalized()
 
-func _update_camera_position() -> void:
-	# This function may now be redundant since we always calculate position in _process
-	pass
-
 func set_focus_target(new_target: Node3D) -> void:
 	if focus_target == new_target:
 		return
@@ -236,18 +225,12 @@ func set_focus_target(new_target: Node3D) -> void:
 		transition_tween.kill()
 	
 	var distance = position.distance_to(target_orbit_point)
-	var travel_time = clamp(distance * 0.1, 0.2, 1.0)
-	var bounce_factor = clamp(distance * 0.01, 0.0, bounce_overshoot)
+	var travel_time = clamp(distance * 0.1, 0.2, 1.0) * 0.7
 	
 	transition_tween = create_tween()
 	transition_tween.set_ease(Tween.EASE_OUT)
 	transition_tween.set_trans(Tween.TRANS_CUBIC)
-	
-	var bounce_point = target_orbit_point + (target_orbit_point - current_orbit_point) * bounce_factor
-	
-	# Tween the current_orbit_point to the bounce point and then to the target
-	transition_tween.tween_property(self, "current_orbit_point", bounce_point, travel_time * 0.7)
-	transition_tween.chain().tween_property(self, "current_orbit_point", target_orbit_point, travel_time * 0.3)
+	transition_tween.chain().tween_property(self, "current_orbit_point", target_orbit_point, travel_time)
 
 func _input(event: InputEvent) -> void:
 	# Handle mouse orbit

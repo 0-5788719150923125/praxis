@@ -42,7 +42,6 @@ script = ExtResource("4_3dn7x")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
 current = true
 script = ExtResource("3_orbital")
-orbit_speed = 0.8
 max_zoom = 8.0
 zoom_speed = 0.25
 

@@ -92,6 +92,7 @@ func _on_atom_selected(selected_atom: Area3D) -> void:
 	
 	# Update camera
 	print("Moving camera to focus on: ", selected_atom.name)
+
 	camera.set_focus_target(selected_atom)
 	
 	# Get interior system and handle atom selection

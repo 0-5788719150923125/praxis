@@ -3,11 +3,11 @@ extends Area3D
 const HIGHLIGHT_TRANSITION_TIME = 0.3
 const INTERIOR_TRANSITION_TIME = 0.5
 
-var base_emission_color := Color(0.2, 0.4, 1.0)
-var highlight_emission_color := Color(1.0, 0.4, 0.2)
-var interior_color := Color(0, 0, 0, 1)  # Pure black for interior view
-var is_highlighted := false
-var original_material_state := {}  # Store original material properties
+var base_emission_color = Color(0.2, 0.4, 1.0)
+var highlight_emission_color = Color(1.0, 0.4, 0.2)
+var interior_color = Color(0, 0, 0, 1)  # Pure black for interior view
+var is_highlighted = false
+var original_material_state = {}  # Store original material properties
 
 @onready var mesh_instance: MeshInstance3D = $MeshInstance3D
 @onready var material: StandardMaterial3D = mesh_instance.get_surface_override_material(0)

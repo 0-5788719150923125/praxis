@@ -2,26 +2,26 @@ extends Node3D
 class_name AtomInteriorSystem
 
 # Constants for transition and scaling
-const TRANSITION_DURATION := 1.0
-const INTERIOR_ENTRY_THRESHOLD := 1.2  # When camera distance is this times atom radius
-const INTERIOR_EXIT_THRESHOLD := 3.0   # When interior camera distance exceeds this
-const INTERIOR_SCALE_FACTOR := 200.0   # How much bigger the interior feels
-const MIN_INTERIOR_DISTANCE := 0.001   # Allow closer zoom
-const INVERSE_ZOOM_FACTOR := 4.0       # Controls how "infinite" the interior zoom feels
+const TRANSITION_DURATION = 1.0
+const INTERIOR_ENTRY_THRESHOLD = 1.2  # When camera distance is this times atom radius
+const INTERIOR_EXIT_THRESHOLD = 3.0   # When interior camera distance exceeds this
+const INTERIOR_SCALE_FACTOR = 200.0   # How much bigger the interior feels
+const MIN_INTERIOR_DISTANCE = 0.001   # Allow closer zoom
+const INVERSE_ZOOM_FACTOR = 4.0       # Controls how "infinite" the interior zoom feels
 
 # Add these new constants
-const DISTANCE_SCALE_FACTOR := 10.0    # Controls how quickly distance affects zoom
-const BASE_ZOOM_SPEED := 0.25          # Original zoom speed
-const MIN_ZOOM_SPEED := 0.001          # Minimum zoom speed 
+const DISTANCE_SCALE_FACTOR = 10.0    # Controls how quickly distance affects zoom
+const BASE_ZOOM_SPEED = 0.25          # Original zoom speed
+const MIN_ZOOM_SPEED = 0.001          # Minimum zoom speed 
 
 # Initial camera values to restore
-const INITIAL_MIN_ZOOM := 1.0  # Changed from 2.0 to match your debug output
-const INITIAL_MAX_ZOOM := 30.0 # Changed from 8.0 to match your debug output
-const INITIAL_ZOOM_SPEED := 0.25
+const INITIAL_MIN_ZOOM = 1.0  # Changed from 2.0 to match your debug output
+const INITIAL_MAX_ZOOM = 30.0 # Changed from 8.0 to match your debug output
+const INITIAL_ZOOM_SPEED = 0.25
 
 # State tracking
-var is_inside_atom := false
-var is_transitioning := false
+var is_inside_atom = false
+var is_transitioning = false
 var current_atom: Node3D = null
 var original_skybox: Node3D = null
 var camera: Camera3D = null
