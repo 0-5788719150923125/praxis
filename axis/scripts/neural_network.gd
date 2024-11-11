@@ -78,11 +78,14 @@ func _create_atom(pos: Vector3) -> Node3D:
 	return atom
 
 func _on_atom_selected(selected_atom: Area3D) -> void:
-	print("Signal received! Atom selected: ", selected_atom.name)
+	print("Neural Network: Atom selected: ", selected_atom.name)
 	
 	if selected_atom == current_focused_atom:
-		print("Atom already focused")
+		print("Neural Network: Atom already focused")
 		return
+	
+	# Get reference to AtomInteriorSystem
+	var interior_system = get_node("../InteriorAtomSystem")
 	
 	# Update highlights
 	current_focused_atom.set_highlight(false)
@@ -90,10 +93,13 @@ func _on_atom_selected(selected_atom: Area3D) -> void:
 	
 	current_focused_atom = selected_atom
 	
-	# Update camera
-	print("Moving camera to focus on: ", selected_atom.name)
-
-	camera.set_focus_target(selected_atom)
+	# IMPORTANT: Let interior system handle the transition if we're inside
+	if interior_system and interior_system.is_inside_atom:
+		print("Neural Network: Delegating to interior system")
+		interior_system._switch_atom_interior(selected_atom)
+	else:
+		print("Neural Network: Moving camera normally")
+		camera.set_focus_target(selected_atom)
 
 func _get_random_position_in_orbit(orbit_range: Vector2) -> Vector3:
 	var max_attempts = 50

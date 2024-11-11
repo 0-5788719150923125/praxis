@@ -20,14 +20,16 @@ const NUCLEUS_RELATIVE_SIZE = 0.01  # Size of nucleus relative to atom
 # State tracking
 var is_inside_atom = false
 var is_transitioning = false
+var is_transferring_interior = false
+var transition_progress: float = 0.0
+var transition_protected = false
 var current_atom: Node3D = null
+var reference_radius: float = 1.0
 var camera: Camera3D = null
 var transition_tween: Tween
-var transition_progress: float = 0.0
 var neural_network: Node3D = null
 var world_environment: WorldEnvironment = null
 var starfield: Node3D = null
-var reference_radius: float = 1.0  # Default reference radius
 
 signal is_inside_changed(is_inside: bool)
 
@@ -69,10 +71,17 @@ func _get_scaled_parameters(atom: Node3D) -> Dictionary:
 		"nucleus_distance": distance_to_nucleus
 	}
 
-var is_transferring_interior = false
 
 func _process(_delta: float) -> void:
-	if not camera or not world_environment or is_transitioning or is_transferring_interior:
+	if not camera or not world_environment:
+		return
+		
+	# Don't check distances during any kind of transition
+	if is_transitioning or is_transferring_interior:
+		return
+		
+	# Don't check distances during camera movement
+	if camera.transition_tween and camera.transition_tween.is_valid():
 		return
 		
 	if neural_network:
@@ -84,17 +93,62 @@ func _process(_delta: float) -> void:
 				
 				if is_inside_atom:
 					if atom == current_atom and distance_factor > params.exit_threshold:
-						# Only exit if we're not in transfer
-						if not is_transferring_interior:
-							print("Distance factor:", distance_factor, " - Exiting atom")
-							_exit_atom()
+						print("Distance check: ", distance_factor, " vs threshold ", params.exit_threshold)
+						_exit_atom()
 				else:
 					if distance_factor < params.entry_threshold:
-						print("Distance factor:", distance_factor, " - Entering atom:", atom.get_radius())
 						_enter_atom(atom)
 
-func _enter_atom(atom: Node3D, transfer_from_interior: bool = false) -> void:
-	if is_transitioning:
+func _switch_atom_interior(new_atom: Node3D) -> void:
+	if new_atom == current_atom:
+		return
+		
+	print("Starting interior transfer...")
+	is_transferring_interior = true
+	
+	if neural_network:
+		# Update ALL atoms to maintain interior view
+		for atom in neural_network.atoms:
+			# Set interior view for all atoms (true), but only the new target is "current" (second param)
+			atom.set_interior_view(true, atom == new_atom)
+			
+			# Keep highlight state consistent
+			if atom == new_atom:
+				atom.set_highlight(true)
+			elif atom == current_atom:
+				atom.set_highlight(false)
+	
+	# Update current atom reference
+	current_atom = new_atom
+	
+	# Update camera settings
+	const BASE_MIN_DISTANCE = 0.2
+	var atom_radius = new_atom.get_radius()
+	camera.min_zoom = BASE_MIN_DISTANCE * atom_radius
+	camera.max_zoom = atom_radius * BASE_INTERIOR_SCALE
+	
+	# Set camera parameters for interior transfer
+	camera.set_interior_mode(true, {
+		"radius": atom_radius,
+		"transfer_from_interior": true
+	})
+	
+	# Move camera with updated parameters
+	if camera:
+		camera.set_focus_target(new_atom)
+	
+	# Clear transfer state after transition
+	await get_tree().create_timer(0.1).timeout
+	is_transferring_interior = false
+	print("Interior transfer complete")
+
+func _on_transfer_complete() -> void:
+	transition_protected = false
+	is_transferring_interior = false
+	print("Interior transfer complete")
+
+func _enter_atom(atom: Node3D) -> void:
+	if is_transitioning or transition_protected:
 		return
 	
 	print("Entering atom interior...")
@@ -102,30 +156,22 @@ func _enter_atom(atom: Node3D, transfer_from_interior: bool = false) -> void:
 	is_inside_atom = true
 	current_atom = atom
 	
-	var atom_radius = atom.get_radius()
-	print("Entering atom with radius:", atom_radius)
-	
 	if neural_network:
+		# Set ALL atoms to interior view mode
 		for other_atom in neural_network.atoms:
 			other_atom.set_interior_view(true, other_atom == atom)
-			
-		var highlighted_atom = neural_network.current_focused_atom
-		if highlighted_atom:
-			highlighted_atom.set_highlight(true)
 	
-	# Only toggle skybox if not transferring from another atom's interior
-	if starfield and not transfer_from_interior:
+	if starfield:
 		starfield.toggle_inverse_mode(true)
 	
 	# Update camera settings
-	const BASE_MIN_DISTANCE = 0.2
-	camera.min_zoom = BASE_MIN_DISTANCE * atom_radius
+	var atom_radius = atom.get_radius()
+	camera.min_zoom = 0.2 * atom_radius
 	camera.max_zoom = atom_radius * BASE_INTERIOR_SCALE
 	
-	# Set interior mode
 	camera.set_interior_mode(true, {
 		"radius": atom_radius,
-		"transfer_from_interior": transfer_from_interior  # Pass this to camera
+		"transfer_from_interior": false
 	})
 	
 	is_inside_changed.emit(true)
@@ -143,74 +189,23 @@ func _enter_atom(atom: Node3D, transfer_from_interior: bool = false) -> void:
 	
 	transition_tween.connect("finished", _on_enter_transition_complete)
 
-func _switch_atom_interior(new_atom: Node3D) -> void:
-	if new_atom == current_atom:
-		return
-		
-	print("Starting interior transfer...")
-	is_transferring_interior = true
-	
-	# Update visuals for previous atom
-	if current_atom:
-		current_atom.set_interior_view(false)
-	
-	# Set up new atom
-	current_atom = new_atom
-	current_atom.set_interior_view(true, true)
-	
-	# Update camera settings
-	const BASE_MIN_DISTANCE = 0.2
-	var atom_radius = new_atom.get_radius()
-	camera.min_zoom = BASE_MIN_DISTANCE * atom_radius
-	camera.max_zoom = atom_radius * BASE_INTERIOR_SCALE
-	
-	# Move camera to new atom
-	if camera:
-		camera.set_focus_target(new_atom)
-	
-	# Set up safe initial position inside new atom
-	var safe_distance = atom_radius * 0.5  # Start closer to ensure we're inside
-	camera.camera_distance = safe_distance
-	
-	# Update camera's interior mode for new atom
-	camera.set_interior_mode(true, {
-		"radius": atom_radius
-	})
-	
-	# Clear transfer state after a short delay
-	await get_tree().create_timer(0.1).timeout
-	is_transferring_interior = false
-	print("Interior transfer complete")
-
-# Modify neural network's atom selection handling
-func on_atom_selected(selected_atom: Node3D) -> void:
-	if is_inside_atom:
-		_switch_atom_interior(selected_atom)
-	else:
-		_enter_atom(selected_atom)
-
-# Modify _exit_atom to be more explicit about when to toggle skybox
 func _exit_atom(force_skybox_toggle: bool = true) -> void:
-	if is_transitioning:
+	# Never exit if we're in any kind of protected state
+	if is_transitioning or is_transferring_interior or transition_protected:
+		print("Preventing exit during protected state...")
 		return
 	
 	print("Exiting atom interior...")
 	is_transitioning = true
 	
 	if neural_network:
-		var highlighted_atom = neural_network.current_focused_atom
-		
 		for atom in neural_network.atoms:
 			atom.set_interior_view(false)
-		
-		if highlighted_atom:
-			highlighted_atom.set_highlight(true)
 	
-	# Only toggle skybox if forced (normal exit) or if actually exiting to exterior
+	# Only toggle skybox if actually exiting to exterior
 	if starfield and force_skybox_toggle:
 		starfield.toggle_inverse_mode(false)
-	
-	is_inside_changed.emit(false)
+		is_inside_changed.emit(false)
 	
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()

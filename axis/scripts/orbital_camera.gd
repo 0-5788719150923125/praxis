@@ -285,10 +285,29 @@ func set_focus_target(new_target: Node3D) -> void:
 	var distance = position.distance_to(target_orbit_point)
 	var travel_time = clamp(distance * 0.1, 0.2, 1.0) * 0.7
 	
+	# Store and maintain interior mode state during transition
+	var was_in_interior = is_in_interior_mode
+	var stored_atom_radius = atom_radius
+	
 	transition_tween = create_tween()
 	transition_tween.set_ease(Tween.EASE_OUT)
 	transition_tween.set_trans(Tween.TRANS_CUBIC)
+	
+	# Important: Keep camera closer to target when transferring between atoms
+	if was_in_interior:
+		# Calculate a path that stays within interior view
+		var target_distance = stored_atom_radius * 0.5  # Stay close to new atom
+		camera_distance = target_distance
+	
 	transition_tween.chain().tween_property(self, "current_orbit_point", target_orbit_point, travel_time)
+	transition_tween.connect("finished", _on_transition_complete.bind(was_in_interior, stored_atom_radius))
+
+func _on_transition_complete(was_in_interior: bool, stored_radius: float) -> void:
+	if was_in_interior:
+		# Ensure we maintain interior mode after transition
+		atom_radius = stored_radius
+		is_in_interior_mode = true
+		interior_mode_blend = 1.0
 
 func _input(event: InputEvent) -> void:
 	# Handle mouse orbit
