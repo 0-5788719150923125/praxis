@@ -89,7 +89,7 @@ func _process(_delta: float) -> void:
 		if atoms_node:
 			for atom in atoms_node.get_children():
 				var params = _get_scaled_parameters(atom)
-				var distance_factor = _get_atom_distance_factor(atom, params)
+				var distance_factor = _get_atom_distance_factor(atom)
 				
 				if is_inside_atom:
 					if atom == current_atom and distance_factor > params.exit_threshold:
@@ -250,7 +250,7 @@ func _exit_atom(force_skybox_toggle: bool = true) -> void:
 	camera.set_interior_mode(false)
 	_reset_camera()
 
-func _get_atom_distance_factor(atom: Node3D, params: Dictionary) -> float:
+func _get_atom_distance_factor(atom: Node3D) -> float:
 	var distance = camera.global_position.distance_to(atom.global_position)
 	var radius = atom.get_radius()
 	# Scale padding with atom size

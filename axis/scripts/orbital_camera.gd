@@ -291,7 +291,7 @@ func set_focus_target(new_target: Node3D) -> void:
 		# Scale travel time by atom radius for interior mode
 		travel_time *= 5.0 * (atom_radius / BASE_INTERIOR_SCALE)
 	else:
-		travel_time *= 0.7
+		travel_time *= 1.5
 	
 	# Store and maintain interior mode state during transition
 	var was_in_interior = is_in_interior_mode
