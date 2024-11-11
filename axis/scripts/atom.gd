@@ -42,11 +42,14 @@ func _store_original_material_state() -> void:
 
 func set_interior_view(enabled: bool, is_current: bool = false) -> void:
 	if is_current:
-		# For the current atom, only hide the outer shell, keep nucleus visible
+		# For the current atom, hide mesh but keep nucleus
 		mesh_instance.visible = false
-		nucleus.visible = true  # Keep nucleus visible
+		nucleus.visible = true
+		input_ray_pickable = true  # Ensure we can still click
 		return
 		
+	# Always ensure input handling is enabled
+	input_ray_pickable = true
 	mesh_instance.visible = true
 	nucleus.visible = true
 	
@@ -55,7 +58,7 @@ func set_interior_view(enabled: bool, is_current: bool = false) -> void:
 	tween.set_ease(Tween.EASE_OUT)
 	
 	if enabled:
-		# Configure material for interior view
+		# Configure material for interior view (black)
 		tween.tween_property(material, "albedo_color", interior_color, INTERIOR_TRANSITION_TIME)
 		tween.parallel().tween_property(material, "emission_enabled", false, INTERIOR_TRANSITION_TIME)
 		tween.parallel().tween_property(material, "metallic", 0.0, INTERIOR_TRANSITION_TIME)

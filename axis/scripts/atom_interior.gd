@@ -107,16 +107,20 @@ func _switch_atom_interior(new_atom: Node3D) -> void:
 	is_transferring_interior = true
 	
 	if neural_network:
-		# Update ALL atoms to maintain interior view
+		# First, ensure ALL atoms stay in interior mode (black)
 		for atom in neural_network.atoms:
-			# Set interior view for all atoms (true), but only the new target is "current" (second param)
-			atom.set_interior_view(true, atom == new_atom)
+			if atom == current_atom:
+				# Current atom stays black but becomes visible
+				atom.set_interior_view(true, false)
+			elif atom == new_atom:
+				# New target atom stays visible but black
+				atom.set_interior_view(true, false)
+			else:
+				# All other atoms stay black
+				atom.set_interior_view(true, false)
 			
-			# Keep highlight state consistent
-			if atom == new_atom:
-				atom.set_highlight(true)
-			elif atom == current_atom:
-				atom.set_highlight(false)
+			# Update highlighting separately from interior state
+			atom.set_highlight(atom == new_atom)
 	
 	# Update current atom reference
 	current_atom = new_atom
@@ -137,16 +141,17 @@ func _switch_atom_interior(new_atom: Node3D) -> void:
 	if camera:
 		camera.set_focus_target(new_atom)
 	
-	# Clear transfer state after transition
-	await get_tree().create_timer(0.1).timeout
-	is_transferring_interior = false
-	print("Interior transfer complete")
+	# When we reach the destination, update final states
+	var timer = get_tree().create_timer(0.5)  # Increased for safety
+	timer.timeout.connect(func():
+		# Only hide the mesh of the target atom
+		if current_atom:
+			current_atom.set_interior_view(true, true)  # This will hide mesh, keep nucleus
+		is_transferring_interior = false
+		print("Interior transfer complete")
+	)
 
-func _on_transfer_complete() -> void:
-	transition_protected = false
-	is_transferring_interior = false
-	print("Interior transfer complete")
-
+# Also modify enter_atom to ensure consistent behavior
 func _enter_atom(atom: Node3D) -> void:
 	if is_transitioning or transition_protected:
 		return
@@ -157,9 +162,12 @@ func _enter_atom(atom: Node3D) -> void:
 	current_atom = atom
 	
 	if neural_network:
-		# Set ALL atoms to interior view mode
+		# Set ALL atoms to interior mode first
 		for other_atom in neural_network.atoms:
-			other_atom.set_interior_view(true, other_atom == atom)
+			other_atom.set_interior_view(true, false)
+		
+		# Then set the target atom's final state
+		current_atom.set_interior_view(true, true)
 	
 	if starfield:
 		starfield.toggle_inverse_mode(true)
