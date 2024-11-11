@@ -110,6 +110,9 @@ from transformers import (
     AutoTokenizer,
     PreTrainedTokenizer,
 )
+import warnings
+
+warnings.filterwarnings("ignore", ".*Checkpoint directory.*exists and is not empty*")
 
 from api import APIServer
 from builders import get_datamodules
