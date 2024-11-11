@@ -1,7 +1,7 @@
-from typing import OrderedDict
+from typing import OrderedDict, Optional
 from torch import nn
 from transformers import AutoConfig
-from praxis.activations import ACT2FN
+from praxis.activations import ACT2FN, ACT2CLS
 
 
 class PraxisMLP(nn.Sequential):
@@ -31,10 +31,10 @@ class PraxisGLU(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: AutoConfig, *args, **kwargs):
         super().__init__()
         self.up = nn.Linear(config.num_dims, int((8 / 3) * config.num_dims))
-        self.act = ACT2FN[config.activation]
+        self.act = ACT2CLS[config.activation](*args, **kwargs)
         self.dropout = nn.Dropout(config.dropout)
         self.down = nn.Linear(int((4 / 3) * config.num_dims), config.num_dims)
 

@@ -34,9 +34,12 @@ class PraxisNano(nn.Module):
             TriLinear(int(chunk_size * 0.75), chunk_size, causal=config.causal),
         )
 
-        config.activation = "sinlu"
+        # NOTE: SinLU might be too expensive; it adds a lot of VRAM to the gradients
+        config.activation = "jagged_sin"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = PraxisGLU(config)
+        self.ffw = PraxisGLU(
+            config, frequencies=[1.0, 2.3, 5.9], amplitudes=[1.0, 0.1, 0.23]
+        )
 
     def forward(
         self,
