@@ -224,7 +224,7 @@ parser.add_argument(
     "--block_type",
     type=str,
     choices=BLOCK_REGISTRY.keys(),
-    default="default",
+    default="transformer",
     help="The type of block to use for every intermediate decoder layer",
 )
 parser.add_argument(

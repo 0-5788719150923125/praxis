@@ -5,114 +5,117 @@ from torch import Tensor
 import time
 from transformers import AutoConfig
 from typing import Optional
+from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.activations import ACT2FN
 from dataclasses import dataclass
 
 
 class PraxisNano(nn.Module):
     """
-    A special kind of block that omits all self-attention mechanisms, in favor
-    of dense layers with sine activations. Inspired by NanoFFT:
+    A special kind of block that omits the self-attention mechanism, in favor
+    of dense layers with periodic activations, sequence chunking and state
+    preservation. Inspired by NanoFFT:
     https://github.com/timurgepard/nanoFFT
     """
 
-    def __init__(
-        self,
-        config: "AutoConfig",
-        chunk_size: int = 256,
-        stride: Optional[int] = 128,
-    ):
+    def __init__(self, config: "AutoConfig", chunk_size: int = 64, *args, **kwargs):
         super().__init__()
         self.chunk_size = chunk_size
-        self.stride = stride if stride is not None else chunk_size
+        self.stride = chunk_size // 2
 
         embed_dim = config.num_embeds
         hidden_dim = config.num_dims
 
-        # Define the weight matrices with chunk_size
-        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fft_norm = nn.LayerNorm(hidden_dim)
         self.fft = nn.Sequential(
-            TriLinear(chunk_size),
-            TriLinear(chunk_size),
+            TriLinear(chunk_size, int(chunk_size * 0.75)),
+            TriLinear(int(chunk_size * 0.75), chunk_size),
         )
 
-        # Feed-forward network with sine activation
-        self.ln2 = nn.LayerNorm(hidden_dim)
-        self.ffw = nn.Sequential(
-            nn.Linear(hidden_dim, embed_dim),
-            ACT2FN["sin"],
-            nn.Linear(embed_dim, hidden_dim),
-        )
+        config.activation = "sin"
+        self.ffw_norm = nn.LayerNorm(hidden_dim)
+        self.ffw = PraxisGLU(config)
 
     def forward(
         self,
         x: Tensor,
         attention_mask: Optional[Tensor] = None,
-    ):
+        router_weights: Optional[Tensor] = None,
+        token_indices: Optional[Tensor] = None,
+    ) -> Tensor:
         B, T, E = x.shape
         chunk_size = self.chunk_size
         stride = self.stride
-
-        # Initialize the output tensor and a tensor to keep track of overlap counts
         device = x.device
-        output = torch.zeros_like(x)
-        overlap_counts = torch.zeros(B, T, E, device=device)
 
-        # Iterate over the sequence in chunks
+        # Initialize output tensor
+        output = torch.zeros(B, T, E, device=device)
+
+        # Initialize state tensor for previous chunk's overlapping region
+        prev_state = None
+
         for start in range(0, T, stride):
-            end = start + chunk_size
-            chunk = x[:, start:end, :]
+            end = min(start + chunk_size, T)
+            current_size = end - start
 
-            # Handle the last chunk which might be smaller than chunk_size
-            if chunk.size(1) < chunk_size:
-                padding = chunk_size - chunk.size(1)
-                chunk = nn.functional.pad(chunk, (0, 0, 0, padding), "constant", 0)
+            # Extract and maybe pad current chunk
+            if current_size < chunk_size:
+                chunk = F.pad(
+                    x[:, start:end, :],
+                    (0, 0, 0, chunk_size - current_size),
+                    "constant",
+                    0,
+                )
+            else:
+                chunk = x[:, start:end, :]
 
-            # save residual and apply layer norm
-            residual = chunk
-            chunk_norm = self.ln1(chunk)
+            # Blend with previous state if exists
+            if prev_state is not None:
+                overlap_size = min(stride, current_size)
+                # Create blended version of overlap region
+                alpha = torch.linspace(0, 1, overlap_size, device=device).view(1, -1, 1)
+                blended = (
+                    prev_state[:, -overlap_size:, :] * (1 - alpha)
+                    + chunk[:, :overlap_size, :] * alpha
+                )
+                # Create new chunk with blended region
+                chunk = torch.cat([blended, chunk[:, overlap_size:, :]], dim=1)
 
-            # Reshape chunk for matrix multiplication
-            chunk_fft = chunk_norm.transpose(1, 2)  # [B, embed_dim, T_chunk]
+            # Process the chunk
+            processed_chunk = self.process_chunk(chunk)
 
-            # Apply the masked and normalized weight matrices
-            chunk_fft = self.fft(chunk_fft)
+            # Store state for next iteration if needed
+            if start + stride < T:
+                prev_state = processed_chunk
 
-            # Reshape back to original dimensions
-            chunk_fft = chunk_fft.transpose(1, 2)  # [B, T_chunk, E]
-
-            # Residual connection
-            chunk = chunk_fft + residual
-
-            # Apply second layer norm and feed-forward network
-            residual = chunk
-            chunk = self.ln2(chunk)
-            chunk = self.ffw(chunk) + residual
-
-            # If the chunk was padded, remove the padding
-            if end > T:
-                chunk = chunk[:, : T - start, :]
-
-            # Accumulate the output and overlap counts
-            seq_len = chunk.size(1)
-            output[:, start : start + seq_len, :] += chunk
-            overlap_counts[:, start : start + seq_len, :] += 1
-
-        # Avoid division by zero
-        overlap_counts = torch.clamp(overlap_counts, min=1.0)
-
-        # Average the overlapping regions
-        output = output / overlap_counts
+            # Remove padding if necessary and store in output
+            if current_size < chunk_size:
+                processed_chunk = processed_chunk[:, :current_size, :]
+            output[:, start:end, :] = processed_chunk[:, :current_size, :]
 
         return output
 
+    def process_chunk(self, chunk: Tensor) -> Tensor:
+        residual = chunk
+        chunk_norm = self.fft_norm(chunk)
+        chunk_fft = chunk_norm.transpose(1, 2)
+        chunk_fft = self.fft(chunk_fft)
+        chunk_fft = chunk_fft.transpose(1, 2)
+        chunk = chunk_fft + residual
+        residual = chunk
+        chunk = self.ffw_norm(chunk)
+        chunk = self.ffw(chunk)
+        return chunk + residual
+
 
 class TriLinear(nn.Linear):
-    def __init__(self, features: int):
-        super().__init__(features, features, bias=False)
+    def __init__(self, in_features: int, out_features: int):
+        super().__init__(in_features, out_features, bias=False)
 
         # Create a lower triangular mask
-        causal_mask = torch.tril(torch.ones((features, features), dtype=torch.float32))
+        causal_mask = torch.tril(
+            torch.ones((out_features, in_features), dtype=torch.float32)
+        )
 
         # Apply the mask to the weights: keep lower triangle as initialized, zero upper triangle
         with torch.no_grad():
@@ -129,6 +132,348 @@ class TriLinear(nn.Linear):
         return F.linear(x, self.weight, self.bias)
 
 
+# class PraxisNano(nn.Module):
+#     """
+#     A special kind of block that omits the self-attention mechanism, in favor
+#     of dense layers with sine activations. Inspired by NanoFFT:
+#     https://github.com/timurgepard/nanoFFT
+#     """
+
+#     def __init__(self, config: "AutoConfig", chunk_size: int = 64, *args, **kwargs):
+#         super().__init__()
+#         self.chunk_size = chunk_size
+#         self.stride = chunk_size // 2
+
+#         embed_dim = config.num_embeds
+#         hidden_dim = config.num_dims
+
+#         # Define the weight matrices with chunk_size
+#         self.fft_norm = nn.LayerNorm(hidden_dim)
+#         self.fft = nn.Sequential(
+#             TriLinear(chunk_size, int(chunk_size * 0.75)),
+#             TriLinear(int(chunk_size * 0.75), chunk_size),
+#         )
+
+#         # Feed-forward network with sine activation
+#         config.activation = "sin"
+#         self.ffw_norm = nn.LayerNorm(hidden_dim)
+#         self.ffw = PraxisGLU(config)
+
+#     def forward(
+#         self,
+#         x: Tensor,
+#         attention_mask: Optional[Tensor] = None,
+#         router_weights: Optional[Tensor] = None,
+#         token_indices: Optional[Tensor] = None,
+#     ):
+#         B, T, E = x.shape
+#         chunk_size, stride = self.chunk_size, self.stride
+#         output = torch.zeros_like(x)
+#         previous_overlap = None
+
+#         for start in range(0, T, stride):
+#             end = start + chunk_size
+#             chunk = x[:, start:end, :]  # [B, chunk_size, E]
+
+#             # Handle the last chunk which might be smaller than chunk_size
+#             if chunk.size(1) < chunk_size:
+#                 padding = chunk_size - chunk.size(1)
+#                 chunk = F.pad(chunk, (0, 0, 0, padding), "constant", 0)
+
+#             if previous_overlap is not None:
+#                 # Replace the first 'stride' tokens with the previous processed overlap
+#                 chunk = torch.cat([previous_overlap, chunk[:, stride:, :]], dim=1)
+
+#             # Apply first layer normalization
+#             chunk_norm = self.fft_norm(chunk)  # [B, chunk_size, E]
+
+#             # Reshape chunk for FFT layers
+#             chunk_fft = chunk_norm.transpose(1, 2)  # [B, E, T_chunk]
+
+#             # Apply FFT layers
+#             chunk_fft = self.fft(chunk_fft)  # [B, E, T_chunk]
+
+#             # Reshape back to original dimensions
+#             chunk_fft = chunk_fft.transpose(1, 2)  # [B, T_chunk, E]
+
+#             # First residual connection
+#             scale = 0.5
+#             residual = (chunk_fft + chunk) * scale  # [B, chunk_size, E]
+
+#             # Apply second layer normalization
+#             chunk_norm_ffw = self.ffw_norm(residual)  # [B, chunk_size, E]
+
+#             # Apply feed-forward network
+#             chunk_ffw = self.ffw(chunk_norm_ffw)  # [B, chunk_size, E]
+
+#             # Second residual connection
+#             chunk = (chunk_ffw + residual) * scale  # [B, chunk_size, E]
+
+#             # If the chunk was padded, remove the padding
+#             if end > T:
+#                 chunk = chunk[:, : T - start, :]  # [B, actual_seq_len, E]
+
+#             # Accumulate the output
+#             seq_len = chunk.size(1)
+#             output[:, start : start + seq_len, :] += chunk
+
+#             # Update previous_overlap with the current chunk's overlapping region
+#             if stride > 0 and chunk.size(1) >= stride:
+#                 previous_overlap = chunk[:, -stride:, :]  # [B, stride, E]
+#             else:
+#                 previous_overlap = None
+
+#         return output
+
+
+# class PraxisNano(nn.Module):
+#     """
+#     A special kind of block that omits the self-attention mechanism, in favor
+#     of dense layers with sine activations. Inspired by NanoFFT:
+#     https://github.com/timurgepard/nanoFFT
+#     """
+
+#     def __init__(
+#         self,
+#         config: "AutoConfig",
+#         chunk_size: int = 64,
+#         stride: int = 32,
+#     ):
+#         super().__init__()
+#         self.chunk_size = chunk_size
+#         self.stride = stride
+
+#         embed_dim = config.num_embeds
+#         hidden_dim = config.num_dims
+
+#         # Define the weight matrices with chunk_size
+#         self.ln1 = nn.LayerNorm(hidden_dim)
+#         self.fft = nn.Sequential(
+#             TriLinear(chunk_size, int(chunk_size * 0.75)),
+#             TriLinear(int(chunk_size * 0.75), chunk_size),
+#         )
+
+#         # Feed-forward network with sine activation
+#         self.ln2 = nn.LayerNorm(hidden_dim)
+#         config.activation = "sin"
+#         self.ffw = PraxisGLU(config)
+
+#     def forward(
+#         self,
+#         x: Tensor,
+#         attention_mask: Optional[Tensor] = None,
+#     ):
+#         B, T, E = x.shape
+#         chunk_size = self.chunk_size
+#         stride = self.stride
+
+#         # Calculate number of chunks, ensuring at least one chunk
+#         num_chunks = (T + stride - 1) // stride
+#         num_chunks = max(num_chunks, 1)
+
+#         # Calculate the padded length
+#         T_padded = stride * (num_chunks - 1) + chunk_size
+#         pad_amount = T_padded - T
+
+#         if pad_amount > 0:
+#             # Pad the sequence at the end with zeros
+#             x_padded = F.pad(x, (0, 0, 0, pad_amount), "constant", 0)
+#         else:
+#             x_padded = x
+
+#         # Permute to [B, E, T_padded]
+#         x_permuted = x_padded.permute(0, 2, 1)  # [B, E, T_padded]
+
+#         # Use unfold to extract sliding chunks
+#         # Each chunk will have size `chunk_size` and step `stride`
+#         chunks = x_permuted.unfold(
+#             dimension=2, size=chunk_size, step=stride
+#         )  # [B, E, num_chunks, chunk_size]
+
+#         # Reshape to [B * num_chunks, E, chunk_size]
+#         B_num = B * num_chunks
+#         chunks = chunks.contiguous().view(B_num, E, chunk_size)  # [B*num_chunks, E, C]
+
+#         # Permute to [B*num_chunks, C, E] for LayerNorm
+#         chunks = chunks.permute(0, 2, 1)  # [B*num_chunks, C, E]
+
+#         # Create the residual tensor
+#         residual = chunks
+
+#         # Apply LayerNorm
+#         chunks_norm = self.ln1(chunks)  # [B*num_chunks, C, E]
+
+#         # Permute to [B*num_chunks, E, C] for TriLinear
+#         chunks_fft_input = chunks_norm.permute(0, 2, 1)  # [B*num_chunks, E, C]
+
+#         # Apply fft (TriLinear layers)
+#         chunks_fft = self.fft(chunks_fft_input)  # [B*num_chunks, E, C]
+
+#         # Permute back to [B*num_chunks, C, E]
+#         chunks_fft = chunks_fft.permute(0, 2, 1)  # [B*num_chunks, C, E]
+
+#         # Residual connections
+#         residual = chunks_fft + residual  # [B*num_chunks, C, E]
+
+#         # Apply second LayerNorm
+#         chunks_ln2 = self.ln2(residual)  # [B*num_chunks, C, E]
+
+#         # Apply feed-forward network
+#         chunks_ffw = self.ffw(chunks_ln2)  # [B*num_chunks, C, E]
+
+#         # Another residual connection
+#         chunks_final = chunks_ffw + residual  # [B*num_chunks, C, E]
+
+#         # Reshape back to [B, num_chunks, C, E]
+#         chunks_final = chunks_final.view(
+#             B, num_chunks, chunk_size, E
+#         )  # [B, num_chunks, C, E]
+
+#         # Zero out padded positions in the last chunk
+#         if pad_amount > 0:
+#             valid_length = T - stride * (num_chunks - 1)
+#             if valid_length > 0:
+#                 chunks_final[:, -1, valid_length:, :] = 0  # Zero out padded positions
+
+#         # Reshape to [B, num_chunks * C, E]
+#         chunks_final = chunks_final.view(
+#             B, num_chunks * chunk_size, E
+#         )  # [B, num_chunks*C, E]
+
+#         # Create a mask to identify valid positions (1) and padded positions (0)
+#         mask = torch.ones_like(chunks_final, dtype=x.dtype, device=x.device)
+#         if pad_amount > 0:
+#             valid_length = T - stride * (num_chunks - 1)
+#             if valid_length > 0:
+#                 mask[:, -pad_amount:, :] = 0  # Zero out padded positions
+
+#         # Generate position indices for each element
+#         # Generate a range [0, chunk_size) and add stride * chunk_idx
+#         chunk_range = (
+#             torch.arange(chunk_size, device=x.device).unsqueeze(0).unsqueeze(0)
+#         )  # [1,1,C]
+#         chunk_indices = (
+#             torch.arange(num_chunks, device=x.device).unsqueeze(0).unsqueeze(2)
+#         )  # [1,num_chunks,1]
+#         positions = chunk_range + (chunk_indices * stride)  # [1, num_chunks, C]
+#         positions = positions.expand(B, -1, -1)  # [B, num_chunks, C]
+#         positions = positions.contiguous().view(B, -1)  # [B, num_chunks*C]
+
+#         # Clamp positions to [0, T-1]
+#         positions = positions.clamp(max=T - 1).long()  # [B, num_chunks*C]
+
+#         # Expand positions to match E
+#         positions = positions.unsqueeze(-1).expand(-1, -1, E)  # [B, num_chunks*C, E]
+
+#         # Initialize output and overlap counts
+#         output = torch.zeros(B, T, E, device=x.device, dtype=x.dtype)
+#         overlap_counts = torch.zeros(B, T, E, device=x.device, dtype=x.dtype)
+
+#         # Scatter add
+#         output.scatter_add_(1, positions, chunks_final * mask)
+#         overlap_counts.scatter_add_(1, positions, mask)
+
+#         # Avoid division by zero
+#         overlap_counts = torch.clamp(overlap_counts, min=1.0)
+
+#         # Average the overlapping regions
+#         output = output / overlap_counts
+
+#         return output
+
+
+# class PraxisNano(nn.Module):
+#     """
+#     A special kind of block that omits the self-attention mechanism, in favor
+#     of dense layers with sine activations. Inspired by NanoFFT:
+#     https://github.com/timurgepard/nanoFFT
+#     """
+
+#     def __init__(self, config: "AutoConfig", chunk_size: int = 64):
+#         super().__init__()
+#         self.chunk_size = chunk_size
+#         self.stride = chunk_size // 2
+
+#         embed_dim = config.num_embeds
+#         hidden_dim = config.num_dims
+
+#         # Define the weight matrices with chunk_size
+#         self.ln1 = nn.LayerNorm(hidden_dim)
+#         self.fft = nn.Sequential(
+#             TriLinear(chunk_size, int(chunk_size * 0.75)),
+#             TriLinear(int(chunk_size * 0.75), chunk_size),
+#         )
+
+#         # Feed-forward network with sine activation
+#         config.activation = "sin"
+#         self.ln2 = nn.LayerNorm(hidden_dim)
+#         self.ffw = PraxisGLU(config)
+
+#     def forward(
+#         self,
+#         x: Tensor,
+#         attention_mask: Optional[Tensor] = None,
+#         router_weights: Optional[Tensor] = None,
+#         token_indices: Optional[Tensor] = None,
+#     ):
+#         B, T, E = x.shape
+#         chunk_size = self.chunk_size
+#         stride = self.stride
+
+#         # Initialize the output tensor and a tensor to keep track of overlap counts
+#         device = x.device
+#         output = torch.zeros_like(x)
+#         overlap_counts = torch.zeros(B, T, E, device=device)
+
+#         # Iterate over the sequence in chunks
+#         for start in range(0, T, stride):
+#             end = start + chunk_size
+#             chunk = x[:, start:end, :]
+
+#             # Handle the last chunk which might be smaller than chunk_size
+#             if chunk.size(1) < chunk_size:
+#                 padding = chunk_size - chunk.size(1)
+#                 chunk = nn.functional.pad(chunk, (0, 0, 0, padding), "constant", 0)
+
+#             # save residual and apply layer norm
+#             residual = chunk
+#             chunk_norm = self.ln1(chunk)
+
+#             # Reshape chunk for matrix multiplication
+#             chunk_fft = chunk_norm.transpose(1, 2)  # [B, embed_dim, T_chunk]
+
+#             # Apply the masked and normalized weight matrices
+#             chunk_fft = self.fft(chunk_fft)
+
+#             # Reshape back to original dimensions
+#             chunk_fft = chunk_fft.transpose(1, 2)  # [B, T_chunk, E]
+
+#             # Residual connection
+#             chunk = chunk_fft + residual
+
+#             # Apply second layer norm and feed-forward network
+#             residual = chunk
+#             chunk = self.ln2(chunk)
+#             chunk = self.ffw(chunk) + residual
+
+#             # If the chunk was padded, remove the padding
+#             if end > T:
+#                 chunk = chunk[:, : T - start, :]
+
+#             # Accumulate the output and overlap counts
+#             seq_len = chunk.size(1)
+#             output[:, start : start + seq_len, :] += chunk
+#             overlap_counts[:, start : start + seq_len, :] += 1
+
+#         # Avoid division by zero
+#         overlap_counts = torch.clamp(overlap_counts, min=1.0)
+
+#         # Average the overlapping regions
+#         output = output / overlap_counts
+
+#         return output
+
+
 if __name__ == "__main__":
     # Mock AutoConfig class to simulate the configuration
     @dataclass
@@ -138,7 +483,7 @@ if __name__ == "__main__":
         context_length: int = 2048
         vocab_size: int = 50257
         causal: bool = True
-        dropout: float = 0.1
+        dropout: float = 0.0
 
     # Configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

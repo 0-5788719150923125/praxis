@@ -19,7 +19,7 @@ class PraxisConfig(PretrainedConfig):
         vocab_size=4096,
         context_length=4096,
         activation="serf",
-        block="default",
+        block="transformer",
         expert="glu",
         sparse=False,
         shuffle=False,
