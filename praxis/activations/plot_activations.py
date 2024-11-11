@@ -6,10 +6,6 @@ import torch
 import torch.nn as nn
 from praxis import activations
 
-# from praxis.activations.nmda import NMDA
-# from praxis.activations.serf import SERF
-# from praxis.activations.sinlu import SinLU
-
 
 # Define activation functions
 activation_functions = {

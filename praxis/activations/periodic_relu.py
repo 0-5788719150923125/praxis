@@ -1,23 +1,26 @@
 import torch
 from torch import nn
 
+torch.pi = 3.1415926535897932
+torch.pdiv2 = 1.570796326  # π/2
+torch.pdiv4 = 0.785398163  # π/4
+
 
 class PeriodicReLU(nn.Module):
-    def __init__(self, period=2 * torch.pi):
+    """
+    Stolen from here:
+    https://github.com/AaltoML/PeriodicBNN/blob/main/python_codes/model.py
+    """
+
+    def __init__(self):
         super().__init__()
-        self.period = period
 
     def forward(self, x):
-        # Calculate phase within the period
-        phase = x - self.period * torch.floor(x / self.period + 0.5)
+        return torch.pdiv4 * (
+            self._triangle_activation(x) + self._triangle_activation(x + torch.pdiv2)
+        )
 
-        # First triangle wave (shifted by quarter period)
-        shifted = phase + self.period / 4
-        shifted_phase = shifted - self.period * torch.floor(shifted / self.period + 0.5)
-        tri1 = shifted_phase * torch.pow(-1.0, torch.floor(shifted / self.period + 0.5))
-
-        # Second triangle wave
-        tri2 = phase * torch.pow(-1.0, torch.floor(x / self.period + 0.5))
-
-        # Combine with proper scaling according to the paper
-        return (torch.pi / 4) * (tri1 + tri2)
+    def _triangle_activation(self, x):
+        return (x - torch.pi * torch.floor(x / torch.pi + 0.5)) * (-1) ** torch.floor(
+            x / torch.pi + 0.5
+        )
