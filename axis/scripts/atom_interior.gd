@@ -28,8 +28,7 @@ var transition_tween: Tween
 var transition_progress: float = 0.0
 var neural_network: Node3D = null
 var world_environment: WorldEnvironment = null
-var base_environment: Environment = null
-var interior_environment: Environment = null
+var starfield: Node3D = null
 
 signal is_inside_changed(is_inside: bool)
 
@@ -37,15 +36,7 @@ func _ready() -> void:
 	camera = get_node("../Camera3D")
 	neural_network = get_node("../NeuralNetwork")
 	world_environment = get_node("../WorldEnvironment")
-	
-	if world_environment:
-		# Store the original environment
-		base_environment = world_environment.environment.duplicate()
-	
-	# Create inverse skybox environment
-	_setup_inverse_skybox()
-	print("AtomInteriorSystem initialized!")
-	print("Initial camera settings - min_zoom:", camera.min_zoom, " max_zoom:", camera.max_zoom)
+	starfield = get_node("../Skybox")
 
 func _process(_delta: float) -> void:
 	if not camera or not world_environment:
@@ -67,13 +58,11 @@ func _process(_delta: float) -> void:
 					if atom == current_atom and distance_factor > INTERIOR_EXIT_THRESHOLD:
 						print("Distance factor:", distance_factor, " - Exiting atom")
 						_exit_atom()
-						break
 				# If we're outside atoms
 				else:
 					if distance_factor < INTERIOR_ENTRY_THRESHOLD:
 						print("Distance factor:", distance_factor, " - Entering atom")
 						_enter_atom(atom)
-						break
 
 func _enter_atom(atom: Node3D) -> void:
 	if is_transitioning:
@@ -84,19 +73,17 @@ func _enter_atom(atom: Node3D) -> void:
 	is_inside_atom = true
 	current_atom = atom
 	
-	# Get all atoms from the neural network
 	if neural_network:
-		# Set interior view for all atoms
 		for other_atom in neural_network.atoms:
 			other_atom.set_interior_view(true, other_atom == atom)
 			
-		# Update highlight if needed
 		var highlighted_atom = neural_network.current_focused_atom
 		if highlighted_atom:
 			highlighted_atom.set_highlight(true)
 	
-	# Switch to interior environment
-	world_environment.environment = interior_environment
+	# Toggle starfield to inverse mode
+	if starfield:
+		starfield.toggle_inverse_mode(true)
 	
 	# Update camera settings
 	var target_max_zoom = current_atom.get_radius() * INTERIOR_SCALE_FACTOR
@@ -106,7 +93,6 @@ func _enter_atom(atom: Node3D) -> void:
 	
 	is_inside_changed.emit(true)
 	
-	# Create transition effect
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
 	
@@ -127,20 +113,19 @@ func _exit_atom() -> void:
 	print("Exiting atom interior...")
 	is_transitioning = true
 	
-	# Get all atoms from the neural network
 	if neural_network:
-		# Store current highlighted atom
 		var highlighted_atom = neural_network.current_focused_atom
 		
-		# Restore all atoms to normal view
 		for atom in neural_network.atoms:
 			atom.set_interior_view(false)
 		
-		# Ensure highlight state is maintained
 		if highlighted_atom:
 			highlighted_atom.set_highlight(true)
 	
-	# Emit signal for interior state change
+	# Toggle starfield back to normal mode
+	if starfield:
+		starfield.toggle_inverse_mode(false)
+	
 	is_inside_changed.emit(false)
 	
 	if transition_tween and transition_tween.is_valid():
@@ -156,53 +141,8 @@ func _exit_atom() -> void:
 	
 	transition_tween.connect("finished", _on_exit_transition_complete)
 	
-	# Restore original environment
-	world_environment.environment = base_environment
-	
-	# Reset camera mode
 	camera.set_interior_mode(false)
-	
-	# Restore original parameters
 	_reset_camera()
-
-func _setup_inverse_skybox() -> void:
-	var image = Image.create(2048, 1024, false, Image.FORMAT_RGBA8)
-	image.fill(Color(1, 1, 1, 1))  # White background
-	
-	var rng = RandomNumberGenerator.new()
-	rng.randomize()
-	
-	# Create black stars
-	for _i in range(4000):
-		var x = rng.randi() % 2048
-		var y = rng.randi() % 1024
-		var size = rng.randf_range(0.5, 1.5)
-		var color = Color(0, 0, 0, rng.randf_range(0.5, 0.8))
-		_draw_star(image, x, y, size, color)
-	
-	var texture = ImageTexture.create_from_image(image)
-	
-	# Create the inverse sky setup
-	var sky_material = PanoramaSkyMaterial.new()
-	sky_material.panorama = texture
-	
-	var sky = Sky.new()
-	sky.sky_material = sky_material
-	
-	# Create interior environment
-	interior_environment = base_environment.duplicate()
-	interior_environment.background_mode = Environment.BG_SKY
-	interior_environment.sky = sky
-
-func _draw_star(image: Image, center_x: int, center_y: int, size: float, color: Color) -> void:
-	var radius = ceil(size)
-	for y in range(max(0, center_y - radius), min(1024, center_y + radius + 1)):
-		for x in range(max(0, center_x - radius), min(2048, center_x + radius + 1)):
-			var dist = Vector2(center_x, center_y).distance_to(Vector2(x, y))
-			if dist <= size:
-				var alpha = (1.0 - (dist / size)) * color.a
-				var pixel_color = Color(color.r, color.g, color.b, alpha)
-				image.set_pixel(x, y, pixel_color)
 
 func _reset_camera() -> void:
 	print("Resetting camera parameters...")
