@@ -40,13 +40,39 @@ func _store_original_material_state() -> void:
 		"transparency": material.transparency
 	}
 
+var is_fading = false
+
+func start_fade() -> void:
+	is_fading = true
+	nucleus.visible = true  # Show nucleus immediately
+	
+	# Configure material for fading
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color.a = 1.0  # Start fully opaque
+	mesh_instance.visible = true
+
+func update_fade(opacity: float) -> void:
+	if not is_fading:
+		return
+	
+	# Update shell opacity
+	material.albedo_color.a = opacity
+	mesh_instance.visible = opacity > 0.01  # Keep mesh visible until nearly transparent
+
+# Modify set_interior_view to work with fading
 func set_interior_view(enabled: bool, is_current: bool = false) -> void:
+	is_fading = false  # Reset fade state
+	
 	if is_current:
 		# For the current atom, hide mesh but keep nucleus
 		mesh_instance.visible = false
 		nucleus.visible = true
-		input_ray_pickable = true  # Ensure we can still click
+		input_ray_pickable = true
 		return
+	
+	# Reset material transparency mode
+	material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	material.albedo_color.a = 1.0
 		
 	# Always ensure input handling is enabled
 	input_ray_pickable = true

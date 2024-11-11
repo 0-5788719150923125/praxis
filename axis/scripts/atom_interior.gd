@@ -107,19 +107,19 @@ func _switch_atom_interior(new_atom: Node3D) -> void:
 	is_transferring_interior = true
 	
 	if neural_network:
-		# First, ensure ALL atoms stay in interior mode (black)
+		# Keep all atoms black
 		for atom in neural_network.atoms:
 			if atom == current_atom:
 				# Current atom stays black but becomes visible
 				atom.set_interior_view(true, false)
 			elif atom == new_atom:
-				# New target atom stays visible but black
-				atom.set_interior_view(true, false)
+				# New target atom starts transition
+				atom.set_interior_view(true, false)  # Keep visible initially
+				atom.start_fade()  # Start fade transition for target
 			else:
 				# All other atoms stay black
 				atom.set_interior_view(true, false)
 			
-			# Update highlighting separately from interior state
 			atom.set_highlight(atom == new_atom)
 	
 	# Update current atom reference
@@ -131,25 +131,44 @@ func _switch_atom_interior(new_atom: Node3D) -> void:
 	camera.min_zoom = BASE_MIN_DISTANCE * atom_radius
 	camera.max_zoom = atom_radius * BASE_INTERIOR_SCALE
 	
-	# Set camera parameters for interior transfer
 	camera.set_interior_mode(true, {
 		"radius": atom_radius,
 		"transfer_from_interior": true
 	})
 	
-	# Move camera with updated parameters
-	if camera:
-		camera.set_focus_target(new_atom)
+	# Monitor distance for fade
+	var monitor_tween = create_tween()
+	monitor_tween.set_loops()
+	monitor_tween.tween_interval(0.016)
 	
-	# When we reach the destination, update final states
-	var timer = get_tree().create_timer(0.5)  # Increased for safety
-	timer.timeout.connect(func():
-		# Only hide the mesh of the target atom
-		if current_atom:
-			current_atom.set_interior_view(true, true)  # This will hide mesh, keep nucleus
-		is_transferring_interior = false
-		print("Interior transfer complete")
-	)
+	const START_FADE = 6.0    # Start fading much earlier (6x radius)
+	const END_FADE = 1.0     # Complete fade at entry
+	const FADE_POWER = 0.3   # Power curve for fade (less than 1 = slower fade initially)
+	
+	var monitor = func(_step = 0):  # Fixed: Accept step parameter
+		var distance = camera.global_position.distance_to(new_atom.global_position)
+		var relative_distance = distance / atom_radius
+		
+		# Calculate base fade progress
+		var fade_progress = clamp((relative_distance - END_FADE) / (START_FADE - END_FADE), 0.0, 1.0)
+		
+		# Apply power curve to make fade more dramatic near end
+		var fade = pow(fade_progress, FADE_POWER)
+		
+		print("Distance: ", relative_distance, " Fade: ", fade)  # Debug info
+		new_atom.update_fade(fade)
+		
+		# Complete transition when fully faded
+		if relative_distance <= END_FADE:
+			monitor_tween.kill()
+			is_transferring_interior = false
+			new_atom.set_interior_view(true, true)
+			return false
+			
+		return true
+	
+	monitor_tween.connect("step_finished", monitor)
+	camera.set_focus_target(new_atom)
 
 # Also modify enter_atom to ensure consistent behavior
 func _enter_atom(atom: Node3D) -> void:
