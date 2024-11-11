@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://bgo7ackrcjpw3"]
 
-[ext_resource type="Script" path="res://scripts/network.gd" id="1_neural"]
+[ext_resource type="Script" path="res://scripts/neural_network.gd" id="1_neural"]
 [ext_resource type="Script" path="res://scripts/synapse_manager.gd" id="2_synapse"]
 
 [node name="NeuralNetwork" type="Node3D"]
