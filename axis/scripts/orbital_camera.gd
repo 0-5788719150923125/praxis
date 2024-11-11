@@ -26,6 +26,10 @@ const BASE_APPROACH_FACTOR = 2.0
 const BASE_MIN_APPROACH_SPEED = 0.001
 const BASE_NUCLEUS_DISTANCE = 0.999
 const BASE_INTERIOR_SCALE = 1.0
+const INTERIOR_APPROACH_FACTOR = 2.0
+const MIN_APPROACH_SPEED = 0.001
+const START_SLOWDOWN_DISTANCE = 2.0  # Start slowing down at 50% of distance to center
+const HARD_STOP_DISTANCE = 0.01      # Absolute minimum approach (5% of distance to center)
 
 # Dynamic scaling parameters (adjusted during interior mode)
 var current_approach_factor = BASE_APPROACH_FACTOR
@@ -64,12 +68,6 @@ var is_zooming = false
 var is_in_interior_mode = false
 var interior_mode_blend = 0.0
 var mode_transition_tween: Tween
-
-# Interior mode parameters for nucleus approach
-const INTERIOR_APPROACH_FACTOR = 2.0
-const MIN_APPROACH_SPEED = 0.001
-const START_SLOWDOWN_DISTANCE = 2.0  # Start slowing down at 50% of distance to center
-const HARD_STOP_DISTANCE = 0.01      # Absolute minimum approach (5% of distance to center)
 
 func _ready() -> void:
 	camera_distance = initial_distance
@@ -282,16 +280,26 @@ func set_focus_target(new_target: Node3D) -> void:
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
 	
+	#var travel_time = 5.0  # Set the desired travel time in seconds
 	var distance = position.distance_to(target_orbit_point)
-	var travel_time = clamp(distance * 0.1, 0.2, 1.0) * 0.7
+	
+	# Modify travel time based on interior mode and atom size
+	var base_travel_time = clamp(distance * 0.1, 0.2, 1.0)
+	var travel_time = base_travel_time
+	
+	if is_in_interior_mode:
+		# Scale travel time by atom radius for interior mode
+		travel_time *= 5.0 * (atom_radius / BASE_INTERIOR_SCALE)
+	else:
+		travel_time *= 0.7
 	
 	# Store and maintain interior mode state during transition
 	var was_in_interior = is_in_interior_mode
 	var stored_atom_radius = atom_radius
 	
 	transition_tween = create_tween()
-	transition_tween.set_ease(Tween.EASE_OUT)
-	transition_tween.set_trans(Tween.TRANS_CUBIC)
+	transition_tween.set_ease(Tween.EASE_IN_OUT)
+	transition_tween.set_trans(Tween.TRANS_EXPO)
 	
 	# Important: Keep camera closer to target when transferring between atoms
 	if was_in_interior:
@@ -299,7 +307,7 @@ func set_focus_target(new_target: Node3D) -> void:
 		var target_distance = stored_atom_radius * 0.5  # Stay close to new atom
 		camera_distance = target_distance
 	
-	transition_tween.chain().tween_property(self, "current_orbit_point", target_orbit_point, travel_time)
+	transition_tween.tween_property(self, "current_orbit_point", target_orbit_point, travel_time)
 	transition_tween.connect("finished", _on_transition_complete.bind(was_in_interior, stored_atom_radius))
 
 func _on_transition_complete(was_in_interior: bool, stored_radius: float) -> void:
