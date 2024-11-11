@@ -65,6 +65,12 @@ var is_in_interior_mode = false
 var interior_mode_blend = 0.0
 var mode_transition_tween: Tween
 
+# Interior mode parameters for nucleus approach
+const INTERIOR_APPROACH_FACTOR = 2.0
+const MIN_APPROACH_SPEED = 0.001
+const START_SLOWDOWN_DISTANCE = 2.0  # Start slowing down at 50% of distance to center
+const HARD_STOP_DISTANCE = 0.01      # Absolute minimum approach (5% of distance to center)
+
 func _ready() -> void:
 	camera_distance = initial_distance
 	rotation_quaternion = Quaternion.IDENTITY
@@ -154,14 +160,30 @@ func _handle_zoom_input(delta: float) -> void:
 	var zoom_force = delta * zoom_input_sensitivity * zoom_chain_multiplier
 	
 	if interior_mode_blend > 0.0:
-		# Scale distances based on current atom size
-		var scaled_distance = position.length() / (atom_radius * current_interior_scale)
-		if scaled_distance < current_nucleus_distance:
-			var approach_factor = log(scaled_distance / current_nucleus_distance + 1.0)
-			zoom_force *= max(approach_factor, current_min_approach_speed)
+		# Calculate distance relative to target point
+		var distance_to_center = position.distance_to(target_orbit_point)
+		var relative_distance = distance_to_center / atom_radius
 		
-		# Scale force based on atom size
-		zoom_force = lerp(zoom_force, zoom_force * (0.5 * atom_radius), interior_mode_blend)
+		print("\nZoom Details:")
+		print("Distance to center: ", distance_to_center)
+		print("Relative to atom radius: ", relative_distance)
+		
+		# Apply progressive slowdown based on distance to center
+		if relative_distance < START_SLOWDOWN_DISTANCE:
+			# Calculate how deep we are in the slowdown zone
+			var penetration = (START_SLOWDOWN_DISTANCE - relative_distance) / (START_SLOWDOWN_DISTANCE - HARD_STOP_DISTANCE)
+			penetration = clamp(penetration, 0.0, 1.0)
+			
+			# Exponential slowdown
+			var slowdown_factor = pow(1.0 - penetration, INTERIOR_APPROACH_FACTOR)
+			zoom_force *= max(slowdown_factor, MIN_APPROACH_SPEED)
+			
+			print("Penetration: ", penetration)
+			print("Slowdown factor: ", slowdown_factor)
+			
+			# Hard stop if too close
+			if relative_distance <= HARD_STOP_DISTANCE and zoom_force < 0:
+				zoom_force = 0
 	
 	zoom_velocity += zoom_force
 	
@@ -172,16 +194,27 @@ func _apply_zoom(zoom_delta: float) -> void:
 	var zoom_factor = 1.0
 	
 	if interior_mode_blend > 0.0:
-		var scaled_distance = position.length() / (atom_radius * current_interior_scale)
-		if scaled_distance < current_nucleus_distance:
-			zoom_factor = pow(scaled_distance / current_nucleus_distance, current_approach_factor)
-			zoom_factor = max(zoom_factor, current_min_approach_speed)
-			zoom_factor *= lerp(1.0, 0.5 * atom_radius, interior_mode_blend)
+		var distance_to_center = position.distance_to(target_orbit_point)
+		var relative_distance = distance_to_center / atom_radius
+		
+		if relative_distance < START_SLOWDOWN_DISTANCE:
+			var penetration = (START_SLOWDOWN_DISTANCE - relative_distance) / (START_SLOWDOWN_DISTANCE - HARD_STOP_DISTANCE)
+			penetration = clamp(penetration, 0.0, 1.0)
+			zoom_factor = pow(1.0 - penetration, INTERIOR_APPROACH_FACTOR)
+			
+			# Prevent getting closer than hard stop
+			if relative_distance <= HARD_STOP_DISTANCE and zoom_delta < 0:
+				return
 	elif camera_distance > 10.0:
 		zoom_factor = pow(camera_distance, 0.3)
 	
 	var move_amount = zoom_delta * zoom_factor
 	var new_distance = camera_distance + move_amount
+	
+	# Enforce minimum distance
+	if is_in_interior_mode:
+		var min_allowed = atom_radius * HARD_STOP_DISTANCE
+		new_distance = max(new_distance, min_allowed)
 	
 	camera_distance = max(min_zoom, new_distance)
 
@@ -189,10 +222,19 @@ func _calculate_camera_position(orbit_point: Vector3) -> Vector3:
 	var offset = rotation_quaternion * Vector3(0, 0, camera_distance)
 	
 	if interior_mode_blend > 0.0:
-		var scaled_offset = offset / (atom_radius * current_interior_scale)
-		if scaled_offset.length() < current_nucleus_distance:
-			var scale_factor = log(scaled_offset.length() / current_nucleus_distance + 1.0)
-			offset *= max(scale_factor, current_min_approach_speed)
+		var distance_to_center = (orbit_point + offset).distance_to(orbit_point)
+		var relative_distance = distance_to_center / atom_radius
+		
+		# Apply slowdown and hard stop
+		if relative_distance < START_SLOWDOWN_DISTANCE:
+			var penetration = (START_SLOWDOWN_DISTANCE - relative_distance) / (START_SLOWDOWN_DISTANCE - HARD_STOP_DISTANCE)
+			penetration = clamp(penetration, 0.0, 1.0)
+			
+			# Ensure we never get closer than hard stop
+			var min_distance = atom_radius * HARD_STOP_DISTANCE
+			var current_distance = offset.length()
+			if current_distance < min_distance:
+				offset = offset.normalized() * min_distance
 	
 	return orbit_point + offset
 

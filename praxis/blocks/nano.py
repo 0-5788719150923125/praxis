@@ -8,90 +8,6 @@ from typing import Optional
 from praxis.activations import ACT2FN
 
 
-class PraxisNano(nn.Module):
-    """
-    A special kind of block that omits all self-attention mechanisms, in favor
-    of dense layers with sine activations. Inspired by NanoFFT:
-    https://github.com/timurgepard/nanoFFT
-    """
-
-    def __init__(self, config: AutoConfig, chunk_size: int = 128):
-        super().__init__()
-        self.chunk_size = chunk_size
-        embed_dim = config.num_embeds
-        hidden_dim = config.num_dims
-
-        # Core FFT matrices
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.fft = nn.ParameterDict(
-            {
-                "w1": nn.Parameter(torch.Tensor(chunk_size, chunk_size)),
-                "w2": nn.Parameter(torch.Tensor(chunk_size, chunk_size)),
-            }
-        )
-
-        # Initialize weights
-        nn.init.xavier_uniform_(self.fft["w1"])
-        nn.init.xavier_uniform_(self.fft["w2"])
-
-        # Layer norms and FFW - these operate on full sequence
-        self.ln2 = nn.LayerNorm(hidden_dim)
-        self.ffw = nn.Sequential(
-            nn.Linear(hidden_dim, embed_dim),
-            ACT2FN["sinlu"],
-            nn.Dropout(config.dropout),
-            nn.Linear(embed_dim, hidden_dim),
-        )
-
-    def forward(self, x: Tensor, attention_mask: Optional[Tensor] = None) -> Tensor:
-        B, T, E = x.shape
-
-        # Create causal mask for full sequence
-        mask = torch.tril(torch.ones(T, T, device=x.device))
-        mask = mask / mask.sum(dim=1, keepdim=True)
-
-        # First residual branch
-        residual = x
-        x = self.ln1(x)
-
-        # FFT processing in chunks
-        x = self._process_fft_chunks(x, mask)
-
-        # Add residual
-        x = x + residual
-
-        # FFW branch
-        residual = x
-        x = self.ln2(x)
-        x = self.ffw(x) + residual
-
-        return x
-
-    def _process_fft_chunks(self, x: Tensor, full_seq_mask: Tensor) -> Tensor:
-        """Process sequence through FFT weights in chunks."""
-        B, T, E = x.shape
-        chunks_out = []
-
-        for chunk_start in range(0, T, self.chunk_size):
-            chunk_end = min(chunk_start + self.chunk_size, T)
-            chunk = x[:, chunk_start:chunk_end, :]
-
-            # Get the mask slice that represents this chunk's visibility of the full sequence
-            # Each position in chunk can see all previous positions globally
-            chunk_len = chunk_end - chunk_start
-            mask_slice = full_seq_mask[chunk_start:chunk_end, chunk_start:chunk_end]
-
-            # Process chunk
-            chunk = chunk.permute(0, 2, 1)  # [B, E, T_chunk]
-            chunk = chunk @ (self.fft["w1"][:chunk_len, :chunk_len] * mask_slice)
-            chunk = chunk @ (self.fft["w2"][:chunk_len, :chunk_len] * mask_slice)
-            chunk = chunk.permute(0, 2, 1)  # Back to [B, T_chunk, E]
-
-            chunks_out.append(chunk)
-
-        return torch.cat(chunks_out, dim=1)
-
-
 # class PraxisNano(nn.Module):
 #     """
 #     A special kind of block that omits all self-attention mechanisms, in favor
@@ -99,18 +15,18 @@ class PraxisNano(nn.Module):
 #     https://github.com/timurgepard/nanoFFT
 #     """
 
-#     def __init__(self, config: AutoConfig):
+#     def __init__(self, config: AutoConfig, chunk_size: int = 128):
 #         super().__init__()
-#         max_seq_len = config.context_length // 2
+#         self.chunk_size = chunk_size
 #         embed_dim = config.num_embeds
 #         hidden_dim = config.num_dims
 
-#         # Define the weight matrices with maximum sequence length
+#         # Core FFT matrices
 #         self.ln1 = nn.LayerNorm(hidden_dim)
 #         self.fft = nn.ParameterDict(
 #             {
-#                 "w1": nn.Parameter(torch.Tensor(max_seq_len, max_seq_len)),
-#                 "w2": nn.Parameter(torch.Tensor(max_seq_len, max_seq_len)),
+#                 "w1": nn.Parameter(torch.Tensor(chunk_size, chunk_size)),
+#                 "w2": nn.Parameter(torch.Tensor(chunk_size, chunk_size)),
 #             }
 #         )
 
@@ -118,54 +34,133 @@ class PraxisNano(nn.Module):
 #         nn.init.xavier_uniform_(self.fft["w1"])
 #         nn.init.xavier_uniform_(self.fft["w2"])
 
-#         # Define the mask
-#         mask = torch.tril(torch.ones(max_seq_len, max_seq_len))
-#         # Normalize per row
-#         row_sums = mask.sum(dim=1, keepdim=True)
-#         mask = mask / row_sums
-#         self.register_buffer("mask", mask)
-
-#         class SineActivation(nn.Module):
-#             def forward(self, x):
-#                 return torch.sin(x)
-
-#         # Feed-forward network with sine activation
+#         # Layer norms and FFW - these operate on full sequence
 #         self.ln2 = nn.LayerNorm(hidden_dim)
 #         self.ffw = nn.Sequential(
 #             nn.Linear(hidden_dim, embed_dim),
-#             SineActivation(),
-#             # ACT2FN["sinlu"],
+#             ACT2FN["sinlu"],
+#             nn.Dropout(config.dropout),
 #             nn.Linear(embed_dim, hidden_dim),
 #         )
 
-#     def forward(self, x: Tensor, attention_mask: Tensor):
-#         # x: [batch_size, seq_len, embed_dim]
+#     def forward(self, x: Tensor, attention_mask: Optional[Tensor] = None) -> Tensor:
 #         B, T, E = x.shape
-#         if T > self.fft["w1"].size(0):
-#             raise ValueError(
-#                 f"Sequence length {T} exceeds maximum supported length {self.W1.size(0)}."
-#             )
 
+#         # Create causal mask for full sequence
+#         mask = torch.tril(torch.ones(T, T, device=x.device))
+#         mask = mask / mask.sum(dim=1, keepdim=True)
+
+#         # First residual branch
+#         residual = x
 #         x = self.ln1(x)
 
-#         # Get the relevant slices of weights and mask based on the actual sequence length
-#         W1 = self.fft["w1"][:T, :T] * self.mask[:T, :T]
-#         W2 = self.fft["w2"][:T, :T] * self.mask[:T, :T]
+#         # FFT processing in chunks
+#         x = self._process_fft_chunks(x, mask)
 
-#         # Reshape x for matrix multiplication
-#         x_fft = x.transpose(1, 2).reshape(-1, T)  # [B * embed_dim, T]
+#         # Add residual
+#         x = x + residual
 
-#         # Apply the masked and normalized weight matrices
-#         x_fft = x_fft @ W1  # [B * embed_dim, T]
-#         x_fft = x_fft @ W2  # [B * embed_dim, T]
-
-#         # Reshape back to original dimensions
-#         x_fft = x_fft.view(B, E, T).transpose(1, 2)  # [B, T, E]
-
-#         x = x + x_fft  # Residual connection
+#         # FFW branch
+#         residual = x
 #         x = self.ln2(x)
-#         x = x + self.ffw(x)  # Residual connection
+#         x = self.ffw(x) + residual
+
 #         return x
+
+#     def _process_fft_chunks(self, x: Tensor, full_seq_mask: Tensor) -> Tensor:
+#         """Process sequence through FFT weights in chunks."""
+#         B, T, E = x.shape
+#         chunks_out = []
+
+#         for chunk_start in range(0, T, self.chunk_size):
+#             chunk_end = min(chunk_start + self.chunk_size, T)
+#             chunk = x[:, chunk_start:chunk_end, :]
+
+#             # Get the mask slice that represents this chunk's visibility of the full sequence
+#             # Each position in chunk can see all previous positions globally
+#             chunk_len = chunk_end - chunk_start
+#             mask_slice = full_seq_mask[chunk_start:chunk_end, chunk_start:chunk_end]
+
+#             # Process chunk
+#             chunk = chunk.permute(0, 2, 1)  # [B, E, T_chunk]
+#             chunk = chunk @ (self.fft["w1"][:chunk_len, :chunk_len] * mask_slice)
+#             chunk = chunk @ (self.fft["w2"][:chunk_len, :chunk_len] * mask_slice)
+#             chunk = chunk.permute(0, 2, 1)  # Back to [B, T_chunk, E]
+
+#             chunks_out.append(chunk)
+
+#         return torch.cat(chunks_out, dim=1)
+
+
+class PraxisNano(nn.Module):
+    """
+    A special kind of block that omits all self-attention mechanisms, in favor
+    of dense layers with sine activations. Inspired by NanoFFT:
+    https://github.com/timurgepard/nanoFFT
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+        max_seq_len = config.context_length // 2
+        embed_dim = config.num_embeds
+        hidden_dim = config.num_dims
+
+        # Define the weight matrices with maximum sequence length
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fft = nn.ParameterDict(
+            {
+                "w1": nn.Parameter(torch.Tensor(max_seq_len, max_seq_len)),
+                "w2": nn.Parameter(torch.Tensor(max_seq_len, max_seq_len)),
+            }
+        )
+
+        # Initialize weights
+        nn.init.xavier_uniform_(self.fft["w1"])
+        nn.init.xavier_uniform_(self.fft["w2"])
+
+        # Define the mask
+        mask = torch.tril(torch.ones(max_seq_len, max_seq_len))
+        # Normalize per row
+        row_sums = mask.sum(dim=1, keepdim=True)
+        mask = mask / row_sums
+        self.register_buffer("mask", mask)
+
+        # Feed-forward network with sine activation
+        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.ffw = nn.Sequential(
+            nn.Linear(hidden_dim, embed_dim),
+            ACT2FN["sin"],
+            nn.Linear(embed_dim, hidden_dim),
+        )
+
+    def forward(self, x: Tensor, attention_mask: Tensor):
+        # x: [batch_size, seq_len, embed_dim]
+        B, T, E = x.shape
+        if T > self.fft["w1"].size(0):
+            raise ValueError(
+                f"Sequence length {T} exceeds maximum supported length {self.W1.size(0)}."
+            )
+
+        x = self.ln1(x)
+
+        # Get the relevant slices of weights and mask based on the actual sequence length
+        W1 = self.fft["w1"][:T, :T] * self.mask[:T, :T]
+        W2 = self.fft["w2"][:T, :T] * self.mask[:T, :T]
+
+        # Reshape x for matrix multiplication
+        x_fft = x.transpose(1, 2).reshape(-1, T)  # [B * embed_dim, T]
+
+        # Apply the masked and normalized weight matrices
+        x_fft = x_fft @ W1  # [B * embed_dim, T]
+        x_fft = x_fft @ W2  # [B * embed_dim, T]
+
+        # Reshape back to original dimensions
+        x_fft = x_fft.view(B, E, T).transpose(1, 2)  # [B, T, E]
+
+        x = x + x_fft  # Residual connection
+        x = self.ln2(x)
+        x = x + self.ffw(x)  # Residual connection
+        return x
 
 
 if __name__ == "__main__":
