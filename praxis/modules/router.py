@@ -13,12 +13,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(
-        self,
-        config: AutoConfig,
-        *args,
-        **kwargs,
-    ):
+    def __init__(self, config: AutoConfig):
         super().__init__(in_features=config.num_dims, out_features=1)
         self.capacity = config.capacity
         assert (
@@ -26,13 +21,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         ), "'capacity' must be set to a value between 0 and 1."
 
     def forward(
-        self,
-        layer: nn.Module,
-        inputs: Tensor,
-        attention_mask: Tensor,
-        safe_grad=False,
-        *args,
-        **kwargs,
+        self, layer: nn.Module, inputs: Tensor, attention_mask: Tensor, safe_grad=False
     ):
 
         b, s, d = inputs.shape
@@ -41,18 +30,19 @@ class PraxisMixtureOfDepths(nn.Linear):
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
 
-        prepared_logits = router_logits
-        if not self.training:
-            # Always select exactly k tokens, even during inference
-            prepared_logits = torch.sigmoid(router_logits)
-
         #  𝑟𝑙> 𝑃𝛽 (R) - equation 1
         token_weights, token_indices = torch.topk(
-            prepared_logits,
+            router_logits,
             k,
             dim=1,
             sorted=False,
         )
+
+        # Sort indices by position and get the sorting indices
+        token_indices, sort_indices = torch.sort(token_indices, dim=1)
+
+        # Re-order the weights to match the sorted indices
+        token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
