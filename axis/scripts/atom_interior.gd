@@ -45,8 +45,6 @@ var world_environment: WorldEnvironment = null
 var base_environment: Environment = null
 var interior_environment: Environment = null
 
-signal is_inside_changed(is_inside: bool)
-
 func _ready() -> void:
 	# Get references
 	await get_tree().create_timer(0.1).timeout  # Give other nodes time to initialize
@@ -186,9 +184,6 @@ func _exit_atom() -> void:
 		if highlighted_atom:
 			highlighted_atom.set_highlight(true)
 	
-	# Emit signal for interior state change
-	emit_signal("is_inside_changed", false)
-	
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
 	
@@ -265,8 +260,6 @@ func _force_exit() -> void:
 	is_inside_atom = false
 	current_atom = null
 	is_transitioning = false
-	
-	emit_signal("is_inside_changed", false)
 
 func _try_enter_selected_atom(atom: Node3D) -> void:
 	# Calculate distance factor to see if we're close enough to enter
@@ -302,8 +295,6 @@ func _enter_atom(atom: Node3D) -> void:
 	camera.min_zoom = MIN_INTERIOR_DISTANCE
 	camera.max_zoom = target_max_zoom
 	_modify_camera_for_interior()
-	
-	emit_signal("is_inside_changed", true)
 	
 	# Create transition effect
 	if transition_tween and transition_tween.is_valid():

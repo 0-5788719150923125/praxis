@@ -7,8 +7,6 @@ signal atom_created(atom: Node3D)
 @onready var atoms_container = $Atoms
 @onready var camera = get_node("../Camera3D")
 
-const NUM_ATOMS = 7
-
 # Planetary scale constants
 const MIN_RADIUS = 0.3      # Smallest atom size
 const MAX_RADIUS = 1.2      # Largest atom size
@@ -35,13 +33,6 @@ var atoms: Array = []
 var current_focused_atom: Node3D = null  # Track currently focused atom
 
 func _ready() -> void:
-	print("Neural Network initializing...")
-	
-	if camera:
-		print("Camera found successfully!")
-	else:
-		print("ERROR: Camera not found! Current path: ", get_node("../Camera3D"))
-	
 	# Create initial central atom
 	var central_atom = _create_atom(Vector3.ZERO)
 	central_atom.set_radius(CENTER_RADIUS)
@@ -59,8 +50,6 @@ func _ready() -> void:
 		var size_variation = randf_range(-0.2, 0.2)
 		var radius = lerp(MIN_RADIUS, MAX_RADIUS, distance_factor + size_variation)
 		atom.set_radius(radius)
-		atom.set_highlight(false)  # Ensure it starts unhighlighted
-		
 		atoms.append(atom)
 	
 	# Set camera focus
@@ -70,9 +59,7 @@ func _ready() -> void:
 		camera.max_zoom = OUTER_ORBIT.y * 1.2
 		camera.initial_distance = MIDDLE_ORBIT.x
 	
-	# Initialize synapse manager if it exists
-	if $SynapseManager:
-		$SynapseManager.initialize(atoms)
+	$SynapseManager.initialize(atoms)
 	
 	print("Neural network initialized with ", atoms.size(), " atoms")
 
@@ -83,10 +70,6 @@ func _create_atom(pos: Vector3) -> Node3D:
 	
 	# Connect signals
 	var connect_result = atom.connect("atom_selected", _on_atom_selected)
-	if connect_result == OK:
-		print("Successfully connected signal for atom: ", atom.name)
-	else:
-		print("Failed to connect signal for atom: ", atom.name, " Error: ", connect_result)
 	
 	# Emit signal for new atom
 	atom_created.emit(atom)
@@ -101,30 +84,18 @@ func _on_atom_selected(selected_atom: Area3D) -> void:
 		return
 	
 	# Update highlights
-	if current_focused_atom:
-		print("Un-highlighting current atom: ", current_focused_atom.name)
-		current_focused_atom.set_highlight(false)
-	
-	print("Highlighting new atom: ", selected_atom.name)
+	current_focused_atom.set_highlight(false)
 	selected_atom.set_highlight(true)
+	
 	current_focused_atom = selected_atom
 	
 	# Update camera
-	if camera:
-		print("Moving camera to focus on: ", selected_atom.name)
-		camera.set_focus_target(selected_atom)
-		
-		# Get interior system and handle atom selection
-		var interior_system = get_node("../InteriorAtomSystem")
-		if interior_system:
-			interior_system.handle_atom_selection(selected_atom)
-	else:
-		print("ERROR: Camera not found in _on_atom_selected")
-
-func _update_atom_highlights(focused_atom: Node3D) -> void:
-	print("Updating atom highlights, focused atom: ", focused_atom.name)
-	for atom in atoms:
-		atom.set_highlight(atom == focused_atom)
+	print("Moving camera to focus on: ", selected_atom.name)
+	camera.set_focus_target(selected_atom)
+	
+	# Get interior system and handle atom selection
+	var interior_system = get_node("../InteriorAtomSystem")
+	interior_system.handle_atom_selection(selected_atom)
 
 func _get_random_position_in_orbit(orbit_range: Vector2) -> Vector3:
 	var max_attempts = 50
