@@ -13,6 +13,10 @@ const MAX_RADIUS = 1.2      # Largest atom size
 const CENTER_RADIUS = 0.9   # Size of central atom
 const MIN_SEPARATION_FACTOR = 3.0  # Added this constant
 
+# Camera safety constants
+const CAMERA_SAFE_MARGIN = 2.0  # Extra safety margin around camera
+const CAMERA_START_POSITION = Vector3(0, 0, 4)  # Match camera's initial_distance
+
 # Distance ranges (like planetary orbits)
 const INNER_ORBIT = Vector2(2.0, 4.0)     # Close atoms
 const MIDDLE_ORBIT = Vector2(6.0, 10.0)   # Medium distance atoms
@@ -129,8 +133,27 @@ func _get_random_position_in_orbit(orbit_range: Vector2) -> Vector3:
 	return Vector3(fallback_distance, 0, 0)
 
 func _is_position_valid(pos: Vector3) -> bool:
+	# First check: Is this position too close to the camera's starting position?
+	var camera_start = CAMERA_START_POSITION
+	var new_atom_radius = MIN_RADIUS  # Use minimum radius for initial check
+	var minimum_camera_distance = new_atom_radius * (1.0 + CAMERA_SAFE_MARGIN)
+	
+	if pos.distance_to(camera_start) < minimum_camera_distance:
+		print("Position invalid: Too close to camera start position")
+		return false
+	
+	# If camera is already initialized, also check current camera position
+	if camera:
+		var current_camera_pos = camera.global_position
+		if pos.distance_to(current_camera_pos) < minimum_camera_distance:
+			print("Position invalid: Too close to current camera position")
+			return false
+	
+	# Then check distance from other atoms
 	for atom in atoms:
 		var min_distance = (atom.get_radius() + MIN_RADIUS) * MIN_SEPARATION_FACTOR
 		if atom.global_position.distance_to(pos) < min_distance:
+			print("Position invalid: Too close to existing atom")
 			return false
+	
 	return true
