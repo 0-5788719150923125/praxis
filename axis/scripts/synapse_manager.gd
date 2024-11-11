@@ -21,6 +21,11 @@ func _ready() -> void:
 	# Find the AtomInteriorSystem and connect to it
 	var root = get_tree().root
 	var main = root.get_node("Main")
+	if main:
+		var interior_system = main.find_child("InteriorAtomSystem", true, false)
+		if interior_system:
+			# Connect to transition progress property
+			interior_system.connect("is_inside_changed", _on_interior_state_changed)
 
 func initialize(atom_list: Array) -> void:
 	atoms = atom_list

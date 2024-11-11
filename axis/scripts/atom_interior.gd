@@ -3,29 +3,16 @@ class_name AtomInteriorSystem
 
 # Constants for transition and scaling
 const TRANSITION_DURATION := 1.0
-const INTERIOR_ENTRY_THRESHOLD := 1.2
-const INTERIOR_EXIT_THRESHOLD := 3.0
-const INTERIOR_SCALE_FACTOR := 200.0   # Increased from 50.0 to 200.0
-const MIN_INTERIOR_DISTANCE := 0.001    # Decreased from 0.1 to 0.001
-const INVERSE_ZOOM_FACTOR := 4.0       # Increased from 2.0 to 4.0
+const INTERIOR_ENTRY_THRESHOLD := 1.2  # When camera distance is this times atom radius
+const INTERIOR_EXIT_THRESHOLD := 3.0   # When interior camera distance exceeds this
+const INTERIOR_SCALE_FACTOR := 200.0   # How much bigger the interior feels
+const MIN_INTERIOR_DISTANCE := 0.001   # Allow closer zoom
+const INVERSE_ZOOM_FACTOR := 4.0       # Controls how "infinite" the interior zoom feels
 
 # Add these new constants
 const DISTANCE_SCALE_FACTOR := 10.0    # Controls how quickly distance affects zoom
 const BASE_ZOOM_SPEED := 0.25          # Original zoom speed
-const MIN_ZOOM_SPEED := 0.001          # Minimum zoom speed
-
-# Constants for transition and scaling
-#const TRANSITION_DURATION := 1.0
-# Modify these constants
-#const INTERIOR_ENTRY_THRESHOLD := 0.5  # When camera distance is this times atom radius
-#const INTERIOR_EXIT_THRESHOLD := 4.0   # When interior camera distance exceeds this
-#const INTERIOR_SCALE_FACTOR := 100.0   # How much bigger the interior feels
-#const MIN_INTERIOR_DISTANCE := 0.05    # Allow closer zoom
-#const INTERIOR_ENTRY_THRESHOLD := 1.2  # Made it easier to enter again
-#const INTERIOR_EXIT_THRESHOLD := 3.0   # Reduced exit threshold
-#const INTERIOR_SCALE_FACTOR := 50.0    # Made scaling less extreme
-#const MIN_INTERIOR_DISTANCE := 0.1     # Increased minimum distance
-#const INVERSE_ZOOM_FACTOR := 2.0     # Controls how "infinite" the interior zoom feels
+const MIN_ZOOM_SPEED := 0.001          # Minimum zoom speed 
 
 # Initial camera values to restore
 const INITIAL_MIN_ZOOM := 1.0  # Changed from 2.0 to match your debug output
@@ -35,15 +22,17 @@ const INITIAL_ZOOM_SPEED := 0.25
 # State tracking
 var is_inside_atom := false
 var is_transitioning := false
-var transition_progress: float = 0.0  # Added this property
 var current_atom: Node3D = null
 var original_skybox: Node3D = null
 var camera: Camera3D = null
 var transition_tween: Tween
+var transition_progress: float = 0.0
 var neural_network: Node3D = null
 var world_environment: WorldEnvironment = null
 var base_environment: Environment = null
 var interior_environment: Environment = null
+
+signal is_inside_changed(is_inside: bool)
 
 func _ready() -> void:
 	# Get references
@@ -57,10 +46,6 @@ func _ready() -> void:
 	if world_environment:
 		# Store the original environment
 		base_environment = world_environment.environment.duplicate()
-	
-	if neural_network:
-		# Connect to the neural network's atom creation signal
-		neural_network.connect("atom_created", _on_atom_created)
 	
 	# Create inverse skybox environment
 	_setup_inverse_skybox()
@@ -171,7 +156,6 @@ func _exit_atom() -> void:
 	is_transitioning = true
 	
 	# Get all atoms from the neural network
-	var neural_network = get_node("../NeuralNetwork")
 	if neural_network:
 		# Store current highlighted atom
 		var highlighted_atom = neural_network.current_focused_atom
@@ -183,6 +167,9 @@ func _exit_atom() -> void:
 		# Ensure highlight state is maintained
 		if highlighted_atom:
 			highlighted_atom.set_highlight(true)
+	
+	# Emit signal for interior state change
+	is_inside_changed.emit(false)
 	
 	if transition_tween and transition_tween.is_valid():
 		transition_tween.kill()
@@ -226,11 +213,8 @@ func _modify_camera_for_interior() -> void:
 	
 	camera.zoom_speed = BASE_ZOOM_SPEED
 	camera.set_interior_mode(true)  # Enable interior mode
-
-func _on_atom_created(atom: Node3D) -> void:
-	print("New atom registered with interior system:", atom.name)
 	
-# Modified to handle the atom selection from neural_network.gd
+# Modified to handle the atom selection from network.gd
 func handle_atom_selection(selected_atom: Node3D) -> void:
 	# If we're inside an atom and it's not the one we're selecting
 	if is_inside_atom and current_atom != selected_atom:
@@ -260,6 +244,8 @@ func _force_exit() -> void:
 	is_inside_atom = false
 	current_atom = null
 	is_transitioning = false
+	
+	is_inside_changed.emit(false)
 
 func _try_enter_selected_atom(atom: Node3D) -> void:
 	# Calculate distance factor to see if we're close enough to enter
@@ -295,6 +281,8 @@ func _enter_atom(atom: Node3D) -> void:
 	camera.min_zoom = MIN_INTERIOR_DISTANCE
 	camera.max_zoom = target_max_zoom
 	_modify_camera_for_interior()
+	
+	is_inside_changed.emit(true)
 	
 	# Create transition effect
 	if transition_tween and transition_tween.is_valid():

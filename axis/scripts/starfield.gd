@@ -21,7 +21,7 @@ const STAR_COLORS = [
 ]
 
 func _ready():
-	call_deferred("create_starfield_sky")
+	create_starfield_sky()
 
 func create_starfield_sky():
 	var image = Image.create(TEXTURE_WIDTH, TEXTURE_HEIGHT, false, Image.FORMAT_RGBA8)

@@ -4,7 +4,7 @@
 [ext_resource type="PackedScene" uid="uid://kkoitcxefsgc" path="res://scenes/chat_interface.tscn" id="1_s1yu4"]
 [ext_resource type="PackedScene" uid="uid://bgo7ackrcjpw3" path="res://scenes/network.tscn" id="2_mdfsc"]
 [ext_resource type="Script" path="res://scripts/orbital_camera.gd" id="3_orbital"]
-[ext_resource type="Script" path="res://scripts/starfield_sky.gd" id="4_3dn7x"]
+[ext_resource type="Script" path="res://scripts/starfield.gd" id="4_3dn7x"]
 
 [sub_resource type="Environment" id="Environment_7l4kd"]
 background_mode = 1

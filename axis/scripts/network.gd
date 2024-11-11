@@ -59,7 +59,8 @@ func _ready() -> void:
 		camera.max_zoom = OUTER_ORBIT.y * 1.2
 		camera.initial_distance = MIDDLE_ORBIT.x
 	
-	$SynapseManager.initialize(atoms)
+	if $SynapseManager:
+		$SynapseManager.initialize(atoms)
 	
 	print("Neural network initialized with ", atoms.size(), " atoms")
 
@@ -69,7 +70,7 @@ func _create_atom(pos: Vector3) -> Node3D:
 	atom.global_position = pos
 	
 	# Connect signals
-	var connect_result = atom.connect("atom_selected", _on_atom_selected)
+	atom.connect("atom_selected", _on_atom_selected)
 	
 	# Emit signal for new atom
 	atom_created.emit(atom)
