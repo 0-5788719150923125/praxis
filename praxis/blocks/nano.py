@@ -30,6 +30,7 @@ class PraxisNano(nn.Module):
                 in_features=projection, out_features=bottleneck, causal=config.causal
             ),
             nn.Dropout(config.dropout),
+            ACT2FN["periodic_relu"],
             ElasticLinear(
                 in_features=bottleneck, out_features=hidden_dim, causal=config.causal
             ),

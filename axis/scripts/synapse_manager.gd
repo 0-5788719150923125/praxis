@@ -9,7 +9,6 @@ const LINE_WIDTH = 2.0
 # Timing properties
 const MIN_INTERVAL = 0.5
 const MAX_INTERVAL = 3.0
-const NUM_CONNECTIONS = 3
 
 var next_update_time: float = 0.0
 var current_lines: Array[MeshInstance3D] = []
@@ -57,7 +56,8 @@ func _update_connections() -> void:
 	current_lines.clear()
 	
 	# Create new random connections
-	for i in range(NUM_CONNECTIONS):
+	var num_connections = randi_range(1, 4)
+	for i in range(num_connections):
 		if atoms.size() < 2:  # Safety check
 			return
 			
