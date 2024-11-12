@@ -49,4 +49,5 @@ class PraxisLearnedPositionEmbedding(nn.Module):
 EMBEDDING_REGISTRY = {
     "transformer": PraxisEmbedding,
     "nano": PraxisLearnedPositionEmbedding,
+    "conv": PraxisLearnedPositionEmbedding,
 }

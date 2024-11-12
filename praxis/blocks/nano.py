@@ -4,213 +4,136 @@ import torch.nn.functional as F
 from torch import Tensor
 import time
 from typing import Optional
-from praxis.modules.dense import PraxisGLU, PraxisMLP
-from praxis.activations import ACT2FN
+from dataclasses import dataclass
+import random
+from praxis.modules.dense import PraxisMLP, PraxisGLU
+from praxis.activations import ACT2FN, ACT2CLS
 
 
 class PraxisNano(nn.Module):
     """
-    A special kind of block that omits the self-attention mechanism, in favor
-    of causal convolutional layers and periodic activations. While this was originally
-    inspired by NanoFFT, this module looks almost nothing like that now.
+    A special kind of block that omits all self-attention mechanisms, in favor
+    of dense layers with periodic activations. Inspired by NanoFFT:
     https://github.com/timurgepard/nanoFFT
-    Periodic activation functions can train a model to "know what they do not know."
-    https://arxiv.org/abs/2110.13572
     """
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
+        bottleneck = int(hidden_dim * 0.75)
 
-        reduction = 0.75
+        # Define the weight matrices with maximum sequence length
         self.fft_norm = nn.LayerNorm(hidden_dim)
-        self.fft = CausalPeriodicConvolution(config, reduction=reduction)
+        self.fft = nn.Sequential(
+            ElasticLinear(
+                in_features=hidden_dim, out_features=bottleneck, causal=config.causal
+            ),
+            nn.Dropout(config.dropout),
+            ElasticLinear(
+                in_features=bottleneck, out_features=hidden_dim, causal=config.causal
+            ),
+        )
 
+        # Feed-forward network with sine activation
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
         self.ffw = PraxisGLU(config)
 
-    def forward(
-        self,
-        x: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        router_weights: Optional[Tensor] = None,
-        token_indices: Optional[Tensor] = None,
-    ) -> Tensor:
-        # Normalize input
-        x_norm = self.fft_norm(x)  # (B, T, E)
-
-        # Transpose to (B, E, T) for Conv1d
-        x_out = x_norm.transpose(1, 2)  # (B, E, T)
-
-        # Capture local and global patterns
-        x_out = self.fft(x_out)
-
-        # Transpose back to (B, T, E)
-        x_out = x_out.transpose(1, 2)  # (B, T, reduced_dim)
-
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
+        # x shape: (batch_size, seq_len, hidden_dim)
+        chunk_norm = self.fft_norm(x)
+        # Transpose to (batch_size, seq_len, hidden_dim) -> (batch_size, hidden_dim, seq_len)
+        chunk_fft = chunk_norm.transpose(1, 2)
+        # Pass through FFT layers
+        chunk_fft = self.fft(chunk_fft)
+        # Transpose back to original shape
+        chunk_fft = chunk_fft.transpose(1, 2)
         # Residual connection
-        residual = x_out + x
-
-        # Feedforward network
-        x_norm = self.ffw_norm(residual)
-        x_ffw = self.ffw(x_norm)
-        return x_ffw + residual
+        residual = chunk_fft + x
+        chunk = self.ffw_norm(residual)
+        chunk = self.ffw(chunk)
+        return chunk + residual
 
 
-class CausalPeriodicConvolution(nn.Module):
-    """
-    A module that attempts to capture local, global, and temporal patterns in an
-    efficient manner. Uses convolutions, linear layers, and bottlenecking - rather than
-    any 'full' attention mechanisms.
-    """
-
-    def __init__(self, config, reduction, *args, **kwargs):
-        super().__init__()
-        hidden_dim = config.num_dims
-
-        # First Causal Convolution
-        self.conv1 = CausalConv1d(
-            in_channels=hidden_dim,
-            out_channels=hidden_dim,
-            kernel_size=3,
-            dilation=1,
-        )
-        self.dropout = nn.Dropout(config.dropout)
-
-        # Split Dimension
-        split_dim = hidden_dim // 2
-
-        # Second Causal Convolution Path
-        self.conv2 = CausalConv1d(
-            in_channels=split_dim,
-            out_channels=split_dim,
-            kernel_size=3,
-            dilation=2,
-        )
-
-        # Global Context Path
-        self.conv3 = CausalGlobalContext(split_dim, reduction)
-
-    def forward(self, x: Tensor):
-        # First Causal Convolution
-        x_conv = self.conv1(x)  # (B, reduced_dim, T)
-        x_conv = self.dropout(x_conv)
-
-        # Split into two parts
-        x_local, x_global = torch.chunk(
-            x_conv, 2, dim=1
-        )  # Each of shape (B, split_dim, T)
-
-        # Process local path
-        x_local = self.conv2(x_local)  # (B, split_dim, T)
-
-        # Process global path
-        x_global = self.conv3(x_global)  # (B, split_dim, T)
-
-        # Concatenate along the channel dimension
-        x_concat = torch.cat([x_local, x_global], dim=1)  # (B, reduced_dim, T)
-
-        return x_concat
-
-
-class CausalConv1d(nn.Conv1d):
-    """1D Causal Convolution Layer."""
-
+class ElasticLinear(nn.Module):
     def __init__(
-        self, in_channels, out_channels, kernel_size, dilation=1, bias=False, **kwargs
+        self, in_features, out_features, std=0.02, causal=False, *args, **kwargs
     ):
-        padding = (kernel_size - 1) * dilation
-        super().__init__(
-            in_channels,
-            out_channels,
-            kernel_size,
-            padding=0,
-            dilation=dilation,
-            bias=bias,
-            **kwargs,
-        )
-        self.left_padding = padding
-
-    def forward(self, x):
-        x = F.pad(x, (self.left_padding, 0))
-        return super().forward(x)
-
-
-class CausalGlobalContext(nn.Module):
-    """
-    Implements a kind of squeeze-and-excitation mechanism, which allows
-    us to bridge convolutional operations' local contexts, into a global one.
-    https://arxiv.org/abs/1904.11492v1
-    """
-
-    def __init__(self, in_channels, reduction=0.125):
         super().__init__()
+        self.base_in_features = in_features
+        self.base_out_features = out_features
+        self.std = std
+        self.causal = causal
 
-        bottleneck = int(in_channels * reduction)
+        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.reset_parameters()
 
-        # Context Modeling: 1x1 convolution to generate attention scores
-        self.context = nn.Conv1d(in_channels, 1, kernel_size=1)
+        # Learnable scalar for scaling padded weights
+        self.alpha = nn.Parameter(torch.ones(1))
 
-        # Transform Module: Bottleneck with LayerNorm and ReLU
-        self.transform = nn.Sequential(
-            nn.Linear(in_channels, bottleneck, bias=False),
-            nn.LayerNorm(bottleneck),
-            ACT2FN["periodic_relu"],
-            nn.Linear(bottleneck, in_channels, bias=False),
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+
+    def _adjust_weight_matrix(self, in_features, out_features):
+        # Adjust the weight matrix to match in_features and out_features
+        weight = self.weight
+
+        # Generate random noise
+        noise = (
+            torch.randn(out_features, in_features, device=weight.device)
+            * self.std
+            * self.alpha
         )
 
+        if (
+            in_features <= self.base_in_features
+            and out_features <= self.base_out_features
+        ):
+            # Slice self.weight to match in_features and out_features
+            adjusted_weight = weight[:out_features, :in_features]
+        else:
+            # Pad self.weight with zeros to match in_features and out_features
+            pad_in = max(0, in_features - self.base_in_features)
+            pad_out = max(0, out_features - self.base_out_features)
+            # Padding: (left, right, top, bottom)
+            padding = (0, pad_in, 0, pad_out)
+            adjusted_weight = F.pad(weight, padding, "constant", 0)
+
+        # Add random noise to all weights being used
+        adjusted_weights = adjusted_weight + noise
+
+        return adjusted_weights
+
     def forward(self, x):
-        # Compute attention scores
-        attn_scores = self.context(x).squeeze(1)  # Shape: (B, T)
-        attn_weights = F.softmax(attn_scores, dim=1)  # Shape: (B, T)
+        # x shape: (batch_size, in_features, seq_len)
+        in_features = x.size(1)
+        out_features = self.base_out_features
 
-        # Compute cumulative attention weights for causality
-        cumulative_attn_weights = torch.cumsum(attn_weights, dim=1)  # Shape: (B, T)
+        adjusted_weights = self._adjust_weight_matrix(in_features, out_features)
 
-        # Normalize cumulative attention weights
-        cumulative_attn_weights = cumulative_attn_weights / (
-            cumulative_attn_weights[:, -1].unsqueeze(1) + 1e-6
-        )  # Shape: (B, T)
+        if self.causal:
+            mask = torch.tril(
+                torch.ones_like(adjusted_weights, dtype=torch.float32, device=x.device)
+            )
+            mask_normalized = mask / mask.sum(dim=1, keepdim=True)
+            adjusted_weights = adjusted_weights * mask_normalized
 
-        # **Add an extra dimension to attn_weights for broadcasting**
-        attn_weights = attn_weights.unsqueeze(1)  # Shape: (B, 1, T)
-
-        # Compute cumulative sum of input features weighted by attention weights
-        weighted_input = x * attn_weights  # Shape: (B, C, T)
-        cumulative_context = torch.cumsum(weighted_input, dim=2)  # Shape: (B, C, T)
-
-        # **Add an extra dimension to cumulative_attn_weights for broadcasting**
-        cumulative_attn_weights = cumulative_attn_weights.unsqueeze(
-            1
-        )  # Shape: (B, 1, T)
-
-        # Normalize cumulative context
-        context = cumulative_context / (
-            cumulative_attn_weights + 1e-6
-        )  # Shape: (B, C, T)
-
-        # Use the last time step context for each position
-        context = context[:, :, -1]  # Shape: (B, C)
-
-        # Transform Module
-        transformed = self.transform(context)  # Shape: (B, C)
-
-        # Fusion: Add transformed context to each position
-        out = x + transformed.unsqueeze(2)  # Shape: (B, C, T)
-
-        return out
+        # Perform batch matrix multiplication
+        # x: (batch_size, in_features, seq_len)
+        # adjusted_weights: (out_features, in_features)
+        # We need to compute adjusted_weights @ x
+        output = torch.matmul(adjusted_weights, x)
+        # output shape: (batch_size, out_features, seq_len)
+        return output
 
 
 if __name__ == "__main__":
-    from dataclasses import dataclass
-
     # Mock AutoConfig class to simulate the configuration
     @dataclass
     class AutoConfig:
         num_dims: int = 768
         num_embeds: int = 768
-        context_length: int = 2048
+        context_length: int = 8192
         vocab_size: int = 50257
         causal: bool = True
         dropout: float = 0.0
@@ -222,8 +145,9 @@ if __name__ == "__main__":
     stride = 128  # Example stride with overlap
 
     def run_memory_test(model, x):
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.empty_cache()
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.empty_cache()
 
         # Forward pass
         start_time = time.time()
@@ -231,17 +155,16 @@ if __name__ == "__main__":
             output = model(x)
         if device.type == "cuda":
             torch.cuda.synchronize()
+            max_memory = torch.cuda.max_memory_allocated() / 1024**2  # Convert to MB
+        else:
+            max_memory = 0
         end_time = time.time()
-
-        max_memory = (
-            torch.cuda.max_memory_allocated() / 1024**2 if device.type == "cuda" else 0
-        )  # Convert to MB
         return output, end_time - start_time, max_memory
 
     print("Running tests for PraxisNano...")
 
     # Create model once for all tests
-    model = PraxisNano(config, chunk_size=chunk_size, stride=stride).to(device)
+    model = PraxisNano(config).to(device)
 
     # Test 1: Basic Functionality (Short Sequence)
     print("\nTest 1: Short Sequence Test")
@@ -283,7 +206,7 @@ if __name__ == "__main__":
     for cs in chunk_sizes:
         # Adjust stride accordingly (for simplicity, stride = cs // 2)
         current_stride = cs // 2
-        model_test = PraxisNano(config, chunk_size=cs, stride=current_stride).to(device)
+        model_test = PraxisNano(config).to(device)
         x_test = torch.randn(1, cs * 4, config.num_dims).to(device)
         output, duration, memory = run_memory_test(model_test, x_test)
         results.append((cs, duration, memory))
@@ -356,5 +279,46 @@ if __name__ == "__main__":
         print("✓ Random offset test passed")
     except Exception as e:
         print(f"✗ Test failed: {str(e)}")
+
+    # Test 7: Random Dimensions Test
+    print("\nTest 7: Random Dimensions Test")
+    torch.manual_seed(42)  # For reproducibility
+    for i in range(5):
+        # Generate random dimensions
+        base_in_features = random.randint(5, 500)
+        base_out_features = random.randint(5, 500)
+        batch_dim = random.randint(1, 32)
+        time_dim = random.randint(1, 64)
+        input_dim = random.randint(5, 500)
+
+        print(f"\nRandom test iteration {i+1}:")
+        print(
+            f"Base in_features: {base_in_features}, Base out_features: {base_out_features}"
+        )
+        print(
+            f"Input dimensions: [batch={batch_dim}, time={time_dim}, input_dim={input_dim}]"
+        )
+
+        # Create model and input
+        model = ElasticLinear(
+            in_features=base_in_features, out_features=base_out_features
+        ).to(device)
+        x = torch.randn(batch_dim, input_dim, time_dim).to(device)
+
+        # Forward pass
+        out = model(x)
+
+        # Verify shapes
+        print(f"Input shape: {x.shape}")
+        print(f"Output shape: {out.shape}")
+        print(
+            f"Adjusted weight matrix shape: {model._adjust_weight_matrix(input_dim, base_out_features).shape}"
+        )
+        print(f"Padding scale (alpha): {model.alpha.item():.4f}")
+        assert out.shape == (
+            batch_dim,
+            base_out_features,
+            time_dim,
+        ), "Output shape mismatch"
 
     print("\nAll tests completed!")
