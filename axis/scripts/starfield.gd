@@ -4,7 +4,6 @@ const TEXTURE_WIDTH = 2048
 const TEXTURE_HEIGHT = 1024
 const STAR_COUNT = 4000
 
-# We'll use these for normal mode only now
 const NORMAL_COLORS = [
 	Color(1.0, 1.0, 1.0, 0.8),    # Dimmer white
 	Color(0.95, 0.95, 1.0, 0.7),  # Very slight blue
@@ -16,20 +15,42 @@ var current_mode: bool = false  # false = normal, true = inverse
 var world_env: WorldEnvironment
 var base_environment: Environment
 
+# Cache for pre-computed skies
+var normal_sky: Sky
+var inverse_sky: Sky
+
 func _ready():
 	world_env = get_node("../WorldEnvironment")
 	if world_env and world_env.environment:
 		base_environment = world_env.environment
-		create_starfield_sky(false)  # Start with normal mode
+		
+		# Pre-compute both sky variants during initialization
+		print("Pre-computing normal starfield...")
+		normal_sky = _create_sky(false)
+		
+		print("Pre-computing inverse starfield...")
+		inverse_sky = _create_sky(true)
+		
+		# Set initial sky
+		_apply_sky(normal_sky)
+		print("Starfield initialization complete")
 
 func toggle_inverse_mode(is_inverse: bool) -> void:
 	if current_mode != is_inverse:
 		current_mode = is_inverse
-		create_starfield_sky(is_inverse)
+		# Simply switch between pre-computed skies
+		_apply_sky(inverse_sky if is_inverse else normal_sky)
 
-func create_starfield_sky(inverse: bool = false):
+func _apply_sky(sky: Sky) -> void:
+	if world_env and world_env.environment:
+		world_env.environment.background_mode = Environment.BG_SKY
+		world_env.environment.sky = sky
+		world_env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+		world_env.environment.ambient_light_sky_contribution = 0.1
+		world_env.environment.background_energy_multiplier = 1.0
+
+func _create_sky(inverse: bool = false) -> Sky:
 	var image = Image.create(TEXTURE_WIDTH, TEXTURE_HEIGHT, false, Image.FORMAT_RGBA8)
-	# Set background color based on mode
 	image.fill(Color(0, 0, 0, 1) if not inverse else Color(1, 1, 1, 1))
 	
 	var rng = RandomNumberGenerator.new()
@@ -37,14 +58,12 @@ func create_starfield_sky(inverse: bool = false):
 	
 	for _i in range(STAR_COUNT):
 		if inverse:
-			# Use original inverse mode star generation
 			var x = rng.randi() % TEXTURE_WIDTH
 			var y = rng.randi() % TEXTURE_HEIGHT
-			var size = rng.randf_range(0.5, 1.5)  # Original size range
-			var color = Color(0, 0, 0, rng.randf_range(0.5, 0.8))  # Original alpha range
+			var size = rng.randf_range(0.5, 1.5)
+			var color = Color(0, 0, 0, rng.randf_range(0.5, 0.8))
 			draw_star(image, x, y, size, color, inverse)
 		else:
-			# Normal mode with panoramic correction
 			var phi = rng.randf() * TAU
 			var theta = acos(2 * rng.randf() - 1)
 			var x = int((phi / TAU) * TEXTURE_WIDTH) % TEXTURE_WIDTH
@@ -63,12 +82,7 @@ func create_starfield_sky(inverse: bool = false):
 	var sky = Sky.new()
 	sky.sky_material = sky_material
 	
-	if world_env and world_env.environment:
-		world_env.environment.background_mode = Environment.BG_SKY
-		world_env.environment.sky = sky
-		world_env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-		world_env.environment.ambient_light_sky_contribution = 0.1
-		world_env.environment.background_energy_multiplier = 1.0
+	return sky
 
 func draw_star(image: Image, center_x: int, center_y: int, size: float, color: Color, inverse: bool):
 	var radius = ceil(size)
@@ -82,12 +96,10 @@ func draw_star(image: Image, center_x: int, center_y: int, size: float, color: C
 			var dist = Vector2(center_x, center_y).distance_to(Vector2(x, y))
 			if dist <= size:
 				if inverse:
-					# Use original linear alpha calculation for inverse mode
 					var alpha = (1.0 - (dist / size)) * color.a
 					var pixel_color = Color(color.r, color.g, color.b, alpha)
 					image.set_pixel(x, y, pixel_color)
 				else:
-					# Keep original blending for normal mode
 					var alpha = pow(1.0 - (dist / size), 3)
 					var final_color = Color(
 						color.r,
