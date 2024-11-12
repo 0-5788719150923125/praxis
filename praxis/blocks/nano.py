@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import time
-from transformers import AutoConfig
 from typing import Optional
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.activations import ACT2FN
@@ -12,10 +11,10 @@ from praxis.activations import ACT2FN
 class PraxisNano(nn.Module):
     """
     A special kind of block that omits the self-attention mechanism, in favor
-    of causal convolutional layers and periodic activations.
-    Inspired by NanoFFT:
+    of causal convolutional layers and periodic activations. While this was originally
+    inspired by NanoFFT, this module looks almost nothing like that now.
     https://github.com/timurgepard/nanoFFT
-    Informed by:
+    Periodic activation functions can train a model to "know what they do not know."
     https://arxiv.org/abs/2110.13572
     """
 
@@ -23,20 +22,9 @@ class PraxisNano(nn.Module):
         super().__init__()
         hidden_dim = config.num_dims
 
+        reduction = 0.75
         self.fft_norm = nn.LayerNorm(hidden_dim)
-        self.fft = nn.Sequential(
-            CausalConv1d(
-                in_channels=hidden_dim,
-                out_channels=int(hidden_dim * 0.75),
-                kernel_size=3,
-            ),
-            nn.Dropout(config.dropout),
-            CausalConv1d(
-                in_channels=int(hidden_dim * 0.75),
-                out_channels=hidden_dim,
-                kernel_size=3,
-            ),
-        )
+        self.fft = CausalPeriodicConvolution(config, reduction=reduction)
 
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
@@ -49,33 +37,89 @@ class PraxisNano(nn.Module):
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ) -> Tensor:
-        B, T, E = x.shape
-
         # Normalize input
         x_norm = self.fft_norm(x)  # (B, T, E)
 
         # Transpose to (B, E, T) for Conv1d
-        x_conv = x_norm.transpose(1, 2)  # (B, E, T)
+        x_out = x_norm.transpose(1, 2)  # (B, E, T)
 
-        # Apply causal convolutions
-        x_fft = self.fft(x_conv)  # (B, E, T)
+        # Capture local and global patterns
+        x_out = self.fft(x_out)
 
         # Transpose back to (B, T, E)
-        x_fft = x_fft.transpose(1, 2)
+        x_out = x_out.transpose(1, 2)  # (B, T, reduced_dim)
 
         # Residual connection
-        residual = x_fft + x
+        residual = x_out + x
 
         # Feedforward network
-        chunk = self.ffw_norm(residual)
-        chunk = self.ffw(chunk)
-        return chunk + residual
+        x_norm = self.ffw_norm(residual)
+        x_ffw = self.ffw(x_norm)
+        return x_ffw + residual
+
+
+class CausalPeriodicConvolution(nn.Module):
+    """
+    A module that attempts to capture local, global, and temporal patterns in an
+    efficient manner. Uses convolutions, linear layers, and bottlenecking - rather than
+    any 'full' attention mechanisms.
+    """
+
+    def __init__(self, config, reduction, *args, **kwargs):
+        super().__init__()
+        hidden_dim = config.num_dims
+
+        # First Causal Convolution
+        self.conv1 = CausalConv1d(
+            in_channels=hidden_dim,
+            out_channels=hidden_dim,
+            kernel_size=3,
+            dilation=1,
+        )
+        self.dropout = nn.Dropout(config.dropout)
+
+        # Split Dimension
+        split_dim = hidden_dim // 2
+
+        # Second Causal Convolution Path
+        self.conv2 = CausalConv1d(
+            in_channels=split_dim,
+            out_channels=split_dim,
+            kernel_size=3,
+            dilation=2,
+        )
+
+        # Global Context Path
+        self.conv3 = CausalGlobalContext(split_dim, reduction)
+
+    def forward(self, x: Tensor):
+        # First Causal Convolution
+        x_conv = self.conv1(x)  # (B, reduced_dim, T)
+        x_conv = self.dropout(x_conv)
+
+        # Split into two parts
+        x_local, x_global = torch.chunk(
+            x_conv, 2, dim=1
+        )  # Each of shape (B, split_dim, T)
+
+        # Process local path
+        x_local = self.conv2(x_local)  # (B, split_dim, T)
+
+        # Process global path
+        x_global = self.conv3(x_global)  # (B, split_dim, T)
+
+        # Concatenate along the channel dimension
+        x_concat = torch.cat([x_local, x_global], dim=1)  # (B, reduced_dim, T)
+
+        return x_concat
 
 
 class CausalConv1d(nn.Conv1d):
     """1D Causal Convolution Layer."""
 
-    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, **kwargs):
+    def __init__(
+        self, in_channels, out_channels, kernel_size, dilation=1, bias=False, **kwargs
+    ):
         padding = (kernel_size - 1) * dilation
         super().__init__(
             in_channels,
@@ -83,6 +127,7 @@ class CausalConv1d(nn.Conv1d):
             kernel_size,
             padding=0,
             dilation=dilation,
+            bias=bias,
             **kwargs,
         )
         self.left_padding = padding
@@ -90,6 +135,71 @@ class CausalConv1d(nn.Conv1d):
     def forward(self, x):
         x = F.pad(x, (self.left_padding, 0))
         return super().forward(x)
+
+
+class CausalGlobalContext(nn.Module):
+    """
+    Implements a kind of squeeze-and-excitation mechanism, which allows
+    us to bridge convolutional operations' local contexts, into a global one.
+    https://arxiv.org/abs/1904.11492v1
+    """
+
+    def __init__(self, in_channels, reduction=0.125):
+        super().__init__()
+
+        bottleneck = int(in_channels * reduction)
+
+        # Context Modeling: 1x1 convolution to generate attention scores
+        self.context = nn.Conv1d(in_channels, 1, kernel_size=1)
+
+        # Transform Module: Bottleneck with LayerNorm and ReLU
+        self.transform = nn.Sequential(
+            nn.Linear(in_channels, bottleneck, bias=False),
+            nn.LayerNorm(bottleneck),
+            ACT2FN["periodic_relu"],
+            nn.Linear(bottleneck, in_channels, bias=False),
+        )
+
+    def forward(self, x):
+        # Compute attention scores
+        attn_scores = self.context(x).squeeze(1)  # Shape: (B, T)
+        attn_weights = F.softmax(attn_scores, dim=1)  # Shape: (B, T)
+
+        # Compute cumulative attention weights for causality
+        cumulative_attn_weights = torch.cumsum(attn_weights, dim=1)  # Shape: (B, T)
+
+        # Normalize cumulative attention weights
+        cumulative_attn_weights = cumulative_attn_weights / (
+            cumulative_attn_weights[:, -1].unsqueeze(1) + 1e-6
+        )  # Shape: (B, T)
+
+        # **Add an extra dimension to attn_weights for broadcasting**
+        attn_weights = attn_weights.unsqueeze(1)  # Shape: (B, 1, T)
+
+        # Compute cumulative sum of input features weighted by attention weights
+        weighted_input = x * attn_weights  # Shape: (B, C, T)
+        cumulative_context = torch.cumsum(weighted_input, dim=2)  # Shape: (B, C, T)
+
+        # **Add an extra dimension to cumulative_attn_weights for broadcasting**
+        cumulative_attn_weights = cumulative_attn_weights.unsqueeze(
+            1
+        )  # Shape: (B, 1, T)
+
+        # Normalize cumulative context
+        context = cumulative_context / (
+            cumulative_attn_weights + 1e-6
+        )  # Shape: (B, C, T)
+
+        # Use the last time step context for each position
+        context = context[:, :, -1]  # Shape: (B, C)
+
+        # Transform Module
+        transformed = self.transform(context)  # Shape: (B, C)
+
+        # Fusion: Add transformed context to each position
+        out = x + transformed.unsqueeze(2)  # Shape: (B, C, T)
+
+        return out
 
 
 if __name__ == "__main__":
