@@ -12,29 +12,33 @@ from praxis.activations import ACT2FN
 class PraxisNano(nn.Module):
     """
     A special kind of block that omits the self-attention mechanism, in favor
-    of dense layers with periodic activations, sequence chunking and state
-    preservation. Inspired by NanoFFT:
+    of causal convolutional layers and periodic activations.
+    Inspired by NanoFFT:
     https://github.com/timurgepard/nanoFFT
     Informed by:
     https://arxiv.org/abs/2110.13572
     """
 
-    def __init__(self, config: "AutoConfig", chunk_size: int = 64, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
-        self.chunk_size = chunk_size
-        self.stride = chunk_size // 2
-
-        embed_dim = config.num_embeds
         hidden_dim = config.num_dims
 
         self.fft_norm = nn.LayerNorm(hidden_dim)
         self.fft = nn.Sequential(
-            TriLinear(chunk_size, int(chunk_size * 0.75), causal=config.causal),
+            CausalConv1d(
+                in_channels=hidden_dim,
+                out_channels=int(hidden_dim * 0.75),
+                kernel_size=3,
+            ),
             nn.Dropout(config.dropout),
-            TriLinear(int(chunk_size * 0.75), chunk_size, causal=config.causal),
+            CausalConv1d(
+                in_channels=int(hidden_dim * 0.75),
+                out_channels=hidden_dim,
+                kernel_size=3,
+            ),
         )
 
-        config.activation = "sin"
+        config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
         self.ffw = PraxisGLU(config)
 
@@ -46,92 +50,46 @@ class PraxisNano(nn.Module):
         token_indices: Optional[Tensor] = None,
     ) -> Tensor:
         B, T, E = x.shape
-        chunk_size = self.chunk_size
-        stride = self.stride
-        device = x.device
 
-        # Initialize output tensor
-        output = torch.zeros(B, T, E, device=device)
+        # Normalize input
+        x_norm = self.fft_norm(x)  # (B, T, E)
 
-        # Initialize state tensor for previous chunk's overlapping region
-        prev_state = None
+        # Transpose to (B, E, T) for Conv1d
+        x_conv = x_norm.transpose(1, 2)  # (B, E, T)
 
-        for start in range(0, T, stride):
-            end = min(start + chunk_size, T)
-            current_size = end - start
+        # Apply causal convolutions
+        x_fft = self.fft(x_conv)  # (B, E, T)
 
-            # Extract and maybe pad current chunk
-            if current_size < chunk_size:
-                chunk = F.pad(
-                    x[:, start:end, :],
-                    (0, 0, 0, chunk_size - current_size),
-                    "constant",
-                    0,
-                )
-            else:
-                chunk = x[:, start:end, :]
+        # Transpose back to (B, T, E)
+        x_fft = x_fft.transpose(1, 2)
 
-            # Create residual before we blend with the current chunk
-            residual = chunk
+        # Residual connection
+        residual = x_fft + x
 
-            # If striding, overwrite the overlapping part of the current chunk with processed
-            # data from the previous chunk
-            if prev_state is not None:
-                overlap_size = min(stride, current_size)
-                chunk = torch.cat(
-                    [prev_state[:, -overlap_size:, :], chunk[:, overlap_size:, :]],
-                    dim=1,
-                )
-
-            # Process the chunk
-            processed_chunk = self.process_chunk(chunk, residual)
-
-            # Store state for next iteration if needed
-            if start + stride < T:
-                prev_state = processed_chunk
-
-            # Remove padding if necessary and store in output
-            if current_size < chunk_size:
-                processed_chunk = processed_chunk[:, :current_size, :]
-            output[:, start:end, :] = processed_chunk[:, :current_size, :]
-
-        return output
-
-    def process_chunk(self, chunk: Tensor, residual: Tensor) -> Tensor:
-        chunk_norm = self.fft_norm(chunk)
-        chunk_fft = chunk_norm.transpose(1, 2)
-        chunk_fft = self.fft(chunk_fft)
-        chunk_fft = chunk_fft.transpose(1, 2)
-        residual = chunk_fft + residual
+        # Feedforward network
         chunk = self.ffw_norm(residual)
         chunk = self.ffw(chunk)
         return chunk + residual
 
 
-class TriLinear(nn.Linear):
-    def __init__(self, in_features: int, out_features: int, bias=False, causal=True):
-        super().__init__(in_features, out_features, bias=bias)
+class CausalConv1d(nn.Conv1d):
+    """1D Causal Convolution Layer."""
 
-        mask = torch.ones((out_features, in_features), dtype=torch.float32)
+    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, **kwargs):
+        padding = (kernel_size - 1) * dilation
+        super().__init__(
+            in_channels,
+            out_channels,
+            kernel_size,
+            padding=0,
+            dilation=dilation,
+            **kwargs,
+        )
+        self.left_padding = padding
 
-        if causal:
-            # Create a lower triangular mask
-            mask = torch.tril(mask)
-
-        # Apply the mask to the weights: keep lower triangle as initialized, zero upper triangle
-        with torch.no_grad():
-            self.weight.copy_(self.weight * mask)
-
-        if causal:
-            # Compute the normalized mask and register it as a buffer
-            mask_normalized = mask / mask.sum(dim=1, keepdim=True)
-            self.register_buffer("mask_normalized", mask_normalized)
-
-            # Register the hook to zero gradients outside the mask
-            self.weight.register_hook(lambda grad: grad * self.mask_normalized)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return F.linear(x, self.weight, self.bias)
+    def forward(self, x):
+        x = F.pad(x, (self.left_padding, 0))
+        return super().forward(x)
 
 
 if __name__ == "__main__":
