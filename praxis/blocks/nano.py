@@ -20,13 +20,14 @@ class PraxisNano(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
-        bottleneck = int(hidden_dim * 0.75)
+        projection = int(hidden_dim * 2.0)
+        bottleneck = int(hidden_dim * 0.5)
 
         # Define the weight matrices with maximum sequence length
         self.fft_norm = nn.LayerNorm(hidden_dim)
         self.fft = nn.Sequential(
             ElasticLinear(
-                in_features=hidden_dim, out_features=bottleneck, causal=config.causal
+                in_features=projection, out_features=bottleneck, causal=config.causal
             ),
             nn.Dropout(config.dropout),
             ElasticLinear(
@@ -110,6 +111,7 @@ class ElasticLinear(nn.Module):
         out_features = self.base_out_features
 
         adjusted_weights = self._adjust_weight_matrix(in_features, out_features)
+        # adjusted_weights: (out_features, in_features)
 
         if self.causal:
             mask = torch.tril(
@@ -119,9 +121,6 @@ class ElasticLinear(nn.Module):
             adjusted_weights = adjusted_weights * mask_normalized
 
         # Perform batch matrix multiplication
-        # x: (batch_size, in_features, seq_len)
-        # adjusted_weights: (out_features, in_features)
-        # We need to compute adjusted_weights @ x
         output = torch.matmul(adjusted_weights, x)
         # output shape: (batch_size, out_features, seq_len)
         return output
