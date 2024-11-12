@@ -728,8 +728,8 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        n_gram_size = 7
-        frequency = 30
+        n_gram_size = 9
+        frequency = 20
         if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
             self.text = f"{self.initial_text}"
             if self.dashboard:

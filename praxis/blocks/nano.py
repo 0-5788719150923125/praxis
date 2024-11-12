@@ -34,12 +34,9 @@ class PraxisNano(nn.Module):
             TriLinear(int(chunk_size * 0.75), chunk_size, causal=config.causal),
         )
 
-        # NOTE: SinLU might be too expensive; it adds a lot of VRAM to the gradients
-        config.activation = "jagged_sin"
+        config.activation = "sin"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = PraxisGLU(
-            config, frequencies=[1.0, 2.3, 5.9], amplitudes=[1.0, 0.1, 0.23]
-        )
+        self.ffw = PraxisGLU(config)
 
     def forward(
         self,
@@ -74,20 +71,20 @@ class PraxisNano(nn.Module):
             else:
                 chunk = x[:, start:end, :]
 
-            # Blend with previous state if exists
+            # Create residual before we blend with the current chunk
+            residual = chunk
+
+            # If striding, overwrite the overlapping part of the current chunk with processed
+            # data from the previous chunk
             if prev_state is not None:
                 overlap_size = min(stride, current_size)
-                # Create blended version of overlap region
-                alpha = torch.linspace(0, 1, overlap_size, device=device).view(1, -1, 1)
-                blended = (
-                    prev_state[:, -overlap_size:, :] * (1 - alpha)
-                    + chunk[:, :overlap_size, :] * alpha
+                chunk = torch.cat(
+                    [prev_state[:, -overlap_size:, :], chunk[:, overlap_size:, :]],
+                    dim=1,
                 )
-                # Create new chunk with blended region
-                chunk = torch.cat([blended, chunk[:, overlap_size:, :]], dim=1)
 
             # Process the chunk
-            processed_chunk = self.process_chunk(chunk)
+            processed_chunk = self.process_chunk(chunk, residual)
 
             # Store state for next iteration if needed
             if start + stride < T:
@@ -100,15 +97,13 @@ class PraxisNano(nn.Module):
 
         return output
 
-    def process_chunk(self, chunk: Tensor) -> Tensor:
-        residual = chunk
+    def process_chunk(self, chunk: Tensor, residual: Tensor) -> Tensor:
         chunk_norm = self.fft_norm(chunk)
         chunk_fft = chunk_norm.transpose(1, 2)
         chunk_fft = self.fft(chunk_fft)
         chunk_fft = chunk_fft.transpose(1, 2)
-        chunk = chunk_fft + residual
-        residual = chunk
-        chunk = self.ffw_norm(chunk)
+        residual = chunk_fft + residual
+        chunk = self.ffw_norm(residual)
         chunk = self.ffw(chunk)
         return chunk + residual
 

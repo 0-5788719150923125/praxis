@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from praxis import activations
-
+import random
 
 # Define activation functions
 activation_functions = {
@@ -14,8 +14,12 @@ activation_functions = {
     "Tanh": nn.Tanh(),
     "Leaky ReLU": nn.LeakyReLU(),
     # "ELU": nn.ELU(),
+    # "JaggedSine": activations.JaggedSine(
+    #     frequencies=[1.0, 2.3, 5.9], amplitudes=[1.0, 0.1, 0.23]
+    # ),
     "JaggedSine": activations.JaggedSine(
-        frequencies=[1.0, 2.3, 5.9], amplitudes=[1.0, 0.1, 0.23]
+        frequencies=[random.uniform(-2, 2) for _ in range(9)],
+        amplitudes=[random.uniform(-2, 2) for _ in range(9)],
     ),
     # "NMDA": NMDA(),
     # "SERF": SERF(),
