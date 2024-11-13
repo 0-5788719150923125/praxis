@@ -23,13 +23,13 @@ class PraxisNano(nn.Module):
         self.fft = nn.Sequential(
             ElasticLinear(
                 features=hidden_dim,
-                bottleneck=0.75,
+                bottleneck=1.0,
                 causal=config.causal,
             ),
             nn.Dropout(config.dropout),
             ElasticLinear(
                 features=hidden_dim,
-                bottleneck=0.75,
+                bottleneck=1.0,
                 causal=config.causal,
             ),
         )
@@ -69,35 +69,29 @@ class ElasticLinear(nn.Module):
         self.reset_parameters()
 
     def forward(self, x):
-        # x shape: (batch_size, in_features, seq_len)
-        _, in_features, _ = x.shape
-
-        # Always get interpolated weights
-        weights = self._interpolate_weights(in_features)
-
-        # Perform batch matrix multiplication and add bias
-        output = torch.matmul(weights, x) + self.bias.view(-1, 1)
-
-        return output
+        # x shape: (batch_size, features, seq_len)
+        _, features, _ = x.shape
+        weights = self._interpolate_weights(features)
+        return torch.matmul(weights, x) + self.bias.view(-1, 1)
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.weight)
         nn.init.zeros_(self.bias)
 
-    def _interpolate_weights(self, in_features):
+    def _interpolate_weights(self, features):
         # Always interpolate since we're starting from a smaller base
         weights_expanded = self.weight.unsqueeze(0)
 
         interpolated = F.interpolate(
             weights_expanded,
-            size=[in_features],
-            mode="linear",
-            align_corners=True,
+            size=[features],
+            mode="nearest",
+            # align_corners=True,
         ).squeeze(0)
 
         if self.causal:
             causal_mask = torch.tril(torch.ones_like(interpolated))
-            causal_mask = causal_mask / (torch.sum(causal_mask, dim=1, keepdim=True))
+            # causal_mask = causal_mask / (torch.sum(causal_mask, dim=1, keepdim=True))
             interpolated = interpolated * causal_mask
 
         return interpolated
