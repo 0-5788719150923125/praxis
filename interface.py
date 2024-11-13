@@ -408,17 +408,22 @@ class TerminalDashboard:
         with self.lock:
             elapsed = self.hours_since()
             footer_text = (
-                f"  PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | "
+                f" PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | "
                 f"RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, "
                 f"RATE: {self.rate:.2f}s | {self.local_experts} local experts, "
                 f"{self.remote_experts} remote | {self.url}"
             )
+            # Add the footer text with borders on sides
             frame.append(
-                self._truncate_to_width(
-                    footer_text,
-                    width,  # Use 'width' instead of 'current_size.columns' to match frame
+                "║"
+                + self._visual_ljust(
+                    self._truncate_to_width(footer_text, width + 1), width + 1
                 )
+                + "║"
             )
+
+            # Add bottom border
+            frame.append("╚" + "═" * (width + 1) + "╝")
 
         return frame
 
