@@ -4,8 +4,7 @@ import torch.nn.functional as F
 from torch import Tensor
 import math
 from typing import Optional
-from praxis.modules.dense import PraxisMLP, PraxisGLU
-from praxis.activations import ACT2FN, ACT2CLS
+from praxis.modules.dense import PraxisGLU
 
 
 class PraxisNano(nn.Module):
@@ -18,22 +17,19 @@ class PraxisNano(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
-        bottleneck = int(hidden_dim * 0.5)
 
-        # Define the weight matrices with maximum sequence length
+        # Define the weight matrices
         self.fft_norm = nn.LayerNorm(hidden_dim)
         self.fft = nn.Sequential(
             ElasticLinear(
-                in_features=bottleneck,
-                out_features=bottleneck,
-                reduction=0.5,
+                features=hidden_dim,
+                bottleneck=0.75,
                 causal=config.causal,
             ),
             nn.Dropout(config.dropout),
             ElasticLinear(
-                in_features=bottleneck,
-                out_features=hidden_dim,
-                reduction=0.5,
+                features=hidden_dim,
+                bottleneck=0.75,
                 causal=config.causal,
             ),
         )
@@ -44,29 +40,32 @@ class PraxisNano(nn.Module):
         self.ffw = PraxisGLU(config)
 
     def forward(self, x: Tensor, attention_mask: Tensor = None):
-        # x shape: (batch_size, seq_len, hidden_dim)
+        # x shape: (B, T, E)
         chunk_norm = self.fft_norm(x)
-        # Transpose to (batch_size, seq_len, hidden_dim) -> (batch_size, hidden_dim, seq_len)
+        # Transpose (B, T, E) -> (B, E, T)
         chunk_fft = chunk_norm.transpose(1, 2)
         # Pass through FFT layers
         chunk_fft = self.fft(chunk_fft)
-        # Transpose back to original shape
+        # Transpose back to (B, T, T)
         chunk_fft = chunk_fft.transpose(1, 2)
         # Residual connection
         residual = chunk_fft + x
-        chunk = self.ffw_norm(residual)
-        chunk = self.ffw(chunk)
-        return chunk + residual
+        # LayerNorm
+        chunk_ffw = self.ffw_norm(residual)
+        # Feedforward
+        chunk_ffw = self.ffw(chunk_ffw)
+        # Residual connection
+        return chunk_ffw + residual
 
 
 class ElasticLinear(nn.Module):
-    def __init__(self, in_features, out_features, reduction=0.5, causal=False):
+    def __init__(self, features, bottleneck=0.5, causal=False):
         super().__init__()
         self.causal = causal
-        # Initialize with smaller dimension to force interpolation
-        bottleneck = int(min(in_features, out_features) * reduction)
-        self.weight = nn.Parameter(torch.Tensor(out_features, bottleneck))
-        self.bias = nn.Parameter(torch.Tensor(out_features))
+        # Initialize with smaller dimensions to force interpolation
+        bottleneck_dim = int(features * bottleneck)
+        self.weight = nn.Parameter(torch.Tensor(features, bottleneck_dim))
+        self.bias = nn.Parameter(torch.Tensor(features))
         self.reset_parameters()
 
     def forward(self, x):
@@ -76,11 +75,8 @@ class ElasticLinear(nn.Module):
         # Always get interpolated weights
         weights = self._interpolate_weights(in_features)
 
-        # Perform batch matrix multiplication
-        output = torch.matmul(weights, x)
-
-        # Add bias
-        output = output + self.bias.view(-1, 1)
+        # Perform batch matrix multiplication and add bias
+        output = torch.matmul(weights, x) + self.bias.view(-1, 1)
 
         return output
 
@@ -271,23 +267,21 @@ if __name__ == "__main__":
     for i in range(5):
         # Generate random dimensions
         base_in_features = random.randint(5, 500)
-        base_out_features = random.randint(5, 500)
         batch_dim = random.randint(1, 32)
         time_dim = random.randint(1, 64)
         input_dim = random.randint(5, 500)
 
         print(f"\nRandom test iteration {i+1}:")
-        print(
-            f"Base in_features: {base_in_features}, Base out_features: {base_out_features}"
-        )
+        print(f"Base in_features: {base_in_features}")
         print(
             f"Input dimensions: [batch={batch_dim}, time={time_dim}, input_dim={input_dim}]"
         )
 
         # Create model and input
-        model = ElasticLinear(
-            in_features=base_in_features, out_features=base_out_features
-        ).to(device)
+        bottleneck = 0.5
+        model = ElasticLinear(features=base_in_features, bottleneck=bottleneck).to(
+            device
+        )
         x = torch.randn(batch_dim, input_dim, time_dim).to(device)
 
         # Forward pass
@@ -301,7 +295,7 @@ if __name__ == "__main__":
         )
         assert out.shape == (
             batch_dim,
-            base_out_features,
+            base_in_features,
             time_dim,
         ), "Output shape mismatch"
 
@@ -310,8 +304,8 @@ if __name__ == "__main__":
 
         # Create a small example
         in_features = 8
-        out_features = 16
-        model = ElasticLinear(in_features, out_features)
+        bottleneck = 0.5
+        model = ElasticLinear(in_features, bottleneck)
 
         # The actual weight matrix will be [out_features, bottleneck]
         # where bottleneck = min(in_features, out_features) // 2 = 4

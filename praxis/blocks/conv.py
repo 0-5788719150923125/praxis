@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch import Tensor
 import time
 from typing import Optional
-from praxis.modules.dense import PraxisGLU, PraxisMLP
+from praxis.modules.dense import PraxisGLU
 from praxis.activations import ACT2FN
 
 
