@@ -20,17 +20,17 @@ class PraxisNano(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
-        projection = int(hidden_dim * 2.0)
+        # projection = int(hidden_dim * 2.0)
         bottleneck = int(hidden_dim * 0.5)
 
         # Define the weight matrices with maximum sequence length
         self.fft_norm = nn.LayerNorm(hidden_dim)
         self.fft = nn.Sequential(
             ElasticLinear(
-                in_features=projection, out_features=bottleneck, causal=config.causal
+                in_features=bottleneck, out_features=bottleneck, causal=config.causal
             ),
-            nn.Dropout(config.dropout),
             ACT2FN["periodic_relu"],
+            nn.Dropout(config.dropout),
             ElasticLinear(
                 in_features=bottleneck, out_features=hidden_dim, causal=config.causal
             ),
@@ -59,57 +59,23 @@ class PraxisNano(nn.Module):
 
 class ElasticLinear(nn.Module):
     def __init__(
-        self, in_features, out_features, std=0.02, causal=False, *args, **kwargs
+        self, in_features, out_features, std=0.0002, causal=False, *args, **kwargs
     ):
         super().__init__()
-        self.base_in_features = in_features
-        self.base_out_features = out_features
+        self.in_features = in_features
+        self.out_features = out_features
         self.std = std
         self.causal = causal
 
         self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.bias = nn.Parameter(torch.Tensor(1))
+        self.alpha = nn.Parameter(torch.Tensor(1))
         self.reset_parameters()
-
-        # Learnable scalar for scaling padded weights
-        self.alpha = nn.Parameter(torch.ones(1))
-
-    def reset_parameters(self):
-        nn.init.xavier_uniform_(self.weight)
-
-    def _adjust_weight_matrix(self, in_features, out_features):
-        # Adjust the weight matrix to match in_features and out_features
-        weight = self.weight
-
-        # Generate random noise
-        noise = (
-            torch.randn(out_features, in_features, device=weight.device)
-            * self.std
-            * self.alpha
-        )
-
-        if (
-            in_features <= self.base_in_features
-            and out_features <= self.base_out_features
-        ):
-            # Slice self.weight to match in_features and out_features
-            adjusted_weight = weight[:out_features, :in_features]
-        else:
-            # Pad self.weight with zeros to match in_features and out_features
-            pad_in = max(0, in_features - self.base_in_features)
-            pad_out = max(0, out_features - self.base_out_features)
-            # Padding: (left, right, top, bottom)
-            padding = (0, pad_in, 0, pad_out)
-            adjusted_weight = F.pad(weight, padding, "constant", 0)
-
-        # Add random noise to all weights being used
-        adjusted_weights = adjusted_weight + noise
-
-        return adjusted_weights
 
     def forward(self, x):
         # x shape: (batch_size, in_features, seq_len)
         in_features = x.size(1)
-        out_features = self.base_out_features
+        out_features = self.out_features
 
         adjusted_weights = self._adjust_weight_matrix(in_features, out_features)
         # adjusted_weights: (out_features, in_features)
@@ -125,6 +91,38 @@ class ElasticLinear(nn.Module):
         output = torch.matmul(adjusted_weights, x)
         # output shape: (batch_size, out_features, seq_len)
         return output
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+        nn.init.zeros_(self.bias)
+        nn.init.ones_(self.alpha)
+
+    def _adjust_weight_matrix(self, in_features, out_features):
+        # Adjust the weight matrix to match in_features and out_features
+        weight = self.weight
+
+        # Generate random noise
+        noise = (
+            torch.randn(out_features, in_features, device=weight.device)
+            * self.std
+            * self.alpha
+        )
+
+        if in_features <= self.in_features and out_features <= self.out_features:
+            # Slice self.weight to match in_features and out_features
+            adjusted_weight = weight[:out_features, :in_features]
+        else:
+            # Pad self.weight with zeros to match in_features and out_features
+            pad_in = max(0, in_features - self.in_features)
+            pad_out = max(0, out_features - self.out_features)
+            # Padding: (left, right, top, bottom)
+            padding = (0, pad_in, 0, pad_out)
+            adjusted_weight = F.pad(weight, padding, "constant", 0)
+
+        # Add random noise to all weights being used
+        adjusted_weights = adjusted_weight + self.bias + noise
+
+        return adjusted_weights
 
 
 if __name__ == "__main__":
