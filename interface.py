@@ -256,7 +256,6 @@ class TerminalDashboard:
         return "".join(result)
 
     def _correct_borders(self, frame):
-        """Correct any misaligned borders in the frame."""
         width = len(frame[0])
         for i in range(1, len(frame) - 1):
             line = frame[i]
@@ -314,18 +313,22 @@ class TerminalDashboard:
         width, height = current_size
         height -= 4  # Adjust for status bar and borders
         width -= 3  # Adjust for left and right borders
-        half_height = height // 2
+
+        if width <= 0 or height <= 0:
+            # Prevent negative or zero dimensions
+            return [" " * current_size.columns for _ in range(current_size.lines)]
+
         half_width = width // 2
-        right_width = width - half_width - 1
+        right_width = width - half_width  # Correct calculation
 
         frame = []
         frame.append("╔" + "═" * half_width + "╦" + "═" * right_width + "╗")
 
         with self.lock:
             train_chart = self._draw_chart(
-                self.train_losses, half_width, half_height - 1
+                self.train_losses, half_width, (height // 2) - 1
             )
-            val_chart = self._draw_chart(self.val_losses, half_width, half_height - 1)
+            val_chart = self._draw_chart(self.val_losses, half_width, (height // 2) - 1)
 
         # Wrap the entire status text
         status_lines = self._wrap_text(
@@ -333,18 +336,18 @@ class TerminalDashboard:
         )  # Changed to half_width
 
         # Calculate the maximum number of lines that can fit in the status section
-        max_status_lines = half_height - 3
+        max_status_lines = (height // 2) - 3
 
         # If status_lines exceed max_status_lines, keep only the most recent lines
         if len(status_lines) > max_status_lines:
             status_lines = status_lines[-max_status_lines:]
 
-        log_text = "\n".join(list(self.log_buffer)[-half_height + 3 :])
+        log_text = "\n".join(list(self.log_buffer)[-((height // 2) - 1) :])
         log_lines = self._wrap_text(log_text, right_width)
 
         # Pad status_lines and log_lines if they're shorter than the available space
         status_lines += [""] * (max_status_lines - len(status_lines))
-        log_lines += [""] * (half_height - 3 - len(log_lines))
+        log_lines += [""] * ((height // 2) - 1 - len(log_lines))
 
         for i in range(height):
             left_content = " " * half_width
@@ -365,26 +368,26 @@ class TerminalDashboard:
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
-            elif i < half_height - 1:
+            elif i < (height // 2) - 1:
                 if i - 2 < len(status_lines):
                     left_content = status_lines[i - 2]
                 if i - 2 < len(train_chart):
                     right_content = train_chart[i - 2]
-            elif i == half_height - 1:
+            elif i == (height // 2) - 1:
                 left_content = "═" * half_width
                 right_content = "═" * right_width
-            elif i == half_height:
+            elif i == (height // 2):
                 val_loss = self.val_losses[-1] if self.val_losses else 0
                 left_content = self._visual_ljust(f" SIGN: {val_loss:.4f}", half_width)
                 right_content = self._visual_ljust(" LOG", right_width)
-            elif i == half_height + 1:
+            elif i == (height // 2) + 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
-            elif i > half_height + 1:
-                chart_index = i - half_height - 2
+            elif i > (height // 2) + 1:
+                chart_index = i - (height // 2) - 2
                 if chart_index < len(val_chart):
                     left_content = val_chart[chart_index]
-                log_index = i - half_height - 2
+                log_index = i - (height // 2) - 2
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
 
@@ -404,10 +407,16 @@ class TerminalDashboard:
 
         with self.lock:
             elapsed = self.hours_since()
+            footer_text = (
+                f"  PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | "
+                f"RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, "
+                f"RATE: {self.rate:.2f}s | {self.local_experts} local experts, "
+                f"{self.remote_experts} remote | {self.url}"
+            )
             frame.append(
                 self._truncate_to_width(
-                    f"\n PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, RATE: {self.rate:.2f}s | {self.local_experts} local experts, {self.remote_experts} remote | {self.url}",
-                    width,
+                    footer_text,
+                    width,  # Use 'width' instead of 'current_size.columns' to match frame
                 )
             )
 

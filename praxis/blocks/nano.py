@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+import math
 import time
 from typing import Optional
 from dataclasses import dataclass
@@ -58,71 +59,68 @@ class PraxisNano(nn.Module):
 
 
 class ElasticLinear(nn.Module):
-    def __init__(
-        self, in_features, out_features, std=0.0002, causal=False, *args, **kwargs
-    ):
+    def __init__(self, in_features, out_features, causal=False):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.std = std
         self.causal = causal
 
+        # Initialize base weight matrix
         self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
-        self.bias = nn.Parameter(torch.Tensor(1))
-        self.alpha = nn.Parameter(torch.Tensor(1))
+        self.bias = nn.Parameter(torch.Tensor(out_features))
         self.reset_parameters()
+
+    def reset_parameters(self):
+        # Initialize with Kaiming uniform
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+        bound = 1 / math.sqrt(fan_in)
+        nn.init.uniform_(self.bias, -bound, bound)
+
+        if self.causal:
+            with torch.no_grad():
+                self.weight.data.copy_(torch.tril(self.weight.data))
+
+    def _interpolate_weights(self, in_features):
+        """Elastically interpolate weights along the input dimension only."""
+        if in_features == self.in_features:
+            return self.weight
+
+        # Reshape weight for 1D interpolation
+        weights_reshaped = self.weight.unsqueeze(0)  # Add batch dim
+
+        # Use scale_factor for interpolation
+        interpolated = F.interpolate(
+            weights_reshaped,
+            size=[in_features],
+            mode="linear",
+            align_corners=True,
+        ).squeeze(0)
+
+        # Apply causal mask if needed
+        if self.causal:
+            causal_mask = torch.tril(torch.ones_like(interpolated))
+            causal_mask = causal_mask / (
+                torch.sum(causal_mask, dim=1, keepdim=True) + 1e-8
+            )
+            interpolated = interpolated * causal_mask
+
+        return interpolated
 
     def forward(self, x):
         # x shape: (batch_size, in_features, seq_len)
-        in_features = x.size(1)
-        out_features = self.out_features
+        batch_size, in_features, seq_len = x.shape
 
-        adjusted_weights = self._adjust_weight_matrix(in_features, out_features)
-        # adjusted_weights: (out_features, in_features)
-
-        if self.causal:
-            mask = torch.tril(
-                torch.ones_like(adjusted_weights, dtype=torch.float32, device=x.device)
-            )
-            mask_normalized = mask / mask.sum(dim=1, keepdim=True)
-            adjusted_weights = adjusted_weights * mask_normalized
+        # Get interpolated weights
+        adjusted_weight = self._interpolate_weights(in_features)
 
         # Perform batch matrix multiplication
-        output = torch.matmul(adjusted_weights, x)
-        # output shape: (batch_size, out_features, seq_len)
+        output = torch.matmul(adjusted_weight, x)
+
+        # Add bias
+        output = output + self.bias.view(-1, 1)
+
         return output
-
-    def reset_parameters(self):
-        nn.init.xavier_uniform_(self.weight)
-        nn.init.zeros_(self.bias)
-        nn.init.ones_(self.alpha)
-
-    def _adjust_weight_matrix(self, in_features, out_features):
-        # Adjust the weight matrix to match in_features and out_features
-        weight = self.weight
-
-        # Generate random noise
-        noise = (
-            torch.randn(out_features, in_features, device=weight.device)
-            * self.std
-            * self.alpha
-        )
-
-        if in_features <= self.in_features and out_features <= self.out_features:
-            # Slice self.weight to match in_features and out_features
-            adjusted_weight = weight[:out_features, :in_features]
-        else:
-            # Pad self.weight with zeros to match in_features and out_features
-            pad_in = max(0, in_features - self.in_features)
-            pad_out = max(0, out_features - self.out_features)
-            # Padding: (left, right, top, bottom)
-            padding = (0, pad_in, 0, pad_out)
-            adjusted_weight = F.pad(weight, padding, "constant", 0)
-
-        # Add random noise to all weights being used
-        adjusted_weights = adjusted_weight + self.bias + noise
-
-        return adjusted_weights
 
 
 if __name__ == "__main__":
@@ -310,9 +308,8 @@ if __name__ == "__main__":
         print(f"Input shape: {x.shape}")
         print(f"Output shape: {out.shape}")
         print(
-            f"Adjusted weight matrix shape: {model._adjust_weight_matrix(input_dim, base_out_features).shape}"
+            f"Adjusted weight matrix shape: {model._interpolate_weights(input_dim).shape}"
         )
-        print(f"Padding scale (alpha): {model.alpha.item():.4f}")
         assert out.shape == (
             batch_dim,
             base_out_features,
