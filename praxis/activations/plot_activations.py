@@ -17,15 +17,15 @@ activation_functions = {
     # "JaggedSine": activations.JaggedSine(
     #     frequencies=[1.0, 2.3, 5.9], amplitudes=[1.0, 0.1, 0.23]
     # ),
-    "JaggedSine": activations.JaggedSine(
-        frequencies=[random.uniform(-2, 2) for _ in range(9)],
-        amplitudes=[random.uniform(-2, 2) for _ in range(9)],
-    ),
+    # "JaggedSine": activations.JaggedSine(
+    #     frequencies=[random.uniform(-2, 2) for _ in range(9)],
+    #     amplitudes=[random.uniform(-2, 2) for _ in range(9)],
+    # ),
     # "NMDA": NMDA(),
     # "SERF": SERF(),
     # "SinLU": SinLU(),
     "Sine": activations.Sine(),
-    # "SineCosine": activations.SineCosine(),
+    "SineCosine": activations.SineCosine(),
     "PeriodicReLU": activations.PeriodicReLU(),
 }
 

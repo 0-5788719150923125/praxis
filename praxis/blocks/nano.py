@@ -3,10 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import math
-import time
 from typing import Optional
-from dataclasses import dataclass
-import random
 from praxis.modules.dense import PraxisMLP, PraxisGLU
 from praxis.activations import ACT2FN, ACT2CLS
 
@@ -21,24 +18,28 @@ class PraxisNano(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
-        # projection = int(hidden_dim * 2.0)
         bottleneck = int(hidden_dim * 0.5)
 
         # Define the weight matrices with maximum sequence length
         self.fft_norm = nn.LayerNorm(hidden_dim)
         self.fft = nn.Sequential(
             ElasticLinear(
-                in_features=bottleneck, out_features=bottleneck, causal=config.causal
+                in_features=bottleneck,
+                out_features=bottleneck,
+                reduction=0.5,
+                causal=config.causal,
             ),
-            # ACT2FN["periodic_relu"],
             nn.Dropout(config.dropout),
             ElasticLinear(
-                in_features=bottleneck, out_features=hidden_dim, causal=config.causal
+                in_features=bottleneck,
+                out_features=hidden_dim,
+                reduction=0.5,
+                causal=config.causal,
             ),
         )
 
         # Feed-forward network with sine activation
-        config.activation = "sin_cos"
+        config.activation = "sin"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
         self.ffw = PraxisGLU(config)
 
@@ -59,71 +60,59 @@ class PraxisNano(nn.Module):
 
 
 class ElasticLinear(nn.Module):
-    def __init__(self, in_features, out_features, causal=False):
+    def __init__(self, in_features, out_features, reduction=0.5, causal=False):
         super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
         self.causal = causal
-
-        # Initialize base weight matrix
-        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        # Initialize with smaller dimension to force interpolation
+        bottleneck = int(min(in_features, out_features) * reduction)
+        self.weight = nn.Parameter(torch.Tensor(out_features, bottleneck))
         self.bias = nn.Parameter(torch.Tensor(out_features))
         self.reset_parameters()
 
-    def reset_parameters(self):
-        # Initialize with Kaiming uniform
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
-        bound = 1 / math.sqrt(fan_in)
-        nn.init.uniform_(self.bias, -bound, bound)
-
-        if self.causal:
-            with torch.no_grad():
-                self.weight.data.copy_(torch.tril(self.weight.data))
-
-    def _interpolate_weights(self, in_features):
-        """Elastically interpolate weights along the input dimension only."""
-        if in_features == self.in_features:
-            return self.weight
-
-        # Reshape weight for 1D interpolation
-        weights_reshaped = self.weight.unsqueeze(0)  # Add batch dim
-
-        # Use scale_factor for interpolation
-        interpolated = F.interpolate(
-            weights_reshaped,
-            size=[in_features],
-            mode="linear",
-            align_corners=True,
-        ).squeeze(0)
-
-        # Apply causal mask if needed
-        if self.causal:
-            causal_mask = torch.tril(torch.ones_like(interpolated))
-            causal_mask = causal_mask / (
-                torch.sum(causal_mask, dim=1, keepdim=True) + 1e-8
-            )
-            interpolated = interpolated * causal_mask
-
-        return interpolated
-
     def forward(self, x):
         # x shape: (batch_size, in_features, seq_len)
-        batch_size, in_features, seq_len = x.shape
+        _, in_features, _ = x.shape
 
-        # Get interpolated weights
-        adjusted_weight = self._interpolate_weights(in_features)
+        # Always get interpolated weights
+        weights = self._interpolate_weights(in_features)
 
         # Perform batch matrix multiplication
-        output = torch.matmul(adjusted_weight, x)
+        output = torch.matmul(weights, x)
 
         # Add bias
         output = output + self.bias.view(-1, 1)
 
         return output
 
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+        nn.init.zeros_(self.bias)
+
+    def _interpolate_weights(self, in_features):
+        # Always interpolate since we're starting from a smaller base
+        weights_expanded = self.weight.unsqueeze(0)
+
+        interpolated = F.interpolate(
+            weights_expanded,
+            size=[in_features],
+            mode="linear",
+            align_corners=True,
+        ).squeeze(0)
+
+        if self.causal:
+            causal_mask = torch.tril(torch.ones_like(interpolated))
+            causal_mask = causal_mask / (torch.sum(causal_mask, dim=1, keepdim=True))
+            interpolated = interpolated * causal_mask
+
+        return interpolated
+
 
 if __name__ == "__main__":
+    import numpy as np
+    from dataclasses import dataclass
+    import random
+    import time
+
     # Mock AutoConfig class to simulate the configuration
     @dataclass
     class AutoConfig:
@@ -315,5 +304,63 @@ if __name__ == "__main__":
             base_out_features,
             time_dim,
         ), "Output shape mismatch"
+
+    def test_elastic_interpolation():
+        torch.manual_seed(42)  # For reproducibility
+
+        # Create a small example
+        in_features = 8
+        out_features = 16
+        model = ElasticLinear(in_features, out_features)
+
+        # The actual weight matrix will be [out_features, bottleneck]
+        # where bottleneck = min(in_features, out_features) // 2 = 4
+        print(f"Original weight shape: {model.weight.shape}")
+        print("\nOriginal weights (first 3 rows):")
+        print(model.weight[:3].detach().numpy())
+
+        # Create input that requires interpolation
+        x = torch.randn(1, in_features, 10)  # batch=1, seq_len=10
+
+        # Get interpolated weights
+        interpolated = model._interpolate_weights(in_features)
+        print(f"\nInterpolated weight shape: {interpolated.shape}")
+        print("\nInterpolated weights (first 3 rows):")
+        print(interpolated[:3].detach().numpy())
+
+        # Compare dimensions and values
+        print("\nComparison:")
+        print(
+            f"Original weights:    {model.weight.shape} -> min: {model.weight.min():.3f}, max: {model.weight.max():.3f}"
+        )
+        print(
+            f"Interpolated weights: {interpolated.shape} -> min: {interpolated.min():.3f}, max: {interpolated.max():.3f}"
+        )
+
+        # Show that values are actually different
+        if model.weight.shape[1] != interpolated.shape[1]:
+            print("\nDimension change detected!")
+            print(
+                f"Number of columns changed from {model.weight.shape[1]} to {interpolated.shape[1]}"
+            )
+
+        # Check if values are just being copied or actually interpolated
+        if model.weight.shape[1] < interpolated.shape[1]:
+            # Take a slice of the original and interpolated weights to compare
+            orig_slice = model.weight[0, :3].detach().numpy()
+            interp_slice = interpolated[0, :3].detach().numpy()
+            print("\nComparing first three values of first row:")
+            print(f"Original:     {orig_slice}")
+            print(f"Interpolated: {interp_slice}")
+
+            # Check if the values are truly interpolated (should be different)
+            is_different = not np.allclose(orig_slice, interp_slice)
+            print(
+                f"\nValues are {'different (interpolated)' if is_different else 'identical (copied)'}"
+            )
+
+    # Test 8: Interpolation Test
+    print("\nTest 8: Interpolation")
+    test_elastic_interpolation()
 
     print("\nAll tests completed!")
