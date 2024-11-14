@@ -186,7 +186,6 @@ class PraxisManagement:
         if new_expert.uid not in self.expert_uids:
             expert = PraxisExpert(
                 self.config,
-                self,
                 HivemindWrapper(new_expert),
                 self.router,
                 is_remote=True,

@@ -5,8 +5,30 @@ import torch.nn as nn
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.blocks import BLOCK_REGISTRY, EXPERT_CONFIGS, EXPERT_REGISTRY
+from praxis.modules.dense import PraxisGLU, PraxisMLP
+from praxis.modules.peer import PraxisPEER
+from praxis.modules.smear import PraxisSMEAR
 from praxis.modules.router import PraxisMixtureOfDepths
+
+EXPERT_REGISTRY = {
+    "mlp": PraxisMLP,
+    "glu": PraxisGLU,
+    "peer": PraxisPEER,
+    "smear": PraxisSMEAR,
+}
+
+EXPERT_CONFIGS = {
+    "mlp": {},
+    "glu": {},
+    "peer": {
+        "num_experts": 32**2,
+        "num_heads": 4,
+        "k": 8,
+        "key_dims": 90,
+        "offset_heads": False,
+    },
+    "smear": {"num_experts": 3},
+}
 
 
 class PraxisExpert(nn.Module):
@@ -19,7 +41,6 @@ class PraxisExpert(nn.Module):
     def __init__(
         self,
         config: AutoConfig,
-        manager: Optional = False,
         block: nn.Module = False,
         router: nn.Module = False,
         is_remote=False,
@@ -27,15 +48,7 @@ class PraxisExpert(nn.Module):
         super().__init__()
         self.sparse = config.sparse
         self.is_remote = is_remote
-        self.block = (
-            block
-            if block
-            else (
-                manager.register_expert(config)
-                if manager
-                else BLOCK_REGISTRY[config.block_type](config)
-            )
-        )
+        self.block = block
         if config.sparse:
             self.router = router if router else PraxisMixtureOfDepths(config)
 

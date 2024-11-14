@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import AutoConfig
 
+from praxis.blocks import BLOCK_REGISTRY
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
 from praxis.orchestration.hivemind import (
@@ -35,9 +36,19 @@ class PraxisDecoder(nn.Module):
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remote_experts = self.manager.active_remote_experts
-        self.local_experts = nn.ModuleList(
-            [PraxisExpert(config, self.manager) for _ in range(config.num_experts)]
-        )
+            self.local_experts = nn.ModuleList(
+                [
+                    PraxisExpert(config, self.manager.register_expert(config))
+                    for _ in range(config.num_experts)
+                ]
+            )
+        else:
+            self.local_experts = nn.ModuleList(
+                [
+                    PraxisExpert(config, BLOCK_REGISTRY[config.block_type](config))
+                    for _ in range(config.num_experts)
+                ]
+            )
         self.navigator = False
         if config.autopilot:
             self.navigator = PraxisController(config, len(self.local_experts) * 3)

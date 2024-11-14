@@ -8,29 +8,8 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.attention import PraxisAttention
-from praxis.modules.dense import PraxisGLU, PraxisMLP
-from praxis.modules.peer import PraxisPEER
-from praxis.modules.smear import PraxisSMEAR
+from praxis.modules.experts import EXPERT_REGISTRY
 
-EXPERT_REGISTRY = {
-    "mlp": PraxisMLP,
-    "glu": PraxisGLU,
-    "peer": PraxisPEER,
-    "smear": PraxisSMEAR,
-}
-
-EXPERT_CONFIGS = {
-    "peer": {
-        "num_experts": 32**2,
-        "num_heads": 4,
-        "k": 8,
-        "key_dims": 90,
-        "offset_heads": False,
-    },
-    "smear": {"num_experts": 3},
-    "glu": {},
-    "mlp": {},
-}
 
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 

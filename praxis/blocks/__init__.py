@@ -1,4 +1,4 @@
-from praxis.blocks.transformer import PraxisBlock, EXPERT_REGISTRY, EXPERT_CONFIGS
+from praxis.blocks.transformer import PraxisBlock
 from praxis.blocks.nano import PraxisNano
 from praxis.blocks.conv import PraxisConv
 
