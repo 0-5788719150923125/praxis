@@ -59,23 +59,22 @@ class PraxisExpert(nn.Module):
         # because we would otherwise break gradient flow
         residual = inputs
         aux_losses = []
+        inputs = inputs.to("cpu")
+        attention_mask = attention_mask.to("cpu")
         if use_router:
-            hidden_states, aux_loss = self.router(
-                self.block, inputs, attention_mask, safe_grad=True
-            )
+            hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
             # because hivemind cannot receive undefined arguments in the forward pass
             dummy_router_weights = torch.zeros_like(inputs)
             dummy_token_indices = torch.zeros_like(attention_mask, dtype=torch.int64)
             # because we do not backpropagate through remote experts
-            with torch.no_grad():
-                hidden_states = self.block(
-                    inputs.to("cpu"),
-                    attention_mask.to("cpu"),
-                    dummy_router_weights.to("cpu"),
-                    dummy_token_indices.to("cpu"),
-                ).to(residual.device)
+            hidden_states = self.block(
+                inputs,
+                attention_mask,
+                dummy_router_weights,
+                dummy_token_indices,
+            )
         # TODO: we could possibly add some differentiable noise here; perhaps as a penalty on slow experts?
-        hidden_states = hidden_states + residual
+        hidden_states = hidden_states.to(residual.device) + residual
         return hidden_states, sum(aux_losses)

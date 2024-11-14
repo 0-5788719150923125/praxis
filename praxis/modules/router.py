@@ -20,9 +20,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             self.capacity > 0 and self.capacity < 1.0
         ), "'capacity' must be set to a value between 0 and 1."
 
-    def forward(
-        self, layer: nn.Module, inputs: Tensor, attention_mask: Tensor, safe_grad=False
-    ):
+    def forward(self, layer: nn.Module, inputs: Tensor, attention_mask: Tensor):
 
         b, s, d = inputs.shape
         k = int(s * self.capacity)
@@ -61,26 +59,15 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        if safe_grad:
-            # we do not perform backpropagation when sending to remote/hivemind experts
-            # TODO: there is almost certainly a better way to write this code
-            with torch.no_grad():
-                layer_outputs = layer(
-                    filtered_inputs.to("cpu"),
-                    filtered_attention_mask.to("cpu"),
-                    token_weights.to("cpu"),
-                    squeezed_indices.to("cpu"),
-                ).to(inputs.device)
-        else:
-            layer_outputs = layer(
-                filtered_inputs,
-                filtered_attention_mask,
-                token_weights,
-                squeezed_indices,
-            )
+        layer_outputs = layer(
+            filtered_inputs,
+            filtered_attention_mask,
+            token_weights,
+            squeezed_indices,
+        )
 
         # reintegrate the processed tokens with our residual stream
-        outputs = torch.scatter(
+        outputs = torch.scatter_add(
             input=inputs,
             dim=1,
             index=indices_expanded,

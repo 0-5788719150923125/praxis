@@ -65,18 +65,18 @@ class ElasticLinear(nn.Module):
         # Initialize with smaller dimensions to force interpolation
         bottleneck_dim = int(features * bottleneck)
         self.weight = nn.Parameter(torch.Tensor(features, bottleneck_dim))
-        self.bias = nn.Parameter(torch.Tensor(features))
+        # self.bias = nn.Parameter(torch.Tensor(features))
         self.reset_parameters()
 
     def forward(self, x):
         # x shape: (batch_size, features, seq_len)
         _, features, _ = x.shape
         weights = self._interpolate_weights(features)
-        return torch.matmul(weights, x) + self.bias.view(-1, 1)
+        return torch.matmul(weights, x)  # + self.bias.view(-1, 1)
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.weight)
-        nn.init.zeros_(self.bias)
+        # nn.init.zeros_(self.bias)
 
     def _interpolate_weights(self, features):
         # Always interpolate since we're starting from a smaller base

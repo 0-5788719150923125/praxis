@@ -48,10 +48,10 @@ class PraxisManagement:
         # print(f"Received public IP address of this machine: {address}")
         # version = ip_address(address).version
         # announce_maddrs = [f"/ip{version}/{address}/tcp/0"]
-        self.use_ipfs = True
+        self.use_ipfs = False
         self.dht = DHT(
-            # initial_peers=PUBLIC_INITIAL_PEERS,
-            initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
+            initial_peers=PUBLIC_INITIAL_PEERS,
+            # initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
             # initial_peers=PUBLIC_INITIAL_PEERS + config.initial_peers,
             # initial_peers=config.initial_peers,
             host_maddrs=["/ip4/0.0.0.0/tcp/0", "/ip4/0.0.0.0/udp/0/quic"],
@@ -159,22 +159,25 @@ class PraxisManagement:
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
     def _generate_unique_name(self, k=3, run_once=False):
-        new_name = self._generate_random_name(self.pool_size)
-        try:
+        attempts = 0
+        MAX_ATTEMPTS = 100
+        while True:
+            if attempts >= MAX_ATTEMPTS:
+                self.pool_size += 1
+                print(
+                    f"Exceeded max attempts when trying to generate a unique expert name. "
+                    f"Expanding the pool size to: {self.pool_size}"
+                )
+                attempts = 0  # Reset attempts after increasing pool size
+            new_name = self._generate_random_name(self.pool_size)
+            attempts += 1
             if new_name in self.expert_uids:
-                return self._generate_unique_name(self.pool_size, run_once)
+                continue
             new_expert = get_experts(self.dht, [new_name])[0]
             if isinstance(new_expert, RemoteExpert) and not run_once:
-                return self._generate_unique_name(self.pool_size, run_once)
+                continue
             else:
                 return new_name, new_expert
-        except RecursionError as e:
-            self.pool_size += 1
-            print(
-                f"Caught a RecursionError when trying to generate a unique expert name. Expanding the pool size to: {self.pool_size}"
-            )
-            # TODO: this doesn't work right; it can fire a hundred times before succeeding - which makes the pool much too large
-            return self._generate_unique_name(self.pool_size, run_once)
 
     def _search_for_experts(self):
         _, new_expert = self._generate_unique_name(self.pool_size, run_once=True)
@@ -182,7 +185,11 @@ class PraxisManagement:
             return
         if new_expert.uid not in self.expert_uids:
             expert = PraxisExpert(
-                self.config, self, new_expert, self.router, is_remote=True
+                self.config,
+                self,
+                HivemindWrapper(new_expert),
+                self.router,
+                is_remote=True,
             )
             self.active_remote_experts.append(expert)
             self.expert_uids.append(new_expert.uid)
@@ -193,6 +200,25 @@ class PraxisManagement:
                 f"{uid} slid into the hivemind!",
             ]
             print(random.choice(messages))
+
+
+class HivemindWrapper:
+    """
+    Ensures that gradients are not computed for remote experts.
+    """
+
+    def __init__(self, module):
+        self.module = module
+
+    @torch.no_grad()
+    def forward(self, *args, **kwargs):
+        return self.module.forward(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self.module, name)
 
 
 PUBLIC_INITIAL_PEERS = [
