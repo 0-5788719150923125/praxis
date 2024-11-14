@@ -168,9 +168,9 @@ class ScaledDotProduct(nn.Module):
 
     def compute_weights(self, v, scores, mask: Optional[Tensor] = None):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
-        return self._compute_values(weights[0], v)
+        return self._compute_outputs(weights[0], v)
 
-    def _compute_values(self, weights, v):
+    def _compute_outputs(self, weights, v):
         # Compute attention output
         return weights @ v  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
@@ -215,10 +215,10 @@ class Differential(ScaledDotProduct):
             + self.lambda_init
         )
         weights = weights[0] - lambda_scalar * weights[1]
-        weights = self._compute_values(weights, v)
-        return self._normalize_weights(weights)
+        outputs = self._compute_outputs(weights, v)
+        return self._normalize_outputs(outputs)
 
-    def _normalize_weights(self, weights):
+    def _normalize_outputs(self, weights):
         batch_size, num_heads, seq_len, head_dim = weights.shape
         # Reshape for GroupNorm
         attention_output = (
@@ -251,9 +251,11 @@ class Stickbreaking(ScaledDotProduct):
         super().__init__(config)
         self.register_buffer("key_history", None)
         self.register_buffer("value_history", None)
+        self.capacity = config.capacity
+        self.use_history = True
 
     def compute_scores(self, q, k, v):
-        if self.training:
+        if self.training and self.use_history:
             k, v = self._update_history(k, v)
         return super().compute_scores(q, k, v)
 
@@ -281,19 +283,20 @@ class Stickbreaking(ScaledDotProduct):
         # Final attention weights
         weights = self.dropout(z * re_cum_log_beta.exp())
 
-        return self._compute_values(weights, v)
+        return self._compute_outputs(weights, v)
 
-    @staticmethod
-    @torch.jit.script
-    def _get_cum_weight(hist_len: int, device: torch.device) -> torch.Tensor:
-        return torch.tril(torch.ones(hist_len, hist_len, device=device))
+    def _get_random_slice(self, tensor: Tensor) -> Tensor:
+        """Get random slice of history with size history_slice_size"""
+        _, _, seq_len, _ = tensor.shape
+        seg_len = int(seq_len * self.capacity)
+        if seq_len <= seg_len:
+            return tensor
+
+        # Random starting point that ensures we can get history_slice_size tokens
+        start_idx = torch.randint(0, seq_len - seg_len + 1, (1,)).item()
+        return tensor[:, :, start_idx : start_idx + seg_len, :]
 
     def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
-        """
-        Update and return concatenated history for keys and values.
-        Uses batch size as primary decision metric for history management,
-        since larger batches correspond to smaller sequences that we want to concatenate.
-        """
         # First forward pass - initialize history
         if self.key_history is None or self.value_history is None:
             self.key_history = k.detach()
@@ -316,10 +319,15 @@ class Stickbreaking(ScaledDotProduct):
             self.value_history = v.detach()
             return k, v
 
-        # At this point batch sizes match, safe to concatenate
         try:
-            new_k = torch.cat([self.key_history, k], dim=2)
-            new_v = torch.cat([self.value_history, v], dim=2)
+            # Get random slice from history
+            hist_k = self._get_random_slice(self.key_history)
+            hist_v = self._get_random_slice(self.value_history)
+
+            # Concatenate [history slice, current sequence]
+            new_k = torch.cat([hist_k, k], dim=2)
+            new_v = torch.cat([hist_v, v], dim=2)
+
         except RuntimeError:
             # Safety fallback
             self.key_history = k.detach()
@@ -331,3 +339,47 @@ class Stickbreaking(ScaledDotProduct):
         self.value_history = new_v.detach()
 
         return new_k, new_v
+
+    # def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+    #     """
+    #     Update and return concatenated history for keys and values.
+    #     Uses batch size as primary decision metric for history management,
+    #     since larger batches correspond to smaller sequences that we want to concatenate.
+    #     """
+    #     # First forward pass - initialize history
+    #     if self.key_history is None or self.value_history is None:
+    #         self.key_history = k.detach()
+    #         self.value_history = v.detach()
+    #         return k, v
+
+    #     # Get current and history batch sizes
+    #     curr_batch = k.size(0)
+    #     hist_batch = self.key_history.size(0)
+
+    #     # If current batch is smaller than history batch,
+    #     # this means we have a longer sequence - return unmodified
+    #     if curr_batch < hist_batch:
+    #         return k, v
+
+    #     # If current batch is larger than history batch,
+    #     # this means we have shorter sequences - reset history
+    #     if curr_batch > hist_batch:
+    #         self.key_history = k.detach()
+    #         self.value_history = v.detach()
+    #         return k, v
+
+    #     # At this point batch sizes match, safe to concatenate
+    #     try:
+    #         new_k = torch.cat([self.key_history, k], dim=2)
+    #         new_v = torch.cat([self.value_history, v], dim=2)
+    #     except RuntimeError:
+    #         # Safety fallback
+    #         self.key_history = k.detach()
+    #         self.value_history = v.detach()
+    #         return k, v
+
+    #     # Update history
+    #     self.key_history = new_k.detach()
+    #     self.value_history = new_v.detach()
+
+    #     return new_k, new_v
