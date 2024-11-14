@@ -127,22 +127,19 @@ class PraxisAttention(nn.Module):
         scores = [score + attention_mask for score in scores]
 
         # Compute attention weights
-        weights = self.algorithm.compute_weights(scores, causal_mask)
-
-        # Compute attention output
-        outputs = self.algorithm.compute_outputs(weights, v)
+        weights = self.algorithm.compute_weights(v, scores, causal_mask)
 
         # Add memory-based attention
         if self.use_memory:
-            outputs = self.memory(inputs, q, k, v, outputs)
+            weights = self.memory(inputs, q, k, v, weights)
 
         # Reshape for output projection
-        outputs = outputs.transpose(1, 2).reshape(
+        weights = weights.transpose(1, 2).reshape(
             batch_size, seq_len, self.hidden_size
         )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
         # Output projection
-        return self.output(outputs)
+        return self.output(weights)
 
 
 class ScaledDotProduct(nn.Module):
@@ -169,11 +166,11 @@ class ScaledDotProduct(nn.Module):
         scores = [self._compute_score(q, k)]
         return q, k, v, scores
 
-    def compute_weights(self, scores, mask: Optional[Tensor] = None):
+    def compute_weights(self, v, scores, mask: Optional[Tensor] = None):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
-        return weights[0]
+        return self._compute_values(weights[0], v)
 
-    def compute_outputs(self, weights, v):
+    def _compute_values(self, weights, v):
         # Compute attention output
         return weights @ v  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
@@ -209,7 +206,7 @@ class Differential(ScaledDotProduct):
         scores = [self._compute_score(Q1, K1), self._compute_score(Q2, K2)]
         return q, k, v, scores
 
-    def compute_weights(self, scores, mask: Optional[Tensor] = None):
+    def compute_weights(self, v, scores, mask: Optional[Tensor] = None):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
         # Compute scalar lambda
         lambda_scalar = (
@@ -217,15 +214,15 @@ class Differential(ScaledDotProduct):
             - torch.exp(torch.dot(self.lambdas["q2"], self.lambdas["k2"]))
             + self.lambda_init
         )
-        attention_weights = weights[0] - lambda_scalar * weights[1]
-        return attention_weights
+        weights = weights[0] - lambda_scalar * weights[1]
+        weights = self._compute_values(weights, v)
+        return self._normalize_weights(weights)
 
-    def compute_outputs(self, weights, v):
-        outputs = super().compute_outputs(weights, v)
-        batch_size, num_heads, seq_len, head_dim = outputs.shape
+    def _normalize_weights(self, weights):
+        batch_size, num_heads, seq_len, head_dim = weights.shape
         # Reshape for GroupNorm
         attention_output = (
-            outputs.permute(0, 2, 1, 3)
+            weights.permute(0, 2, 1, 3)
             .reshape(batch_size, seq_len, num_heads * head_dim)
             .permute(0, 2, 1)
             .contiguous()
@@ -261,7 +258,7 @@ class Stickbreaking(ScaledDotProduct):
         return super().compute_scores(q, k, v)
 
     def compute_weights(
-        self, scores: List[Tensor], mask: Optional[Tensor] = None
+        self, v, scores: List[Tensor], mask: Optional[Tensor] = None
     ) -> Tensor:
         logits = scores[0]
         batch_size, num_heads, seq_len, hist_len = logits.shape
@@ -282,9 +279,9 @@ class Stickbreaking(ScaledDotProduct):
         )
 
         # Final attention weights
-        att = self.dropout(z * re_cum_log_beta.exp())
+        weights = self.dropout(z * re_cum_log_beta.exp())
 
-        return att
+        return self._compute_values(weights, v)
 
     @staticmethod
     @torch.jit.script

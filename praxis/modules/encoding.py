@@ -19,7 +19,7 @@ class NoPE(nn.Module):
         self.num_heads = config.num_heads
         self.head_dim = config.num_dims // config.num_heads
         # Initialize scaling factors - one per head with linspace
-        self.head_scales = nn.Parameter(torch.linspace(0.8, 1.2, self.num_heads))
+        self.head_scales = nn.Parameter(torch.linspace(1.2, 1.2, self.num_heads))
 
     def before_scores(self, q, k, v):
         # Get base scaling factor

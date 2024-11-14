@@ -67,7 +67,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # reintegrate the processed tokens with our residual stream
-        outputs = torch.scatter_add(
+        outputs = torch.scatter(
             input=inputs,
             dim=1,
             index=indices_expanded,
