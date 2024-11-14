@@ -96,7 +96,7 @@ class PraxisAttention(nn.Module):
         )
 
         # Pre-scoring positional encoding
-        q, k, v = self.encoding.before_scores(q, k, v)
+        q, k, v = self.encoding.before_scores(q, k, v, token_indices)
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
@@ -159,8 +159,8 @@ class ScaledDotProduct(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def _compute_score(self, q, k):
-        reciprocal = 1.0 / math.sqrt(self.head_dim)
-        return torch.matmul(q, k.transpose(-2, -1)) * reciprocal
+        scaling = 1.0 / math.sqrt(self.head_dim)
+        return torch.matmul(q, k.transpose(-2, -1)) * scaling
 
     def compute_scores(self, q, k, v):
         scores = [self._compute_score(q, k)]

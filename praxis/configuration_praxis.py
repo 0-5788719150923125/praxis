@@ -17,7 +17,7 @@ class PraxisConfig(PretrainedConfig):
         epsilon=1e-5,
         capacity=0.125,
         vocab_size=4096,
-        context_length=4096,
+        context_length=2048,
         activation="serf",
         block="transformer",
         expert="glu",
