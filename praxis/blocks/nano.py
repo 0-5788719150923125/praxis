@@ -14,6 +14,8 @@ class PraxisNano(nn.Module):
     https://github.com/timurgepard/nanoFFT
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
