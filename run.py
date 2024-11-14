@@ -726,7 +726,7 @@ class TerminalInterface(Callback):
                 eta_cutoff=0.002,
                 penalty_alpha=0.6,
                 top_k=4,
-                repetition_penalty=1.35,
+                repetition_penalty=1.1,
                 suppress_tokens=[
                     tokenizer.eos_token_id,
                     tokenizer.pad_token_id,
