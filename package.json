@@ -2,11 +2,6 @@
   "name": "praxis",
   "version": "0.1.0",
   "description": "as above, so below",
-  "source": "web/index.html",
-  "scripts": {
-    "start": "parcel",
-    "build": "parcel build --dist-dir templates --no-content-hash"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/0-5788719150923125/praxis.git"
@@ -18,15 +13,10 @@
   },
   "homepage": "https://src.eco",
   "devDependencies": {
-    "parcel": "^2.12.0",
-    "prettier": "^3.3.3",
-    "process": "^0.11.10"
+    "prettier": "^3.3.3"
   },
   "dependencies": {
-    "@xyflow/react": "^12.3.2",
-    "gun": "^0.2020.1240",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "gun": "^0.2020.1240"
   },
   "prettier": {
     "semi": false,
