@@ -12,11 +12,9 @@ from praxis.modules.memory import PraxisMemory
 
 class PraxisAttention(nn.Module):
     """
-    We implement Differential Attention, to filter the noise from attention maps:
-    https://arxiv.org/abs/2410.05258
-
-    We implement ALiBi for length extrapolation, to keep parameter counts low:
-    https://arxiv.org/abs/2108.12409
+    This class is akin a wrapper, which implements a number of interesting attention
+    mechanisms, and makes them optional with feature flags. By toggling features, one can
+    essentially blend components from various kinds of attention.
     """
 
     __version__ = "0.1.0"
@@ -25,7 +23,6 @@ class PraxisAttention(nn.Module):
         super().__init__()
         self.causal = config.causal
         self.differential = config.differential
-        self.max_seq_len = config.context_length
         self.hidden_size = config.num_dims
         self.num_heads = config.num_heads
         self.head_dim = self.hidden_size // self.num_heads
@@ -46,23 +43,18 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
 
-        # Force exploration of attention subnetworks
-        self.dropout = nn.Dropout(config.dropout)
-
-        # Lambda vectors per differential head and per head
+        # The core attention mechanism
         if self.differential:
-            self.lambda_init = 0.8  # A good default, per the paper
-            self.lambdas = nn.ParameterDict(
-                dict(
-                    q1=nn.Parameter(torch.randn(self.head_dim)),
-                    q2=nn.Parameter(torch.randn(self.head_dim)),
-                    k1=nn.Parameter(torch.randn(self.head_dim)),
-                    k2=nn.Parameter(torch.randn(self.head_dim)),
-                )
-            )
-            self.norm = nn.GroupNorm(
-                num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
-            )
+            self.algorithm = Differential(config)
+        else:
+            self.algorithm = ScaledDotProduct(config)
+
+        # For handling length extrapolation
+        self.alibi = True
+        if self.alibi:
+            self.encoding = ALiBi(config)
+        else:
+            self.encoding = NoPE(config)
 
         # Add memory-related parameters
         self.use_memory = config.memory
@@ -72,13 +64,6 @@ class PraxisAttention(nn.Module):
         # Standard output projection
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
-        )
-
-        # Pre-compute the ALiBi slopes
-        slopes = 2 ** (-8 * torch.arange(1, self.num_heads + 1) / self.num_heads)
-        self.register_buffer("slopes", slopes)
-        self.register_buffer(
-            "positions", torch.arange(self.max_seq_len, dtype=torch.float32)
         )
 
     def forward(
@@ -104,32 +89,11 @@ class PraxisAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        reciprocal = 1.0 / math.sqrt(self.head_dim)
-        if self.differential:
-            # Split queries and keys
-            Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
-            K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
+        # Compute attention scores
+        scores = self.algorithm.compute_scores(q, k)
 
-            # Compute differential attention scores
-            scores = [
-                torch.matmul(Q1, K1.transpose(-2, -1)) * reciprocal,
-                torch.matmul(Q2, K2.transpose(-2, -1)) * reciprocal,
-            ]
-        else:
-            # Compute attention scores
-            scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
-
-        # Compute ALiBi biases
-        if torch.is_tensor(token_indices):
-            positions = self.positions[token_indices]
-        else:
-            positions = (
-                self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
-            )
-
-        pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
-        biases = self.slopes.view(1, self.num_heads, 1, 1) * pos_diff.unsqueeze(1)
-        scores = [score - biases for score in scores]
+        # Compute positional encoding
+        scores = self.encoding(scores, token_indices)
 
         # Apply masks
         if self.causal:
@@ -147,53 +111,169 @@ class PraxisAttention(nn.Module):
         scores = [score + attention_mask for score in scores]
 
         # Compute attention weights
-        weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
-
-        # Compute attention weights
-        attention_weights = weights[0]
-        if self.differential:
-            # Compute scalar lambda
-            lambda_scalar = (
-                torch.exp(torch.dot(self.lambdas["q1"], self.lambdas["k1"]))
-                - torch.exp(torch.dot(self.lambdas["q2"], self.lambdas["k2"]))
-                + self.lambda_init
-            )
-            attention_weights = weights[0] - lambda_scalar * weights[1]
+        weights = self.algorithm.compute_weights(scores)
 
         # Compute attention output
-        attention_output = (
-            attention_weights @ v
-        )  # Shape: (batch_size, num_heads, seq_len, head_dim)
-
-        # Use differential attention
-        if self.differential:
-            # Reshape for GroupNorm
-            attention_output = (
-                attention_output.permute(0, 2, 1, 3)
-                .reshape(batch_size, seq_len, self.num_heads * self.head_dim)
-                .permute(0, 2, 1)
-                .contiguous()
-            )  # Shape: (batch_size, num_heads * head_dim, seq_len)
-            # Apply GroupNorm
-            attention_output = self.norm(attention_output)
-            # Permute to original shape
-            attention_output = (
-                attention_output.permute(0, 2, 1)
-                .view(batch_size, seq_len, self.num_heads, self.head_dim)
-                .permute(0, 2, 1, 3)
-                .contiguous()
-            )  # Shape: (batch_size, num_heads, seq_len, head_dim)
-            # Apply scaling factor
-            attention_output = attention_output * (1 - self.lambda_init)
+        outputs = self.algorithm.compute_outputs(weights, v)
 
         # Add memory-based attention
         if self.use_memory:
-            attention_output = self.memory(inputs, q, k, v, attention_output)
+            outputs = self.memory(inputs, q, k, v, outputs)
 
         # Reshape for output projection
-        attention_output = attention_output.transpose(1, 2).reshape(
+        outputs = outputs.transpose(1, 2).reshape(
             batch_size, seq_len, self.hidden_size
         )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
         # Output projection
-        return self.output(attention_output)
+        return self.output(outputs)
+
+
+class ScaledDotProduct(nn.Module):
+    """
+    This class implements scaled dot-product attention:
+    https://paperswithcode.com/method/scaled
+    """
+
+    __version__ = "0.1.0"
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+        self.hidden_size = config.num_dims
+        self.num_heads = config.num_heads
+        self.head_dim = self.hidden_size // self.num_heads
+        # Force exploration of attention subnetworks
+        self.dropout = nn.Dropout(config.dropout)
+
+    def compute_scores(self, q, k):
+        reciprocal = 1.0 / math.sqrt(self.head_dim)
+        scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
+        return scores
+
+    def compute_weights(self, scores):
+        weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
+        return weights[0]
+
+    def compute_outputs(self, weights, v):
+        # Compute attention output
+        return weights @ v  # Shape: (batch_size, num_heads, seq_len, head_dim)
+
+
+class Differential(ScaledDotProduct):
+    """
+    This class implements Differential Attention, to filter the noise from attention maps:
+    https://arxiv.org/abs/2410.05258
+    """
+
+    __version__ = "0.1.0"
+
+    def __init__(self, config: AutoConfig):
+        super().__init__(config)
+        self.lambda_init = 0.8  # A good default, per the paper
+        self.lambdas = nn.ParameterDict(
+            dict(
+                q1=nn.Parameter(torch.randn(self.head_dim)),
+                q2=nn.Parameter(torch.randn(self.head_dim)),
+                k1=nn.Parameter(torch.randn(self.head_dim)),
+                k2=nn.Parameter(torch.randn(self.head_dim)),
+            )
+        )
+        self.norm = nn.GroupNorm(
+            num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
+        )
+
+    def compute_scores(self, q, k):
+        # Split queries and keys
+        Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
+        K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
+        # Compute differential attention scores
+        reciprocal = 1.0 / math.sqrt(self.head_dim)
+        scores = [
+            torch.matmul(Q1, K1.transpose(-2, -1)) * reciprocal,
+            torch.matmul(Q2, K2.transpose(-2, -1)) * reciprocal,
+        ]
+        return scores
+
+    def compute_weights(self, scores):
+        weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
+        # Compute scalar lambda
+        lambda_scalar = (
+            torch.exp(torch.dot(self.lambdas["q1"], self.lambdas["k1"]))
+            - torch.exp(torch.dot(self.lambdas["q2"], self.lambdas["k2"]))
+            + self.lambda_init
+        )
+        attention_weights = weights[0] - lambda_scalar * weights[1]
+        return attention_weights
+
+    def compute_outputs(self, weights, v):
+        outputs = super().compute_outputs(weights, v)
+        batch_size, num_heads, seq_len, head_dim = outputs.shape
+        # Reshape for GroupNorm
+        attention_output = (
+            outputs.permute(0, 2, 1, 3)
+            .reshape(batch_size, seq_len, num_heads * head_dim)
+            .permute(0, 2, 1)
+            .contiguous()
+        )  # Shape: (batch_size, num_heads * head_dim, seq_len)
+        # Apply GroupNorm
+        attention_output = self.norm(attention_output)
+        # Permute to original shape
+        attention_output = (
+            attention_output.permute(0, 2, 1)
+            .view(batch_size, seq_len, num_heads, head_dim)
+            .permute(0, 2, 1, 3)
+            .contiguous()
+        )  # Shape: (batch_size, num_heads, seq_len, head_dim)
+        # Apply scaling factor
+        attention_output = attention_output * (1 - self.lambda_init)
+        return attention_output
+
+
+class NoPE(nn.Module):
+    """
+    This class is like nn.Identity(), because it implements no positional
+    encoding at all.
+    https://arxiv.org/abs/2404.12224
+    """
+
+    __version__ = "0.1.0"
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+
+    def forward(self, scores, token_indices):
+        return scores
+
+
+class ALiBi(NoPE):
+    """
+    This class implements Attention with Linear Biases (ALiBi), which is a form of
+    length extrapolation that does not require trainable parameters.
+    https://arxiv.org/abs/2108.12409
+    """
+
+    __version__ = "0.1.0"
+
+    def __init__(self, config: AutoConfig):
+        super().__init__(config)
+        # Pre-compute the ALiBi slopes
+        slopes = 2 ** (-8 * torch.arange(1, config.num_heads + 1) / config.num_heads)
+        self.register_buffer("slopes", slopes)
+        self.register_buffer(
+            "positions", torch.arange(config.context_length, dtype=torch.float32)
+        )
+
+    def forward(self, scores, token_indices):
+        batch_size, num_heads, seq_len, _ = scores[0].shape
+        if torch.is_tensor(token_indices):
+            # If token indices were provided (by a router, perhaps), use them
+            positions = self.positions[token_indices]
+        else:
+            # Else, slice from the pre-computed ALiBi biases
+            positions = (
+                self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
+            )
+        pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
+        biases = self.slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
+        scores = [score - biases for score in scores]
+        return scores
