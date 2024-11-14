@@ -44,14 +44,19 @@ class PraxisAttention(nn.Module):
         )
 
         # The core attention mechanism
-        if self.differential:
+        self.stickbreaking = False
+        if self.stickbreaking:
+            self.algorithm = Stickbreaking(config)
+        elif self.differential:
             self.algorithm = Differential(config)
         else:
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
         self.alibi = True
-        if self.alibi:
+        if self.stickbreaking:
+            self.encoding = NoPE(config)
+        elif self.alibi:
             self.encoding = ALiBi(config)
         else:
             self.encoding = NoPE(config)
@@ -90,16 +95,18 @@ class PraxisAttention(nn.Module):
         )
 
         # Compute attention scores
-        scores = self.algorithm.compute_scores(q, k)
+        q, k, v, scores = self.algorithm.compute_scores(q, k, v)
+        hist_len = scores[0].shape[3]
 
         # Compute positional encoding
         scores = self.encoding(scores, token_indices)
 
         # Apply masks
+        causal_mask = None
         if self.causal:
             causal_mask = (
                 torch.triu(
-                    torch.full((seq_len, seq_len), -1e9, device=inputs.device),
+                    torch.full((seq_len, hist_len), -1e9, device=inputs.device),
                     diagonal=1,
                 )
                 .unsqueeze(0)
@@ -107,11 +114,18 @@ class PraxisAttention(nn.Module):
             )
             scores = [score + causal_mask for score in scores]
 
+        # Expand attention mask to historical length
+        attention_mask = F.pad(
+            attention_mask,
+            (hist_len - attention_mask.size(-1), 0),
+            value=1,  # Pad with 1s since we're using 1 - mask later
+        )
+
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
         scores = [score + attention_mask for score in scores]
 
         # Compute attention weights
-        weights = self.algorithm.compute_weights(scores)
+        weights = self.algorithm.compute_weights(scores, causal_mask)
 
         # Compute attention output
         outputs = self.algorithm.compute_outputs(weights, v)
@@ -145,12 +159,12 @@ class ScaledDotProduct(nn.Module):
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
-    def compute_scores(self, q, k):
+    def compute_scores(self, q, k, v):
         reciprocal = 1.0 / math.sqrt(self.head_dim)
         scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
-        return scores
+        return q, k, v, scores
 
-    def compute_weights(self, scores):
+    def compute_weights(self, scores, mask: Optional[Tensor] = None):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
         return weights[0]
 
@@ -182,7 +196,7 @@ class Differential(ScaledDotProduct):
             num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
         )
 
-    def compute_scores(self, q, k):
+    def compute_scores(self, q, k, v):
         # Split queries and keys
         Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
         K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
@@ -192,9 +206,9 @@ class Differential(ScaledDotProduct):
             torch.matmul(Q1, K1.transpose(-2, -1)) * reciprocal,
             torch.matmul(Q2, K2.transpose(-2, -1)) * reciprocal,
         ]
-        return scores
+        return q, k, v, scores
 
-    def compute_weights(self, scores):
+    def compute_weights(self, scores, mask: Optional[Tensor] = None):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
         # Compute scalar lambda
         lambda_scalar = (
@@ -227,6 +241,79 @@ class Differential(ScaledDotProduct):
         # Apply scaling factor
         attention_output = attention_output * (1 - self.lambda_init)
         return attention_output
+
+
+class Stickbreaking(ScaledDotProduct):
+    """
+    Implements Stickbreaking Attention mechanism without top-k selection.
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__(config)
+        self.register_buffer("key_history", None)
+        self.register_buffer("value_history", None)
+
+    def compute_scores(self, q, k, v):
+        if self.training:
+            k, v = self._update_history(k, v)
+        return super().compute_scores(q, k, v)
+
+    def compute_weights(
+        self, scores: List[Tensor], mask: Optional[Tensor] = None
+    ) -> Tensor:
+        logits = scores[0]
+        batch_size, num_heads, seq_len, hist_len = logits.shape
+
+        # Get cumulative weight matrix of appropriate size and expand it
+        cum_weight = self._get_cum_weight(hist_len, logits.device)
+
+        # Compute stick-breaking weights
+        z = torch.sigmoid(logits)
+        log_beta = F.logsigmoid(-logits)
+        if mask is not None:
+            z = z + mask
+            log_beta = log_beta + mask
+
+        # Compute cumulative log beta terms
+        re_cum_log_beta = torch.einsum(
+            "bhij,jk->bhik", log_beta, cum_weight.type_as(logits)
+        )
+
+        # Final attention weights
+        att = self.dropout(z * re_cum_log_beta.exp())
+
+        return att
+
+    @staticmethod
+    @torch.jit.script
+    def _get_cum_weight(hist_len: int, device: torch.device) -> torch.Tensor:
+        return torch.tril(torch.ones(hist_len, hist_len, device=device))
+
+    # return new_k, new_v
+    def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+        """Update and return concatenated history for keys and values.
+
+        Args:
+            k: Shape (batch_size, num_heads, seq_len, head_dim)
+            v: Shape (batch_size, num_heads, seq_len, head_dim)
+        Returns:
+            Tuple containing updated k,v with same shape except longer seq_len
+        """
+        if self.key_history is None or self.value_history is None:
+            # First forward pass - initialize history
+            self.key_history = k.detach()
+            self.value_history = v.detach()
+            return k, v
+
+        # Concatenate along sequence length dimension (dim=2)
+        new_k = torch.cat([self.key_history, k], dim=2)
+        new_v = torch.cat([self.value_history, v], dim=2)
+
+        # Update history (detached to prevent backprop through history)
+        self.key_history = new_k.detach()
+        self.value_history = new_v.detach()
+
+        return new_k, new_v
 
 
 class NoPE(nn.Module):
