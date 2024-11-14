@@ -74,7 +74,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             src=layer_outputs,
         )
 
-        # compute aux loss, in order to teach the router about causality
+        # compute aux loss, in order to enforce causality in the top-k operation
         aux_loss = self.aux_loss(router_logits, token_indices)
 
         return outputs, aux_loss

@@ -164,6 +164,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Facts as Experts: Adaptable and Interpretable Neural Memory over Symbolic Knowledge](https://arxiv.org/abs/2007.00849)
 - https://github.com/timurgepard/nanoFFT (a somewhat novel idea)
 - [TokenFormer](https://arxiv.org/abs/2410.23168)
+- [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
 
 ## won't do
 
