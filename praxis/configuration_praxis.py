@@ -21,6 +21,7 @@ class PraxisConfig(PretrainedConfig):
         activation="serf",
         block="transformer",
         expert="glu",
+        encoding="alibi",
         sparse=False,
         shuffle=False,
         autopilot=False,
@@ -83,6 +84,7 @@ class PraxisConfig(PretrainedConfig):
         self.activation = activation
         self.block_type = block
         self.expert = self._register_experts(expert)
+        self.encoding = encoding
         self.sparse = sparse
         self.shuffle = shuffle
         self.autopilot = autopilot

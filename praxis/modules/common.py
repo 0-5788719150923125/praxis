@@ -1,4 +1,7 @@
 import torch.nn as nn
+from praxis.modules.encoding import NoPE, ALiBi
+
+ENCODING_REGISTRY = {"nope": NoPE, "alibi": ALiBi}
 
 
 class MultiIdentity(nn.Module):

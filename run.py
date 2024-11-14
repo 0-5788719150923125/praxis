@@ -120,6 +120,7 @@ from interface import TerminalDashboard
 from praxis import (
     BLOCK_REGISTRY,
     EXPERT_REGISTRY,
+    ENCODING_REGISTRY,
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
@@ -236,6 +237,13 @@ parser.add_argument(
     choices=EXPERT_REGISTRY.keys(),
     default="glu",
     help="The module to use for feedforward networks",
+)
+parser.add_argument(
+    "--encoding_type",
+    type=str,
+    choices=ENCODING_REGISTRY.keys(),
+    default="alibi",
+    help="The positional encoding to use for sequence length extrapolation",
 )
 parser.add_argument(
     "--dense",
@@ -393,6 +401,7 @@ config = PraxisConfig(
     initial_peers=initial_peers,
     block=block_type,
     expert=expert_type,
+    encoding=encoding_type,
     memory_profile=memory_profile,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,

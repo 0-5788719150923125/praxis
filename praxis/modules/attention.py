@@ -8,6 +8,7 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.memory import PraxisMemory
+from praxis.modules.common import ENCODING_REGISTRY
 
 
 class PraxisAttention(nn.Module):
@@ -51,6 +52,7 @@ class PraxisAttention(nn.Module):
 
         # The core attention mechanism
         if self.stickbreaking:
+            config.encoding = "nope"
             self.algorithm = Stickbreaking(config)
         elif self.differential:
             self.algorithm = Differential(config)
@@ -58,11 +60,7 @@ class PraxisAttention(nn.Module):
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.alibi = not self.stickbreaking
-        if self.alibi:
-            self.encoding = ALiBi(config)
-        else:
-            self.encoding = NoPE(config)
+        self.encoding = ENCODING_REGISTRY[config.encoding](config)
 
         # Add memory-related parameters
         self.use_memory = config.memory
@@ -97,12 +95,15 @@ class PraxisAttention(nn.Module):
             .transpose(1, 2)
         )
 
+        # Pre-scoring positional encoding
+        q, k, v = self.encoding.before_scores(q, k, v)
+
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
-        hist_len = scores[0].shape[3]
+        hist_len = scores[0].size(-1)
 
-        # Compute positional encoding
-        scores = self.encoding(scores, token_indices)
+        # Post-scoring positional encoding
+        scores = self.encoding.after_scores(scores, token_indices)
 
         # Apply masks
         causal_mask = None
@@ -119,9 +120,7 @@ class PraxisAttention(nn.Module):
 
         # Expand attention mask to historical length
         attention_mask = F.pad(
-            attention_mask,
-            (hist_len - attention_mask.size(-1), 0),
-            value=1,  # Pad with 1s since we're using 1 - mask later
+            attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
         )
 
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
@@ -268,7 +267,7 @@ class Stickbreaking(ScaledDotProduct):
         batch_size, num_heads, seq_len, hist_len = logits.shape
 
         # Get cumulative weight matrix of appropriate size and expand it
-        cum_weight = self._get_cum_weight(hist_len, logits.device)
+        cum_weight = torch.tril(torch.ones(hist_len, hist_len, device=logits.device))
 
         # Compute stick-breaking weights
         z = torch.sigmoid(logits)
@@ -317,53 +316,3 @@ class Stickbreaking(ScaledDotProduct):
         self.value_history = new_v.detach()
 
         return new_k, new_v
-
-
-class NoPE(nn.Module):
-    """
-    This class is like nn.Identity(), because it implements no positional
-    encoding at all.
-    https://arxiv.org/abs/2404.12224
-    """
-
-    __version__ = "0.1.0"
-
-    def __init__(self, config: AutoConfig):
-        super().__init__()
-
-    def forward(self, scores, token_indices):
-        return scores
-
-
-class ALiBi(NoPE):
-    """
-    This class implements Attention with Linear Biases (ALiBi), which is a form of
-    length extrapolation that does not require trainable parameters.
-    https://arxiv.org/abs/2108.12409
-    """
-
-    __version__ = "0.1.0"
-
-    def __init__(self, config: AutoConfig):
-        super().__init__(config)
-        # Pre-compute the ALiBi slopes
-        slopes = 2 ** (-8 * torch.arange(1, config.num_heads + 1) / config.num_heads)
-        self.register_buffer("slopes", slopes)
-        self.register_buffer(
-            "positions", torch.arange(config.context_length, dtype=torch.float32)
-        )
-
-    def forward(self, scores, token_indices):
-        batch_size, num_heads, seq_len, _ = scores[0].shape
-        if torch.is_tensor(token_indices):
-            # If token indices were provided (by a router, perhaps), use them
-            positions = self.positions[token_indices]
-        else:
-            # Else, slice from the pre-computed ALiBi biases
-            positions = (
-                self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
-            )
-        pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
-        biases = self.slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
-        scores = [score - biases for score in scores]
-        return scores
