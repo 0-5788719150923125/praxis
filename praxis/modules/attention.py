@@ -22,10 +22,16 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.causal = config.causal
-        self.differential = config.differential
         self.hidden_size = config.num_dims
         self.num_heads = config.num_heads
         self.head_dim = self.hidden_size // self.num_heads
+
+        # Set the core attention mechanism
+        self.differential = config.differential
+        self.stickbreaking = config.stickbreaking
+        assert not (
+            self.differential and self.stickbreaking
+        ), "We cannot use both stickbreaking attention and differential attention at the same time. Please remove one of them."
 
         # Query and key projections for differential heads
         multiplier = 2 if self.differential else 1
@@ -44,7 +50,6 @@ class PraxisAttention(nn.Module):
         )
 
         # The core attention mechanism
-        self.stickbreaking = False
         if self.stickbreaking:
             self.algorithm = Stickbreaking(config)
         elif self.differential:
@@ -53,10 +58,8 @@ class PraxisAttention(nn.Module):
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.alibi = True
-        if self.stickbreaking:
-            self.encoding = NoPE(config)
-        elif self.alibi:
+        self.alibi = not self.stickbreaking
+        if self.alibi:
             self.encoding = ALiBi(config)
         else:
             self.encoding = NoPE(config)
@@ -159,9 +162,12 @@ class ScaledDotProduct(nn.Module):
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
-    def compute_scores(self, q, k, v):
+    def _compute_score(self, q, k):
         reciprocal = 1.0 / math.sqrt(self.head_dim)
-        scores = [torch.matmul(q, k.transpose(-2, -1)) * reciprocal]
+        return torch.matmul(q, k.transpose(-2, -1)) * reciprocal
+
+    def compute_scores(self, q, k, v):
+        scores = [self._compute_score(q, k)]
         return q, k, v, scores
 
     def compute_weights(self, scores, mask: Optional[Tensor] = None):
@@ -201,11 +207,7 @@ class Differential(ScaledDotProduct):
         Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
         K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
         # Compute differential attention scores
-        reciprocal = 1.0 / math.sqrt(self.head_dim)
-        scores = [
-            torch.matmul(Q1, K1.transpose(-2, -1)) * reciprocal,
-            torch.matmul(Q2, K2.transpose(-2, -1)) * reciprocal,
-        ]
+        scores = [self._compute_score(Q1, K1), self._compute_score(Q2, K2)]
         return q, k, v, scores
 
     def compute_weights(self, scores, mask: Optional[Tensor] = None):
@@ -245,7 +247,8 @@ class Differential(ScaledDotProduct):
 
 class Stickbreaking(ScaledDotProduct):
     """
-    Implements Stickbreaking Attention mechanism without top-k selection.
+    Implements Stickbreaking Attention mechanism.
+    https://github.com/IBM/ModuleFormer
     """
 
     def __init__(self, config: AutoConfig):

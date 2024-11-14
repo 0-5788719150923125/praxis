@@ -271,7 +271,13 @@ parser.add_argument(
     "--differential",
     action="store_true",
     default=False,
-    help="Use Differential Attention mechanism",
+    help="Use a Differential Attention mechanism",
+)
+parser.add_argument(
+    "--stickbreaking",
+    action="store_true",
+    default=False,
+    help="Use a Stickbreaking Attention mechanism",
 )
 parser.add_argument(
     "--memory",
@@ -380,6 +386,7 @@ config = PraxisConfig(
     shuffle=shuffle,
     autopilot=autopilot,
     differential=differential,
+    stickbreaking=stickbreaking,
     compression=compression,
     memory=memory,
     hivemind=hivemind,
