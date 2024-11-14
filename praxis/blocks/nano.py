@@ -46,7 +46,7 @@ class PraxisNano(nn.Module):
         chunk_fft = chunk_norm.transpose(1, 2)
         # Pass through FFT layers
         chunk_fft = self.fft(chunk_fft)
-        # Transpose back to (B, T, T)
+        # Transpose back to (B, T, E)
         chunk_fft = chunk_fft.transpose(1, 2)
         # Residual connection
         residual = chunk_fft + x
