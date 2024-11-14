@@ -288,27 +288,45 @@ class Stickbreaking(ScaledDotProduct):
     def _get_cum_weight(hist_len: int, device: torch.device) -> torch.Tensor:
         return torch.tril(torch.ones(hist_len, hist_len, device=device))
 
-    # return new_k, new_v
     def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
-        """Update and return concatenated history for keys and values.
-
-        Args:
-            k: Shape (batch_size, num_heads, seq_len, head_dim)
-            v: Shape (batch_size, num_heads, seq_len, head_dim)
-        Returns:
-            Tuple containing updated k,v with same shape except longer seq_len
         """
+        Update and return concatenated history for keys and values.
+        Uses batch size as primary decision metric for history management,
+        since larger batches correspond to smaller sequences that we want to concatenate.
+        """
+        # First forward pass - initialize history
         if self.key_history is None or self.value_history is None:
-            # First forward pass - initialize history
             self.key_history = k.detach()
             self.value_history = v.detach()
             return k, v
 
-        # Concatenate along sequence length dimension (dim=2)
-        new_k = torch.cat([self.key_history, k], dim=2)
-        new_v = torch.cat([self.value_history, v], dim=2)
+        # Get current and history batch sizes
+        curr_batch = k.size(0)
+        hist_batch = self.key_history.size(0)
 
-        # Update history (detached to prevent backprop through history)
+        # If current batch is smaller than history batch,
+        # this means we have a longer sequence - return unmodified
+        if curr_batch < hist_batch:
+            return k, v
+
+        # If current batch is larger than history batch,
+        # this means we have shorter sequences - reset history
+        if curr_batch > hist_batch:
+            self.key_history = k.detach()
+            self.value_history = v.detach()
+            return k, v
+
+        # At this point batch sizes match, safe to concatenate
+        try:
+            new_k = torch.cat([self.key_history, k], dim=2)
+            new_v = torch.cat([self.value_history, v], dim=2)
+        except RuntimeError:
+            # Safety fallback
+            self.key_history = k.detach()
+            self.value_history = v.detach()
+            return k, v
+
+        # Update history
         self.key_history = new_k.detach()
         self.value_history = new_v.detach()
 
