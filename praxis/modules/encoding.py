@@ -80,14 +80,10 @@ class RoPE(NoPE):
 
     def __init__(self, config: AutoConfig):
         super().__init__(config)
-        # For differential mode, the actual head dimension is doubled
-        self.effective_head_dim = self.head_dim * (2 if config.differential else 1)
-
         # Important: RoPE operates on pairs of dimensions
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 
-        # Generate inverse frequencies - note we use head_dim not effective_head_dim
-        # since we'll apply RoPE separately to each half in differential mode
+        # Generate inverse frequencies for base head_dim
         inv_freq = 1.0 / (
             10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
         )
@@ -97,9 +93,6 @@ class RoPE(NoPE):
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
-
-        # Store differential flag
-        self.differential = config.differential
 
     def _compute_rope_embeddings(self, seq_len, device, dtype):
         """Compute sin and cos embeddings."""
@@ -145,24 +138,25 @@ class RoPE(NoPE):
         cos = self._cached_cos[:, :, :seq_len, :]
         sin = self._cached_sin[:, :, :seq_len, :]
 
-        if self.differential:
-            # Split q and k into their differential halves
-            q1, q2 = q.chunk(2, dim=-1)
-            k1, k2 = k.chunk(2, dim=-1)
+        # Check if input tensors have larger head dimensions than base
+        q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
+        k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
 
-            # Apply RoPE to each half separately
-            q1_rope = self._apply_rotary_pos_emb(q1, cos, sin)
-            q2_rope = self._apply_rotary_pos_emb(q2, cos, sin)
-            k1_rope = self._apply_rotary_pos_emb(k1, cos, sin)
-            k2_rope = self._apply_rotary_pos_emb(k2, cos, sin)
+        # Apply RoPE to each chunk
+        q_rope_chunks = [
+            self._apply_rotary_pos_emb(q_chunk, cos, sin) for q_chunk in q_chunks
+        ]
+        k_rope_chunks = [
+            self._apply_rotary_pos_emb(k_chunk, cos, sin) for k_chunk in k_chunks
+        ]
 
-            # Recombine the halves
-            q_rope = torch.cat([q1_rope, q2_rope], dim=-1)
-            k_rope = torch.cat([k1_rope, k2_rope], dim=-1)
-        else:
-            # Standard RoPE application
-            q_rope = self._apply_rotary_pos_emb(q, cos, sin)
-            k_rope = self._apply_rotary_pos_emb(k, cos, sin)
+        # Recombine chunks if necessary
+        q_rope = (
+            torch.cat(q_rope_chunks, dim=-1) if len(q_chunks) > 1 else q_rope_chunks[0]
+        )
+        k_rope = (
+            torch.cat(k_rope_chunks, dim=-1) if len(k_chunks) > 1 else k_rope_chunks[0]
+        )
 
         return q_rope, k_rope, v
 
