@@ -14,22 +14,27 @@ class NoPE(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: AutoConfig, scaled: bool = False):
         super().__init__()
         self.num_heads = config.num_heads
         self.head_dim = config.num_dims // config.num_heads
         # Initialize scaling factors - one per head with linspace
-        self.head_scales = nn.Parameter(torch.linspace(1.2, 1.2, self.num_heads))
+        self.scaled = scaled
+        if self.scaled:
+            self.head_scales = nn.Parameter(torch.linspace(1.2, 1.2, self.num_heads))
 
     def before_scores(self, q, k, v):
-        # Get base scaling factor
-        base_scale = 1.0 / math.sqrt(self.head_dim)
+        if self.scaled:
+            # Get base scaling factor
+            base_scale = 1.0 / math.sqrt(self.head_dim)
 
-        # Reshape scales for broadcasting
-        scaling = self.head_scales.view(1, -1, 1, 1) * base_scale
+            # Reshape scales for broadcasting
+            scaling = self.head_scales.view(1, -1, 1, 1) * base_scale
 
-        # Apply scaling to queries
-        return q * scaling, k, v
+            # Apply scaling to queries
+            return q * scaling, k, v
+        else:
+            return q, k, v
 
     def after_scores(self, scores, token_indices):
         return scores
@@ -44,7 +49,7 @@ class ALiBi(NoPE):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: AutoConfig, *args, **kwargs):
         super().__init__(config)
         # Pre-compute the ALiBi slopes
         slopes = 2 ** (-8 * torch.arange(1, config.num_heads + 1) / config.num_heads)
@@ -78,7 +83,7 @@ class RoPE(NoPE):
     https://arxiv.org/abs/2104.09864
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: AutoConfig, *args, **kwargs):
         super().__init__(config)
         # Important: RoPE operates on pairs of dimensions
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
