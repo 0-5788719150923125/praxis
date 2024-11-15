@@ -10,7 +10,7 @@ class PraxisConfig(PretrainedConfig):
         self,
         num_embeds=720,
         num_dims=360,
-        num_heads=8,
+        num_heads=4,
         depth=7,
         num_experts=7,
         dropout=0,
