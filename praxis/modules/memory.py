@@ -31,11 +31,15 @@ class PraxisMemory(nn.Module):
         self.gate = nn.Parameter(torch.zeros(self.num_heads))
         # Initialize key_memories and value_memories for each head
         multiplier = 2 if config.differential else 1
+        # Pre-allocate full memory, circular buffers
+        self.write_pos = 0
         self.register_buffer(
-            "key_memories", torch.empty(self.num_heads, 0, self.head_dim * multiplier)
+            "key_memories",
+            torch.zeros(self.num_heads, self.max_memories, self.head_dim * multiplier),
         )
         self.register_buffer(
-            "value_memories", torch.empty(self.num_heads, 0, self.head_dim)
+            "value_memories",
+            torch.zeros(self.num_heads, self.max_memories, self.head_dim),
         )
 
     def forward(
@@ -151,21 +155,31 @@ class PraxisMemory(nn.Module):
 
     def _update_memory(self, keys: Tensor, values: Tensor):
         """
-        Updates the memory with new keys and values.
+        Updates the memory using a circular buffer approach.
         """
-        # Concatenate new keys and values
-        self.key_memories = torch.cat(
-            [self.key_memories, keys], dim=1
-        )  # [num_heads, K_new, hidden_size]
-        self.value_memories = torch.cat(
-            [self.value_memories, values], dim=1
-        )  # [num_heads, K_new, hidden_size]
+        batch_size = keys.size(1)
 
-        # Trim memory if exceeding max_memories
-        if self.key_memories.size(1) > self.max_memories:
-            excess = self.key_memories.size(1) - self.max_memories
-            self.key_memories = self.key_memories[:, excess:, :]
-            self.value_memories = self.value_memories[:, excess:, :]
+        # Calculate positions to write to
+        end_pos = self.write_pos + batch_size
+        if end_pos <= self.max_memories:
+            # Simple case: just write to next positions
+            self.key_memories[:, self.write_pos : end_pos] = keys
+            self.value_memories[:, self.write_pos : end_pos] = values
+        else:
+            # Wrap around case: split the write
+            first_part = self.max_memories - self.write_pos
+            second_part = batch_size - first_part
+
+            # Write first part
+            self.key_memories[:, self.write_pos :] = keys[:, :first_part]
+            self.value_memories[:, self.write_pos :] = values[:, :first_part]
+
+            # Write second part at beginning
+            self.key_memories[:, :second_part] = keys[:, first_part:]
+            self.value_memories[:, :second_part] = values[:, first_part:]
+
+        # Update positions
+        self.write_pos = (self.write_pos + batch_size) % self.max_memories
 
 
 # import math
