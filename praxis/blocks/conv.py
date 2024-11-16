@@ -32,7 +32,7 @@ class PraxisConv(nn.Module):
         self.conv = CausalConv1d(hidden_dim, hidden_dim, kernel_size=3)
 
         # Global context processing
-        self.gc = CausalGlobalContext(hidden_dim, reduction=0.125)
+        self.gc = CausalGlobalContext(hidden_dim, capacity=0.75)
 
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
@@ -46,6 +46,7 @@ class PraxisConv(nn.Module):
         token_indices: Optional[Tensor] = None,
     ) -> Tensor:
         # Local processing
+        residual = x
         x_norm = self.conv_norm(x)
         x_conv = self.conv(x_norm.transpose(1, 2))
 
@@ -56,7 +57,7 @@ class PraxisConv(nn.Module):
         x_out = x_gc.transpose(1, 2)
 
         # Residual
-        residual = x_out + x
+        residual = x_out + residual
 
         # FFN
         x_norm = self.ffw_norm(residual)
@@ -200,9 +201,9 @@ class CausalGlobalContext(nn.Module):
     https://arxiv.org/abs/1904.11492v1
     """
 
-    def __init__(self, in_channels, reduction=0.125):
+    def __init__(self, in_channels, capacity=0.125):
         super().__init__()
-        bottleneck = int(in_channels * reduction)
+        bottleneck = int(in_channels * capacity)
 
         # Context modeling - single 1x1 conv to generate global attention weights
         self.context = nn.Conv1d(in_channels, 1, kernel_size=1)

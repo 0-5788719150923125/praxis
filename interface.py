@@ -277,10 +277,8 @@ class TerminalDashboard:
         return frame
 
     def _update_screen(self, new_frame):
-        frame_width = len(new_frame[0])  # Get the width of the frame
-
-        # Ensure all lines in new_frame are exactly frame_width in length
-        new_frame = [line.ljust(frame_width)[:frame_width] for line in new_frame]
+        # No need to pad lines here; they should already be the correct length
+        frame_width = len(new_frame[0])
 
         if self.previous_frame is None or len(self.previous_frame) != len(new_frame):
             print(
@@ -296,10 +294,8 @@ class TerminalDashboard:
                 zip(self.previous_frame, new_frame)
             ):
                 if old_line != new_line:
-                    # Ensure the new line is exactly frame_width in length
-                    padded_new_line = new_line.ljust(frame_width)[:frame_width]
                     print(
-                        self.term.move(i, 0) + self.term.white + padded_new_line,
+                        self.term.move(i, 0) + self.term.white + new_line,
                         end="",
                         file=self.dashboard_output,
                     )
@@ -332,14 +328,12 @@ class TerminalDashboard:
 
         with self.lock:
             train_chart = self._draw_chart(
-                self.train_losses, half_width, (height // 2) - 1
+                self.train_losses, right_width, (height // 2) - 1
             )
             val_chart = self._draw_chart(self.val_losses, half_width, (height // 2) - 1)
 
         # Wrap the entire status text
-        status_lines = self._wrap_text(
-            self.status_text, half_width
-        )  # Changed to half_width
+        status_lines = self._wrap_text(self.status_text, half_width)
 
         # Calculate the maximum number of lines that can fit in the status section
         max_status_lines = (height // 2) - 3
@@ -366,11 +360,11 @@ class TerminalDashboard:
                     text += f" || ACCURACY: {self.accuracy[0]:.3f} || CONFIDENCE: {self.accuracy[1]:.3f}"
                 # Truncate before padding
                 right_content = self._truncate_to_width(text, right_width)
-                right_content = self._visual_ljust(right_content, right_width)
+                right_content = right_content.ljust(right_width)
                 left_content = self._truncate_to_width(
                     f" HOST {self.num_faults}", half_width
                 )
-                left_content = self._visual_ljust(left_content, half_width)
+                left_content = left_content.ljust(half_width)
             elif i == 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -384,8 +378,9 @@ class TerminalDashboard:
                 right_content = "═" * right_width
             elif i == (height // 2):
                 val_loss = self.val_losses[-1] if self.val_losses else 0
-                left_content = self._visual_ljust(f" SIGN: {val_loss:.4f}", half_width)
-                right_content = self._visual_ljust(" LOG", right_width)
+                left_content = f" SIGN: {val_loss:.4f}"
+                left_content = left_content.ljust(half_width)[:half_width]
+                right_content = " LOG".ljust(right_width)[:right_width]
             elif i == (height // 2) + 1:
                 left_content = "─" * half_width
                 right_content = "─" * right_width
@@ -397,18 +392,12 @@ class TerminalDashboard:
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
 
-            # Ensure left and right content are exactly the right width and strip ANSI codes
-            left_content = self._truncate_to_width(left_content, half_width)
-            right_content = self._truncate_to_width(right_content, right_width)
-            left_content = self._visual_ljust(left_content, half_width)
-            right_content = self._visual_ljust(right_content, right_width)
+            # Ensure left and right content are exactly the right width
+            left_content = left_content.ljust(half_width)[:half_width]
+            right_content = right_content.ljust(right_width)[:right_width]
 
+            # Combine the content with borders
             frame.append(f"║{left_content}║{right_content}║")
-
-        # At the end of _create_frame method
-        frame_width = len(frame[0])
-        for i in range(len(frame)):
-            frame[i] = frame[i].ljust(frame_width)[:frame_width]
 
         frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
 
@@ -420,24 +409,14 @@ class TerminalDashboard:
                 f"RATE: {self.rate:.2f}s | {self.local_experts} local experts, "
                 f"{self.remote_experts} remote | {self.url}"
             )
-            # Add the footer text with borders on sides
-            frame.append(
-                "║"
-                + self._visual_ljust(
-                    self._truncate_to_width(footer_text, width + 1), width + 1
-                )
-                + "║"
-            )
+            # Truncate and pad the footer text to fit the width
+            footer_text = self._truncate_to_width(footer_text, width + 1)
+            footer_text = footer_text.ljust(width + 1)
+            frame.append("║" + footer_text + "║")
 
-            # Add bottom border
-            frame.append("╚" + "═" * (width + 1) + "╝")
+        # Add bottom border
+        frame.append("╚" + "═" * (width + 1) + "╝")
 
-        frame_visual_width = self._visual_len(frame[0])
-        for i in range(len(frame)):
-            line_visual_len = self._visual_len(frame[i])
-            if line_visual_len < frame_visual_width:
-                padding_needed = frame_visual_width - line_visual_len
-                frame[i] += " " * padding_needed
         return frame
 
     def _wrap_text(self, text, width):
