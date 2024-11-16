@@ -37,16 +37,6 @@ class PraxisMemory(nn.Module):
         self.register_buffer(
             "value_memories", torch.empty(self.num_heads, 0, self.head_dim)
         )
-        # LSH configuration
-        self.approximation = False
-        if self.approximation:
-            self.num_hyperplanes = 16  # number of random hyperplanes for hashing
-            self.num_hash_tables = 8  # number of hash tables for multiple probing
-            # Register hyperplanes for each hash table
-            self.register_buffer(
-                "hyperplanes",
-                torch.randn(self.num_hash_tables, self.num_hyperplanes, self.head_dim),
-            )
 
     def forward(
         self, inputs: Tensor, query: Tensor, key: Tensor, value: Tensor, outputs: Tensor
@@ -138,64 +128,14 @@ class PraxisMemory(nn.Module):
         queries_norm = F.normalize(queries, p=2, dim=-1, eps=self.epsilon)
         keys_norm = F.normalize(self.key_memories, p=2, dim=-1, eps=self.epsilon)
 
-        if not self.approximation:
-            # Compute cosine similarity: [num_heads, Q, K]
-            # Since vectors are normalized, cosine similarity is equivalent to the dot product
-            similarities = torch.bmm(
-                queries_norm, keys_norm.transpose(1, 2)
-            ) / math.sqrt(self.head_dim)
-            k = min(self.k, self.key_memories.size(1))
-            scores, indices = similarities.topk(k, dim=-1)
-            return scores, indices
-
-        # LSH-based approximate KNN
-        candidate_scores = []
-        candidate_indices = []
-
-        for table_idx in range(self.num_hash_tables):
-            # Hash both queries and keys
-            query_hashes = self._hash_vectors(queries_norm, table_idx)
-            key_hashes = self._hash_vectors(keys_norm, table_idx)
-
-            # Find matching buckets
-            matches = query_hashes.unsqueeze(-1) == key_hashes.unsqueeze(1)
-
-            # Use masked_fill instead of torch.where for better numerical stability
-            similarities = torch.bmm(
-                queries_norm, keys_norm.transpose(1, 2)
-            ) / math.sqrt(self.head_dim)
-            similarities = similarities.masked_fill(~matches, -1e4)
-
-            # Get top-k for this hash table
-            k_per_table = min(self.k // self.num_hash_tables + 1, similarities.size(-1))
-            scores, indices = similarities.topk(k_per_table, dim=-1)
-
-            # Filter out the masked values that might have been selected
-            valid_scores = scores > -1e4
-            if valid_scores.any():
-                candidate_scores.append(scores * valid_scores.float())
-                candidate_indices.append(indices * valid_scores.long())
-
-        # If no valid candidates found, return None
-        if not candidate_scores:
-            return None, None
-
-        # Combine candidates from all hash tables
-        all_scores = torch.cat(candidate_scores, dim=-1)
-        all_indices = torch.cat(candidate_indices, dim=-1)
-
-        # Get final top-k from all candidates
-        k = min(self.k, all_scores.size(-1))
-        final_scores, final_idx = all_scores.topk(k, dim=-1)
-
-        # Filter out any remaining invalid scores
-        valid_mask = final_scores > -1e4
-        final_scores = final_scores.masked_fill(~valid_mask, 0.0)
-
-        # Gather corresponding indices
-        final_indices = torch.gather(all_indices, dim=-1, index=final_idx)
-
-        return final_scores, final_indices
+        # Compute cosine similarity: [num_heads, Q, K]
+        # Since vectors are normalized, cosine similarity is equivalent to the dot product
+        similarities = torch.bmm(queries_norm, keys_norm.transpose(1, 2)) / math.sqrt(
+            self.head_dim
+        )
+        k = min(self.k, self.key_memories.size(1))
+        scores, indices = similarities.topk(k, dim=-1)
+        return scores, indices
 
     def _get_values(self, indices: Tensor) -> Tensor:
         """
@@ -226,24 +166,6 @@ class PraxisMemory(nn.Module):
             excess = self.key_memories.size(1) - self.max_memories
             self.key_memories = self.key_memories[:, excess:, :]
             self.value_memories = self.value_memories[:, excess:, :]
-
-    def _hash_vectors(self, vectors: Tensor, table_idx: int) -> Tensor:
-        """
-        Convert vectors to hash codes using the specified hash table's hyperplanes.
-        """
-        # Get binary codes based on hyperplane positions
-        # vectors: [num_heads, Q, dim]
-        # hyperplanes: [num_hyperplanes, dim]
-        hash_bits = (
-            vectors @ self.hyperplanes[table_idx].T
-        ) >= 0  # [num_heads, Q, num_hyperplanes]
-
-        # Convert to decimal for bucketing
-        powers = 2 ** torch.arange(
-            self.num_hyperplanes, device=vectors.device, dtype=torch.long
-        )  # [num_hyperplanes]
-
-        return (hash_bits * powers).sum(dim=-1)  # [num_heads, Q]
 
 
 # import math
