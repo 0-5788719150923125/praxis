@@ -7,8 +7,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.modules.memory import PraxisMemory
 from praxis.modules.common import ENCODING_REGISTRY
+from praxis.modules.memory import PraxisMemory
 
 
 class PraxisAttention(nn.Module):

@@ -7,8 +7,8 @@ from transformers import AutoConfig
 
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.peer import PraxisPEER
-from praxis.modules.smear import PraxisSMEAR
 from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.modules.smear import PraxisSMEAR
 
 EXPERT_REGISTRY = {
     "mlp": PraxisMLP,

@@ -1,9 +1,11 @@
+import math
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-import math
-from typing import Optional
+
 from praxis.modules.dense import PraxisGLU
 
 
@@ -106,10 +108,11 @@ class ElasticLinear(nn.Module):
 
 
 if __name__ == "__main__":
-    import numpy as np
-    from dataclasses import dataclass
     import random
     import time
+    from dataclasses import dataclass
+
+    import numpy as np
 
     # Mock AutoConfig class to simulate the configuration
     @dataclass

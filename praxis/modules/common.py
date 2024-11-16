@@ -1,4 +1,5 @@
 import torch.nn as nn
+
 from praxis.modules.encoding import ALiBi, NoPE, RoPE, YaRN
 
 ENCODING_REGISTRY = {"alibi": ALiBi, "nope": NoPE, "rope": RoPE, "yarn": YaRN}

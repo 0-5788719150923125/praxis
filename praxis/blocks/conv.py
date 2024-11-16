@@ -1,12 +1,14 @@
+import math
+import time
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-import time
-import math
-from typing import Optional
-from praxis.modules.dense import PraxisGLU
+
 from praxis.activations import ACT2FN
+from praxis.modules.dense import PraxisGLU
 
 
 class PraxisConv(nn.Module):
@@ -139,6 +141,12 @@ class CausalConv1d(nn.Conv1d):
 
 
 class CausalGlobalContext(nn.Module):
+    """
+    Implements a kind of squeeze-and-excitation mechanism, which allows
+    us to bridge convolutional operations' local contexts, into a global one.
+    https://arxiv.org/abs/1904.11492v1
+    """
+
     def __init__(self, in_channels, reduction=0.125):
         super().__init__()
         bottleneck = int(in_channels * reduction)
@@ -146,34 +154,80 @@ class CausalGlobalContext(nn.Module):
         # Context modeling - single 1x1 conv to generate global attention weights
         self.context = nn.Conv1d(in_channels, 1, kernel_size=1)
 
-        # Bottleneck transform
+        # Bottleneck transform with Conv1d layers
         self.transform = nn.Sequential(
-            nn.Linear(in_channels, bottleneck),
-            nn.LayerNorm(bottleneck),
+            # First conv reduces channels
+            nn.Conv1d(in_channels, bottleneck, kernel_size=1),
+            # LayerNorm needs to be applied to channel dim for conv
+            nn.GroupNorm(1, bottleneck),  # equivalent to LayerNorm for conv
             ACT2FN["periodic_relu"],
-            nn.Linear(bottleneck, in_channels),
+            # Second conv restores channels
+            nn.Conv1d(bottleneck, in_channels, kernel_size=1),
         )
 
     def forward(self, x):
         # Generate attention weights
         attn = self.context(x)  # B, 1, T
 
-        # Apply causal masking by setting future weights to -inf
+        # Apply causal masking
         mask = torch.triu(torch.ones_like(attn), diagonal=1)
         attn = attn.masked_fill(mask.bool(), float("-inf"))
-
-        # Softmax to get attention distribution
         attn = F.softmax(attn, dim=-1)  # B, 1, T
 
         # Calculate global context
         context = torch.matmul(x, attn.transpose(-2, -1))  # B, C, 1
-        context = context.squeeze(-1)  # B, C
 
-        # Transform through bottleneck
-        context = self.transform(context)  # B, C
+        # Transform through bottleneck (no need to squeeze/unsqueeze)
+        context = self.transform(context)  # B, C, 1
 
-        # Add to all positions
-        return x + context.unsqueeze(-1)  # B, C, T
+        # Broadcast and add to input
+        return x + context.expand(-1, -1, x.size(2))
+
+
+# class CausalGlobalContext(nn.Module):
+#     """
+#     Implements a kind of squeeze-and-excitation mechanism, which allows
+#     us to bridge convolutional operations' local contexts, into a global one.
+#     https://arxiv.org/abs/1904.11492v1
+#     """
+
+#     def __init__(self, in_channels, reduction=0.125):
+#         super().__init__()
+#         bottleneck = int(in_channels * reduction)
+
+#         # Context modeling - single 1x1 conv to generate global attention weights
+#         self.context = nn.Conv1d(in_channels, 1, kernel_size=1)
+
+#         # Bottleneck transform
+#         self.transform = nn.Sequential(
+#             nn.Linear(in_channels, bottleneck),
+#             # nn.Conv1d(in_channels, 1, kernel_size=1),
+#             nn.LayerNorm(bottleneck),
+#             ACT2FN["periodic_relu"],
+#             # nn.Conv1d(1, in_channels, kernel_size=1),
+#             nn.Linear(bottleneck, in_channels),
+#         )
+
+#     def forward(self, x):
+#         # Generate attention weights
+#         attn = self.context(x)  # B, 1, T
+
+#         # Apply causal masking by setting future weights to -inf
+#         mask = torch.triu(torch.ones_like(attn), diagonal=1)
+#         attn = attn.masked_fill(mask.bool(), float("-inf"))
+
+#         # Softmax to get attention distribution
+#         attn = F.softmax(attn, dim=-1)  # B, 1, T
+
+#         # Calculate global context
+#         context = torch.matmul(x, attn.transpose(-2, -1))  # B, C, 1
+#         context = context.squeeze(-1)  # B, C
+
+#         # Transform through bottleneck
+#         context = self.transform(context)  # B, C
+
+#         # Add to all positions
+#         return x + context.unsqueeze(-1)  # B, C, T
 
 
 # class CausalGlobalContext(nn.Module):

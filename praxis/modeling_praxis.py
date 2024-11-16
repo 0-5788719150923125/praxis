@@ -10,7 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
-from praxis.modules import MultiIdentity, EMBEDDING_REGISTRY
+from praxis.modules import EMBEDDING_REGISTRY, MultiIdentity
 from praxis.modules.compression import PraxisCompressor
 from praxis.modules.decoder import PraxisDecoder
 

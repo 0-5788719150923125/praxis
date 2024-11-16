@@ -10,7 +10,6 @@ from transformers import AutoConfig
 from praxis.modules.attention import PraxisAttention
 from praxis.modules.experts import EXPERT_REGISTRY
 
-
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 
 

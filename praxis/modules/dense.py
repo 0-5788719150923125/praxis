@@ -1,7 +1,9 @@
-from typing import OrderedDict, Optional
+from typing import Optional, OrderedDict
+
 from torch import nn
 from transformers import AutoConfig
-from praxis.activations import ACT2FN, ACT2CLS
+
+from praxis.activations import ACT2CLS, ACT2FN
 
 
 class PraxisMLP(nn.Sequential):

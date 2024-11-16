@@ -82,6 +82,7 @@ import shutil
 import time
 import traceback
 import uuid
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -110,7 +111,6 @@ from transformers import (
     AutoTokenizer,
     PreTrainedTokenizer,
 )
-import warnings
 
 warnings.filterwarnings("ignore", ".*Checkpoint directory.*exists and is not empty*")
 
@@ -119,8 +119,8 @@ from builders import get_datamodules
 from interface import TerminalDashboard
 from praxis import (
     BLOCK_REGISTRY,
-    EXPERT_REGISTRY,
     ENCODING_REGISTRY,
+    EXPERT_REGISTRY,
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
