@@ -15,7 +15,7 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, continuously-l
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
 - [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. We take this a step further, and implement the `PraxisController`, which teaches the model how to predict an optimal route through expert layers during inference. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
 - In addition to the shuffling, we implement a simplified version of [CALM](https://arxiv.org/abs/2207.07061), which allows the model to early-exit from computation.
-- [Attention with Linear Biases (ALiBi)](https://arxiv.org/abs/2108.12409) for length extrapolation, because it's easy, it works well at sane contexts lengths, and it requires no trainable parameters.
+- We implement RoPE, ALiBi and NoPE as options for positional encoding, because they're easy, work well at sane contexts lengths, and require little to no trainable parameters.
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps.
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
@@ -169,5 +169,4 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 ## won't do
 
 - cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
-- half-precision; [there is research](https://sambanova.ai/blog/alibi-interpolation-vs-extrapolation) that suggests a detrimental interaction between ALiBi and low-precision. So, until we have replaced ALiBi - operations use full (32-bit) precision for now.
 - We implemented a simplified version of Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143), but found it to be ineffective. Particularly, we were looking for long-term memory, whereas this is primarly used for extremely long context lengths (i.e. "memories" do not persist between forward passes).

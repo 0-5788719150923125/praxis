@@ -99,37 +99,6 @@ class RoPE(NoPE):
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def _compute_rope_embeddings(self, seq_len, device, dtype):
-        """Compute sin and cos embeddings."""
-        # Recompute if cache is invalid
-        if (
-            self._cached_seq_length is None
-            or seq_len > self._cached_seq_length
-            or self._cached_cos is None
-            or self._cached_cos.device != device
-            or self._cached_cos.dtype != dtype
-        ):
-
-            positions = torch.arange(seq_len, device=device)
-            # [seq_len, dim/2]
-            pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
-
-            # [1, 1, seq_len, dim]
-            cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
-            sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
-
-            self._cached_cos = cos.to(dtype)
-            self._cached_sin = sin.to(dtype)
-            self._cached_seq_length = seq_len
-
-    def _rotate_half(self, x):
-        """Rotates half the hidden dims of the input."""
-        x1, x2 = x.chunk(2, dim=-1)
-        return torch.cat((-x2, x1), dim=-1)
-
-    def _apply_rotary_pos_emb(self, x, cos, sin):
-        return (x * cos) + (self._rotate_half(x) * sin)
-
     def before_scores(self, q, k, v):
         # Get sequence length and device
         seq_len = q.size(2)
@@ -167,3 +136,33 @@ class RoPE(NoPE):
 
     def after_scores(self, scores, token_indices):
         return scores
+
+    def _compute_rope_embeddings(self, seq_len, device, dtype):
+        """Compute sin and cos embeddings."""
+        # Recompute if cache is invalid
+        if (
+            self._cached_seq_length is None
+            or seq_len > self._cached_seq_length
+            or self._cached_cos is None
+            or self._cached_cos.device != device
+            or self._cached_cos.dtype != dtype
+        ):
+            positions = torch.arange(seq_len, device=device)
+            # [seq_len, dim/2]
+            pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
+
+            # [1, 1, seq_len, dim]
+            cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
+            sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
+
+            self._cached_cos = cos.to(dtype)
+            self._cached_sin = sin.to(dtype)
+            self._cached_seq_length = seq_len
+
+    def _rotate_half(self, x):
+        """Rotates half the hidden dims of the input."""
+        x1, x2 = x.chunk(2, dim=-1)
+        return torch.cat((-x2, x1), dim=-1)
+
+    def _apply_rotary_pos_emb(self, x, cos, sin):
+        return (x * cos) + (self._rotate_half(x) * sin)

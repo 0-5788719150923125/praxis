@@ -21,7 +21,7 @@ class PraxisConfig(PretrainedConfig):
         activation="serf",
         block="transformer",
         expert="glu",
-        encoding="alibi",
+        encoding="rope",
         sparse=False,
         shuffle=False,
         autopilot=False,

@@ -746,7 +746,11 @@ class TerminalInterface(Callback):
 
         n_gram_size = 11
         frequency = 20
-        if self._detect_repetition(n_gram_size, frequency) or self._is_all_whitespace():
+        if (
+            self._detect_repetition(n_gram_size, frequency)
+            or self._detect_sequential_repetition(threshold=5, min_segment_length=8)
+            or self._is_all_whitespace()
+        ):
             self.text = f"{self.initial_text}"
             if self.dashboard:
                 self.host_count += 1
@@ -782,6 +786,66 @@ class TerminalInterface(Callback):
         for count in n_gram_counts.values():
             if count > threshold:
                 return True
+
+        return False
+
+    def _detect_sequential_repetition(self, threshold, min_segment_length=3):
+        """
+        Detect unbroken/sequential repetitions of any character sequence in text,
+        only if the total repeated segment exceeds a minimum length.
+
+        Args:
+            threshold (int): Number of times a sequence must repeat consecutively
+            min_segment_length (int): Minimum total length of the repeated sequence
+                to be considered significant. For example, with threshold=3 and
+                min_segment_length=6, "ab" repeated 3 times (total length 6) would
+                be detected, but " " repeated 3 times (total length 3) would not.
+
+        Returns:
+            bool: True if significant sequential repetition is detected
+
+        Example:
+            text = "   code    here" (multiple spaces)
+            With min_segment_length=3: Won't detect space repetition
+
+            text = "abcabcabcabc"
+            With min_segment_length=6: Will detect as it's a longer sequence
+        """
+        text = self.text
+
+        # Early return for very short texts
+        if len(text) < min_segment_length:
+            return False
+
+        # Try all possible pattern lengths, from 1 up to half the text length
+        max_pattern_length = len(text) // 2
+
+        for pattern_length in range(1, max_pattern_length + 1):
+            # Skip if pattern_length * threshold would be too short
+            if pattern_length * threshold < min_segment_length:
+                continue
+
+            # Check each possible starting position
+            for start in range(len(text) - pattern_length * threshold + 1):
+                pattern = text[start : start + pattern_length]
+
+                # Count sequential repetitions
+                repeat_count = 1
+                current_pos = start + pattern_length
+
+                while (
+                    current_pos + pattern_length <= len(text)
+                    and text[current_pos : current_pos + pattern_length] == pattern
+                ):
+                    repeat_count += 1
+                    current_pos += pattern_length
+
+                    # Only return True if the total repeated segment is long enough
+                    if (
+                        repeat_count >= threshold
+                        and pattern_length * repeat_count >= min_segment_length
+                    ):
+                        return True
 
         return False
 

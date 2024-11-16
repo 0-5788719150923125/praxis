@@ -36,25 +36,22 @@ class PraxisDecoder(nn.Module):
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remote_experts = self.manager.active_remote_experts
-            self.local_experts = nn.ModuleList(
-                [
+        self.local_experts = nn.ModuleList(
+            [
+                (
                     PraxisExpert(config, self.manager.register_expert(config))
-                    for _ in range(config.num_experts)
-                ]
-            )
-        else:
-            self.local_experts = nn.ModuleList(
-                [
-                    PraxisExpert(config, BLOCK_REGISTRY[config.block_type](config))
-                    for _ in range(config.num_experts)
-                ]
-            )
+                    if self.manager
+                    else PraxisExpert(config, BLOCK_REGISTRY[config.block_type](config))
+                )
+                for _ in range(config.num_experts)
+            ]
+        )
+        if self.manager:
+            self.manager.serve_experts()
         self.navigator = False
         if config.autopilot:
             self.navigator = PraxisController(config, len(self.local_experts) * 3)
         self._define_checkpoints(config.memory_profile, self.depth)
-        if self.manager:
-            self.manager.serve_experts()
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.local_experts) + list(self.remote_experts)
