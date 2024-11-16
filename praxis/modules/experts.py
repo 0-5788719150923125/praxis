@@ -42,6 +42,7 @@ class PraxisExpert(nn.Module):
         self,
         config: AutoConfig,
         block: nn.Module = False,
+        memory: nn.Module = False,
         router: nn.Module = False,
         is_remote=False,
     ):
@@ -49,23 +50,31 @@ class PraxisExpert(nn.Module):
         self.sparse = config.sparse
         self.is_remote = is_remote
         self.block = block
+        self.memory = memory
         if config.sparse:
             self.router = router if router else PraxisMixtureOfDepths(config)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, current_depth: int):
-        use_router = True if self.sparse and current_depth % 2 != 0 else False
+        d = current_depth
+        use_router = True if self.sparse and d % 2 != 0 else False  # every odd layer
+        use_memory = (
+            True if self.memory and d % 4 == 0 and d != 0 else False
+        )  # every 4th layer
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask, use_router)
         else:
-            return self._local_forward(inputs, attention_mask, use_router)
+            return self._local_forward(inputs, attention_mask, use_router, use_memory)
 
-    def _local_forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
+    def _local_forward(
+        self, inputs: Tensor, attention_mask: Tensor, use_router: bool, use_memory: bool
+    ):
         aux_losses = []
         if use_router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
-            hidden_states = self.block(inputs, attention_mask)
+            memory = False if not use_memory else self.memory
+            hidden_states = self.block(inputs, attention_mask, memory=memory)
         return hidden_states, sum(aux_losses)
 
     def _remote_forward(self, inputs, attention_mask, use_router):

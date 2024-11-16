@@ -44,6 +44,8 @@ class PraxisBlock(nn.Module):
         attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
+        *args,
+        **kwargs,
     ):
         # this is a super hack because hivemind
         if torch.is_tensor(router_weights) and self._is_zero_tensor(router_weights):
@@ -52,7 +54,9 @@ class PraxisBlock(nn.Module):
             token_indices = None
         residual = inputs
         normalized = self.attn_norm(inputs)
-        outputs = self.attn(normalized, attention_mask, token_indices)
+        outputs = self.attn(
+            normalized, attention_mask, token_indices, kwargs.get("memory", False)
+        )
         outputs = self.dropout(outputs)
         outputs = outputs + residual
         residual = outputs

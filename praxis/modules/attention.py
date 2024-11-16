@@ -8,7 +8,6 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.common import ENCODING_REGISTRY
-from praxis.modules.memory import PraxisMemory
 
 
 class PraxisAttention(nn.Module):
@@ -64,18 +63,17 @@ class PraxisAttention(nn.Module):
         # For handling length extrapolation
         self.encoding = ENCODING_REGISTRY[config.encoding](config, scaled)
 
-        # Add memory-related parameters
-        self.use_memory = config.memory
-        if self.use_memory:
-            self.memory = PraxisMemory(config)
-
         # Standard output projection
         self.output = nn.Linear(
             self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
 
     def forward(
-        self, inputs: Tensor, attention_mask: Tensor, token_indices: Optional[Tensor]
+        self,
+        inputs: Tensor,
+        attention_mask: Tensor,
+        token_indices: Optional[Tensor],
+        memory: Optional[nn.Module] = False,
     ):
         batch_size, seq_len, _ = inputs.shape
 
@@ -132,8 +130,8 @@ class PraxisAttention(nn.Module):
         weights = self.algorithm.compute_weights(v, scores, causal_mask)
 
         # Add memory-based attention
-        if self.use_memory:
-            weights = self.memory(inputs, q, k, v, weights)
+        if memory:
+            weights = memory(inputs, q, k, v, weights)
 
         # Reshape for output projection
         weights = weights.transpose(1, 2).reshape(

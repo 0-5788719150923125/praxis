@@ -10,6 +10,7 @@ from transformers import AutoConfig
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
+from praxis.modules.memory import PraxisMemory
 from praxis.orchestration.hivemind import (
     P2PDaemonError,
     P2PHandlerError,
@@ -31,6 +32,9 @@ class PraxisDecoder(nn.Module):
         self.sparse = config.sparse
         self.shuffle = config.shuffle
         self.random = random.Random(config.seed)
+        memory = False
+        if config.memory:
+            memory = PraxisMemory(config)
         self.manager = False
         self.remote_experts = []
         if config.hivemind:
@@ -41,7 +45,11 @@ class PraxisDecoder(nn.Module):
                 (
                     PraxisExpert(config, self.manager.register_expert(config))
                     if self.manager
-                    else PraxisExpert(config, BLOCK_REGISTRY[config.block_type](config))
+                    else PraxisExpert(
+                        config,
+                        block=BLOCK_REGISTRY[config.block_type](config),
+                        memory=memory,
+                    )
                 )
                 for _ in range(config.num_experts)
             ]
