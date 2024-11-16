@@ -1021,7 +1021,7 @@ class TimeBasedCheckpoint(ModelCheckpoint):
             self.last_checkpoint_time = current_time
 
             # Also save the model in Huggingface format
-            lm.model.save_pretrained(self.dirpath, safe_serialization=True)
+            lm.model.save_pretrained(self.dirpath, safe_serialization=False)
 
     def on_train_epoch_end(self, trainer, pl_module):
         # Disable saving checkpoints at the end of every epoch

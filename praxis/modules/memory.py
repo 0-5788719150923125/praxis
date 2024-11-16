@@ -24,7 +24,7 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.num_heads = config.num_heads
         self.head_dim = config.num_dims // config.num_heads
-        self.k = 16  # max KNN vectors to lookup
+        self.k = 8  # max KNN vectors to lookup
         self.max_memories = 4 * 4096  # max k/v vectors to store
         self.epsilon = 1e-8  # for numerical stability
         # Gating parameter: one gate per head
