@@ -14,7 +14,7 @@ class PraxisConfig(PretrainedConfig):
         depth=7,
         num_experts=7,
         dropout=0,
-        epsilon=1e-5,
+        epsilon=1e-6,
         capacity=0.125,
         vocab_size=4096,
         context_length=2048,

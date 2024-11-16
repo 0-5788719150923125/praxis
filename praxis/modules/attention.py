@@ -197,7 +197,9 @@ class Differential(ScaledDotProduct):
             )
         )
         self.norm = nn.GroupNorm(
-            num_groups=self.num_heads, num_channels=self.num_heads * self.head_dim
+            num_groups=self.num_heads,
+            num_channels=self.num_heads * self.head_dim,
+            eps=config.epsilon,
         )
 
     def compute_scores(self, q, k, v):
