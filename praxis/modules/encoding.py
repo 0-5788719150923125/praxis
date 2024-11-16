@@ -169,3 +169,92 @@ class RoPE(NoPE):
 
     def _apply_rotary_pos_emb(self, x, cos, sin):
         return (x * cos) + (self._rotate_half(x) * sin)
+
+
+class YaRN(RoPE):
+    """
+    An implementation of YaRN (Yet another RoPE extensioN).
+    https://arxiv.org/abs/2309.00071
+    """
+
+    def __init__(self, config: AutoConfig, *args, **kwargs):
+        super().__init__(config)
+        assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
+
+        # YaRN parameters
+        self.original_max_position = config.context_length
+
+        # YaRN attention scaling factor (from paper equation)
+        factor = 2.0  # e.g., 16.0 for 32k context
+        self.scale = 0.1 * math.log(factor) + 1.0
+
+        # Generate position-dependent scaling factors for NTK-by-parts
+        self.alpha = 1  # threshold for full scaling
+        self.beta = 32  # threshold for no scaling
+
+        # Base frequencies
+        inv_freq = 1.0 / (
+            10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
+        )
+        self.register_buffer("inv_freq", inv_freq)
+
+        # Calculate rotations per dimension
+        positions = torch.arange(self.original_max_position)
+        dim_rotations = positions.unsqueeze(1) * inv_freq.unsqueeze(
+            0
+        )  # [seq_len, dim/2]
+        self.dim_ranges = (dim_rotations[-1] / math.pi) * 2  # rotations at max position
+
+        # Cache buffers
+        self._cached_cos = None
+        self._cached_sin = None
+        self._cached_seq_length = None
+
+    def _compute_rope_embeddings(self, seq_len, device, dtype):
+        """Compute YaRN-scaled RoPE embeddings."""
+        if (
+            self._cached_seq_length is None
+            or seq_len > self._cached_seq_length
+            or self._cached_cos is None
+            or self._cached_cos.device != device
+            or self._cached_cos.dtype != dtype
+        ):
+
+            # Current sequence scaling factor (for dynamic scaling)
+            dynamic_scale = max(1.0, seq_len / self.original_max_position)
+
+            # Generate position indices
+            positions = torch.arange(seq_len, device=device, dtype=dtype)
+
+            # Calculate per-dimension scaling factors
+            dim_scales = torch.ones(self.head_dim // 2, device=device, dtype=dtype)
+
+            # Apply NTK-by-parts scaling
+            for i in range(self.head_dim // 2):
+                rotations = self.dim_ranges[i]
+                if rotations <= self.alpha:
+                    dim_scales[i] = dynamic_scale  # Full scaling
+                elif rotations >= self.beta:
+                    dim_scales[i] = 1.0  # No scaling
+                else:
+                    # Linear interpolation between scaling and no scaling
+                    dim_scales[i] = 1.0 + (dynamic_scale - 1.0) * (
+                        self.beta - rotations
+                    ) / (self.beta - self.alpha)
+
+            # Apply scaling to frequencies
+            scaled_inv_freq = self.inv_freq * dim_scales
+
+            # Compute position embeddings with scaled frequencies
+            pos_emb = positions.unsqueeze(1) * scaled_inv_freq.unsqueeze(0)
+
+            # Apply YaRN attention scaling
+            pos_emb = pos_emb * self.scale
+
+            # Generate final rotary embeddings
+            cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
+            sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
+
+            self._cached_cos = cos.to(dtype)
+            self._cached_sin = sin.to(dtype)
+            self._cached_seq_length = seq_len
