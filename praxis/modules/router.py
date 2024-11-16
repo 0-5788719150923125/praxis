@@ -42,6 +42,13 @@ class PraxisMixtureOfDepths(nn.Linear):
         # Re-order the weights to match the sorted indices
         token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
 
+        # compute aux loss, in order to enforce causality in the top-k operation
+        aux_loss = self.aux_loss(router_logits, token_indices)
+
+        # when inputs have a length of 1, the router will sometimes select no tokens at all
+        if token_weights.size(1) == 0:
+            return inputs, aux_loss
+
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
 
@@ -73,9 +80,6 @@ class PraxisMixtureOfDepths(nn.Linear):
             index=indices_expanded,
             src=layer_outputs,
         )
-
-        # compute aux loss, in order to enforce causality in the top-k operation
-        aux_loss = self.aux_loss(router_logits, token_indices)
 
         return outputs, aux_loss
 

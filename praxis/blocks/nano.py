@@ -41,7 +41,13 @@ class PraxisNano(nn.Module):
         self.ffw_norm = nn.LayerNorm(hidden_dim)
         self.ffw = PraxisGLU(config)
 
-    def forward(self, x: Tensor, attention_mask: Tensor = None):
+    def forward(
+        self,
+        x: Tensor,
+        attention_mask: Tensor,
+        router_weights: Optional[Tensor] = None,
+        token_indices: Optional[Tensor] = None,
+    ):
         # x shape: (B, T, E)
         chunk_norm = self.fft_norm(x)
         # Transpose (B, T, E) -> (B, E, T)
