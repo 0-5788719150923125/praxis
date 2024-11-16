@@ -242,7 +242,7 @@ parser.add_argument(
     "--encoding_type",
     type=str,
     choices=ENCODING_REGISTRY.keys(),
-    default="alibi",
+    default="rope",
     help="The positional encoding to use for sequence length extrapolation",
 )
 parser.add_argument(
