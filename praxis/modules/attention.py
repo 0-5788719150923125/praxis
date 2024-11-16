@@ -202,10 +202,12 @@ class Differential(ScaledDotProduct):
 
     def compute_scores(self, q, k, v):
         # Split queries and keys
-        Q1, Q2 = q[..., : self.head_dim], q[..., self.head_dim :]
-        K1, K2 = k[..., : self.head_dim], k[..., self.head_dim :]
+        q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
+        k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
         # Compute differential attention scores
-        scores = [self._compute_score(Q1, K1), self._compute_score(Q2, K2)]
+        scores = [
+            self._compute_score(q_chunks[i], k_chunks[i]) for i in range(len(q_chunks))
+        ]
         return q, k, v, scores
 
     def compute_weights(self, v, scores, mask: Optional[Tensor] = None):
