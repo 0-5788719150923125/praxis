@@ -14,11 +14,7 @@ from praxis.modules.dense import PraxisGLU
 class PraxisConv(nn.Module):
     """
     A special kind of block that omits the self-attention mechanism, in favor
-    of causal convolutional layers and periodic activations. While this was originally
-    inspired by NanoFFT, the module looks almost nothing like that now.
-    https://github.com/timurgepard/nanoFFT
-    Periodic activation functions can train a model to "know what they do not know."
-    https://arxiv.org/abs/2110.13572
+    of causal convolutional layers and periodic activations.
     """
 
     __version__ = "0.1.0"
@@ -26,13 +22,16 @@ class PraxisConv(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
+        projection = int(hidden_dim * (1 + config.capacity))
 
         # Local processing
         self.conv_norm = nn.LayerNorm(hidden_dim)
-        self.conv = CausalConv1d(hidden_dim, hidden_dim, kernel_size=3)
+        # self.conv = CausalConv1d(hidden_dim, projection, kernel_size=7)
+        self.conv = MultiHeadCausalConv1d(hidden_dim, projection, num_heads=3)
 
         # Global context processing
-        self.gc = CausalGlobalContext(hidden_dim, capacity=0.75)
+        self.gc = CausalGlobalContext(projection, capacity=config.capacity)
+        self.reduce = nn.Linear(projection, hidden_dim)
 
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
@@ -47,23 +46,174 @@ class PraxisConv(nn.Module):
     ) -> Tensor:
         # Local processing
         residual = x
-        x_norm = self.conv_norm(x)
-        x_transposed = x_norm.transpose(1, 2)  # (B, E, T)
-        x_conv = self.conv(x_transposed)
+        x_norm = self.conv_norm(x)  # Shape: (B, T, E)
+        x_transposed = x_norm.transpose(1, 2)  # Shape: (B, E, T)
+        x_conv = self.conv(x_transposed)  # Shape: (B, projection, T)
 
         # Global context
-        x_gc = self.gc(x_conv)
+        x_gc = self.gc(x_conv)  # Shape: (B, projection, T)
+        x_gc = x_gc.transpose(1, 2)  # Transpose to (B, T, projection)
+        x_out = self.reduce(x_gc)  # Linear layer applied to feature dimension
+        # Output shape: (B, T, hidden_dim)
 
-        # Back to sequence format
-        x_out = x_gc.transpose(1, 2)  # (B, T, E)
+        # Residual connection and FFN
+        residual = x_out + residual  # Shape: (B, T, hidden_dim)
 
-        # Residual
-        residual = x_out + residual
-
-        # FFN
         x_norm = self.ffw_norm(residual)
         x_ffw = self.ffw(x_norm)
         return x_ffw + residual
+
+
+class MultiHeadCausalConv1d(nn.Module):
+    def __init__(self, in_channels, out_channels, num_heads):
+        super().__init__()
+        assert out_channels % num_heads == 0
+        head_dim = out_channels // num_heads
+        self.convs = nn.ModuleList(
+            [CausalConv1d(in_channels, head_dim, (i + 3)) for i in range(num_heads)]
+        )
+
+    def forward(self, x):
+        head_outputs = [conv(x) for conv in self.convs]
+        return torch.cat(head_outputs, dim=1)
+
+
+# class MultiHeadCausalConv1d(nn.Module):
+#     def __init__(self, in_channels, out_channels, num_heads, kernel_size=3):
+#         super().__init__()
+#         assert out_channels % num_heads == 0
+#         self.num_heads = num_heads
+#         self.head_dim = out_channels // num_heads
+
+#         # Single set of convolutions for all heads
+#         self.query_conv = nn.Conv1d(
+#             in_channels,
+#             out_channels,
+#             kernel_size=kernel_size,
+#             padding=kernel_size - 1,
+#             groups=num_heads,
+#         )
+#         self.key_conv = nn.Conv1d(
+#             in_channels,
+#             out_channels,
+#             kernel_size=kernel_size,
+#             padding=kernel_size - 1,
+#             groups=num_heads,
+#         )
+#         self.value_conv = nn.Conv1d(
+#             in_channels,
+#             out_channels,
+#             kernel_size=kernel_size,
+#             padding=kernel_size - 1,
+#             groups=num_heads,
+#         )
+
+#         # Layer normalization for better training stability
+#         self.layer_norm = nn.LayerNorm(out_channels)
+
+#         self.scale = (out_channels // num_heads) ** -0.5
+
+#     def forward(self, x):
+#         B, C, T = x.size()
+#         H = self.num_heads
+
+#         # Apply convolutions and reshape for multi-head attention
+#         # Shape: (B, C, T) -> (B, H, D, T) where D = C//H
+#         queries = self.query_conv(x)[:, :, -T:]  # Remove padding
+#         keys = self.key_conv(x)[:, :, -T:]
+#         values = self.value_conv(x)[:, :, -T:]
+
+#         # Reshape to separate heads
+#         queries = queries.view(B, H, -1, T)
+#         keys = keys.view(B, H, -1, T)
+#         values = values.view(B, H, -1, T)
+
+#         # Compute attention scores for all heads simultaneously
+#         # (B, H, D, T) @ (B, H, T, D) -> (B, H, T, T)
+#         scores = torch.matmul(queries.transpose(2, 3), keys) * self.scale
+
+#         # Causal masking
+#         mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
+#         scores = scores.masked_fill(mask, float("-inf"))
+
+#         # Apply softmax
+#         attn_weights = F.softmax(scores, dim=-1)
+
+#         # Apply attention weights to values
+#         # (B, H, T, T) @ (B, H, D, T).transpose(2,3) -> (B, H, T, D)
+#         out = torch.matmul(attn_weights, values.transpose(2, 3))
+
+#         # Reshape back
+#         out = out.transpose(2, 3).contiguous().view(B, -1, T)
+
+#         # Apply layer normalization
+#         out = self.layer_norm(out.transpose(1, 2)).transpose(1, 2)
+
+#         return out
+
+
+# class MultiHeadCausalConv1d(nn.Module):
+#     def __init__(self, in_channels, out_channels, num_heads):
+#         super().__init__()
+#         assert out_channels % num_heads == 0
+#         self.num_heads = num_heads
+#         self.head_dim = out_channels // num_heads
+
+#         # Convolutions to compute queries, keys, and values
+#         self.query_convs = nn.ModuleList(
+#             [
+#                 CausalConv1d(in_channels, self.head_dim, kernel_size=(i + 3))
+#                 for i in range(num_heads)
+#             ]
+#         )
+#         self.key_convs = nn.ModuleList(
+#             [
+#                 CausalConv1d(in_channels, self.head_dim, kernel_size=(i + 3))
+#                 for i in range(num_heads)
+#             ]
+#         )
+#         self.value_convs = nn.ModuleList(
+#             [
+#                 CausalConv1d(in_channels, self.head_dim, kernel_size=(i + 3))
+#                 for i in range(num_heads)
+#             ]
+#         )
+
+#         self.scale = self.head_dim**-0.5  # Scaling factor for dot product attention
+
+#     def forward(self, x):
+#         # x shape: (B, C, T)
+#         B, C, T = x.size()
+#         attention_outputs = []
+
+#         for i in range(self.num_heads):
+#             # Compute queries, keys, and values
+#             Q = self.query_convs[i](x)  # Shape: (B, head_dim, T)
+#             K = self.key_convs[i](x)  # Shape: (B, head_dim, T)
+#             V = self.value_convs[i](x)  # Shape: (B, head_dim, T)
+
+#             # Compute attention scores
+#             # Transpose K to match dimensions for batch matrix multiplication
+#             attn_scores = torch.bmm(Q.transpose(1, 2), K)  # Shape: (B, T, T)
+#             attn_scores = attn_scores * self.scale
+
+#             # Apply causal masking
+#             causal_mask = torch.tril(torch.ones(T, T, device=x.device)).unsqueeze(0)
+#             attn_scores = attn_scores.masked_fill(causal_mask == 0, float("-inf"))
+
+#             # Apply softmax to get attention weights
+#             attn_weights = F.softmax(attn_scores, dim=-1)  # Shape: (B, T, T)
+
+#             # Compute weighted sum of values
+#             attn_output = torch.bmm(
+#                 attn_weights, V.transpose(1, 2)
+#             )  # Shape: (B, T, head_dim)
+#             attn_output = attn_output.transpose(1, 2)  # Shape: (B, head_dim, T)
+#             attention_outputs.append(attn_output)
+
+#         # Concatenate the outputs from all heads
+#         output = torch.cat(attention_outputs, dim=1)  # Shape: (B, out_channels, T)
+#         return output
 
 
 class CausalConv1d(nn.Conv1d):
@@ -159,10 +309,12 @@ if __name__ == "__main__":
     class AutoConfig:
         num_dims: int = 768
         num_embeds: int = 768
+        num_heads: int = 4
         context_length: int = 2048
         vocab_size: int = 50257
         causal: bool = True
         dropout: float = 0.0
+        capacity: float = 0.125
 
     # Configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
