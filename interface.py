@@ -255,32 +255,39 @@ class TerminalDashboard:
             current_width += char_width
         return "".join(result)
 
+    def _visual_len(self, s):
+        """Calculate the visual display width of a string."""
+        return sum(max(wcwidth.wcwidth(char), 0) for char in s)
+
     def _correct_borders(self, frame):
-        width = len(frame[0])
+        frame_visual_width = self._visual_len(frame[0])
         for i in range(1, len(frame) - 1):
             line = frame[i]
-            if len(line) < width:
-                line = line.ljust(width)
-            elif len(line) > width:
-                line = line[:width]
-            if line[0] != "║":
+            line_visual_len = self._visual_len(line)
+            if line_visual_len < frame_visual_width:
+                padding_needed = frame_visual_width - line_visual_len
+                line += " " * padding_needed
+            elif line_visual_len > frame_visual_width:
+                line = self._truncate_to_width(line, frame_visual_width)
+            if not line.startswith("║"):
                 line = "║" + line[1:]
-            if line[-1] != "║":
+            if not line.endswith("║"):
                 line = line[:-1] + "║"
             frame[i] = line
         return frame
 
     def _update_screen(self, new_frame):
-        new_frame = self._correct_borders(new_frame)
-
         frame_width = len(new_frame[0])  # Get the width of the frame
+
+        # Ensure all lines in new_frame are exactly frame_width in length
+        new_frame = [line.ljust(frame_width)[:frame_width] for line in new_frame]
 
         if self.previous_frame is None or len(self.previous_frame) != len(new_frame):
             print(
                 self.term.home
                 + self.term.clear
                 + self.term.white
-                + "\n".join(new_frame).replace("<newline>", "\n"),
+                + "\n".join(new_frame),
                 end="",
                 file=self.dashboard_output,
             )
@@ -288,10 +295,9 @@ class TerminalDashboard:
             for i, (old_line, new_line) in enumerate(
                 zip(self.previous_frame, new_frame)
             ):
-                new_line = new_line.replace("<newline>", "\n")
                 if old_line != new_line:
-                    # Pad the new line to ensure it overwrites the old content
-                    padded_new_line = new_line.ljust(frame_width)
+                    # Ensure the new line is exactly frame_width in length
+                    padded_new_line = new_line.ljust(frame_width)[:frame_width]
                     print(
                         self.term.move(i, 0) + self.term.white + padded_new_line,
                         end="",
@@ -399,9 +405,10 @@ class TerminalDashboard:
 
             frame.append(f"║{left_content}║{right_content}║")
 
+        # At the end of _create_frame method
         frame_width = len(frame[0])
         for i in range(len(frame)):
-            frame[i] = frame[i].ljust(frame_width)
+            frame[i] = frame[i].ljust(frame_width)[:frame_width]
 
         frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
 
@@ -425,6 +432,12 @@ class TerminalDashboard:
             # Add bottom border
             frame.append("╚" + "═" * (width + 1) + "╝")
 
+        frame_visual_width = self._visual_len(frame[0])
+        for i in range(len(frame)):
+            line_visual_len = self._visual_len(frame[i])
+            if line_visual_len < frame_visual_width:
+                padding_needed = frame_visual_width - line_visual_len
+                frame[i] += " " * padding_needed
         return frame
 
     def _wrap_text(self, text, width):

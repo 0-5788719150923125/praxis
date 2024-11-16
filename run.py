@@ -367,7 +367,7 @@ seed_everything(seed, workers=True)
 # An important warning
 if gun and seed:
     print(
-        "WARNING: GUN data is never deterministic, and cannot be reliably-reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
+        "WARNING: GUN data is never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
     )
     time.sleep(5)
 

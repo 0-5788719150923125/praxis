@@ -94,6 +94,9 @@ class RoPE(NoPE):
         )
         self.register_buffer("inv_freq", inv_freq)
 
+        # Linear scaling
+        self.scale = 1.0
+
         # Cache buffers
         self._cached_cos = None
         self._cached_sin = None
@@ -147,7 +150,7 @@ class RoPE(NoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
-            positions = torch.arange(seq_len, device=device)
+            positions = torch.arange(seq_len, device=device) * self.scale
             # [seq_len, dim/2]
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
