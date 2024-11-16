@@ -1,3 +1,4 @@
+from functools import partial
 from typing import OrderedDict
 
 import torch
@@ -8,46 +9,46 @@ from transformers import AutoConfig
 
 class PraxisEmbedding(nn.Sequential):
     """
-    A simple token embeddings layer with linear projection into a reduced dimension.
+    A flexible token embeddings layer with optional learned positional embeddings.
     """
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
-        super().__init__(
-            OrderedDict(
-                [
-                    ("wte", nn.Embedding(config.vocab_size, config.num_embeds)),
-                    ("dropout", nn.Dropout(config.dropout)),
-                    ("reduction", nn.Linear(config.num_embeds, config.num_dims)),
-                ]
+    def __init__(self, config: AutoConfig, learned: bool = False):
+
+        layers = [("wte", nn.Embedding(config.vocab_size, config.num_embeds))]
+
+        if learned:
+            layers.append(
+                ("wpe", nn.Embedding(config.context_length, config.num_embeds))
             )
+
+        layers.extend(
+            [
+                ("dropout", nn.Dropout(config.dropout)),
+                ("reduction", nn.Linear(config.num_embeds, config.num_dims)),
+            ]
         )
 
-
-class PraxisLearnedPositionEmbedding(nn.Module):
-    """
-    Learned positional embeddings with a uniform projection.
-    """
-
-    __version__ = "0.1.0"
-
-    def __init__(self, config: AutoConfig):
-        super().__init__()
-        self.wte = nn.Embedding(config.vocab_size, config.num_embeds)
-        self.wpe = nn.Embedding(config.context_length, config.num_embeds)
-        self.reduction = nn.Linear(config.num_embeds, config.num_dims)
+        super().__init__(OrderedDict(layers))
 
     def forward(self, x: Tensor):
-        B, T = x.shape
-        tokens = self.wte(x)
-        position = self.wpe(torch.arange(T, device=x.device))
-        y = tokens + position
-        return self.reduction(y)
+
+        hidden_states = self.wte(x)
+        if hasattr(self, "wpe"):
+            B, T = x.shape
+            position_ids = torch.arange(T, device=x.device)
+            positions = self.wpe(position_ids)
+            hidden_states = hidden_states + positions
+
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.reduction(hidden_states)
+
+        return hidden_states
 
 
 EMBEDDING_REGISTRY = {
-    "transformer": PraxisEmbedding,
-    "nano": PraxisLearnedPositionEmbedding,
-    "conv": PraxisLearnedPositionEmbedding,
+    "transformer": partial(PraxisEmbedding),
+    "nano": partial(PraxisEmbedding, learned=True),
+    "conv": partial(PraxisEmbedding),
 }
