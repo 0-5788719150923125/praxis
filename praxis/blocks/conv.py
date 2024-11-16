@@ -15,7 +15,7 @@ class PraxisConv(nn.Module):
     """
     A special kind of block that omits the self-attention mechanism, in favor
     of causal convolutional layers and periodic activations. While this was originally
-    inspired by NanoFFT, this module looks almost nothing like that now.
+    inspired by NanoFFT, the module looks almost nothing like that now.
     https://github.com/timurgepard/nanoFFT
     Periodic activation functions can train a model to "know what they do not know."
     https://arxiv.org/abs/2110.13572
@@ -27,9 +27,12 @@ class PraxisConv(nn.Module):
         super().__init__()
         hidden_dim = config.num_dims
 
-        reduction = 0.75
-        self.fft_norm = nn.LayerNorm(hidden_dim)
-        self.fft = CausalPeriodicConvolution(config, reduction=reduction)
+        # Local processing
+        self.conv_norm = nn.LayerNorm(hidden_dim)
+        self.conv = CausalConv1d(hidden_dim, hidden_dim, kernel_size=3)
+
+        # Global context processing
+        self.gc = CausalGlobalContext(hidden_dim, reduction=0.125)
 
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
@@ -42,25 +45,75 @@ class PraxisConv(nn.Module):
         router_weights: Optional[Tensor] = None,
         token_indices: Optional[Tensor] = None,
     ) -> Tensor:
-        # Normalize input
-        x_norm = self.fft_norm(x)  # (B, T, E)
+        # Local processing
+        x_norm = self.conv_norm(x)
+        x_conv = self.conv(x_norm.transpose(1, 2))
 
-        # Transpose to (B, E, T) for Conv1d
-        x_out = x_norm.transpose(1, 2)  # (B, E, T)
+        # Global context
+        x_gc = self.gc(x_conv)
 
-        # Capture local and global patterns
-        x_out = self.fft(x_out)
+        # Back to sequence format
+        x_out = x_gc.transpose(1, 2)
 
-        # Transpose back to (B, T, E)
-        x_out = x_out.transpose(1, 2)  # (B, T, reduced_dim)
-
-        # Residual connection
+        # Residual
         residual = x_out + x
 
-        # Feedforward network
+        # FFN
         x_norm = self.ffw_norm(residual)
         x_ffw = self.ffw(x_norm)
         return x_ffw + residual
+
+
+# class PraxisConv(nn.Module):
+#     """
+#     A special kind of block that omits the self-attention mechanism, in favor
+#     of causal convolutional layers and periodic activations. While this was originally
+#     inspired by NanoFFT, this module looks almost nothing like that now.
+#     https://github.com/timurgepard/nanoFFT
+#     Periodic activation functions can train a model to "know what they do not know."
+#     https://arxiv.org/abs/2110.13572
+#     """
+
+#     __version__ = "0.1.0"
+
+#     def __init__(self, config: "AutoConfig", *args, **kwargs):
+#         super().__init__()
+#         hidden_dim = config.num_dims
+
+#         reduction = 0.75
+#         self.fft_norm = nn.LayerNorm(hidden_dim)
+#         self.fft = CausalPeriodicConvolution(config, reduction=reduction)
+
+#         config.activation = "sin_cos"
+#         self.ffw_norm = nn.LayerNorm(hidden_dim)
+#         self.ffw = PraxisGLU(config)
+
+#     def forward(
+#         self,
+#         x: Tensor,
+#         attention_mask: Optional[Tensor] = None,
+#         router_weights: Optional[Tensor] = None,
+#         token_indices: Optional[Tensor] = None,
+#     ) -> Tensor:
+#         # Normalize input
+#         x_norm = self.fft_norm(x)  # (B, T, E)
+
+#         # Transpose to (B, E, T) for Conv1d
+#         x_out = x_norm.transpose(1, 2)  # (B, E, T)
+
+#         # Capture local and global patterns
+#         x_out = self.fft(x_out)
+
+#         # Transpose back to (B, T, E)
+#         x_out = x_out.transpose(1, 2)  # (B, T, reduced_dim)
+
+#         # Residual connection
+#         residual = x_out + x
+
+#         # Feedforward network
+#         x_norm = self.ffw_norm(residual)
+#         x_ffw = self.ffw(x_norm)
+#         return x_ffw + residual
 
 
 class CausalPeriodicConvolution(nn.Module):
