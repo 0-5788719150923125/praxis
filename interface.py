@@ -399,7 +399,7 @@ class TerminalDashboard:
             # Combine the content with borders
             frame.append(f"║{left_content}║{right_content}║")
 
-        frame.append("╚" + "═" * half_width + "╩" + "═" * right_width + "╝")
+        frame.append("╠" + "═" * half_width + "╩" + "═" * right_width + "╣")
 
         with self.lock:
             elapsed = self.hours_since()
