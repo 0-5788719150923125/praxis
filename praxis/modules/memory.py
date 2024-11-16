@@ -25,7 +25,7 @@ class PraxisMemory(nn.Module):
         self.num_heads = config.num_heads
         self.head_dim = config.num_dims // config.num_heads
         self.k = 16  # max KNN vectors to lookup
-        self.max_memories = 8192  # max k/v vectors to store
+        self.max_memories = 4 * 4096  # max k/v vectors to store
         self.epsilon = 1e-8  # for numerical stability
         # Gating parameter: one gate per head
         self.gate = nn.Parameter(torch.zeros(self.num_heads))
@@ -123,7 +123,7 @@ class PraxisMemory(nn.Module):
 
     def _find_knn(self, queries: Tensor) -> tuple:
         """
-        Finds the k-nearest neighbors for each query across all heads using cosine similarity.
+        Finds k-nearest neighbors using batched processing to reduce peak memory usage.
         """
         if self.key_memories.size(1) == 0:
             return None, None
@@ -132,14 +132,41 @@ class PraxisMemory(nn.Module):
         queries_norm = F.normalize(queries, p=2, dim=-1, eps=self.epsilon)
         keys_norm = F.normalize(self.key_memories, p=2, dim=-1, eps=self.epsilon)
 
-        # Compute cosine similarity: [num_heads, Q, K]
-        # Since vectors are normalized, cosine similarity is equivalent to the dot product
-        similarities = torch.bmm(queries_norm, keys_norm.transpose(1, 2)) / math.sqrt(
-            self.head_dim
-        )
+        batch_size = 512  # Adjust based on available memory
+        num_queries = queries_norm.size(1)
         k = min(self.k, self.key_memories.size(1))
-        scores, indices = similarities.topk(k, dim=-1)
-        return scores, indices
+        device = queries.device
+
+        # Pre-allocate output tensors
+        all_scores = torch.zeros(self.num_heads, num_queries, k, device=device)
+        all_indices = torch.zeros(
+            self.num_heads, num_queries, k, dtype=torch.long, device=device
+        )
+
+        # Process queries in batches
+        for start_idx in range(0, num_queries, batch_size):
+            end_idx = min(start_idx + batch_size, num_queries)
+            batch_queries = queries_norm[
+                :, start_idx:end_idx
+            ]  # [num_heads, batch, dim]
+
+            # Compute similarities for this batch
+            batch_similarities = torch.bmm(
+                batch_queries, keys_norm.transpose(1, 2)
+            ) / math.sqrt(
+                self.head_dim
+            )  # [num_heads, batch, num_keys]
+
+            # Get top k for this batch
+            batch_scores, batch_indices = batch_similarities.topk(
+                k, dim=-1
+            )  # [num_heads, batch, k]
+
+            # Store results
+            all_scores[:, start_idx:end_idx] = batch_scores
+            all_indices[:, start_idx:end_idx] = batch_indices
+
+        return all_scores, all_indices
 
     def _get_values(self, indices: Tensor) -> Tensor:
         """
