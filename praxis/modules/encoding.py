@@ -23,7 +23,7 @@ class NoPE(nn.Module):
         if self.scaled:
             self.head_scales = nn.Parameter(torch.linspace(1.2, 1.2, self.num_heads))
 
-    def before_scores(self, q, k, v):
+    def before_scores(self, q, k, v, token_indices):
         if self.scaled:
             # Get base scaling factor
             base_scale = 1.0 / math.sqrt(self.head_dim)
@@ -58,7 +58,7 @@ class ALiBi(NoPE):
             "positions", torch.arange(config.context_length, dtype=torch.float32)
         )
 
-    def compute_before(self, q, k, v):
+    def compute_before(self, q, k, v, token_indices):
         return q, k, v
 
     def compute_after(self, scores, token_indices):
@@ -102,24 +102,40 @@ class RoPE(NoPE):
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def before_scores(self, q, k, v):
+    def before_scores(self, q, k, v, token_indices):
         # Get sequence length and device
         seq_len = q.size(2)
+        batch_size = q.size(0)
+        num_heads = q.size(1)
         device = q.device
         dtype = q.dtype
 
+        if torch.is_tensor(token_indices):
+            max_idx = token_indices.max().item()
+            needed_length = max(seq_len, max_idx + 1)
+        else:
+            needed_length = seq_len
+
         # Ensure embeddings are computed and cached
-        self._compute_rope_embeddings(seq_len, device, dtype)
+        self._compute_rope_embeddings(needed_length, device, dtype)
 
-        # Get appropriate slice of cached values
-        cos = self._cached_cos[:, :, :seq_len, :]
-        sin = self._cached_sin[:, :, :seq_len, :]
+        if torch.is_tensor(token_indices):
+            # Select from cached tensors using batch_idx and token_indices
+            # This will give us [batch_size, num_selected, dim]
+            selected_cos = self._cached_cos[0, 0, token_indices, :]
+            selected_sin = self._cached_sin[0, 0, token_indices, :]
 
-        # Check if input tensors have larger head dimensions than base
+            # Add head dimension and expand
+            cos = selected_cos.unsqueeze(1).expand(-1, num_heads, -1, -1)
+            sin = selected_sin.unsqueeze(1).expand(-1, num_heads, -1, -1)
+        else:
+            cos = self._cached_cos[:, :, :seq_len, :]
+            sin = self._cached_sin[:, :, :seq_len, :]
+
+        # Rest of the code remains the same
         q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
         k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
 
-        # Apply RoPE to each chunk
         q_rope_chunks = [
             self._apply_rotary_pos_emb(q_chunk, cos, sin) for q_chunk in q_chunks
         ]
@@ -127,7 +143,6 @@ class RoPE(NoPE):
             self._apply_rotary_pos_emb(k_chunk, cos, sin) for k_chunk in k_chunks
         ]
 
-        # Recombine chunks if necessary
         q_rope = (
             torch.cat(q_rope_chunks, dim=-1) if len(q_chunks) > 1 else q_rope_chunks[0]
         )

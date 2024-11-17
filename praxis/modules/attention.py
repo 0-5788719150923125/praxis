@@ -96,7 +96,7 @@ class PraxisAttention(nn.Module):
         )
 
         # Pre-scoring positional encoding
-        q, k, v = self.encoding.before_scores(q, k, v)
+        q, k, v = self.encoding.before_scores(q, k, v, token_indices)
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
