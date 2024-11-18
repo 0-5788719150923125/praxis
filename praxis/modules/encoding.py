@@ -243,3 +243,6 @@ class YaRN(RoPE):
             self._cached_cos = cos.to(dtype)
             self._cached_sin = sin.to(dtype)
             self._cached_seq_length = seq_len
+
+
+ENCODING_REGISTRY = {"alibi": ALiBi, "nope": NoPE, "rope": RoPE, "yarn": YaRN}
