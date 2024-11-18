@@ -462,6 +462,7 @@ optimizer_defaults = dict(
         "InstanceNorm",
         "PReLU",
         "SinLU",
+        "NMDA",
     ],
 )
 if optimizer.lower() == "soap":
@@ -471,7 +472,7 @@ if optimizer.lower() == "soap":
         min_lr=1e-5,
         weight_decay=1e-2,
         precondition_frequency=10,
-        max_preconditionum_dims=1024,
+        max_precondition_dim=1024,
         normalize_gradient=False,
         correct_bias=True,
         precondition_1d=False,
