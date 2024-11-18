@@ -1,18 +1,19 @@
 import math
+import random
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+
 from praxis import activations
-import random
 
 # Define activation functions
 activation_functions = {
     # "ReLU": nn.ReLU(),
-    "Sigmoid": nn.Sigmoid(),
-    "Tanh": nn.Tanh(),
-    "Leaky ReLU": nn.LeakyReLU(),
+    # "Sigmoid": nn.Sigmoid(),
+    # "Tanh": nn.Tanh(),
+    # "Leaky ReLU": nn.LeakyReLU(),
     # "ELU": nn.ELU(),
     # "JaggedSine": activations.JaggedSine(
     #     frequencies=[1.0, 2.3, 5.9], amplitudes=[1.0, 0.1, 0.23]
@@ -21,9 +22,9 @@ activation_functions = {
     #     frequencies=[random.uniform(-2, 2) for _ in range(9)],
     #     amplitudes=[random.uniform(-2, 2) for _ in range(9)],
     # ),
-    # "NMDA": NMDA(),
-    # "SERF": SERF(),
-    # "SinLU": SinLU(),
+    "NMDA": activations.NMDA(),
+    "SERF": activations.SERF(),
+    "SinLU": activations.SinLU(),
     "Sine": activations.Sine(),
     "SineCosine": activations.SineCosine(),
     "PeriodicReLU": activations.PeriodicReLU(),
