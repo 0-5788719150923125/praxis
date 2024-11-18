@@ -411,6 +411,7 @@ config = PraxisConfig(
     stickbreaking=stickbreaking,
     compression=compression,
     memory=memory,
+    activation=activation,
     hivemind=hivemind,
     initial_peers=initial_peers,
     block=block_type,
