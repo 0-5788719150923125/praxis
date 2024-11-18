@@ -178,6 +178,7 @@ def get_datamodules(
     dev: bool,
     phi: bool,
     gun: bool,
+    source: bool,
     tokenizer,
     hparams,
     data_path,
@@ -192,7 +193,24 @@ def get_datamodules(
 
     if data_path:
         train_data.append(
-            get_dataset("directory", tokenizer, hparams["block_size"], seed, *args)
+            get_dataset(
+                "directory",
+                tokenizer,
+                hparams["block_size"],
+                seed,
+                data_path=data_path,
+                *args,
+            )
+        )
+    if source:
+        train_data.append(
+            get_dataset(
+                "self",
+                tokenizer,
+                hparams["block_size"],
+                seed,
+                *args,
+            )
         )
 
     if gun:
@@ -228,19 +246,46 @@ def get_datamodules(
     return train_dataloader, validation_dataloader
 
 
-def get_dataset(format, tokenizer, block_size, seed, *args):
+def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
     if format == "huggingface":
         dataset = HuggingfaceDataset(tokenizer, block_size, seed, *args)
         # First arg is config dict for huggingface
         dataset.weight = args[0].get("weight", 1.0)
         return dataset
     elif format == "directory":
-        dataset = MultiDirectoryDataset(tokenizer, block_size, *args)
-        dataset.weight = 0.1  # Default weight for directory datasets
+        dataset = MultiDirectoryDataset(
+            tokenizer, block_size, directories=kwargs.get("data_path")
+        )
+        dataset.weight = 0.1
+        return dataset
+    elif format == "self":
+        dataset = MultiDirectoryDataset(
+            tokenizer,
+            block_size,
+            directories="./",
+            allowed_extensions=[
+                ".py",
+                ".js",
+                ".mjs",
+                ".gd",
+                ".tscn",
+                ".cfg",
+                ".godot",
+                ".tex",
+                ".html",
+                ".css",
+                ".bib",
+                ".txt",
+                ".md",
+                ".sh",
+                ".json",
+            ],
+        )
+        dataset.weight = 0.001
         return dataset
     elif format == "gun":
         dataset = GunChatDataset(tokenizer, block_size)
-        dataset.weight = 0.001  # Default weight for gun dataset
+        dataset.weight = 0.001
         return dataset
 
 
@@ -451,13 +496,130 @@ class HuggingfaceDataset(PraxisSampler):
 
 class MultiDirectoryDataset(PraxisSampler):
     def __init__(
-        self, tokenizer: PreTrainedTokenizer, block_size: int, directories: List[str]
+        self,
+        tokenizer: PreTrainedTokenizer,
+        block_size: int,
+        directories: List[str],
+        allowed_extensions: Optional[List[str]] = [],
+        excluded_dirs: Optional[List[str]] = None,
     ):
         super().__init__(tokenizer, block_size)
-        self.directories = directories
+        # Normalize and resolve all directory paths relative to current working directory
+        self.cwd = os.getcwd()
+        self.directories = [
+            os.path.normpath(os.path.join(self.cwd, d)) for d in directories
+        ]
+        self.allowed_extensions = [ext.lower() for ext in allowed_extensions]
+
+        # Default exclusions for common development directories
+        default_exclusions = {
+            ".git",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "node_modules",
+            "build",
+            "dist",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".tox",
+        }
+        user_exclusions = set(excluded_dirs) if excluded_dirs else set()
+        self.excluded_dirs = default_exclusions.union(user_exclusions)
+
+        print(f"Working directory: {self.cwd}")
+        print(f"Scanning directories: {self.directories}")
+        print(f"File extensions filter: {self.allowed_extensions}")
+        print(f"Excluding directories: {self.excluded_dirs}")
+
         self.file_list = self._get_file_list()
+        print(f"Found {len(self.file_list)} files")
         random.shuffle(self.file_list)
         self.file_iterator = iter(self.file_list)
+
+    def _should_skip_directory(self, dirpath: str) -> bool:
+        """
+        Check if directory should be skipped based on exclusion rules
+        and ensure we don't leave the working directory context.
+        """
+        dir_name = os.path.basename(dirpath)
+
+        # Check if directory is in excluded list
+        if dir_name in self.excluded_dirs:
+            return True
+
+        # Ensure directory is within working directory context
+        try:
+            # Resolve the real path, following symlinks
+            real_path = os.path.realpath(dirpath)
+            # Check if this path is within our working directory
+            return not real_path.startswith(self.cwd)
+        except:
+            # If there's any error resolving the path, skip it to be safe
+            return True
+
+    def _get_file_list(self) -> List[str]:
+        """
+        Recursively traverse directories and return a flat list of fully-qualified file paths,
+        staying within the working directory context.
+        """
+        all_files = []
+
+        for directory in self.directories:
+            if not os.path.exists(directory):
+                print(f"Warning: Directory {directory} does not exist, skipping...")
+                continue
+
+            try:
+                # Walk through directory recursively
+                for root, dirs, files in os.walk(
+                    directory, topdown=True, followlinks=False
+                ):
+                    # Modify dirs in-place to prevent walking into excluded directories
+                    dirs[:] = [
+                        d
+                        for d in dirs
+                        if not self._should_skip_directory(os.path.join(root, d))
+                    ]
+
+                    for filename in files:
+                        # Get full path
+                        full_path = os.path.join(root, filename)
+
+                        # Verify file is within working directory
+                        real_path = os.path.realpath(full_path)
+                        if not real_path.startswith(self.cwd):
+                            continue
+
+                        # Check if file extension is allowed
+                        file_ext = os.path.splitext(filename)[1].lower()
+                        if len(self.allowed_extensions) > 0:
+                            if file_ext in self.allowed_extensions:
+                                all_files.append(full_path)
+                        else:
+                            all_files.append(full_path)
+            except Exception as e:
+                print(f"Error scanning directory {directory}: {str(e)}")
+                continue
+
+        return all_files
+
+    def _read_file(self, file_path: str) -> str:
+        """Read and return the contents of a file."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except UnicodeDecodeError:
+            # Fallback to latin-1 if UTF-8 fails
+            try:
+                with open(file_path, "r", encoding="latin-1") as f:
+                    return f.read()
+            except Exception as e:
+                print(f"Error reading file {file_path}: {str(e)}")
+                return ""
+        except Exception as e:
+            print(f"Error reading file {file_path}: {str(e)}")
+            return ""
 
     def fill_sequence_cache(self):
         try:
