@@ -6,12 +6,14 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.dense import PraxisGLU, PraxisMLP
+from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.smear import PraxisSMEAR
 
 EXPERT_REGISTRY = {
-    "mlp": PraxisMLP,
     "glu": PraxisGLU,
+    "kan": PraxisKAN,
+    "mlp": PraxisMLP,
     "peer": PraxisPEER,
     "smear": PraxisSMEAR,
 }
