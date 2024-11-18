@@ -48,11 +48,13 @@ class PraxisEmbedding(nn.Sequential):
             position_ids = torch.arange(T, device=x.device)
             positions = self.wpe(position_ids)
             hidden_states = hidden_states + positions
-            hidden_states = self.dropout(self.linear(hidden_states))
+            hidden_states = self.dropout(hidden_states)
+            hidden_states = self.linear(hidden_states)
         else:
             residual = self.linear(hidden_states)
             hidden_states = self.up(self.down(hidden_states))
-            hidden_states = self.dropout(hidden_states + residual)
+            hidden_states = self.dropout(hidden_states)
+            hidden_states = hidden_states + residual
 
         return hidden_states
 
