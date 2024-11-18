@@ -46,9 +46,6 @@ class PraxisBlock(nn.Module):
         *args,
         **kwargs,
     ):
-        # this is a super hack because hivemind
-        if torch.is_tensor(router_weights) and self._is_zero_tensor(router_weights):
-            router_weights = None
         residual = inputs
         normalized = self.attn_norm(inputs)
         outputs = self.attn(normalized, attention_mask, kwargs.get("memory", False))
@@ -59,6 +56,9 @@ class PraxisBlock(nn.Module):
         outputs = self.mlp(normalized)
         outputs = self.dropout(outputs)
         if torch.is_tensor(router_weights):
+            # this is a super hack because hivemind
+            if self._is_zero_tensor(router_weights):
+                router_weights = None
             outputs = outputs + router_weights
         outputs = outputs + residual
         return outputs

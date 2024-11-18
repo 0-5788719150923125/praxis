@@ -166,6 +166,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [TokenFormer](https://arxiv.org/abs/2410.23168)
 - [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
 - [Language Models are Hidden Reasoners: Unlocking Latent Reasoning Capabilities via Self-Rewarding](https://arxiv.org/abs/2411.04282)
+- https://github.com/jinyeom/lsh-knn/tree/main
 
 ## won't do
 

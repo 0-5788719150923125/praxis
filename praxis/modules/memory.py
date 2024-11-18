@@ -13,9 +13,6 @@ class PraxisMemory(nn.Module):
     performs a KNN lookup of previous keys/values used in the attention mechanism.
     Inspired by Memorizing Transformers:
     https://arxiv.org/abs/2203.08913
-    We also use a form of Locally-Sensitive Hashing (LSH), to reduce the computational
-    requirements of the KNN algorithm:
-    https://github.com/jinyeom/lsh-knn/tree/main
     """
 
     __version__ = "0.1.0"
