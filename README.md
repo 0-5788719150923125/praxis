@@ -165,6 +165,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - https://github.com/timurgepard/nanoFFT (a somewhat novel idea)
 - [TokenFormer](https://arxiv.org/abs/2410.23168)
 - [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
+- [Language Models are Hidden Reasoners: Unlocking Latent Reasoning Capabilities via Self-Rewarding](https://arxiv.org/abs/2411.04282)
 
 ## won't do
 
