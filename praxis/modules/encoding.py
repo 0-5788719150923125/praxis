@@ -183,12 +183,6 @@ class YaRN(RoPE):
         self.alpha = 1  # threshold for full scaling
         self.beta = 32  # threshold for no scaling
 
-        # Base frequencies
-        inv_freq = 1.0 / (
-            10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
-        )
-        self.register_buffer("inv_freq", inv_freq)
-
         # Calculate rotations per dimension
         positions = torch.arange(self.original_max_position)
         dim_rotations = positions.unsqueeze(1) * inv_freq.unsqueeze(
