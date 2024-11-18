@@ -24,3 +24,4 @@ for k, v in ACTIVATION_MAP.items():
     ACT2CLS.update({k: v})
 
 ACT2FN = ClassInstantier(ACT2CLS)
+ACTIVATION_REGISTRY = dict(sorted(ACT2FN.items()))

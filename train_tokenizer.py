@@ -79,12 +79,8 @@ trainer = trainers.BpeTrainer(
     ],
 )
 
-tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
-    [
-        pre_tokenizers.Punctuation(behavior="isolated"),
-        pre_tokenizers.Digits(individual_digits=True),
-        pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=True),
-    ]
+tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(
+    add_prefix_space=False, use_regex=True
 )
 
 tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC()])

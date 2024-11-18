@@ -118,6 +118,7 @@ from api import APIServer
 from builders import get_datamodules
 from interface import TerminalDashboard
 from praxis import (
+    ACTIVATION_REGISTRY,
     BLOCK_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
@@ -184,6 +185,13 @@ parser.add_argument(
     type=int,
     default=False,
     help="Number of experts to host (defaults to depth)",
+)
+parser.add_argument(
+    "--activation",
+    type=str,
+    choices=ACTIVATION_REGISTRY.keys(),
+    default="serf",
+    help="The primary activation function to use",
 )
 parser.add_argument(
     "--memory_profile",
@@ -701,7 +709,7 @@ class TerminalInterface(Callback):
             self.dashboard.update_expert_count(local_experts, remote_experts)
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
-            self.dashboard.fake_log(chance=0.000001)
+            self.dashboard.fake_log(chance=0.000005)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
@@ -751,7 +759,7 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        n_gram_size = 11
+        n_gram_size = 7
         frequency = 20
         if (
             self._detect_repetition(n_gram_size, frequency)

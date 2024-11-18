@@ -1,3 +1,4 @@
+from praxis.activations import ACTIVATION_REGISTRY
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.configuration_praxis import PraxisConfig
 from praxis.modeling_praxis import PraxisForCausalLM, PraxisModel
