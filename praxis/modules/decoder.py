@@ -11,6 +11,7 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
 from praxis.modules.memory import PraxisMemory
+from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.orchestration.hivemind import (
     P2PDaemonError,
     P2PHandlerError,
@@ -40,20 +41,17 @@ class PraxisDecoder(nn.Module):
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remote_experts = self.manager.active_remote_experts
-        self.local_experts = nn.ModuleList(
-            [
-                (
-                    PraxisExpert(config, self.manager.register_expert(config))
-                    if self.manager
-                    else PraxisExpert(
-                        config,
-                        block=BLOCK_REGISTRY[config.block_type](config),
-                        memory=memory,
-                    )
-                )
-                for _ in range(config.num_experts)
-            ]
-        )
+        self.local_experts = nn.ModuleList()
+        for i in range(config.num_experts):
+            if self.manager:
+                block = self.manager.register_expert(config)
+            else:
+                block = BLOCK_REGISTRY[config.block_type](config)
+            router = False
+            if config.sparse and i % 2 != 0:
+                router = PraxisMixtureOfDepths(config)
+            expert = PraxisExpert(config, block=block, memory=memory, router=router)
+            self.local_experts.append(expert)
         if self.manager:
             self.manager.serve_experts()
         self.navigator = False

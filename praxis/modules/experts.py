@@ -7,7 +7,6 @@ from transformers import AutoConfig
 
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.peer import PraxisPEER
-from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.modules.smear import PraxisSMEAR
 
 EXPERT_REGISTRY = {
@@ -51,25 +50,21 @@ class PraxisExpert(nn.Module):
         self.is_remote = is_remote
         self.block = block
         self.memory = memory
-        if config.sparse:
-            self.router = router if router else PraxisMixtureOfDepths(config)
+        self.router = router
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, current_depth: int):
         d = current_depth
-        use_router = True if self.sparse and d % 2 != 0 else False  # every odd layer
         use_memory = (
             True if self.memory and d % 4 == 0 and d != 0 else False
         )  # every 4th layer
         if self.is_remote:
-            return self._remote_forward(inputs, attention_mask, use_router)
+            return self._remote_forward(inputs, attention_mask)
         else:
-            return self._local_forward(inputs, attention_mask, use_router, use_memory)
+            return self._local_forward(inputs, attention_mask, use_memory)
 
-    def _local_forward(
-        self, inputs: Tensor, attention_mask: Tensor, use_router: bool, use_memory: bool
-    ):
+    def _local_forward(self, inputs: Tensor, attention_mask: Tensor, use_memory: bool):
         aux_losses = []
-        if use_router:
+        if self.router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
@@ -77,25 +72,23 @@ class PraxisExpert(nn.Module):
             hidden_states = self.block(inputs, attention_mask, memory=memory)
         return hidden_states, sum(aux_losses)
 
-    def _remote_forward(self, inputs, attention_mask, use_router):
+    def _remote_forward(self, inputs, attention_mask):
         # because we would otherwise break gradient flow
         residual = inputs
         aux_losses = []
         inputs = inputs.to("cpu")
         attention_mask = attention_mask.to("cpu")
-        if use_router:
+        if self.router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
             # because hivemind cannot receive undefined arguments in the forward pass
             dummy_router_weights = torch.zeros_like(inputs)
-            dummy_token_indices = torch.zeros_like(attention_mask, dtype=torch.int64)
             # because we do not backpropagate through remote experts
             hidden_states = self.block(
                 inputs,
                 attention_mask,
                 dummy_router_weights,
-                dummy_token_indices,
             )
         # TODO: we could possibly add some differentiable noise here; perhaps as a penalty on slow experts?
         hidden_states = hidden_states.to(residual.device) + residual

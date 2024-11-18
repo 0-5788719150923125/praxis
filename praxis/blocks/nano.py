@@ -48,7 +48,6 @@ class PraxisNano(nn.Module):
         x: Tensor,
         attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
-        token_indices: Optional[Tensor] = None,
     ):
         # x shape: (B, T, E)
         chunk_norm = self.fft_norm(x)

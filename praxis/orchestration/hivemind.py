@@ -107,11 +107,6 @@ class PraxisManagement:
         )
         attention_schema = hidden_schema
         router_weights = hidden_schema
-        token_indices = BatchTensorDescriptor(
-            4,
-            dtype=torch.int64,
-            # compression=CompressionType.UNIFORM_8BIT
-        )
 
         expert_uid, _ = self._generate_unique_name(self.pool_size)
         self.expert_uids.append(expert_uid)
@@ -122,7 +117,6 @@ class PraxisManagement:
                 hidden_schema,
                 attention_schema,
                 router_weights,
-                token_indices,
             ),
             outputs_schema=(hidden_schema),
             optimizer=None,
