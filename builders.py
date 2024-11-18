@@ -21,7 +21,7 @@ class DataFormat(Enum):
     CUSTOM = "custom"
 
 
-HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
+HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
 HUGGINGFACE_DATASETS = [
     dict(
         path="open-phi/textbooks",
@@ -56,6 +56,13 @@ HUGGINGFACE_DATASETS = [
         keys=["raw_content"],
         format=DataFormat.SIMPLE,
         weight=1.0,
+    ),
+    dict(
+        path="codeparrot/github-code",
+        name="all-all",
+        keys=["code"],
+        format=DataFormat.SIMPLE,
+        weight=0.001,
     ),
     dict(
         path="HuggingFaceFW/fineweb-edu",
@@ -299,11 +306,12 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"].append(HUGGINGFACE_DATASETS[1])
         config["primary"].append(HUGGINGFACE_DATASETS[2])
         config["primary"].append(HUGGINGFACE_DATASETS[3])
+        config["primary"].append(HUGGINGFACE_DATASETS[4])
     if dev:
         # Overwrite with simpler dataset
         config["primary"] = [HUGGINGFACE_DATASETS[0]]
     else:
-        config["validation"].append(HUGGINGFACE_DATASETS[4])
+        config["validation"].append(HUGGINGFACE_DATASETS[5])
 
     return config
 
