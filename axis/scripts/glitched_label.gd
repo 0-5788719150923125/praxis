@@ -4,6 +4,7 @@ extends Label
 class_name GlitchedLabel
 
 signal glitch_completed
+signal text_changed
 
 # Safe Unicode characters that create interesting visual effects
 const GLITCH_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!?#$%^&*<>-_/\\[]{}|="
@@ -168,8 +169,10 @@ func _on_timer_timeout() -> void:
 		
 		display_text += ch.get_display_text()
 	
-	# Update display
-	text = display_text
+	# Update display and emit signal
+	if text != display_text:
+		text = display_text
+		text_changed.emit()  # Emit signal when text changes
 	
 	# Move to next character if current one is stable
 	if current_char_index < chars.size() and chars[current_char_index].is_finished():
@@ -179,6 +182,7 @@ func _on_timer_timeout() -> void:
 		is_writing = false
 		timer.stop()
 		text = target_text
+		text_changed.emit()  # Final text change
 		glitch_completed.emit()
 	else:
 		timer.start(_get_random_interval())
