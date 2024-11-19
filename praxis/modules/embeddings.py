@@ -22,11 +22,19 @@ class PraxisEmbedding(nn.Sequential):
             layers.append(
                 ("wpe", nn.Embedding(config.context_length, config.num_embeds))
             )
+        else:
+            bottleneck_dim = config.num_dims // 2
+            layers.extend(
+                [
+                    ("down", nn.Linear(config.num_embeds, bottleneck_dim)),
+                    ("up", nn.Linear(bottleneck_dim, config.num_dims)),
+                ]
+            )
 
         layers.extend(
             [
                 ("dropout", nn.Dropout(config.dropout)),
-                ("reduction", nn.Linear(config.num_embeds, config.num_dims)),
+                ("linear", nn.Linear(config.num_embeds, config.num_dims)),
             ]
         )
 
@@ -40,9 +48,13 @@ class PraxisEmbedding(nn.Sequential):
             position_ids = torch.arange(T, device=x.device)
             positions = self.wpe(position_ids)
             hidden_states = hidden_states + positions
-
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.reduction(hidden_states)
+            hidden_states = self.dropout(hidden_states)
+            hidden_states = self.linear(hidden_states)
+        else:
+            residual = self.linear(hidden_states)
+            hidden_states = self.up(self.down(hidden_states))
+            hidden_states = self.dropout(hidden_states)
+            hidden_states = hidden_states + residual
 
         return hidden_states
 

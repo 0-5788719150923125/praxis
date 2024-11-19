@@ -118,6 +118,7 @@ from api import APIServer
 from builders import get_datamodules
 from interface import TerminalDashboard
 from praxis import (
+    ACTIVATION_REGISTRY,
     BLOCK_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
@@ -184,6 +185,13 @@ parser.add_argument(
     type=int,
     default=False,
     help="Number of experts to host (defaults to depth)",
+)
+parser.add_argument(
+    "--activation",
+    type=str,
+    choices=ACTIVATION_REGISTRY.keys(),
+    default="serf",
+    help="The primary activation function to use",
 )
 parser.add_argument(
     "--memory_profile",
@@ -318,6 +326,12 @@ parser.add_argument(
     help="Supplement training with chat data from https://src.eco",
 )
 parser.add_argument(
+    "--source",
+    action="store_true",
+    default=False,
+    help="Train on the model's own source code",
+)
+parser.add_argument(
     "--quiet",
     action="store_true",
     default=False,
@@ -397,6 +411,7 @@ config = PraxisConfig(
     stickbreaking=stickbreaking,
     compression=compression,
     memory=memory,
+    activation=activation,
     hivemind=hivemind,
     initial_peers=initial_peers,
     block=block_type,
@@ -462,6 +477,7 @@ optimizer_defaults = dict(
         "InstanceNorm",
         "PReLU",
         "SinLU",
+        "NMDA",
     ],
 )
 if optimizer.lower() == "soap":
@@ -471,7 +487,7 @@ if optimizer.lower() == "soap":
         min_lr=1e-5,
         weight_decay=1e-2,
         precondition_frequency=10,
-        max_preconditionum_dims=1024,
+        max_precondition_dim=1024,
         normalize_gradient=False,
         correct_bias=True,
         precondition_1d=False,
@@ -694,7 +710,7 @@ class TerminalInterface(Callback):
             self.dashboard.update_expert_count(local_experts, remote_experts)
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
-            self.dashboard.fake_log(chance=0.000001)
+            self.dashboard.fake_log(chance=0.000005)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
@@ -744,7 +760,7 @@ class TerminalInterface(Callback):
         while len(self.text) > self.max_length:
             self.text = self.text[1:]
 
-        n_gram_size = 11
+        n_gram_size = 7
         frequency = 20
         if (
             self._detect_repetition(n_gram_size, frequency)
@@ -1130,7 +1146,7 @@ api_server.start()
 
 # Load datasets
 train_datamodule, validation_datamodule = get_datamodules(
-    seed, dev, phi, gun, tokenizer, hparams, data_path
+    seed, dev, phi, gun, source, tokenizer, hparams, data_path
 )
 
 # create the optimizer

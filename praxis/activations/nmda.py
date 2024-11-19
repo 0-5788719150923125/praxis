@@ -10,7 +10,7 @@ class NMDA(nn.Module):
     Implements NMDA - an activation function which mimics N-methyl-D-aspartic acid receptors (NMDAR)
     in the brain. NMDAR-like nonlinearity shifts short-term working memory into long-term reference memory,
     thus enhancing a process that is similar to memory consolidation in the mammalian brain.
-    https://proceedings.neurips.cc/paper_files/paper/2023/hash/2f1eb4c897e63870eee9a0a0f7a10332-Abstract-Conference.html
+    https://openreview.net/forum?id=vKpVJxplmB
     """
 
     def __init__(self):

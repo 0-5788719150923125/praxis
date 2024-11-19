@@ -66,12 +66,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        layer_outputs = layer(
-            filtered_inputs,
-            filtered_attention_mask,
-            token_weights,
-            squeezed_indices,
-        )
+        layer_outputs = layer(filtered_inputs, filtered_attention_mask, token_weights)
 
         # reintegrate the processed tokens with our residual stream
         outputs = torch.scatter(

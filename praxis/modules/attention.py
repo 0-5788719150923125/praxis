@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.modules.common import ENCODING_REGISTRY
+from praxis.modules.encoding import ENCODING_REGISTRY
 
 
 class PraxisAttention(nn.Module):
@@ -72,7 +72,6 @@ class PraxisAttention(nn.Module):
         self,
         inputs: Tensor,
         attention_mask: Tensor,
-        token_indices: Optional[Tensor],
         memory: Optional[nn.Module] = False,
     ):
         batch_size, seq_len, _ = inputs.shape
@@ -96,14 +95,14 @@ class PraxisAttention(nn.Module):
         )
 
         # Pre-scoring positional encoding
-        q, k, v = self.encoding.before_scores(q, k, v, token_indices)
+        q, k, v = self.encoding.before_scores(q, k, v)
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
         hist_len = scores[0].size(-1)
 
         # Post-scoring positional encoding
-        scores = self.encoding.after_scores(scores, token_indices)
+        scores = self.encoding.after_scores(scores)
 
         # Apply masks
         causal_mask = None
