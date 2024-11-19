@@ -11,7 +11,7 @@ from praxis import activations
 # Define activation functions
 activation_functions = {
     # "ReLU": nn.ReLU(),
-    # "Sigmoid": nn.Sigmoid(),
+    "Sigmoid": nn.Sigmoid(),
     # "Tanh": nn.Tanh(),
     # "Leaky ReLU": nn.LeakyReLU(),
     # "ELU": nn.ELU(),
@@ -22,12 +22,14 @@ activation_functions = {
     #     frequencies=[random.uniform(-2, 2) for _ in range(9)],
     #     amplitudes=[random.uniform(-2, 2) for _ in range(9)],
     # ),
-    "NMDA": activations.NMDA(),
-    "SERF": activations.SERF(),
-    "SinLU": activations.SinLU(),
-    "Sine": activations.Sine(),
-    "SineCosine": activations.SineCosine(),
-    "PeriodicReLU": activations.PeriodicReLU(),
+    # "NMDA": activations.NMDA(1, 1),
+    "NMDA": activations.NMDA(1.0, 1.0),
+    # "NMDA": activations.NMDA(10.0, 1),
+    # "SERF": activations.SERF(),
+    # "SinLU": activations.SinLU(),
+    # "Sine": activations.Sine(),
+    # "SineCosine": activations.SineCosine(),
+    # "PeriodicReLU": activations.PeriodicReLU(),
 }
 
 # Generate input data for activation curves

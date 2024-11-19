@@ -13,12 +13,12 @@ class NMDA(nn.Module):
     https://openreview.net/forum?id=vKpVJxplmB
     """
 
-    def __init__(self):
+    def __init__(self, alpha: float = 1.0, beta: float = 1.0):
         super().__init__()
         self.alpha = nn.Parameter(torch.empty(1))
         self.beta = nn.Parameter(torch.empty(1))
-        nn.init.constant_(self.alpha, 1.0)
-        nn.init.constant_(self.beta, 1.0)
+        nn.init.constant_(self.alpha, alpha)
+        nn.init.constant_(self.beta, beta)
 
     def forward(self, x):
         alpha = 0 if self.alpha <= 0 else self.alpha.log()
