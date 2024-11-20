@@ -633,7 +633,7 @@ class TerminalInterface(Callback):
         self.ema_loss = 0
         self.start_time = datetime.now()
         self.last_time = datetime.now()
-        self.initial_text = tokenizer.bos_token
+        self.initial_text = tokenizer.bos_token + " "
         self.text = self.initial_text
         self.max_length = 4096
         self.interval = 3
