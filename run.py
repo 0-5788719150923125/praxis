@@ -755,10 +755,11 @@ class TerminalInterface(Callback):
                 penalty_alpha=0.6,
                 top_k=4,
                 repetition_penalty=1.35,
-                suppress_tokens=[
-                    tokenizer.eos_token_id,
-                    tokenizer.pad_token_id,
-                ],  # else the model tends to degenerate into 100% <|eos|> or <|pad|> tokens
+                skip_special_tokens=False,
+                # suppress_tokens=[
+                #     tokenizer.eos_token_id,
+                #     tokenizer.pad_token_id,
+                # ],  # else the model tends to degenerate into 100% <|eos|> or <|pad|> tokens
             ),
         )
         while True:
