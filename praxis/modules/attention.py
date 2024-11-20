@@ -27,11 +27,12 @@ class PraxisAttention(nn.Module):
         self.head_dim = self.hidden_size // self.num_heads
 
         # Set the core attention mechanism
+        self.linear = config.linear
         self.differential = config.differential
         self.stickbreaking = config.stickbreaking
-        assert not (
-            self.differential and self.stickbreaking
-        ), "We cannot use both stickbreaking attention and differential attention at the same time. Please remove one of them."
+        assert (
+            sum([self.differential, self.stickbreaking, self.linear]) <= 1
+        ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
         # Query and key projections for differential heads
         multiplier = 2 if self.differential else 1
@@ -57,6 +58,8 @@ class PraxisAttention(nn.Module):
             self.algorithm = Stickbreaking(config)
         elif self.differential:
             self.algorithm = Differential(config)
+        elif self.linear:
+            self.algorithm = LinearAttention(config)
         else:
             self.algorithm = ScaledDotProduct(config)
 
@@ -99,34 +102,20 @@ class PraxisAttention(nn.Module):
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
-        hist_len = scores[0].size(-1)
+        hist_len = q.size(2)
 
         # Post-scoring positional encoding
         scores = self.encoding.after_scores(scores)
 
         # Apply masks
-        causal_mask = None
-        if self.causal:
-            causal_mask = (
-                torch.triu(
-                    torch.full((seq_len, hist_len), -1e9, device=inputs.device),
-                    diagonal=1,
-                )
-                .unsqueeze(0)
-                .unsqueeze(0)
-            )
-            scores = [score + causal_mask for score in scores]
-
-        # Expand attention mask to historical length
-        attention_mask = F.pad(
-            attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
+        scores, causal_mask, attention_mask = self.algorithm.apply_masking(
+            scores, attention_mask, seq_len, hist_len, self.causal
         )
 
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-        scores = [score + attention_mask for score in scores]
-
         # Compute attention weights
-        weights = self.algorithm.compute_weights(v, scores, causal_mask)
+        weights = self.algorithm.compute_weights(
+            q, k, v, scores, causal_mask, attention_mask
+        )
 
         # Add memory-based attention
         if memory:
@@ -165,13 +154,134 @@ class ScaledDotProduct(nn.Module):
         scores = [self._compute_score(q, k)]
         return q, k, v, scores
 
-    def compute_weights(self, v, scores, mask: Optional[Tensor] = None):
+    def compute_weights(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        scores,
+        causal_mask: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
+    ):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
         return self._compute_outputs(weights[0], v)
 
     def _compute_outputs(self, weights, v):
         # Compute attention output
         return weights @ v  # Shape: (batch_size, num_heads, seq_len, head_dim)
+
+    def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
+        causal_mask = None
+        if causal:
+            causal_mask = (
+                torch.triu(
+                    torch.full((seq_len, hist_len), -1e9, device=scores[0].device),
+                    diagonal=1,
+                )
+                .unsqueeze(0)
+                .unsqueeze(0)
+            )
+            scores = [score + causal_mask for score in scores]
+
+        # Expand attention mask to historical length
+        attention_mask = F.pad(
+            attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
+        )
+
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+        scores = [score + attention_mask for score in scores]
+        return scores, causal_mask, attention_mask
+
+
+class LinearAttention(ScaledDotProduct):
+    """
+    Implements Linear Attention using kernel feature maps.
+    Based on 'Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention'
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__(config)
+        self.epsilon = 1e-6
+        self.causal = config.causal
+
+        # Feature map for positive definite kernel
+        self.feature_map = lambda x: F.elu(x) + 1
+
+        # Optional dropout
+        self.dropout = nn.Dropout(config.dropout)
+
+    def compute_scores(self, q: Tensor, k: Tensor, v: Tensor):
+        """
+        Instead of returning attention scores, we return the feature-mapped queries and keys.
+        """
+        # Apply the feature map
+        q = self.feature_map(q)  # Shape: (B, H, L, D)
+        k = self.feature_map(k)  # Shape: (B, H, L, D)
+
+        return q, k, v, []  # Return an empty list for scores
+
+    def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
+        return scores, None, attention_mask
+
+    def compute_weights(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        scores: List[Tensor],
+        causal_mask: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
+    ):
+        """
+        Perform the linear attention computation here, using the feature-mapped q and k.
+        """
+        # Now, perform the linear attention computation
+        B, H, L, D = v.size()
+
+        # Apply mask to k and v if provided
+        if attention_mask is not None:
+            mask = attention_mask.unsqueeze(1).unsqueeze(-1)  # Shape: (B, 1, L, 1)
+            k = k * mask
+            v = v * mask
+
+        if self.causal:
+            # Implement causal linear attention using cumulative sums
+            k_cumsum = torch.cumsum(k.transpose(2, 1), dim=2).transpose(
+                2, 1
+            )  # (B, H, L, D)
+            kv_cumsum = torch.cumsum((k * v).transpose(2, 1), dim=2).transpose(
+                2, 1
+            )  # (B, H, L, D)
+
+            # Compute denominator z
+            z = torch.einsum("bhld,bhld->bhl", q, k_cumsum) + self.epsilon  # (B, H, L)
+
+            # Apply attention mask to z
+            if attention_mask is not None:
+                z = z * attention_mask.unsqueeze(1)  # Shape: (B, 1, L)
+
+            # Compute numerator
+            output = torch.einsum("bhld,bhld->bhld", q, kv_cumsum)  # (B, H, L, D)
+        else:
+            # Non-causal linear attention
+            k_sum = k.sum(dim=2)  # (B, H, D)
+            kv_sum = torch.einsum("bhld,bhld->bhd", k, v)  # (B, H, D)
+
+            # Compute denominator z
+            z = torch.einsum("bhld,bhd->bhl", q, k_sum) + self.epsilon  # (B, H, L)
+
+            # Apply attention mask to z
+            if attention_mask is not None:
+                z = z * attention_mask.unsqueeze(1)  # Shape: (B, 1, L)
+
+            # Compute numerator
+            output = torch.einsum("bhld,bhd->bhld", q, kv_sum)  # (B, H, L, D)
+
+        # Normalize output
+        output = output / z.unsqueeze(-1)  # (B, H, L, D)
+
+        output = self.dropout(output)
+        return output
 
 
 class Differential(ScaledDotProduct):
@@ -209,7 +319,15 @@ class Differential(ScaledDotProduct):
         ]
         return q, k, v, scores
 
-    def compute_weights(self, v, scores, mask: Optional[Tensor] = None):
+    def compute_weights(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        scores,
+        causal_mask: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
+    ):
         weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
         # Compute scalar lambda
         lambda_scalar = (
@@ -263,7 +381,13 @@ class Stickbreaking(ScaledDotProduct):
         return super().compute_scores(q, k, v)
 
     def compute_weights(
-        self, v, scores: List[Tensor], mask: Optional[Tensor] = None
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        scores: List[Tensor],
+        causal_mask: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
     ) -> Tensor:
         logits = scores[0]
         batch_size, num_heads, seq_len, hist_len = logits.shape
@@ -274,9 +398,9 @@ class Stickbreaking(ScaledDotProduct):
         # Compute stick-breaking weights
         z = torch.sigmoid(logits)
         log_beta = F.logsigmoid(-logits)
-        if mask is not None:
-            z = z + mask
-            log_beta = log_beta + mask
+        if causal_mask is not None:
+            z = z + causal_mask
+            log_beta = log_beta + causal_mask
 
         # Compute cumulative log beta terms
         re_cum_log_beta = torch.einsum(

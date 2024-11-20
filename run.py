@@ -284,6 +284,12 @@ parser.add_argument(
     help="Compress sequence length by a factor of 2",
 )
 parser.add_argument(
+    "--linear",
+    action="store_true",
+    default=False,
+    help="Use a Linear (O(n)) attention mechanism",
+)
+parser.add_argument(
     "--differential",
     action="store_true",
     default=False,
@@ -407,6 +413,7 @@ config = PraxisConfig(
     sparse=True if sparse else not dense,
     shuffle=shuffle,
     autopilot=autopilot,
+    linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,
     compression=compression,

@@ -25,6 +25,7 @@ class PraxisConfig(PretrainedConfig):
         sparse=False,
         shuffle=False,
         autopilot=False,
+        linear=False,
         differential=False,
         stickbreaking=False,
         compression=False,
@@ -74,6 +75,7 @@ class PraxisConfig(PretrainedConfig):
         self.num_heads = num_heads
         self.depth = depth
         self.num_experts = num_experts
+        self.linear = linear
         self.differential = differential
         self.stickbreaking = stickbreaking
         self.dropout = dropout

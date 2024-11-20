@@ -15,6 +15,7 @@ class PraxisKAN(nn.Module):
     An implementation of an approximate Kolmogorov-Arnold Network, of which is
     a theoretical alternative to the traditional Multi-Layer Perceptron. We use
     an approximate here, because it is much more efficient than the standard KAN.
+    Code was borrowed from here:
     https://github.com/ZiyaoLi/fast-kan
     """
 
