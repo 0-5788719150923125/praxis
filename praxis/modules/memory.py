@@ -91,6 +91,9 @@ class PraxisMemory(nn.Module):
 
         return combined_output
 
+    def get_metrics(self):
+        return {"churn": self.memory_churn.item()}
+
     @torch.no_grad()
     def _find_knn(self, queries: Tensor) -> tuple:
         """
@@ -225,42 +228,50 @@ class PraxisMemory(nn.Module):
                     surprising_indices
                 )  # Use full count, not capped
 
-                # Cap replacements for actual memory update
-                num_memories = existing_keys_norm[h].size(0)
-                num_replacements = min(len(surprising_indices), num_memories)
-                surprising_indices = surprising_indices[:num_replacements]
+                # Sort surprising_indices by their similarity scores
+                if len(surprising_indices) > 0:
+                    # Sort by similarity (ascending), so most surprising (lowest similarity) first
+                    similarities = max_sims[surprising_indices]
+                    sorted_indices = torch.argsort(similarities)
+                    surprising_indices = surprising_indices[sorted_indices]
 
-                if self.training and self.debug and random.random() < 0.005:
-                    print(f"DEBUG: found {len(surprising_indices)} surprising memories")
+                    # Cap replacements for actual memory update
+                    num_memories = existing_keys_norm[h].size(0)
+                    num_replacements = min(len(surprising_indices), num_memories)
+                    surprising_indices = surprising_indices[
+                        :num_replacements
+                    ]  # Now takes most surprising ones
 
-                if num_replacements > 0:
-                    # Compare surprising new memories against existing ones
-                    relevant_sims = sims[surprising_indices]
+                    if self.training and self.debug and random.random() < 0.005:
+                        print(
+                            f"DEBUG: found {len(surprising_indices)} surprising memories"
+                        )
 
-                    # Find memories least relevant to our new surprising content
-                    min_relevance = relevant_sims.min(dim=0)[
-                        0
-                    ]  # How relevant is each memory to new content?
+                    if num_replacements > 0:
+                        # Compare surprising new memories against existing ones
+                        relevant_sims = sims[surprising_indices]
 
-                    # Replace least relevant memories
-                    _, replace_positions = min_relevance.topk(
-                        k=num_replacements,
-                        largest=False,  # Take lowest relevance scores
-                    )
+                        # Find memories least relevant to our new surprising content
+                        min_relevance = relevant_sims.min(dim=0)[
+                            0
+                        ]  # How relevant is each memory to new content?
 
-                    # Replace redundant memories with surprising ones
-                    self.key_memories[h, replace_positions] = group_keys[
-                        h, surprising_indices
-                    ]
-                    self.value_memories[h, replace_positions] = group_values[
-                        h, surprising_indices
-                    ]
+                        # Replace least relevant memories
+                        _, replace_positions = min_relevance.topk(
+                            k=num_replacements,
+                            largest=False,  # Take lowest relevance scores
+                        )
+
+                        # Replace redundant memories with surprising ones
+                        self.key_memories[h, replace_positions] = group_keys[
+                            h, surprising_indices
+                        ]
+                        self.value_memories[h, replace_positions] = group_values[
+                            h, surprising_indices
+                        ]
 
         # Update memory churn metric
         churn_percent = (total_surprising / total_capacity) * 100
         self.memory_churn.mul_(self.memory_decay).add_(
             churn_percent * (1 - self.memory_decay)
         )
-
-    def get_metrics(self):
-        return {"churn": self.memory_churn.item()}

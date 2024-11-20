@@ -51,9 +51,9 @@ class PraxisExpert(nn.Module):
         super().__init__()
         self.sparse = config.sparse
         self.is_remote = is_remote
-        self.block = block
         self.memory = memory
         self.router = router
+        self.block = block
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, current_depth: int):
         d = current_depth
