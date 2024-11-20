@@ -23,7 +23,8 @@ class PraxisMemory(nn.Module):
         self.debug = config.debug
         self.num_heads = config.num_heads
         self.epsilon = 1e-11  # for numerical stability
-        max_memories = 4 * 4096  # max k/v vectors to store
+        self.chunk_size = 512
+        max_memories = self.chunk_size * 8  # max k/v vectors to store
         head_dim = config.num_dims // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
         self.k = num_query_heads  # max KNN vectors to lookup
@@ -101,7 +102,6 @@ class PraxisMemory(nn.Module):
             self.key_memories, p=2, dim=-1, eps=self.epsilon
         )  # [num_heads, num_memories, dim]
 
-        batch_size = 512
         k = min(self.k, self.key_memories.size(1))
         num_query_heads, num_queries, queries_dim = queries_norm.shape
         num_heads = self.num_heads
@@ -118,8 +118,8 @@ class PraxisMemory(nn.Module):
         )
 
         # Process in batches to manage memory
-        for start_idx in range(0, num_queries, batch_size):
-            end_idx = min(start_idx + batch_size, num_queries)
+        for start_idx in range(0, num_queries, self.chunk_size):
+            end_idx = min(start_idx + self.chunk_size, num_queries)
             batch_queries = queries_norm[
                 :, :, start_idx:end_idx, :
             ]  # [num_heads, queries_per_key, batch_size, dim]
@@ -215,10 +215,18 @@ class PraxisMemory(nn.Module):
                 # Only consider truly surprising memories
                 surprising_indices = torch.where(max_sims < (1 - surprise_threshold))[0]
 
-                if self.training and self.debug and random.random() < 0.001:
-                    print(f"DEBUG: found {len(surprising_indices)} memories")
+                # Limit the number of surprising indices
+                num_memories = existing_keys_norm[h].size(0)
+                # num_replacements = min(
+                #     len(surprising_indices), num_memories, max_surprising_indices
+                # )
+                num_replacements = min(len(surprising_indices), num_memories)
+                surprising_indices = surprising_indices[:num_replacements]
 
-                if len(surprising_indices) > 0:
+                if self.training and self.debug and random.random() < 0.005:
+                    print(f"DEBUG: found {len(surprising_indices)} surprising memories")
+
+                if len(num_replacements) > 0:
                     # Compare surprising new memories against existing ones
                     relevant_sims = sims[surprising_indices]
 
@@ -229,7 +237,7 @@ class PraxisMemory(nn.Module):
 
                     # Replace least relevant memories
                     _, replace_positions = min_relevance.topk(
-                        k=len(surprising_indices),
+                        k=num_replacements,
                         largest=False,  # Take lowest relevance scores
                     )
 
