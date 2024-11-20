@@ -12,9 +12,9 @@ from praxis.activations import ACT2FN
 
 class PraxisKAN(nn.Module):
     """
-    An implementation of an approximate Kolmogorov-Arnold Network, of which
-    is a theoretical alternative to the usual Multi-Layer Perceptron. We use an
-    approximate here, because it is much more efficient than the standard KAN.
+    An implementation of an approximate Kolmogorov-Arnold Network, of which is
+    a theoretical alternative to the traditional Multi-Layer Perceptron. We use
+    an approximate here, because it is much more efficient than the standard KAN.
     https://github.com/ZiyaoLi/fast-kan
     """
 
@@ -168,9 +168,13 @@ if __name__ == "__main__":
 
     print("\nAdditional tests for edge cases:")
 
+    class DummyConfig:
+        num_dims = 2
+        activation = "silu"
+
     # Test with zero inputs
     try:
-        model = PraxisKAN(in_dim=2, out_dim=2)
+        model = PraxisKAN(DummyConfig())
         x_zero = torch.zeros(1, 1, 2)
         y_zero = model(x_zero)
         print("✓ Zero input test passed")
@@ -179,7 +183,7 @@ if __name__ == "__main__":
 
     # Test with very large values
     try:
-        model = PraxisKAN(in_dim=2, out_dim=2)
+        model = PraxisKAN(DummyConfig())
         x_large = torch.ones(1, 1, 2) * 1000
         y_large = model(x_large)
         print("✓ Large value test passed")
