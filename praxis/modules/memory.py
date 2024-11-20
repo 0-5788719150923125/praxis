@@ -22,7 +22,7 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.num_heads = config.num_heads
-        self.epsilon = 1e-11  # for numerical stability
+        self.epsilon = 1e-6  # for numerical stability
         self.chunk_size = 512
         max_memories = self.chunk_size * 8  # max k/v vectors to store
         head_dim = config.num_dims // config.num_heads
