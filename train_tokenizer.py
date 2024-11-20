@@ -16,12 +16,11 @@ from transformers import PreTrainedTokenizerFast
 
 num_examples = 10_000_000
 
-save_path = "data/praxis"
-
-
 vocab_size = 8192
 dropout = 0.1
 
+save_path = "data/praxis"
+archive_path = save_path + f"-{vocab_size}"
 
 pad_token = "<|pad|>"
 bos_token = "<|bos|>"
@@ -80,10 +79,10 @@ trainer = trainers.BpeTrainer(
 )
 
 tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(
-    add_prefix_space=False, use_regex=True
+    add_prefix_space=True, use_regex=True
 )
 
-tokenizer.normalizer = normalizers.Sequence([normalizers.NFKC()])
+tokenizer.normalizer = normalizers.NFC()
 
 tokenizer.decoder = decoders.ByteLevel()
 tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
@@ -101,7 +100,6 @@ trained_tokenizer.add_special_tokens(
 )
 custom_special_tokens = {"additional_special_tokens": [start_token, end_token]}
 trained_tokenizer.add_special_tokens(custom_special_tokens)
-archive_path = save_path + f"-{vocab_size}"
 
 os.makedirs(save_path, exist_ok=True)
 os.makedirs(archive_path, exist_ok=True)
