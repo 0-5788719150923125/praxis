@@ -22,12 +22,12 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.num_heads = config.num_heads
-        self.epsilon = 1e-8  # for numerical stability
-        self.k = 8  # max KNN vectors to lookup
+        self.epsilon = 1e-11  # for numerical stability
         max_memories = 4 * 4096  # max k/v vectors to store
-        # Gating parameter: one gate per query head
         head_dim = config.num_dims // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
+        self.k = num_query_heads  # max KNN vectors to lookup
+        # Gating parameter: one gate per query head
         self.gate = nn.Parameter(
             torch.full((num_query_heads,), -1.0)
         )  # sigmoid(-1) ≈ 0.27
@@ -102,18 +102,19 @@ class PraxisMemory(nn.Module):
         )  # [num_heads, num_memories, dim]
 
         batch_size = 512
-        num_query_heads, num_queries, dim = queries_norm.shape
         k = min(self.k, self.key_memories.size(1))
-        device = queries.device
+        num_query_heads, num_queries, queries_dim = queries_norm.shape
         num_heads = self.num_heads
         queries_per_key = num_query_heads // num_heads  # Assume divisible
 
         # Reshape queries_norm to [num_heads, queries_per_key, num_queries, dim]
-        queries_norm = queries_norm.view(num_heads, queries_per_key, num_queries, dim)
+        queries_norm = queries_norm.view(
+            num_heads, queries_per_key, num_queries, queries_dim
+        )
 
-        all_scores = torch.zeros(num_query_heads, num_queries, k, device=device)
+        all_scores = torch.zeros(num_query_heads, num_queries, k, device=queries.device)
         all_indices = torch.zeros(
-            num_query_heads, num_queries, k, dtype=torch.long, device=device
+            num_query_heads, num_queries, k, dtype=torch.long, device=queries.device
         )
 
         # Process in batches to manage memory
@@ -201,8 +202,10 @@ class PraxisMemory(nn.Module):
             group_values = values[start_idx:end_idx]
 
             # Replace least useful memories
-            batch_keys_norm = F.normalize(group_keys, dim=-1)
-            existing_keys_norm = F.normalize(self.key_memories, dim=-1)
+            batch_keys_norm = F.normalize(group_keys, dim=-1, eps=self.epsilon)
+            existing_keys_norm = F.normalize(
+                self.key_memories, dim=-1, eps=self.epsilon
+            )
 
             for h in range(num_heads):
                 # Compare new memories against existing ones
