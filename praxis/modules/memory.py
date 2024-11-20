@@ -57,57 +57,42 @@ class PraxisMemory(nn.Module):
             num_heads, batch_size * seq_len, -1
         )  # [num_heads, Q, d_k]
 
-        # Detach q, k, v for non-differentiable memory operations
-        q_detached = q.detach()
-        k_detached = k.detach()
-        v_detached = v.detach()
-
         # Look up KNN memories without tracking gradients
-        with torch.no_grad():
-            scores_mem, indices_mem = self._find_knn(q_detached)
+        scores_mem, indices_mem = self._find_knn(q)
 
-        # If no memory found, use standard attention output
-        combined_output = outputs  # [batch_size, num_heads, seq_len, dim]
-        if scores_mem is not None:
-            # Retrieve memory values without tracking gradients
-            with torch.no_grad():
-                memory_values = self._get_values(indices_mem)  # [num_heads, Q, k, dim]
+        # Retrieve memory values without tracking gradients
+        memory_values = self._get_values(indices_mem)  # [num_heads, Q, k, dim]
 
-            # Compute weighted sum: [num_heads, Q, dim]
-            weighted_memory = memory_values * scores_mem.unsqueeze(
-                -1
-            )  # [num_heads, Q, k, dim]
-            weighted_memory = weighted_memory.sum(dim=2)  # [num_heads, Q, dim]
+        # Compute weighted sum: [num_heads, Q, dim]
+        weighted_memory = memory_values * scores_mem.unsqueeze(
+            -1
+        )  # [num_heads, Q, k, dim]
+        weighted_memory = weighted_memory.sum(dim=2)  # [num_heads, Q, dim]
 
-            # Reshape to [num_heads, batch_size, seq_len, dim]
-            weighted_memory = weighted_memory.view(
-                batch_size, num_heads, seq_len, -1
-            )  # [num_heads, batch_size, seq_len, dim]
+        # Reshape to [num_heads, batch_size, seq_len, dim]
+        weighted_memory = weighted_memory.view(
+            batch_size, num_heads, seq_len, -1
+        )  # [num_heads, batch_size, seq_len, dim]
 
-            # Apply per-head gating
-            gate = torch.sigmoid(self.gate).view(
-                1, num_heads, 1, 1
-            )  # [1, num_heads, 1, 1]
+        # Apply per-head gating
+        gate = torch.sigmoid(self.gate).view(1, num_heads, 1, 1)  # [1, num_heads, 1, 1]
 
-            # Combine attention and memory outputs using the gate
-            combined_output = (
-                gate * weighted_memory + (1 - gate) * outputs
-            )  # [batch_size, num_heads, seq_len, dim]
+        # Combine attention and memory outputs using the gate
+        combined_output = (
+            gate * weighted_memory + (1 - gate) * outputs
+        )  # [batch_size, num_heads, seq_len, dim]
 
         # Update memory with current keys and values without tracking gradients
-        with torch.no_grad():
-            self._update_memory(k_detached, v_detached)  # [num_heads, Q, dim]
+        self._update_memory(k, v)  # [num_heads, Q, dim]
 
         return combined_output
 
+    @torch.no_grad()
     def _find_knn(self, queries: Tensor) -> tuple:
         """
         Finds k-nearest neighbors using batched processing to reduce peak memory usage.
         Handles GQA where num_query_heads > num_heads (key/value heads)
         """
-        if self.key_memories.size(1) == 0:
-            return None, None
-
         # Normalize queries and keys
         queries_norm = F.normalize(
             queries, p=2, dim=-1, eps=self.epsilon
@@ -162,6 +147,7 @@ class PraxisMemory(nn.Module):
 
         return all_scores, all_indices
 
+    @torch.no_grad()
     def _get_values(self, indices: Tensor) -> Tensor:
         """
         Retrieves the values corresponding to the nearest neighbors.
@@ -198,6 +184,7 @@ class PraxisMemory(nn.Module):
 
         return gathered_values
 
+    @torch.no_grad()
     def _update_memory(self, keys: Tensor, values: Tensor):
         """Updates memory by keeping most surprising/novel information."""
         num_heads = self.num_heads
