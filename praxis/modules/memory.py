@@ -22,46 +22,37 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.num_heads = config.num_heads
-        self.head_dim = config.num_dims // config.num_heads
+        self.epsilon = 1e-8  # for numerical stability
         self.k = 8  # max KNN vectors to lookup
         max_memories = 4 * 4096  # max k/v vectors to store
-        self.epsilon = 1e-8  # for numerical stability
-        # Gating parameter: one gate per head
+        # Gating parameter: one gate per query head
+        head_dim = config.num_dims // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
         self.gate = nn.Parameter(torch.zeros(num_query_heads))
         # Initialize key_memories and value_memories for each head
-        self.multiplier = 2 if config.differential else 1
-        # Pre-allocate full memory banks
+        multiplier = 2 if config.differential else 1
         self.register_buffer(
             "key_memories",
-            torch.zeros(self.num_heads, max_memories, self.head_dim * self.multiplier),
+            torch.zeros(self.num_heads, max_memories, head_dim * multiplier),
         )
         self.register_buffer(
             "value_memories",
-            torch.zeros(self.num_heads, max_memories, self.head_dim),
+            torch.zeros(self.num_heads, max_memories, head_dim),
         )
 
     def forward(
         self, inputs: Tensor, query: Tensor, key: Tensor, value: Tensor, outputs: Tensor
     ) -> Tensor:
-        batch_size, seq_len, _ = inputs.size()
-        num_heads = query.size(1)
+        batch_size, num_heads, seq_len, query_dim = query.shape
         # Prepare queries, keys, and values for memory: [num_heads, Q, dim]
-        multiplier = query.size(-1) // self.head_dim
-        q = (
-            query.view(batch_size, num_heads, seq_len, self.head_dim * multiplier)
-            .transpose(0, 1)
-            .reshape(num_heads, batch_size * seq_len, self.head_dim * multiplier)
+        q = query.transpose(0, 1).reshape(
+            num_heads, batch_size * seq_len, -1
         )  # [num_heads, Q, d_k]
-        k = (
-            key.view(batch_size, num_heads, seq_len, self.head_dim * multiplier)
-            .transpose(0, 1)
-            .reshape(num_heads, batch_size * seq_len, self.head_dim * multiplier)
+        k = key.transpose(0, 1).reshape(
+            num_heads, batch_size * seq_len, -1
         )  # [num_heads, Q, d_k]
-        v = (
-            value.view(batch_size, num_heads, seq_len, self.head_dim)
-            .transpose(0, 1)
-            .reshape(num_heads, batch_size * seq_len, self.head_dim)
+        v = value.transpose(0, 1).reshape(
+            num_heads, batch_size * seq_len, -1
         )  # [num_heads, Q, d_k]
 
         # Detach q, k, v for non-differentiable memory operations
@@ -89,7 +80,7 @@ class PraxisMemory(nn.Module):
 
             # Reshape to [num_heads, batch_size, seq_len, dim]
             weighted_memory = weighted_memory.view(
-                num_heads, batch_size, seq_len, self.head_dim
+                num_heads, batch_size, seq_len, -1
             )  # [num_heads, batch_size, seq_len, dim]
 
             # Permute to [batch_size, num_heads, seq_len, dim] to align with attn_out
@@ -112,9 +103,7 @@ class PraxisMemory(nn.Module):
 
         # Update memory with current keys and values without tracking gradients
         with torch.no_grad():
-            self._update_memory(
-                k_detached, v_detached
-            )  # Correct dimensions: [num_heads, Q, dim]
+            self._update_memory(k_detached, v_detached)  # [num_heads, Q, dim]
 
         return combined_output
 
@@ -149,8 +138,6 @@ class PraxisMemory(nn.Module):
             num_query_heads, num_queries, k, dtype=torch.long, device=device
         )
 
-        sqrt_d = math.sqrt(self.head_dim)
-
         # Process in batches to manage memory
         for start_idx in range(0, num_queries, batch_size):
             end_idx = min(start_idx + batch_size, num_queries)
@@ -158,19 +145,15 @@ class PraxisMemory(nn.Module):
                 :, :, start_idx:end_idx, :
             ]  # [num_heads, queries_per_key, batch_size, dim]
 
-            # Compute similarities using einsum
-            # batch_queries: [num_heads, queries_per_key, batch_size, dim]
-            # keys_norm: [num_heads, num_memories, dim]
-            batch_similarities = (
-                torch.einsum("hqbd,hnd->hqbn", batch_queries, keys_norm) / sqrt_d
-            )
-            # batch_similarities: [num_heads, queries_per_key, batch_size, num_memories]
+            # Compute similarities
+            batch_similarities = torch.einsum(
+                "hqbd,hnd->hqbn", batch_queries, keys_norm
+            )  # [num_heads, queries_per_key, batch_size, num_memories]
 
             # Flatten similarities for top-k selection
             similarities_flat = batch_similarities.reshape(
                 -1, batch_similarities.size(-1)
-            )
-            # similarities_flat: [num_heads * queries_per_key * batch_size, num_memories]
+            )  # [num_heads * queries_per_key * batch_size, num_memories]
 
             # Get top k for each query
             batch_scores, batch_indices = similarities_flat.topk(k, dim=-1)
@@ -218,21 +201,22 @@ class PraxisMemory(nn.Module):
         ]  # [N, head_dim]
 
         # Reshape values to [num_query_heads, Q, k, head_dim]
-        gathered_values = values.view(num_query_heads, Q, k, self.head_dim)
+        gathered_values = values.view(num_query_heads, Q, k, -1)
 
         return gathered_values
 
     def _update_memory(self, keys: Tensor, values: Tensor):
         """Updates memory by keeping most surprising/novel information."""
+        num_heads = self.num_heads
         num_query_heads = keys.size(0)
-        queries_per_key = num_query_heads // self.num_heads
+        queries_per_key = num_query_heads // num_heads
         surprise_threshold = 0.5
 
         # Process each group of queries_per_key heads
         for i in range(queries_per_key):
             # Take the corresponding slice of heads
-            start_idx = i * self.num_heads
-            end_idx = (i + 1) * self.num_heads
+            start_idx = i * num_heads
+            end_idx = (i + 1) * num_heads
             group_keys = keys[start_idx:end_idx]
             group_values = values[start_idx:end_idx]
 
@@ -240,14 +224,14 @@ class PraxisMemory(nn.Module):
             batch_keys_norm = F.normalize(group_keys, dim=-1)
             existing_keys_norm = F.normalize(self.key_memories, dim=-1)
 
-            for h in range(self.num_heads):
+            for h in range(num_heads):
                 # Compare new memories against existing ones
                 sims = torch.mm(batch_keys_norm[h], existing_keys_norm[h].t())
                 max_sims = sims.max(dim=1)[0]
 
                 # Only consider truly surprising memories
                 surprising_indices = torch.where(max_sims < (1 - surprise_threshold))[0]
-                if self.debug and random.random() < 0.001:
+                if self.training and self.debug and random.random() < 0.001:
                     print(f"DEBUG: found {len(surprising_indices)} memories")
 
                 if len(surprising_indices) > 0:
