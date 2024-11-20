@@ -57,12 +57,13 @@ class PraxisModel(PreTrainedModel):
         if self.decoder.manager:
             self.decoder.manager.get_visible_maddrs()
 
-    def get_info(self):
+    def get_metrics(self):
         return dict(
             experts=dict(
                 local=len(self.decoder.local_experts),
                 remote=len(self.decoder.remote_experts),
             ),
+            **self.decoder.get_metrics()
             # predictions=(
             #     self.decoder.get_prediction_accuracies()
             #     if self.decoder.use_autopilot

@@ -33,9 +33,9 @@ class PraxisDecoder(nn.Module):
         self.sparse = config.sparse
         self.shuffle = config.shuffle
         self.random = random.Random(config.seed)
-        memory = False
+        self.memory = False
         if config.memory:
-            memory = PraxisMemory(config)
+            self.memory = PraxisMemory(config)
         self.manager = False
         self.remote_experts = []
         if config.hivemind:
@@ -50,7 +50,9 @@ class PraxisDecoder(nn.Module):
             router = False
             if config.sparse and i % 2 != 0:
                 router = PraxisMixtureOfDepths(config)
-            expert = PraxisExpert(config, block=block, memory=memory, router=router)
+            expert = PraxisExpert(
+                config, block=block, memory=self.memory, router=router
+            )
             self.local_experts.append(expert)
         if self.manager:
             self.manager.serve_experts()
@@ -105,6 +107,8 @@ class PraxisDecoder(nn.Module):
         if self.debug and not self.training and self.navigator:
             print(f"DEBUG: routing through: {' -> '.join(route)}")
 
+        self.get_metrics()
+
         return hidden_states, sum(aux_losses)
 
     def _define_checkpoints(self, strategy="speed", num_layers=0):
@@ -138,11 +142,13 @@ class PraxisDecoder(nn.Module):
         else:
             return custom_forward(hidden_states, attention_mask, current_depth)
 
-    def get_prediction_accuracies(self):
+    def get_metrics(self):
         """Return current prediction accuracies"""
-        if self.navigator:
-            return {
-                "mean": self.navigator.get_mean_accuracy(),
-                "per_expert": self.navigator.get_all_accuracies(),
-            }
+        if self.memory:
+            return {**self.memory.get_metrics()}
+        # if self.navigator:
+        #     return {
+        #         "mean": self.navigator.get_mean_accuracy(),
+        #         "per_expert": self.navigator.get_all_accuracies(),
+        #     }
         return None

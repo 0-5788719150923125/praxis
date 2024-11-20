@@ -682,7 +682,7 @@ class TerminalInterface(Callback):
             self._generate_text(lm, batch_idx, self.interval)
 
         batch_size, _ = batch.shape
-        swarm_info = lm.model.get_info()
+        swarm_info = lm.model.get_metrics()
         local_experts = swarm_info["experts"].get("local", 0)
         remote_experts = swarm_info["experts"].get("remote", 0)
 
@@ -691,6 +691,9 @@ class TerminalInterface(Callback):
             "local_experts": int(local_experts),
             "remote_experts": int(remote_experts),
         }
+
+        if "churn" in swarm_info:
+            data.update({"memory_churn": swarm_info["churn"]})
 
         if "predictions" in swarm_info:
             data.update(
@@ -718,6 +721,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_rate(rate.item())
             self.dashboard.update_loss(self.ema_loss)
             self.dashboard.update_expert_count(local_experts, remote_experts)
+            if "memory_churn" in data:
+                self.dashboard.update_memory(data["memory_churn"])
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
             self.dashboard.fake_log(chance=0.000005)

@@ -42,6 +42,9 @@ class PraxisMemory(nn.Module):
             "value_memories",
             torch.randn(self.num_heads, max_memories, head_dim),
         )
+        # Add memory churn tracking
+        self.memory_decay = 0.99  # EMA decay factor
+        self.register_buffer("memory_churn", torch.zeros(1))
 
     def forward(
         self, inputs: Tensor, query: Tensor, key: Tensor, value: Tensor, outputs: Tensor
@@ -193,6 +196,10 @@ class PraxisMemory(nn.Module):
         queries_per_key = num_query_heads // num_heads
         surprise_threshold = 0.5
 
+        # Track total surprising memories this batch
+        total_surprising = 0
+        total_capacity = self.key_memories.size(1) * num_heads
+
         # Process each group of queries_per_key heads
         for i in range(queries_per_key):
             # Take the corresponding slice of heads
@@ -212,14 +219,14 @@ class PraxisMemory(nn.Module):
                 sims = torch.mm(batch_keys_norm[h], existing_keys_norm[h].t())
                 max_sims = sims.max(dim=1)[0]
 
-                # Only consider truly surprising memories
+                # Count ALL surprising memories before capping
                 surprising_indices = torch.where(max_sims < (1 - surprise_threshold))[0]
+                total_surprising += len(
+                    surprising_indices
+                )  # Use full count, not capped
 
-                # Limit the number of surprising indices
+                # Cap replacements for actual memory update
                 num_memories = existing_keys_norm[h].size(0)
-                # num_replacements = min(
-                #     len(surprising_indices), num_memories, max_surprising_indices
-                # )
                 num_replacements = min(len(surprising_indices), num_memories)
                 surprising_indices = surprising_indices[:num_replacements]
 
@@ -248,3 +255,12 @@ class PraxisMemory(nn.Module):
                     self.value_memories[h, replace_positions] = group_values[
                         h, surprising_indices
                     ]
+
+        # Update memory churn metric
+        churn_percent = (total_surprising / total_capacity) * 100
+        self.memory_churn.mul_(self.memory_decay).add_(
+            churn_percent * (1 - self.memory_decay)
+        )
+
+    def get_metrics(self):
+        return {"churn": self.memory_churn.item()}
