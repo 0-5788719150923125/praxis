@@ -1088,7 +1088,7 @@ checkpoint_callback = TimeBasedCheckpoint(
     dirpath=os.path.join(cache_dir, "praxis"),
     filename="model-{loss:.4f}",
     enable_version_counter=False,
-    save_interval=60,
+    save_interval=3600,
 )
 
 # Bootstrap the model and trainer
