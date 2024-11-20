@@ -160,6 +160,10 @@ class TerminalDashboard:
             self.mode = mode
             self.previous_frame = None  # force a redraw
 
+    def set_start_time(self, time):
+        with self.lock:
+            self.start_time = time
+
     def update_status(self, status):
         with self.lock:
             self.status_text = status
