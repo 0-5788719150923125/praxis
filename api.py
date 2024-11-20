@@ -13,6 +13,9 @@ logger.setLevel(logging.ERROR)
 app = Flask(__name__)
 app.static_folder = "templates"
 
+start_token = "<|im_start|> "
+end_token = "<|im_end|> "
+
 
 class APIServer:
     def __init__(self, generator, host="localhost", port=5000):
@@ -68,17 +71,17 @@ def format_messages_to_chatml(messages):
         content = message.get("content", "").strip()
         if role not in {"system", "user", "assistant"}:
             raise ValueError(f"Invalid role: {role}")
-        formatted += f"<|im_start|>{role}\n{content}\n<|im_end|>\n"
+        formatted += f"{start_token}{role}\n{content}\n{end_token}\n"
     # Ensure the prompt ends with the assistant's role
-    if not formatted.strip().endswith("<|im_start|>assistant"):
-        formatted += "<|im_start|>assistant\n"
+    if not formatted.strip().endswith("<|im_start|> assistant"):
+        formatted += f"{start_token}assistant\n"
     return formatted
 
 
 def extract_assistant_reply(generated_text):
     """Extract the assistant's reply from the generated text."""
     # Tokens used in ChatML
-    start_token = "<|im_start|>assistant\n"
+    start_token = f"{start_token}assistant\n"
     end_token = "<|im_end|>"
     # Find the last occurrence of the assistant's start token
     start_index = generated_text.rfind(start_token)
@@ -122,7 +125,7 @@ def generate():
             try:
                 prompt = format_messages_to_chatml(messages)
                 is_chatml = True
-                kwargs["stop_strings"] = ["<|im_end|>"]
+                kwargs["stop_strings"] = [end_token]
                 kwargs["skip_special_tokens"] = False
                 del kwargs["messages"]
             except ValueError as ve:

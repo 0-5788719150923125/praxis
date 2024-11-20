@@ -416,7 +416,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             footer_text = (
                 f" PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | "
-                f"RUN: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, "
+                f"LIFE: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, "
                 f"RATE: {self.rate:.2f}s | {self.local_experts} local experts, "
                 f"{self.remote_experts} remote | {self.url}"
             )

@@ -12,6 +12,9 @@ from transformers import PreTrainedTokenizer
 
 debug = False
 
+start_token = "<|im_start|> "
+end_token = "<|im_end|> "
+
 
 class DataFormat(Enum):
     SIMPLE = "simple"
@@ -106,8 +109,8 @@ def format_instruction(document: Dict, keys: List[str]) -> str:
     instruction = document.get(keys[0], "")
     output = document.get(keys[1], "")
     return (
-        f"<|im_start|>user\n{instruction}\n<|im_end|>\n"
-        f"<|im_start|>assistant\n{output}\n<|im_end|>\n"
+        f"{start_token}user\n{instruction}\n{end_token}\n"
+        f"{start_token}assistant\n{output}\n{end_token}\n"
     )
 
 
@@ -123,7 +126,7 @@ def format_conversation(document: Dict, keys: List[str]) -> str:
         elif i == 2:
             role = "assistant"
         message = document.get(key, "")
-        parts.append(f"<|im_start|>{role}\n{message}\n<|im_end|>\n")
+        parts.append(f"{start_token}{role}\n{message}\n{end_token}\n")
     return "".join(parts)
 
 
@@ -146,7 +149,7 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
         )
 
     # Initialize the formatted text with system message
-    formatted = f"<|im_start|>system\n{system_message.strip()}\n<|im_end|>\n"
+    formatted = f"{start_token}system\n{system_message.strip()}\n{end_token}\n"
 
     # Map speaker labels to ChatML roles
     speaker_map = {
@@ -167,7 +170,7 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
             # Alternate speakers if no prefix is present
             role = "user" if i % 2 == 0 else "assistant"
             text = utterance
-        formatted += f"<|im_start|>{role}\n{text.strip()}\n<|im_end|>\n"
+        formatted += f"{start_token}{role}\n{text.strip()}\n{end_token}\n"
 
     return formatted
 
@@ -684,12 +687,12 @@ class GunChatDataset(PraxisSampler):
         system_prompt = f"{user_description}\n{assistant_description}"
 
         # Initialize the formatted text with system message
-        formatted = f"<|im_start|>system\n{system_prompt}\n<|im_end|>\n"
+        formatted = f"{start_token}system\n{system_prompt}\n{end_token}\n"
 
         # Build the conversation by randomly assigning text to user or assistant
         for text in text_list:
             role = random.choice(["user", "assistant"])
-            formatted += f"<|im_start|>{role}\n{text.strip()}\n<|im_end|>\n"
+            formatted += f"{start_token}{role}\n{text.strip()}\n{end_token}\n"
 
         # Add the conversation to the sequence cache
         self.sequence_cache.append(formatted)
