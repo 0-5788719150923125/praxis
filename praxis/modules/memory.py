@@ -22,25 +22,23 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.num_heads = config.num_heads
-        self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = config.num_dims // config.num_heads
         self.k = 8  # max KNN vectors to lookup
-        self.max_memories = 4 * 4096  # max k/v vectors to store
+        max_memories = 4 * 4096  # max k/v vectors to store
         self.epsilon = 1e-8  # for numerical stability
         # Gating parameter: one gate per head
-        self.gate = nn.Parameter(torch.zeros(self.num_query_heads))
+        num_query_heads = self.num_heads * config.num_queries
+        self.gate = nn.Parameter(torch.zeros(num_query_heads))
         # Initialize key_memories and value_memories for each head
         self.multiplier = 2 if config.differential else 1
         # Pre-allocate full memory banks
         self.register_buffer(
             "key_memories",
-            torch.zeros(
-                self.num_heads, self.max_memories, self.head_dim * self.multiplier
-            ),
+            torch.zeros(self.num_heads, max_memories, self.head_dim * self.multiplier),
         )
         self.register_buffer(
             "value_memories",
-            torch.zeros(self.num_heads, self.max_memories, self.head_dim),
+            torch.zeros(self.num_heads, max_memories, self.head_dim),
         )
 
     def forward(
@@ -49,7 +47,7 @@ class PraxisMemory(nn.Module):
         batch_size, seq_len, _ = inputs.size()
         num_heads = query.size(1)
         # Prepare queries, keys, and values for memory: [num_heads, Q, dim]
-        multiplier = self.multiplier
+        multiplier = query.size(-1) // self.head_dim
         q = (
             query.view(batch_size, num_heads, seq_len, self.head_dim * multiplier)
             .transpose(0, 1)
@@ -133,14 +131,14 @@ class PraxisMemory(nn.Module):
         keys_norm = F.normalize(self.key_memories, p=2, dim=-1, eps=self.epsilon)
 
         batch_size = 512
-        num_queries = queries_norm.size(1)
+        num_query_heads, num_queries, _ = queries_norm.shape
         k = min(self.k, self.key_memories.size(1))
         device = queries.device
-        queries_per_key = self.num_query_heads // self.num_heads
+        queries_per_key = num_query_heads // self.num_heads
 
-        all_scores = torch.zeros(self.num_query_heads, num_queries, k, device=device)
+        all_scores = torch.zeros(num_query_heads, num_queries, k, device=device)
         all_indices = torch.zeros(
-            self.num_query_heads, num_queries, k, dtype=torch.long, device=device
+            num_query_heads, num_queries, k, dtype=torch.long, device=device
         )
 
         # Process each key head's group of query heads
@@ -183,7 +181,8 @@ class PraxisMemory(nn.Module):
         Retrieves the values corresponding to the nearest neighbors.
         Handles GQA where num_query_heads > num_heads (key/value heads)
         """
-        queries_per_key = self.num_query_heads // self.num_heads
+        num_query_heads = indices.size(0)
+        queries_per_key = num_query_heads // self.num_heads
         gathered_values = []
 
         # Process each key head's group of query heads
@@ -219,8 +218,8 @@ class PraxisMemory(nn.Module):
 
     def _update_memory(self, keys: Tensor, values: Tensor):
         """Updates memory by keeping most surprising/novel information."""
-        batch_size = keys.size(1)
-        queries_per_key = self.num_query_heads // self.num_heads
+        num_query_heads = keys.size(0)
+        queries_per_key = num_query_heads // self.num_heads
         surprise_threshold = 0.5
 
         # Process each group of queries_per_key heads
@@ -242,10 +241,10 @@ class PraxisMemory(nn.Module):
 
                 # Only consider truly surprising memories
                 surprising_indices = torch.where(max_sims < (1 - surprise_threshold))[0]
+                if self.debug and random.random() < 0.001:
+                    print(f"DEBUG: found {len(surprising_indices)} memories")
 
                 if len(surprising_indices) > 0:
-                    if random.random() < 0.001:
-                        print(f"DEBUG: found {len(surprising_indices)} memories")
                     # Compare surprising new memories against existing ones
                     relevant_sims = sims[surprising_indices]
 
