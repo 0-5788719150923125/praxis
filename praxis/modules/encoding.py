@@ -16,12 +16,14 @@ class NoPE(nn.Module):
 
     def __init__(self, config: AutoConfig, scaled: bool = False):
         super().__init__()
-        self.num_heads = config.num_heads
+        self.num_query_heads = config.num_heads * config.num_queries
         self.head_dim = config.num_dims // config.num_heads
         # Initialize scaling factors - one per head with linspace
         self.scaled = scaled
         if self.scaled:
-            self.head_scales = nn.Parameter(torch.linspace(1.2, 1.2, self.num_heads))
+            self.head_scales = nn.Parameter(
+                torch.linspace(1.2, 1.2, self.num_query_heads)
+            )
 
     def before_scores(self, q, k, v):
         if self.scaled:

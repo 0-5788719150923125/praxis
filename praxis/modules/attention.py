@@ -24,6 +24,8 @@ class PraxisAttention(nn.Module):
         self.causal = config.causal
         self.hidden_size = config.num_dims
         self.num_heads = config.num_heads
+        self.num_queries = config.num_queries
+        self.num_query_heads = self.num_heads * self.num_queries
         self.head_dim = self.hidden_size // self.num_heads
 
         # Set the core attention mechanism
@@ -38,7 +40,7 @@ class PraxisAttention(nn.Module):
         multiplier = 2 if self.differential else 1
         self.query = nn.Linear(
             self.hidden_size,
-            self.num_heads * self.head_dim * multiplier,
+            self.num_query_heads * self.head_dim * multiplier,
             bias=False,
         )
         self.key = nn.Linear(
@@ -68,7 +70,7 @@ class PraxisAttention(nn.Module):
 
         # Standard output projection
         self.output = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=False
+            self.num_query_heads * self.head_dim, self.hidden_size, bias=False
         )
 
     def forward(
@@ -80,10 +82,10 @@ class PraxisAttention(nn.Module):
         batch_size, seq_len, _ = inputs.shape
 
         # Compute queries, keys, and values
-        multiplier = (self.query.weight.size(0) // self.num_heads) // self.head_dim
+        multiplier = (self.key.weight.size(0) // self.num_heads) // self.head_dim
         q = (
             self.query(inputs)
-            .view(batch_size, -1, self.num_heads, self.head_dim * multiplier)
+            .view(batch_size, -1, self.num_query_heads, self.head_dim * multiplier)
             .transpose(1, 2)
         )
         k = (
@@ -97,12 +99,18 @@ class PraxisAttention(nn.Module):
             .transpose(1, 2)
         )
 
+        # Expand k and v to match number of query heads
+        # Shape: (batch_size, num_heads, seq_len, head_dim) -> (batch_size, num_q_heads, seq_len, head_dim)
+        if self.num_queries > 1:
+            k = k.repeat_interleave(self.num_queries, dim=1)
+            v = v.repeat_interleave(self.num_queries, dim=1)
+
         # Pre-scoring positional encoding
         q, k, v = self.encoding.before_scores(q, k, v)
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
-        hist_len = q.size(2)
+        hist_len = k.size(2)
 
         # Post-scoring positional encoding
         scores = self.encoding.after_scores(scores)
@@ -123,7 +131,7 @@ class PraxisAttention(nn.Module):
 
         # Reshape for output projection
         weights = weights.transpose(1, 2).reshape(
-            batch_size, seq_len, self.hidden_size
+            batch_size, seq_len, -1
         )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
         # Output projection
@@ -142,6 +150,7 @@ class ScaledDotProduct(nn.Module):
         super().__init__()
         self.hidden_size = config.num_dims
         self.num_heads = config.num_heads
+        self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = self.hidden_size // self.num_heads
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
@@ -304,8 +313,8 @@ class Differential(ScaledDotProduct):
             )
         )
         self.norm = nn.GroupNorm(
-            num_groups=self.num_heads,
-            num_channels=self.num_heads * self.head_dim,
+            num_groups=self.num_query_heads,
+            num_channels=self.num_query_heads * self.head_dim,
             eps=config.epsilon,
         )
 
