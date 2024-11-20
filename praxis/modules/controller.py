@@ -16,6 +16,8 @@ class PraxisController(nn.Module):
 
     def __init__(self, config, max_num_experts: int):
         super().__init__()
+        assert config.shuffle, "To use `autopilot`, you must also use `shuffle=True`."
+
         hidden_size = config.num_dims
         self.loss_scale = 0.001
 

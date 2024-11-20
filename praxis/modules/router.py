@@ -19,6 +19,9 @@ class PraxisMixtureOfDepths(nn.Linear):
         assert (
             self.capacity > 0 and self.capacity < 1.0
         ), "'capacity' must be set to a value between 0 and 1."
+        assert (
+            config.depth % 2 != 0
+        ), "When using `sparse=True`, `depth` should be an odd number."
 
     def forward(self, layer: nn.Module, inputs: Tensor, attention_mask: Tensor):
 

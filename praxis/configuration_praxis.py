@@ -17,8 +17,8 @@ class PraxisConfig(PretrainedConfig):
         dropout=0,
         epsilon=1e-6,
         capacity=0.125,
-        vocab_size=4096,
-        context_length=2048,
+        vocab_size=8192,
+        context_length=4096,
         activation="serf",
         block="transformer",
         expert="glu",
@@ -50,16 +50,6 @@ class PraxisConfig(PretrainedConfig):
             unk_token_id=unk_token_id,
             **kwargs,
         )
-
-        if sparse:
-            assert (
-                depth % 2 != 0
-            ), "When using `sparse=True`, `depth` should be an odd number."
-
-        if autopilot:
-            assert (
-                autopilot == shuffle
-            ), "To use `autopilot`, you must also use `shuffle`."
 
         assert (
             num_experts >= depth

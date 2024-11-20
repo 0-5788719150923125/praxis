@@ -53,11 +53,11 @@ class PraxisAttention(nn.Module):
         )
 
         # The core attention mechanism
-        scaled = True
+        scale_encoding = True
         if self.stickbreaking:
-            config.encoding = "nope"
-            scaled = False
             self.algorithm = Stickbreaking(config)
+            config.encoding = "nope"
+            scale_encoding = False
         elif self.differential:
             self.algorithm = Differential(config)
         elif self.linear:
@@ -66,7 +66,7 @@ class PraxisAttention(nn.Module):
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.encoding = ENCODING_REGISTRY[config.encoding](config, scaled)
+        self.encoding = ENCODING_REGISTRY[config.encoding](config, scale_encoding)
 
         # Standard output projection
         self.output = nn.Linear(
