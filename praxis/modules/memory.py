@@ -226,7 +226,7 @@ class PraxisMemory(nn.Module):
                 if self.training and self.debug and random.random() < 0.005:
                     print(f"DEBUG: found {len(surprising_indices)} surprising memories")
 
-                if len(num_replacements) > 0:
+                if num_replacements > 0:
                     # Compare surprising new memories against existing ones
                     relevant_sims = sims[surprising_indices]
 
