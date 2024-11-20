@@ -19,8 +19,9 @@ EXPERT_REGISTRY = {
 }
 
 EXPERT_CONFIGS = {
-    "mlp": {},
     "glu": {},
+    "kan": {},
+    "mlp": {},
     "peer": {
         "num_experts": 32**2,
         "num_heads": 4,
