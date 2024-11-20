@@ -28,16 +28,18 @@ class PraxisMemory(nn.Module):
         # Gating parameter: one gate per query head
         head_dim = config.num_dims // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
-        self.gate = nn.Parameter(torch.zeros(num_query_heads))
+        self.gate = nn.Parameter(
+            torch.full((num_query_heads,), -1.0)
+        )  # sigmoid(-1) ≈ 0.27
         # Initialize key_memories and value_memories for each head
         multiplier = 2 if config.differential else 1
         self.register_buffer(
             "key_memories",
-            torch.zeros(self.num_heads, max_memories, head_dim * multiplier),
+            torch.randn(self.num_heads, max_memories, head_dim * multiplier),
         )
         self.register_buffer(
             "value_memories",
-            torch.zeros(self.num_heads, max_memories, head_dim),
+            torch.randn(self.num_heads, max_memories, head_dim),
         )
 
     def forward(
@@ -72,7 +74,6 @@ class PraxisMemory(nn.Module):
                 memory_values = self._get_values(indices_mem)  # [num_heads, Q, k, dim]
 
             # Compute weighted sum: [num_heads, Q, dim]
-            # Note: scores_mem is detached; no gradients will flow through it
             weighted_memory = memory_values * scores_mem.unsqueeze(
                 -1
             )  # [num_heads, Q, k, dim]
@@ -80,21 +81,13 @@ class PraxisMemory(nn.Module):
 
             # Reshape to [num_heads, batch_size, seq_len, dim]
             weighted_memory = weighted_memory.view(
-                num_heads, batch_size, seq_len, -1
+                batch_size, num_heads, seq_len, -1
             )  # [num_heads, batch_size, seq_len, dim]
 
-            # Permute to [batch_size, num_heads, seq_len, dim] to align with attn_out
-            weighted_memory = weighted_memory.permute(
-                1, 0, 2, 3
-            ).contiguous()  # [batch_size, num_heads, seq_len, dim]
-
             # Apply per-head gating
-            gate = (
-                torch.sigmoid(self.gate).view(1, num_heads, 1, 1).to(outputs.device)
+            gate = torch.sigmoid(self.gate).view(
+                1, num_heads, 1, 1
             )  # [1, num_heads, 1, 1]
-
-            output_dim = outputs.size(-1)
-            weighted_memory = weighted_memory[..., :output_dim]
 
             # Combine attention and memory outputs using the gate
             combined_output = (
@@ -231,6 +224,7 @@ class PraxisMemory(nn.Module):
 
                 # Only consider truly surprising memories
                 surprising_indices = torch.where(max_sims < (1 - surprise_threshold))[0]
+
                 if self.training and self.debug and random.random() < 0.001:
                     print(f"DEBUG: found {len(surprising_indices)} memories")
 
