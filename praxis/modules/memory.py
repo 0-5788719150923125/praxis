@@ -237,7 +237,10 @@ class PraxisMemory(nn.Module):
 
                     # Cap replacements for actual memory update
                     num_memories = existing_keys_norm[h].size(0)
-                    num_replacements = min(len(surprising_indices), num_memories)
+                    update_cap = int(num_memories * 0.01)
+                    num_replacements = min(
+                        len(surprising_indices), num_memories, update_cap
+                    )
                     surprising_indices = surprising_indices[
                         :num_replacements
                     ]  # Now takes most surprising ones
