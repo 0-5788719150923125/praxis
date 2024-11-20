@@ -131,49 +131,53 @@ class PraxisMemory(nn.Module):
         queries_norm = F.normalize(queries, p=2, dim=-1, eps=self.epsilon)
         keys_norm = F.normalize(self.key_memories, p=2, dim=-1, eps=self.epsilon)
 
-        batch_size = 512  # Adjust based on available memory
+        batch_size = 512
         num_queries = queries_norm.size(1)
         k = min(self.k, self.key_memories.size(1))
         device = queries.device
-
-        # Reshape queries to match key heads (group query heads)
         queries_per_key = self.num_query_heads // self.num_heads
-        queries_reshaped = queries_norm.view(
-            self.num_heads, queries_per_key, num_queries, -1
-        )
-        queries_reshaped = queries_reshaped.mean(dim=1)  # Average grouped queries
 
-        # Pre-allocate output tensors
         all_scores = torch.zeros(self.num_query_heads, num_queries, k, device=device)
         all_indices = torch.zeros(
             self.num_query_heads, num_queries, k, dtype=torch.long, device=device
         )
 
-        # Process queries in batches
-        for start_idx in range(0, num_queries, batch_size):
-            end_idx = min(start_idx + batch_size, num_queries)
-            batch_queries = queries_reshaped[:, start_idx:end_idx]
+        # Process each key head's group of query heads
+        for i in range(self.num_heads):
+            # Get the query heads for this key head
+            query_start = i * queries_per_key
+            query_end = (i + 1) * queries_per_key
+            group_queries = queries_norm[
+                query_start:query_end
+            ]  # [queries_per_key, num_queries, dim]
 
-            # Compute similarities for this batch
-            batch_similarities = torch.bmm(
-                batch_queries, keys_norm.transpose(1, 2)
-            ) / math.sqrt(self.head_dim)
+            # Process in batches to manage memory
+            for start_idx in range(0, num_queries, batch_size):
+                end_idx = min(start_idx + batch_size, num_queries)
+                batch_queries = group_queries[
+                    :, start_idx:end_idx
+                ]  # [queries_per_key, batch_size, dim]
 
-            # Get top k for this batch
-            batch_scores, batch_indices = batch_similarities.topk(k, dim=-1)
+                # Compute similarities for each query in the group
+                # Expand keys to match batch_queries shape for bmm
+                key_head = (
+                    keys_norm[i].unsqueeze(0).expand(batch_queries.size(0), -1, -1)
+                )  # [queries_per_key, num_memories, dim]
 
-            # Expand back to query heads
-            batch_scores = batch_scores.unsqueeze(1).expand(-1, queries_per_key, -1, -1)
-            batch_indices = batch_indices.unsqueeze(1).expand(
-                -1, queries_per_key, -1, -1
-            )
+                batch_similarities = torch.bmm(
+                    batch_queries, key_head.transpose(1, 2)
+                ) / math.sqrt(self.head_dim)
 
-            batch_scores = batch_scores.reshape(self.num_query_heads, -1, k)
-            batch_indices = batch_indices.reshape(self.num_query_heads, -1, k)
+                # Get top k for this batch
+                batch_scores, batch_indices = batch_similarities.topk(k, dim=-1)
 
-            # Store results
-            all_scores[:, start_idx:end_idx] = batch_scores
-            all_indices[:, start_idx:end_idx] = batch_indices
+                # Store results for this group of query heads
+                all_scores[query_start:query_end, start_idx:end_idx] = batch_scores
+                all_indices[query_start:query_end, start_idx:end_idx] = batch_indices
+
+                # Store most recent batch for memory updates if needed
+                if start_idx + batch_size >= num_queries and i == self.num_heads - 1:
+                    self.recent_similarities = batch_similarities[-1].detach()
 
         return all_scores, all_indices
 
@@ -182,63 +186,71 @@ class PraxisMemory(nn.Module):
         Retrieves the values corresponding to the nearest neighbors.
         Handles GQA where num_query_heads > num_heads (key/value heads)
         """
-        # First, need to map query head indices to key/value head indices
         queries_per_key = self.num_query_heads // self.num_heads
+        gathered_values = []
 
-        # Reshape indices from [num_query_heads, Q, k] to [num_heads, queries_per_key, Q, k]
-        indices = indices.view(self.num_heads, queries_per_key, -1, indices.size(-1))
+        # Process each key head's group of query heads
+        for i in range(self.num_heads):
+            query_start = i * queries_per_key
+            query_end = (i + 1) * queries_per_key
+            group_indices = indices[query_start:query_end]  # [queries_per_key, Q, k]
 
-        # Use the same indices for each group of query heads
-        indices = indices[:, 0]  # [num_heads, Q, k]
+            # Expand memory values for this head
+            head_memory = self.value_memories[i]  # [num_memories, head_dim]
 
-        # Gather values for each head
-        gathered_values = torch.gather(
-            self.value_memories.unsqueeze(1).expand(-1, indices.size(1), -1, -1),
-            2,
-            indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim),
-        )  # [num_heads, Q, k, dim]
+            # Reshape indices for gather: [queries_per_key * Q, k]
+            flat_indices = group_indices.reshape(-1, group_indices.size(-1))
 
-        # Expand back to query heads
-        gathered_values = gathered_values.unsqueeze(1).expand(
-            -1, queries_per_key, -1, -1, -1
-        )
-        gathered_values = gathered_values.reshape(
-            self.num_query_heads, -1, self.k, self.head_dim
-        )
+            # Gather values and reshape
+            values = head_memory[flat_indices]  # [queries_per_key * Q, k, head_dim]
 
+            # Reshape back to [queries_per_key, Q, k, head_dim]
+            head_values = values.reshape(
+                group_indices.size(0),  # queries_per_key
+                group_indices.size(1),  # Q
+                group_indices.size(2),  # k
+                self.head_dim,
+            )
+
+            gathered_values.append(head_values)
+
+        # Combine all gathered values
+        gathered_values = torch.cat(
+            gathered_values, dim=0
+        )  # [num_query_heads, Q, k, dim]
         return gathered_values
 
     def _update_memory(self, keys: Tensor, values: Tensor):
-        """
-        Updates the memory using a circular buffer approach.
-        Handles GQA by mapping from query heads to their corresponding k/v heads
-        """
+        """Updates the memory using a circular buffer approach."""
         batch_size = keys.size(1)
         queries_per_key = self.num_query_heads // self.num_heads
 
-        # Map from query heads back to k/v heads by reshaping and taking first query head
-        # from each group (they share the same k/v head)
-        keys = keys.view(self.num_heads, queries_per_key, batch_size, -1)[:, 0]
-        values = values.view(self.num_heads, queries_per_key, batch_size, -1)[:, 0]
+        # Process each group of queries_per_key heads
+        for i in range(queries_per_key):
+            # Take the corresponding slice of heads
+            start_idx = i * self.num_heads
+            end_idx = (i + 1) * self.num_heads
+            group_keys = keys[start_idx:end_idx]
+            group_values = values[start_idx:end_idx]
 
-        # Calculate positions to write to
-        end_pos = self.write_pos + batch_size
-        if end_pos <= self.max_memories:
-            # Simple case: just write to next positions
-            self.key_memories[:, self.write_pos : end_pos] = keys
-            self.value_memories[:, self.write_pos : end_pos] = values
-        else:
-            # Wrap around case: split the write
-            first_part = self.max_memories - self.write_pos
-            second_part = batch_size - first_part
+            # Calculate positions to write to
+            end_pos = self.write_pos + batch_size
+            if end_pos <= self.max_memories:
+                # Simple case: just write to next positions
+                self.key_memories[:, self.write_pos : end_pos] = group_keys
+                self.value_memories[:, self.write_pos : end_pos] = group_values
+            else:
+                # Wrap around case: split the write
+                first_part = self.max_memories - self.write_pos
+                second_part = batch_size - first_part
 
-            # Write first part
-            self.key_memories[:, self.write_pos :] = keys[:, :first_part]
-            self.value_memories[:, self.write_pos :] = values[:, :first_part]
+                # Write first part
+                self.key_memories[:, self.write_pos :] = group_keys[:, :first_part]
+                self.value_memories[:, self.write_pos :] = group_values[:, :first_part]
 
-            # Write second part at beginning
-            self.key_memories[:, :second_part] = keys[:, first_part:]
-            self.value_memories[:, :second_part] = values[:, first_part:]
+                # Write second part at beginning
+                self.key_memories[:, :second_part] = group_keys[:, first_part:]
+                self.value_memories[:, :second_part] = group_values[:, first_part:]
 
-        # Update positions
-        self.write_pos = (self.write_pos + batch_size) % self.max_memories
+            # Update write position
+            self.write_pos = (self.write_pos + batch_size) % self.max_memories
