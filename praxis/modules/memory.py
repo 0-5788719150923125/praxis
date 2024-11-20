@@ -1,4 +1,5 @@
 import math
+import random
 
 import torch
 import torch.nn as nn
@@ -19,6 +20,7 @@ class PraxisMemory(nn.Module):
 
     def __init__(self, config: AutoConfig):
         super().__init__()
+        self.debug = config.debug
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = config.num_dims // config.num_heads
@@ -29,8 +31,7 @@ class PraxisMemory(nn.Module):
         self.gate = nn.Parameter(torch.zeros(self.num_query_heads))
         # Initialize key_memories and value_memories for each head
         self.multiplier = 2 if config.differential else 1
-        # Pre-allocate full memory, circular buffers
-        self.write_pos = 0
+        # Pre-allocate full memory banks
         self.register_buffer(
             "key_memories",
             torch.zeros(
@@ -175,10 +176,6 @@ class PraxisMemory(nn.Module):
                 all_scores[query_start:query_end, start_idx:end_idx] = batch_scores
                 all_indices[query_start:query_end, start_idx:end_idx] = batch_indices
 
-                # Store most recent batch for memory updates if needed
-                if start_idx + batch_size >= num_queries and i == self.num_heads - 1:
-                    self.recent_similarities = batch_similarities[-1].detach()
-
         return all_scores, all_indices
 
     def _get_values(self, indices: Tensor) -> Tensor:
@@ -221,9 +218,10 @@ class PraxisMemory(nn.Module):
         return gathered_values
 
     def _update_memory(self, keys: Tensor, values: Tensor):
-        """Updates the memory using a circular buffer approach."""
+        """Updates memory by keeping most surprising/novel information."""
         batch_size = keys.size(1)
         queries_per_key = self.num_query_heads // self.num_heads
+        surprise_threshold = 0.5
 
         # Process each group of queries_per_key heads
         for i in range(queries_per_key):
@@ -233,24 +231,39 @@ class PraxisMemory(nn.Module):
             group_keys = keys[start_idx:end_idx]
             group_values = values[start_idx:end_idx]
 
-            # Calculate positions to write to
-            end_pos = self.write_pos + batch_size
-            if end_pos <= self.max_memories:
-                # Simple case: just write to next positions
-                self.key_memories[:, self.write_pos : end_pos] = group_keys
-                self.value_memories[:, self.write_pos : end_pos] = group_values
-            else:
-                # Wrap around case: split the write
-                first_part = self.max_memories - self.write_pos
-                second_part = batch_size - first_part
+            # Replace least useful memories
+            batch_keys_norm = F.normalize(group_keys, dim=-1)
+            existing_keys_norm = F.normalize(self.key_memories, dim=-1)
 
-                # Write first part
-                self.key_memories[:, self.write_pos :] = group_keys[:, :first_part]
-                self.value_memories[:, self.write_pos :] = group_values[:, :first_part]
+            for h in range(self.num_heads):
+                # Compare new memories against existing ones
+                sims = torch.mm(batch_keys_norm[h], existing_keys_norm[h].t())
+                max_sims = sims.max(dim=1)[0]
 
-                # Write second part at beginning
-                self.key_memories[:, :second_part] = group_keys[:, first_part:]
-                self.value_memories[:, :second_part] = group_values[:, first_part:]
+                # Only consider truly surprising memories
+                surprising_indices = torch.where(max_sims < (1 - surprise_threshold))[0]
 
-            # Update write position
-            self.write_pos = (self.write_pos + batch_size) % self.max_memories
+                if len(surprising_indices) > 0:
+                    if random.random() < 0.001:
+                        print(f"DEBUG: found {len(surprising_indices)} memories")
+                    # Compare surprising new memories against existing ones
+                    relevant_sims = sims[surprising_indices]
+
+                    # Find memories least relevant to our new surprising content
+                    min_relevance = relevant_sims.min(dim=0)[
+                        0
+                    ]  # How relevant is each memory to new content?
+
+                    # Replace least relevant memories
+                    _, replace_positions = min_relevance.topk(
+                        k=len(surprising_indices),
+                        largest=False,  # Take lowest relevance scores
+                    )
+
+                    # Replace redundant memories with surprising ones
+                    self.key_memories[h, replace_positions] = group_keys[
+                        h, surprising_indices
+                    ]
+                    self.value_memories[h, replace_positions] = group_values[
+                        h, surprising_indices
+                    ]
