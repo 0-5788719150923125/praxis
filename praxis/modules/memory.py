@@ -20,19 +20,22 @@ class PraxisMemory(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.num_heads = config.num_heads
+        self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = config.num_dims // config.num_heads
         self.k = 8  # max KNN vectors to lookup
         self.max_memories = 4 * 4096  # max k/v vectors to store
         self.epsilon = 1e-8  # for numerical stability
         # Gating parameter: one gate per head
-        self.gate = nn.Parameter(torch.zeros(self.num_heads))
+        self.gate = nn.Parameter(torch.zeros(self.num_query_heads))
         # Initialize key_memories and value_memories for each head
-        multiplier = 2 if config.differential else 1
+        self.multiplier = 2 if config.differential else 1
         # Pre-allocate full memory, circular buffers
         self.write_pos = 0
         self.register_buffer(
             "key_memories",
-            torch.zeros(self.num_heads, self.max_memories, self.head_dim * multiplier),
+            torch.zeros(
+                self.num_heads, self.max_memories, self.head_dim * self.multiplier
+            ),
         )
         self.register_buffer(
             "value_memories",
@@ -43,23 +46,23 @@ class PraxisMemory(nn.Module):
         self, inputs: Tensor, query: Tensor, key: Tensor, value: Tensor, outputs: Tensor
     ) -> Tensor:
         batch_size, seq_len, _ = inputs.size()
-
+        num_heads = query.size(1)
         # Prepare queries, keys, and values for memory: [num_heads, Q, dim]
-        multiplier = query.size(-1) // self.head_dim
+        multiplier = self.multiplier
         q = (
-            query.view(batch_size, self.num_heads, seq_len, self.head_dim * multiplier)
+            query.view(batch_size, num_heads, seq_len, self.head_dim * multiplier)
             .transpose(0, 1)
-            .reshape(self.num_heads, batch_size * seq_len, self.head_dim * multiplier)
+            .reshape(num_heads, batch_size * seq_len, self.head_dim * multiplier)
         )  # [num_heads, Q, d_k]
         k = (
-            key.view(batch_size, self.num_heads, seq_len, self.head_dim * multiplier)
+            key.view(batch_size, num_heads, seq_len, self.head_dim * multiplier)
             .transpose(0, 1)
-            .reshape(self.num_heads, batch_size * seq_len, self.head_dim * multiplier)
+            .reshape(num_heads, batch_size * seq_len, self.head_dim * multiplier)
         )  # [num_heads, Q, d_k]
         v = (
-            value.view(batch_size, self.num_heads, seq_len, self.head_dim)
+            value.view(batch_size, num_heads, seq_len, self.head_dim)
             .transpose(0, 1)
-            .reshape(self.num_heads, batch_size * seq_len, self.head_dim)
+            .reshape(num_heads, batch_size * seq_len, self.head_dim)
         )  # [num_heads, Q, d_k]
 
         # Detach q, k, v for non-differentiable memory operations
@@ -87,7 +90,7 @@ class PraxisMemory(nn.Module):
 
             # Reshape to [num_heads, batch_size, seq_len, dim]
             weighted_memory = weighted_memory.view(
-                self.num_heads, batch_size, seq_len, self.head_dim
+                num_heads, batch_size, seq_len, self.head_dim
             )  # [num_heads, batch_size, seq_len, dim]
 
             # Permute to [batch_size, num_heads, seq_len, dim] to align with attn_out
@@ -97,9 +100,7 @@ class PraxisMemory(nn.Module):
 
             # Apply per-head gating
             gate = (
-                torch.sigmoid(self.gate)
-                .view(1, self.num_heads, 1, 1)
-                .to(outputs.device)
+                torch.sigmoid(self.gate).view(1, num_heads, 1, 1).to(outputs.device)
             )  # [1, num_heads, 1, 1]
 
             output_dim = outputs.size(-1)
@@ -121,6 +122,7 @@ class PraxisMemory(nn.Module):
     def _find_knn(self, queries: Tensor) -> tuple:
         """
         Finds k-nearest neighbors using batched processing to reduce peak memory usage.
+        Handles GQA where num_query_heads > num_heads (key/value heads)
         """
         if self.key_memories.size(1) == 0:
             return None, None
@@ -134,30 +136,40 @@ class PraxisMemory(nn.Module):
         k = min(self.k, self.key_memories.size(1))
         device = queries.device
 
+        # Reshape queries to match key heads (group query heads)
+        queries_per_key = self.num_query_heads // self.num_heads
+        queries_reshaped = queries_norm.view(
+            self.num_heads, queries_per_key, num_queries, -1
+        )
+        queries_reshaped = queries_reshaped.mean(dim=1)  # Average grouped queries
+
         # Pre-allocate output tensors
-        all_scores = torch.zeros(self.num_heads, num_queries, k, device=device)
+        all_scores = torch.zeros(self.num_query_heads, num_queries, k, device=device)
         all_indices = torch.zeros(
-            self.num_heads, num_queries, k, dtype=torch.long, device=device
+            self.num_query_heads, num_queries, k, dtype=torch.long, device=device
         )
 
         # Process queries in batches
         for start_idx in range(0, num_queries, batch_size):
             end_idx = min(start_idx + batch_size, num_queries)
-            batch_queries = queries_norm[
-                :, start_idx:end_idx
-            ]  # [num_heads, batch, dim]
+            batch_queries = queries_reshaped[:, start_idx:end_idx]
 
             # Compute similarities for this batch
             batch_similarities = torch.bmm(
                 batch_queries, keys_norm.transpose(1, 2)
-            ) / math.sqrt(
-                self.head_dim
-            )  # [num_heads, batch, num_keys]
+            ) / math.sqrt(self.head_dim)
 
             # Get top k for this batch
-            batch_scores, batch_indices = batch_similarities.topk(
-                k, dim=-1
-            )  # [num_heads, batch, k]
+            batch_scores, batch_indices = batch_similarities.topk(k, dim=-1)
+
+            # Expand back to query heads
+            batch_scores = batch_scores.unsqueeze(1).expand(-1, queries_per_key, -1, -1)
+            batch_indices = batch_indices.unsqueeze(1).expand(
+                -1, queries_per_key, -1, -1
+            )
+
+            batch_scores = batch_scores.reshape(self.num_query_heads, -1, k)
+            batch_indices = batch_indices.reshape(self.num_query_heads, -1, k)
 
             # Store results
             all_scores[:, start_idx:end_idx] = batch_scores
@@ -168,20 +180,46 @@ class PraxisMemory(nn.Module):
     def _get_values(self, indices: Tensor) -> Tensor:
         """
         Retrieves the values corresponding to the nearest neighbors.
+        Handles GQA where num_query_heads > num_heads (key/value heads)
         """
+        # First, need to map query head indices to key/value head indices
+        queries_per_key = self.num_query_heads // self.num_heads
+
+        # Reshape indices from [num_query_heads, Q, k] to [num_heads, queries_per_key, Q, k]
+        indices = indices.view(self.num_heads, queries_per_key, -1, indices.size(-1))
+
+        # Use the same indices for each group of query heads
+        indices = indices[:, 0]  # [num_heads, Q, k]
+
         # Gather values for each head
         gathered_values = torch.gather(
             self.value_memories.unsqueeze(1).expand(-1, indices.size(1), -1, -1),
             2,
             indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim),
         )  # [num_heads, Q, k, dim]
+
+        # Expand back to query heads
+        gathered_values = gathered_values.unsqueeze(1).expand(
+            -1, queries_per_key, -1, -1, -1
+        )
+        gathered_values = gathered_values.reshape(
+            self.num_query_heads, -1, self.k, self.head_dim
+        )
+
         return gathered_values
 
     def _update_memory(self, keys: Tensor, values: Tensor):
         """
         Updates the memory using a circular buffer approach.
+        Handles GQA by mapping from query heads to their corresponding k/v heads
         """
         batch_size = keys.size(1)
+        queries_per_key = self.num_query_heads // self.num_heads
+
+        # Map from query heads back to k/v heads by reshaping and taking first query head
+        # from each group (they share the same k/v head)
+        keys = keys.view(self.num_heads, queries_per_key, batch_size, -1)[:, 0]
+        values = values.view(self.num_heads, queries_per_key, batch_size, -1)[:, 0]
 
         # Calculate positions to write to
         end_pos = self.write_pos + batch_size
