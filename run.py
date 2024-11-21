@@ -428,7 +428,6 @@ config = PraxisConfig(
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
-    unk_token_id=tokenizer.unk_token_id,
     device_map=device,
     cache_dir=cache_dir,
     debug=debug,
@@ -633,7 +632,7 @@ class TerminalInterface(Callback):
         self.ema_loss = 0
         self.start_time = datetime.now()
         self.last_time = datetime.now()
-        self.initial_text = tokenizer.bos_token + " "
+        self.initial_text = tokenizer.bos_token
         self.text = self.initial_text
         self.max_length = 4096
         self.interval = 3
@@ -725,7 +724,7 @@ class TerminalInterface(Callback):
                 self.dashboard.update_memory(data["memory_churn"])
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
-            self.dashboard.fake_log(chance=0.000005)
+            self.dashboard.fake_log(chance=0.000002)
             if random.random() < 0.25:
                 self.dashboard.update_validator(
                     self._sign_wave(
@@ -969,32 +968,44 @@ class Generator:
                 skip_special_tokens = False
             del combined["skip_special_tokens"]
 
-        return_text = request.prompt
+        generated_tokens = input_ids
         max_attempts = 30
         attempts = 0
 
         with self._eval_mode():
             while attempts < max_attempts:
                 outputs = self.model.generate(
-                    input_ids, **combined, tokenizer=self.tokenizer
+                    generated_tokens,
+                    **combined,
+                    tokenizer=self.tokenizer,
+                    # token_healing=True,
                 )
+
+                # Update generated_tokens with the new token
+                generated_tokens = outputs
+
+                # Decode the tokens generated so far
                 decoded_new = self.tokenizer.decode(
-                    outputs[0], skip_special_tokens=skip_special_tokens
+                    generated_tokens[0], skip_special_tokens=skip_special_tokens
                 )
 
-                if decoded_new != request.prompt:
-                    return_text = decoded_new
-                    break
+                # Check if the decoded text contains the replacement character
+                if "�" not in decoded_new:
+                    # Ensure that the new text is different from the prompt
+                    if decoded_new != request.prompt:
+                        return_text = decoded_new
+                        break
                 else:
-                    input_ids = outputs
+                    # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
+            else:
+                print(
+                    f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
+                )
+                # Return the decoded text even if it contains '�'
+                return_text = decoded_new
 
-        if attempts == max_attempts:
-            print(
-                f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
-            )
-
-        return return_text
+            return return_text
 
     def fulfill_requests(self, max_requests: int = None) -> int:
         """

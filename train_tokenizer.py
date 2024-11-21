@@ -25,10 +25,8 @@ archive_path = save_path + f"-{vocab_size}"
 pad_token = "<|pad|>"
 bos_token = "<|bos|>"
 eos_token = "<|eos|>"
-unk_token = "<|unk|>"
 start_token = "<|im_start|>"
 end_token = "<|im_end|>"
-
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb-edu",
@@ -46,16 +44,11 @@ column = "text"
 iterator = islice((item[column] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
-    models.BPE(
-        dropout=dropout,
-        unk_token=unk_token,
-        cache_capacity=4096,
-    )
+    models.BPE(dropout=dropout, cache_capacity=4096, byte_fallback=True)
 )
 
 tokenizer.add_special_tokens(
     [
-        unk_token,
         pad_token,
         bos_token,
         eos_token,
@@ -69,7 +62,6 @@ trainer = trainers.BpeTrainer(
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     show_progress=True,
     special_tokens=[
-        unk_token,
         pad_token,
         bos_token,
         eos_token,
@@ -82,24 +74,37 @@ tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(
     add_prefix_space=True, use_regex=True
 )
 
-tokenizer.normalizer = normalizers.NFC()
+tokenizer.normalizer = normalizers.NFKC()
 
 tokenizer.decoder = decoders.ByteLevel()
 tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+# bos = "<|begin_of_text|>"
+# eos = "<|end_of_text|>"
+# tokenizer._tokenizer.post_processor = processors.Sequence(
+#     [
+#         processors.ByteLevel(trim_offsets=False),
+#         processors.TemplateProcessing(
+#             single=f"{bos}:0 $A:0 {eos}:0",
+#             pair=f"{bos}:0 $A:0 {bos}:1 $B:1 {eos}:1",
+#             special_tokens=[
+#                 (bos, tokenizer.bos_token_id),
+#                 (eos, tokenizer.eos_token_id),
+#             ],
+#         ),
+#     ]
+# )
 
 tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)
 
 trained_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
 trained_tokenizer.add_special_tokens(
     {
-        "unk_token": unk_token,
         "pad_token": pad_token,
         "bos_token": bos_token,
         "eos_token": eos_token,
+        "additional_special_tokens": [start_token, end_token],
     }
 )
-custom_special_tokens = {"additional_special_tokens": [start_token, end_token]}
-trained_tokenizer.add_special_tokens(custom_special_tokens)
 
 os.makedirs(save_path, exist_ok=True)
 os.makedirs(archive_path, exist_ok=True)

@@ -439,7 +439,9 @@ class InterleaveDataManager:
             sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
-            sequence += new_sequences[0] + self.tokenizer.eos_token
+            sequence += (
+                self.tokenizer.bos_token + new_sequences[0] + self.tokenizer.eos_token
+            )
         return sequence
 
     def fill_token_cache(self):
