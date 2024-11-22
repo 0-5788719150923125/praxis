@@ -10,9 +10,10 @@ from praxis import activations
 
 # Define activation functions
 activation_functions = {
-    # "ReLU": nn.ReLU(),
     "Sigmoid": nn.Sigmoid(),
-    # "Tanh": nn.Tanh(),
+    "Tanh": nn.Tanh(),
+    "Softsign": nn.Softsign(),
+    "ReLU": nn.ReLU(),
     # "Leaky ReLU": nn.LeakyReLU(),
     # "ELU": nn.ELU(),
     # "JaggedSine": activations.JaggedSine(
@@ -23,7 +24,7 @@ activation_functions = {
     #     amplitudes=[random.uniform(-2, 2) for _ in range(9)],
     # ),
     # "NMDA": activations.NMDA(1, 1),
-    "NMDA": activations.NMDA(1.0, 1.0),
+    # "NMDA": activations.NMDA(1.0, 1.0),
     # "NMDA": activations.NMDA(10.0, 1),
     # "SERF": activations.SERF(),
     # "SinLU": activations.SinLU(),

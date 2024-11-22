@@ -263,18 +263,13 @@ class PraxisMemory(nn.Module):
         num_query_heads = keys.size(0)
         queries_per_key = num_query_heads // num_heads
 
-        # Target replacement rate - we want about this percentage of memories to be replaced
-        target_replace_rate = 0.005  # 0.5% target replacement rate
-        # Learning rate for threshold adjustment
-        threshold_lr = 0.01
-
         # Initialize or get current threshold (stored as buffer to persist between calls)
         if not hasattr(self, "surprise_threshold"):
             self.register_buffer("surprise_threshold", torch.tensor(0.9))
 
         total_surprising = 0
         total_capacity = self.key_memories.size(1) * num_heads
-        total_checked = 0  # Track total number of memories checked
+        total_checked = 0
 
         # Process each group of queries_per_key heads
         for i in range(queries_per_key):
@@ -292,6 +287,13 @@ class PraxisMemory(nn.Module):
                 sims = torch.mm(batch_keys_norm[h], existing_keys_norm[h].t())
                 max_sims = sims.max(dim=1)[0]
                 total_checked += len(max_sims)
+
+                # Update threshold based on current similarities distribution
+                target_percentile = 95  # Keep top 5% most surprising
+                current_threshold = torch.quantile(max_sims, target_percentile / 100)
+                self.surprise_threshold = (
+                    0.9 * self.surprise_threshold + 0.1 * current_threshold
+                ).clamp(0.5, 0.95)
 
                 # Use current threshold
                 surprising_indices = torch.where(max_sims < self.surprise_threshold)[0]
@@ -351,18 +353,6 @@ class PraxisMemory(nn.Module):
                         self.value_memories[h, replace_positions] = group_values[
                             h, surprising_indices
                         ]
-
-        # Adjust threshold based on actual replacement rate
-        actual_replace_rate = total_surprising / total_checked
-        if actual_replace_rate > target_replace_rate:
-            # Too many replacements, increase threshold
-            self.surprise_threshold *= 1 + threshold_lr
-        elif actual_replace_rate < target_replace_rate:
-            # Too few replacements, decrease threshold
-            self.surprise_threshold *= 1 - threshold_lr
-
-        # Clamp threshold to reasonable range
-        self.surprise_threshold.clamp_(0.5, 0.95)  # Never too low or too high
 
         # Update memory churn metric
         churn_percent = (total_surprising / total_capacity) * 100

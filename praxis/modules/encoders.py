@@ -51,25 +51,33 @@ class PraxisVAE(nn.Module):
         self.fc_mu = nn.Linear(self.bottleneck_dim, self.latent_dim)
         self.fc_var = nn.Linear(self.bottleneck_dim, self.latent_dim)
 
+        class ScaledTanh(nn.Module):
+            def __init__(self, scale=1.0):
+                super().__init__()
+                self.scale = nn.Parameter(torch.tensor(scale))
+
+            def forward(self, x):
+                return torch.tanh(x / self.scale) * self.scale
+
         # Decoder layers
         self.decoder = nn.Sequential(
             nn.Linear(self.latent_dim, self.bottleneck_dim),
-            nn.ReLU(),
+            ScaledTanh(),
             nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
-            nn.ReLU(),
+            ScaledTanh(),
             nn.Linear(self.bottleneck_dim, output_dim),
-            nn.LayerNorm(output_dim),
+            # nn.LayerNorm(output_dim),
         )
 
         self.projection = False
         if requires_projection:
             self.projection = nn.Sequential(
                 nn.Linear(output_dim, self.bottleneck_dim),
-                nn.ReLU(),
+                ScaledTanh(),
                 nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
-                nn.ReLU(),
+                ScaledTanh(),
                 nn.Linear(self.bottleneck_dim, input_dim),
-                nn.LayerNorm(input_dim),
+                # nn.LayerNorm(input_dim),
             )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
