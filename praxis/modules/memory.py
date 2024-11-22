@@ -145,6 +145,10 @@ class PraxisMemory(nn.Module):
         # Apply per-head gating
         gate = torch.sigmoid(self.gate).view(1, num_heads, 1, 1)  # [1, num_heads, 1, 1]
 
+        if self.debug and random.random() < 0.001:
+            mean_gate = gate.mean(1).squeeze().item()
+            print(f"DEBUG: average memory contribution: {mean_gate:.4f}%")
+
         # Combine attention and memory outputs using the gate
         combined_output = (
             gate * weighted_memory + (1 - gate) * outputs
