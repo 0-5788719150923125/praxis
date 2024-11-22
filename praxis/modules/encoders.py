@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class VariationalAutoencoder(nn.Module):
+class PraxisVAE(nn.Module):
     """
     A flexible Variational Autoencoder implementation with β-VAE support.
     Handles 3D inputs of shape [batch_size, seq_len, num_features].
@@ -50,6 +50,10 @@ class VariationalAutoencoder(nn.Module):
             nn.Sigmoid(),  # Assuming output should be in [0,1]
         )
 
+        self.direct_projection = nn.Sequential(
+            nn.Linear(output_dim, input_dim), nn.Sigmoid()
+        )
+
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Encode input to latent space parameters mu and log_var."""
         # Reshape input: [batch_size, seq_len, features] -> [batch_size * seq_len, features]
@@ -73,18 +77,20 @@ class VariationalAutoencoder(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """Decode latent vector to output space."""
-        # Reshape input: [batch_size, seq_len, latent_dim] -> [batch_size * seq_len, latent_dim]
+    def decode(self, z: torch.Tensor, project_to_input: bool = False) -> torch.Tensor:
+        """Decode latent vector with optional projection to input dimension."""
         batch_size, seq_len, _ = z.shape
         z = z.reshape(-1, self.latent_dim)
 
-        # Decode
+        # Decode to compressed dimension
         x = self.decoder(z)
 
-        # Reshape back: [batch_size * seq_len, output_dim] -> [batch_size, seq_len, output_dim]
-        x = x.reshape(batch_size, seq_len, -1)
+        # Optionally project back to input dimension
+        if project_to_input:
+            x = self.direct_projection(x)
 
+        # Reshape back
+        x = x.reshape(batch_size, seq_len, -1)
         return x
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -133,13 +139,13 @@ if __name__ == "__main__":
 
     # Test 1: Model instantiation
     def test_model_instantiation():
-        model = VariationalAutoencoder(input_dim=10, output_dim=5, beta=2.0)
+        model = PraxisVAE(input_dim=10, output_dim=5, beta=2.0)
         assert isinstance(model, nn.Module), "Model should be a nn.Module"
         assert model.beta == 2.0, "Beta parameter not set correctly"
 
     # Test 2: Basic forward pass
     def test_forward_pass():
-        model = VariationalAutoencoder(input_dim=10, output_dim=5)
+        model = PraxisVAE(input_dim=10, output_dim=5)
         x = torch.randn(32, 8, 10)  # [batch_size, seq_len, input_dim]
         reconstruction, kl_loss = model(x)
         assert reconstruction.shape == (
@@ -151,7 +157,7 @@ if __name__ == "__main__":
 
     # Test 3: Output range
     def test_output_range():
-        model = VariationalAutoencoder(input_dim=10, output_dim=5)
+        model = PraxisVAE(input_dim=10, output_dim=5)
         x = torch.randn(16, 4, 10)
         reconstruction, _ = model(x)
         assert torch.all(reconstruction >= 0) and torch.all(
@@ -161,8 +167,8 @@ if __name__ == "__main__":
     # Test 4: Beta effect on KL loss
     def test_beta_effect():
         x = torch.randn(16, 4, 10)
-        model1 = VariationalAutoencoder(input_dim=10, output_dim=5, beta=1.0)
-        model2 = VariationalAutoencoder(input_dim=10, output_dim=5, beta=2.0)
+        model1 = PraxisVAE(input_dim=10, output_dim=5, beta=1.0)
+        model2 = PraxisVAE(input_dim=10, output_dim=5, beta=2.0)
 
         # Use the same weights for both models
         model2.load_state_dict(model1.state_dict())
@@ -173,7 +179,7 @@ if __name__ == "__main__":
 
     # Test 5: Shape preservation with equal dimensions
     def test_equal_dimensions():
-        model = VariationalAutoencoder(input_dim=10, output_dim=10)
+        model = PraxisVAE(input_dim=10, output_dim=10)
         x = torch.randn(8, 6, 10)
         reconstruction, _ = model(x)
         assert (
@@ -182,7 +188,7 @@ if __name__ == "__main__":
 
     # Test 6: Different sequence lengths
     def test_different_seq_lengths():
-        model = VariationalAutoencoder(input_dim=10, output_dim=5)
+        model = PraxisVAE(input_dim=10, output_dim=5)
         x1 = torch.randn(8, 6, 10)
         x2 = torch.randn(8, 12, 10)
         rec1, _ = model(x1)

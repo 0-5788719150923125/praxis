@@ -998,6 +998,7 @@ class Generator:
                 else:
                     # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
+                    generated_tokens = input_ids
             else:
                 print(
                     f"Warning: Request {request.id} reached maximum attempts without generating a valid token"

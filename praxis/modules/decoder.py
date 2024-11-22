@@ -107,6 +107,9 @@ class PraxisDecoder(nn.Module):
         if self.debug and not self.training and self.navigator:
             print(f"DEBUG: routing through: {' -> '.join(route)}")
 
+        if self.memory:
+            aux_losses.append(self.memory.get_aux_loss())
+
         self.get_metrics()
 
         return hidden_states, sum(aux_losses)
