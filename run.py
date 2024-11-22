@@ -1000,11 +1000,11 @@ class Generator:
                     attempts += 1
                     generated_tokens = input_ids
             else:
-                print(
-                    f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
-                )
-                # Return the decoded text even if it contains '�'
-                return_text = decoded_new
+                # print(
+                #     f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
+                # )
+                # Return the original text
+                return_text = request.prompt
 
             return return_text
 

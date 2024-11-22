@@ -41,10 +41,10 @@ class PraxisMemory(nn.Module):
             compressed_dim = head_dim // 4  # Compress to 1/4 size
             storage_dim = compressed_dim
             self.key_vae = PraxisVAE(
-                input_dim=head_dim, output_dim=compressed_dim, beta=0.1
+                config, input_dim=head_dim, output_dim=compressed_dim, beta=0.1
             )
             self.value_vae = PraxisVAE(
-                input_dim=head_dim, output_dim=compressed_dim, beta=0.1
+                config, input_dim=head_dim, output_dim=compressed_dim, beta=0.1
             )
         else:
             storage_dim = head_dim

@@ -1,8 +1,10 @@
+import random
 from typing import Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import AutoConfig
 
 
 class PraxisVAE(nn.Module):
@@ -16,8 +18,12 @@ class PraxisVAE(nn.Module):
         beta (float): Weight of the KL divergence term (β-VAE)
     """
 
-    def __init__(self, input_dim: int, output_dim: int, beta: float = 1.0):
+    def __init__(
+        self, config: AutoConfig, input_dim: int, output_dim: int, beta: float = 1.0
+    ):
         super().__init__()
+
+        self.debug = config.debug
 
         # Store dimensions
         self.input_dim = input_dim
@@ -94,6 +100,26 @@ class PraxisVAE(nn.Module):
         x = x.reshape(batch_size, seq_len, -1)
         return x
 
+    def compute_reconstruction_quality(
+        self, x: torch.Tensor, reconstruction: torch.Tensor
+    ) -> dict:
+        """Compute various reconstruction quality metrics."""
+        # Project reconstruction back to input dimension
+        projected = self.decode(
+            self.reparameterize(*self.encode(x)), project_to_input=True
+        )
+
+        # Compute metrics
+        mse = F.mse_loss(projected, x).item()
+        mae = F.l1_loss(projected, x).item()
+
+        # Compute correlation coefficient
+        x_flat = x.reshape(-1)
+        proj_flat = projected.reshape(-1)
+        corr = torch.corrcoef(torch.stack([x_flat, proj_flat]))[0, 1].item()
+
+        return {"mse": f"{mse:.4f}", "mae": f"{mae:.4f}", "correlation": f"{corr:.4f}"}
+
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the VAE.
@@ -119,6 +145,11 @@ class PraxisVAE(nn.Module):
         kl_loss = (
             -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=2).mean()
         )
+
+        if self.debug and random.random() < 0.001:
+            with torch.no_grad():
+                debug_metrics = self.compute_reconstruction_quality(x, reconstruction)
+                print(f"DEBUG: reconstruction quality {str(debug_metrics)}")
 
         return reconstruction, self.beta * kl_loss
 
