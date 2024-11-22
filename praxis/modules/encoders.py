@@ -47,11 +47,12 @@ class PraxisVAE(nn.Module):
             nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
             nn.ReLU(),
             nn.Linear(self.bottleneck_dim, output_dim),
-            nn.Sigmoid(),  # Assuming output should be in [0,1]
+            # nn.Sigmoid(),  # Assuming output should be in [0,1]
         )
 
         self.direct_projection = nn.Sequential(
-            nn.Linear(output_dim, input_dim), nn.Sigmoid()
+            nn.Linear(output_dim, input_dim),
+            # nn.Sigmoid()
         )
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
