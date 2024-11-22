@@ -181,10 +181,10 @@ class PraxisVAE(nn.Module):
         ).item()
 
         return {
-            "mse": f"{mse:.3f}",
-            "mae": f"{mae:.3f}",
-            "correlation": f"{corr:.3f}",
-            "cosine": f"{cos_sim:.3f}",
+            "mse": f"{mse:.2f}",
+            "mae": f"{mae:.2f}",
+            "corr": f"{corr:.2f}",
+            "cosine": f"{cos_sim:.2f}",
         }
 
 

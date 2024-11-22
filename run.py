@@ -1007,12 +1007,14 @@ class Generator:
                     # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
                     generated_tokens = input_ids
+                    combined["max_new_tokens"] += 1
             else:
                 # print(
                 #     f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
                 # )
                 # Return the original text
-                return_text = request.prompt
+                # return_text = request.prompt
+                return_text = decoded_new
 
             return return_text
 

@@ -298,14 +298,15 @@ class PraxisMemory(nn.Module):
                 total_surprising += len(surprising_indices)
 
                 if self.debug and random.random() < 0.001:
-                    print(f"Current threshold: {self.surprise_threshold.item():.3f}")
+                    thresh = self.surprise_threshold.item()
+                    mean = max_sims.mean().item()
+                    stddv = max_sims.std().item()
+                    mn = self.key_memories[h].norm(dim=-1).mean().item()
+                    kn = keys[h].norm(dim=-1).mean().item()
                     print(
-                        f"Max similarities: {max_sims.mean().item():.3f} ± {max_sims.std().item():.3f}"
+                        f"DEBUG: memory thresh: {thresh:.3f}, similarities: {mean:.3f} ± {stddv:.3f}"
                     )
-                    print(
-                        f"Memory norm: {self.key_memories[h].norm(dim=-1).mean().item():.3f}"
-                    )
-                    print(f"Keys norm: {keys[h].norm(dim=-1).mean().item():.3f}")
+                    print(f"DEBUG: memory norm: {mn:.3f}, key norm: {kn:.3f}")
 
                 # Sort surprising_indices by their similarity scores
                 if len(surprising_indices) > 0:
