@@ -32,8 +32,6 @@ class PraxisDecoder(nn.Module):
         self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
-        rand_num = random.random()
-        print(f"Random number inside model: {rand_num}")
         self.memory = False
         if config.memory:
             self.memory = PraxisMemory(config)

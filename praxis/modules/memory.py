@@ -25,8 +25,16 @@ class PraxisMemory(nn.Module):
         self.debug = config.debug
         self.num_heads = config.num_heads
         self.epsilon = 1e-6  # for numerical stability
+
         self.chunk_size = 512
         max_memories = self.chunk_size * 8  # max k/v vectors to store
+        self.sample_size = 1.0
+        # Intended to reduce VRAM, but it doesn't help very much
+        # At 32768 memories, memory buffers only use ~0.05GB of VRAM already
+        if "subsample" in config.meta:
+            max_memories = self.chunk_size * 64
+            self.sample_size = 0.25
+
         head_dim = config.num_dims // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
         self.k = num_query_heads  # max KNN vectors to lookup
@@ -36,10 +44,10 @@ class PraxisMemory(nn.Module):
         )  # sigmoid(-1) ≈ 0.27
         # Determine if we're using compression
         self.compressed = True if "compressed" in config.meta else False
-        self.aux_losses = []
+
         memory_dim = head_dim
         if self.compressed:
-            memory_dim = int(head_dim * 0.75)
+            memory_dim = int(head_dim * 0.25)
             self.key_vae = PraxisVAE(
                 config, input_dim=head_dim, output_dim=memory_dim, beta=0.1
             )
@@ -62,6 +70,7 @@ class PraxisMemory(nn.Module):
             torch.randn(self.num_heads, max_memories, memory_dim),
         )
         # Memory churn tracking
+        self.aux_losses = []
         self.memory_decay = 0.99
         self.register_buffer("memory_churn", torch.zeros(1))
 
@@ -176,12 +185,30 @@ class PraxisMemory(nn.Module):
         k = min(self.k, self.key_memories.size(1))
         num_query_heads, num_queries, queries_dim = queries_norm.shape
         num_heads = self.num_heads
-        queries_per_key = num_query_heads // num_heads  # Assume divisible
+        queries_per_key = num_query_heads // num_heads  # Assuming divisible
 
         # Reshape queries_norm to [num_heads, queries_per_key, num_queries, dim]
         queries_norm = queries_norm.view(
             num_heads, queries_per_key, num_queries, queries_dim
         )
+
+        # If sampling is enabled, sample a subset of keys per head
+        if self.sample_size < 1.0:
+            num_samples = max(int(keys_norm.size(1) * self.sample_size), 64)
+            sampled_key_indices = torch.randint(
+                0, keys_norm.size(1), (num_heads, num_samples), device=keys_norm.device
+            )
+
+            # Gather sampled keys for each head
+            keys_norm_sampled = []
+            for h in range(num_heads):
+                sampled_indices = sampled_key_indices[h]
+                sampled_keys = keys_norm[h, sampled_indices, :]
+                keys_norm_sampled.append(sampled_keys)
+            keys_norm = torch.stack(keys_norm_sampled, dim=0)
+        else:
+            num_samples = keys_norm.size(1)
+            sampled_key_indices = None  # All keys are used
 
         all_scores = torch.zeros(num_query_heads, num_queries, k, device=queries.device)
         all_indices = torch.zeros(
@@ -195,19 +222,34 @@ class PraxisMemory(nn.Module):
                 :, :, start_idx:end_idx, :
             ]  # [num_heads, queries_per_key, batch_size, dim]
 
-            # Compute similarities
+            # Compute similarities with sampled keys
             batch_similarities = torch.einsum(
-                "hqbd,hnd->hqbn", batch_queries, keys_norm
-            )  # [num_heads, queries_per_key, batch_size, num_memories]
+                "hqbd,hkd->hqbk", batch_queries, keys_norm
+            )  # [num_heads, queries_per_key, batch_size, num_samples]
 
             # Flatten similarities for top-k selection
             similarities_flat = batch_similarities.reshape(
                 -1, batch_similarities.size(-1)
-            )  # [num_heads * queries_per_key * batch_size, num_memories]
+            )  # [num_heads * queries_per_key * batch_size, num_samples]
 
             # Get top k for each query
             batch_scores, batch_indices = similarities_flat.topk(k, dim=-1)
-            # batch_scores, batch_indices: [num_heads * queries_per_key * batch_size, k]
+            # batch_scores, batch_indices: [num_query_heads * batch_size, k]
+
+            # Adjust indices if sampling was done
+            if sampled_key_indices is not None:
+                # Map indices back to original key indices
+                adjusted_indices = torch.zeros_like(batch_indices)
+                for h in range(num_heads):
+                    # Determine the range of query indices for this head
+                    head_start = h * queries_per_key * (end_idx - start_idx)
+                    head_end = (h + 1) * queries_per_key * (end_idx - start_idx)
+
+                    # Get the batch indices for this head
+                    h_batch_indices = batch_indices[head_start:head_end, :]
+                    h_sampled_indices = sampled_key_indices[h][h_batch_indices]
+                    adjusted_indices[head_start:head_end, :] = h_sampled_indices
+                batch_indices = adjusted_indices
 
             # Reshape back to [num_query_heads, batch_size, k]
             batch_scores = batch_scores.view(num_query_heads, end_idx - start_idx, k)
