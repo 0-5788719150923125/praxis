@@ -32,7 +32,8 @@ class PraxisDecoder(nn.Module):
         self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
-        self.random = random.Random(config.seed)
+        rand_num = random.random()
+        print(f"Random number inside model: {rand_num}")
         self.memory = False
         if config.memory:
             self.memory = PraxisMemory(config)
@@ -65,7 +66,7 @@ class PraxisDecoder(nn.Module):
         experts = list(self.local_experts) + list(self.remote_experts)
         original_order = experts.copy()
         if self.shuffle:
-            self.random.shuffle(experts)
+            random.shuffle(experts)
 
         hidden_states = inputs
         aux_losses = []
