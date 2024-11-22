@@ -40,6 +40,7 @@ class PraxisConfig(PretrainedConfig):
         eos_token_id=2,
         seed=42,
         debug=False,
+        meta=[],
         **kwargs,
     ):
         super().__init__(
@@ -88,6 +89,7 @@ class PraxisConfig(PretrainedConfig):
         self.device_map = device_map
         self.seed = seed
         self.debug = debug
+        self.meta = meta
         self.causal = False
 
     def _register_experts(self, expert: str or dict):

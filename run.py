@@ -356,6 +356,13 @@ parser.add_argument(
     help="Print debug logs to the terminal",
 )
 parser.add_argument(
+    "--meta",
+    type=str,
+    action="append",
+    default=[],
+    help="Can be specified multiple times to build a list of meta flags",
+)
+parser.add_argument(
     "--reset",
     action="store_true",
     default=False,
@@ -432,6 +439,7 @@ config = PraxisConfig(
     cache_dir=cache_dir,
     debug=debug,
     seed=seed,
+    meta=meta,
 )
 
 # Misc hyperparameters
