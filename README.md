@@ -29,12 +29,17 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, continuously-l
 
 ## install
 
-From a Linux shell, run these commands:
+Setup a virtual environment:
 
 ```sh
-# Setup a virtual environment
 source make-venv.sh
+```
 
+Alternatively, you may use the VSCode command bar (`Ctrl + Shift + P`), and choose: `Python: Create Environment...`
+
+Then, install dependencies:
+
+```sh
 # Install core model dependencies
 pip install -e .
 

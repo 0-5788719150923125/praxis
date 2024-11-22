@@ -103,22 +103,50 @@ class PraxisVAE(nn.Module):
     def compute_reconstruction_quality(
         self, x: torch.Tensor, reconstruction: torch.Tensor
     ) -> dict:
-        """Compute various reconstruction quality metrics."""
+        """Compute various reconstruction quality metrics.
+
+        Returns:
+            dict with metrics:
+            - mse: Mean squared error (lower is better)
+            - mae: Mean absolute error (lower is better)
+            - correlation: Pearson correlation (closer to 1 is better)
+            - cosine_sim: Cosine similarity (closer to 1 is better)
+
+        Note:
+            - Correlation measures linear relationship strength (-1 to 1)
+            Positive means input and reconstruction move in same direction
+            Negative means they move in opposite directions
+
+            - Cosine similarity measures directional similarity (-1 to 1)
+            High value means patterns are preserved regardless of scale
+        """
         # Project reconstruction back to input dimension
         projected = self.decode(
             self.reparameterize(*self.encode(x)), project_to_input=True
         )
 
-        # Compute metrics
+        # Compute basic metrics
         mse = F.mse_loss(projected, x).item()
         mae = F.l1_loss(projected, x).item()
 
-        # Compute correlation coefficient
+        # Flatten tensors for correlation and cosine similarity
         x_flat = x.reshape(-1)
         proj_flat = projected.reshape(-1)
+
+        # Compute correlation coefficient
         corr = torch.corrcoef(torch.stack([x_flat, proj_flat]))[0, 1].item()
 
-        return {"mse": f"{mse:.4f}", "mae": f"{mae:.4f}", "correlation": f"{corr:.4f}"}
+        # Compute cosine similarity
+        cos_sim = F.cosine_similarity(
+            x_flat.unsqueeze(0), proj_flat.unsqueeze(0)
+        ).item()
+
+        return {
+            "mse": f"{mse:.3f}",
+            "mae": f"{mae:.3f}",
+            "correlation": f"{corr:.3f}",
+            "cosine": f"{cos_sim:.3f}",
+        }
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -149,7 +177,7 @@ class PraxisVAE(nn.Module):
         if self.debug and random.random() < 0.001:
             with torch.no_grad():
                 debug_metrics = self.compute_reconstruction_quality(x, reconstruction)
-                print(f"DEBUG: reconstruction quality {str(debug_metrics)}")
+                print(f"DEBUG: reconstruction: {str(debug_metrics)}")
 
         return reconstruction, self.beta * kl_loss
 
