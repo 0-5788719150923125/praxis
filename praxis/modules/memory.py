@@ -37,26 +37,25 @@ class PraxisMemory(nn.Module):
         # Determine if we're using compression
         self.compressed = False
         self.aux_losses = []
+        memory_dim = head_dim
         if self.compressed:
-            compressed_dim = head_dim // 4  # Compress to 1/4 size
-            storage_dim = compressed_dim
+            memory_dim = int(head_dim * 0.75)
             self.key_vae = PraxisVAE(
-                config, input_dim=head_dim, output_dim=compressed_dim, beta=0.1
+                config, input_dim=head_dim, output_dim=memory_dim, beta=0.1
             )
             self.value_vae = PraxisVAE(
-                config, input_dim=head_dim, output_dim=compressed_dim, beta=0.1
+                config, input_dim=head_dim, output_dim=memory_dim, beta=0.1
             )
-        else:
-            storage_dim = head_dim
+
         # Initialize key_memories and value_memories for each head
         multiplier = 2 if config.differential else 1
         self.register_buffer(
             "key_memories",
-            torch.randn(self.num_heads, max_memories, storage_dim * multiplier),
+            torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
         )
         self.register_buffer(
             "value_memories",
-            torch.randn(self.num_heads, max_memories, storage_dim),
+            torch.randn(self.num_heads, max_memories, memory_dim),
         )
         # Memory churn tracking
         self.memory_decay = 0.99
@@ -86,12 +85,6 @@ class PraxisMemory(nn.Module):
             num_heads, batch_size * seq_len, -1
         )  # [num_heads, Q, d_k]
 
-        # # Look up KNN memories without tracking gradients
-        # scores_mem, indices_mem = self._find_knn(q)
-
-        # # Retrieve memory values without tracking gradients
-        # memory_values = self._get_values(indices_mem)  # [num_heads, Q, k, dim]
-
         aux_loss = 0
         if self.compressed:
             # Compress for memory operations - keeping gradients for VAE training
@@ -104,27 +97,30 @@ class PraxisMemory(nn.Module):
             self.set_aux_loss(aux_loss)
 
             # Use compressed versions for memory operations
-            scores_mem, indices_mem = self._find_knn(q_compressed.detach())
+            scores_mem, indices_mem = self._find_knn(q_compressed)
+            # Memory values are in compressed form
             memory_values_compressed = self._get_values(
                 indices_mem
-            )  # Shape: [num_query_heads, Q, k, compressed_dim]
-
-            # Reshape for decoder: [num_query_heads, Q, k, compressed_dim] -> [num_query_heads*Q*k, 1, compressed_dim]
+            )  # [num_query_heads, Q, k, compressed_dim]
             num_query_heads, Q, k, compressed_dim = memory_values_compressed.shape
-            memory_values_compressed_reshaped = memory_values_compressed.reshape(
+
+            # Reshape: [num_query_heads, Q, k, compressed_dim] -> [num_query_heads * Q * k, 1, compressed_dim]
+            memory_values_compressed_reshaped = memory_values_compressed.view(
                 -1, 1, compressed_dim
             )
 
-            # Decode
+            # These values are already compressed - send directly to decoder
             memory_values_expanded = self.value_vae.decode(
-                memory_values_compressed_reshaped, project_to_input=True
-            )  # Shape: [num_query_heads*Q*k, 1, head_dim]
+                memory_values_compressed_reshaped,
+                compressed_input=True,  # New flag to indicate we're starting from compressed form
+                project_to_input=True,
+            )
 
-            # Reshape back: [num_query_heads*Q*k, 1, head_dim] -> [num_query_heads, Q, k, head_dim]
+            # Reshape back to original structure
             memory_values = memory_values_expanded.reshape(num_query_heads, Q, k, -1)
 
             # Update memory with compressed versions
-            self._update_memory(k_compressed.detach(), v_compressed.detach())
+            self._update_memory(k_compressed, v_compressed)
         else:
             # Original non-compressed path
             scores_mem, indices_mem = self._find_knn(q)
@@ -149,9 +145,6 @@ class PraxisMemory(nn.Module):
         combined_output = (
             gate * weighted_memory + (1 - gate) * outputs
         )  # [batch_size, num_heads, seq_len, dim]
-
-        # Update memory with current keys and values without tracking gradients
-        # self._update_memory(k, v)  # [num_heads, Q, dim]
 
         return combined_output, aux_loss
 

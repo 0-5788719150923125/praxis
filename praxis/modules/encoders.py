@@ -31,8 +31,8 @@ class PraxisVAE(nn.Module):
         self.beta = beta
 
         # Calculate bottleneck dimension
-        self.bottleneck_dim = max(input_dim, output_dim) // 2
-        self.latent_dim = self.bottleneck_dim // 2
+        self.bottleneck_dim = min(input_dim, output_dim) // 2  # = 96
+        self.latent_dim = self.bottleneck_dim // 2  # = 48
 
         # Encoder layers
         self.encoder = nn.Sequential(
@@ -62,43 +62,58 @@ class PraxisVAE(nn.Module):
         )
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Encode input to latent space parameters mu and log_var."""
-        # Reshape input: [batch_size, seq_len, features] -> [batch_size * seq_len, features]
-        batch_size, seq_len, _ = x.shape
-        x = x.reshape(-1, self.input_dim)
+
+        batch_size, seq_len, feat_dim = x.shape
+
+        # Flatten batch and sequence dimensions
+        flat_x = x.reshape(-1, self.input_dim)
 
         # Encode
-        x = self.encoder(x)
-        mu = self.fc_mu(x)
-        log_var = self.fc_var(x)
+        encoded = self.encoder(flat_x)
+        mu = self.fc_mu(encoded)
+        log_var = self.fc_var(encoded)
 
-        # Reshape back: [batch_size * seq_len, latent_dim] -> [batch_size, seq_len, latent_dim]
-        mu = mu.reshape(batch_size, seq_len, -1)
-        log_var = log_var.reshape(batch_size, seq_len, -1)
+        # Reshape back to 3D
+        mu = mu.reshape(batch_size, seq_len, self.latent_dim)
+        log_var = log_var.reshape(batch_size, seq_len, self.latent_dim)
 
         return mu, log_var
+
+    def decode(
+        self,
+        z: torch.Tensor,
+        compressed_input: bool = False,
+        project_to_input: bool = False,
+    ) -> torch.Tensor:
+
+        batch_size, seq_len, feat_dim = z.shape
+        expected_dim = self.output_dim if compressed_input else self.latent_dim
+
+        # Flatten batch and sequence dimensions
+        flat_z = z.reshape(-1, feat_dim)
+
+        if compressed_input:
+            # If input is already compressed, skip the decoder network
+            decoded = flat_z
+        else:
+            # Normal decode from latent space
+            decoded = self.decoder(flat_z)
+
+        # Project to input dimension if requested
+        if project_to_input:
+            decoded = self.direct_projection(decoded)
+
+        # Reshape back to 3D
+        out_dim = self.input_dim if project_to_input else self.output_dim
+        output = decoded.reshape(batch_size, seq_len, out_dim)
+
+        return output
 
     def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
         """Reparameterization trick to sample from N(mu, var)."""
         std = torch.exp(0.5 * log_var)
         eps = torch.randn_like(std)
         return mu + eps * std
-
-    def decode(self, z: torch.Tensor, project_to_input: bool = False) -> torch.Tensor:
-        """Decode latent vector with optional projection to input dimension."""
-        batch_size, seq_len, _ = z.shape
-        z = z.reshape(-1, self.latent_dim)
-
-        # Decode to compressed dimension
-        x = self.decoder(z)
-
-        # Optionally project back to input dimension
-        if project_to_input:
-            x = self.direct_projection(x)
-
-        # Reshape back
-        x = x.reshape(batch_size, seq_len, -1)
-        return x
 
     def compute_reconstruction_quality(
         self, x: torch.Tensor, reconstruction: torch.Tensor
