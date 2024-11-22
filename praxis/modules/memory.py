@@ -24,7 +24,6 @@ class PraxisMemory(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.num_heads = config.num_heads
-        self.epsilon = 1e-6  # for numerical stability
 
         self.chunk_size = 512
         max_memories = self.chunk_size * 8  # max k/v vectors to store
@@ -61,22 +60,22 @@ class PraxisMemory(nn.Module):
 
         # Initialize key_memories and value_memories for each head
         multiplier = 2 if config.differential else 1
-        self.register_buffer(
-            "key_memories",
-            torch.zeros(self.num_heads, max_memories, memory_dim * multiplier),
-        )
-        self.register_buffer(
-            "value_memories",
-            torch.zeros(self.num_heads, max_memories, memory_dim),
-        )
         # self.register_buffer(
         #     "key_memories",
-        #     torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+        #     torch.zeros(self.num_heads, max_memories, memory_dim * multiplier),
         # )
         # self.register_buffer(
         #     "value_memories",
-        #     torch.randn(self.num_heads, max_memories, memory_dim),
+        #     torch.zeros(self.num_heads, max_memories, memory_dim),
         # )
+        self.register_buffer(
+            "key_memories",
+            torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+        )
+        self.register_buffer(
+            "value_memories",
+            torch.randn(self.num_heads, max_memories, memory_dim),
+        )
         # Memory churn tracking
         self.aux_losses = []
         self.memory_decay = 0.99
@@ -182,13 +181,27 @@ class PraxisMemory(nn.Module):
         Finds k-nearest neighbors using batched processing to reduce peak memory usage.
         Handles GQA where num_query_heads > num_heads (key/value heads)
         """
+        # Debug norm check before initial normalization
+        do_log = random.random() < 0.001
+        if self.debug and do_log:
+            q_norm = queries.norm(dim=-1).mean().item()
+            k_norm = self.key_memories.norm(dim=-1).mean().item()
+            print(f"DEBUG: pre-norm: query={q_norm:.3f} key={k_norm:.3f}")
+
         # Normalize queries and keys
         queries_norm = F.normalize(
-            queries, p=2, dim=-1, eps=self.epsilon
+            queries, p=2, dim=-1
         )  # [num_query_heads, num_queries, dim]
-        keys_norm = F.normalize(
-            self.key_memories, p=2, dim=-1, eps=self.epsilon
-        )  # [num_heads, num_memories, dim]
+        keys = self.key_memories
+
+        # Verify normalization worked as expected
+        if self.debug and do_log:
+            qn = queries_norm.norm(dim=-1)
+            kn = keys.norm(dim=-1)
+            print(
+                f"DEBUG: norms: query={qn.mean().item():.3f}±{qn.std().item():.3f} "
+                f"key={kn.mean().item():.3f}±{kn.std().item():.3f}"
+            )
 
         k = min(self.k, self.key_memories.size(1))
         num_query_heads, num_queries, queries_dim = queries_norm.shape
@@ -200,22 +213,29 @@ class PraxisMemory(nn.Module):
             num_heads, queries_per_key, num_queries, queries_dim
         )
 
+        # Verify norms are preserved after reshape
+        if self.debug and do_log:
+            qn = queries_norm.norm(dim=-1)
+            print(
+                f"DEBUG: post-reshape: query={qn.mean().item():.3f}±{qn.std().item():.3f}"
+            )
+
         # If sampling is enabled, sample a subset of keys per head
         if self.sample_size < 1.0:
-            num_samples = max(int(keys_norm.size(1) * self.sample_size), 64)
+            num_samples = max(int(keys.size(1) * self.sample_size), 64)
             sampled_key_indices = torch.randint(
-                0, keys_norm.size(1), (num_heads, num_samples), device=keys_norm.device
+                0, keys.size(1), (num_heads, num_samples), device=keys.device
             )
 
             # Gather sampled keys for each head
-            keys_norm_sampled = []
+            keys_sampled = []
             for h in range(num_heads):
                 sampled_indices = sampled_key_indices[h]
-                sampled_keys = keys_norm[h, sampled_indices, :]
-                keys_norm_sampled.append(sampled_keys)
-            keys_norm = torch.stack(keys_norm_sampled, dim=0)
+                sampled_keys = keys[h, sampled_indices, :]
+                keys_sampled.append(sampled_keys)
+            keys = torch.stack(keys_sampled, dim=0)
         else:
-            num_samples = keys_norm.size(1)
+            num_samples = keys.size(1)
             sampled_key_indices = None  # All keys are used
 
         all_scores = torch.zeros(num_query_heads, num_queries, k, device=queries.device)
@@ -232,7 +252,7 @@ class PraxisMemory(nn.Module):
 
             # Compute similarities with sampled keys
             batch_similarities = torch.einsum(
-                "hqbd,hkd->hqbk", batch_queries, keys_norm
+                "hqbd,hkd->hqbk", batch_queries, keys
             )  # [num_heads, queries_per_key, batch_size, num_samples]
 
             # Flatten similarities for top-k selection
@@ -314,12 +334,19 @@ class PraxisMemory(nn.Module):
         queries_per_key = num_query_heads // num_heads
 
         # Initialize or get current threshold (stored as buffer to persist between calls)
-        if not hasattr(self, "surprise_threshold"):
-            self.register_buffer("surprise_threshold", torch.tensor(0.9))
+        if not hasattr(self, "redundancy_threshold"):
+            self.register_buffer("redundancy_threshold", torch.tensor(0.9))
 
         total_surprising = 0
         total_capacity = self.key_memories.size(1) * num_heads
         total_checked = 0
+
+        # Add replacement tracking
+        if self.training and self.debug:
+            # Track which positions have been touched in this update
+            replacement_mask = torch.zeros_like(
+                self.key_memories[:, :, 0], dtype=torch.bool
+            )  # [num_heads, num_memories]
 
         # Process each group of queries_per_key heads
         for i in range(queries_per_key):
@@ -328,29 +355,29 @@ class PraxisMemory(nn.Module):
             group_keys = keys[start_idx:end_idx]
             group_values = values[start_idx:end_idx]
 
-            batch_keys_norm = F.normalize(group_keys, dim=-1, eps=self.epsilon)
-            existing_keys_norm = F.normalize(
-                self.key_memories, dim=-1, eps=self.epsilon
-            )
+            batch_keys_norm = F.normalize(group_keys, dim=-1)
+            existing_keys = self.key_memories
 
             for h in range(num_heads):
-                sims = torch.mm(batch_keys_norm[h], existing_keys_norm[h].t())
+                sims = torch.mm(batch_keys_norm[h], existing_keys[h].t())
                 max_sims = sims.max(dim=1)[0]
                 total_checked += len(max_sims)
 
                 # Update threshold based on current similarities distribution
-                target_percentile = 95  # Keep top 5% most surprising
+                target_percentile = (
+                    95  # Now means we keep the MOST redundant (most similar) memories
+                )
                 current_threshold = torch.quantile(max_sims, target_percentile / 100)
-                self.surprise_threshold = (
-                    0.9 * self.surprise_threshold + 0.1 * current_threshold
+                self.redundancy_threshold = (
+                    0.9 * self.redundancy_threshold + 0.1 * current_threshold
                 ).clamp(0.5, 0.95)
 
                 # Use current threshold
-                surprising_indices = torch.where(max_sims < self.surprise_threshold)[0]
-                total_surprising += len(surprising_indices)
+                redundant_indices = torch.where(max_sims > self.redundancy_threshold)[0]
+                total_surprising += len(redundant_indices)
 
                 if self.debug and random.random() < 0.001:
-                    thresh = self.surprise_threshold.item()
+                    thresh = self.redundancy_threshold.item()
                     mean = max_sims.mean().item()
                     stddv = max_sims.std().item()
                     mn = self.key_memories[h].norm(dim=-1).mean().item()
@@ -361,23 +388,23 @@ class PraxisMemory(nn.Module):
                     print(f"DEBUG: memory norm: {mn:.3f}, key norm: {kn:.3f}")
 
                 # Sort surprising_indices by their similarity scores
-                if len(surprising_indices) > 0:
-                    # Sort by similarity (ascending), so most surprising (lowest similarity) first
-                    similarities = max_sims[surprising_indices]
-                    sorted_indices = torch.argsort(similarities)
-                    surprising_indices = surprising_indices[sorted_indices]
+                if len(redundant_indices) > 0:
+                    # Sort by similarity (descending), so most redundant first
+                    similarities = max_sims[redundant_indices]
+                    sorted_indices = torch.argsort(similarities, descending=True)
+                    redundant_indices = redundant_indices[sorted_indices]
 
                     # Cap replacements for actual memory update
-                    num_memories = existing_keys_norm[h].size(0)
+                    num_memories = existing_keys[h].size(0)
                     update_cap = int(num_memories * 0.01)
                     num_replacements = min(
-                        len(surprising_indices), num_memories, update_cap
+                        len(redundant_indices), num_memories, update_cap
                     )
 
                     if self.training and self.debug and random.random() < 0.005:
                         print(f"DEBUG: found {num_replacements} surprising memories")
 
-                    surprising_indices = surprising_indices[
+                    redundant_indices = redundant_indices[
                         :num_replacements
                     ]  # Now takes most surprising ones
 
@@ -392,7 +419,7 @@ class PraxisMemory(nn.Module):
                         )  # Reduce similarity-based by random count
 
                         # Compare surprising new memories against existing ones
-                        relevant_sims = sims[surprising_indices]
+                        relevant_sims = sims[redundant_indices]
 
                         # Find memories least relevant to our new surprising content
                         min_relevance = relevant_sims.min(dim=0)[0]
@@ -418,18 +445,61 @@ class PraxisMemory(nn.Module):
 
                         # Take corresponding number of surprising indices
                         # (we're still only using num_replacements total values)
-                        surprising_indices = surprising_indices[:num_replacements]
+                        redundant_indices = redundant_indices[:num_replacements]
+
+                        # Normalize the keys before storage
+                        new_keys = F.normalize(group_keys[h, redundant_indices], dim=-1)
+
+                        if self.debug and random.random() < 0.001:
+                            nk = new_keys.norm(dim=-1)
+                            print(
+                                f"DEBUG: store: new={nk.mean().item():.3f}±{nk.std().item():.3f} "
+                                f"old={existing_keys[h].norm(dim=-1).mean().item():.3f}"
+                            )
 
                         # Perform replacements
-                        self.key_memories[h, replace_positions] = group_keys[
-                            h, surprising_indices
-                        ]
+                        self.key_memories[h, replace_positions] = new_keys
                         self.value_memories[h, replace_positions] = group_values[
-                            h, surprising_indices
+                            h, redundant_indices
                         ]
+
+                        # Track which positions were replaced
+                        if self.training and self.debug:
+                            replacement_mask[h, replace_positions] = True
 
         # Update memory churn metric
         churn_percent = (total_surprising / total_capacity) * 100
         self.memory_churn.mul_(self.memory_decay).add_(
             churn_percent * (1 - self.memory_decay)
         )
+
+        # Debug logging for replacement statistics
+        if self.training and self.debug and random.random() < 0.001:
+            # Calculate what percentage of memory has ever been written to
+            memory_used = (self.key_memories.norm(dim=-1) > 0).float()
+            percent_used = (memory_used.mean() * 100).item()
+
+            # Calculate what percentage was replaced in this update
+            percent_replaced = (replacement_mask.float().mean() * 100).item()
+
+            # If this is the first debug call, initialize replacement history
+            if not hasattr(self, "replacement_history"):
+                self.register_buffer(
+                    "replacement_history", torch.zeros_like(self.key_memories[:, :, 0])
+                )  # [num_heads, num_memories]
+
+            # Update replacement history with exponential moving average
+            self.replacement_history.mul_(0.99).add_(replacement_mask.float() * 0.01)
+
+            # Calculate distribution of replacement frequency
+            hist = self.replacement_history.view(-1)
+            freq_never = (hist == 0).float().mean() * 100
+            freq_rare = ((hist > 0) & (hist < 0.1)).float().mean() * 100
+            freq_common = ((hist >= 0.1) & (hist < 0.5)).float().mean() * 100
+            freq_heavy = (hist >= 0.5).float().mean() * 100
+
+            print(
+                f"DEBUG: mem: {percent_used:.1f}% used, {percent_replaced:.1f}% updated, "
+                f"freq: never={freq_never:.1f}% rare={freq_rare:.1f}% "
+                f"med={freq_common:.1f}% high={freq_heavy:.1f}%"
+            )
