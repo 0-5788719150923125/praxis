@@ -19,7 +19,12 @@ class PraxisVAE(nn.Module):
     """
 
     def __init__(
-        self, config: AutoConfig, input_dim: int, output_dim: int, beta: float = 1.0
+        self,
+        config: AutoConfig,
+        input_dim: int,
+        output_dim: int,
+        beta: float = 1.0,
+        requires_projection=False,
     ):
         super().__init__()
 
@@ -56,10 +61,50 @@ class PraxisVAE(nn.Module):
             # nn.Sigmoid(),  # Assuming output should be in [0,1]
         )
 
-        self.direct_projection = nn.Sequential(
-            nn.Linear(output_dim, input_dim),
-            # nn.Sigmoid()
+        self.projection = False
+        if requires_projection:
+            self.projection = nn.Sequential(
+                nn.Linear(output_dim, input_dim),
+                # nn.Sigmoid()
+            )
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the VAE with added consistency loss.
+        """
+        # Encode
+        mu, log_var = self.encode(x)
+
+        # Sample from latent space
+        z = self.reparameterize(mu, log_var)
+
+        # Get compressed representation
+        compressed = self.decode(z)
+
+        # Calculate KL divergence
+        kl_loss = (
+            -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=2).mean()
         )
+
+        consistency_loss = 0
+        if self.projection:
+            # Get projection back to input space for consistency loss
+            projected = self.projection(compressed)
+
+            # Calculate consistency loss (L1 loss between input and projection)
+            consistency_loss = F.l1_loss(projected, x)
+
+            if self.debug and random.random() < 0.001:
+                with torch.no_grad():
+                    debug_metrics = self.compute_reconstruction_quality_from_tensors(
+                        x, projected
+                    )
+                    print(f"DEBUG: reconstruction: {str(debug_metrics)}")
+
+        # Combine losses with weighting
+        total_loss = self.beta * kl_loss + consistency_loss
+
+        return compressed, total_loss
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
 
@@ -101,7 +146,7 @@ class PraxisVAE(nn.Module):
 
         # Project to input dimension if requested
         if project_to_input:
-            decoded = self.direct_projection(decoded)
+            decoded = self.projection(decoded)
 
         # Reshape back to 3D
         out_dim = self.input_dim if project_to_input else self.output_dim
@@ -115,38 +160,17 @@ class PraxisVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def compute_reconstruction_quality(
-        self, x: torch.Tensor, reconstruction: torch.Tensor
+    def compute_reconstruction_quality_from_tensors(
+        self, x: torch.Tensor, projected: torch.Tensor
     ) -> dict:
-        """Compute various reconstruction quality metrics.
-
-        Returns:
-            dict with metrics:
-            - mse: Mean squared error (lower is better)
-            - mae: Mean absolute error (lower is better)
-            - correlation: Pearson correlation (closer to 1 is better)
-            - cosine_sim: Cosine similarity (closer to 1 is better)
-
-        Note:
-            - Correlation measures linear relationship strength (-1 to 1)
-            Positive means input and reconstruction move in same direction
-            Negative means they move in opposite directions
-
-            - Cosine similarity measures directional similarity (-1 to 1)
-            High value means patterns are preserved regardless of scale
-        """
-        # Project reconstruction back to input dimension
-        projected = self.decode(
-            self.reparameterize(*self.encode(x)), project_to_input=True
-        )
+        """Compute reconstruction quality metrics from pre-computed tensors."""
+        # Flatten tensors for correlation and cosine similarity
+        x_flat = x.reshape(-1)
+        proj_flat = projected.reshape(-1)
 
         # Compute basic metrics
         mse = F.mse_loss(projected, x).item()
         mae = F.l1_loss(projected, x).item()
-
-        # Flatten tensors for correlation and cosine similarity
-        x_flat = x.reshape(-1)
-        proj_flat = projected.reshape(-1)
 
         # Compute correlation coefficient
         corr = torch.corrcoef(torch.stack([x_flat, proj_flat]))[0, 1].item()
@@ -162,39 +186,6 @@ class PraxisVAE(nn.Module):
             "correlation": f"{corr:.3f}",
             "cosine": f"{cos_sim:.3f}",
         }
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of the VAE.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape [batch_size, seq_len, input_dim]
-
-        Returns:
-            tuple: (reconstruction, kl_loss * beta)
-            - reconstruction has shape [batch_size, seq_len, output_dim]
-            - kl_loss is the KL divergence loss term weighted by beta
-        """
-        # Encode
-        mu, log_var = self.encode(x)
-
-        # Sample from latent space
-        z = self.reparameterize(mu, log_var)
-
-        # Decode
-        reconstruction = self.decode(z)
-
-        # Calculate KL divergence
-        kl_loss = (
-            -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=2).mean()
-        )
-
-        if self.debug and random.random() < 0.001:
-            with torch.no_grad():
-                debug_metrics = self.compute_reconstruction_quality(x, reconstruction)
-                print(f"DEBUG: reconstruction: {str(debug_metrics)}")
-
-        return reconstruction, self.beta * kl_loss
 
 
 if __name__ == "__main__":

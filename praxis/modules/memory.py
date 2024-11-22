@@ -44,7 +44,11 @@ class PraxisMemory(nn.Module):
                 config, input_dim=head_dim, output_dim=memory_dim, beta=0.1
             )
             self.value_vae = PraxisVAE(
-                config, input_dim=head_dim, output_dim=memory_dim, beta=0.1
+                config,
+                input_dim=head_dim,
+                output_dim=memory_dim,
+                beta=0.1,
+                requires_projection=True,
             )
 
         # Initialize key_memories and value_memories for each head
@@ -105,14 +109,14 @@ class PraxisMemory(nn.Module):
             num_query_heads, Q, k, compressed_dim = memory_values_compressed.shape
 
             # Reshape: [num_query_heads, Q, k, compressed_dim] -> [num_query_heads * Q * k, 1, compressed_dim]
-            memory_values_compressed_reshaped = memory_values_compressed.view(
+            memory_values_reshaped = memory_values_compressed.view(
                 -1, 1, compressed_dim
             )
 
             # These values are already compressed - send directly to decoder
             memory_values_expanded = self.value_vae.decode(
-                memory_values_compressed_reshaped,
-                compressed_input=True,  # New flag to indicate we're starting from compressed form
+                memory_values_reshaped,
+                compressed_input=True,
                 project_to_input=True,
             )
 
