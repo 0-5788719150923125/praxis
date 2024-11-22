@@ -40,8 +40,8 @@ class PraxisMemory(nn.Module):
         self.k = num_query_heads  # max KNN vectors to lookup
         # Gating parameter: one gate per query head
         self.gate = nn.Parameter(
-            torch.full((num_query_heads,), -1.0)
-        )  # sigmoid(-1) ≈ 0.27
+            torch.full((num_query_heads,), 0.0)
+        )  # sigmoid(-1) ≈ 0.5
         # Determine if we're using compression
         self.compressed = True if "compressed" in config.meta else False
 
@@ -63,12 +63,20 @@ class PraxisMemory(nn.Module):
         multiplier = 2 if config.differential else 1
         self.register_buffer(
             "key_memories",
-            torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+            torch.zeros(self.num_heads, max_memories, memory_dim * multiplier),
         )
         self.register_buffer(
             "value_memories",
-            torch.randn(self.num_heads, max_memories, memory_dim),
+            torch.zeros(self.num_heads, max_memories, memory_dim),
         )
+        # self.register_buffer(
+        #     "key_memories",
+        #     torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+        # )
+        # self.register_buffer(
+        #     "value_memories",
+        #     torch.randn(self.num_heads, max_memories, memory_dim),
+        # )
         # Memory churn tracking
         self.aux_losses = []
         self.memory_decay = 0.99
@@ -374,21 +382,45 @@ class PraxisMemory(nn.Module):
                     ]  # Now takes most surprising ones
 
                     if num_replacements > 0:
+                        # Calculate how many random replacements we'll do
+                        percent_random = 0.001
+                        num_random = max(
+                            1, math.ceil(num_replacements * percent_random)
+                        )  # 5% random replacement
+                        num_similarity = (
+                            num_replacements - num_random
+                        )  # Reduce similarity-based by random count
+
                         # Compare surprising new memories against existing ones
                         relevant_sims = sims[surprising_indices]
 
                         # Find memories least relevant to our new surprising content
-                        min_relevance = relevant_sims.min(dim=0)[
-                            0
-                        ]  # How relevant is each memory to new content?
+                        min_relevance = relevant_sims.min(dim=0)[0]
 
-                        # Replace least relevant memories
-                        _, replace_positions = min_relevance.topk(
-                            k=num_replacements,
-                            largest=False,  # Take lowest relevance scores
+                        # Get positions for similarity-based replacement (reduced count)
+                        _, replace_positions_sim = min_relevance.topk(
+                            k=num_similarity,
+                            largest=False,
                         )
 
-                        # Replace redundant memories with surprising ones
+                        # Get random positions for random replacement
+                        replace_positions_random = torch.randint(
+                            0,
+                            num_memories,
+                            (num_random,),
+                            device=self.key_memories.device,
+                        )
+
+                        # Combine position indices
+                        replace_positions = torch.cat(
+                            [replace_positions_sim, replace_positions_random]
+                        )
+
+                        # Take corresponding number of surprising indices
+                        # (we're still only using num_replacements total values)
+                        surprising_indices = surprising_indices[:num_replacements]
+
+                        # Perform replacements
                         self.key_memories[h, replace_positions] = group_keys[
                             h, surprising_indices
                         ]

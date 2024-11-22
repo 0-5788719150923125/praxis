@@ -194,6 +194,12 @@ class PraxisVAE(nn.Module):
 
 
 class PraxisVQVAE(PraxisVAE):
+    """
+    A type of autoencoder that learns a discrete/categorical mapping of vectors
+    in the latent space.
+    https://arxiv.org/abs/1711.00937
+    """
+
     def __init__(
         self,
         config: AutoConfig,
