@@ -35,7 +35,7 @@ class PraxisMemory(nn.Module):
             torch.full((num_query_heads,), -1.0)
         )  # sigmoid(-1) ≈ 0.27
         # Determine if we're using compression
-        self.compressed = True
+        self.compressed = False
         self.aux_losses = []
         if self.compressed:
             compressed_dim = head_dim // 4  # Compress to 1/4 size
