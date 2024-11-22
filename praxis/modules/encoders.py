@@ -11,11 +11,6 @@ class PraxisVAE(nn.Module):
     """
     A flexible Variational Autoencoder implementation with β-VAE support.
     Handles 3D inputs of shape [batch_size, seq_len, num_features].
-
-    Args:
-        input_dim (int): Number of input features
-        output_dim (int): Number of output features
-        beta (float): Weight of the KL divergence term (β-VAE)
     """
 
     def __init__(
@@ -39,18 +34,6 @@ class PraxisVAE(nn.Module):
         self.bottleneck_dim = min(input_dim, output_dim) // 2  # = 96
         self.latent_dim = self.bottleneck_dim // 2  # = 48
 
-        # Encoder layers
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, self.bottleneck_dim),
-            nn.ReLU(),
-            nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
-            nn.ReLU(),
-        )
-
-        # Latent space parameters
-        self.fc_mu = nn.Linear(self.bottleneck_dim, self.latent_dim)
-        self.fc_var = nn.Linear(self.bottleneck_dim, self.latent_dim)
-
         class ScaledTanh(nn.Module):
             def __init__(self, scale=1.0):
                 super().__init__()
@@ -59,6 +42,18 @@ class PraxisVAE(nn.Module):
             def forward(self, x):
                 return torch.tanh(x / self.scale) * self.scale
 
+        # Encoder layers
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, self.bottleneck_dim),
+            ScaledTanh(),
+            nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
+            ScaledTanh(),
+        )
+
+        # Latent space parameters
+        self.mu = nn.Linear(self.bottleneck_dim, self.latent_dim)
+        self.var = nn.Linear(self.bottleneck_dim, self.latent_dim)
+
         # Decoder layers
         self.decoder = nn.Sequential(
             nn.Linear(self.latent_dim, self.bottleneck_dim),
@@ -66,7 +61,6 @@ class PraxisVAE(nn.Module):
             nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
             ScaledTanh(),
             nn.Linear(self.bottleneck_dim, output_dim),
-            # nn.LayerNorm(output_dim),
         )
 
         self.projection = False
@@ -77,7 +71,6 @@ class PraxisVAE(nn.Module):
                 nn.Linear(self.bottleneck_dim, self.bottleneck_dim),
                 ScaledTanh(),
                 nn.Linear(self.bottleneck_dim, input_dim),
-                # nn.LayerNorm(input_dim),
             )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -127,8 +120,8 @@ class PraxisVAE(nn.Module):
 
         # Encode
         encoded = self.encoder(flat_x)
-        mu = self.fc_mu(encoded)
-        log_var = self.fc_var(encoded)
+        mu = self.mu(encoded)
+        log_var = self.var(encoded)
 
         # Reshape back to 3D
         mu = mu.reshape(batch_size, seq_len, self.latent_dim)
