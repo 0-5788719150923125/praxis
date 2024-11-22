@@ -80,6 +80,9 @@ class PraxisMemory(nn.Module):
         self.aux_losses = []
         self.memory_decay = 0.99
         self.register_buffer("memory_churn", torch.zeros(1))
+        self.register_buffer(
+            "update_counts", torch.zeros_like(self.key_memories[:, :, 0])
+        )  # [num_heads, num_memories]
 
     def get_aux_loss(self):
         if len(self.aux_losses) > 0:
@@ -162,8 +165,14 @@ class PraxisMemory(nn.Module):
         gate = torch.sigmoid(self.gate).view(1, num_heads, 1, 1)  # [1, num_heads, 1, 1]
 
         if self.debug and random.random() < 0.001:
-            mean_gate = gate.mean(1).squeeze().item()
-            print(f"DEBUG: average memory contribution: {mean_gate:.4f}%")
+            gate_values = gate.squeeze()
+            gate_str = ", ".join([f"{g:.2f}" for g in gate_values.cpu().tolist()])
+            print(
+                f"DEBUG: head gates: {gate_str} | "
+                f"min={gate_values.min().item():.2f} "
+                f"max={gate_values.max().item():.2f} "
+                f"mean={gate_values.mean().item():.2f}"
+            )
 
         # Combine attention and memory outputs using the gate
         combined_output = (
@@ -181,27 +190,12 @@ class PraxisMemory(nn.Module):
         Finds k-nearest neighbors using batched processing to reduce peak memory usage.
         Handles GQA where num_query_heads > num_heads (key/value heads)
         """
-        # Debug norm check before initial normalization
-        do_log = random.random() < 0.001
-        if self.debug and do_log:
-            q_norm = queries.norm(dim=-1).mean().item()
-            k_norm = self.key_memories.norm(dim=-1).mean().item()
-            print(f"DEBUG: pre-norm: query={q_norm:.3f} key={k_norm:.3f}")
 
         # Normalize queries and keys
         queries_norm = F.normalize(
             queries, p=2, dim=-1
         )  # [num_query_heads, num_queries, dim]
         keys = self.key_memories
-
-        # Verify normalization worked as expected
-        if self.debug and do_log:
-            qn = queries_norm.norm(dim=-1)
-            kn = keys.norm(dim=-1)
-            print(
-                f"DEBUG: norms: query={qn.mean().item():.3f}±{qn.std().item():.3f} "
-                f"key={kn.mean().item():.3f}±{kn.std().item():.3f}"
-            )
 
         k = min(self.k, self.key_memories.size(1))
         num_query_heads, num_queries, queries_dim = queries_norm.shape
@@ -212,13 +206,6 @@ class PraxisMemory(nn.Module):
         queries_norm = queries_norm.view(
             num_heads, queries_per_key, num_queries, queries_dim
         )
-
-        # Verify norms are preserved after reshape
-        if self.debug and do_log:
-            qn = queries_norm.norm(dim=-1)
-            print(
-                f"DEBUG: post-reshape: query={qn.mean().item():.3f}±{qn.std().item():.3f}"
-            )
 
         # If sampling is enabled, sample a subset of keys per head
         if self.sample_size < 1.0:
@@ -450,13 +437,6 @@ class PraxisMemory(nn.Module):
                         # Normalize the keys before storage
                         new_keys = F.normalize(group_keys[h, redundant_indices], dim=-1)
 
-                        if self.debug and random.random() < 0.001:
-                            nk = new_keys.norm(dim=-1)
-                            print(
-                                f"DEBUG: store: new={nk.mean().item():.3f}±{nk.std().item():.3f} "
-                                f"old={existing_keys[h].norm(dim=-1).mean().item():.3f}"
-                            )
-
                         # Perform replacements
                         self.key_memories[h, replace_positions] = new_keys
                         self.value_memories[h, replace_positions] = group_values[
@@ -474,32 +454,18 @@ class PraxisMemory(nn.Module):
         )
 
         # Debug logging for replacement statistics
-        if self.training and self.debug and random.random() < 0.001:
-            # Calculate what percentage of memory has ever been written to
-            memory_used = (self.key_memories.norm(dim=-1) > 0).float()
-            percent_used = (memory_used.mean() * 100).item()
+        if self.training and self.debug:
+            # Increment age of all memories
+            self.update_counts += 1
+            # Reset counter for new memories
+            self.update_counts[h, replace_positions] = 0
 
-            # Calculate what percentage was replaced in this update
-            percent_replaced = (replacement_mask.float().mean() * 100).item()
-
-            # If this is the first debug call, initialize replacement history
-            if not hasattr(self, "replacement_history"):
-                self.register_buffer(
-                    "replacement_history", torch.zeros_like(self.key_memories[:, :, 0])
-                )  # [num_heads, num_memories]
-
-            # Update replacement history with exponential moving average
-            self.replacement_history.mul_(0.99).add_(replacement_mask.float() * 0.01)
-
-            # Calculate distribution of replacement frequency
-            hist = self.replacement_history.view(-1)
-            freq_never = (hist == 0).float().mean() * 100
-            freq_rare = ((hist > 0) & (hist < 0.1)).float().mean() * 100
-            freq_common = ((hist >= 0.1) & (hist < 0.5)).float().mean() * 100
-            freq_heavy = (hist >= 0.5).float().mean() * 100
-
-            print(
-                f"DEBUG: mem: {percent_used:.1f}% used, {percent_replaced:.1f}% updated, "
-                f"freq: never={freq_never:.1f}% rare={freq_rare:.1f}% "
-                f"med={freq_common:.1f}% high={freq_heavy:.1f}%"
-            )
+            if random.random() < 0.003:
+                counts = self.update_counts.view(-1)
+                young = (counts < 100).float().mean() * 100
+                adult = ((counts >= 100) & (counts < 1000)).float().mean() * 100
+                old = (counts >= 1000).float().mean() * 100
+                print(
+                    f"DEBUG: memory ages: young(<100)={young:.1f}% "
+                    f"adult(100-1000)={adult:.1f}% old(1000+)={old:.1f}%"
+                )
