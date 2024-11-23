@@ -23,6 +23,7 @@ class PraxisMemory(nn.Module):
         self.debug = config.debug
         self.num_heads = config.num_heads
 
+        self.k = 16  # max KNN vectors to lookup
         self.chunk_size = 512
         max_memories = self.chunk_size * 8  # max k/v vectors to store
         self.sample_size = 1.0
@@ -34,7 +35,7 @@ class PraxisMemory(nn.Module):
 
         head_dim = config.num_dims // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
-        self.k = num_query_heads  # max KNN vectors to lookup
+
         # Gating parameter: one gate per query head
         self.gate = nn.Parameter(
             torch.full((num_query_heads,), 0.0)
@@ -244,125 +245,110 @@ class PraxisMemory(nn.Module):
 
     @torch.no_grad()
     def _update_memory(self, keys: Tensor, values: Tensor):
-        """Updates memory by keeping most surprising/novel information."""
+        """
+        Updates memory by replacing least useful memories with novel information.
+        Uses similarity scores to identify both novel content and redundant memories.
+        """
         num_heads = self.num_heads
         num_query_heads = keys.size(0)
         queries_per_key = num_query_heads // num_heads
 
-        # Initialize or get current threshold (stored as buffer to persist between calls)
+        # Initialize thresholds if not already present
         if not hasattr(self, "redundancy_threshold"):
-            self.register_buffer("redundancy_threshold", torch.tensor(0.9))
+            self.register_buffer("redundancy_threshold", torch.tensor(0.95))
+        if not hasattr(self, "surprise_threshold"):
+            self.register_buffer("surprise_threshold", torch.tensor(0.80))
 
+        max_memories = self.key_memories.size(1)
+        max_replacements = int(max_memories * 0.01)  # Cap at 1% per update
+
+        total_memories = max_memories * num_heads
         total_surprising = 0
-        total_capacity = self.key_memories.size(1) * num_heads
+        total_processed = 0
 
-        # Process each group of queries_per_key heads
+        # Process each group of heads
         for i in range(queries_per_key):
             start_idx = i * num_heads
             end_idx = (i + 1) * num_heads
-            group_keys = keys[start_idx:end_idx]
+            group_keys = F.normalize(keys[start_idx:end_idx], dim=-1)
             group_values = values[start_idx:end_idx]
 
-            batch_keys_norm = F.normalize(group_keys, dim=-1)
+            # For each batch/sequence position, track how many tokens were processed
+            total_processed += group_keys.size(1) * num_heads
 
+            # Update memories for each head
             for h in range(num_heads):
-                sims = torch.mm(batch_keys_norm[h], self.key_memories[h].t())
-                max_sims = sims.max(dim=1)[0]
+                # Compute similarities between new keys and stored memories
+                similarities = torch.mm(group_keys[h], self.key_memories[h].t())
+                max_similarities = similarities.max(dim=1)[0]
 
-                # Update threshold based on current similarities distribution
-                target_percentile = 95  # Adjusted percentile
-                current_threshold = torch.quantile(max_sims, target_percentile / 100)
+                # Update running statistics
+                target_percentile = 95
+                current_max_sim = torch.quantile(
+                    max_similarities, target_percentile / 100
+                )
                 self.redundancy_threshold = (
-                    0.9 * self.redundancy_threshold + 0.1 * current_threshold
+                    0.9 * self.redundancy_threshold + 0.1 * current_max_sim
                 ).clamp(0.5, 0.95)
 
-                # Use current threshold
-                redundant_indices = torch.where(max_sims >= self.redundancy_threshold)[
-                    0
-                ]
-                surprising_indices = torch.where(max_sims < self.redundancy_threshold)[
-                    0
-                ]
+                # Find novel content
+                novel_mask = max_similarities < self.surprise_threshold
+                novel_indices = torch.where(novel_mask)[0]
 
-                total_surprising += len(surprising_indices)
+                # Track surprises relative to batch size
+                total_surprising += len(novel_indices)
 
-                if self.debug and random.random() < 0.001:
-                    thresh = self.redundancy_threshold.item()
-                    mean = max_sims.mean().item()
-                    stddv = max_sims.std().item()
-                    mn = self.key_memories[h].norm(dim=-1).mean().item()
-                    kn = keys[h].norm(dim=-1).mean().item()
-                    print(
-                        f"DEBUG: memory thresh: {thresh:.3f}, similarities: {mean:.3f} ± {stddv:.3f}"
-                    )
-                    print(f"DEBUG: memory norm: {mn:.3f}, key norm: {kn:.3f}")
+                # Find redundant memories (check similarity to all input keys)
+                memory_similarities = torch.mm(self.key_memories[h], group_keys[h].t())
+                memory_max_sims = memory_similarities.max(dim=1)[0]
+                redundant_mask = memory_max_sims >= self.redundancy_threshold
+                redundant_indices = torch.where(redundant_mask)[0]
 
-                if len(surprising_indices) == 0 or len(redundant_indices) == 0:
-                    continue  # Skip if we have no indices to work with
+                if len(novel_indices) == 0 or len(redundant_indices) == 0:
+                    continue
 
-                # Sort indices
-                similarities = max_sims[surprising_indices]
-                sorted_surprising = surprising_indices[torch.argsort(similarities)]
+                # Sort by similarity scores
+                novel_scores = max_similarities[novel_indices]
+                sorted_novel = novel_indices[torch.argsort(novel_scores)]
 
-                redundant_sims = max_sims[redundant_indices]
+                redundant_scores = memory_max_sims[redundant_indices]
                 sorted_redundant = redundant_indices[
-                    torch.argsort(redundant_sims, descending=True)
+                    torch.argsort(redundant_scores, descending=True)
                 ]
 
-                # Cap replacements
-                num_memories = self.key_memories.size(1)
+                # Determine number of replacements
                 num_replacements = min(
-                    len(sorted_surprising),
-                    len(sorted_redundant),
-                    int(num_memories * 0.01),
+                    len(sorted_novel), len(sorted_redundant), max_replacements
                 )
 
-                if self.training and self.debug and random.random() < 0.005:
-                    print(f"DEBUG: found {num_replacements} surprising memories")
-
-                if num_replacements == 0:
-                    continue  # Skip if no replacements to make
-
-                # Select indices
-                chosen_surprising = sorted_surprising[:num_replacements]
-                chosen_redundant = sorted_redundant[:num_replacements]
-
-                Q = group_keys.shape[1]
-
-                # Ensure indices are within bounds
-                chosen_surprising = chosen_surprising[chosen_surprising < Q]
-                chosen_redundant = chosen_redundant[chosen_redundant < num_memories]
-
-                if len(chosen_surprising) == 0 or len(chosen_redundant) == 0:
-                    continue  # Skip if after filtering we have no valid indices
-
-                # Adjust num_replacements after filtering
-                num_replacements = min(len(chosen_surprising), len(chosen_redundant))
-
-                chosen_surprising = chosen_surprising[:num_replacements]
-                chosen_redundant = chosen_redundant[:num_replacements]
-
-                # Get new keys and values
-                new_keys = F.normalize(group_keys[h, chosen_surprising], dim=-1)
-                new_values = group_values[h, chosen_surprising]
-
                 # Update memories
-                self.key_memories[h, chosen_redundant] = new_keys
-                self.value_memories[h, chosen_redundant] = new_values
+                replace_slots = sorted_redundant[:num_replacements]
+                new_content = sorted_novel[:num_replacements]
 
-                # Reset update counts if needed
+                self.key_memories[h, replace_slots] = group_keys[h, new_content]
+                self.value_memories[h, replace_slots] = group_values[h, new_content]
+
+                # Reset update counts for replaced memories
                 if self.training and self.debug:
-                    self.update_counts[h, chosen_redundant] = 0
+                    self.update_counts[h, replace_slots] = 0
 
-        # Update memory churn metric
-        churn_percent = (total_surprising / total_capacity) * 100
+                # Debug logging
+                if self.debug and random.random() < 0.001:
+                    print(
+                        f"DEBUG: head {h} replaced {num_replacements} memories | "
+                        f"thresh={self.redundancy_threshold:.3f} | "
+                        f"sims: {max_similarities.mean():.3f} ± {max_similarities.std():.3f}"
+                    )
+
+        # Calculate normalized churn (0-100%)
+        # Normalize by number of tokens processed rather than memory size
+        churn_percent = min(100.0, (total_surprising / total_processed) * 100)
         self.memory_churn.mul_(self.memory_decay).add_(
             churn_percent * (1 - self.memory_decay)
         )
 
-        # Debug logging for replacement statistics
+        # Debug age statistics
         if self.training and self.debug:
-            # Increment age of all memories
             self.update_counts += 1
             if random.random() < 0.003:
                 counts = self.update_counts.view(-1)
