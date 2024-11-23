@@ -126,9 +126,8 @@ class PraxisAttention(nn.Module):
         )
 
         # Add memory-based attention
-        aux_loss = 0
         if memory:
-            weights, aux_loss = memory(inputs, q, k, v, weights)
+            weights = memory(inputs, q, k, v, weights)
 
         # Reshape for output projection
         weights = weights.transpose(1, 2).reshape(
@@ -136,8 +135,6 @@ class PraxisAttention(nn.Module):
         )  # Shape: (batch_size, seq_len, num_heads * head_dim)
 
         # Output projection
-        # return self.output(weights), aux_loss
-        # because hivemind, we can't output losses yet
         return self.output(weights)
 
 
