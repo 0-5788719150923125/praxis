@@ -73,7 +73,6 @@ class PraxisMemory(nn.Module):
             F.normalize(
                 torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
                 dim=-1,
-                eps=1e-8,
             ),
         )
         self.register_buffer(
@@ -328,7 +327,7 @@ class PraxisMemory(nn.Module):
         if not hasattr(self, "redundancy_threshold"):
             self.register_buffer("redundancy_threshold", torch.tensor(0.9))
 
-        total_churn = 0
+        total_surprising = 0
         total_capacity = self.key_memories.size(1) * num_heads
 
         # Process each group of queries_per_key heads
@@ -358,6 +357,8 @@ class PraxisMemory(nn.Module):
                 surprising_indices = torch.where(max_sims < self.redundancy_threshold)[
                     0
                 ]
+
+                total_surprising += len(surprising_indices)
 
                 if self.debug and random.random() < 0.001:
                     thresh = self.redundancy_threshold.item()
@@ -416,9 +417,7 @@ class PraxisMemory(nn.Module):
                 chosen_redundant = chosen_redundant[:num_replacements]
 
                 # Get new keys and values
-                new_keys = F.normalize(
-                    group_keys[h, chosen_surprising], dim=-1, eps=1e-8
-                )
+                new_keys = F.normalize(group_keys[h, chosen_surprising], dim=-1)
                 new_values = group_values[h, chosen_surprising]
 
                 # Ensure shapes match
@@ -437,10 +436,8 @@ class PraxisMemory(nn.Module):
                 if self.training and self.debug:
                     self.update_counts[h, chosen_redundant] = 0
 
-                total_churn += len(chosen_surprising)
-
         # Update memory churn metric
-        churn_percent = (total_churn / total_capacity) * 100
+        churn_percent = (total_surprising / total_capacity) * 100
         self.memory_churn.mul_(self.memory_decay).add_(
             churn_percent * (1 - self.memory_decay)
         )
