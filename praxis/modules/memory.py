@@ -282,13 +282,22 @@ class PraxisMemory(nn.Module):
                 similarities = torch.mm(group_keys[h], self.key_memories[h].t())
                 max_similarities = similarities.max(dim=1)[0]
 
-                # Update running statistics
-                target_percentile = 95
-                current_max_sim = torch.quantile(
-                    max_similarities, target_percentile / 100
+                # Update running statistics for both thresholds
+                low_percentile = 5  # For surprise threshold (bottom 5%)
+                high_percentile = 95  # For redundancy threshold (top 5%)
+
+                current_low_sim = torch.quantile(max_similarities, low_percentile / 100)
+                current_high_sim = torch.quantile(
+                    max_similarities, high_percentile / 100
                 )
+
+                # Update both thresholds with exponential moving average
+                self.surprise_threshold = (
+                    0.9 * self.surprise_threshold + 0.1 * current_low_sim
+                ).clamp(0.3, 0.8)
+
                 self.redundancy_threshold = (
-                    0.9 * self.redundancy_threshold + 0.1 * current_max_sim
+                    0.9 * self.redundancy_threshold + 0.1 * current_high_sim
                 ).clamp(0.5, 0.95)
 
                 # Find novel content
@@ -333,15 +342,15 @@ class PraxisMemory(nn.Module):
                     self.update_counts[h, replace_slots] = 0
 
                 # Debug logging
-                if self.debug and random.random() < 0.001:
+                if self.debug and random.random() < 0.003:
                     print(
-                        f"DEBUG: head {h} replaced {num_replacements} memories | "
-                        f"thresh={self.redundancy_threshold:.3f} | "
-                        f"sims: {max_similarities.mean():.3f} ± {max_similarities.std():.3f}"
+                        f"DEBUG: head #{h} replaced {num_replacements} memories, "
+                        f"redundant_thresh={self.redundancy_threshold:.3f}, "
+                        f"surprise_thresh={self.surprise_threshold:.3f}, "
+                        f"similarities={max_similarities.mean():.3f} ± {max_similarities.std():.3f}"
                     )
 
-        # Calculate normalized churn (0-100%)
-        # Normalize by number of tokens processed rather than memory size
+        # Calculate normalized memory surprise (0-100%)
         churn_percent = min(100.0, (total_surprising / total_processed) * 100)
         self.memory_churn.mul_(self.memory_decay).add_(
             churn_percent * (1 - self.memory_decay)
@@ -356,6 +365,6 @@ class PraxisMemory(nn.Module):
                 adult = ((counts >= 100) & (counts < 1000)).float().mean() * 100
                 old = (counts >= 1000).float().mean() * 100
                 print(
-                    f"DEBUG: memory ages: young(<100)={young:.1f}% "
-                    f"adult(100-1000)={adult:.1f}% old(1000+)={old:.1f}%"
+                    f"DEBUG: memory age: new(<100)={young:.1f}%, "
+                    f"modern(100-1000)={adult:.1f}%, stable(1000+)={old:.1f}%"
                 )
