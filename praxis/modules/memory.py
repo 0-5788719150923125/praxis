@@ -70,7 +70,11 @@ class PraxisMemory(nn.Module):
         # )
         self.register_buffer(
             "key_memories",
-            torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+            F.normalize(
+                torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+                dim=-1,
+                eps=1e-8,
+            ),
         )
         self.register_buffer(
             "value_memories",
@@ -324,16 +328,8 @@ class PraxisMemory(nn.Module):
         if not hasattr(self, "redundancy_threshold"):
             self.register_buffer("redundancy_threshold", torch.tensor(0.9))
 
-        total_surprising = 0
+        total_churn = 0
         total_capacity = self.key_memories.size(1) * num_heads
-        total_checked = 0
-
-        # Add replacement tracking
-        if self.training and self.debug:
-            # Track which positions have been touched in this update
-            replacement_mask = torch.zeros_like(
-                self.key_memories[:, :, 0], dtype=torch.bool
-            )  # [num_heads, num_memories]
 
         # Process each group of queries_per_key heads
         for i in range(queries_per_key):
@@ -343,25 +339,25 @@ class PraxisMemory(nn.Module):
             group_values = values[start_idx:end_idx]
 
             batch_keys_norm = F.normalize(group_keys, dim=-1)
-            existing_keys = self.key_memories
 
             for h in range(num_heads):
-                sims = torch.mm(batch_keys_norm[h], existing_keys[h].t())
+                sims = torch.mm(batch_keys_norm[h], self.key_memories[h].t())
                 max_sims = sims.max(dim=1)[0]
-                total_checked += len(max_sims)
 
                 # Update threshold based on current similarities distribution
-                target_percentile = (
-                    95  # Now means we keep the MOST redundant (most similar) memories
-                )
+                target_percentile = 95  # Adjusted percentile
                 current_threshold = torch.quantile(max_sims, target_percentile / 100)
                 self.redundancy_threshold = (
                     0.9 * self.redundancy_threshold + 0.1 * current_threshold
                 ).clamp(0.5, 0.95)
 
                 # Use current threshold
-                redundant_indices = torch.where(max_sims > self.redundancy_threshold)[0]
-                total_surprising += len(redundant_indices)
+                redundant_indices = torch.where(max_sims >= self.redundancy_threshold)[
+                    0
+                ]
+                surprising_indices = torch.where(max_sims < self.redundancy_threshold)[
+                    0
+                ]
 
                 if self.debug and random.random() < 0.001:
                     thresh = self.redundancy_threshold.item()
@@ -374,81 +370,77 @@ class PraxisMemory(nn.Module):
                     )
                     print(f"DEBUG: memory norm: {mn:.3f}, key norm: {kn:.3f}")
 
-                # Sort surprising_indices by their similarity scores
-                if len(redundant_indices) > 0:
-                    # Sort by similarity (descending), so most redundant first
-                    similarities = max_sims[redundant_indices]
-                    sorted_indices = torch.argsort(similarities, descending=True)
-                    redundant_indices = redundant_indices[sorted_indices]
+                if len(surprising_indices) == 0 or len(redundant_indices) == 0:
+                    continue  # Skip if we have no indices to work with
 
-                    # Cap replacements for actual memory update
-                    num_memories = existing_keys[h].size(0)
-                    update_cap = int(num_memories * 0.01)
-                    num_replacements = min(
-                        len(redundant_indices), num_memories, update_cap
-                    )
+                # Sort indices
+                similarities = max_sims[surprising_indices]
+                sorted_surprising = surprising_indices[torch.argsort(similarities)]
 
-                    if self.training and self.debug and random.random() < 0.005:
-                        print(f"DEBUG: found {num_replacements} surprising memories")
+                redundant_sims = max_sims[redundant_indices]
+                sorted_redundant = redundant_indices[
+                    torch.argsort(redundant_sims, descending=True)
+                ]
 
-                    redundant_indices = redundant_indices[
-                        :num_replacements
-                    ]  # Now takes most surprising ones
+                # Cap replacements
+                num_memories = self.key_memories.size(1)
+                num_replacements = min(
+                    len(sorted_surprising),
+                    len(sorted_redundant),
+                    int(num_memories * 0.01),
+                )
 
-                    if num_replacements > 0:
-                        # Calculate how many random replacements we'll do
-                        percent_random = 0.001
-                        num_random = max(
-                            1, math.ceil(num_replacements * percent_random)
-                        )  # 5% random replacement
-                        num_similarity = (
-                            num_replacements - num_random
-                        )  # Reduce similarity-based by random count
+                if self.training and self.debug and random.random() < 0.005:
+                    print(f"DEBUG: found {num_replacements} surprising memories")
 
-                        # Compare surprising new memories against existing ones
-                        relevant_sims = sims[redundant_indices]
+                if num_replacements == 0:
+                    continue  # Skip if no replacements to make
 
-                        # Find memories least relevant to our new surprising content
-                        min_relevance = relevant_sims.min(dim=0)[0]
+                # Select indices
+                chosen_surprising = sorted_surprising[:num_replacements]
+                chosen_redundant = sorted_redundant[:num_replacements]
 
-                        # Get positions for similarity-based replacement (reduced count)
-                        _, replace_positions_sim = min_relevance.topk(
-                            k=num_similarity,
-                            largest=False,
-                        )
+                Q = group_keys.shape[1]
 
-                        # Get random positions for random replacement
-                        replace_positions_random = torch.randint(
-                            0,
-                            num_memories,
-                            (num_random,),
-                            device=self.key_memories.device,
-                        )
+                # Ensure indices are within bounds
+                chosen_surprising = chosen_surprising[chosen_surprising < Q]
+                chosen_redundant = chosen_redundant[chosen_redundant < num_memories]
 
-                        # Combine position indices
-                        replace_positions = torch.cat(
-                            [replace_positions_sim, replace_positions_random]
-                        )
+                if len(chosen_surprising) == 0 or len(chosen_redundant) == 0:
+                    continue  # Skip if after filtering we have no valid indices
 
-                        # Take corresponding number of surprising indices
-                        # (we're still only using num_replacements total values)
-                        redundant_indices = redundant_indices[:num_replacements]
+                # Adjust num_replacements after filtering
+                num_replacements = min(len(chosen_surprising), len(chosen_redundant))
 
-                        # Normalize the keys before storage
-                        new_keys = F.normalize(group_keys[h, redundant_indices], dim=-1)
+                chosen_surprising = chosen_surprising[:num_replacements]
+                chosen_redundant = chosen_redundant[:num_replacements]
 
-                        # Perform replacements
-                        self.key_memories[h, replace_positions] = new_keys
-                        self.value_memories[h, replace_positions] = group_values[
-                            h, redundant_indices
-                        ]
+                # Get new keys and values
+                new_keys = F.normalize(
+                    group_keys[h, chosen_surprising], dim=-1, eps=1e-8
+                )
+                new_values = group_values[h, chosen_surprising]
 
-                        # Track which positions were replaced
-                        if self.training and self.debug:
-                            replacement_mask[h, replace_positions] = True
+                # Ensure shapes match
+                assert (
+                    new_keys.shape == self.key_memories[h, chosen_redundant].shape
+                ), f"Shape mismatch in keys: {new_keys.shape} vs {self.key_memories[h, chosen_redundant].shape}"
+                assert (
+                    new_values.shape == self.value_memories[h, chosen_redundant].shape
+                ), f"Shape mismatch in values: {new_values.shape} vs {self.value_memories[h, chosen_redundant].shape}"
+
+                # Update memories
+                self.key_memories[h, chosen_redundant] = new_keys
+                self.value_memories[h, chosen_redundant] = new_values
+
+                # Reset update counts if needed
+                if self.training and self.debug:
+                    self.update_counts[h, chosen_redundant] = 0
+
+                total_churn += len(chosen_surprising)
 
         # Update memory churn metric
-        churn_percent = (total_surprising / total_capacity) * 100
+        churn_percent = (total_churn / total_capacity) * 100
         self.memory_churn.mul_(self.memory_decay).add_(
             churn_percent * (1 - self.memory_decay)
         )
@@ -457,9 +449,6 @@ class PraxisMemory(nn.Module):
         if self.training and self.debug:
             # Increment age of all memories
             self.update_counts += 1
-            # Reset counter for new memories
-            self.update_counts[h, replace_positions] = 0
-
             if random.random() < 0.003:
                 counts = self.update_counts.view(-1)
                 young = (counts < 100).float().mean() * 100
