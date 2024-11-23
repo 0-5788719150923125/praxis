@@ -361,8 +361,7 @@ class PraxisMemory(nn.Module):
                 counts = self.update_counts.view(-1)
 
                 age_buckets = {
-                    "fresh": (0, 100),  # Very new memories
-                    "new": (100, 1000),  # Recently added
+                    "new": (0, 1000),  # Recently added
                     "settled": (1000, 10000),  # Moderately stable
                     "mature": (10000, 100000),  # Well-established
                     "permanent": (100000, None),  # Very stable memories
@@ -375,8 +374,6 @@ class PraxisMemory(nn.Module):
                     else:
                         mask = (counts >= min_age) & (counts < max_age)
                     percentage = mask.float().mean() * 100
-                    percentages.append(
-                        f"{name}({min_age}-{max_age or '∞'})={percentage:.1f}%"
-                    )
+                    percentages.append(f"{name}(<{max_age or '∞'})={percentage:.1f}%")
 
-                print("DEBUG: memory ages:", ", ".join(percentages))
+                print("DEBUG: memory age:", ", ".join(percentages))
