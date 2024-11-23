@@ -283,8 +283,8 @@ class PraxisMemory(nn.Module):
                 max_similarities = similarities.max(dim=1)[0]
 
                 # Update running statistics for both thresholds
-                low_percentile = 5  # For surprise threshold (bottom 5%)
-                high_percentile = 95  # For redundancy threshold (top 5%)
+                low_percentile = 10  # Bottom 10% are "surprising"
+                high_percentile = 90  # Top 10% are "redundant"
 
                 current_low_sim = torch.quantile(max_similarities, low_percentile / 100)
                 current_high_sim = torch.quantile(
@@ -294,11 +294,11 @@ class PraxisMemory(nn.Module):
                 # Update both thresholds with exponential moving average
                 self.surprise_threshold = (
                     0.9 * self.surprise_threshold + 0.1 * current_low_sim
-                ).clamp(0.3, 0.8)
+                ).clamp(0.2, 0.8)
 
                 self.redundancy_threshold = (
                     0.9 * self.redundancy_threshold + 0.1 * current_high_sim
-                ).clamp(0.5, 0.95)
+                ).clamp(0.4, 0.95)
 
                 # Find novel content
                 novel_mask = max_similarities < self.surprise_threshold
@@ -342,12 +342,11 @@ class PraxisMemory(nn.Module):
                     self.update_counts[h, replace_slots] = 0
 
                 # Debug logging
-                if self.debug and random.random() < 0.003:
+                if self.debug and random.random() < 0.001:
                     print(
                         f"DEBUG: head #{h} replaced {num_replacements} memories, "
                         f"redundant_thresh={self.redundancy_threshold:.3f}, "
-                        f"surprise_thresh={self.surprise_threshold:.3f}, "
-                        f"similarities={max_similarities.mean():.3f} ± {max_similarities.std():.3f}"
+                        f"surprise_thresh={self.surprise_threshold:.3f}"
                     )
 
         # Calculate normalized memory surprise (0-100%)
@@ -359,12 +358,26 @@ class PraxisMemory(nn.Module):
         # Debug age statistics
         if self.training and self.debug:
             self.update_counts += 1
-            if random.random() < 0.003:
+            if random.random() < 0.001:
                 counts = self.update_counts.view(-1)
-                young = (counts < 100).float().mean() * 100
-                adult = ((counts >= 100) & (counts < 1000)).float().mean() * 100
-                old = (counts >= 1000).float().mean() * 100
-                print(
-                    f"DEBUG: memory age: new(<100)={young:.1f}%, "
-                    f"modern(100-1000)={adult:.1f}%, stable(1000+)={old:.1f}%"
-                )
+
+                age_buckets = {
+                    "fresh": (0, 100),  # Very new memories
+                    "new": (100, 1000),  # Recently added
+                    "settled": (1000, 10000),  # Moderately stable
+                    "mature": (10000, 100000),  # Well-established
+                    "permanent": (100000, None),  # Very stable memories
+                }
+
+                percentages = []
+                for name, (min_age, max_age) in age_buckets.items():
+                    if max_age is None:
+                        mask = counts >= min_age
+                    else:
+                        mask = (counts >= min_age) & (counts < max_age)
+                    percentage = mask.float().mean() * 100
+                    percentages.append(
+                        f"{name}({min_age}-{max_age or '∞'})={percentage:.1f}%"
+                    )
+
+                print("DEBUG: memory ages:", ", ".join(percentages))
