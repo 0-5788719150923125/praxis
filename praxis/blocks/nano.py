@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.modules.dense import PraxisGLU
+from praxis.modules.dense import PraxisMLP
 
 
 class PraxisNano(nn.Module):
@@ -41,7 +41,7 @@ class PraxisNano(nn.Module):
         # Feed-forward network with sine activation
         config.activation = "sin"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = PraxisGLU(config)
+        self.ffw = PraxisMLP(config)
 
     def forward(
         self,
@@ -76,7 +76,6 @@ class ElasticLinear(nn.Module):
         # Initialize with smaller dimensions to force interpolation
         bottleneck_dim = int(features * bottleneck)
         self.weight = nn.Parameter(torch.Tensor(features, bottleneck_dim))
-        # self.bias = nn.Parameter(torch.Tensor(features))
         self.reset_parameters()
 
     def forward(self, x):
@@ -87,7 +86,6 @@ class ElasticLinear(nn.Module):
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.weight)
-        # nn.init.zeros_(self.bias)
 
     def _interpolate_weights(self, features):
         # Always interpolate since we're starting from a smaller base
@@ -96,8 +94,8 @@ class ElasticLinear(nn.Module):
         interpolated = F.interpolate(
             weights_expanded,
             size=[features],
-            mode="nearest",
-            # align_corners=True,
+            mode="linear",
+            align_corners=True,
         ).squeeze(0)
 
         if self.causal:
