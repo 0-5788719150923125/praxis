@@ -42,6 +42,8 @@ class PraxisConv(nn.Module):
         x: Tensor,
         attention_mask: Optional[Tensor] = None,
         router_weights: Optional[Tensor] = None,
+        *args,
+        **kwargs,
     ) -> Tensor:
         # Local processing
         residual = x
