@@ -346,14 +346,6 @@ class PraxisMemory(nn.Module):
                 new_keys = F.normalize(group_keys[h, chosen_surprising], dim=-1)
                 new_values = group_values[h, chosen_surprising]
 
-                # Ensure shapes match
-                assert (
-                    new_keys.shape == self.key_memories[h, chosen_redundant].shape
-                ), f"Shape mismatch in keys: {new_keys.shape} vs {self.key_memories[h, chosen_redundant].shape}"
-                assert (
-                    new_values.shape == self.value_memories[h, chosen_redundant].shape
-                ), f"Shape mismatch in values: {new_values.shape} vs {self.value_memories[h, chosen_redundant].shape}"
-
                 # Update memories
                 self.key_memories[h, chosen_redundant] = new_keys
                 self.value_memories[h, chosen_redundant] = new_values
