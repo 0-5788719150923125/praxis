@@ -39,35 +39,18 @@ class PraxisMemory(nn.Module):
         self.gate = nn.Parameter(
             torch.full((num_query_heads,), 0.0)
         )  # sigmoid(-1) ≈ 0.5
-        # Determine if we're using compression
-        self.compressed = True if "compressed" in config.meta else False
-
-        memory_dim = head_dim
-        if self.compressed:
-            memory_dim = int(head_dim * 0.25)
-            self.key_vae = PraxisVAE(
-                config, input_dim=head_dim, output_dim=memory_dim, beta=0.1
-            )
-            self.value_vae = PraxisVAE(
-                config,
-                input_dim=head_dim,
-                output_dim=memory_dim,
-                beta=0.1,
-                requires_projection=True,
-            )
-
         # Initialize key_memories and value_memories for each head
         multiplier = 2 if config.differential else 1
         self.register_buffer(
             "key_memories",
             F.normalize(
-                torch.randn(self.num_heads, max_memories, memory_dim * multiplier),
+                torch.randn(self.num_heads, max_memories, head_dim * multiplier),
                 dim=-1,
             ),
         )
         self.register_buffer(
             "value_memories",
-            torch.randn(self.num_heads, max_memories, memory_dim),
+            torch.randn(self.num_heads, max_memories, head_dim),
         )
         # Memory churn tracking
         self.memory_decay = 0.99
