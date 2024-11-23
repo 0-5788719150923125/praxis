@@ -37,9 +37,8 @@ class PraxisMemory(nn.Module):
         num_query_heads = self.num_heads * config.num_queries
 
         # Gating parameter: one gate per query head
-        self.gate = nn.Parameter(
-            torch.full((num_query_heads,), 0.0)
-        )  # sigmoid(-1) ≈ 0.5
+        self.gate = nn.Parameter(torch.zeros(num_query_heads))
+        nn.init.normal_(self.gate, mean=0, std=0.01)
         # Initialize key_memories and value_memories for each head
         multiplier = 2 if config.differential else 1
         self.register_buffer(
@@ -283,8 +282,8 @@ class PraxisMemory(nn.Module):
                 max_similarities = similarities.max(dim=1)[0]
 
                 # Update running statistics for both thresholds
-                low_percentile = 10  # Bottom 10% are "surprising"
-                high_percentile = 90  # Top 10% are "redundant"
+                low_percentile = 5  # Bottom 5% are "surprising"
+                high_percentile = 95  # Top 5% are "redundant"
 
                 current_low_sim = torch.quantile(max_similarities, low_percentile / 100)
                 current_high_sim = torch.quantile(
@@ -294,11 +293,11 @@ class PraxisMemory(nn.Module):
                 # Update both thresholds with exponential moving average
                 self.surprise_threshold = (
                     0.9 * self.surprise_threshold + 0.1 * current_low_sim
-                ).clamp(0.2, 0.8)
+                ).clamp(0.3, 0.8)
 
                 self.redundancy_threshold = (
                     0.9 * self.redundancy_threshold + 0.1 * current_high_sim
-                ).clamp(0.4, 0.95)
+                ).clamp(0.5, 0.95)
 
                 # Find novel content
                 novel_mask = max_similarities < self.surprise_threshold
