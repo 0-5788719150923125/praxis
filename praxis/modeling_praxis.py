@@ -22,9 +22,7 @@ class PraxisModel(PreTrainedModel):
         super().__init__(config)
         self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.compression = (
-            PraxisCompressor(
-                config, compressed_seq_len=256, compressed_dim=config.num_dims
-            )
+            PraxisCompressor(config, compressed_dim=config.num_dims)
             if config.compression
             else False
         )

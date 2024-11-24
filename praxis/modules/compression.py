@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,7 +7,7 @@ from transformers import AutoConfig
 
 
 class PraxisCompressor(nn.Module):
-    def __init__(self, config: AutoConfig, compressed_seq_len=32, compressed_dim=128):
+    def __init__(self, config: AutoConfig, compressed_seq_len=64, compressed_dim=128):
         super().__init__()
         self.input_dim = config.num_dims
         self.compressed_seq_len = compressed_seq_len
@@ -26,6 +28,7 @@ class PraxisCompressor(nn.Module):
             batch_first=True,
             dropout=config.dropout,
         )
+        self.upsample = LearnedUpsampling(compressed_dim)
         self.project = nn.Linear(compressed_dim, self.input_dim)
 
     def encode(self, x, attention_mask=None):
@@ -54,12 +57,13 @@ class PraxisCompressor(nn.Module):
     def decode(self, compressed):
         # Regular decode process
         decoded, _ = self.decoder(compressed)
-        decoded = F.interpolate(
-            decoded.transpose(1, 2),
-            size=self.residual.size(1),
-            mode="linear",
-            align_corners=True,
-        ).transpose(1, 2)
+        # decoded = F.interpolate(
+        #     decoded.transpose(1, 2),
+        #     size=self.residual.size(1),
+        #     mode="bicubic",  # or "trilinear"
+        #     align_corners=False,
+        # ).transpose(1, 2)
+        decoded = self.upsample(decoded, self.residual.size(1))
         decoded = self.project(decoded)
 
         # Add residual connection with the original input
@@ -70,6 +74,44 @@ class PraxisCompressor(nn.Module):
         return self.encode(x, attention_mask)
 
 
+class LearnedUpsampling(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+        self.position_mlp = nn.Sequential(
+            nn.Linear(1, dim), nn.GELU(), nn.Linear(dim, dim)
+        )
+
+    def forward(self, x, target_length):
+        # x: [batch, seq_len, dim]
+        batch_size = x.size(0)
+
+        # Create position embeddings
+        positions = torch.linspace(0, 1, target_length, device=x.device)
+        position_embeddings = self.position_mlp(
+            positions.unsqueeze(-1)
+        )  # [target_len, dim]
+
+        # Expand position embeddings for batch
+        position_embeddings = position_embeddings.unsqueeze(0).expand(
+            batch_size, -1, -1
+        )  # [batch, target_len, dim]
+
+        # Compute attention scores
+        attention = torch.bmm(
+            position_embeddings,  # [batch, target_len, dim]
+            x.transpose(1, 2),  # [batch, dim, seq_len]
+        )  # [batch, target_len, seq_len]
+
+        # Apply softmax
+        attention = F.softmax(attention / math.sqrt(self.dim), dim=-1)
+
+        # Get final output
+        return torch.bmm(
+            attention, x  # [batch, target_len, seq_len]  # [batch, seq_len, dim]
+        )  # [batch, target_len, dim]
+
+
 if __name__ == "__main__":
 
     class SequenceCompressorTester:
@@ -77,6 +119,7 @@ if __name__ == "__main__":
             class DummyConfig:
                 def __init__(self):
                     self.num_dims = 64
+                    self.dropout = 0.0
 
             config = DummyConfig()
             self.model = PraxisCompressor(
