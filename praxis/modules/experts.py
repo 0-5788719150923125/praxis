@@ -15,7 +15,7 @@ EXPERT_REGISTRY = {
     "kan": PraxisKAN,
     "mlp": PraxisMLP,
     "peer": PraxisPEER,
-    "smear": PraxisSMEAR,
+    # "smear": PraxisSMEAR,
 }
 
 EXPERT_CONFIGS = {

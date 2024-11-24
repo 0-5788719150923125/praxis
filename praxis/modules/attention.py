@@ -8,6 +8,7 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.encoding import ENCODING_REGISTRY
+from praxis.modules.smear import PraxisSMEAR
 
 
 class PraxisAttention(nn.Module):
@@ -37,17 +38,48 @@ class PraxisAttention(nn.Module):
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
         # Query and key projections for differential heads
-        multiplier = 2 if self.differential else 1
+        self.multiplier = 2 if self.differential else 1
         self.query = nn.Linear(
             self.hidden_size,
-            self.num_query_heads * self.head_dim * multiplier,
+            self.num_query_heads * self.head_dim * self.multiplier,
             bias=False,
         )
-        self.key = nn.Linear(
-            self.hidden_size,
-            self.num_heads * self.head_dim * multiplier,
-            bias=False,
-        )
+        self.memory = config.memory
+        if config.memory:
+
+            class AttentionKey(nn.Module):
+                """Simple wrapper for attention key projection"""
+
+                def __init__(self, hidden_size, num_heads, head_dim):
+                    super().__init__()
+                    self.key = nn.Linear(
+                        hidden_size,
+                        num_heads * head_dim,
+                        bias=False,
+                    )
+
+                def forward(self, x):
+                    return self.key(x)
+
+            # Create expert modules
+            num_experts = 3
+            experts = [
+                AttentionKey(
+                    hidden_size=self.hidden_size,
+                    num_heads=self.num_heads,
+                    head_dim=self.head_dim * self.multiplier,
+                )
+                for _ in range(num_experts)
+            ]
+
+            self.key = PraxisSMEAR(config, experts)
+
+        else:
+            self.key = nn.Linear(
+                self.hidden_size,
+                self.num_heads * self.head_dim * self.multiplier,
+                bias=False,
+            )
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
@@ -77,15 +109,14 @@ class PraxisAttention(nn.Module):
         batch_size, seq_len, _ = inputs.shape
 
         # Compute queries, keys, and values
-        multiplier = (self.key.weight.size(0) // self.num_heads) // self.head_dim
         q = (
             self.query(inputs)
-            .view(batch_size, -1, self.num_query_heads, self.head_dim * multiplier)
+            .view(batch_size, -1, self.num_query_heads, self.head_dim * self.multiplier)
             .transpose(1, 2)
         )
         k = (
             self.key(inputs)
-            .view(batch_size, -1, self.num_heads, self.head_dim * multiplier)
+            .view(batch_size, -1, self.num_heads, self.head_dim * self.multiplier)
             .transpose(1, 2)
         )
         v = (
