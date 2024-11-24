@@ -34,17 +34,16 @@ class PraxisDecoder(nn.Module):
         hidden_states = inputs
         aux_losses = []
 
-        first_expert_idx = original_order.index(experts[0])
-        route = [str(first_expert_idx)]
+        route = []
 
         next_expert_idx = None
-        for i in range(self.stack.depth - 1):
+        for i in range(self.stack.depth):
             try:
                 expert = experts[i]
                 if not self.training and next_expert_idx is not None:
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
-                elif not self.training:
+                elif not self.training and self.stack.shuffle:
                     route.append(str(original_order.index(experts[i])))
 
                 new_states, aux_loss = self._create_forward(
