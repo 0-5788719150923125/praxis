@@ -16,11 +16,15 @@ class PraxisCompressor(nn.Module):
             hidden_size=compressed_dim,
             batch_first=True,
             bidirectional=True,
+            dropout=config.dropout,
         )
         self.compress = nn.Linear(compressed_dim * 2, compressed_dim)
         # Decoder components
         self.decoder = nn.LSTM(
-            input_size=compressed_dim, hidden_size=compressed_dim, batch_first=True
+            input_size=compressed_dim,
+            hidden_size=compressed_dim,
+            batch_first=True,
+            dropout=config.dropout,
         )
         self.project = nn.Linear(compressed_dim, self.input_dim)
 

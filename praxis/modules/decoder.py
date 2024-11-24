@@ -29,15 +29,23 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth
-        self.sparse = config.sparse
+        self.num_experts = config.num_experts
+        assert (
+            self.num_experts >= self.depth
+        ), "`num_experts` should be at least as large as `depth`."
         self.shuffle = config.shuffle
+        if not self.shuffle:
+            assert (
+                self.num_experts == self.depth
+            ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
+        self.sparse = config.sparse
         self.manager = False
         self.remote_experts = []
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remote_experts = self.manager.active_remote_experts
         self.local_experts = nn.ModuleList()
-        for i in range(config.num_experts):
+        for i in range(self.num_experts):
             if self.manager:
                 block = self.manager.register_expert(config)
             else:

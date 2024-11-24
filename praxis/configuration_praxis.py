@@ -50,15 +50,6 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
-        assert (
-            num_experts >= depth
-        ), "`num_experts` should be at least as large as `depth`."
-
-        if not shuffle:
-            assert (
-                num_experts == depth
-            ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
-
         # Praxis args
         self.num_embeds = num_embeds
         self.num_dims = num_dims
