@@ -9,8 +9,8 @@ from torch import Tensor
 
 class PraxisRecurrent(nn.Module):
     """
-    A recurrent block using LSTM with layer normalization and residual connections.
-    Designed to be stackable for deep RNN architectures while maintaining stable gradients.
+    A recurrent block using LSTM with layer normalization, residual connections,
+    and learned initial hidden states.
     """
 
     __version__ = "0.1.0"
@@ -19,20 +19,19 @@ class PraxisRecurrent(nn.Module):
         super().__init__()
         hidden_dim = config.num_dims
 
-        # Layer normalization before LSTM
-        self.pre_norm = nn.LayerNorm(hidden_dim)
-
-        # Single LSTM layer
+        self.norm = nn.LayerNorm(hidden_dim)
         self.lstm = nn.LSTM(
             input_size=hidden_dim,
             hidden_size=hidden_dim,
             batch_first=True,
         )
-
-        # Optional dropout
         self.dropout = nn.Dropout(config.dropout)
 
-        # Initialize LSTM parameters with orthogonal initialization
+        # Learned initial states
+        self.h0 = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+        self.c0 = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+
+        # Initialize LSTM parameters
         for name, param in self.lstm.named_parameters():
             if "weight" in name:
                 nn.init.orthogonal_(param)
@@ -46,20 +45,20 @@ class PraxisRecurrent(nn.Module):
         router_weights: Optional[Tensor] = None,
         *args,
         **kwargs,
-    ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
-        """
-        Forward pass with residual connections and normalization.
-        """
-        # Pre-normalization
-        normed_input = self.pre_norm(x)
+    ) -> Tensor:
+        """Forward pass with learned initial states."""
+        batch_size = x.size(0)
 
-        # LSTM layer
-        lstm_out, _ = self.lstm(normed_input)
+        # Expand learned initial states to batch size
+        h0 = self.h0.expand(-1, batch_size, -1).contiguous()
+        c0 = self.c0.expand(-1, batch_size, -1).contiguous()
+        initial_state = (h0, c0)
 
-        # Post-processing
+        # Process input
+        normed_input = self.norm(x)
+        lstm_out, _ = self.lstm(normed_input, initial_state)
         lstm_out = self.dropout(lstm_out)
 
-        # residual connection
         return lstm_out + x
 
 
