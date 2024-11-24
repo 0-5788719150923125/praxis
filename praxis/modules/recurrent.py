@@ -9,15 +9,20 @@ from torch import Tensor
 
 class PraxisRecurrent(nn.Module):
     """
-    A recurrent block using LSTM with layer normalization, residual connections,
-    and learned initial hidden states.
+    A recurrent block using LSTM with learnable probabilistic initial states
+    using Gumbel Softmax for differentiable sampling.
     """
 
-    __version__ = "0.1.0"
-
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(
+        self,
+        config: "AutoConfig",
+        num_latent_states: int = 16,
+        temperature: float = 1.0,
+    ):
         super().__init__()
         hidden_dim = config.num_dims
+        self.temperature = temperature
+        self.num_latent_states = num_latent_states
 
         self.norm = nn.LayerNorm(hidden_dim)
         self.lstm = nn.LSTM(
@@ -27,9 +32,17 @@ class PraxisRecurrent(nn.Module):
         )
         self.dropout = nn.Dropout(config.dropout)
 
-        # Learned initial states
-        self.h0 = nn.Parameter(torch.zeros(1, 1, hidden_dim))
-        self.c0 = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+        # Learnable logits for initial state distributions over latent spaces
+        self.h0_logits = nn.Parameter(torch.zeros(hidden_dim, num_latent_states))
+        self.c0_logits = nn.Parameter(torch.zeros(hidden_dim, num_latent_states))
+
+        # Learnable state embeddings - one per latent state
+        self.h0_embeddings = nn.Parameter(
+            torch.randn(num_latent_states) / math.sqrt(num_latent_states)
+        )
+        self.c0_embeddings = nn.Parameter(
+            torch.randn(num_latent_states) / math.sqrt(num_latent_states)
+        )
 
         # Initialize LSTM parameters
         for name, param in self.lstm.named_parameters():
@@ -46,12 +59,16 @@ class PraxisRecurrent(nn.Module):
         *args,
         **kwargs,
     ) -> Tensor:
-        """Forward pass with learned initial states."""
+        """Forward pass with sampled initial states."""
         batch_size = x.size(0)
 
-        # Expand learned initial states to batch size
-        h0 = self.h0.expand(-1, batch_size, -1).contiguous()
-        c0 = self.c0.expand(-1, batch_size, -1).contiguous()
+        # Allow temperature adjustment during inference
+        temperature = 0.1
+        if not self.training:
+            self.temperature = temperature
+
+        # Sample initial states
+        h0, c0 = self.sample_initial_state(batch_size)
         initial_state = (h0, c0)
 
         # Process input
@@ -60,6 +77,41 @@ class PraxisRecurrent(nn.Module):
         lstm_out = self.dropout(lstm_out)
 
         return lstm_out + x
+
+    def sample_initial_state(self, batch_size: int) -> tuple[Tensor, Tensor]:
+        """Sample initial states using Gumbel Softmax."""
+        # Sample from Gumbel Softmax distribution for each dimension
+        h0_dist = F.gumbel_softmax(
+            self.h0_logits, tau=self.temperature, hard=False, dim=1
+        )  # Shape: [hidden_dim, num_latent_states]
+        c0_dist = F.gumbel_softmax(
+            self.c0_logits, tau=self.temperature, hard=False, dim=1
+        )  # Shape: [hidden_dim, num_latent_states]
+
+        # Mix embeddings for each dimension
+        h0 = torch.matmul(h0_dist, self.h0_embeddings)  # Shape: [hidden_dim]
+        c0 = torch.matmul(c0_dist, self.c0_embeddings)  # Shape: [hidden_dim]
+
+        # Expand to batch size and add lstm expected dim
+        h0 = h0.unsqueeze(0).unsqueeze(0).expand(1, batch_size, -1).contiguous()
+        c0 = c0.unsqueeze(0).unsqueeze(0).expand(1, batch_size, -1).contiguous()
+
+        return h0, c0
+
+    @property
+    def state_entropy(self) -> tuple[Tensor, Tensor]:
+        """Calculate entropy of the initial state distributions."""
+        h0_probs = F.softmax(
+            self.h0_logits, dim=1
+        )  # Shape: [hidden_dim, num_latent_states]
+        c0_probs = F.softmax(self.c0_logits, dim=1)
+
+        h0_entropy = -(h0_probs * torch.log(h0_probs + 1e-10)).sum(
+            1
+        )  # Shape: [hidden_dim]
+        c0_entropy = -(c0_probs * torch.log(c0_probs + 1e-10)).sum(1)
+
+        return h0_entropy, c0_entropy
 
 
 if __name__ == "__main__":

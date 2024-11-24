@@ -38,12 +38,14 @@ class PraxisDecoder(nn.Module):
         route = [str(first_expert_idx)]
 
         next_expert_idx = None
-        for i in range(self.stack.depth):
+        for i in range(self.stack.depth - 1):
             try:
                 expert = experts[i]
                 if not self.training and next_expert_idx is not None:
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
+                elif not self.training:
+                    route.append(str(original_order.index(experts[i])))
 
                 new_states, aux_loss = self._create_forward(
                     expert, hidden_states, attention_mask, i
@@ -68,7 +70,7 @@ class PraxisDecoder(nn.Module):
                     self.manager.handle_failure(expert)
                     continue
 
-        if self.debug and not self.training and self.stack.navigator:
+        if self.debug and not self.training and self.stack.shuffle:
             print(f"DEBUG: routing through: {' -> '.join(route)}")
 
         self.get_metrics()
