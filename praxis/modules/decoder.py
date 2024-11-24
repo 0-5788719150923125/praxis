@@ -144,4 +144,9 @@ class PraxisDecoder(nn.Module):
         #         "mean": self.navigator.get_mean_accuracy(),
         #         "per_expert": self.navigator.get_all_accuracies(),
         #     }
-        return {}
+        return {
+            "experts": dict(
+                local=len(self.local_experts),
+                remote=len(self.remote_experts),
+            )
+        }

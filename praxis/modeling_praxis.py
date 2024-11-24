@@ -10,7 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
-from praxis.modules import EMBEDDING_REGISTRY, MultiIdentity
+from praxis.modules import EMBEDDING_REGISTRY
 from praxis.modules.compression import PraxisCompressor
 from praxis.modules.decoder import PraxisDecoder
 
@@ -22,7 +22,11 @@ class PraxisModel(PreTrainedModel):
         super().__init__(config)
         self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.compression = (
-            PraxisCompressor(config) if config.compression else MultiIdentity()
+            PraxisCompressor(
+                config, compressed_seq_len=256, compressed_dim=config.num_dims
+            )
+            if config.compression
+            else False
         )
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
@@ -41,9 +45,10 @@ class PraxisModel(PreTrainedModel):
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
-        symbols, attention_mask = self.compression(inputs, attention_mask)
+        if self.compression:
+            inputs, attention_mask = self.compression(inputs, attention_mask)
 
-        last_hidden_state, aux_loss = self.decoder(symbols, attention_mask)
+        last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
         self.aux_losses.append(aux_loss)
 
         return BaseModelOutputWithPast(
@@ -58,18 +63,7 @@ class PraxisModel(PreTrainedModel):
             self.decoder.manager.get_visible_maddrs()
 
     def get_metrics(self):
-        return dict(
-            experts=dict(
-                local=len(self.decoder.local_experts),
-                remote=len(self.decoder.remote_experts),
-            ),
-            **self.decoder.get_metrics()
-            # predictions=(
-            #     self.decoder.get_prediction_accuracies()
-            #     if self.decoder.use_autopilot
-            #     else False
-            # ),
-        )
+        return dict(**self.decoder.get_metrics())
 
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):
@@ -105,18 +99,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         )
 
         hidden_states = outputs[0]
+
+        if self.compression:
+            hidden_states = self.compression.decode(hidden_states)
+
         logits = self.head(hidden_states)
 
         loss = 0
         if labels is not None:
-            if self.config.compression:
-                # Calculate window size as in compressor
-                seq_len = labels.shape[1]
-                target_len = self.compression.target_len
-                window_size = max(1, seq_len // target_len)
-                # Reshape labels to match compression windows and take first token of each window
-                labels = labels.view(labels.shape[0], target_len, window_size)[:, :, 0]
-
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss = F.cross_entropy(

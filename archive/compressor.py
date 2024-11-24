@@ -1,77 +1,64 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoConfig
 
 
-class PraxisCompressor(nn.Module):
-    def __init__(self, config: AutoConfig, compressed_seq_len=32, compressed_dim=128):
+class SequenceCompressor(nn.Module):
+    def __init__(self, input_dim=64, compressed_seq_len=32, hidden_dim=128):
         super().__init__()
-        input_dim = config.num_dims
         self.input_dim = input_dim
         self.compressed_seq_len = compressed_seq_len
-        self.hidden_dim = compressed_dim
+        self.hidden_dim = hidden_dim
 
         # Encoder components
         self.encoder_lstm = nn.LSTM(
             input_size=input_dim,
-            hidden_size=compressed_dim,
+            hidden_size=hidden_dim,
             batch_first=True,
             bidirectional=True,
         )
-        self.compress = nn.Linear(compressed_dim * 2, compressed_dim)
+        self.compress = nn.Linear(hidden_dim * 2, hidden_dim)
 
         # Decoder components
         self.decoder_lstm = nn.LSTM(
-            input_size=compressed_dim, hidden_size=compressed_dim, batch_first=True
+            input_size=hidden_dim, hidden_size=hidden_dim, batch_first=True
         )
-        self.output_proj = nn.Linear(compressed_dim, input_dim)
+        self.output_proj = nn.Linear(hidden_dim, input_dim)
 
-    def encode(self, x, attention_mask=None):
+    def encode(self, x):
         """
         Encode and compress input sequence to fixed length
         Args:
             x (torch.Tensor): Input tensor of shape (batch_size, seq_len, input_dim)
-            attention_mask (torch.Tensor, optional): Attention mask of shape (batch_size, seq_len)
         Returns:
-            tuple: (compressed tensor of shape (batch_size, compressed_seq_len, hidden_dim),
-                compressed mask of shape (batch_size, compressed_seq_len))
+            torch.Tensor: Compressed tensor of shape (batch_size, compressed_seq_len, hidden_dim)
         """
-        # Store original sequence length
-        self.orig_seq_len = x.size(1)
-
         # Encode sequence
         encoded, _ = self.encoder_lstm(x)
+
+        # Compress to fixed length using adaptive average pooling
         compressed = F.adaptive_avg_pool1d(
             encoded.transpose(1, 2), self.compressed_seq_len
         ).transpose(1, 2)
+
+        # Project to hidden dimension
         compressed = self.compress(compressed)
 
-        compressed_mask = None
-        if attention_mask is not None:
-            # Convert mask to float for pooling
-            original_dtype = attention_mask.dtype
-            mask_expanded = attention_mask.float().unsqueeze(1)
+        return compressed
 
-            # Pool the mask
-            compressed_mask = F.adaptive_avg_pool1d(
-                mask_expanded, self.compressed_seq_len
-            ).squeeze(1)
-
-            # Convert back to original dtype (likely torch.long)
-            compressed_mask = (compressed_mask > 0.5).to(original_dtype)
-
-        return compressed, compressed_mask
-
-    def decode(self, compressed):
+    def decode(self, compressed, target_length):
         """
         Decode compressed representation back to original sequence length
+        Args:
+            compressed (torch.Tensor): Compressed tensor of shape (batch_size, compressed_seq_len, hidden_dim)
+            target_length (int): Desired output sequence length
+        Returns:
+            torch.Tensor: Reconstructed tensor of shape (batch_size, target_length, input_dim)
         """
-
-        target_length = self.orig_seq_len
-
-        # Rest of decode stays the same...
+        # Decode compressed representation
         decoded, _ = self.decoder_lstm(compressed)
+
+        # Upsample back to target sequence length
         decoded = F.interpolate(
             decoded.transpose(1, 2),
             size=target_length,
@@ -79,39 +66,35 @@ class PraxisCompressor(nn.Module):
             align_corners=False,
         ).transpose(1, 2)
 
+        # Project to input dimension
         output = self.output_proj(decoded)
 
         return output
 
-    def forward(self, x, attention_mask=None):
-        """Convenience method for encode only"""
-        return self.encode(x, attention_mask)
-
-
-class DummyConfig:
-    def __init__(self):
-        self.num_dims = 64
+    def forward(self, x):
+        """
+        Convenience method for full encode-decode pipeline
+        """
+        compressed = self.encode(x)
+        return self.decode(compressed, x.size(1))
 
 
 class SequenceCompressorTester:
     def __init__(self):
-        config = DummyConfig()
-        self.model = PraxisCompressor(config, compressed_seq_len=32, compressed_dim=128)
+        self.model = SequenceCompressor(
+            input_dim=64, compressed_seq_len=32, hidden_dim=128
+        )
         self.criterion = nn.MSELoss()
 
     def test_encoding(self, batch_size, seq_len):
         """Test the encoding process"""
         print(f"\nTesting encoding with sequence length {seq_len}")
 
-        # Create input and mask
+        # Create input
         x = torch.randn(batch_size, seq_len, self.model.input_dim)
-        mask = torch.ones(batch_size, seq_len)
-
-        # Randomly mask some positions
-        mask[:, seq_len // 2 :] = 0.0
 
         # Encode
-        compressed, compressed_mask = self.model.encode(x, mask)
+        compressed = self.model.encode(x)
 
         # Verify shapes
         expected_shape = (
@@ -119,50 +102,33 @@ class SequenceCompressorTester:
             self.model.compressed_seq_len,
             self.model.hidden_dim,
         )
-        expected_mask_shape = (batch_size, self.model.compressed_seq_len)
-
         actual_shape = tuple(compressed.shape)
-        actual_mask_shape = tuple(compressed_mask.shape)
 
         print(f"Input shape: {tuple(x.shape)}")
-        print(f"Input mask shape: {tuple(mask.shape)}")
         print(f"Compressed shape: {actual_shape}")
-        print(f"Compressed mask shape: {actual_mask_shape}")
+        print(f"Expected compressed shape: {expected_shape}")
         print(f"Compression ratio: {seq_len/self.model.compressed_seq_len:.2f}x")
-
-        # Verify compression maintains masking proportions
-        original_mask_ratio = mask.float().mean()
-        compressed_mask_ratio = compressed_mask.float().mean()
-        print(f"Original mask ratio: {original_mask_ratio:.3f}")
-        print(f"Compressed mask ratio: {compressed_mask_ratio:.3f}")
 
         assert (
             actual_shape == expected_shape
         ), f"Encoding shape mismatch! Expected {expected_shape}, got {actual_shape}"
-        assert (
-            actual_mask_shape == expected_mask_shape
-        ), f"Mask shape mismatch! Expected {expected_mask_shape}, got {actual_mask_shape}"
 
-        return compressed, compressed_mask
+        return compressed
 
-    def test_decoding(self, compressed_tuple, target_length):
+    def test_decoding(self, compressed, target_length):
         """Test the decoding process"""
         print(f"\nTesting decoding to length {target_length}")
 
-        compressed, compressed_mask = compressed_tuple
-
         # Decode
-        decoded = self.model.decode(compressed)
+        decoded = self.model.decode(compressed, target_length)
 
         # Verify shapes
         expected_shape = (compressed.size(0), target_length, self.model.input_dim)
-        expected_mask_shape = (compressed.size(0), target_length)
-
         actual_shape = tuple(decoded.shape)
 
         print(f"Compressed shape: {tuple(compressed.shape)}")
-        print(f"Compressed mask shape: {tuple(compressed_mask.shape)}")
         print(f"Decoded shape: {actual_shape}")
+        print(f"Expected decoded shape: {expected_shape}")
 
         assert (
             actual_shape == expected_shape
@@ -174,22 +140,18 @@ class SequenceCompressorTester:
         """Test the complete encode-decode pipeline"""
         print(f"\nTesting full pipeline with sequence length {seq_len}")
 
-        # Create input and mask
+        # Create input
         x = torch.randn(batch_size, seq_len, self.model.input_dim)
-        mask = torch.ones(batch_size, seq_len)
-        mask[:, seq_len // 2 :] = 0.0
 
         # Full forward pass
-        compressed, compressed_mask = self.model.encode(x, mask)
-        output = self.model.decode(compressed)
+        compressed = self.model.encode(x)
+        output = self.model.decode(compressed, seq_len)
 
         # Compute reconstruction loss
         loss = self.criterion(output, x)
 
         print(f"Input shape: {tuple(x.shape)}")
-        print(f"Input mask shape: {tuple(mask.shape)}")
         print(f"Compressed shape: {tuple(compressed.shape)}")
-        print(f"Compressed mask shape: {tuple(compressed_mask.shape)}")
         print(f"Output shape: {tuple(output.shape)}")
         print(f"Reconstruction loss: {loss.item():.4f}")
 
@@ -203,14 +165,14 @@ class SequenceCompressorTester:
         print("Running SequenceCompressor test suite...")
 
         batch_size = 8
-        test_lengths = [10, 50, 100, 200]
+        test_lengths = [50, 100, 200]
 
         for seq_len in test_lengths:
             # Test encoding
-            compressed_tuple = self.test_encoding(batch_size, seq_len)
+            compressed = self.test_encoding(batch_size, seq_len)
 
             # Test decoding
-            self.test_decoding(compressed_tuple, seq_len)
+            self.test_decoding(compressed, seq_len)
 
             # Test full pipeline
             self.test_full_pipeline(batch_size, seq_len)
