@@ -9,6 +9,7 @@ from transformers import AutoConfig
 class PraxisCompressor(nn.Module):
     def __init__(self, config: AutoConfig, compressed_seq_len=64, compressed_dim=128):
         super().__init__()
+        assert config.causal, "`compression=True` cannot be used with `causal=False`"
         self.input_dim = config.num_dims
         self.compressed_seq_len = compressed_seq_len
         self.compressed_dim = compressed_dim
@@ -18,11 +19,10 @@ class PraxisCompressor(nn.Module):
             input_size=self.input_dim,
             hidden_size=compressed_dim,
             batch_first=True,
-            bidirectional=True,
+            bidirectional=False,
             dropout=config.dropout,
         )
-        self.compress = nn.Linear(compressed_dim * 2, compressed_dim)
-        self.downsample = LearnedResampling(compressed_dim * 2)  # *2 for bidirectional
+        self.downsample = LearnedResampling(compressed_dim)
 
         # Decoder components
         self.decoder = nn.LSTM(
@@ -42,7 +42,6 @@ class PraxisCompressor(nn.Module):
 
         # Compress sequence
         compressed = self.downsample(encoded, self.compressed_seq_len)
-        compressed = self.compress(compressed)
 
         # Handle attention mask
         compressed_mask = None
@@ -57,8 +56,10 @@ class PraxisCompressor(nn.Module):
         return compressed, compressed_mask
 
     def decode(self, compressed):
-        # Regular decode process
+        # Decode sequence
         decoded, _ = self.decoder(compressed)
+
+        # Uncompress sequence
         decoded = self.upsample(decoded, self.residual.size(1))
         decoded = self.project(decoded)
 
@@ -74,55 +75,44 @@ class LearnedResampling(nn.Module):
     """
     A unified module for sequence length adjustment (both upsampling and downsampling)
     using learned position embeddings and attention mechanisms.
-
-    Args:
-        dim (int): The dimension of the input features
     """
 
-    def __init__(self, dim):
+    def __init__(self, hidden_dim: int):
         super().__init__()
-        self.dim = dim
-        self.position_mlp = nn.Sequential(
-            nn.Linear(1, dim), nn.GELU(), nn.Linear(dim, dim)
+        self.hidden_dim = hidden_dim
+        self.mlp = nn.Sequential(
+            nn.Linear(1, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, hidden_dim)
         )
 
     def forward(self, x, target_length):
-        """
-        Resample the input sequence to the target length.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape [batch, seq_len, dim]
-            target_length (int): Desired output sequence length
-
-        Returns:
-            torch.Tensor: Resampled tensor of shape [batch, target_length, dim]
-        """
         batch_size = x.size(0)
+        seq_len = x.size(1)
 
         # Create position embeddings for target sequence length
         positions = torch.linspace(0, 1, target_length, device=x.device)
-        position_embeddings = self.position_mlp(
-            positions.unsqueeze(-1)
-        )  # [target_len, dim]
+        position_embeddings = self.mlp(positions.unsqueeze(-1))
 
         # Expand position embeddings for batch dimension
         position_embeddings = position_embeddings.unsqueeze(0).expand(
             batch_size, -1, -1
-        )  # [batch, target_len, dim]
+        )
 
-        # Compute attention scores between position embeddings and input sequence
+        # Compute attention scores
         attention = torch.bmm(
-            position_embeddings,  # [batch, target_len, dim]
-            x.transpose(1, 2),  # [batch, dim, seq_len]
+            position_embeddings, x.transpose(1, 2)
         )  # [batch, target_len, seq_len]
 
+        # Create causal mask
+        causal_mask = torch.triu(
+            torch.ones(target_length, seq_len, device=x.device), diagonal=1
+        ).bool()
+        attention = attention.masked_fill(causal_mask, float("-inf"))
+
         # Scale and normalize attention weights
-        attention = F.softmax(attention / math.sqrt(self.dim), dim=-1)
+        attention = F.softmax(attention / math.sqrt(self.hidden_dim), dim=-1)
 
         # Apply attention to get resampled sequence
-        return torch.bmm(
-            attention, x  # [batch, target_len, seq_len]  # [batch, seq_len, dim]
-        )  # [batch, target_len, dim]
+        return torch.bmm(attention, x)
 
 
 if __name__ == "__main__":
@@ -131,6 +121,7 @@ if __name__ == "__main__":
         def __init__(self):
             class DummyConfig:
                 def __init__(self):
+                    self.causal = True
                     self.num_dims = 64
                     self.dropout = 0.0
 
