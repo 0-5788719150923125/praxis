@@ -9,29 +9,31 @@ from transformers import AutoConfig
 class PraxisCompressor(nn.Module):
     def __init__(self, config: AutoConfig, compressed_seq_len=64, compressed_dim=128):
         super().__init__()
-        assert config.causal, "`compression=True` cannot be used with `causal=False`"
         self.input_dim = config.num_dims
         self.compressed_seq_len = compressed_seq_len
         self.compressed_dim = compressed_dim
 
-        # Encoder components
+        # Initial encoding
         self.encoder = nn.LSTM(
             input_size=self.input_dim,
             hidden_size=compressed_dim,
+            num_layers=2,
             batch_first=True,
-            bidirectional=False,
             dropout=config.dropout,
         )
-        self.downsample = LearnedResampling(compressed_dim)
 
-        # Decoder components
+        # Multi-scale pooling
+        self.compress = MultiScalePooling(compressed_dim, num_scales=8)
+
+        # Decoder components remain the same
         self.decoder = nn.LSTM(
             input_size=compressed_dim,
             hidden_size=compressed_dim,
+            num_layers=2,
             batch_first=True,
             dropout=config.dropout,
         )
-        self.upsample = LearnedResampling(compressed_dim)
+        self.upsample = CausalUpsampling(compressed_dim)
         self.project = nn.Linear(compressed_dim, self.input_dim)
 
     def encode(self, x, attention_mask=None):
@@ -40,18 +42,21 @@ class PraxisCompressor(nn.Module):
         # Encode sequence
         encoded, _ = self.encoder(x)
 
-        # Compress sequence
-        compressed = self.downsample(encoded, self.compressed_seq_len)
+        # Multi-scale compression
+        compressed = self.compress(encoded, self.compressed_seq_len)
 
-        # Handle attention mask
+        # Handle attention mask (simplified for multi-scale)
         compressed_mask = None
         if attention_mask is not None:
             original_dtype = attention_mask.dtype
-            mask_expanded = attention_mask.float().unsqueeze(1)
-            compressed_mask = F.adaptive_avg_pool1d(
-                mask_expanded, self.compressed_seq_len
-            ).squeeze(1)
-            compressed_mask = (compressed_mask > 0.5).to(original_dtype)
+            compressed_mask = (
+                F.interpolate(
+                    attention_mask.float().unsqueeze(1),
+                    size=self.compressed_seq_len,
+                    mode="linear",
+                ).squeeze(1)
+                > 0.5
+            ).to(original_dtype)
 
         return compressed, compressed_mask
 
@@ -71,48 +76,61 @@ class PraxisCompressor(nn.Module):
         return self.encode(x, attention_mask)
 
 
-class LearnedResampling(nn.Module):
-    """
-    A unified module for sequence length adjustment (both upsampling and downsampling)
-    using learned position embeddings and attention mechanisms.
-    """
-
-    def __init__(self, hidden_dim: int):
+class MultiScalePooling(nn.Module):
+    def __init__(self, dim, num_scales=4):
         super().__init__()
-        self.hidden_dim = hidden_dim
-        self.mlp = nn.Sequential(
-            nn.Linear(1, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, hidden_dim)
+        self.dim = dim
+        self.num_scales = num_scales
+        # Learn how to weight different scales
+        self.scale_weights = nn.Parameter(torch.ones(num_scales))
+
+    def forward(self, x, target_length):
+        batch_size, seq_len, _ = x.shape
+        pools = []
+
+        for scale in range(self.num_scales):
+            # Exponentially increasing kernel sizes
+            kernel_size = 2**scale
+            stride = max(seq_len // target_length // self.num_scales, 1)
+
+            # Causal pooling (pad on the right)
+            padded = F.pad(x.transpose(1, 2), (kernel_size - 1, 0))
+            pooled = F.avg_pool1d(
+                padded, kernel_size=kernel_size, stride=stride, padding=0
+            )
+
+            # Interpolate to target length
+            pooled = F.interpolate(pooled, size=target_length, mode="linear")
+            pools.append(pooled)
+
+        # Combine different scales with learned weights
+        scale_weights = F.softmax(self.scale_weights, dim=0)
+        pools = torch.stack(pools, dim=0)
+        combined = (pools * scale_weights.view(-1, 1, 1, 1)).sum(dim=0)
+
+        return combined.transpose(1, 2)
+
+
+class CausalUpsampling(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+        # Maybe add a small MLP to help with the projection
+        self.pre_project = nn.Sequential(
+            nn.Linear(dim, dim * 4), nn.GELU(), nn.Linear(dim * 4, dim)
         )
 
     def forward(self, x, target_length):
-        batch_size = x.size(0)
-        seq_len = x.size(1)
+        # First, condition the representations
+        x = self.pre_project(x)
 
-        # Create position embeddings for target sequence length
-        positions = torch.linspace(0, 1, target_length, device=x.device)
-        position_embeddings = self.mlp(positions.unsqueeze(-1))
+        # Simple linear interpolation maintains causality
+        # and preserves the transformed representations
+        upsampled = F.interpolate(
+            x.transpose(1, 2), size=target_length, mode="linear"
+        ).transpose(1, 2)
 
-        # Expand position embeddings for batch dimension
-        position_embeddings = position_embeddings.unsqueeze(0).expand(
-            batch_size, -1, -1
-        )
-
-        # Compute attention scores
-        attention = torch.bmm(
-            position_embeddings, x.transpose(1, 2)
-        )  # [batch, target_len, seq_len]
-
-        # Create causal mask
-        causal_mask = torch.triu(
-            torch.ones(target_length, seq_len, device=x.device), diagonal=1
-        ).bool()
-        attention = attention.masked_fill(causal_mask, float("-inf"))
-
-        # Scale and normalize attention weights
-        attention = F.softmax(attention / math.sqrt(self.hidden_dim), dim=-1)
-
-        # Apply attention to get resampled sequence
-        return torch.bmm(attention, x)
+        return upsampled
 
 
 if __name__ == "__main__":
