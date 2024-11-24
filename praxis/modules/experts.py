@@ -29,8 +29,20 @@ EXPERT_CONFIGS = {
         "key_dims": 90,
         "offset_heads": False,
     },
-    "smear": {"num_experts": 3},
+    # "smear": {"num_experts": 3},
 }
+
+
+def get_expert_config(expert: str or dict):
+    # Handle expert configuration
+    if isinstance(expert, str):
+        if expert not in EXPERT_CONFIGS:
+            raise ValueError(f"Unknown expert type: {expert}")
+        return {"type": expert, **EXPERT_CONFIGS[expert]}
+    elif isinstance(expert, dict):
+        return expert
+    else:
+        raise ValueError("Expert must be either a string or a dictionary")
 
 
 class PraxisExpert(nn.Module):

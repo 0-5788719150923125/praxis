@@ -1,7 +1,5 @@
 from transformers import PretrainedConfig
 
-from praxis.modules import EXPERT_CONFIGS
-
 
 class PraxisConfig(PretrainedConfig):
     model_type = "praxis"
@@ -50,7 +48,6 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
-        # Praxis args
         self.num_embeds = num_embeds
         self.num_dims = num_dims
         self.num_heads = num_heads
@@ -67,7 +64,7 @@ class PraxisConfig(PretrainedConfig):
         self.context_length = context_length
         self.activation = activation
         self.block_type = block
-        self.expert = self._register_experts(expert)
+        self.expert = expert
         self.encoding = encoding
         self.sparse = sparse
         self.shuffle = shuffle
@@ -82,14 +79,3 @@ class PraxisConfig(PretrainedConfig):
         self.debug = debug
         self.meta = meta
         self.causal = False
-
-    def _register_experts(self, expert: str or dict):
-        # Handle expert configuration
-        if isinstance(expert, str):
-            if expert not in EXPERT_CONFIGS:
-                raise ValueError(f"Unknown expert type: {expert}")
-            return {"type": expert, **EXPERT_CONFIGS[expert]}
-        elif isinstance(expert, dict):
-            return expert
-        else:
-            raise ValueError("Expert must be either a string or a dictionary")

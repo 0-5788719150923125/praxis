@@ -8,7 +8,7 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.attention import PraxisAttention
-from praxis.modules.experts import EXPERT_REGISTRY
+from praxis.modules.experts import EXPERT_REGISTRY, get_expert_config
 
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 
@@ -35,7 +35,7 @@ class PraxisBlock(nn.Module):
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
-        self.mlp = EXPERT_REGISTRY[config.expert["type"]](config)
+        self.mlp = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
