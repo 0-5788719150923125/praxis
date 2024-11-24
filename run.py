@@ -977,7 +977,7 @@ class Generator:
             del combined["skip_special_tokens"]
 
         generated_tokens = input_ids
-        max_attempts = 30
+        max_attempts = 10
         attempts = 0
 
         with self._eval_mode():
@@ -1013,8 +1013,8 @@ class Generator:
                 #     f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
                 # )
                 # Return the original text
-                # return_text = request.prompt
-                return_text = decoded_new
+                return_text = request.prompt
+                # return_text = decoded_new
 
             return return_text
 

@@ -10,7 +10,6 @@ class PraxisCompressor(nn.Module):
         self.input_dim = config.num_dims
         self.compressed_seq_len = compressed_seq_len
         self.compressed_dim = compressed_dim
-
         # Encoder components
         self.encoder = nn.LSTM(
             input_size=self.input_dim,
@@ -19,7 +18,6 @@ class PraxisCompressor(nn.Module):
             bidirectional=True,
         )
         self.compress = nn.Linear(compressed_dim * 2, compressed_dim)
-
         # Decoder components
         self.decoder = nn.LSTM(
             input_size=compressed_dim, hidden_size=compressed_dim, batch_first=True
@@ -27,54 +25,41 @@ class PraxisCompressor(nn.Module):
         self.project = nn.Linear(compressed_dim, self.input_dim)
 
     def encode(self, x, attention_mask=None):
-        """
-        Encode and compress input sequence to fixed length and dimension
-        """
-        # Store original sequence length
-        self.orig_seq_len = x.size(1)
+        # Store original input for residual connection
+        self.residual = x
 
-        # Encode sequence
+        # Regular encode process
         encoded, _ = self.encoder(x)
         compressed = F.adaptive_avg_pool1d(
             encoded.transpose(1, 2), self.compressed_seq_len
         ).transpose(1, 2)
         compressed = self.compress(compressed)
 
+        # Handle attention mask...
         compressed_mask = None
         if attention_mask is not None:
-            # Convert mask to float for pooling
             original_dtype = attention_mask.dtype
             mask_expanded = attention_mask.float().unsqueeze(1)
-
-            # Pool the mask
             compressed_mask = F.adaptive_avg_pool1d(
                 mask_expanded, self.compressed_seq_len
             ).squeeze(1)
-
-            # Convert back to original dtype (likely torch.long)
             compressed_mask = (compressed_mask > 0.5).to(original_dtype)
 
         return compressed, compressed_mask
 
     def decode(self, compressed):
-        """
-        Decode compressed representation back to original sequence length and dimension
-        """
-
-        target_length = self.orig_seq_len
-
-        # Rest of decode stays the same...
+        # Regular decode process
         decoded, _ = self.decoder(compressed)
         decoded = F.interpolate(
             decoded.transpose(1, 2),
-            size=target_length,
+            size=self.residual.size(1),
             mode="linear",
-            align_corners=False,
+            align_corners=True,
         ).transpose(1, 2)
+        decoded = self.project(decoded)
 
-        output = self.project(decoded)
-
-        return output
+        # Add residual connection with the original input
+        return decoded + self.residual
 
     def forward(self, x, attention_mask=None):
         """Convenience method for encode only"""
