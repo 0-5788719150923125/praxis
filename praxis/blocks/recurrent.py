@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.modules.smear import PraxisSMEAR
+
 
 class PraxisRecurrent(nn.Module):
     """
@@ -15,9 +17,13 @@ class PraxisRecurrent(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(self, config: "AutoConfig", block_pool: list = [], *args, **kwargs):
         super().__init__()
         hidden_dim = config.num_dims
+
+        self.pool = block_pool
+
+        self.expert_pool = PraxisSMEAR(config, self.pool)
 
         # Layer normalization before LSTM
         self.pre_norm = nn.LayerNorm(hidden_dim)
@@ -54,7 +60,8 @@ class PraxisRecurrent(nn.Module):
         normed_input = self.pre_norm(x)
 
         # LSTM layer
-        lstm_out, _ = self.lstm(normed_input)
+        # lstm_out, _ = self.lstm(normed_input)
+        lstm_out, _ = self.expert_pool(normed_input)
 
         # Post-processing
         lstm_out = self.dropout(lstm_out)

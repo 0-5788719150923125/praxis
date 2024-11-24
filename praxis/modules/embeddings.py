@@ -63,4 +63,5 @@ EMBEDDING_REGISTRY = {
     "transformer": partial(PraxisEmbedding),
     "nano": partial(PraxisEmbedding, learned=True),
     "conv": partial(PraxisEmbedding),
+    "recurrent": partial(PraxisEmbedding),
 }

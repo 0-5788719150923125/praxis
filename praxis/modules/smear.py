@@ -18,14 +18,10 @@ class PraxisSMEAR(nn.Module):
 
     def __init__(self, config: AutoConfig, experts: list[nn.Module]):
         super().__init__()
-        if not experts:
-            raise ValueError(
-                "The experts list must contain at least two expert modules."
-            )
 
-        self.num_experts = len(experts)
+        self.num_experts = config.num_experts
         self.num_dims = config.num_dims
-        self.experts = nn.ModuleList(experts)
+        self.experts = experts
 
         # Router network: simple linear -> softmax
         self.router = nn.Sequential(
@@ -34,9 +30,6 @@ class PraxisSMEAR(nn.Module):
         )
 
         self.dropout = nn.Dropout(config.dropout)
-
-        # Collect all parameter names from the first expert
-        self.parameter_names = self._collect_parameter_names(self.experts[0])
 
     def forward(self, inputs):
         # Get routing probabilities
@@ -76,6 +69,7 @@ class PraxisSMEAR(nn.Module):
         expert_weights = routing_probs.mean(dim=0)  # [num_experts]
 
         # Iterate over all parameter names
+        self.parameter_names = self._collect_parameter_names(self.experts[0])
         for param_name in self.parameter_names:
             # Initialize the merged parameter with zeros
             merged_param = None
