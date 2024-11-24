@@ -8,14 +8,14 @@ from transformers import AutoConfig
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
-from praxis.modules.smear import PraxisSMEAR
+from praxis.modules.recurrent import PraxisRecurrent
 
 EXPERT_REGISTRY = {
     "glu": PraxisGLU,
     "kan": PraxisKAN,
     "mlp": PraxisMLP,
     "peer": PraxisPEER,
-    # "smear": PraxisSMEAR,
+    "recurrent": PraxisRecurrent,
 }
 
 EXPERT_CONFIGS = {
@@ -29,7 +29,7 @@ EXPERT_CONFIGS = {
         "key_dims": 90,
         "offset_heads": False,
     },
-    # "smear": {"num_experts": 3},
+    "recurrent": {},
 }
 
 

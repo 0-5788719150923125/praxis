@@ -151,10 +151,11 @@ class PraxisStack(nn.Module):
         self.local_experts = nn.ModuleList()
         if config.block_type == "recurrent":
             config.sparse = False
-            block_pool = []
+            experts = [
+                EXPERT_REGISTRY["recurrent"](config) for _ in range(self.num_experts)
+            ]
             for _ in range(self.num_experts):
-                block = BLOCK_REGISTRY["recurrent"](config, block_pool)
-                block_pool.append(block)
+                block = BLOCK_REGISTRY["recurrent"](config, experts)
                 expert = PraxisExpert(config, block=block)
                 self.local_experts.append(expert)
         else:

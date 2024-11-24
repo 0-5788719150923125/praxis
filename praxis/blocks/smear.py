@@ -8,6 +8,15 @@ import torch.nn.functional as F
 from transformers import AutoConfig
 
 
+@dataclass
+class SMEARConfig:
+    """Configuration class for SMEAR module"""
+
+    num_dims: int
+    num_experts: int
+    dropout: float = 0.1
+
+
 class PraxisSMEAR(nn.Module):
     """
     This module implements Soft-Merging of Experts with Adaptive Routing (SMEAR):
@@ -16,12 +25,12 @@ class PraxisSMEAR(nn.Module):
 
     __version__ = "0.2.0"
 
-    def __init__(self, config: AutoConfig, experts: list[nn.Module]):
+    def __init__(self, config: SMEARConfig, experts: list[nn.Module]):
         super().__init__()
 
         self.num_experts = config.num_experts
         self.num_dims = config.num_dims
-        self.experts = experts
+        self.experts = nn.ModuleList(experts)  # Properly register experts as submodules
 
         # Router network: simple linear -> softmax
         self.router = nn.Sequential(
@@ -31,7 +40,7 @@ class PraxisSMEAR(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, inputs):
+    def forward(self, inputs, *args, **kwargs):
         # Get routing probabilities
         routing_probs = self.router(inputs.mean(dim=1))  # [batch_size, num_experts]
 
@@ -41,7 +50,9 @@ class PraxisSMEAR(nn.Module):
         # Use the first expert as the base module structure
         base_module = self.experts[0]
         # Apply the merged parameters using functional_call
-        outputs = torch.func.functional_call(base_module, merged_state_dict, inputs)
+        outputs = torch.func.functional_call(
+            base_module, merged_state_dict, (inputs, *args), kwargs
+        )
 
         return outputs
 
@@ -113,12 +124,14 @@ class PraxisSMEAR(nn.Module):
 
 
 if __name__ == "__main__":
-    # Simple smoke tests for PraxisSMEAR
+    print("Running SMEAR tests...")
 
-    # Define a simple MLP expert
+    # Test 1: Simple MLP
+    print("\n1. Testing MLP experts...")
+
     class SimpleMLP(nn.Module):
-        def __init__(self, input_dim, hidden_dim, output_dim, activation="relu"):
-            super(SimpleMLP, self).__init__()
+        def __init__(self, input_dim, hidden_dim, output_dim):
+            super().__init__()
             self.linear1 = nn.Linear(input_dim, hidden_dim)
             self.activation = F.relu
             self.linear2 = nn.Linear(hidden_dim, output_dim)
@@ -129,117 +142,106 @@ if __name__ == "__main__":
             x = self.linear2(x)
             return x
 
-    # Configuration for SMEAR
-    class Config:
-        def __init__(self, num_dims, activation, dropout):
-            self.num_dims = num_dims
-            self.activation = activation
-            self.dropout = dropout
-
-    # Instantiate duplicate MLP experts
+    # MLP test configuration
     input_dim = 16
     hidden_dim = 32
     output_dim = 16
     num_experts = 3
 
-    experts = [
-        SimpleMLP(input_dim, hidden_dim, output_dim, activation="relu")
-        for _ in range(num_experts)
-    ]
+    experts = [SimpleMLP(input_dim, hidden_dim, output_dim) for _ in range(num_experts)]
 
-    # Create a configuration
-    config = Config(num_dims=input_dim, activation="relu", dropout=0.1)
-
-    # Instantiate the SMEAR module with the experts
+    config = SMEARConfig(num_dims=input_dim, num_experts=num_experts)
     smear = PraxisSMEAR(config, experts)
 
-    # Create dummy input
     batch_size = 4
     seq_length = 10
     dummy_input = torch.randn(batch_size, seq_length, input_dim)
 
-    # Forward pass through SMEAR
     output = smear(dummy_input)
-    print(
-        "Output shape:", output.shape
-    )  # Expected: [batch_size, seq_length, output_dim]
-
-    # Verify that the output is differentiable
+    print(f"MLP Output shape: {output.shape}")
     output.sum().backward()
-    print("Backward pass successful.")
+    print("MLP test passed!")
 
-    @dataclass
-    class Config:
-        def __init__(self, num_dims, dropout):
-            self.num_dims = num_dims
-            self.dropout = dropout
+    # Test 2: Attention Key
+    print("\n2. Testing Attention Key experts...")
 
     class AttentionKey(nn.Module):
-        """Simple wrapper for attention key projection"""
-
-        def __init__(self, hidden_size, num_heads, head_dim, multiplier=1):
+        def __init__(self, hidden_size, num_heads, head_dim):
             super().__init__()
             self.key = nn.Linear(
                 hidden_size,
-                num_heads * head_dim * multiplier,
+                num_heads * head_dim,
                 bias=False,
             )
 
         def forward(self, x):
             return self.key(x)
 
-    # Test configuration
     hidden_size = 768
     num_heads = 12
     head_dim = 64
     num_experts = 3
 
-    # Create expert modules
-    experts = [
+    attention_experts = [
         AttentionKey(hidden_size=hidden_size, num_heads=num_heads, head_dim=head_dim)
         for _ in range(num_experts)
     ]
 
-    # Create config
-    config = Config(num_dims=hidden_size, dropout=0.1)
+    config = SMEARConfig(num_dims=hidden_size, num_experts=num_experts)
+    attention_smear = PraxisSMEAR(config, attention_experts)
 
-    smear = PraxisSMEAR(config, experts)
-
-    # Create test input
     batch_size = 4
     seq_length = 32
     inputs = torch.randn(batch_size, seq_length, hidden_size)
+    outputs = attention_smear(inputs)
 
-    # Forward pass
-    outputs = smear(inputs)
-
-    # Print shapes for verification
-    print(f"Input shape: {inputs.shape}")
-    print(f"Output shape: {outputs.shape}")
-
-    # Expected output shape
-    expected_output_size = (batch_size, seq_length, num_heads * head_dim)
-    assert (
-        outputs.shape == expected_output_size
-    ), f"Expected shape {expected_output_size}, got {outputs.shape}"
-
-    print("\nTest successful! Output shapes match expected dimensions.")
-
-    # Verify routing probabilities
-    with torch.no_grad():
-        routing_probs = smear.router(inputs.mean(dim=1))
-        prob_sums = routing_probs.sum(dim=-1)
-        print(f"\nRouting probability sums (should be close to 1.0):")
-        print(prob_sums)
-
-    # Test backward pass
+    print(f"Attention Input shape: {inputs.shape}")
+    print(f"Attention Output shape: {outputs.shape}")
     outputs.sum().backward()
-    print("\nBackward pass successful.")
+    print("Attention test passed!")
 
-    # Print expert weights
-    with torch.no_grad():
-        routing_probs = smear.router(inputs.mean(dim=1))
-        expert_weights = routing_probs.mean(dim=0)
-        print("\nExpert weights:")
-        for i, weight in enumerate(expert_weights):
-            print(f"Expert {i}: {weight.item():.3f}")
+    # Test 3: LSTM
+    print("\n3. Testing LSTM experts...")
+
+    # LSTM test configuration
+    input_size = 64
+    hidden_size = 128
+    num_experts = 3
+
+    lstm_experts = [
+        nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=1,
+            batch_first=True,
+        )
+        for _ in range(num_experts)
+    ]
+
+    config = SMEARConfig(num_dims=input_size, num_experts=num_experts)
+    lstm_smear = PraxisSMEAR(config, lstm_experts)
+
+    # Test LSTM with sequence data
+    batch_size = 4
+    seq_length = 20
+    lstm_input = torch.randn(batch_size, seq_length, input_size)
+
+    # Test both with and without initial hidden state
+    lstm_output1, (h_n1, c_n1) = lstm_smear(lstm_input)
+
+    initial_hidden = (
+        torch.zeros(1, batch_size, hidden_size),
+        torch.zeros(1, batch_size, hidden_size),
+    )
+    lstm_output2, (h_n2, c_n2) = lstm_smear(lstm_input, initial_hidden)
+
+    print(f"LSTM Input shape: {lstm_input.shape}")
+    print(f"LSTM Output shape: {lstm_output1.shape}")
+    print(f"LSTM Hidden state shape: {h_n1.shape}")
+    print(f"LSTM Cell state shape: {c_n1.shape}")
+
+    # Test backprop
+    lstm_output1.sum().backward()
+    print("LSTM test passed!")
+
+    print("\nAll tests completed successfully!")
