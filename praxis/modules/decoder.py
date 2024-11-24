@@ -10,7 +10,6 @@ from transformers import AutoConfig
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.modules.controller import PraxisController
 from praxis.modules.experts import PraxisExpert
-from praxis.modules.memory import PraxisMemory
 from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.orchestration.hivemind import (
     P2PDaemonError,
@@ -32,9 +31,6 @@ class PraxisDecoder(nn.Module):
         self.depth = config.depth
         self.sparse = config.sparse
         self.shuffle = config.shuffle
-        self.memory = False
-        if config.memory:
-            self.memory = PraxisMemory(config)
         self.manager = False
         self.remote_experts = []
         if config.hivemind:
@@ -49,9 +45,7 @@ class PraxisDecoder(nn.Module):
             router = False
             if config.sparse and i % 2 != 0:
                 router = PraxisMixtureOfDepths(config)
-            expert = PraxisExpert(
-                config, block=block, memory=self.memory, router=router
-            )
+            expert = PraxisExpert(config, block=block, router=router)
             self.local_experts.append(expert)
         if self.manager:
             self.manager.serve_experts()
@@ -143,8 +137,8 @@ class PraxisDecoder(nn.Module):
 
     def get_metrics(self):
         """Return current prediction accuracies"""
-        if self.memory:
-            return {**self.memory.get_metrics()}
+        # if self.memory:
+        #     return {**self.memory.get_metrics()}
         # if self.navigator:
         #     return {
         #         "mean": self.navigator.get_mean_accuracy(),

@@ -73,12 +73,7 @@ class PraxisAttention(nn.Module):
             self.num_query_heads * self.head_dim, self.hidden_size, bias=False
         )
 
-    def forward(
-        self,
-        inputs: Tensor,
-        attention_mask: Tensor,
-        memory: Optional[nn.Module] = False,
-    ):
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
         batch_size, seq_len, _ = inputs.shape
 
         # Compute queries, keys, and values
@@ -124,10 +119,6 @@ class PraxisAttention(nn.Module):
         weights = self.algorithm.compute_weights(
             q, k, v, scores, causal_mask, attention_mask
         )
-
-        # Add memory-based attention
-        if memory:
-            weights = memory(inputs, q, k, v, weights)
 
         # Reshape for output projection
         weights = weights.transpose(1, 2).reshape(

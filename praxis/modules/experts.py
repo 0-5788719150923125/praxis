@@ -44,35 +44,29 @@ class PraxisExpert(nn.Module):
         self,
         config: AutoConfig,
         block: nn.Module = False,
-        memory: nn.Module = False,
         router: nn.Module = False,
         is_remote=False,
     ):
         super().__init__()
         self.sparse = config.sparse
         self.is_remote = is_remote
-        self.memory = memory
         self.router = router
         self.block = block
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, current_depth: int):
         d = current_depth
-        use_memory = (
-            True if self.memory and d % 4 == 0 and d != 0 else False
-        )  # every 4th layer
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask)
         else:
-            return self._local_forward(inputs, attention_mask, use_memory)
+            return self._local_forward(inputs, attention_mask)
 
-    def _local_forward(self, inputs: Tensor, attention_mask: Tensor, use_memory: bool):
+    def _local_forward(self, inputs: Tensor, attention_mask: Tensor):
         aux_losses = []
         if self.router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
-            memory = False if not use_memory else self.memory
-            hidden_states = self.block(inputs, attention_mask, memory=memory)
+            hidden_states = self.block(inputs, attention_mask)
         return hidden_states, sum(aux_losses)
 
     def _remote_forward(self, inputs, attention_mask):

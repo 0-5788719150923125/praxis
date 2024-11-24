@@ -19,7 +19,6 @@ The Praxis swarm is a decentralized, peer-to-peer, always online, continuously-l
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps. Alternatively (and perhaps in-addition to, in the future), we implement an option for [Stickbreaking Attention](https://arxiv.org/abs/2306.04640), which naturally-encodes positional information, uses a Sigmoid-based mechanism, instead of a Softmax (i.e. parameters "work together", instead of "competing" against each other).
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
-- We also implement a simplistic KNN-based external memory module, akin to [Memorizing Transformers](https://arxiv.org/abs/2203.08913).
 - There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
 
 ## join us

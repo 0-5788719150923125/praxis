@@ -48,7 +48,7 @@ class PraxisBlock(nn.Module):
     ):
         residual = inputs
         normalized = self.attn_norm(inputs)
-        outputs = self.attn(normalized, attention_mask, kwargs.get("memory", False))
+        outputs = self.attn(normalized, attention_mask)
         outputs = self.dropout(outputs)
         outputs = outputs + residual
         residual = outputs
