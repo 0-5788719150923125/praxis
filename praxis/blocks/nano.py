@@ -89,10 +89,8 @@ class ElasticLinear(nn.Module):
 
     def _interpolate_weights(self, features):
         # Always interpolate since we're starting from a smaller base
-        weights_expanded = self.weight.unsqueeze(0)
-
         interpolated = F.interpolate(
-            weights_expanded,
+            self.weight.unsqueeze(0),
             size=[features],
             mode="linear",
             align_corners=True,
