@@ -12,6 +12,7 @@ class PraxisCompressor(nn.Module):
         self.input_dim = config.num_dims
         self.compressed_seq_len = compressed_seq_len
         self.compressed_dim = compressed_dim
+
         # Encoder components
         self.encoder = nn.LSTM(
             input_size=self.input_dim,
@@ -21,6 +22,8 @@ class PraxisCompressor(nn.Module):
             dropout=config.dropout,
         )
         self.compress = nn.Linear(compressed_dim * 2, compressed_dim)
+        self.downsample = LearnedResampling(compressed_dim * 2)  # *2 for bidirectional
+
         # Decoder components
         self.decoder = nn.LSTM(
             input_size=compressed_dim,
@@ -28,21 +31,20 @@ class PraxisCompressor(nn.Module):
             batch_first=True,
             dropout=config.dropout,
         )
-        self.upsample = LearnedUpsampling(compressed_dim)
+        self.upsample = LearnedResampling(compressed_dim)
         self.project = nn.Linear(compressed_dim, self.input_dim)
 
     def encode(self, x, attention_mask=None):
-        # Store original input for residual connection
         self.residual = x
 
-        # Regular encode process
+        # Encode sequence
         encoded, _ = self.encoder(x)
-        compressed = F.adaptive_avg_pool1d(
-            encoded.transpose(1, 2), self.compressed_seq_len
-        ).transpose(1, 2)
+
+        # Compress sequence
+        compressed = self.downsample(encoded, self.compressed_seq_len)
         compressed = self.compress(compressed)
 
-        # Handle attention mask...
+        # Handle attention mask
         compressed_mask = None
         if attention_mask is not None:
             original_dtype = attention_mask.dtype
@@ -57,12 +59,6 @@ class PraxisCompressor(nn.Module):
     def decode(self, compressed):
         # Regular decode process
         decoded, _ = self.decoder(compressed)
-        # decoded = F.interpolate(
-        #     decoded.transpose(1, 2),
-        #     size=self.residual.size(1),
-        #     mode="bicubic",  # or "trilinear"
-        #     align_corners=False,
-        # ).transpose(1, 2)
         decoded = self.upsample(decoded, self.residual.size(1))
         decoded = self.project(decoded)
 
@@ -74,7 +70,15 @@ class PraxisCompressor(nn.Module):
         return self.encode(x, attention_mask)
 
 
-class LearnedUpsampling(nn.Module):
+class LearnedResampling(nn.Module):
+    """
+    A unified module for sequence length adjustment (both upsampling and downsampling)
+    using learned position embeddings and attention mechanisms.
+
+    Args:
+        dim (int): The dimension of the input features
+    """
+
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
@@ -83,30 +87,39 @@ class LearnedUpsampling(nn.Module):
         )
 
     def forward(self, x, target_length):
-        # x: [batch, seq_len, dim]
+        """
+        Resample the input sequence to the target length.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape [batch, seq_len, dim]
+            target_length (int): Desired output sequence length
+
+        Returns:
+            torch.Tensor: Resampled tensor of shape [batch, target_length, dim]
+        """
         batch_size = x.size(0)
 
-        # Create position embeddings
+        # Create position embeddings for target sequence length
         positions = torch.linspace(0, 1, target_length, device=x.device)
         position_embeddings = self.position_mlp(
             positions.unsqueeze(-1)
         )  # [target_len, dim]
 
-        # Expand position embeddings for batch
+        # Expand position embeddings for batch dimension
         position_embeddings = position_embeddings.unsqueeze(0).expand(
             batch_size, -1, -1
         )  # [batch, target_len, dim]
 
-        # Compute attention scores
+        # Compute attention scores between position embeddings and input sequence
         attention = torch.bmm(
             position_embeddings,  # [batch, target_len, dim]
             x.transpose(1, 2),  # [batch, dim, seq_len]
         )  # [batch, target_len, seq_len]
 
-        # Apply softmax
+        # Scale and normalize attention weights
         attention = F.softmax(attention / math.sqrt(self.dim), dim=-1)
 
-        # Get final output
+        # Apply attention to get resampled sequence
         return torch.bmm(
             attention, x  # [batch, target_len, seq_len]  # [batch, seq_len, dim]
         )  # [batch, target_len, dim]
