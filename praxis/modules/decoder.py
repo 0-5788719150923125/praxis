@@ -63,27 +63,15 @@ class PraxisDecoder(nn.Module):
 
             except (P2PDaemonError, P2PHandlerError) as e:
                 # Prune dead peers
-                if self.manager:
-                    if self.debug:
-                        print(e)
-                    self.manager.handle_failure(expert)
-                    continue
+                if self.debug:
+                    print(e)
+                self.manager.handle_failure(expert)
+                continue
 
         if self.debug and not self.training and self.stack.shuffle:
             print(f"DEBUG: routing through: {' -> '.join(route)}")
 
-        self.get_metrics()
-
         return hidden_states, sum(aux_losses)
-
-    def _define_checkpoints(self, strategy="speed", num_layers=0):
-        self.checkpoint_indices = []  # speed / no gradient checkpointing
-        if strategy == "aggressive":
-            # every layer
-            self.checkpoint_indices = [i for i in range(num_layers)]
-        elif strategy == "balanced":
-            # every fourth layer
-            self.checkpoint_indices = [i for i in range(num_layers) if i % 4 == 0]
 
     def _create_forward(
         self,
@@ -95,8 +83,7 @@ class PraxisDecoder(nn.Module):
         def custom_forward(hidden_states, attention_mask, current_depth):
             return expert(hidden_states, attention_mask, current_depth)
 
-        do_checkpoint = True if current_depth in self.checkpoint_indices else False
-        if do_checkpoint and self.training:
+        if self.training and self._should_checkpoint(current_depth):
             return torch.utils.checkpoint.checkpoint(
                 custom_forward,
                 hidden_states,
@@ -106,6 +93,18 @@ class PraxisDecoder(nn.Module):
             )
         else:
             return custom_forward(hidden_states, attention_mask, current_depth)
+
+    def _define_checkpoints(self, strategy="speed", num_layers=0):
+        self.checkpoint_indices = []  # speed / no gradient checkpointing
+        if strategy == "aggressive":
+            # every layer
+            self.checkpoint_indices = [i for i in range(num_layers)]
+        elif strategy == "balanced":
+            # every fourth layer
+            self.checkpoint_indices = [i for i in range(num_layers) if i % 4 == 0]
+
+    def _should_checkpoint(self, layer_idx):
+        return True if layer_idx in self.checkpoint_indices else False
 
     def get_metrics(self):
         """Return current prediction accuracies"""
