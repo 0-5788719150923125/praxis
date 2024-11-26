@@ -9,20 +9,12 @@ from torch import Tensor
 
 class PraxisRecurrent(nn.Module):
     """
-    A recurrent block using LSTM with learnable probabilistic initial states
-    using Gumbel Softmax for differentiable sampling.
+    A recurrent block using LSTM modules with learnable initial states.
     """
 
-    def __init__(
-        self,
-        config: "AutoConfig",
-        num_latent_states: int = 16,
-        temperature: float = 1.0,
-    ):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         hidden_dim = config.num_dims
-        self.temperature = temperature
-        self.num_latent_states = num_latent_states
 
         self.norm = nn.LayerNorm(hidden_dim)
         self.lstm = nn.LSTM(
@@ -30,19 +22,12 @@ class PraxisRecurrent(nn.Module):
             hidden_size=hidden_dim,
             batch_first=True,
         )
+
+        # Change initialization to match required shape (hidden_dim,) instead of (hidden_dim, hidden_dim)
+        self.h0_logits = nn.Parameter(torch.zeros(hidden_dim))
+        self.c0_logits = nn.Parameter(torch.zeros(hidden_dim))
+
         self.dropout = nn.Dropout(config.dropout)
-
-        # Learnable logits for initial state distributions over latent spaces
-        self.h0_logits = nn.Parameter(torch.zeros(hidden_dim, num_latent_states))
-        self.c0_logits = nn.Parameter(torch.zeros(hidden_dim, num_latent_states))
-
-        # Learnable state embeddings - one per latent state
-        self.h0_embeddings = nn.Parameter(
-            torch.randn(num_latent_states) / math.sqrt(num_latent_states)
-        )
-        self.c0_embeddings = nn.Parameter(
-            torch.randn(num_latent_states) / math.sqrt(num_latent_states)
-        )
 
         # Initialize LSTM parameters
         for name, param in self.lstm.named_parameters():
@@ -62,56 +47,18 @@ class PraxisRecurrent(nn.Module):
         """Forward pass with sampled initial states."""
         batch_size = x.size(0)
 
-        # Allow temperature adjustment during inference
-        temperature = 0.1
-        if not self.training:
-            self.temperature = temperature
-
-        # Sample initial states
-        h0, c0 = self.sample_initial_state(batch_size)
-        initial_state = (h0, c0)
-
         # Process input
         normed_input = self.norm(x)
+
+        # Reshape initial states to (num_layers=1, batch_size, hidden_dim)
+        h0 = self.h0_logits.view(1, 1, -1).expand(-1, batch_size, -1).contiguous()
+        c0 = self.c0_logits.view(1, 1, -1).expand(-1, batch_size, -1).contiguous()
+
+        initial_state = (h0, c0)
         lstm_out, _ = self.lstm(normed_input, initial_state)
         lstm_out = self.dropout(lstm_out)
 
         return lstm_out + x
-
-    def sample_initial_state(self, batch_size: int) -> tuple[Tensor, Tensor]:
-        """Sample initial states using Gumbel Softmax."""
-        # Sample from Gumbel Softmax distribution for each dimension
-        h0_dist = F.gumbel_softmax(
-            self.h0_logits, tau=self.temperature, hard=False, dim=1
-        )  # Shape: [hidden_dim, num_latent_states]
-        c0_dist = F.gumbel_softmax(
-            self.c0_logits, tau=self.temperature, hard=False, dim=1
-        )  # Shape: [hidden_dim, num_latent_states]
-
-        # Mix embeddings for each dimension
-        h0 = torch.matmul(h0_dist, self.h0_embeddings)  # Shape: [hidden_dim]
-        c0 = torch.matmul(c0_dist, self.c0_embeddings)  # Shape: [hidden_dim]
-
-        # Expand to batch size and add lstm expected dim
-        h0 = h0.unsqueeze(0).unsqueeze(0).expand(1, batch_size, -1).contiguous()
-        c0 = c0.unsqueeze(0).unsqueeze(0).expand(1, batch_size, -1).contiguous()
-
-        return h0, c0
-
-    @property
-    def state_entropy(self) -> tuple[Tensor, Tensor]:
-        """Calculate entropy of the initial state distributions."""
-        h0_probs = F.softmax(
-            self.h0_logits, dim=1
-        )  # Shape: [hidden_dim, num_latent_states]
-        c0_probs = F.softmax(self.c0_logits, dim=1)
-
-        h0_entropy = -(h0_probs * torch.log(h0_probs + 1e-10)).sum(
-            1
-        )  # Shape: [hidden_dim]
-        c0_entropy = -(c0_probs * torch.log(c0_probs + 1e-10)).sum(1)
-
-        return h0_entropy, c0_entropy
 
 
 if __name__ == "__main__":
