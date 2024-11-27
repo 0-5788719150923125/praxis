@@ -586,6 +586,22 @@ class CompressiveMemory(nn.Module):
             torch.zeros(1, self.num_query_heads, 1, self.head_dim)
         )
         self._states_buffer = []
+        self.init_state_learnable = True
+        if self.init_state_learnable:
+            self.init_mem = nn.Parameter(
+                torch.randn(
+                    1,
+                    self.num_query_heads,
+                    self.head_dim * self.multiplier,
+                    self.head_dim,
+                )
+            )
+            self.init_z = nn.Parameter(
+                torch.ones(1, self.num_query_heads, self.head_dim * self.multiplier, 1)
+            )
+        else:
+            self.init_mem = None
+            self.init_z = None
 
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
         batch_size = q.size(0)
@@ -623,26 +639,29 @@ class CompressiveMemory(nn.Module):
     def _init_states(
         self, batch_size: int, device: torch.device
     ) -> Tuple[Tensor, Tensor]:
-        # Initialize fresh states for this batch
-        memory_states = torch.zeros(
-            batch_size,
-            self.num_query_heads,
-            self.head_dim * self.multiplier,
-            self.head_dim,
-            device=device,
-        )
-
-        memory_z = (
-            torch.ones(
+        if self.init_state_learnable:
+            # Use learnable initial states
+            memory_states = self.init_mem.expand(batch_size, -1, -1, -1).to(device)
+            memory_z = self.init_z.expand(batch_size, -1, -1, -1).to(device)
+        else:
+            # Use standard initialization
+            memory_states = torch.zeros(
                 batch_size,
                 self.num_query_heads,
                 self.head_dim * self.multiplier,
-                1,
+                self.head_dim,
                 device=device,
             )
-            / self.head_dim
-        )
-
+            memory_z = (
+                torch.ones(
+                    batch_size,
+                    self.num_query_heads,
+                    self.head_dim * self.multiplier,
+                    1,
+                    device=device,
+                )
+                / self.head_dim
+            )
         return memory_states, memory_z
 
     def reset_states(self):
