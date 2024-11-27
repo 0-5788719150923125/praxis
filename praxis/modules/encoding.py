@@ -25,7 +25,7 @@ class NoPE(nn.Module):
                 torch.linspace(1.2, 1.2, self.num_query_heads)
             )
 
-    def before_scores(self, q, k, v):
+    def before_scores(self, q, k, v, offset: int = 0):
         if self.scaled:
             # Get base scaling factor
             base_scale = 1.0 / math.sqrt(self.head_dim)
@@ -38,7 +38,7 @@ class NoPE(nn.Module):
         else:
             return q, k, v
 
-    def after_scores(self, scores):
+    def after_scores(self, scores, offset: int = 0):
         return scores
 
 
@@ -60,13 +60,15 @@ class ALiBi(NoPE):
             "positions", torch.arange(config.context_length, dtype=torch.float32)
         )
 
-    def compute_before(self, q, k, v):
+    def before_scores(self, q, k, v, offset: int = 0):
         return q, k, v
 
-    def compute_after(self, scores):
+    def compute_after(self, scores, offset: int = 0):
         batch_size, num_heads, seq_len, _ = scores[0].shape
-        # slice from the pre-computed ALiBi biases
+        # Use offset positions
         positions = self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
+        # Add offset to positions
+        positions = positions + offset
         pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
         biases = self.slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
         scores = [score - biases for score in scores]
@@ -98,19 +100,17 @@ class RoPE(NoPE):
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def before_scores(self, q, k, v):
-        # Get sequence length and device
+    def before_scores(self, q, k, v, offset: int = 0):
         seq_len = q.size(2)
         device = q.device
         dtype = q.dtype
 
-        # Ensure embeddings are computed and cached
-        self._compute_rope_embeddings(seq_len, device, dtype)
+        # Pass offset to compute_rope_embeddings
+        self._compute_rope_embeddings(seq_len, device, dtype, offset)
 
         cos = self._cached_cos[:, :, :seq_len, :]
         sin = self._cached_sin[:, :, :seq_len, :]
 
-        # Rest of the code remains the same
         q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
         k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
 
@@ -130,12 +130,11 @@ class RoPE(NoPE):
 
         return q_rope, k_rope, v
 
-    def after_scores(self, scores):
+    def after_scores(self, scores, offset: int = 0):
         return scores
 
-    def _compute_rope_embeddings(self, seq_len, device, dtype):
-        """Compute sin and cos embeddings."""
-        # Recompute if cache is invalid
+    def _compute_rope_embeddings(self, seq_len, device, dtype, offset: int = 0):
+        """Compute sin and cos embeddings with offset."""
         if (
             self._cached_seq_length is None
             or seq_len > self._cached_seq_length
@@ -143,11 +142,10 @@ class RoPE(NoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
-            positions = torch.arange(seq_len, device=device) * self.scale
-            # [seq_len, dim/2]
+            # Add offset to positions
+            positions = (torch.arange(seq_len, device=device) + offset) * self.scale
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
-            # [1, 1, seq_len, dim]
             cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
             sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
 
@@ -199,8 +197,8 @@ class YaRN(RoPE):
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def _compute_rope_embeddings(self, seq_len, device, dtype):
-        """Compute YaRN-scaled RoPE embeddings."""
+    def _compute_rope_embeddings(self, seq_len, device, dtype, offset: int = 0):
+        """Compute YaRN-scaled RoPE embeddings with offset."""
         if (
             self._cached_seq_length is None
             or seq_len > self._cached_seq_length
@@ -208,39 +206,31 @@ class YaRN(RoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
+            # Consider total sequence length including offset for scaling
+            total_seq_len = seq_len + offset
+            dynamic_scale = max(1.0, total_seq_len / self.original_max_position)
 
-            # Current sequence scaling factor (for dynamic scaling)
-            dynamic_scale = max(1.0, seq_len / self.original_max_position)
-
-            # Generate position indices
-            positions = torch.arange(seq_len, device=device, dtype=dtype)
+            # Generate position indices with offset
+            positions = torch.arange(seq_len, device=device, dtype=dtype) + offset
 
             # Calculate per-dimension scaling factors
             dim_scales = torch.ones(self.head_dim // 2, device=device, dtype=dtype)
 
-            # Apply NTK-by-parts scaling
             for i in range(self.head_dim // 2):
                 rotations = self.dim_ranges[i]
                 if rotations <= self.alpha:
-                    dim_scales[i] = dynamic_scale  # Full scaling
+                    dim_scales[i] = dynamic_scale
                 elif rotations >= self.beta:
-                    dim_scales[i] = 1.0  # No scaling
+                    dim_scales[i] = 1.0
                 else:
-                    # Linear interpolation between scaling and no scaling
                     dim_scales[i] = 1.0 + (dynamic_scale - 1.0) * (
                         self.beta - rotations
                     ) / (self.beta - self.alpha)
 
-            # Apply scaling to frequencies
             scaled_inv_freq = self.inv_freq * dim_scales
-
-            # Compute position embeddings with scaled frequencies
             pos_emb = positions.unsqueeze(1) * scaled_inv_freq.unsqueeze(0)
-
-            # Apply YaRN attention scaling
             pos_emb = pos_emb * self.scale
 
-            # Generate final rotary embeddings
             cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
             sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
 

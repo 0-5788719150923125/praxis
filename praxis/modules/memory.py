@@ -44,7 +44,9 @@ class CompressiveMemory(nn.Module):
             self.init_mem = None
             self.init_z = None
 
-    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+    def forward(
+        self, q: Tensor, k: Tensor, v: Tensor, attention_output: Tensor
+    ) -> Tensor:
         batch_size = q.size(0)
 
         # Get states - either initialize or pop from buffer
@@ -71,9 +73,9 @@ class CompressiveMemory(nn.Module):
         # Store single new state
         self._states_buffer.append((new_states, new_z))
 
-        return memory_output
+        return self._blend_outputs(memory_output, attention_output)
 
-    def blend_outputs(self, memory_output: Tensor, attention_output: Tensor) -> Tensor:
+    def _blend_outputs(self, memory_output: Tensor, attention_output: Tensor) -> Tensor:
         gate = torch.sigmoid(self.betas)
         return gate * memory_output + (1 - gate) * attention_output
 

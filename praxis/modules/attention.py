@@ -56,7 +56,7 @@ class PraxisAttention(nn.Module):
         self.memory = config.memory
         self.chunk_size = 0
         if self.memory:
-            self.chunk_size = 64
+            self.chunk_size = 256
             self.memory = CompressiveMemory(config)
 
         # The core attention mechanism
@@ -117,9 +117,14 @@ class PraxisAttention(nn.Module):
             chunk_v = v[:, :, start_idx:end_idx]
             chunk_mask = attention_mask[:, start_idx:end_idx]
 
-            # Process chunk
+            # Process chunk with position offset
             chunk_output = self._process_chunk(
-                chunk_q, chunk_k, chunk_v, chunk_mask, current_chunk_size
+                chunk_q,
+                chunk_k,
+                chunk_v,
+                chunk_mask,
+                current_chunk_size,
+                start_idx,
             )
 
             outputs.append(chunk_output)
@@ -140,6 +145,7 @@ class PraxisAttention(nn.Module):
         v: Tensor,
         attention_mask: Tensor,
         chunk_size: int,
+        offset: int = 0,
     ) -> Tensor:
         batch_size = q.size(0)
 
@@ -148,15 +154,15 @@ class PraxisAttention(nn.Module):
             k = k.repeat_interleave(self.num_queries, dim=1)
             v = v.repeat_interleave(self.num_queries, dim=1)
 
-        # Apply positional encoding
-        q, k, v = self.encoding.before_scores(q, k, v)
+        # Apply positional encoding with offset
+        q, k, v = self.encoding.before_scores(q, k, v, offset=offset)
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
         hist_len = k.size(2)
 
         # Apply positional encoding to scores
-        scores = self.encoding.after_scores(scores)
+        scores = self.encoding.after_scores(scores, offset=offset)
 
         # Apply masking
         scores, causal_mask, chunk_attention_mask = self.algorithm.apply_masking(
@@ -169,11 +175,8 @@ class PraxisAttention(nn.Module):
         )
 
         if self.memory:
-            # Get memory output and blend
-            memory_output = self.memory(q, k, v)
-            attention_output = self.memory.blend_outputs(
-                memory_output, attention_output
-            )
+            # Get memory output and blend (memory doesn't need position info)
+            attention_output = self.memory(q, k, v, attention_output)
 
         # Reshape for output projection
         chunk_output = attention_output.transpose(1, 2).reshape(
