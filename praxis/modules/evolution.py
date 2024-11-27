@@ -11,13 +11,13 @@ class GenomicBottleneck(nn.Module):
         config,
         genome_dim: int = 23,
         population_size: int = 64,
-        mutation_rate: float = 0.001,
+        mutation_rate: float = 0.00001,
         tournament_size: int = 5,
         elite_size: int = 2,
     ):
         super().__init__()
         self.input_dim = config.num_dims
-        self.half_input_dim = self.input_dim // 2
+        self.quarter_input_dim = self.input_dim // 4
         self.output_dim = config.num_dims
         self.genome_dim = genome_dim
         self.population_size = population_size
@@ -29,11 +29,11 @@ class GenomicBottleneck(nn.Module):
         self.fitness_scores = torch.full((population_size,), float("-inf"))
         self.best_fitness = float("-inf")
 
-        # Trainable projections
-        self.left = nn.Linear(self.half_input_dim, genome_dim)
-        self.right = nn.Linear(genome_dim, self.half_input_dim)
+        # Trainable projections for the bottlenecked part
+        self.left = nn.Linear(self.quarter_input_dim, genome_dim)
+        self.right = nn.Linear(genome_dim, self.quarter_input_dim)
 
-        # Initialize population
+        # Initialize population of genomes
         self.population = nn.Parameter(
             torch.randn(population_size, genome_dim, genome_dim) * 0.02,
             requires_grad=False,
@@ -46,34 +46,48 @@ class GenomicBottleneck(nn.Module):
         self.stored_inputs = []
 
     def forward(self, x):
-        # Split the input tensor into two halves along the feature dimension
-        residual, bottleneck_input = torch.split(x, self.half_input_dim, dim=-1)
+        # Split the input tensor into four equal parts along the feature dimension
+        A, T, C, G = torch.split(x, self.quarter_input_dim, dim=-1)
+        splits = [A, T, C, G]
 
-        # Project the bottleneck half
+        # Randomly select one part to go through the bottleneck
+        indices = [0, 1, 2, 3]
+        bottleneck_idx = random.choice(indices)
+        residual_indices = indices.copy()
+        residual_indices.remove(bottleneck_idx)
+
+        bottleneck_input = splits[bottleneck_idx]
+        residual_parts = [splits[i] for i in residual_indices]
+
+        # Project the bottleneck input
         projected = self.left(bottleneck_input)
 
-        # Store input state
+        # Store input state for fitness evaluation
         if self.training:
             self.stored_inputs.append(projected.detach())
-            if len(self.stored_inputs) > 10:  # Keep last 10 states
+            if len(self.stored_inputs) > 10:  # Keep the last 10 states
                 self.stored_inputs.pop(0)
 
+        # Use the active genome for transformation
         with torch.no_grad():
             weight = self.active_genome.clone()
 
         # Apply linear transformation with the genome
         x_bottleneck = F.linear(projected, weight)
 
-        # Project back to the original half dimension
+        # Project back to the original quarter dimension
         x_bottleneck = self.right(x_bottleneck)
 
-        # Concatenate the residual half with the bottleneck output
-        x = torch.cat((residual, x_bottleneck), dim=-1)
+        # Concatenate the residual parts with the bottlenecked part
+        # Insert the bottlenecked part back into its original position
+        output_splits = residual_parts.copy()
+        output_splits.insert(bottleneck_idx, x_bottleneck)
+        x = torch.cat(output_splits, dim=-1)
 
         return x
 
     def compute_fitness(self, genome, num_trials=1):
-        """Compute fitness based on reconstruction error of the bottleneck half"""
+        """Compute fitness based on reconstruction error of the bottlenecked part"""
         if not self.stored_inputs:
             return float("-inf")
 
@@ -89,14 +103,14 @@ class GenomicBottleneck(nn.Module):
         return fitness
 
     def tournament_select(self):
-        """Select individual using tournament selection"""
+        """Select an individual using tournament selection"""
         indices = torch.randint(0, self.population_size, (self.tournament_size,))
         tournament_fitness = self.fitness_scores[indices]
         winner_idx = indices[torch.argmax(tournament_fitness)]
         return self.population[winner_idx]
 
     def mutate(self, genome):
-        """Apply small random mutations"""
+        """Apply small random mutations to a genome"""
         with torch.no_grad():
             mutation = torch.randn_like(genome) * self.mutation_rate
             return genome + mutation
@@ -104,19 +118,19 @@ class GenomicBottleneck(nn.Module):
     def evolve_population(self, num_trials=10):
         """Evolve the population using tournament selection"""
         with torch.no_grad():
-            # Evaluate current population
+            # Evaluate the current population
             for i in range(self.population_size):
                 genome = self.population[i]
                 fitness = self.compute_fitness(genome, num_trials=num_trials)
                 self.fitness_scores[i] = fitness
 
-            # Store best genome
+            # Store the best genome
             best_idx = torch.argmax(self.fitness_scores)
             if self.fitness_scores[best_idx] > self.best_fitness:
                 self.best_fitness = self.fitness_scores[best_idx]
                 self.active_genome.data.copy_(self.population[best_idx].clone())
 
-            # Create new population
+            # Create a new population
             new_population = torch.zeros_like(self.population)
 
             # Preserve elite individuals
@@ -125,13 +139,13 @@ class GenomicBottleneck(nn.Module):
                 sorted_indices[: self.elite_size]
             ]
 
-            # Generate rest through tournament selection and mutation
+            # Generate the rest through tournament selection and mutation
             for i in range(self.elite_size, self.population_size):
                 parent = self.tournament_select()
                 child = self.mutate(parent)
                 new_population[i] = child
 
-            # Update population
+            # Update the population
             self.population.data.copy_(new_population)
 
     @property
@@ -143,7 +157,7 @@ if __name__ == "__main__":
     print("Running tests for GenomicBottleneck...")
 
     class MockConfig:
-        num_dims = 512  # Must be even for splitting in half
+        num_dims = 512  # Must be divisible by 4 for splitting
 
     # Test parameters
     config = MockConfig()
@@ -151,7 +165,7 @@ if __name__ == "__main__":
     batch_size = 8
     sequence_length = 10
 
-    # Create layer
+    # Create the layer
     layer = GenomicBottleneck(
         config=config, genome_dim=genome_dim, population_size=50, mutation_rate=0.01
     )
