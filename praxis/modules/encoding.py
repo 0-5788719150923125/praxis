@@ -178,7 +178,9 @@ class YaRN(RoPE):
         self.original_max_position = config.context_length
 
         # YaRN attention scaling factor (from paper equation)
-        factor = 2.0  # e.g., 16.0 for 32k context
+        factor = (
+            4.0  # e.g. if original_max_position is 4096, then a factor of 4.0 is 16384
+        )
         self.scale = 0.1 * math.log(factor) + 1.0
 
         # Generate position-dependent scaling factors for NTK-by-parts
@@ -187,7 +189,7 @@ class YaRN(RoPE):
 
         # Calculate rotations per dimension
         positions = torch.arange(self.original_max_position)
-        dim_rotations = positions.unsqueeze(1) * inv_freq.unsqueeze(
+        dim_rotations = positions.unsqueeze(1) * self.inv_freq.unsqueeze(
             0
         )  # [seq_len, dim/2]
         self.dim_ranges = (dim_rotations[-1] / math.pi) * 2  # rotations at max position

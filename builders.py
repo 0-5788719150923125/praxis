@@ -30,7 +30,7 @@ HUGGINGFACE_DATASETS = [
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
-        weight=0.001,
+        weight=0.002,
     ),
     dict(
         path="HuggingFaceTB/smollm-corpus",
