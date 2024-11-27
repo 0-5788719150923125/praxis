@@ -25,7 +25,7 @@ class PraxisSMEAR(nn.Module):
 
     __version__ = "0.2.0"
 
-    def __init__(self, config: SMEARConfig, experts: list[nn.Module]):
+    def __init__(self, config: SMEARConfig, experts: list[nn.Module], *args, **kwargs):
         super().__init__()
 
         self.num_experts = config.num_experts

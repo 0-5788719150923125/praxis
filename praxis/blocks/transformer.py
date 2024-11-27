@@ -30,7 +30,7 @@ class PraxisTransformer(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: AutoConfig, *args, **kwargs):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.attn = PraxisAttention(config)

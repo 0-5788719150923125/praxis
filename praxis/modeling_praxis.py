@@ -11,7 +11,6 @@ from transformers.modeling_outputs import (
 
 from praxis import PraxisConfig
 from praxis.modules import EMBEDDING_REGISTRY
-from praxis.modules.compression import PraxisCompressor
 from praxis.modules.decoder import PraxisDecoder
 
 
@@ -21,11 +20,6 @@ class PraxisModel(PreTrainedModel):
     def __init__(self, config: PraxisConfig):
         super().__init__(config)
         self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
-        self.compression = (
-            PraxisCompressor(config, compressed_dim=config.num_dims)
-            if config.compression
-            else False
-        )
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
@@ -42,9 +36,6 @@ class PraxisModel(PreTrainedModel):
 
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
-
-        if self.compression:
-            inputs, attention_mask = self.compression(inputs, attention_mask)
 
         last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
         self.aux_losses.append(aux_loss)
@@ -97,9 +88,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         )
 
         hidden_states = outputs[0]
-
-        if self.compression:
-            hidden_states = self.compression.decode(hidden_states)
 
         logits = self.head(hidden_states)
 
