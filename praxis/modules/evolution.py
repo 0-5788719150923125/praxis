@@ -20,9 +20,6 @@ class GenomicBottleneck(nn.Module):
         super().__init__()
         self.input_dim = config.num_dims
         self.quarter_input_dim = self.input_dim // 4
-        self.three_quarter_input_dim = (
-            3 * self.quarter_input_dim
-        )  # New dimension for 3/4 of input
         self.output_dim = config.num_dims
         self.genome_dim = genome_dim
         self.population_size = population_size
@@ -37,9 +34,9 @@ class GenomicBottleneck(nn.Module):
         self.fitness_scores = torch.full((population_size,), float("-inf"))
         self.best_fitness = float("-inf")
 
-        # Modified projections for the larger bottlenecked part
-        self.left = nn.Linear(self.three_quarter_input_dim, genome_dim)
-        self.right = nn.Linear(genome_dim, self.three_quarter_input_dim)
+        # Single projection for quarter-sized inputs
+        self.left = nn.Linear(self.quarter_input_dim, genome_dim)
+        self.right = nn.Linear(genome_dim, self.quarter_input_dim)
 
         # Initialize population of genomes
         self.population = nn.Parameter(
@@ -67,55 +64,51 @@ class GenomicBottleneck(nn.Module):
         residual_part = splits[residual_idx]
         bottleneck_parts = [splits[i] for i in bottleneck_indices]
 
-        # Concatenate the three parts that will go through bottleneck
-        bottleneck_input = torch.cat(bottleneck_parts, dim=-1)
+        # Process each bottleneck part separately
+        processed_parts = []
+        for part in bottleneck_parts:
+            # Project the bottleneck input
+            projected = self.left(part)
 
-        # Project the bottleneck input
-        projected = self.left(bottleneck_input)
+            # Store input state for fitness evaluation
+            if self.training:
+                self.stored_inputs.append(projected.detach())
+                if len(self.stored_inputs) > 50:
+                    self.stored_inputs.pop(0)
 
-        # Store input state for fitness evaluation
+            # Use the active genome for transformation
+            with torch.no_grad():
+                weight = self.active_genome.clone()
+
+            # Apply linear transformation with the genome
+            x_bottleneck = F.linear(projected, weight)
+
+            # Project back to the original quarter dimension
+            x_bottleneck = self.right(x_bottleneck)
+            processed_parts.append(x_bottleneck)
+
         if self.training:
-            self.stored_inputs.append(projected.detach())
-            if len(self.stored_inputs) > 50:
-                self.stored_inputs.pop(0)
-
             self.step_counter += 1
-
             if (
                 self.step_counter % self.evolve_every_n_steps == 0
                 and len(self.stored_inputs) >= self.num_trials
             ):
                 self.evolve_population(num_trials=self.num_trials)
-                # Optionally reset stored inputs after evolution
-                # self.stored_inputs = []
 
-        # Use the active genome for transformation
-        with torch.no_grad():
-            weight = self.active_genome.clone()
-
-        # Apply linear transformation with the genome
-        x_bottleneck = F.linear(projected, weight)
-
-        # Project back to the original three-quarter dimension
-        x_bottleneck = self.right(x_bottleneck)
-
-        # Split the bottleneck output back into three parts
-        bottleneck_splits = torch.split(x_bottleneck, self.quarter_input_dim, dim=-1)
-
-        # Reconstruct the output by inserting the residual part back in its original position
+        # Reconstruct the output by inserting parts in their original positions
         output_splits = []
         bottleneck_idx = 0
         for i in range(4):
             if i == residual_idx:
                 output_splits.append(residual_part)
             else:
-                output_splits.append(bottleneck_splits[bottleneck_idx])
+                output_splits.append(processed_parts[bottleneck_idx])
                 bottleneck_idx += 1
 
         x = torch.cat(output_splits, dim=-1)
-
         return x
 
+    # Rest of the methods remain unchanged
     def compute_fitness(self, genome, num_trials=1):
         """Compute fitness based on cosine similarity of the bottlenecked part"""
         if not self.stored_inputs:
