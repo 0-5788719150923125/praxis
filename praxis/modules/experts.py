@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.modules.dense import PraxisGLU, PraxisMLP
+from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly
 from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
@@ -15,6 +15,7 @@ EXPERT_REGISTRY = {
     "kan": PraxisKAN,
     "mlp": PraxisMLP,
     "peer": PraxisPEER,
+    "poly": PraxisPoly,
     "recurrent": PraxisRecurrent,
 }
 
@@ -29,6 +30,7 @@ EXPERT_CONFIGS = {
         "key_dims": 90,
         "offset_heads": False,
     },
+    "poly": {},
     "recurrent": {},
 }
 

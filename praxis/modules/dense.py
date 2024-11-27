@@ -1,5 +1,6 @@
 from typing import Optional, OrderedDict
 
+import torch
 from torch import nn
 from transformers import AutoConfig
 
@@ -43,3 +44,79 @@ class PraxisGLU(nn.Module):
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
         return self.down(self.dropout(a * self.act(b)))
+
+
+class PraxisPoly(nn.Module):
+    """
+    A novel dense layer based on explicit polynomial feature expansions.
+    Learns combinations of features up to a specified degree while maintaining
+    computational efficiency through careful parameter sharing. Polynomial
+    functions are universal approximators (Stone-Weierstrass theorem).
+    """
+
+    def __init__(
+        self,
+        config: AutoConfig,
+        degree: int = 6,
+        bottleneck: float = 0.5,
+        *args,
+        **kwargs
+    ):
+        super().__init__()
+        dim = config.num_dims
+        self.dim = dim
+        self.degree = degree
+        self.reduced_dim = int(dim * bottleneck)
+
+        # Reduce dimension for efficiency
+        self.down = nn.Linear(dim, self.reduced_dim)
+
+        # Learnable coefficients for each degree
+        self.degree_coeffs = nn.ParameterList(
+            [nn.Parameter(torch.randn(self.reduced_dim) * 0.02) for _ in range(degree)]
+        )
+
+        # Learnable mixing matrices for cross-terms
+        self.cross_terms = nn.ParameterList(
+            [
+                nn.Parameter(torch.randn(self.reduced_dim, self.reduced_dim) * 0.02)
+                for _ in range(degree - 1)
+            ]
+        )
+
+        # Project back to original dimension
+        self.up = nn.Linear(self.reduced_dim, dim)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        residual = x
+
+        # Project to lower dimension
+        x = self.down(x)
+
+        # Compute powers and cross-terms
+        terms = []
+        x_power = x
+
+        for i in range(self.degree):
+            # Add direct power term
+            weighted_power = x_power * self.degree_coeffs[i]
+            terms.append(weighted_power)
+
+            # Add cross-terms for higher degrees
+            if i < self.degree - 1:
+                cross_term = torch.matmul(x_power, self.cross_terms[i]) * x
+                terms.append(cross_term)
+
+            # Prepare next power
+            x_power = x_power * x
+
+        # Combine all terms
+        output = sum(terms)
+
+        # Project back to original dimension
+        output = self.up(output)
+        output = self.dropout(output)
+
+        # Residual connection
+        return output + residual
