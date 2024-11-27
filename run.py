@@ -706,6 +706,9 @@ class TerminalInterface(Callback):
             "remote_experts": int(remote_experts),
         }
 
+        if "fitness" in swarm_info:
+            data.update({"fitness": swarm_info["fitness"]})
+
         if "churn" in swarm_info:
             data.update({"memory_churn": swarm_info["churn"]})
 
@@ -735,6 +738,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_rate(rate.item())
             self.dashboard.update_loss(self.ema_loss)
             self.dashboard.update_expert_count(local_experts, remote_experts)
+            if "fitness" in data:
+                self.dashboard.update_fitness(data["fitness"])
             if "memory_churn" in data:
                 self.dashboard.update_memory(data["memory_churn"])
             if "acc0" in data:

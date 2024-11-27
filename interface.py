@@ -83,6 +83,7 @@ class TerminalDashboard:
         self.mode = "train"
         self.local_experts = 0
         self.remote_experts = 0
+        self.fitness = None
         self.memory_churn = None
         self.accuracy = None
 
@@ -186,6 +187,10 @@ class TerminalDashboard:
     def update_accuracy(self, acc0, acc1):
         with self.lock:
             self.accuracy = [acc0, acc1]
+
+    def update_fitness(self, fitness):
+        with self.lock:
+            self.fitness = fitness
 
     def update_memory(self, churn):
         with self.lock:
@@ -365,6 +370,8 @@ class TerminalDashboard:
             if i == 0:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
                 text = f" ERROR: {train_loss:.4f}"
+                if self.fitness is not None:
+                    text += f" || FITNESS: {self.fitness:.4f}%"
                 if self.memory_churn is not None:
                     text += f" || SURPRISE: {self.memory_churn:.2f}%"
                 if self.accuracy is not None:

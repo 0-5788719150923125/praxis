@@ -113,9 +113,13 @@ class PraxisDecoder(nn.Module):
 
     def get_metrics(self):
         """Return current prediction accuracies"""
+        extras = {}
+        if self.genome:
+            extras = {**extras, **self.genome.get_metrics()}
         return {
             "experts": dict(
                 local=len(self.stack.local_experts),
                 remote=len(self.stack.remote_experts),
-            )
+            ),
+            **extras,
         }

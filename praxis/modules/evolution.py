@@ -165,6 +165,9 @@ class GenomicBottleneck(nn.Module):
             # Update the population
             self.population.data.copy_(new_population)
 
+    def get_metrics(self):
+        return {"fitness": self.best_fitness}
+
     @property
     def current_best_fitness(self):
         return self.best_fitness.item()
