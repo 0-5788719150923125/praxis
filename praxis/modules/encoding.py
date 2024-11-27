@@ -81,6 +81,8 @@ class RoPE(NoPE):
     https://arxiv.org/abs/2104.09864
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: AutoConfig, *args, **kwargs):
         super().__init__(config)
         # Important: RoPE operates on pairs of dimensions
@@ -167,6 +169,8 @@ class YaRN(RoPE):
     An implementation of YaRN (Yet another RoPE extensioN).
     https://arxiv.org/abs/2309.00071
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: AutoConfig, *args, **kwargs):
         super().__init__(config)

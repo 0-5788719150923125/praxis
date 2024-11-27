@@ -12,6 +12,8 @@ class PraxisRecurrent(nn.Module):
     A recurrent block using LSTM modules with learnable initial states.
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: "AutoConfig"):
         super().__init__()
         hidden_dim = config.num_dims
