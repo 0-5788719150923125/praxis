@@ -6,24 +6,18 @@ import torch.nn.functional as F
 
 
 class GenomicBottleneck(nn.Module):
-    """
-    A DNA-like bottlenecking layer. Inspired by the following research:
-    https://www.pnas.org/doi/10.1073/pnas.2409160121
-    """
-
-    __version__ = "0.1.0"
-
     def __init__(
         self,
         config,
         genome_dim: int = 23,
         population_size: int = 64,
-        mutation_rate: float = 0.00001,
+        mutation_rate: float = 0.001,
         tournament_size: int = 5,
         elite_size: int = 2,
     ):
         super().__init__()
         self.input_dim = config.num_dims
+        self.half_input_dim = self.input_dim // 2
         self.output_dim = config.num_dims
         self.genome_dim = genome_dim
         self.population_size = population_size
@@ -36,8 +30,8 @@ class GenomicBottleneck(nn.Module):
         self.best_fitness = float("-inf")
 
         # Trainable projections
-        self.left = nn.Linear(self.input_dim, genome_dim)
-        self.right = nn.Linear(genome_dim, self.output_dim)
+        self.left = nn.Linear(self.half_input_dim, genome_dim)
+        self.right = nn.Linear(genome_dim, self.half_input_dim)
 
         # Initialize population
         self.population = nn.Parameter(
@@ -52,7 +46,11 @@ class GenomicBottleneck(nn.Module):
         self.stored_inputs = []
 
     def forward(self, x):
-        projected = self.left(x)
+        # Split the input tensor into two halves along the feature dimension
+        residual, bottleneck_input = torch.split(x, self.half_input_dim, dim=-1)
+
+        # Project the bottleneck half
+        projected = self.left(bottleneck_input)
 
         # Store input state
         if self.training:
@@ -64,13 +62,18 @@ class GenomicBottleneck(nn.Module):
             weight = self.active_genome.clone()
 
         # Apply linear transformation with the genome
-        x = F.linear(projected, weight)
+        x_bottleneck = F.linear(projected, weight)
 
-        x = self.right(x)
+        # Project back to the original half dimension
+        x_bottleneck = self.right(x_bottleneck)
+
+        # Concatenate the residual half with the bottleneck output
+        x = torch.cat((residual, x_bottleneck), dim=-1)
+
         return x
 
     def compute_fitness(self, genome, num_trials=1):
-        """Compute fitness based on reconstruction error"""
+        """Compute fitness based on reconstruction error of the bottleneck half"""
         if not self.stored_inputs:
             return float("-inf")
 
@@ -140,7 +143,7 @@ if __name__ == "__main__":
     print("Running tests for GenomicBottleneck...")
 
     class MockConfig:
-        num_dims = 512
+        num_dims = 512  # Must be even for splitting in half
 
     # Test parameters
     config = MockConfig()
