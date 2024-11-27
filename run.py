@@ -308,6 +308,12 @@ parser.add_argument(
     help="Use a long-term episodic memory module",
 )
 parser.add_argument(
+    "--evolve",
+    action="store_true",
+    default=False,
+    help="Use a genomic bottleneck",
+)
+parser.add_argument(
     "--hivemind",
     action="store_true",
     default=False,
@@ -425,6 +431,7 @@ config = PraxisConfig(
     stickbreaking=stickbreaking,
     compression=compression,
     memory=memory,
+    evolve=evolve,
     activation=activation,
     hivemind=hivemind,
     initial_peers=initial_peers,

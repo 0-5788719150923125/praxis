@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import AutoConfig
 
+from praxis.modules.evolution import GenomicBottleneck
 from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
 from praxis.stacks import PraxisStack
 
@@ -22,6 +23,7 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.stack = PraxisStack(config)
+        self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = self.stack.manager
         self._define_checkpoints(config.strategy, self.stack.depth)
 
@@ -57,6 +59,9 @@ class PraxisDecoder(nn.Module):
                         original_order, experts, expert, new_states
                     )
                     aux_losses.append(aux_loss)
+
+                if self.genome and i == 4:
+                    new_states = self.genome(new_states)
 
                 # Commit to self
                 hidden_states = new_states
