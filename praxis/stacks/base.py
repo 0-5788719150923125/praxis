@@ -47,7 +47,10 @@ class PraxisStack(nn.Module):
             for i in range(self.num_experts):
                 mixture = BLOCK_REGISTRY["recurrent"](config, blocks)
                 router = False
-                if config.sparse and i % 2 != 0:
+                use_router = config.sparse and i % 2 != 0
+                if "chaos" in config.meta:
+                    use_router = True
+                if use_router:
                     router = PraxisMixtureOfDepths(config)
                 expert = PraxisExpert(config, block=mixture, router=router)
                 self.local_experts.append(expert)
@@ -58,7 +61,10 @@ class PraxisStack(nn.Module):
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
                 router = False
-                if config.sparse and i % 2 != 0:
+                use_router = config.sparse and i % 2 != 0
+                if "chaos" in config.meta:
+                    use_router = True
+                if use_router:
                     router = PraxisMixtureOfDepths(config)
                 expert = PraxisExpert(config, block=block, router=router)
                 self.local_experts.append(expert)

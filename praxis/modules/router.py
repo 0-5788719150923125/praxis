@@ -1,3 +1,5 @@
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,6 +17,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     def __init__(self, config: AutoConfig):
         super().__init__(in_features=config.num_dims, out_features=1)
+        self.config = config
         self.capacity = config.capacity
         assert (
             self.capacity > 0 and self.capacity < 1.0
@@ -27,6 +30,9 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         b, s, d = inputs.shape
         k = int(s * self.capacity)
+
+        if "chaos" in self.config.meta:
+            k = random.randint(int(s * 0.1), int(s * 0.9))
 
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
