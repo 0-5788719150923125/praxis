@@ -11,7 +11,7 @@ class GenomicBottleneck(nn.Module):
         config,
         genome_dim: int = 23,
         population_size: int = 64,
-        mutation_rate: float = 0.001,
+        mutation_rate: float = 0.00001,
         tournament_size: int = 5,
         elite_size: int = 2,
         evolve_every_n_steps: int = 10,
@@ -104,7 +104,7 @@ class GenomicBottleneck(nn.Module):
         return x
 
     def compute_fitness(self, genome, num_trials=1):
-        """Compute fitness based on reconstruction error of the bottlenecked part"""
+        """Compute fitness based on cosine similarity of the bottlenecked part"""
         if not self.stored_inputs:
             return float("-inf")
 
@@ -114,8 +114,8 @@ class GenomicBottleneck(nn.Module):
             input_sample = self.stored_inputs[idx]
             with torch.no_grad():
                 x = F.linear(input_sample, genome)
-                mse = F.mse_loss(x, input_sample)
-                fitness -= mse.item()  # Lower MSE leads to higher fitness
+                cos_sim = F.cosine_similarity(x, input_sample, dim=-1).mean().item()
+                fitness += cos_sim
         fitness /= num_trials
         return fitness
 
@@ -167,10 +167,6 @@ class GenomicBottleneck(nn.Module):
 
     def get_metrics(self):
         return {"fitness": self.best_fitness}
-
-    @property
-    def current_best_fitness(self):
-        return self.best_fitness.item()
 
 
 if __name__ == "__main__":
@@ -236,10 +232,10 @@ if __name__ == "__main__":
         # Evolve and print detailed stats
         layer.evolve_population(num_trials=num_trials)
         print(f"Generation {generation + 1}:")
-        print(f"  Best Fitness = {layer.current_best_fitness:.6f}")
+        print(f"  Best Fitness = {layer.get_metrics()["fitness"]:.6f}")
         print(f"  Avg Fitness = {layer.fitness_scores.mean().item():.6f}")
         print(f"  Min Fitness = {layer.fitness_scores.min().item():.6f}")
-        fitness_history.append(layer.current_best_fitness)
+        fitness_history.append(layer.get_metrics()["fitness"])
 
     # Check if fitness improved
     assert (
