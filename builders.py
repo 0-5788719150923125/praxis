@@ -22,9 +22,10 @@ class DataFormat(Enum):
     CONVERSATION = "conversation"
     PERSONACHAT = "persona_chat"
     CUSTOM = "custom"
+    SMOLTALK = "smoltalk"
 
 
-HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
+HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
 HUGGINGFACE_DATASETS = [
     dict(
         path="open-phi/textbooks",
@@ -53,12 +54,11 @@ HUGGINGFACE_DATASETS = [
         weight=0.005,
     ),
     dict(
-        path="togethercomputer/RedPajama-Data-V2",
-        name="sample-10B",
-        snapshots=["2023-14"],
-        keys=["raw_content"],
-        format=DataFormat.SIMPLE,
-        weight=1.0,
+        path="HuggingFaceTB/smoltalk",
+        name="all",
+        keys=["messages"],
+        format=DataFormat.SMOLTALK,
+        weight=0.005,
     ),
     dict(
         path="codeparrot/github-code",
@@ -66,6 +66,14 @@ HUGGINGFACE_DATASETS = [
         keys=["code"],
         format=DataFormat.SIMPLE,
         weight=0.001,
+    ),
+    dict(
+        path="togethercomputer/RedPajama-Data-V2",
+        name="sample-10B",
+        snapshots=["2023-14"],
+        keys=["raw_content"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
     ),
     dict(
         path="HuggingFaceFW/fineweb-edu",
@@ -175,11 +183,33 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
     return formatted
 
 
+def format_smoltalk(document: Dict, keys: List[str]) -> str:
+    """Format Smoltalk-style message arrays into ChatML format."""
+    assert (
+        len(keys) == 1 and keys[0] == "messages"
+    ), "Smoltalk format requires 'messages' key"
+
+    # Get messages array
+    messages = document.get(keys[0], [])
+
+    # Format each message in original order
+    formatted_messages = []
+    for message in messages:
+        role = message.get("role", "user")  # Default to user if role missing
+        content = message.get("content", "").strip()
+        if content:  # Only add non-empty messages
+            formatted_messages.append(f"{start_token}{role}\n{content}\n{end_token}\n")
+
+    # Join all messages together
+    return "".join(formatted_messages)
+
+
 FORMAT_HANDLERS = {
     DataFormat.SIMPLE: format_simple,
     DataFormat.INSTRUCTION: format_instruction,
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.PERSONACHAT: format_personachat,
+    DataFormat.SMOLTALK: format_smoltalk,
 }
 
 
@@ -310,11 +340,12 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"].append(HUGGINGFACE_DATASETS[2])
         config["primary"].append(HUGGINGFACE_DATASETS[3])
         config["primary"].append(HUGGINGFACE_DATASETS[4])
+        config["primary"].append(HUGGINGFACE_DATASETS[5])
     if dev:
         # Overwrite with simpler dataset
         config["primary"] = [HUGGINGFACE_DATASETS[0]]
     else:
-        config["validation"].append(HUGGINGFACE_DATASETS[5])
+        config["validation"].append(HUGGINGFACE_DATASETS[6])
 
     return config
 
