@@ -31,7 +31,7 @@ class PraxisConfig(PretrainedConfig):
         memory=False,
         hivemind=False,
         initial_peers=[],
-        memory_profile="speed",
+        strategy="speed",
         device_map="cpu",
         pad_token_id=0,
         bos_token_id=1,
@@ -73,7 +73,7 @@ class PraxisConfig(PretrainedConfig):
         self.memory = memory
         self.hivemind = hivemind
         self.initial_peers = initial_peers
-        self.memory_profile = memory_profile
+        self.strategy = strategy
         self.device_map = device_map
         self.seed = seed
         self.debug = debug

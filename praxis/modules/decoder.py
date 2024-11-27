@@ -23,7 +23,7 @@ class PraxisDecoder(nn.Module):
         self.debug = config.debug
         self.stack = PraxisStack(config)
         self.manager = self.stack.manager
-        self._define_checkpoints(config.memory_profile, self.stack.depth)
+        self._define_checkpoints(config.strategy, self.stack.depth)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.stack.local_experts) + list(self.stack.remote_experts)

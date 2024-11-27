@@ -1,27 +1,25 @@
-from typing import Optional
+import asyncio
+import os
 import random
+import time
+from pathlib import Path
+from typing import Optional
 
+import hivemind
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
-
-import hivemind
 from hivemind import DHT
 from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
-from hivemind.moe.server.layers import name_to_block
-from hivemind.utils import BatchTensorDescriptor
 from hivemind.moe.server import declare_experts
-from hivemind.utils import get_dht_time
+from hivemind.moe.server.layers import name_to_block
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
+from hivemind.utils import BatchTensorDescriptor, get_dht_time
+from torch import Tensor
 
 from praxis import PraxisConfig
 from praxis.modules.experts import PraxisBlock
 from praxis.modules.router import PraxisMixtureOfDepths
-import asyncio
-import os
-from pathlib import Path
-import time
 
 
 class PraxisDecoder(nn.Module):
@@ -34,7 +32,7 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.shuffle = config.shuffle
         self.checkpoint_layers = self._checkpoint_strategy(
-            config.memory_profile, config.num_layers
+            config.strategy, config.num_layers
         )
         self.dht = False
         self.experts = nn.ModuleList()

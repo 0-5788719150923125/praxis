@@ -194,7 +194,7 @@ parser.add_argument(
     help="The primary activation function to use",
 )
 parser.add_argument(
-    "--memory_profile",
+    "--strategy",
     type=str,
     choices=["aggressive", "balanced", "speed"],
     default="speed",
@@ -431,7 +431,7 @@ config = PraxisConfig(
     block=block_type,
     expert=expert_type,
     encoding=encoding_type,
-    memory_profile=memory_profile,
+    strategy=strategy,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
