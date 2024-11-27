@@ -763,10 +763,10 @@ class TerminalInterface(Callback):
             dict(
                 max_new_tokens=1,
                 temperature=0.45,
-                eta_cutoff=0.002,
-                penalty_alpha=0.6,
-                top_k=4,
-                repetition_penalty=1.35,
+                # eta_cutoff=0.002,
+                # penalty_alpha=0.6,
+                # top_k=4,
+                repetition_penalty=1.1,
                 skip_special_tokens=False,
                 # suppress_tokens=[
                 #     tokenizer.eos_token_id,
@@ -787,6 +787,13 @@ class TerminalInterface(Callback):
 
         n_gram_size = 7
         frequency = 20
+        ignored_n_grams = [
+            self.tokenizer.bos_token,
+            self.tokenizer.eos_token,
+            "<|im_start|> user",
+            "<|im_start|> assistant",
+            "<|im_end|>",
+        ]
         if (
             self._detect_repetition(n_gram_size, frequency)
             or self._detect_sequential_repetition(threshold=5, min_segment_length=8)
@@ -813,14 +820,19 @@ class TerminalInterface(Callback):
             amplitude * math.sin(2 * math.pi * frequency * step + phase_shift)
         )
 
-    def _detect_repetition(self, top_n, threshold):
+    def _detect_repetition(self, top_n, threshold, excluded_ngrams=None):
         text = self.text
+        if excluded_ngrams is None:
+            excluded_ngrams = set()
+        else:
+            excluded_ngrams = set(excluded_ngrams)  # Convert to set for O(1) lookup
 
         # Step 1: Generate n-grams based on characters
         n_grams = [text[i : i + top_n] for i in range(len(text) - top_n + 1)]
 
-        # Step 2: Count n-gram frequencies
-        n_gram_counts = Counter(n_grams)
+        # Step 2: Filter out excluded n-grams and count frequencies
+        filtered_ngrams = [ng for ng in n_grams if ng not in excluded_ngrams]
+        n_gram_counts = Counter(filtered_ngrams)
 
         # Step 3: Check if any n-gram exceeds the threshold
         for count in n_gram_counts.values():
