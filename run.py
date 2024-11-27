@@ -788,8 +788,8 @@ class TerminalInterface(Callback):
         n_gram_size = 7
         frequency = 20
         ignored_n_grams = [
-            self.tokenizer.bos_token,
-            self.tokenizer.eos_token,
+            tokenizer.bos_token,
+            tokenizer.eos_token,
             "<|im_start|> user",
             "<|im_start|> assistant",
             "<|im_end|>",
