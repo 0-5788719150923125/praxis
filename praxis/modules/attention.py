@@ -119,7 +119,7 @@ class PraxisAttention(nn.Module):
 
             # Process chunk
             chunk_output = self._process_chunk(
-                chunk_q, chunk_k, chunk_v, chunk_mask, current_chunk_size, start_idx
+                chunk_q, chunk_k, chunk_v, chunk_mask, current_chunk_size
             )
 
             outputs.append(chunk_output)
@@ -140,7 +140,6 @@ class PraxisAttention(nn.Module):
         v: Tensor,
         attention_mask: Tensor,
         chunk_size: int,
-        offset: int,
     ) -> Tensor:
         batch_size = q.size(0)
 
