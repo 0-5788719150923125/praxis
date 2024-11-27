@@ -20,23 +20,26 @@ class GenomicBottleneck(nn.Module):
         super().__init__()
         self.input_dim = config.num_dims
         self.quarter_input_dim = self.input_dim // 4
+        self.three_quarter_input_dim = (
+            3 * self.quarter_input_dim
+        )  # New dimension for 3/4 of input
         self.output_dim = config.num_dims
         self.genome_dim = genome_dim
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.tournament_size = tournament_size
         self.elite_size = elite_size
-        self.evolve_every_n_steps = evolve_every_n_steps  # How often to evolve
-        self.num_trials = num_trials  # Number of trials for fitness
-        self.step_counter = 0  # Step counter for evolution
+        self.evolve_every_n_steps = evolve_every_n_steps
+        self.num_trials = num_trials
+        self.step_counter = 0
 
         # Initialize fitness scores to negative infinity
         self.fitness_scores = torch.full((population_size,), float("-inf"))
         self.best_fitness = float("-inf")
 
-        # Trainable projections for the bottlenecked part
-        self.left = nn.Linear(self.quarter_input_dim, genome_dim)
-        self.right = nn.Linear(genome_dim, self.quarter_input_dim)
+        # Modified projections for the larger bottlenecked part
+        self.left = nn.Linear(self.three_quarter_input_dim, genome_dim)
+        self.right = nn.Linear(genome_dim, self.three_quarter_input_dim)
 
         # Initialize population of genomes
         self.population = nn.Parameter(
@@ -55,14 +58,17 @@ class GenomicBottleneck(nn.Module):
         A, T, C, G = torch.split(x, self.quarter_input_dim, dim=-1)
         splits = [A, T, C, G]
 
-        # Randomly select one part to go through the bottleneck
+        # Randomly select one part to be residual, the rest go through bottleneck
         indices = [0, 1, 2, 3]
-        bottleneck_idx = random.choice(indices)
-        residual_indices = indices.copy()
-        residual_indices.remove(bottleneck_idx)
+        residual_idx = random.choice(indices)
+        bottleneck_indices = indices.copy()
+        bottleneck_indices.remove(residual_idx)
 
-        bottleneck_input = splits[bottleneck_idx]
-        residual_parts = [splits[i] for i in residual_indices]
+        residual_part = splits[residual_idx]
+        bottleneck_parts = [splits[i] for i in bottleneck_indices]
+
+        # Concatenate the three parts that will go through bottleneck
+        bottleneck_input = torch.cat(bottleneck_parts, dim=-1)
 
         # Project the bottleneck input
         projected = self.left(bottleneck_input)
@@ -70,13 +76,11 @@ class GenomicBottleneck(nn.Module):
         # Store input state for fitness evaluation
         if self.training:
             self.stored_inputs.append(projected.detach())
-            if len(self.stored_inputs) > 50:  # Keep the last 50 states
+            if len(self.stored_inputs) > 50:
                 self.stored_inputs.pop(0)
 
-            # Increment step counter
             self.step_counter += 1
 
-            # Evolve population periodically
             if (
                 self.step_counter % self.evolve_every_n_steps == 0
                 and len(self.stored_inputs) >= self.num_trials
@@ -92,13 +96,22 @@ class GenomicBottleneck(nn.Module):
         # Apply linear transformation with the genome
         x_bottleneck = F.linear(projected, weight)
 
-        # Project back to the original quarter dimension
+        # Project back to the original three-quarter dimension
         x_bottleneck = self.right(x_bottleneck)
 
-        # Concatenate the residual parts with the bottlenecked part
-        # Insert the bottlenecked part back into its original position
-        output_splits = residual_parts.copy()
-        output_splits.insert(bottleneck_idx, x_bottleneck)
+        # Split the bottleneck output back into three parts
+        bottleneck_splits = torch.split(x_bottleneck, self.quarter_input_dim, dim=-1)
+
+        # Reconstruct the output by inserting the residual part back in its original position
+        output_splits = []
+        bottleneck_idx = 0
+        for i in range(4):
+            if i == residual_idx:
+                output_splits.append(residual_part)
+            else:
+                output_splits.append(bottleneck_splits[bottleneck_idx])
+                bottleneck_idx += 1
+
         x = torch.cat(output_splits, dim=-1)
 
         return x
