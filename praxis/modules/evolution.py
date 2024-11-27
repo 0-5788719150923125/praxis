@@ -11,9 +11,11 @@ class GenomicBottleneck(nn.Module):
         config,
         genome_dim: int = 23,
         population_size: int = 64,
-        mutation_rate: float = 0.00001,
+        mutation_rate: float = 0.001,
         tournament_size: int = 5,
         elite_size: int = 2,
+        evolve_every_n_steps: int = 10,
+        num_trials: int = 5,
     ):
         super().__init__()
         self.input_dim = config.num_dims
@@ -24,6 +26,9 @@ class GenomicBottleneck(nn.Module):
         self.mutation_rate = mutation_rate
         self.tournament_size = tournament_size
         self.elite_size = elite_size
+        self.evolve_every_n_steps = evolve_every_n_steps  # How often to evolve
+        self.num_trials = num_trials  # Number of trials for fitness
+        self.step_counter = 0  # Step counter for evolution
 
         # Initialize fitness scores to negative infinity
         self.fitness_scores = torch.full((population_size,), float("-inf"))
@@ -65,8 +70,20 @@ class GenomicBottleneck(nn.Module):
         # Store input state for fitness evaluation
         if self.training:
             self.stored_inputs.append(projected.detach())
-            if len(self.stored_inputs) > 10:  # Keep the last 10 states
+            if len(self.stored_inputs) > 50:  # Keep the last 50 states
                 self.stored_inputs.pop(0)
+
+            # Increment step counter
+            self.step_counter += 1
+
+            # Evolve population periodically
+            if (
+                self.step_counter % self.evolve_every_n_steps == 0
+                and len(self.stored_inputs) >= self.num_trials
+            ):
+                self.evolve_population(num_trials=self.num_trials)
+                # Optionally reset stored inputs after evolution
+                # self.stored_inputs = []
 
         # Use the active genome for transformation
         with torch.no_grad():
