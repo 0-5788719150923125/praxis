@@ -44,45 +44,20 @@ class PraxisAttention(nn.Module):
             self.num_query_heads * self.head_dim * self.multiplier,
             bias=False,
         )
-        self.memory = config.memory
-        if config.memory:
-
-            class AttentionKey(nn.Module):
-                """Simple wrapper for attention key projection"""
-
-                def __init__(self, hidden_size, num_heads, head_dim):
-                    super().__init__()
-                    self.key = nn.Linear(
-                        hidden_size,
-                        num_heads * head_dim,
-                        bias=False,
-                    )
-
-                def forward(self, x):
-                    return self.key(x)
-
-            # Create expert modules
-            num_experts = 3
-            experts = [
-                AttentionKey(
-                    hidden_size=self.hidden_size,
-                    num_heads=self.num_heads,
-                    head_dim=self.head_dim * self.multiplier,
-                )
-                for _ in range(num_experts)
-            ]
-
-            self.key = PraxisSMEAR(config, experts)
-
-        else:
-            self.key = nn.Linear(
-                self.hidden_size,
-                self.num_heads * self.head_dim * self.multiplier,
-                bias=False,
-            )
+        self.key = nn.Linear(
+            self.hidden_size,
+            self.num_heads * self.head_dim * self.multiplier,
+            bias=False,
+        )
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
+
+        self.memory = config.memory
+        self.chunk_size = 0
+        if self.memory:
+            self.chunk_size = 64
+            self.memory = CompressiveMemory(config)
 
         # The core attention mechanism
         scale_encoding = True
@@ -105,10 +80,14 @@ class PraxisAttention(nn.Module):
             self.num_query_heads * self.head_dim, self.hidden_size, bias=False
         )
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor):
+    def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
 
-        # Compute queries, keys, and values
+        # Determine chunk size
+        chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
+        num_chunks = (seq_len + chunk_size - 1) // chunk_size
+
+        # Initialize QKV projections
         q = (
             self.query(inputs)
             .view(batch_size, -1, self.num_query_heads, self.head_dim * self.multiplier)
@@ -125,39 +104,84 @@ class PraxisAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        # Expand k and v to match number of query heads
-        # Shape: (batch_size, num_heads, seq_len, head_dim) -> (batch_size, num_q_heads, seq_len, head_dim)
+        outputs = []
+
+        for i in range(num_chunks):
+            start_idx = i * chunk_size
+            end_idx = min(start_idx + chunk_size, seq_len)
+            current_chunk_size = end_idx - start_idx
+
+            # Extract current chunk
+            chunk_q = q[:, :, start_idx:end_idx]
+            chunk_k = k[:, :, start_idx:end_idx]
+            chunk_v = v[:, :, start_idx:end_idx]
+            chunk_mask = attention_mask[:, start_idx:end_idx]
+
+            # Process chunk
+            chunk_output = self._process_chunk(
+                chunk_q, chunk_k, chunk_v, chunk_mask, current_chunk_size, start_idx
+            )
+
+            outputs.append(chunk_output)
+
+        # Concatenate all chunks
+        output = torch.cat(outputs, dim=1)
+
+        if self.memory:
+            self.memory.reset_states()
+
+        # Final output projection
+        return self.output(output)
+
+    def _process_chunk(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        attention_mask: Tensor,
+        chunk_size: int,
+        offset: int,
+    ) -> Tensor:
+        batch_size = q.size(0)
+
+        # Handle multiple queries
         if self.num_queries > 1:
             k = k.repeat_interleave(self.num_queries, dim=1)
             v = v.repeat_interleave(self.num_queries, dim=1)
 
-        # Pre-scoring positional encoding
+        # Apply positional encoding
         q, k, v = self.encoding.before_scores(q, k, v)
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
         hist_len = k.size(2)
 
-        # Post-scoring positional encoding
+        # Apply positional encoding to scores
         scores = self.encoding.after_scores(scores)
 
-        # Apply masks
-        scores, causal_mask, attention_mask = self.algorithm.apply_masking(
-            scores, attention_mask, seq_len, hist_len, self.causal
+        # Apply masking
+        scores, causal_mask, chunk_attention_mask = self.algorithm.apply_masking(
+            scores, attention_mask, chunk_size, hist_len, self.causal
         )
 
-        # Compute attention weights
-        weights = self.algorithm.compute_weights(
-            q, k, v, scores, causal_mask, attention_mask
+        # Get attention output
+        attention_output = self.algorithm.compute_weights(
+            q, k, v, scores, causal_mask, chunk_attention_mask
         )
+
+        if self.memory:
+            # Get memory output and blend
+            memory_output = self.memory(q, k, v)
+            attention_output = self.memory.blend_outputs(
+                memory_output, attention_output
+            )
 
         # Reshape for output projection
-        weights = weights.transpose(1, 2).reshape(
-            batch_size, seq_len, -1
-        )  # Shape: (batch_size, seq_len, num_heads * head_dim)
+        chunk_output = attention_output.transpose(1, 2).reshape(
+            batch_size, chunk_size, -1
+        )
 
-        # Output projection
-        return self.output(weights)
+        return chunk_output
 
 
 class ScaledDotProduct(nn.Module):
@@ -541,3 +565,176 @@ class Stickbreaking(ScaledDotProduct):
     #     self.value_history = new_v.detach()
 
     #     return new_k, new_v
+
+
+class CompressiveMemory(nn.Module):
+    """
+    This module implements a simplified version of Infini-Attention, which can offer
+    substantial VRAM savings at longer sequence lengths.
+    https://arxiv.org/abs/2404.07143
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+        self.hidden_size = config.num_dims
+        self.num_heads = config.num_heads
+        self.num_queries = config.num_queries
+        self.num_query_heads = self.num_heads * self.num_queries
+        self.head_dim = self.hidden_size // self.num_heads
+        self.multiplier = 2 if config.differential else 1
+        self.use_delta = True
+        self.betas = nn.Parameter(
+            torch.zeros(1, self.num_query_heads, 1, self.head_dim)
+        )
+        self._states_buffer = []
+
+    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        batch_size = q.size(0)
+
+        # Get states - either initialize or pop from buffer
+        if not self._states_buffer:
+            memory_states, memory_z = self._init_states(batch_size, q.device)
+        else:
+            memory_states, memory_z = self._states_buffer.pop()
+
+        # Compute memory output
+        sigma_q = F.elu(q) + 1.0
+        memory_output = (sigma_q @ memory_states) / (sigma_q @ memory_z)
+
+        # Compute updates
+        sigma_k = F.elu(k) + 1.0
+        if self.use_delta:
+            retrieved = (sigma_k @ memory_states) / (sigma_k @ memory_z)
+            value_delta = v - retrieved
+            new_states = memory_states + sigma_k.transpose(-2, -1) @ value_delta
+        else:
+            new_states = memory_states + sigma_k.transpose(-2, -1) @ v
+
+        new_z = memory_z + sigma_k.sum(dim=-2, keepdim=True).transpose(-2, -1)
+
+        # Store single new state
+        self._states_buffer.append((new_states, new_z))
+
+        return memory_output
+
+    def blend_outputs(self, memory_output: Tensor, attention_output: Tensor) -> Tensor:
+        gate = torch.sigmoid(self.betas)
+        return gate * memory_output + (1 - gate) * attention_output
+
+    def _init_states(
+        self, batch_size: int, device: torch.device
+    ) -> Tuple[Tensor, Tensor]:
+        # Initialize fresh states for this batch
+        memory_states = torch.zeros(
+            batch_size,
+            self.num_query_heads,
+            self.head_dim * self.multiplier,
+            self.head_dim,
+            device=device,
+        )
+
+        memory_z = (
+            torch.ones(
+                batch_size,
+                self.num_query_heads,
+                self.head_dim * self.multiplier,
+                1,
+                device=device,
+            )
+            / self.head_dim
+        )
+
+        return memory_states, memory_z
+
+    def reset_states(self):
+        """Clear the states buffer"""
+        self._states_buffer.clear()
+
+
+def test_memory_scaling():
+    BATCH_SIZE = 1
+    HIDDEN_SIZE = 512
+    NUM_HEADS = 8
+    NUM_QUERIES = 2
+    SEQUENCE_LENGTHS = [256, 512, 1024, 2048, 4096]
+    NUM_RUNS = 3  # Average over multiple runs for stability
+
+    def run_test(config, seq_len):
+        # Reset memory tracking
+        torch.cuda.reset_peak_memory_stats()
+
+        # Create model
+        model = PraxisAttention(config).cuda()
+
+        # Create dummy inputs
+        inputs = torch.randn(BATCH_SIZE, seq_len, HIDDEN_SIZE).cuda()
+        attention_mask = torch.ones(BATCH_SIZE, seq_len).cuda()
+
+        # Forward pass
+        output = model(inputs, attention_mask)
+
+        # Dummy loss and backward
+        loss = output.mean()
+        loss.backward()
+
+        # Get peak memory
+        peak_mem = torch.cuda.max_memory_allocated() / (1024 * 1024)  # Convert to MB
+
+        # Clear memory
+        del model, inputs, attention_mask, output
+        torch.cuda.empty_cache()
+
+        return peak_mem
+
+    # Test configurations
+    class DummyConfig:
+        def __init__(self):
+            self.debug = True
+            self.causal = True
+            self.linear = False
+            self.stickbreaking = False
+            self.differential = False
+            self.dropout = 0.0
+            self.encoding = "yarn"
+            self.context_length = 8192
+
+    base_config = DummyConfig()
+    base_config.num_dims = HIDDEN_SIZE
+    base_config.num_heads = NUM_HEADS
+    base_config.num_queries = NUM_QUERIES
+    base_config.memory = False
+
+    memory_config = DummyConfig()
+    memory_config.num_dims = HIDDEN_SIZE
+    memory_config.num_heads = NUM_HEADS
+    memory_config.num_queries = NUM_QUERIES
+    memory_config.memory = True
+
+    print("\nMemory Usage Analysis (in MB):")
+    print("=" * 60)
+    print(
+        f"{'Sequence Length':<15} {'Without Memory':<20} {'With Memory':<20} {'Ratio':<10}"
+    )
+    print("-" * 60)
+
+    for seq_len in SEQUENCE_LENGTHS:
+        base_mems = []
+        memory_mems = []
+
+        for _ in range(NUM_RUNS):
+            base_mems.append(run_test(base_config, seq_len))
+            memory_mems.append(run_test(memory_config, seq_len))
+
+        avg_base = sum(base_mems) / NUM_RUNS
+        avg_memory = sum(memory_mems) / NUM_RUNS
+        ratio = avg_memory / avg_base
+
+        print(
+            f"{seq_len:<15} {avg_base:,.2f}{'MB':<14} {avg_memory:,.2f}{'MB':<14} {ratio:.2f}x"
+        )
+
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    test_memory_scaling()
