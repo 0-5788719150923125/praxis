@@ -8,7 +8,7 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 ## what we're building
 
-The Praxis swarm is a decentralized, peer-to-peer, always online, continuously-learning AI intelligence - and a place to practice [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) directly-integrated into core layers of the model itself, our goal is to build an expert model that is small and simple, easy to parallelize and performant at a scale of hundreds/thousands of peers. We will do this via a sparse mixture of experts, curated routing, algorithmic switching and weighted self-modeling of remotely-hosted peers.
+The Praxis architecture is a fluid, peer-to-peer, always online, continuously-learning and decentralized place to practice [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into core layers of the system, our goal is to build a multi-modal language model that is small and simple, easy to parallelize and performant at a scale of hundreds/thousands of self-hosted peers. We will achieve this via a sparse mixture of experts, user-curated multipath routing, symbolic decision-making and weighted self-modeling of network components.
 
 ## architecture
 

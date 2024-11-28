@@ -774,16 +774,13 @@ class TerminalInterface(Callback):
             self.text,
             dict(
                 max_new_tokens=1,
-                temperature=0.7,
+                temperature=0.45,
+                # min_p=0.02,
                 # eta_cutoff=0.002,
                 # penalty_alpha=0.6,
                 # top_k=4,
-                repetition_penalty=1.2,
+                repetition_penalty=1.1,
                 skip_special_tokens=False,
-                # suppress_tokens=[
-                #     tokenizer.eos_token_id,
-                #     tokenizer.pad_token_id,
-                # ],  # else the model tends to degenerate into 100% <|eos|> or <|pad|> tokens
             ),
         )
         while True:

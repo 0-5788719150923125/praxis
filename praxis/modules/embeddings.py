@@ -19,10 +19,12 @@ class PraxisEmbedding(nn.Sequential):
         layers = [("wte", nn.Embedding(config.vocab_size, config.num_embeds))]
 
         if learned:
+            # Use GPT2-like positional embeddings
             layers.append(
                 ("wpe", nn.Embedding(config.context_length, config.num_embeds))
             )
         else:
+            # Factorize the embeddings
             bottleneck_dim = config.num_dims // 2
             layers.extend(
                 [
