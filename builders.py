@@ -318,7 +318,6 @@ def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
                 ".txt",
                 ".md",
                 ".sh",
-                ".json",
             ],
         )
         dataset.weight = 0.001
