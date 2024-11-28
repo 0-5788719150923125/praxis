@@ -12,11 +12,11 @@ host_requirements = [
     "asciichartpy",
     "blessed",
     "datasets",
+    "evaluate",
     "flask",
     "lightning",
     "lm_eval",
-    "pytorch_optimizer @ git+https://github.com/kozistr/pytorch_optimizer.git",
-    "tokenmonster",
+    "pytorch_optimizer",
     "werkzeug",
 ]
 

@@ -774,11 +774,11 @@ class TerminalInterface(Callback):
             self.text,
             dict(
                 max_new_tokens=1,
-                temperature=0.45,
+                temperature=0.7,
                 # eta_cutoff=0.002,
                 # penalty_alpha=0.6,
                 # top_k=4,
-                repetition_penalty=1.1,
+                repetition_penalty=1.2,
                 skip_special_tokens=False,
                 # suppress_tokens=[
                 #     tokenizer.eos_token_id,
