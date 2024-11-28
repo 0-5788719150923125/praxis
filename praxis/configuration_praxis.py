@@ -29,6 +29,7 @@ class PraxisConfig(PretrainedConfig):
         stickbreaking=False,
         compression=False,
         memory=False,
+        mega=False,
         evolve=False,
         hivemind=False,
         initial_peers=[],
@@ -72,6 +73,7 @@ class PraxisConfig(PretrainedConfig):
         self.autopilot = autopilot
         self.compression = compression
         self.memory = memory
+        self.mega = mega
         self.evolve = evolve
         self.hivemind = hivemind
         self.initial_peers = initial_peers

@@ -308,6 +308,12 @@ parser.add_argument(
     help="Use a long-term episodic memory module",
 )
 parser.add_argument(
+    "--mega",
+    action="store_true",
+    default=False,
+    help="Equip the attention mechanism with exponentially-moving average-based gating",
+)
+parser.add_argument(
     "--evolve",
     action="store_true",
     default=False,
@@ -431,6 +437,7 @@ config = PraxisConfig(
     stickbreaking=stickbreaking,
     compression=compression,
     memory=memory,
+    mega=mega,
     evolve=evolve,
     activation=activation,
     hivemind=hivemind,

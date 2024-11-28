@@ -53,6 +53,10 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
 
+        self.gates = config.mega
+        if self.gates:
+            self.gates = GatedEMA(config)
+
         self.memory = config.memory
         self.chunk_size = 0
         if self.memory:
@@ -153,6 +157,10 @@ class PraxisAttention(nn.Module):
         if self.num_queries > 1:
             k = k.repeat_interleave(self.num_queries, dim=1)
             v = v.repeat_interleave(self.num_queries, dim=1)
+
+        if self.gates:
+            # Compute an exponential moving average-based gating mechanism
+            q, k, v = self.gates(q, k, v)
 
         # Apply positional encoding with offset
         q, k, v = self.encoding.before_scores(q, k, v, offset=offset)
@@ -567,6 +575,84 @@ class Stickbreaking(ScaledDotProduct):
     #     self.value_history = new_v.detach()
 
     #     return new_k, new_v
+
+
+class GatedEMA(nn.Module):
+    """
+    Inspired by MEGA, this class implements a simple EMA into an attention gating
+    mechanism, which encourages inductive biases in the model.
+    https://arxiv.org/abs/2209.10655
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+        self.num_heads = config.num_heads
+        self.num_query_heads = config.num_heads * config.num_queries
+        self.head_dim = config.num_dims // config.num_heads
+
+        # EMA parameters for each head type
+        self.alpha_q = nn.Parameter(
+            torch.ones(1, self.num_query_heads, 1, self.head_dim) * 0.9
+        )
+        self.delta_q = nn.Parameter(
+            torch.ones(1, self.num_query_heads, 1, self.head_dim) * 0.1
+        )
+        self.alpha_kv = nn.Parameter(
+            torch.ones(1, self.num_heads, 1, self.head_dim) * 0.9
+        )
+        self.delta_kv = nn.Parameter(
+            torch.ones(1, self.num_heads, 1, self.head_dim) * 0.1
+        )
+
+        # Gates for each projection
+        self.gate_q = nn.Linear(self.head_dim, self.head_dim)
+        self.gate_k = nn.Linear(self.head_dim, self.head_dim)
+        self.gate_v = nn.Linear(self.head_dim, self.head_dim)
+
+    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        # Compute EMAs separately for queries and key/values
+        q_ema = self._compute_ema(q, self.alpha_q, self.delta_q)
+        k_ema = self._compute_ema(k, self.alpha_kv, self.delta_kv)
+        v_ema = self._compute_ema(v, self.alpha_kv, self.delta_kv)
+
+        # Apply gating (reshaping properly for different head counts)
+        gate_q = torch.sigmoid(self.gate_q(q))
+        gate_k = torch.sigmoid(self.gate_k(k))
+        gate_v = torch.sigmoid(self.gate_v(v))
+
+        # Combine original and EMA outputs
+        q_out = gate_q * q + (1 - gate_q) * q_ema
+        k_out = gate_k * k + (1 - gate_k) * k_ema
+        v_out = gate_v * v + (1 - gate_v) * v_ema
+
+        return q_out, k_out, v_out
+
+    def _compute_ema(self, x: Tensor, alpha: Tensor, delta: Tensor) -> Tensor:
+        """Optimized EMA computation using cumsum with GQA support"""
+        # Handle GQA by repeating parameters if needed
+        num_heads = x.size(1)
+        if num_heads != alpha.size(1):
+            alpha = alpha.repeat_interleave(num_heads // alpha.size(1), dim=1)
+            delta = delta.repeat_interleave(num_heads // delta.size(1), dim=1)
+
+        seq_len = x.shape[2]
+        decay = 1 - alpha * delta  # Now properly shaped for number of heads
+
+        # Compute decayed values directly
+        decayed_x = x * alpha  # Will work with expanded alpha
+
+        # Create powers of decay matrix efficiently
+        k = torch.arange(seq_len, device=x.device)
+        decay_matrix = decay ** k.view(1, 1, -1, 1)
+
+        # Apply decay and use cumsum for causal weighted sum
+        decayed_x = decayed_x * decay_matrix
+
+        # Cumsum for causal aggregation
+        result = torch.cumsum(torch.flip(decayed_x, [2]), dim=2)
+        result = torch.flip(result, [2])
+
+        return result
 
 
 def test_memory_scaling():
