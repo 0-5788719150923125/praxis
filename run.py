@@ -427,7 +427,7 @@ except Exception as e:
 config = PraxisConfig(
     depth=3 if dev else depth,
     num_experts=3 if dev else (num_experts if num_experts else depth),
-    dropout=0.1,
+    dropout=0.01,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
     shuffle=shuffle,

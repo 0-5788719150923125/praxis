@@ -26,10 +26,10 @@ class PraxisDecoder(nn.Module):
         self._define_checkpoints(config.strategy, self.stack.depth)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
-        experts = list(self.stack.local_experts) + list(self.stack.remote_experts)
+        experts = list(self.stack.locals) + list(self.stack.remotes)
         original_order = experts.copy()
-        if self.stack.permutations:
-            experts = self.stack.permutations.shuffle_experts(experts)
+        if self.stack.behavior:
+            experts = self.stack.behavior.shuffle_experts(experts)
 
         hidden_states = inputs
         aux_losses = []
@@ -82,9 +82,9 @@ class PraxisDecoder(nn.Module):
         current_depth: int,
     ):
         def custom_forward(hidden_states, attention_mask, current_depth):
-            if self.stack.permutations:
+            if self.stack.behavior:
                 # Add positional context
-                hidden_states = self.stack.permutations.add_context(
+                hidden_states = self.stack.behavior.add_context(
                     hidden_states, current_depth
                 )
                 # Adjust attention mask to account for extra token
@@ -93,7 +93,7 @@ class PraxisDecoder(nn.Module):
                 # Forward pass
                 states, aux_loss = expert(hidden_states, attention_mask, current_depth)
                 # Remove context token
-                states = self.stack.permutations.remove_context(states)
+                states = self.stack.behavior.remove_context(states)
                 return states, aux_loss
             else:
                 return expert(hidden_states, attention_mask, current_depth)
@@ -128,8 +128,8 @@ class PraxisDecoder(nn.Module):
             extras = {**extras, **self.stack.genome.get_metrics()}
         return {
             "experts": dict(
-                local=len(self.stack.local_experts),
-                remote=len(self.stack.remote_experts),
+                local=len(self.stack.locals),
+                remote=len(self.stack.remotes),
             ),
             **extras,
         }

@@ -30,22 +30,20 @@ class PraxisStack(nn.Module):
         assert (
             self.num_experts >= self.depth
         ), "`num_experts` should be at least as large as `depth`."
+        self.sparse = config.sparse
         self.shuffle = config.shuffle
         if not self.shuffle:
             assert (
                 self.num_experts == self.depth
             ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
-        self.permutations = False
-        if self.shuffle:
-            self.permutations = LayerShuffle(config)
-        self.sparse = config.sparse
+        self.behavior = LayerShuffle(config) if self.shuffle else False
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = False
-        self.remote_experts = []
+        self.remotes = []
         if config.hivemind:
             self.manager = PraxisManagement(config)
-            self.remote_experts = self.manager.active_remote_experts
-        self.local_experts = nn.ModuleList()
+            self.remotes = self.manager.active_remote_experts
+        self.locals = nn.ModuleList()
         if config.block_type == "recurrent":
             blocks = [
                 EXPERT_REGISTRY["recurrent"](config) for _ in range(self.num_experts)
@@ -57,7 +55,7 @@ class PraxisStack(nn.Module):
                 if use_router:
                     router = PraxisMixtureOfDepths(config)
                 expert = PraxisExpert(config, block=mixture, router=router)
-                self.local_experts.append(expert)
+                self.locals.append(expert)
         else:
             for i in range(self.num_experts):
                 if self.manager:
@@ -74,12 +72,12 @@ class PraxisStack(nn.Module):
                 if use_router:
                     router = PraxisMixtureOfDepths(config)
                 expert = PraxisExpert(config, block=block, router=router)
-                self.local_experts.append(expert)
+                self.locals.append(expert)
         if self.manager:
             self.manager.serve_experts()
         self.navigator = False
         if config.autopilot:
-            self.navigator = PraxisController(config, len(self.local_experts) * 3)
+            self.navigator = PraxisController(config, len(self.locals) * 3)
 
 
 class LayerShuffle(nn.Module):
@@ -101,7 +99,7 @@ class LayerShuffle(nn.Module):
         bottleneck = config.num_dims // 4
         self.mixer = nn.Sequential(
             nn.Linear(config.num_dims, bottleneck),
-            ACT2FN["sin"],
+            ACT2FN["gelu"],
             nn.Dropout(config.dropout),
             nn.Linear(bottleneck, config.num_dims),
         )
