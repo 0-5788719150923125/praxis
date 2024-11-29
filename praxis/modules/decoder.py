@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import AutoConfig
 
-from praxis.modules.evolution import GenomicBottleneck
 from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
 from praxis.stacks import PraxisStack
 
@@ -23,15 +22,14 @@ class PraxisDecoder(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.stack = PraxisStack(config)
-        self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = self.stack.manager
         self._define_checkpoints(config.strategy, self.stack.depth)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.stack.local_experts) + list(self.stack.remote_experts)
         original_order = experts.copy()
-        if self.stack.shuffle:
-            random.shuffle(experts)
+        if self.stack.permutations:
+            experts = self.stack.permutations.shuffle_experts(experts)
 
         hidden_states = inputs
         aux_losses = []
@@ -45,8 +43,6 @@ class PraxisDecoder(nn.Module):
                 if not self.training and next_expert_idx is not None:
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
-                elif not self.training and self.stack.shuffle:
-                    route.append(str(original_order.index(experts[i])))
 
                 new_states, aux_loss = self._create_forward(
                     expert, hidden_states, attention_mask, i
@@ -60,8 +56,8 @@ class PraxisDecoder(nn.Module):
                     )
                     aux_losses.append(aux_loss)
 
-                if self.genome and i == 4:
-                    new_states = self.genome(new_states)
+                if self.stack.genome and i == 4:
+                    new_states = self.stack.genome(new_states)
 
                 # Commit to self
                 hidden_states = new_states
@@ -73,7 +69,7 @@ class PraxisDecoder(nn.Module):
                 self.manager.handle_failure(expert)
                 continue
 
-        if self.debug and not self.training and self.stack.shuffle:
+        if self.debug and not self.training and self.stack.navigator:
             print(f"DEBUG: routing through: {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
@@ -86,7 +82,21 @@ class PraxisDecoder(nn.Module):
         current_depth: int,
     ):
         def custom_forward(hidden_states, attention_mask, current_depth):
-            return expert(hidden_states, attention_mask, current_depth)
+            if self.stack.permutations:
+                # Add positional context
+                hidden_states = self.stack.permutations.add_context(
+                    hidden_states, current_depth
+                )
+                # Adjust attention mask to account for extra token
+                context_mask = attention_mask.new_ones(attention_mask.shape[0], 1)
+                attention_mask = torch.cat([context_mask, attention_mask], dim=1)
+                # Forward pass
+                states, aux_loss = expert(hidden_states, attention_mask, current_depth)
+                # Remove context token
+                states = self.stack.permutations.remove_context(states)
+                return states, aux_loss
+            else:
+                return expert(hidden_states, attention_mask, current_depth)
 
         if self.training and self._should_checkpoint(current_depth):
             return torch.utils.checkpoint.checkpoint(
@@ -114,8 +124,8 @@ class PraxisDecoder(nn.Module):
     def get_metrics(self):
         """Return current prediction accuracies"""
         extras = {}
-        if self.genome:
-            extras = {**extras, **self.genome.get_metrics()}
+        if self.stack.genome:
+            extras = {**extras, **self.stack.genome.get_metrics()}
         return {
             "experts": dict(
                 local=len(self.stack.local_experts),
