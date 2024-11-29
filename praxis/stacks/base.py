@@ -96,6 +96,7 @@ class LayerShuffle(nn.Module):
         self.embeddings = nn.Parameter(
             torch.randn(config.depth, num_context_tokens, config.num_dims)
         )
+        nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
         # Add mixing components
         bottleneck = config.num_dims // 4
         self.mixer = nn.Sequential(
@@ -106,7 +107,6 @@ class LayerShuffle(nn.Module):
         )
         # Gate for balancing position vs content influence
         self.gate = nn.Linear(config.num_dims, 1)
-        nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
 
     def add_context(self, hidden_states: Tensor, position: int) -> Tensor:
         # Get position-based embeddings
