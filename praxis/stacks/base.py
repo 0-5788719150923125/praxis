@@ -82,26 +82,37 @@ class PraxisStack(nn.Module):
 
 
 class LayerShuffle(nn.Module):
-    def __init__(self, config: AutoConfig):
+    """
+    This module implements a basic form of LayerShuffle-Position, though we use it
+    as a differentiable "context token" and input-manipulation/preparation mechanism,
+    rather than a positional encoder.
+    https://arxiv.org/abs/2407.04513
+    """
+
+    def __init__(self, config: AutoConfig, num_context_tokens: int = 1):
         super().__init__()
-        self.embeddings = nn.Parameter(torch.randn(config.depth, config.num_dims))
-        # Initialize with small values
+        self.num_context_tokens = num_context_tokens
+        # Shape becomes [depth, num_tokens, dims]
+        self.embeddings = nn.Parameter(
+            torch.randn(config.depth, num_context_tokens, config.num_dims)
+        )
         nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
 
     def add_context(self, hidden_states: Tensor, position: int) -> Tensor:
-        # Get position embedding for current layer
-        pos_embed = self.embeddings[position]
-        # Add as a new "token" at the start
-        # Expand pos_embed to match batch dimension
-        pos_embed = pos_embed.expand(hidden_states.shape[0], -1)
-        # Add sequence dimension
-        pos_embed = pos_embed.unsqueeze(1)
-        return torch.cat([pos_embed, hidden_states], dim=1)
+        # Get all context embeddings for this position
+        pos_embeds = self.embeddings[position]  # Shape: [num_tokens, dims]
+        # Expand to match batch dimension
+        pos_embeds = pos_embeds.expand(hidden_states.shape[0], -1, -1)
+        # pos_embeds is now [batch, num_tokens, dims]
+        return torch.cat([pos_embeds, hidden_states], dim=1)
 
     def remove_context(self, hidden_states: Tensor) -> Tensor:
-        # Remove the first "token" (our added context)
-        return hidden_states[:, 1:, :]
+        # Remove the context tokens from the start
+        return hidden_states[:, self.num_context_tokens :, :]
 
-    def shuffle_experts(self, experts: list) -> list:
-        """Returns a new shuffled list of experts without modifying original"""
-        return random.sample(experts, len(experts))
+    def shuffle_experts(self, experts: list, allow_resampling: bool = False) -> list:
+        depth = self.embeddings.shape[0]
+        if allow_resampling:
+            return random.choices(experts, k=depth)
+        else:
+            return random.sample(experts, k=depth)
