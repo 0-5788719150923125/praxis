@@ -79,7 +79,6 @@ class TerminalDashboard:
         self.rate = 0
         self.url = "N/A"
         self.total_params = "0M"
-        self.num_faults = 0
         self.mode = "train"
         self.local_experts = 0
         self.remote_experts = 0
@@ -169,10 +168,6 @@ class TerminalDashboard:
     def update_status(self, status):
         with self.lock:
             self.status_text = status
-
-    def set_host_count(self, count):
-        with self.lock:
-            self.num_faults = count
 
     def update_params(self, total_params):
         with self.lock:
@@ -379,9 +374,7 @@ class TerminalDashboard:
                 # Truncate before padding
                 right_content = self._truncate_to_width(text, right_width)
                 right_content = right_content.ljust(right_width)
-                left_content = self._truncate_to_width(
-                    f" HOST {self.num_faults}", half_width
-                )
+                left_content = self._truncate_to_width(f" HOST", half_width)
                 left_content = left_content.ljust(half_width)
             elif i == 1:
                 left_content = "─" * half_width

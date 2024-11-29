@@ -658,7 +658,6 @@ class TerminalInterface(Callback):
         self.text = self.initial_text
         self.max_length = 4096
         self.interval = 3
-        self.host_count = 0
         self.dashboard = False
         if use_dashboard:
             max_data_points = 1000
@@ -739,7 +738,6 @@ class TerminalInterface(Callback):
             batch = trainer.callback_metrics.get("batch", 0)
             step = trainer.callback_metrics.get("step", 0)
             rate = trainer.callback_metrics.get("avg_step_time", 0)
-            self.dashboard.set_host_count(self.host_count)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_rate(rate.item())
@@ -764,12 +762,10 @@ class TerminalInterface(Callback):
 
     def on_save_checkpoint(self, trainer, lm, checkpoint):
         super().on_save_checkpoint(trainer, lm, checkpoint)
-        checkpoint["host_count"] = self.host_count
         checkpoint["start_time"] = self.start_time
 
     def on_load_checkpoint(self, trainer, lm, checkpoint):
         super().on_load_checkpoint(trainer, lm, checkpoint)
-        self.host_count = checkpoint.get("host_count", 0)
         self.start_time = checkpoint.get("start_time", datetime.now())
 
     def _generate_text(self, lm, batch_idx=0, interval=10):
@@ -817,7 +813,6 @@ class TerminalInterface(Callback):
         ):
             self.text = self.initial_text
             if self.dashboard:
-                self.host_count += 1
                 self.dashboard.update_status("<|err|>")
         elif self.dashboard:
             self.dashboard.update_status(self.text)
