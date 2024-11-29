@@ -285,7 +285,21 @@ class TerminalDashboard:
             frame[i] = line
         return frame
 
+    def _check_border_alignment(self, frame):
+        # Assuming the ERROR section is on the first content line after the top border
+        error_line_index = 1  # Adjust if necessary
+        line = frame[error_line_index]
+        expected_length = self._visual_len(frame[0])  # Length of the top border
+        line_visual_len = self._visual_len(line)
+        if line_visual_len != expected_length:
+            return False
+        if not line.startswith("║") or not line.endswith("║"):
+            return False
+        return True
+
     def _update_screen(self, new_frame):
+        # Correct borders for all lines
+        new_frame = self._correct_borders(new_frame)
         # No need to pad lines here; they should already be the correct length
         frame_width = len(new_frame[0])
 
@@ -403,9 +417,13 @@ class TerminalDashboard:
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
 
-            # Ensure left and right content are exactly the right width
-            left_content = left_content.ljust(half_width)[:half_width]
-            right_content = right_content.ljust(right_width)[:right_width]
+            # Truncate and pad left content
+            left_content = self._truncate_to_width(left_content, half_width)
+            left_content = self._visual_ljust(left_content, half_width)
+
+            # Truncate and pad right content
+            right_content = self._truncate_to_width(right_content, right_width)
+            right_content = self._visual_ljust(right_content, right_width)
 
             # Combine the content with borders
             frame.append(f"║{left_content}║{right_content}║")
@@ -490,6 +508,8 @@ class TerminalDashboard:
             while self.running:
                 try:
                     new_frame = self._create_frame()
+                    if not self._check_border_alignment(new_frame):
+                        self.previous_frame = None  # Force a redraw
                     self._update_screen(new_frame)
                     time.sleep(0.1)
                 except Exception as e:
