@@ -171,7 +171,7 @@ parser.add_argument(
 parser.add_argument(
     "--target_batch_size",
     type=int,
-    default=64,
+    default=256,
     help="The actual batch size to use, including accumulation steps",
 )
 parser.add_argument(
@@ -190,7 +190,7 @@ parser.add_argument(
     "--activation",
     type=str,
     choices=ACTIVATION_REGISTRY.keys(),
-    default="serf",
+    default="mish",
     help="The primary activation function to use",
 )
 parser.add_argument(
@@ -250,7 +250,7 @@ parser.add_argument(
     "--encoding_type",
     type=str,
     choices=ENCODING_REGISTRY.keys(),
-    default="yarn",
+    default="rope",
     help="The positional encoding to use for sequence length extrapolation",
 )
 parser.add_argument(

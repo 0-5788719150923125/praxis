@@ -83,17 +83,16 @@ class PraxisDecoder(nn.Module):
     ):
         def custom_forward(hidden_states, attention_mask, current_depth):
             if self.stack.behavior:
-                # Add positional context
-                hidden_states = self.stack.behavior.add_context(
-                    hidden_states, current_depth
+                # Add positional context to both hidden states and attention mask
+                hidden_states, attention_mask = self.stack.behavior.add_context(
+                    hidden_states, attention_mask, current_depth
                 )
-                # Adjust attention mask to account for extra token
-                context_mask = attention_mask.new_ones(attention_mask.shape[0], 1)
-                attention_mask = torch.cat([context_mask, attention_mask], dim=1)
                 # Forward pass
                 states, aux_loss = expert(hidden_states, attention_mask, current_depth)
-                # Remove context token
-                states = self.stack.behavior.remove_context(states)
+                # Remove context from both hidden states and attention mask
+                states, attention_mask = self.stack.behavior.remove_context(
+                    states, attention_mask
+                )
                 return states, aux_loss
             else:
                 return expert(hidden_states, attention_mask, current_depth)
