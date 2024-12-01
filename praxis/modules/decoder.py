@@ -40,7 +40,7 @@ class PraxisDecoder(nn.Module):
         for i in range(self.stack.depth):
             try:
                 expert = experts[i]
-                if not self.training and next_expert_idx is not None:
+                if next_expert_idx is not None:
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
 
@@ -69,8 +69,11 @@ class PraxisDecoder(nn.Module):
                 self.manager.handle_failure(expert)
                 continue
 
-        if self.debug and not self.training and self.stack.behavior:
-            print(f"DEBUG: routing through: {' -> '.join(route)}")
+        if self.debug and self.stack.behavior:
+            # if self.training:
+            #     print(f"DEBUG: training through: {' -> '.join(route)}")
+            # else:
+            print(f"DEBUG: inferencing through: {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 

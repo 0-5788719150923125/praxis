@@ -410,7 +410,7 @@ sys.excepthook = exception_to_file
 seed_everything(seed, workers=True)
 
 # An important warning
-if gun and seed:
+if gun and seed and not dev:
     print(
         "WARNING: GUN data is never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
     )

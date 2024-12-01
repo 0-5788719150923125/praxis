@@ -15,7 +15,7 @@ class PraxisGraph(nn.Module):
         super().__init__()
         self.num_experts = config.num_experts
         self.hidden_size = config.num_dims
-        self.num_context_tokens = 3  # Same as current implementation
+        self.num_context_tokens = 3
 
         # Expert Embeddings - represent each expert in latent space
         self.expert_embeddings = nn.Parameter(
@@ -37,68 +37,45 @@ class PraxisGraph(nn.Module):
         self.router = nn.Sequential(
             nn.LayerNorm(self.hidden_size),
             nn.Linear(self.hidden_size, self.hidden_size),
-            nn.GELU(),
+            ACT2FN["gelu"],
             nn.Linear(self.hidden_size, self.hidden_size),
+        )
+
+        # Replace cosine similarity with learned compatibility
+        self.compatibility_matrix = nn.Parameter(
+            torch.randn(self.num_experts, self.num_experts)
         )
 
         # Initialize with small values for stability
         self._init_parameters()
 
     def _init_parameters(self):
-        # Initialize parameters with small values
-        for param in [self.expert_embeddings, self.context_embeddings]:
-            nn.init.normal_(param, mean=0.0, std=0.02)
-        # Initialize biases with zeros
-        nn.init.zeros_(self.centrality_bias)
+        # Initialize embeddings with orthogonal values
+        num_experts = self.num_experts
+        embedding_dim = self.hidden_size
+
+        # Create orthogonal expert embeddings
+        expert_embeddings = torch.empty(num_experts, embedding_dim)
+        nn.init.orthogonal_(expert_embeddings)
+        self.expert_embeddings.data.copy_(expert_embeddings)
+
+        # Initialize context tokens normally
+        nn.init.normal_(self.context_embeddings, mean=0.0, std=0.02)
+
+        # Initialize biases to zero (better starting point)
         nn.init.zeros_(self.spatial_bias)
 
-    def compute_routing_scores(
-        self,
-        state: torch.Tensor,
-        current_expert_idx: int,
-        available_indices: list[int],
-        temperature: float = 1.0,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute routing probabilities for next expert selection.
-        Returns both routing loss and next expert probabilities.
-        """
-        batch_size = state.size(0)
+        # Initialize compatibility matrix
+        nn.init.zeros_(self.compatibility_matrix)
+        with torch.no_grad():
+            # Add slight negative bias for self-connections
+            self.compatibility_matrix.fill_diagonal_(-0.1)
 
-        # Project current state
-        projected_state = self.router(state.mean(dim=1))  # [batch_size, hidden_size]
-
-        # Get available expert embeddings
-        available_embeddings = self.expert_embeddings[available_indices]
-
-        # Compute attention scores
-        attention = torch.matmul(
-            projected_state, available_embeddings.t()
-        )  # [batch_size, num_available]
-
-        # Add structural biases
-        attention = attention + self.centrality_bias[available_indices]
-        attention = attention + self.spatial_bias[current_expert_idx, available_indices]
-
-        # Convert to probabilities
-        if self.training:
-            # Use Gumbel-Softmax during training
-            probs = F.gumbel_softmax(attention, tau=temperature, hard=False)
-            # Compute loss pushing towards current expert (can be modified)
-            target = torch.full(
-                (batch_size,),
-                available_indices.index(current_expert_idx),
-                device=state.device,
-            )
-            loss = (
-                F.cross_entropy(attention, target) * 0.001
-            )  # Small scale like original
-        else:
-            # During inference, use standard softmax
-            probs = F.softmax(attention, dim=-1)
-            loss = torch.tensor(0.0, device=state.device)
-
-        return loss, probs
+    def compute_centrality_scores(self):
+        """Compute dynamic centrality based on expert connectivity"""
+        # Use softmax of raw centrality_bias for better gradient flow
+        scores = F.softmax(self.centrality_bias, dim=-1)
+        return scores
 
     def add_context(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, expert_idx: int
@@ -127,25 +104,97 @@ class PraxisGraph(nn.Module):
             attention_mask[:, self.num_context_tokens :],
         )
 
+    def project_state(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Project hidden states to routing space."""
+        return self.router(hidden_states)[:, -1]  # [batch_size, hidden_size]
+
+    def get_valid_indices(self, current_expert_idx: int) -> list[int]:
+        """Get indices of all possible next experts."""
+        return list(range(self.num_experts))
+
+    def compute_attention_scores(
+        self,
+        projected_state: torch.Tensor,
+        current_expert_idx: int,
+        next_indices: list[int],
+    ) -> torch.Tensor:
+        """Compute attention scores with structural information."""
+        device = projected_state.device
+
+        # Get expert embeddings
+        expert_embeds = self.expert_embeddings[next_indices]
+
+        # Base attention scores
+        scale = torch.sqrt(torch.tensor(self.hidden_size, device=device))
+        attention = torch.matmul(projected_state, expert_embeds.t()) / scale
+
+        # Add centrality bias
+        centrality = self.compute_centrality_scores()[next_indices]
+        attention = attention + centrality
+
+        # Add spatial relationships
+        for i, target_idx in enumerate(next_indices):
+            # Get spatial distance
+            distance = self.spatial_bias[current_expert_idx, target_idx]
+
+            # Use learned compatibility instead of cosine similarity
+            compatibility = self.compatibility_matrix[current_expert_idx, target_idx]
+
+            # Add slight penalty for self-selection
+            if target_idx == current_expert_idx:
+                compatibility = compatibility - 0.1
+
+            attention[:, i] = attention[:, i] + distance + compatibility
+
+        return attention
+
     def get_next_expert(
         self,
         hidden_states: torch.Tensor,
-        current_expert_idx: int,
+        current_idx: int,
         original_experts: List[nn.Module],
-        *args,
-        **kwargs
+        current_experts: List[nn.Module],
+        current_expert: nn.Module,
+        temperature: float = 1.0,
     ) -> tuple[torch.Tensor, Optional[int]]:
-        """
-        Compute next expert selection and associated loss.
-        During inference, returns actual expert index.
-        """
-        available_indices = range(len(original_experts))
-        loss, probs = self.compute_routing_scores(
-            hidden_states, current_expert_idx, available_indices
+        """Compute next expert selection and associated loss."""
+        batch_size = hidden_states.size(0)
+        device = hidden_states.device
+
+        # Project state
+        projected_state = self.project_state(hidden_states)
+
+        # Get current position and valid next experts
+        current_expert_idx = original_experts.index(current_expert)
+        next_indices = self.get_valid_indices(current_expert_idx)
+
+        if not next_indices:
+            return torch.tensor(0.0, device=device), None
+
+        # Compute attention scores
+        attention = self.compute_attention_scores(
+            projected_state, current_expert_idx, next_indices
         )
 
-        if not self.training:
-            next_idx = torch.argmax(probs, dim=-1)[0].item()
-            return loss, available_indices[next_idx]
+        if self.training:
+            probs = F.gumbel_softmax(attention, tau=temperature, hard=False)
+            next_idx = next_indices[torch.multinomial(probs[0], 1).item()]
+            target = torch.zeros(batch_size, device=device, dtype=torch.long)
+            loss = F.cross_entropy(attention, target) * 0.001
+            return loss, next_idx
+        else:
 
-        return loss, None
+            probs = F.softmax(attention, dim=-1)
+
+            # Find argmax across proper dimension
+            max_idx = torch.argmax(probs[0])  # Take first batch, then find max
+
+            next_idx = next_indices[max_idx.item()]
+            # # Add debug prints
+            # print(f"Attention shape: {attention.shape}")
+            # print(f"Raw attention: {attention}")
+            # print(f"Softmax probs: {probs}")
+            # print(f"Selected index: {max_idx.item()}")
+            # print(f"Final expert selection: {next_idx}")
+
+            return torch.tensor(0.0, device=device), next_idx
