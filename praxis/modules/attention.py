@@ -289,7 +289,7 @@ class LinearAttention(ScaledDotProduct):
 
         return q, k, v, []  # Return an empty list for scores
 
-    def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
+    def apply_masking(self, scores, attention_mask, *args, **kwargs):
         return scores, None, attention_mask
 
     def compute_weights(
@@ -387,15 +387,7 @@ class Differential(ScaledDotProduct):
         ]
         return q, k, v, scores
 
-    def compute_weights(
-        self,
-        q: Tensor,
-        k: Tensor,
-        v: Tensor,
-        scores,
-        causal_mask: Optional[Tensor] = None,
-        attention_mask: Optional[Tensor] = None,
-    ):
+    def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
         weights = [F.softmax(score, dim=-1) for score in scores]
         # Compute scalar lambda
         lambda_scalar = (
@@ -409,25 +401,16 @@ class Differential(ScaledDotProduct):
 
     def _normalize_outputs(self, weights):
         batch_size, num_heads, seq_len, head_dim = weights.shape
-        # Reshape for GroupNorm
-        attention_output = (
-            weights.permute(0, 2, 1, 3)
-            .reshape(batch_size, seq_len, num_heads * head_dim)
-            .permute(0, 2, 1)
-            .contiguous()
-        )  # Shape: (batch_size, num_heads * head_dim, seq_len)
+        # Combine heads and head_dim for channels dimension
+        attention_output = weights.reshape(batch_size, num_heads * head_dim, seq_len)
         # Apply GroupNorm
         attention_output = self.norm(attention_output)
-        # Permute to original shape
-        attention_output = (
-            attention_output.permute(0, 2, 1)
-            .view(batch_size, seq_len, num_heads, head_dim)
-            .permute(0, 2, 1, 3)
-            .contiguous()
-        )  # Shape: (batch_size, num_heads, seq_len, head_dim)
+        # Restore original shape
+        attention_output = attention_output.reshape(
+            batch_size, num_heads, head_dim, seq_len
+        ).transpose(-2, -1)
         # Apply scaling factor
-        attention_output = attention_output * (1 - self.lambda_init)
-        return attention_output
+        return attention_output * (1 - self.lambda_init)
 
 
 class Stickbreaking(ScaledDotProduct):
@@ -455,7 +438,8 @@ class Stickbreaking(ScaledDotProduct):
         v: Tensor,
         scores: List[Tensor],
         causal_mask: Optional[Tensor] = None,
-        attention_mask: Optional[Tensor] = None,
+        *args,
+        **kwargs,
     ) -> Tensor:
         logits = scores[0]
         batch_size, num_heads, seq_len, hist_len = logits.shape
