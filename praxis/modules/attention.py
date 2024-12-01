@@ -582,77 +582,120 @@ class GatedEMA(nn.Module):
     Inspired by MEGA, this class implements a simple EMA into an attention gating
     mechanism, which encourages inductive biases in the model.
     https://arxiv.org/abs/2209.10655
+    https://github.com/facebookresearch/mega/blob/main/fairseq/modules/exponential_moving_average.py
     """
 
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.num_heads = config.num_heads
-        self.num_query_heads = config.num_heads * config.num_queries
         self.head_dim = config.num_dims // config.num_heads
+        self.ndim = 2  # Possibly adjust this later
+        self.scale = math.sqrt(1.0 / self.ndim)
 
-        # EMA parameters for each head type
-        self.alpha_q = nn.Parameter(
-            torch.ones(1, self.num_query_heads, 1, self.head_dim) * 0.9
-        )
-        self.delta_q = nn.Parameter(
-            torch.ones(1, self.num_query_heads, 1, self.head_dim) * 0.1
-        )
-        self.alpha_kv = nn.Parameter(
-            torch.ones(1, self.num_heads, 1, self.head_dim) * 0.9
-        )
-        self.delta_kv = nn.Parameter(
-            torch.ones(1, self.num_heads, 1, self.head_dim) * 0.1
-        )
+        # Compute only the most recent X tokens; since EMA decays exponentially, there
+        # is little reason to compute super-long sequences
+        self.truncation = None
 
-        # Gates for each projection
-        self.gate_q = nn.Linear(self.head_dim, self.head_dim)
-        self.gate_k = nn.Linear(self.head_dim, self.head_dim)
-        self.gate_v = nn.Linear(self.head_dim, self.head_dim)
+        # EMA parameters per head dimension
+        self.alpha = nn.Parameter(torch.Tensor(self.head_dim, self.ndim, 1))
+        self.delta = nn.Parameter(torch.Tensor(self.head_dim, self.ndim, 1))
+        self.beta = nn.Parameter(torch.Tensor(self.head_dim, self.ndim, 1))
+        self.gamma = nn.Parameter(torch.Tensor(self.head_dim, self.ndim))
+        self.omega = nn.Parameter(torch.Tensor(self.head_dim))
+
+        # Gate for each projection
+        self.gate = nn.Linear(self.head_dim, self.head_dim)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.delta, mean=0.0, std=0.2)
+        nn.init.normal_(self.alpha, mean=0.0, std=0.2)
+        nn.init.normal_(self.beta, mean=0.0, std=0.02)
+        nn.init.normal_(self.gamma, mean=0.0, std=1.0)
+        nn.init.normal_(self.omega, mean=0.0, std=1.0)
+        nn.init.normal_(self.gate.weight, mean=0.0, std=0.02)
+        nn.init.constant_(self.gate.bias, 0)
 
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-        # Compute EMAs separately for queries and key/values
-        q_ema = self._compute_ema(q, self.alpha_q, self.delta_q)
-        k_ema = self._compute_ema(k, self.alpha_kv, self.delta_kv)
-        v_ema = self._compute_ema(v, self.alpha_kv, self.delta_kv)
+        # q, k, v: (batch_size, num_heads, seq_len, head_dim)
+        batch_size, num_heads, seq_len, head_dim = q.size()
 
-        # Apply gating (reshaping properly for different head counts)
-        gate_q = torch.sigmoid(self.gate_q(q))
-        gate_k = torch.sigmoid(self.gate_k(k))
-        gate_v = torch.sigmoid(self.gate_v(v))
+        # Flatten batch and head dimensions
+        q = q.contiguous().view(batch_size * num_heads, seq_len, head_dim)
+        k = k.contiguous().view(batch_size * num_heads, seq_len, head_dim)
+        v = v.contiguous().view(batch_size * num_heads, seq_len, head_dim)
+
+        # Compute EMA for q, k, v
+        q_ema = self._compute_ema(q)
+        k_ema = self._compute_ema(k)
+        v_ema = self._compute_ema(v)
+
+        # Apply gate
+        gate_q = F.silu(self.gate(q))
+        gate_k = F.silu(self.gate(k))
+        gate_v = F.silu(self.gate(v))
 
         # Combine original and EMA outputs
         q_out = gate_q * q + (1 - gate_q) * q_ema
         k_out = gate_k * k + (1 - gate_k) * k_ema
         v_out = gate_v * v + (1 - gate_v) * v_ema
 
+        # Reshape back to original shape
+        q_out = q_out.view(batch_size, num_heads, seq_len, head_dim)
+        k_out = k_out.view(batch_size, num_heads, seq_len, head_dim)
+        v_out = v_out.view(batch_size, num_heads, seq_len, head_dim)
+
         return q_out, k_out, v_out
 
-    def _compute_ema(self, x: Tensor, alpha: Tensor, delta: Tensor) -> Tensor:
-        """Optimized EMA computation using cumsum with GQA support"""
-        # Handle GQA by repeating parameters if needed
-        num_heads = x.size(1)
-        if num_heads != alpha.size(1):
-            alpha = alpha.repeat_interleave(num_heads // alpha.size(1), dim=1)
-            delta = delta.repeat_interleave(num_heads // delta.size(1), dim=1)
+    def _compute_kernel(self, seq_len: int) -> Tensor:
+        kernel_size = (
+            seq_len if self.truncation is None else min(self.truncation, seq_len)
+        )
+        # Compute coefficients
+        p = torch.sigmoid(self.delta)  # Shape: (head_dim, ndim, 1)
+        alpha = torch.sigmoid(self.alpha)  # Shape: (head_dim, ndim, 1)
+        q = 1.0 - p * alpha  # Shape: (head_dim, ndim, 1)
 
-        seq_len = x.shape[2]
-        decay = 1 - alpha * delta  # Now properly shaped for number of heads
+        # Compute kernel
+        k = torch.arange(kernel_size, device=p.device).view(
+            1, 1, kernel_size
+        ) * torch.log(q)
+        kernel = (p * self.beta) * torch.exp(k)  # Shape: (head_dim, ndim, seq_len)
+        kernel = torch.einsum(
+            "dnl,dn->dl", kernel, self.gamma * self.scale
+        )  # Shape: (head_dim, seq_len)
+        return kernel
 
-        # Compute decayed values directly
-        decayed_x = x * alpha  # Will work with expanded alpha
+    def _compute_ema(self, x: Tensor) -> Tensor:
+        # x: (batch_size_heads, seq_len, head_dim)
+        batch_size_heads, seq_len, head_dim = x.size()
+        x = x.transpose(1, 2)  # Shape: (batch_size_heads, head_dim, seq_len)
 
-        # Create powers of decay matrix efficiently
-        k = torch.arange(seq_len, device=x.device)
-        decay_matrix = decay ** k.view(1, 1, -1, 1)
+        # Compute kernel
+        kernel = self._compute_kernel(seq_len)  # (head_dim, kernel_size)
+        kernel_size = kernel.size(1)
 
-        # Apply decay and use cumsum for causal weighted sum
-        decayed_x = decayed_x * decay_matrix
+        # Zero-pad kernel to match seq_len
+        if kernel_size < seq_len:
+            padding = seq_len - kernel_size
+            kernel = F.pad(kernel, (0, padding))
 
-        # Cumsum for causal aggregation
-        result = torch.cumsum(torch.flip(decayed_x, [2]), dim=2)
-        result = torch.flip(result, [2])
+        # Perform convolution using FFT
+        fft_len = 2 * seq_len
+        x_f = torch.fft.rfft(x.float(), n=fft_len, dim=2)
+        k_f = torch.fft.rfft(kernel.float(), n=fft_len, dim=1)
 
-        return result
+        # Multiply in frequency domain
+        y_f = x_f * k_f.unsqueeze(0)  # Broadcasting over batch_size_heads
+        y = torch.fft.irfft(y_f, n=fft_len, dim=2)[
+            ..., :seq_len
+        ]  # (batch_size_heads, head_dim, seq_len)
+        y = y.type_as(x)
+
+        # Transpose y back to original shape
+        y = y.transpose(1, 2)  # (batch_size_heads, seq_len, head_dim)
+        return y
 
 
 def test_memory_scaling():
