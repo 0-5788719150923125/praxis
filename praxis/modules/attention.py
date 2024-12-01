@@ -13,7 +13,7 @@ from praxis.modules.memory import PraxisCompressiveMemory
 
 class PraxisAttention(nn.Module):
     """
-    This class is akin a wrapper, which implements a number of interesting attention
+    This class is akin to a wrapper, which implements a number of interesting attention
     mechanisms, and makes them optional with feature flags. By toggling features, one can
     essentially blend components from various kinds of attention.
     """
