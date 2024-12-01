@@ -36,7 +36,9 @@ class PraxisStack(nn.Module):
             assert (
                 self.num_experts == self.depth
             ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
-        self.behavior = LayerShuffle(config) if self.shuffle else False
+        self.behavior = (
+            LayerShuffle(config, num_context_tokens=3) if self.shuffle else False
+        )
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = False
         self.locals = nn.ModuleList()

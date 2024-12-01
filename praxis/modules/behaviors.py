@@ -18,47 +18,31 @@ class LayerShuffle(nn.Module):
     https://arxiv.org/abs/2407.04513
     """
 
-    def __init__(self, config: AutoConfig, num_context_tokens: int = 3):
+    def __init__(self, config: AutoConfig, num_context_tokens: int = 1):
         super().__init__()
         self.num_context_tokens = num_context_tokens
+
+        if self.num_context_tokens < 1:
+            return
+
+        # Keep learned embeddings for each position and context token
         self.embeddings = nn.Parameter(
             torch.randn(config.depth, num_context_tokens, config.num_dims)
         )
+        # Initialize with small values for stability
         nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
-        # Add mixing components
-        bottleneck = config.num_dims // 4
-        self.mixer = nn.Sequential(
-            nn.Linear(config.num_dims, bottleneck),
-            ACT2FN["gelu"],
-            nn.Dropout(config.dropout),
-            nn.Linear(bottleneck, config.num_dims),
-        )
-        # Gate for balancing position vs content influence
-        self.gate = nn.Linear(config.num_dims, 1)
 
     def add_context(
         self, hidden_states: Tensor, attention_mask: Tensor, position: int
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor]:
+
+        if self.num_context_tokens < 1:
+            return hidden_states, attention_mask
+
         # Get position-based embeddings
-        pos_embeds = self.embeddings[position]  # [num_tokens, dims]
-
-        # Create content-based context
-        # Average the hidden states for content representation
-        content = hidden_states.mean(dim=1)  # [batch, dims]
-        content_context = self.mixer(content)  # [batch, dims]
-
-        # Expand position embeddings
-        pos_embeds = pos_embeds.expand(hidden_states.shape[0], -1, -1)
-        # Expand content context
-        content_context = content_context.unsqueeze(1).expand(
-            -1, self.num_context_tokens, -1
-        )
-
-        # Compute mixing ratio
-        gate = torch.sigmoid(self.gate(content_context))
-
-        # Mix position and content information
-        mixed_context = gate * pos_embeds + (1 - gate) * content_context
+        context = self.embeddings[position]  # [num_tokens, dims]
+        # Expand to match batch dimension
+        context = context.expand(hidden_states.shape[0], -1, -1)
 
         # Prepare attention mask for context tokens
         context_mask = attention_mask.new_ones(
@@ -67,13 +51,17 @@ class LayerShuffle(nn.Module):
         extended_attention_mask = torch.cat([context_mask, attention_mask], dim=1)
 
         # Add context to hidden states
-        extended_hidden_states = torch.cat([mixed_context, hidden_states], dim=1)
+        extended_hidden_states = torch.cat([context, hidden_states], dim=1)
 
         return extended_hidden_states, extended_attention_mask
 
     def remove_context(
         self, hidden_states: Tensor, attention_mask: Tensor
     ) -> tuple[Tensor, Tensor]:
+
+        if self.num_context_tokens < 1:
+            return hidden_states, attention_mask
+
         # Remove context tokens from both hidden states and attention mask
         trimmed_states = hidden_states[:, self.num_context_tokens :, :]
         trimmed_mask = attention_mask[:, self.num_context_tokens :]
