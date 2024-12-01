@@ -28,19 +28,19 @@ class PraxisDecoder(nn.Module):
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         experts = list(self.stack.locals) + list(self.stack.remotes)
         original_order = experts.copy()
-        if self.stack.behavior:
+        if hasattr(self.stack.behavior, "shuffle_experts"):
             experts = self.stack.behavior.shuffle_experts(experts)
 
         hidden_states = inputs
         aux_losses = []
 
-        route = []
+        route = [str(original_order.index(experts[0]))]
 
         next_expert_idx = None
         for i in range(self.stack.depth):
             try:
                 expert = experts[i]
-                if not self.training and next_expert_idx is not None:
+                if next_expert_idx is not None:
                     expert = experts[next_expert_idx]
                     route.append(str(next_expert_idx))
 
@@ -49,10 +49,10 @@ class PraxisDecoder(nn.Module):
                 )
                 aux_losses.append(aux_loss)
 
-                if self.stack.navigator:
+                if hasattr(self.stack.behavior, "get_next_expert"):
                     # Predict the optimal next-expert index
-                    aux_loss, next_expert_idx = self.navigator(
-                        original_order, experts, expert, new_states
+                    aux_loss, next_expert_idx = self.stack.behavior.get_next_expert(
+                        new_states, i, original_order, experts, expert
                     )
                     aux_losses.append(aux_loss)
 
@@ -69,8 +69,11 @@ class PraxisDecoder(nn.Module):
                 self.manager.handle_failure(expert)
                 continue
 
-        if self.debug and not self.training and self.stack.navigator:
-            print(f"DEBUG: routing through: {' -> '.join(route)}")
+        if self.debug and self.stack.behavior:
+            if not self.training:
+                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
+            # else:
+            #     print(f"DEBUG: training through: {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 

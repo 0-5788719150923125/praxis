@@ -1,5 +1,5 @@
 import random
-from typing import Optional
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -8,6 +8,8 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
+from praxis.modules.controller import PraxisController
+from praxis.modules.graph import PraxisGraph
 
 
 class LayerShuffle(nn.Module):
@@ -20,8 +22,17 @@ class LayerShuffle(nn.Module):
 
     def __init__(self, config: AutoConfig, num_context_tokens: int = 1):
         super().__init__()
-        self.num_context_tokens = num_context_tokens
+        assert (
+            config.num_experts == config.depth
+        ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
 
+        self.navigator = (
+            PraxisController(config, max_num_experts=config.num_experts * 3)
+            if config.autopilot
+            else False
+        )
+
+        self.num_context_tokens = num_context_tokens
         if self.num_context_tokens < 1:
             return
 
@@ -73,3 +84,29 @@ class LayerShuffle(nn.Module):
             return random.choices(experts, k=depth)
         else:
             return random.sample(experts, k=depth)
+
+    def get_next_expert(
+        self,
+        hidden_states: torch.Tensor,
+        current_depth: int,
+        original_experts: List[nn.Module],
+        current_experts: List[nn.Module],
+        current_expert: nn.Module,
+    ) -> tuple[torch.Tensor, Optional[int]]:
+        """
+        Compute next expert selection and associated loss.
+        During inference, returns actual expert index.
+        """
+        if self.navigator:
+            return self.navigator(
+                hidden_states,
+                current_depth,
+                original_experts,
+                current_experts,
+                current_expert,
+            )
+        else:
+            if -len(current_experts) <= current_depth + 1 < len(current_experts):
+                return 0, original_experts.index(current_experts[current_depth + 1])
+            else:
+                return 0, None
