@@ -70,10 +70,10 @@ class PraxisDecoder(nn.Module):
                 continue
 
         if self.debug and self.stack.behavior:
-            # if self.training:
-            #     print(f"DEBUG: training through: {' -> '.join(route)}")
+            if not self.training:
+                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
             # else:
-            print(f"DEBUG: inferencing through: {' -> '.join(route)}")
+            #     print(f"DEBUG: training through: {' -> '.join(route)}")
 
         return hidden_states, sum(aux_losses)
 
