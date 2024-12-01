@@ -19,42 +19,42 @@ class PraxisGraph(nn.Module):
         self.num_heads = 3
         self.num_context_tokens = 3
         self.used_experts = set()
-        self.MASK_VALUE = -1e9
         self.routing_scale = 0.01
 
         # Layer embeddings (nodes)
         self.layer_embeddings = nn.Parameter(
             torch.randn(self.num_layers, self.hidden_dim)
         )
-        nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
 
         # Centrality encoding (based on layer depth)
         self.centrality_embeddings = nn.Parameter(
             torch.randn(self.num_layers, self.hidden_dim)
         )
-        nn.init.normal_(self.centrality_embeddings, mean=0.0, std=0.02)
 
         # Spatial encoding (transition distances)
         self.max_distance = self.num_layers
         self.spatial_embeddings = nn.Parameter(torch.randn(self.max_distance + 1, 1))
-        nn.init.normal_(self.spatial_embeddings, mean=0.0, std=0.02)
 
-        self.edge_dim = config.num_dims  # or specific edge dimension
-        self.edge_embeddings = nn.Parameter(torch.randn(self.num_layers, self.edge_dim))
-        nn.init.normal_(self.edge_embeddings, mean=0.0, std=0.02)
+        edge_dim = self.hidden_dim // 4
+        self.edge_embeddings = nn.Parameter(torch.randn(self.num_layers, edge_dim))
 
         # Normalize the hidden states
         self.norm = nn.LayerNorm(self.hidden_dim)
 
         # Graph attention components
-        self.q_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.k_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.v_proj = nn.Linear(self.hidden_dim, self.hidden_dim)
-
-        # Output projection
-        self.out_proj = nn.Linear(self.hidden_dim, self.num_layers)
+        self.query = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.key = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.value = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.output = nn.Linear(self.hidden_dim, self.num_layers)
 
         self.dropout = nn.Dropout(config.dropout)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
+        nn.init.normal_(self.centrality_embeddings, mean=0.0, std=0.02)
+        nn.init.normal_(self.spatial_embeddings, mean=0.0, std=0.02)
+        nn.init.normal_(self.edge_embeddings, mean=0.0, std=0.02)
 
     def add_context(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, position: int
@@ -111,11 +111,14 @@ class PraxisGraph(nn.Module):
         layer_features = self.layer_embeddings + self.centrality_embeddings
 
         # Project for attention
-        q = self.q_proj(query_input)
-        k = self.k_proj(layer_features)
-        v = self.v_proj(layer_features)
-        k = k.unsqueeze(0)
-        v = v.unsqueeze(0)
+        q = self.query(query_input)
+        k = self.key(layer_features)
+        v = self.value(layer_features)
+
+        # Force ensembling
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
 
         # Compute attention scores
         attention = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.hidden_dim)
@@ -158,9 +161,8 @@ class PraxisGraph(nn.Module):
         for idx in available_indices:
             if idx not in self.used_experts:
                 mask[:, idx] = False
-        scores = scores.masked_fill(mask, self.MASK_VALUE)
 
-        return scores
+        return scores.masked_fill(mask, -1e9)
 
     def get_next_expert(
         self,
@@ -206,11 +208,9 @@ class PraxisGraph(nn.Module):
 
         # Select next expert
         if self.training:
-            softmax_probs = F.gumbel_softmax(scores, tau=1.0, hard=True)
-            next_idx = torch.argmax(softmax_probs[0], dim=-1).item()
-        else:
-            softmax_probs = probs
-            next_idx = torch.argmax(softmax_probs[0], dim=-1).item()
+            probs = F.gumbel_softmax(scores, tau=1.0, hard=True)
+
+        next_idx = torch.argmax(probs[0], dim=-1).item()
 
         # Add current expert to used set
         self.used_experts.add(next_idx)
