@@ -29,10 +29,11 @@ class PraxisController(nn.Module):
 
     def forward(
         self,
+        hidden_states: torch.Tensor,
+        current_depth: int,
         original_experts: List[nn.Module],
         current_experts: List[nn.Module],
         current_expert: nn.Module,
-        hidden_states: torch.Tensor,
     ):
 
         batch_size = hidden_states.size(0)

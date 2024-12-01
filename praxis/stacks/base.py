@@ -8,8 +8,7 @@ from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
-from praxis.modules.behaviors import LayerShuffle
-from praxis.modules.controller import PraxisController
+from praxis.modules.behaviors import LayerShuffle, PraxisGraph
 from praxis.modules.evolution import GenomicBottleneck
 from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
 from praxis.modules.router import PraxisMixtureOfDepths
@@ -31,14 +30,12 @@ class PraxisStack(nn.Module):
             self.num_experts >= self.depth
         ), "`num_experts` should be at least as large as `depth`."
         self.sparse = config.sparse
-        self.shuffle = config.shuffle
-        if not self.shuffle:
-            assert (
-                self.num_experts == self.depth
-            ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
-        self.behavior = (
-            LayerShuffle(config, num_context_tokens=3) if self.shuffle else False
-        )
+        if config.graph:
+            self.behavior = PraxisGraph(config)
+        else:
+            self.behavior = (
+                LayerShuffle(config, num_context_tokens=3) if config.shuffle else False
+            )
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = False
         self.locals = nn.ModuleList()
@@ -77,6 +74,3 @@ class PraxisStack(nn.Module):
                 self.locals.append(expert)
         if self.manager:
             self.manager.serve_experts()
-        self.navigator = False
-        if config.autopilot:
-            self.navigator = PraxisController(config, len(self.locals) * 3)

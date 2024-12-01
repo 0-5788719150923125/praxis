@@ -278,6 +278,12 @@ parser.add_argument(
     help="Allow the model to discover and route through experts in a optimal fashion",
 )
 parser.add_argument(
+    "--graph",
+    action="store_true",
+    default=False,
+    help="Use graph-based routing through experts/layers",
+)
+parser.add_argument(
     "--compression",
     action="store_true",
     default=False,
@@ -432,6 +438,7 @@ config = PraxisConfig(
     sparse=True if sparse else not dense,
     shuffle=shuffle,
     autopilot=autopilot,
+    graph=graph,
     linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,
