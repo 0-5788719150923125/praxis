@@ -17,6 +17,7 @@ class PraxisGraph(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
         # Core dimensions
+        self.causal = config.causal
         self.num_experts = config.num_experts
         self.hidden_size = config.num_dims
         self.num_context_tokens = 3  # Maintain API compatibility
@@ -41,14 +42,14 @@ class PraxisGraph(nn.Module):
             torch.randn(self.num_experts, self.num_experts)
         )
 
-        # Redefine spatial bias to have clear structural meaning
-        num_distance_buckets = 3  # Different types of relationships
-        self.spatial_embeddings = nn.Parameter(torch.randn(num_distance_buckets))
-
         # Define expert relationships matrix (fixed)
         self.register_buffer(
             "expert_distances", self._create_expert_distance_matrix(self.num_experts)
         )
+
+        # Graph structure
+        max_distance = self.expert_distances.max().item()
+        self.spatial_embeddings = nn.Parameter(torch.randn(max_distance + 1))
 
         # Router projection
         self.router = nn.Sequential(
@@ -61,21 +62,10 @@ class PraxisGraph(nn.Module):
 
     def _init_parameters(self):
         """Initialize parameters with Graphformer-inspired values"""
-        # Initialize node embeddings
-        nn.init.normal_(self.expert_embeddings, std=0.02)
-
-        # Initialize centrality embeddings to zeros
+        nn.init.normal_(self.expert_embeddings)
         nn.init.zeros_(self.centrality_embeddings)
-
-        # Initialize context tokens
-        nn.init.normal_(self.context_embeddings, std=0.02)
-
-        # Initialize spatial bias for path distances
-        nn.init.zeros_(self.spatial_bias)
-        with torch.no_grad():
-            # Add slight bias for direct connections
-            eye = torch.eye(self.num_experts)
-            self.spatial_bias.data = self.spatial_bias.data + eye * 0.1
+        nn.init.normal_(self.context_embeddings)
+        nn.init.uniform_(self.spatial_embeddings)
 
     def add_context(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, expert_idx: int
@@ -105,26 +95,12 @@ class PraxisGraph(nn.Module):
         )
 
     def _create_expert_distance_matrix(self, num_experts: int) -> torch.Tensor:
-        """Create a matrix encoding structural relationships between experts.
-
-        Distance values:
-        0 = Same expert (self)
-        1 = Adjacent expert (neighboring)
-        2 = Distant expert (others)
-        """
-        distances = torch.full((num_experts, num_experts), 2)  # Default: distant
-
-        # Set adjacent relationships
+        """Initialize with a ring topology."""
+        distances = torch.zeros((num_experts, num_experts), dtype=torch.long)
         for i in range(num_experts):
-            # Consider experts as circularly arranged
-            prev_idx = (i - 1) % num_experts
-            next_idx = (i + 1) % num_experts
-            distances[i, prev_idx] = 1
-            distances[i, next_idx] = 1
-
-        # Set self-relationships
-        distances.fill_diagonal_(0)
-
+            for j in range(num_experts):
+                dist = min(abs(i - j), num_experts - abs(i - j))
+                distances[i, j] = dist
         return distances
 
     def compute_attention_scores(
@@ -134,7 +110,24 @@ class PraxisGraph(nn.Module):
         next_indices: list[int],
     ) -> torch.Tensor:
         # Project hidden states for routing query
-        query = self.router(hidden_states[:, -1])
+        if self.causal:
+            batch_size, seq_len, features = hidden_states.shape
+            # Compute cumulative sum of hidden states
+            cumsum_hidden_states = torch.cumsum(hidden_states, dim=1)
+            counts = torch.arange(1, seq_len + 1, device=hidden_states.device).view(
+                1, seq_len, 1
+            )
+            cumulative_means = cumsum_hidden_states / counts
+
+            # Use the cumulative mean at the last time step
+            query = self.router(
+                cumulative_means[:, -1, :]
+            )  # Shape: (batch_size, hidden_size)
+        else:
+            # Non-causal case: use mean over all time steps
+            query = self.router(
+                hidden_states.mean(1)
+            )  # Shape: (batch_size, hidden_size)
 
         # Get expert node embeddings with centrality
         expert_nodes = (
@@ -154,7 +147,7 @@ class PraxisGraph(nn.Module):
         ]  # Convert to learnable bias values
 
         attention = attention + spatial_bias
-        attention = attention / math.sqrt(self.hidden_size) / self.temperature
+        attention = attention / math.sqrt(self.hidden_size)
 
         return attention
 
