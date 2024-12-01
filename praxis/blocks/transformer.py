@@ -36,6 +36,8 @@ class PraxisTransformer(nn.Module):
         self.attn = PraxisAttention(config)
         self.mlp_norm = nn.RMSNorm(config.num_dims, eps=config.epsilon)
         self.mlp = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
+        # Force exploration of attention subnetworks
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(
         self,
@@ -49,6 +51,7 @@ class PraxisTransformer(nn.Module):
         normalized = self.attn_norm(inputs)
         outputs = self.attn(normalized, attention_mask)
         outputs = outputs + residual
+        outputs = self.dropout(outputs)
         residual = outputs
         normalized = self.mlp_norm(outputs)
         outputs = self.mlp(normalized)
@@ -58,7 +61,7 @@ class PraxisTransformer(nn.Module):
                 router_weights = None
             outputs = outputs + router_weights
         outputs = outputs + residual
-        return outputs
+        return self.dropout(outputs)
 
     def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
         """Check if a tensor is filled with zeros (within numerical tolerance)"""

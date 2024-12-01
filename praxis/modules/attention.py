@@ -8,7 +8,7 @@ from torch import Tensor
 from transformers import AutoConfig
 
 from praxis.modules.encoding import ENCODING_REGISTRY
-from praxis.modules.memory import CompressiveMemory
+from praxis.modules.memory import PraxisCompressiveMemory
 
 
 class PraxisAttention(nn.Module):
@@ -37,6 +37,10 @@ class PraxisAttention(nn.Module):
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
+        self.gating = config.mega
+        if self.gating:
+            self.gating = PraxisGatedEMA(config)
+
         # Query and key projections for differential heads
         self.multiplier = 2 if self.differential else 1
         self.query = nn.Linear(
@@ -53,15 +57,11 @@ class PraxisAttention(nn.Module):
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
 
-        self.gates = config.mega
-        if self.gates:
-            self.gates = GatedEMA(config)
-
         self.memory = config.memory
         self.chunk_size = 0
         if self.memory:
             self.chunk_size = 256
-            self.memory = CompressiveMemory(config)
+            self.memory = PraxisCompressiveMemory(config)
 
         # The core attention mechanism
         scale_encoding = True
@@ -79,6 +79,9 @@ class PraxisAttention(nn.Module):
         # For handling length extrapolation
         self.encoding = ENCODING_REGISTRY[config.encoding](config, scale_encoding)
 
+        # Force exploration of attention subnetworks
+        self.dropout = nn.Dropout(config.dropout)
+
         # Standard output projection
         self.output = nn.Linear(
             self.num_query_heads * self.head_dim, self.hidden_size, bias=False
@@ -86,6 +89,10 @@ class PraxisAttention(nn.Module):
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
+
+        if self.gating:
+            # Compute an exponential moving average-based gating mechanism
+            inputs = self.gating(inputs)
 
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
@@ -107,6 +114,10 @@ class PraxisAttention(nn.Module):
             .view(batch_size, -1, self.num_heads, self.head_dim)
             .transpose(1, 2)
         )
+
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
 
         outputs = []
 
@@ -158,10 +169,6 @@ class PraxisAttention(nn.Module):
             k = k.repeat_interleave(self.num_queries, dim=1)
             v = v.repeat_interleave(self.num_queries, dim=1)
 
-        if self.gates:
-            # Compute an exponential moving average-based gating mechanism
-            q, k, v = self.gates(q, k, v)
-
         # Apply positional encoding with offset
         q, k, v = self.encoding.before_scores(q, k, v, offset=offset)
 
@@ -186,6 +193,8 @@ class PraxisAttention(nn.Module):
             # Get memory output and blend (memory doesn't need position info)
             attention_output = self.memory(q, k, v, attention_output)
 
+        attention_output = self.dropout(attention_output)
+
         # Reshape for output projection
         chunk_output = attention_output.transpose(1, 2).reshape(
             batch_size, chunk_size, -1
@@ -208,8 +217,6 @@ class ScaledDotProduct(nn.Module):
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = self.hidden_size // self.num_heads
-        # Force exploration of attention subnetworks
-        self.dropout = nn.Dropout(config.dropout)
 
     def _compute_score(self, q, k):
         scaling = 1.0 / math.sqrt(self.head_dim)
@@ -228,7 +235,7 @@ class ScaledDotProduct(nn.Module):
         causal_mask: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
     ):
-        weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
+        weights = [F.softmax(score, dim=-1) for score in scores]
         return self._compute_outputs(weights[0], v)
 
     def _compute_outputs(self, weights, v):
@@ -271,9 +278,6 @@ class LinearAttention(ScaledDotProduct):
 
         # Feature map for positive definite kernel
         self.feature_map = lambda x: F.elu(x) + 1
-
-        # Optional dropout
-        self.dropout = nn.Dropout(config.dropout)
 
     def compute_scores(self, q: Tensor, k: Tensor, v: Tensor):
         """
@@ -345,7 +349,6 @@ class LinearAttention(ScaledDotProduct):
         # Normalize output
         output = output / z.unsqueeze(-1)  # (B, H, L, D)
 
-        output = self.dropout(output)
         return output
 
 
@@ -393,7 +396,7 @@ class Differential(ScaledDotProduct):
         causal_mask: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
     ):
-        weights = [self.dropout(F.softmax(score, dim=-1)) for score in scores]
+        weights = [F.softmax(score, dim=-1) for score in scores]
         # Compute scalar lambda
         lambda_scalar = (
             torch.exp(torch.dot(self.lambdas["q1"], self.lambdas["k1"]))
@@ -473,7 +476,7 @@ class Stickbreaking(ScaledDotProduct):
         )
 
         # Final attention weights
-        weights = self.dropout(z * re_cum_log_beta.exp())
+        weights = z * re_cum_log_beta.exp()
 
         return self._compute_outputs(weights, v)
 
@@ -577,124 +580,110 @@ class Stickbreaking(ScaledDotProduct):
     #     return new_k, new_v
 
 
-class GatedEMA(nn.Module):
+class PraxisGatedEMA(nn.Module):
     """
-    Inspired by MEGA, this class implements a simple EMA into an attention gating
-    mechanism, which encourages inductive biases in the model.
-    https://arxiv.org/abs/2209.10655
-    https://github.com/facebookresearch/mega/blob/main/fairseq/modules/exponential_moving_average.py
+    Inspired by MEGA, this class implements a simple EMA into an attention mechanism,
+    encouraging inductive biases in the model.
+    Reference: https://arxiv.org/abs/2209.10655
+    Original Code: https://github.com/facebookresearch/mega/blob/main/fairseq/modules/exponential_moving_average.py
     """
 
     def __init__(self, config: AutoConfig):
         super().__init__()
-        self.num_heads = config.num_heads
-        self.head_dim = config.num_dims // config.num_heads
-        self.ndim = 2  # Possibly adjust this later
+        self.embed_dim = config.num_dims
+        self.ndim = 3  # Adjust as needed
         self.scale = math.sqrt(1.0 / self.ndim)
 
-        # Compute only the most recent X tokens; since EMA decays exponentially, there
-        # is little reason to compute super-long sequences
-        self.truncation = None
+        # Truncation parameter to limit kernel size
+        self.truncation = None  # Set to a value like 256 if needed
 
-        # EMA parameters per head dimension
-        self.alpha = nn.Parameter(torch.Tensor(self.head_dim, self.ndim, 1))
-        self.delta = nn.Parameter(torch.Tensor(self.head_dim, self.ndim, 1))
-        self.beta = nn.Parameter(torch.Tensor(self.head_dim, self.ndim, 1))
-        self.gamma = nn.Parameter(torch.Tensor(self.head_dim, self.ndim))
-        self.omega = nn.Parameter(torch.Tensor(self.head_dim))
-
-        # Gate for each projection
-        self.gate = nn.Linear(self.head_dim, self.head_dim)
+        # EMA parameters
+        self.delta = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.alpha = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.beta = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.gamma = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim))
+        self.omega = nn.Parameter(torch.Tensor(self.embed_dim))
 
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.normal_(self.delta, mean=0.0, std=0.2)
-        nn.init.normal_(self.alpha, mean=0.0, std=0.2)
-        nn.init.normal_(self.beta, mean=0.0, std=0.02)
-        nn.init.normal_(self.gamma, mean=0.0, std=1.0)
-        nn.init.normal_(self.omega, mean=0.0, std=1.0)
-        nn.init.normal_(self.gate.weight, mean=0.0, std=0.02)
-        nn.init.constant_(self.gate.bias, 0)
+        with torch.no_grad():
+            nn.init.normal_(self.delta, mean=0.0, std=0.2)
+            nn.init.normal_(self.alpha, mean=0.0, std=0.2)
+            val = torch.ones(self.ndim, 1)
+            if self.ndim > 1:
+                idx = torch.tensor(list(range(1, self.ndim, 2)))
+                val.index_fill_(0, idx, -1.0)
+            self.beta.normal_(mean=0.0, std=0.02).add_(val)
+            nn.init.normal_(self.gamma, mean=0.0, std=1.0)
+            nn.init.normal_(self.omega, mean=0.0, std=1.0)
 
-    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
-        # q, k, v: (batch_size, num_heads, seq_len, head_dim)
-        batch_size, num_heads, seq_len, head_dim = q.size()
+    def forward(self, x: Tensor) -> Tensor:
+        # Compute residual
+        residual = x * self.omega  # Shape: (batch_size, seq_len, embed_dim)
 
-        # Flatten batch and head dimensions
-        q = q.contiguous().view(batch_size * num_heads, seq_len, head_dim)
-        k = k.contiguous().view(batch_size * num_heads, seq_len, head_dim)
-        v = v.contiguous().view(batch_size * num_heads, seq_len, head_dim)
+        # Compute EMA
+        ema_x = self._compute_ema(x)  # Shape: (batch_size, seq_len, embed_dim)
 
-        # Compute EMA for q, k, v
-        q_ema = self._compute_ema(q)
-        k_ema = self._compute_ema(k)
-        v_ema = self._compute_ema(v)
+        # Combine EMA output with residual and apply activation function
+        y = F.silu(ema_x + residual)  # Shape: (batch_size, seq_len, embed_dim)
 
-        # Apply gate
-        gate_q = F.silu(self.gate(q))
-        gate_k = F.silu(self.gate(k))
-        gate_v = F.silu(self.gate(v))
+        return y
 
-        # Combine original and EMA outputs
-        q_out = gate_q * q + (1 - gate_q) * q_ema
-        k_out = gate_k * k + (1 - gate_k) * k_ema
-        v_out = gate_v * v + (1 - gate_v) * v_ema
-
-        # Reshape back to original shape
-        q_out = q_out.view(batch_size, num_heads, seq_len, head_dim)
-        k_out = k_out.view(batch_size, num_heads, seq_len, head_dim)
-        v_out = v_out.view(batch_size, num_heads, seq_len, head_dim)
-
-        return q_out, k_out, v_out
+    def _calc_coeffs(self):
+        p = torch.sigmoid(self.delta)  # (embed_dim, ndim, 1)
+        alpha = torch.sigmoid(self.alpha)  # (embed_dim, ndim, 1)
+        q = 1.0 - p * alpha  # (embed_dim, ndim, 1)
+        return p, q
 
     def _compute_kernel(self, seq_len: int) -> Tensor:
         kernel_size = (
             seq_len if self.truncation is None else min(self.truncation, seq_len)
         )
         # Compute coefficients
-        p = torch.sigmoid(self.delta)  # Shape: (head_dim, ndim, 1)
-        alpha = torch.sigmoid(self.alpha)  # Shape: (head_dim, ndim, 1)
-        q = 1.0 - p * alpha  # Shape: (head_dim, ndim, 1)
-
+        p, q = self._calc_coeffs()
         # Compute kernel
-        k = torch.arange(kernel_size, device=p.device).view(
-            1, 1, kernel_size
-        ) * torch.log(q)
-        kernel = (p * self.beta) * torch.exp(k)  # Shape: (head_dim, ndim, seq_len)
+        t = torch.arange(kernel_size, device=p.device).view(1, 1, kernel_size)
+        log_q = torch.log(q)
+        vander = t * log_q  # (embed_dim, ndim, kernel_size)
+        kernel = (p * self.beta) * torch.exp(vander)  # (embed_dim, ndim, kernel_size)
         kernel = torch.einsum(
             "dnl,dn->dl", kernel, self.gamma * self.scale
-        )  # Shape: (head_dim, seq_len)
+        )  # (embed_dim, kernel_size)
         return kernel
 
     def _compute_ema(self, x: Tensor) -> Tensor:
-        # x: (batch_size_heads, seq_len, head_dim)
-        batch_size_heads, seq_len, head_dim = x.size()
-        x = x.transpose(1, 2)  # Shape: (batch_size_heads, head_dim, seq_len)
+        # x: (batch_size, seq_len, embed_dim)
+        batch_size, seq_len, embed_dim = x.size()
+        x = x.transpose(1, 2)  # (batch_size, embed_dim, seq_len)
 
         # Compute kernel
-        kernel = self._compute_kernel(seq_len)  # (head_dim, kernel_size)
+        kernel = self._compute_kernel(seq_len)  # (embed_dim, kernel_size)
         kernel_size = kernel.size(1)
 
-        # Zero-pad kernel to match seq_len
+        # Zero-pad kernel to match seq_len if necessary
         if kernel_size < seq_len:
             padding = seq_len - kernel_size
             kernel = F.pad(kernel, (0, padding))
 
         # Perform convolution using FFT
         fft_len = 2 * seq_len
-        x_f = torch.fft.rfft(x.float(), n=fft_len, dim=2)
-        k_f = torch.fft.rfft(kernel.float(), n=fft_len, dim=1)
+        x_f = torch.fft.rfft(
+            x.float(), n=fft_len, dim=2
+        )  # (batch_size, embed_dim, fft_len//2+1)
+        k_f = torch.fft.rfft(
+            kernel.float(), n=fft_len, dim=1
+        )  # (embed_dim, fft_len//2+1)
 
         # Multiply in frequency domain
-        y_f = x_f * k_f.unsqueeze(0)  # Broadcasting over batch_size_heads
+        y_f = x_f * k_f.unsqueeze(0)  # Broadcasting over batch_size
         y = torch.fft.irfft(y_f, n=fft_len, dim=2)[
             ..., :seq_len
-        ]  # (batch_size_heads, head_dim, seq_len)
+        ]  # (batch_size, embed_dim, seq_len)
         y = y.type_as(x)
 
-        # Transpose y back to original shape
-        y = y.transpose(1, 2)  # (batch_size_heads, seq_len, head_dim)
+        # Transpose back to (batch_size, seq_len, embed_dim)
+        y = y.transpose(1, 2)
         return y
 
 

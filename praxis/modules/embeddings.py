@@ -7,63 +7,81 @@ from torch import Tensor
 from transformers import AutoConfig
 
 
-class PraxisEmbedding(nn.Sequential):
+class PraxisLearnedEmbeddings(nn.Sequential):
     """
-    A flexible token embeddings layer with optional learned positional embeddings.
+    Praxis embeddings with learned positional encodings (GPT2-style).
+    Uses Sequential organization of layers.
     """
 
-    __version__ = "0.1.0"
-
-    def __init__(self, config: AutoConfig, learned: bool = False):
-
-        layers = [("wte", nn.Embedding(config.vocab_size, config.num_embeds))]
-
-        if learned:
-            # Use GPT2-like positional embeddings
-            layers.append(
-                ("wpe", nn.Embedding(config.context_length, config.num_embeds))
-            )
-        else:
-            # Factorize the embeddings
-            bottleneck_dim = config.num_dims // 2
-            layers.extend(
-                [
-                    ("down", nn.Linear(config.num_embeds, bottleneck_dim)),
-                    ("up", nn.Linear(bottleneck_dim, config.num_dims)),
-                ]
-            )
-
-        layers.extend(
+    def __init__(self, config: AutoConfig):
+        layers = OrderedDict(
             [
+                ("wte", nn.Embedding(config.vocab_size, config.num_embeds)),
+                ("wpe", nn.Embedding(config.context_length, config.num_embeds)),
                 ("dropout", nn.Dropout(config.dropout)),
-                ("linear", nn.Linear(config.num_embeds, config.num_dims)),
+                ("reduction", nn.Linear(config.num_embeds, config.num_dims)),
             ]
         )
+        super().__init__(layers)
 
-        super().__init__(OrderedDict(layers))
+    def forward(self, x: Tensor) -> Tensor:
+        B, T = x.shape
 
-    def forward(self, x: Tensor):
-
+        # Token embeddings
         hidden_states = self.wte(x)
-        if hasattr(self, "wpe"):
-            B, T = x.shape
-            position_ids = torch.arange(T, device=x.device)
-            positions = self.wpe(position_ids)
-            hidden_states = hidden_states + positions
-            hidden_states = self.dropout(hidden_states)
-            hidden_states = self.linear(hidden_states)
-        else:
-            residual = self.linear(hidden_states)
-            hidden_states = self.up(self.down(hidden_states))
-            hidden_states = self.dropout(hidden_states)
-            hidden_states = hidden_states + residual
+
+        # Add positional embeddings
+        position_ids = torch.arange(T, device=x.device)
+        positions = self.wpe(position_ids)
+        hidden_states = hidden_states + positions
+
+        # Apply remaining sequential layers
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.reduction(hidden_states)
 
         return hidden_states
 
 
+class PraxisFactorizedEmbeddings(nn.Sequential):
+    """
+    Praxis embeddings using factorized bottleneck architecture.
+    Uses Sequential organization of layers.
+    """
+
+    def __init__(self, config: AutoConfig):
+        bottleneck_dim = config.num_dims // 2
+        layers = OrderedDict(
+            [
+                ("tokens", nn.Embedding(config.vocab_size, config.num_embeds)),
+                ("residual", nn.Linear(config.num_embeds, config.num_dims)),
+                ("compress", nn.Linear(config.num_embeds, bottleneck_dim)),
+                ("decompress", nn.Linear(bottleneck_dim, config.num_dims)),
+                ("dropout", nn.Dropout(config.dropout)),
+            ]
+        )
+        super().__init__(layers)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # Token embeddings
+        hidden_states = self.tokens(x)
+
+        # Store residual
+        residual = self.residual(hidden_states)
+
+        # Apply factorized transformation
+        compressed_states = self.dropout(self.compress(hidden_states))
+        decompressed_states = self.decompress(compressed_states)
+
+        # Add residual connection
+        hidden_states = decompressed_states + residual
+
+        return hidden_states
+
+
+# Registry mapping architecture names to embedding classes
 EMBEDDING_REGISTRY = {
-    "transformer": partial(PraxisEmbedding),
-    "nano": partial(PraxisEmbedding, learned=True),
-    "conv": partial(PraxisEmbedding),
-    "recurrent": partial(PraxisEmbedding),
+    "transformer": PraxisFactorizedEmbeddings,
+    "nano": PraxisLearnedEmbeddings,
+    "conv": PraxisFactorizedEmbeddings,
+    "recurrent": PraxisFactorizedEmbeddings,
 }

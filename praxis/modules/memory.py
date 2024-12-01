@@ -7,7 +7,7 @@ from torch import Tensor
 from transformers import AutoConfig
 
 
-class CompressiveMemory(nn.Module):
+class PraxisCompressiveMemory(nn.Module):
     """
     This module implements a simplified version of Infini-Attention, which can offer
     substantial VRAM savings at longer sequence lengths.
