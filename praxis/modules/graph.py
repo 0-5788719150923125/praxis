@@ -1,16 +1,19 @@
 import math
 import os
+import random
 from collections import defaultdict, deque
 from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
+import matplotlib.transforms as transforms  # Added this import
 import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import ConnectionPatch, FancyArrowPatch
+from matplotlib.patches import Circle, ConnectionPatch, FancyArrowPatch
+from matplotlib.transforms import Affine2D
 
 
 class PraxisGraph(nn.Module):
@@ -254,6 +257,7 @@ class RouteVisualizer:
         self.route_counts = defaultdict(int)
         self.recurrent_counts = defaultdict(int)
         self.inference_count = 0
+        self.node_radius = 0.15
 
     def add_route(self, route: List[int]):
         self.route_history.append(route)
@@ -274,6 +278,67 @@ class RouteVisualizer:
             if self.inference_count == self.save_rate:
                 print(f"Saving graph visualization to: {self.save_dir}/route_viz.png")
 
+    def _get_loop_parameters(self, pos, node, count, total_edge_weight):
+        """Generate parameters for varied self-loops using transformed circles"""
+        center_x, center_y = pos[node]
+        num_loops = count
+
+        loops = []
+        base_radius = 0.08  # Reduced by 50% from 0.1
+
+        for i in range(num_loops):
+            # Calculate base position around node
+            angle = (i * 2 * np.pi / num_loops) + np.random.uniform(-0.1, 0.1)
+
+            # Size variation (keep modest to maintain consistent look)
+            size_factor = 1.0 + np.random.uniform(-0.15, 0.15)
+            radius = base_radius * size_factor
+
+            # Position circle so inner edge touches node center
+            # Distance from node center to circle center should equal circle radius
+            circle_center_x = center_x + radius * np.cos(angle)
+            circle_center_y = center_y + radius * np.sin(angle)
+
+            # Generate transform variations
+            scale_x = np.random.uniform(0.6, 2.0)
+            scale_y = np.random.uniform(0.6, 2.0)
+            rotation = np.random.uniform(0, 2 * np.pi)
+            skew = np.random.uniform(-0.2, 0.2)  # Reduced skew range for cleaner look
+
+            # Create transform matrix
+            transform = (
+                Affine2D()
+                .scale(scale_x, scale_y)
+                .rotate(rotation)
+                .skew(skew, 0)
+                .translate(circle_center_x, circle_center_y)
+            )
+
+            # Calculate arrow parameters (scaled down with circle size)
+            arrow_angle = angle + np.pi / 4
+            arrow_length = radius * 0.4  # Shorter arrows for smaller circles
+            arrow_start_x = circle_center_x + radius * 0.6 * np.cos(arrow_angle)
+            arrow_start_y = circle_center_y + radius * 0.6 * np.sin(arrow_angle)
+            arrow_end_x = arrow_start_x + arrow_length * np.cos(arrow_angle)
+            arrow_end_y = arrow_start_y + arrow_length * np.sin(arrow_angle)
+
+            # Alpha based on count
+            base_alpha = 0.8 / np.sqrt(num_loops)
+            alpha = max(0.1, min(0.8, base_alpha))
+
+            loops.append(
+                {
+                    "center": (0, 0),  # Will be transformed
+                    "radius": radius,
+                    "transform": transform,
+                    "arrow_start": (arrow_start_x, arrow_start_y),
+                    "arrow_end": (arrow_end_x, arrow_end_y),
+                    "alpha": alpha,
+                }
+            )
+
+        return loops
+
     def save_visualization(self):
         fig, ax = plt.subplots(figsize=(15, 10))
         plt.suptitle("Graph Routing", fontsize=16, y=0.98)
@@ -282,9 +347,7 @@ class RouteVisualizer:
         for i in range(self.num_experts):
             G.add_node(i)
 
-        total_edge_weight = sum(self.route_counts.values()) + sum(
-            self.recurrent_counts.values()
-        )
+        total_edge_weight = sum(self.route_counts.values())
         if total_edge_weight == 0:
             print("Warning: No edges found!")
             return
@@ -293,44 +356,64 @@ class RouteVisualizer:
         for (src, dst), count in self.route_counts.items():
             node_usage[src] += count
             node_usage[dst] += count
-        for node, count in self.recurrent_counts.items():
-            node_usage[node] += count
 
         total_usage = sum(node_usage.values())
         pos = nx.spring_layout(G, k=2.0, iterations=50)
 
-        # Create color map for edges (reversed order for intuitive high=red)
         blue_to_red = LinearSegmentedColormap.from_list("", ["blue", "red"])
-        max_edge_count = max(max(self.route_counts.values()), 1)  # Avoid div by zero
+        max_edge_count = max(self.route_counts.values())
 
-        # Draw edges for all transitions (including self-loops)
+        # Draw edges
         for (src, dst), count in self.route_counts.items():
-            num_curves = min(int(np.sqrt(count)), 10)
-
-            # Calculate color intensity based on relative count
             color_val = count / max_edge_count
             edge_color = blue_to_red(color_val)
 
-            for _ in range(num_curves):
-                rad = 0.2 + np.random.uniform(-0.1, 0.1)
-                alpha = 0.15 + np.random.uniform(0, 0.1)
+            if src == dst:
+                loops = self._get_loop_parameters(pos, src, count, total_edge_weight)
 
-                # Special handling for self-loops, but maintain color consistency
-                if src == dst:
-                    rad = 0.3 + np.random.uniform(0, 0.2) * (count / total_edge_weight)
-                    alpha = 0.2
+                for loop in loops:
+                    # Create circle with transform for proper aspect ratio
+                    circle = Circle(
+                        loop["center"],  # Centered at origin
+                        loop["radius"],
+                        facecolor="none",
+                        edgecolor=edge_color,
+                        alpha=loop["alpha"],
+                        zorder=0,
+                        transform=loop["transform"] + ax.transData,  # Apply transform
+                    )
+                    ax.add_patch(circle)
 
-                # Draw the edge with consistent coloring
-                nx.draw_networkx_edges(
-                    G,
-                    pos,
-                    edgelist=[(src, dst)],
-                    edge_color=[edge_color],
-                    width=1.5,
-                    alpha=alpha,
-                    connectionstyle=f"arc3,rad={rad}",
-                    arrowsize=20,
-                )
+                    # Add direction arrow
+                    arrow = FancyArrowPatch(
+                        loop["arrow_start"],
+                        loop["arrow_end"],
+                        color=edge_color,
+                        alpha=loop["alpha"],
+                        arrowstyle="-|>",
+                        mutation_scale=10,  # Smaller arrows
+                        zorder=0,
+                    )
+                    ax.add_patch(arrow)
+            else:
+                # Regular edges can now access edge_color
+                num_curves = min(int(np.sqrt(count)), 10)
+                for _ in range(num_curves):
+                    rad = 0.2 + np.random.uniform(-0.1, 0.1)
+                    alpha = 0.15 + np.random.uniform(0, 0.1)
+                    nx.draw_networkx_edges(
+                        G,
+                        pos,
+                        edgelist=[(src, dst)],
+                        edge_color=[edge_color],
+                        width=1.5,
+                        alpha=alpha,
+                        connectionstyle=f"arc3,rad={rad}",
+                        arrowsize=20,
+                    )
+
+        # Ensure equal aspect ratio for proper circles
+        ax.set_aspect("equal")
 
         # Draw nodes
         node_colors = [
@@ -340,10 +423,10 @@ class RouteVisualizer:
         nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1500)
         nodes.set_zorder(1000)
 
-        # Draw labels
+        # Add labels
         labels = nx.draw_networkx_labels(G, pos)
         for text in labels.values():
-            text.set_zorder(1001)
+            text.set_zorder(2000)
 
         # Create legend
         legend_lines = []
