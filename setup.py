@@ -21,7 +21,7 @@ host_requirements = [
 ]
 
 # Requirements primarily for IDE-related tooling
-dev_requirements = ["attrs", "isort", "lsprotocol", "pygls"]
+dev_requirements = ["attrs", "isort", "lsprotocol", "matplotlib", "networkx", "pygls"]
 
 setup(
     name="praxis",

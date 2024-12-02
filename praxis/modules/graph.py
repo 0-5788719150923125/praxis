@@ -1,9 +1,16 @@
 import math
+import os
+from collections import defaultdict, deque
 from typing import List, Optional, Tuple
 
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import ConnectionPatch, FancyArrowPatch
 
 
 class PraxisGraph(nn.Module):
@@ -14,11 +21,11 @@ class PraxisGraph(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        self.debug = config.debug
         self.num_layers = config.num_experts
         self.hidden_dim = config.num_dims
         self.num_heads = 3
         self.num_context_tokens = 3
-        self.used_experts = set()
         self.routing_scale = 0.01
 
         # Layer embeddings (nodes)
@@ -49,6 +56,14 @@ class PraxisGraph(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
         self.reset_parameters()
+
+        visualize_routes = self.debug
+        self.route_visualizer = (
+            RouteVisualizer(num_experts=config.num_experts)
+            if visualize_routes
+            else None
+        )
+        self.current_route = []
 
     def reset_parameters(self):
         nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
@@ -154,15 +169,7 @@ class PraxisGraph(nn.Module):
 
                 edge_bias = edge_bias + edge_weight
 
-        scores = scores + edge_bias
-
-        # Create mask for both unavailable and used experts
-        mask = torch.ones_like(scores, dtype=torch.bool)
-        for idx in available_indices:
-            if idx not in self.used_experts:
-                mask[:, idx] = False
-
-        return scores.masked_fill(mask, -1e9)
+        return scores + edge_bias
 
     def get_next_expert(
         self,
@@ -174,16 +181,10 @@ class PraxisGraph(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[int]]:
         # Reset used experts at the start of new sequence
         current_idx = original_experts.index(current_expert)
-        if current_depth == 0:
-            self.used_experts = {
-                current_idx
-            }  # The expert at depth 0 is always first and should never be reused
 
-        # Get available expert indices (excluding used ones)
+        # Get available expert indices
         available_indices = [
-            i
-            for i, expert in enumerate(original_experts)
-            if expert in current_experts and i not in self.used_experts
+            i for i, expert in enumerate(original_experts) if expert in current_experts
         ]
 
         # Reset if no unused experts available
@@ -210,10 +211,9 @@ class PraxisGraph(nn.Module):
         if self.training:
             probs = F.gumbel_softmax(scores, tau=1.0, hard=True)
 
-        next_idx = torch.argmax(probs[0], dim=-1).item()
-
-        # Add current expert to used set
-        self.used_experts.add(next_idx)
+        # Mean across batch before selection
+        batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
+        next_idx = torch.argmax(batch_averaged_probs, dim=-1).item()
 
         # Inference-only logging at the end
         # if not self.training:
@@ -226,4 +226,191 @@ class PraxisGraph(nn.Module):
         #     print(f"Selected expert: {next_idx}")
         #     print(f"Used experts: {self.used_experts}")
 
+        # Initialize or update route
+        if current_depth == 0:
+            self.current_route = [current_idx]
+        elif not self.training and self.route_visualizer is not None:
+            self.current_route.append(next_idx)
+            if current_depth == self.num_layers - 1:  # At end of sequence
+                self.route_visualizer.add_route(self.current_route)
+                self.current_route = []
+
         return routing_loss, next_idx
+
+
+class RouteVisualizer:
+    def __init__(
+        self,
+        num_experts: int,
+        save_dir: str = "data",
+        max_history: int = 10000,
+        save_rate: int = 10,
+    ):
+        self.num_experts = num_experts
+        self.save_dir = save_dir
+        self.max_history = max_history
+        self.save_rate = save_rate
+
+        # Route tracking
+        self.route_history = deque(maxlen=max_history)
+        self.route_counts = defaultdict(int)
+        self.inference_count = 0
+
+    def add_route(self, route: List[int]):
+        """Add a new route to history."""
+        self.route_history.append(route)
+
+        for i in range(len(route) - 1):
+            edge = (route[i], route[i + 1])
+            self.route_counts[edge] += 1
+
+        self.inference_count += 1
+
+        if self.inference_count % self.save_rate == 0:
+            self.save_visualization()
+
+    def save_visualization(self):
+        """Create and save visualization with enhanced visual appeal."""
+        fig, ax = plt.subplots(figsize=(15, 10))
+
+        G = nx.DiGraph()
+        for i in range(self.num_experts):
+            G.add_node(i)
+
+        # Calculate statistics
+        total_edge_weight = sum(self.route_counts.values())
+        if total_edge_weight == 0:
+            print("Warning: No edges found!")
+            return
+
+        # Node usage counts
+        node_usage = defaultdict(int)
+        for (src, dst), count in self.route_counts.items():
+            node_usage[src] += count
+            node_usage[dst] += count
+
+        # Calculate total usage here
+        total_usage = sum(node_usage.values())
+
+        # Create layout with more space for curves
+        pos = nx.spring_layout(G, k=2.0, iterations=50)
+
+        # Draw nodes
+        node_colors = [
+            plt.cm.YlOrRd(node_usage[node] / max(node_usage.values()))
+            for node in G.nodes()
+        ]
+        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1500)
+
+        # Create gradient colormap for edges
+        edge_cmap = LinearSegmentedColormap.from_list("", ["lightblue", "darkblue"])
+
+        # Draw edges with gradients
+        for (src, dst), count in self.route_counts.items():
+            num_curves = min(int(np.sqrt(count)), 10)
+            is_self_loop = src == dst
+
+            for i in range(num_curves):
+                if is_self_loop:
+                    # Enhanced self-loop dynamics
+                    base_rad = (
+                        0.3 + (count / total_edge_weight) * 0.5
+                    )  # Scale with usage
+                    velocity = np.random.uniform(0.5, 2.0)  # Random "speed" factor
+                    direction = (
+                        1 if np.random.random() > 0.5 else -1
+                    )  # Random direction
+
+                    # Create more varied loop shapes
+                    rad = direction * (
+                        base_rad * velocity + np.random.uniform(-0.1, 0.1)
+                    )
+
+                    # Adjust position slightly for multiple loops
+                    offset = np.random.uniform(-0.05, 0.05, 2)
+                    start_pos = np.array(pos[src]) + offset
+                    end_pos = np.array(pos[dst]) + offset
+                else:
+                    # Regular edge dynamics
+                    rad = 0.2 + np.random.uniform(-0.1, 0.1)
+                    start_pos = pos[src]
+                    end_pos = pos[dst]
+
+                # Create arrow with gradient
+                arrow = FancyArrowPatch(
+                    start_pos,
+                    end_pos,
+                    connectionstyle=f"arc3,rad={rad}",
+                    arrowstyle="-|>",
+                    mutation_scale=20,
+                    linewidth=1.5,
+                    alpha=0.4 if is_self_loop else 0.6,
+                    color=edge_cmap(0.5),  # Base color
+                    linestyle="-",
+                    zorder=1 if is_self_loop else 2,
+                )
+                ax.add_patch(arrow)
+
+        # Add node labels
+        nx.draw_networkx_labels(G, pos)
+
+        # Create legend entries
+        legend_lines = []
+        legend_labels = []
+
+        # Add usage statistics section
+        legend_labels.append("Expert Usage:")  # Section header
+        for node in sorted(node_usage.keys()):
+            count = node_usage[node]
+            percentage = (count / total_usage) * 100
+            # Create a colored patch matching the node color
+            color = plt.cm.YlOrRd(node_usage[node] / max(node_usage.values()))
+            legend_lines.append(
+                plt.Line2D(
+                    [0], [0], color=color, marker="o", linestyle="", markersize=10
+                )
+            )
+            legend_labels.append(f"E{node}: {count} ({percentage:.1f}%)")
+
+        # Add spacing between sections
+        legend_lines.append(plt.Line2D([0], [0], color="none"))
+        legend_labels.append("")
+
+        # Add transition statistics section
+        legend_labels.append("Top Transitions:")  # Section header
+        sorted_edges = sorted(
+            self.route_counts.items(), key=lambda x: x[1], reverse=True
+        )
+        for (src, dst), count in sorted_edges[:5]:
+            # Create a line with gradient color matching the edges
+            legend_lines.append(
+                plt.Line2D([0], [0], color=edge_cmap(0.5), marker=">", markersize=8)
+            )
+            legend_labels.append(f"{src}→{dst}: {count}")
+
+        # Create legend with proper handles and labels
+        legend = ax.legend(
+            legend_lines,
+            legend_labels,
+            loc="center left",
+            bbox_to_anchor=(1.01, 0.5),
+            borderaxespad=0,
+            frameon=True,
+            fontsize=9,
+            title="Statistics",
+            title_fontsize=10,
+            handletextpad=1,
+            labelspacing=0.2,  # Reduce space between entries
+        )
+
+        # Adjust legend spacing
+        legend._legend_box.sep = 2
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(self.save_dir, f"route_viz.png"),
+            dpi=300,
+            bbox_inches="tight",
+            pad_inches=0.1,
+        )
+        plt.close()
