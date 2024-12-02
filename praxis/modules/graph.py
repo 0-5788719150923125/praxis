@@ -250,31 +250,25 @@ class RouteVisualizer:
         self.save_dir = save_dir
         self.max_history = max_history
         self.save_rate = save_rate
-
-        # Route tracking
         self.route_history = deque(maxlen=max_history)
         self.route_counts = defaultdict(int)
-        self.recurrent_counts = defaultdict(int)  # New: track recurrent patterns
+        self.recurrent_counts = defaultdict(int)
         self.inference_count = 0
 
     def add_route(self, route: List[int]):
-        """Add a new route to history."""
         self.route_history.append(route)
 
-        # Track consecutive transitions
         for i in range(len(route) - 1):
             edge = (route[i], route[i + 1])
             self.route_counts[edge] += 1
 
-        # Track recurrent patterns
         for i, expert in enumerate(route):
-            # Look ahead in the sequence for recurrences
             for j in range(i + 1, len(route)):
                 if route[j] == expert:
                     self.recurrent_counts[expert] += 1
+                    break
 
         self.inference_count += 1
-
         if self.inference_count % self.save_rate == 0:
             self.save_visualization()
             if self.inference_count == self.save_rate:
@@ -288,7 +282,6 @@ class RouteVisualizer:
         for i in range(self.num_experts):
             G.add_node(i)
 
-        # Calculate statistics with recurrent counts included
         total_edge_weight = sum(self.route_counts.values()) + sum(
             self.recurrent_counts.values()
         )
@@ -296,97 +289,68 @@ class RouteVisualizer:
             print("Warning: No edges found!")
             return
 
-        # Node usage counts
         node_usage = defaultdict(int)
         for (src, dst), count in self.route_counts.items():
             node_usage[src] += count
             node_usage[dst] += count
-
-        # Add recurrent counts to node usage
         for node, count in self.recurrent_counts.items():
             node_usage[node] += count
 
         total_usage = sum(node_usage.values())
         pos = nx.spring_layout(G, k=2.0, iterations=50)
-        red_to_blue = LinearSegmentedColormap.from_list("", ["red", "blue"])
 
-        # Draw regular (non-self) transitions
+        # Create color map for edges (reversed order for intuitive high=red)
+        blue_to_red = LinearSegmentedColormap.from_list("", ["blue", "red"])
+        max_edge_count = max(max(self.route_counts.values()), 1)  # Avoid div by zero
+
+        # Draw edges for all transitions (including self-loops)
         for (src, dst), count in self.route_counts.items():
-            if src != dst:  # Only non-self transitions here
-                num_curves = min(int(np.sqrt(count)), 10)
-                for i in range(num_curves):
-                    rad = 0.2 + np.random.uniform(-0.1, 0.1)
-                    arrow = FancyArrowPatch(
-                        pos[src],
-                        pos[dst],
-                        connectionstyle=f"arc3,rad={rad}",
-                        arrowstyle="-|>",
-                        mutation_scale=20,
-                        linewidth=1.5,
-                        alpha=0.05,
-                        color=red_to_blue(0.5),
-                        zorder=2,
-                    )
-                    ax.add_patch(arrow)
+            num_curves = min(int(np.sqrt(count)), 10)
 
-        # Draw all self-loops (both immediate and recurrent)
-        for expert in range(self.num_experts):
-            immediate_count = self.route_counts.get((expert, expert), 0)
-            recurrent_count = self.recurrent_counts.get(expert, 0)
-            total_count = immediate_count + recurrent_count
+            # Calculate color intensity based on relative count
+            color_val = count / max_edge_count
+            edge_color = blue_to_red(color_val)
 
-            if total_count > 0:
-                num_loops = min(int(np.sqrt(total_count) * 2), 15)
+            for _ in range(num_curves):
+                rad = 0.2 + np.random.uniform(-0.1, 0.1)
+                alpha = 0.15 + np.random.uniform(0, 0.1)
 
-                for i in range(num_loops):
-                    # Smaller base radius for tighter loops
-                    base_rad = 0.25 + (total_count / total_edge_weight) * 0.4
-                    velocity = np.random.uniform(0.8, 1.5)  # Reduced variation
-                    direction = 1 if np.random.random() > 0.5 else -1
-                    rad = direction * (
-                        base_rad * velocity
-                    )  # Removed additional random variation
+                # Special handling for self-loops, but maintain color consistency
+                if src == dst:
+                    rad = 0.3 + np.random.uniform(0, 0.2) * (count / total_edge_weight)
+                    alpha = 0.2
 
-                    # Much smaller offset to keep loops connected to nodes
-                    offset = np.random.uniform(-0.02, 0.02, 2)
-                    start_pos = np.array(pos[expert]) + offset
-                    end_pos = start_pos  # Use exact same position to ensure connection
+                # Draw the edge with consistent coloring
+                nx.draw_networkx_edges(
+                    G,
+                    pos,
+                    edgelist=[(src, dst)],
+                    edge_color=[edge_color],
+                    width=1.5,
+                    alpha=alpha,
+                    connectionstyle=f"arc3,rad={rad}",
+                    arrowsize=20,
+                )
 
-                    arrow = FancyArrowPatch(
-                        start_pos,
-                        end_pos,
-                        connectionstyle=f"arc3,rad={rad}",
-                        arrowstyle="-|>",
-                        mutation_scale=15,  # Slightly smaller arrows
-                        linewidth=2.0,
-                        alpha=0.15,  # Increased visibility further
-                        color=red_to_blue(0),  # Red for self-loops
-                        zorder=1,
-                    )
-                    ax.add_patch(arrow)
-
-        # Draw nodes and set zorder through the returned collection
+        # Draw nodes
         node_colors = [
             plt.cm.YlOrRd(node_usage[node] / max(node_usage.values()))
             for node in G.nodes()
         ]
         nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1500)
-        nodes.set_zorder(1000)  # Set zorder after drawing
+        nodes.set_zorder(1000)
 
-        # Draw labels and set zorder
+        # Draw labels
         labels = nx.draw_networkx_labels(G, pos)
         for text in labels.values():
-            text.set_zorder(1001)  # Set zorder for each text object
+            text.set_zorder(1001)
 
-        # Create legend entries with correct alignment
+        # Create legend
         legend_lines = []
         legend_labels = []
 
-        # Add usage statistics section - corrected alignment
-        legend_labels.append(
-            "Expert Usage"
-        )  # Changed from "Expert Usage:" to handle alignment
-        legend_lines.append(plt.Line2D([0], [0], color="none"))  # Blank line for header
+        legend_labels.append("Expert Usage")
+        legend_lines.append(plt.Line2D([0], [0], color="none"))
 
         for node in sorted(node_usage.keys()):
             count = node_usage[node]
@@ -399,24 +363,23 @@ class RouteVisualizer:
             )
             legend_labels.append(f"E{node}: {count} ({percentage:.1f}%)")
 
-        # Add spacing between sections
         legend_lines.append(plt.Line2D([0], [0], color="none"))
         legend_labels.append("")
 
-        # Add transition statistics section
-        legend_labels.append("Top Transitions")  # Changed from "Top Transitions:"
-        legend_lines.append(plt.Line2D([0], [0], color="none"))  # Blank line for header
+        legend_labels.append("Top Transitions")
+        legend_lines.append(plt.Line2D([0], [0], color="none"))
 
         sorted_edges = sorted(
             self.route_counts.items(), key=lambda x: x[1], reverse=True
         )
         for (src, dst), count in sorted_edges[:5]:
+            color_val = count / max_edge_count
+            edge_color = blue_to_red(color_val)
             legend_lines.append(
-                plt.Line2D([0], [0], color="blue", marker=">", markersize=8)
+                plt.Line2D([0], [0], color=edge_color, marker=">", markersize=8)
             )
             legend_labels.append(f"{src}→{dst}: {count}")
 
-        # Create legend with same positioning
         legend = ax.legend(
             legend_lines,
             legend_labels,
@@ -431,15 +394,11 @@ class RouteVisualizer:
             labelspacing=0.2,
         )
 
-        # Make legend background slightly transparent
         legend.get_frame().set_alpha(0.8)
         legend.get_frame().set_facecolor("white")
-
-        # Set legend's zorder to be on top
         legend.set_zorder(2000)
 
         plt.tight_layout(rect=[0, 0, 1, 1.0])
-
         plt.savefig(
             os.path.join(self.save_dir, f"route_viz.png"),
             dpi=300,
