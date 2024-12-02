@@ -300,10 +300,10 @@ class RouteVisualizer:
             circle_center_y = center_y + radius * np.sin(angle)
 
             # Generate transform variations
-            scale_x = np.random.uniform(0.6, 2.0)
-            scale_y = np.random.uniform(0.6, 2.0)
+            scale_x = np.random.normal(0.2, 0.5)
+            scale_y = np.random.normal(0.2, 0.5)
             rotation = np.random.uniform(0, 2 * np.pi)
-            skew = np.random.uniform(-0.2, 0.2)  # Reduced skew range for cleaner look
+            skew = np.random.uniform(-0.1, 0.1)  # Reduced skew range for cleaner look
 
             # Create transform matrix
             transform = (
@@ -343,6 +343,10 @@ class RouteVisualizer:
         fig, ax = plt.subplots(figsize=(15, 10))
         plt.suptitle("Graph Routing", fontsize=16, y=0.98)
 
+        # Set plot limits before drawing
+        ax.set_xlim(-1.2, 1.2)
+        ax.set_ylim(-0.8, 0.8)
+
         G = nx.DiGraph()
         for i in range(self.num_experts):
             G.add_node(i)
@@ -358,7 +362,21 @@ class RouteVisualizer:
             node_usage[dst] += count
 
         total_usage = sum(node_usage.values())
-        pos = nx.spring_layout(G, k=2.0, iterations=50)
+        # Calculate safe boundaries for node placement
+        node_space = self.node_radius * 2  # Space needed for node
+        padding = 0.1  # Extra space for labels
+
+        # Constrain spring_layout to keep nodes fully visible
+        x_scale = 0.8  # Shrink layout area to ensure nodes stay in bounds
+        y_scale = 0.5  # Adjusted for aspect ratio
+
+        pos = nx.spring_layout(
+            G,
+            k=2.0,
+            iterations=50,
+            scale=min(x_scale, y_scale),  # Use smaller scale to ensure containment
+            center=(0, 0),  # Center the layout
+        )
 
         blue_to_red = LinearSegmentedColormap.from_list("", ["blue", "red"])
         max_edge_count = max(self.route_counts.values())
@@ -390,8 +408,7 @@ class RouteVisualizer:
                         loop["arrow_end"],
                         color=edge_color,
                         alpha=loop["alpha"],
-                        arrowstyle="-|>",
-                        mutation_scale=10,  # Smaller arrows
+                        mutation_scale=0,
                         zorder=0,
                     )
                     ax.add_patch(arrow)
@@ -411,9 +428,6 @@ class RouteVisualizer:
                         connectionstyle=f"arc3,rad={rad}",
                         arrowsize=20,
                     )
-
-        # Ensure equal aspect ratio for proper circles
-        ax.set_aspect("equal")
 
         # Draw nodes
         node_colors = [
@@ -481,7 +495,14 @@ class RouteVisualizer:
         legend.get_frame().set_facecolor("white")
         legend.set_zorder(2000)
 
+        # Force aspect ratio early
+        ax.set_aspect("equal", adjustable="datalim")
+
+        # Rest of the visualization code remains the same...
+        # At the end, before saving:
         plt.tight_layout(rect=[0, 0, 1, 1.0])
+        fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
         plt.savefig(
             os.path.join(self.save_dir, f"route_viz.png"),
             dpi=300,
