@@ -2,10 +2,12 @@ import math
 import os
 import random
 from collections import defaultdict, deque
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
-import matplotlib.transforms as transforms  # Added this import
+import matplotlib.transforms as transforms
 import networkx as nx
 import numpy as np
 import torch
@@ -241,42 +243,111 @@ class PraxisGraph(nn.Module):
         return routing_loss, next_idx
 
 
+class EventType(Enum):
+    ROUTE = auto()
+    TRANSITION = auto()
+    RECURRENCE = auto()
+
+
+@dataclass
+class RoutingEvent:
+    type: EventType
+    data: Union[List[int], Tuple[int, int], int]  # Route, Transition, or Expert ID
+    sequence: int  # To maintain order
+
+
 class RouteVisualizer:
     def __init__(
         self,
         num_experts: int,
         save_dir: str = "data",
         max_history: int = 10000,
-        save_rate: int = 10,
+        save_rate: int = 100,
     ):
         self.num_experts = num_experts
         self.save_dir = save_dir
         self.max_history = max_history
         self.save_rate = save_rate
-        self.route_history = deque(maxlen=max_history)
-        self.route_counts = defaultdict(int)
-        self.recurrent_counts = defaultdict(int)
+
+        # Single unified event history
+        self.event_history = deque(maxlen=max_history)
+        self.sequence_counter = 0
+
         self.inference_count = 0
         self.node_radius = 0.15
 
     def add_route(self, route: List[int]):
-        self.route_history.append(route)
+        # Add the complete route as an event
+        self.event_history.append(
+            RoutingEvent(
+                type=EventType.ROUTE, data=route.copy(), sequence=self.sequence_counter
+            )
+        )
+        self.sequence_counter += 1
 
+        # Add each transition as an event
         for i in range(len(route) - 1):
             edge = (route[i], route[i + 1])
-            self.route_counts[edge] += 1
+            self.event_history.append(
+                RoutingEvent(
+                    type=EventType.TRANSITION, data=edge, sequence=self.sequence_counter
+                )
+            )
+            self.sequence_counter += 1
 
+        # Add recurrent expert usage as events
+        seen_experts = set()
         for i, expert in enumerate(route):
-            for j in range(i + 1, len(route)):
-                if route[j] == expert:
-                    self.recurrent_counts[expert] += 1
-                    break
+            if expert in seen_experts:
+                self.event_history.append(
+                    RoutingEvent(
+                        type=EventType.RECURRENCE,
+                        data=expert,
+                        sequence=self.sequence_counter,
+                    )
+                )
+                self.sequence_counter += 1
+            seen_experts.add(expert)
 
         self.inference_count += 1
         if self.inference_count % self.save_rate == 0:
             self.save_visualization()
             if self.inference_count == self.save_rate:
                 print(f"Saving graph visualization to: {self.save_dir}/route_viz.png")
+
+    def get_current_counts(self) -> Tuple[Dict, Dict, List]:
+        """Calculate current statistics from event history"""
+        route_counts = defaultdict(int)
+        recurrent_counts = defaultdict(int)
+        routes = []
+        total_routes = 0
+
+        # Count routes to get normalization factor
+        for event in self.event_history:
+            if event.type == EventType.ROUTE:
+                total_routes += 1
+
+        # Skip if no routes
+        if total_routes == 0:
+            return route_counts, recurrent_counts, routes
+
+        # Normalization factor to scale counts to max_history
+        scale_factor = self.max_history / total_routes if total_routes > 0 else 1
+
+        # Calculate normalized counts
+        for event in self.event_history:
+            if event.type == EventType.TRANSITION:
+                route_counts[event.data] += scale_factor
+            elif event.type == EventType.RECURRENCE:
+                recurrent_counts[event.data] += scale_factor
+            elif event.type == EventType.ROUTE:
+                routes.append(event.data)
+
+        # Round counts to integers
+        route_counts = {k: int(v) for k, v in route_counts.items()}
+        recurrent_counts = {k: int(v) for k, v in recurrent_counts.items()}
+
+        return route_counts, recurrent_counts, routes
 
     def _get_loop_parameters(self, pos, node, count, total_edge_weight):
         """Generate parameters for varied self-loops using transformed circles"""
@@ -343,10 +414,6 @@ class RouteVisualizer:
         fig, ax = plt.subplots(figsize=(15, 10))
         plt.suptitle("Graph Routing", fontsize=16, y=0.98)
 
-        # Set plot limits before drawing
-        # ax.set_xlim(-1.2, 1.2)
-        # ax.set_ylim(-0.8, 0.8)
-
         # Force aspect ratio early
         ax.set_aspect("equal", adjustable="datalim")
 
@@ -354,13 +421,17 @@ class RouteVisualizer:
         for i in range(self.num_experts):
             G.add_node(i)
 
-        total_edge_weight = sum(self.route_counts.values())
+        # Get current statistics from unified history
+        route_counts, recurrent_counts, _ = self.get_current_counts()
+
+        total_edge_weight = sum(route_counts.values())
         if total_edge_weight == 0:
             print("Warning: No edges found!")
             return
 
+        # Calculate node usage from current transitions
         node_usage = defaultdict(int)
-        for (src, dst), count in self.route_counts.items():
+        for (src, dst), count in route_counts.items():
             node_usage[src] += count
             node_usage[dst] += count
 
