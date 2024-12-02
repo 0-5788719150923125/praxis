@@ -272,7 +272,6 @@ class RouteVisualizer:
             for j in range(i + 1, len(route)):
                 if route[j] == expert:
                     self.recurrent_counts[expert] += 1
-                    break
 
         self.inference_count += 1
 
@@ -451,21 +450,29 @@ class RouteVisualizer:
 
 
 if __name__ == "__main__":
-    # Test code for RouteVisualizer
+    import random
+
     num_experts = 5
-    visualizer = RouteVisualizer(num_experts=num_experts, save_dir="data", save_rate=1)
+    num_routes = 10000
+    max_route_length = 10
+    recurrent_loop_probability = 0.3
 
-    # Define some test routes (including self-loops)
-    test_routes = [
-        [0, 1, 2, 3, 4],
-        [0, 0, 1, 1, 2],
-        [2, 3, 3, 3, 4],
-        [4, 4, 4, 4, 4],
-        [1, 2, 2, 1, 1],
-        [3, 4, 0, 0, 3],
-    ]
+    visualizer = RouteVisualizer(
+        num_experts=num_experts, save_dir="data", save_rate=100
+    )
 
-    for route in test_routes:
+    for _ in range(num_routes):
+        route_length = random.randint(1, max_route_length)
+        route = [random.randint(0, num_experts - 1)]
+
+        for _ in range(route_length - 1):
+            if random.random() < recurrent_loop_probability:
+                route.append(route[-1])  # Generate a recurrent loop
+            else:
+                route.append(
+                    random.randint(0, num_experts - 1)
+                )  # Generate a regular transition
+
         visualizer.add_route(route)
 
     print("Visualization saved to data/route_viz.png")
