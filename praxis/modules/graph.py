@@ -284,14 +284,14 @@ class RouteVisualizer:
         num_loops = count
 
         loops = []
-        base_radius = 0.08  # Reduced by 50% from 0.1
+        base_radius = 0.05
 
         for i in range(num_loops):
             # Calculate base position around node
             angle = (i * 2 * np.pi / num_loops) + np.random.uniform(-0.1, 0.1)
 
             # Size variation (keep modest to maintain consistent look)
-            size_factor = 1.0 + np.random.uniform(-0.15, 0.15)
+            size_factor = 1.0 + np.random.uniform(-0.1, 0.1)
             radius = base_radius * size_factor
 
             # Position circle so inner edge touches node center
@@ -300,10 +300,10 @@ class RouteVisualizer:
             circle_center_y = center_y + radius * np.sin(angle)
 
             # Generate transform variations
-            scale_x = np.random.normal(0.2, 0.5)
-            scale_y = np.random.normal(0.2, 0.5)
+            scale_x = np.random.normal(0.2, 0.75)
+            scale_y = np.random.normal(0.2, 0.75)
             rotation = np.random.uniform(0, 2 * np.pi)
-            skew = np.random.uniform(-0.1, 0.1)  # Reduced skew range for cleaner look
+            skew = np.random.uniform(-0.05, 0.05)  # Reduced skew range for cleaner look
 
             # Create transform matrix
             transform = (
@@ -344,8 +344,11 @@ class RouteVisualizer:
         plt.suptitle("Graph Routing", fontsize=16, y=0.98)
 
         # Set plot limits before drawing
-        ax.set_xlim(-1.2, 1.2)
-        ax.set_ylim(-0.8, 0.8)
+        # ax.set_xlim(-1.2, 1.2)
+        # ax.set_ylim(-0.8, 0.8)
+
+        # Force aspect ratio early
+        ax.set_aspect("equal", adjustable="datalim")
 
         G = nx.DiGraph()
         for i in range(self.num_experts):
@@ -362,13 +365,10 @@ class RouteVisualizer:
             node_usage[dst] += count
 
         total_usage = sum(node_usage.values())
-        # Calculate safe boundaries for node placement
-        node_space = self.node_radius * 2  # Space needed for node
-        padding = 0.1  # Extra space for labels
 
         # Constrain spring_layout to keep nodes fully visible
         x_scale = 0.8  # Shrink layout area to ensure nodes stay in bounds
-        y_scale = 0.5  # Adjusted for aspect ratio
+        y_scale = 0.7  # Adjusted for aspect ratio
 
         pos = nx.spring_layout(
             G,
@@ -398,20 +398,9 @@ class RouteVisualizer:
                         edgecolor=edge_color,
                         alpha=loop["alpha"],
                         zorder=0,
-                        transform=loop["transform"] + ax.transData,  # Apply transform
+                        transform=loop["transform"] + ax.transData,
                     )
                     ax.add_patch(circle)
-
-                    # Add direction arrow
-                    arrow = FancyArrowPatch(
-                        loop["arrow_start"],
-                        loop["arrow_end"],
-                        color=edge_color,
-                        alpha=loop["alpha"],
-                        mutation_scale=0,
-                        zorder=0,
-                    )
-                    ax.add_patch(arrow)
             else:
                 # Regular edges can now access edge_color
                 num_curves = min(int(np.sqrt(count)), 10)
@@ -495,13 +484,7 @@ class RouteVisualizer:
         legend.get_frame().set_facecolor("white")
         legend.set_zorder(2000)
 
-        # Force aspect ratio early
-        ax.set_aspect("equal", adjustable="datalim")
-
-        # Rest of the visualization code remains the same...
-        # At the end, before saving:
         plt.tight_layout(rect=[0, 0, 1, 1.0])
-        fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
 
         plt.savefig(
             os.path.join(self.save_dir, f"route_viz.png"),
