@@ -448,3 +448,24 @@ class RouteVisualizer:
             pad_inches=0.1,
         )
         plt.close()
+
+
+if __name__ == "__main__":
+    # Test code for RouteVisualizer
+    num_experts = 5
+    visualizer = RouteVisualizer(num_experts=num_experts, save_dir="data", save_rate=1)
+
+    # Define some test routes (including self-loops)
+    test_routes = [
+        [0, 1, 2, 3, 4],
+        [0, 0, 1, 1, 2],
+        [2, 3, 3, 3, 4],
+        [4, 4, 4, 4, 4],
+        [1, 2, 2, 1, 1],
+        [3, 4, 0, 0, 3],
+    ]
+
+    for route in test_routes:
+        visualizer.add_route(route)
+
+    print("Visualization saved to data/route_viz.png")
