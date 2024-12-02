@@ -243,17 +243,12 @@ class PraxisGraph(nn.Module):
         return routing_loss, next_idx
 
 
-class EventType(Enum):
-    ROUTE = auto()
-    TRANSITION = auto()
-    RECURRENCE = auto()
-
-
 @dataclass
-class RoutingEvent:
-    type: EventType
-    data: Union[List[int], Tuple[int, int], int]  # Route, Transition, or Expert ID
-    sequence: int  # To maintain order
+class RouteData:
+    sequence: int  # Global sequence number
+    route: List[int]
+    transitions: Dict[Tuple[int, int], int]  # (src, dst) -> count
+    recurrences: Dict[int, int]  # expert_id -> count
 
 
 class RouteVisualizer:
@@ -269,85 +264,104 @@ class RouteVisualizer:
         self.max_history = max_history
         self.save_rate = save_rate
 
-        # Single unified event history
-        self.event_history = deque(maxlen=max_history)
+        # Core data structures
+        self.route_history = deque(maxlen=None)  # No maxlen - we'll manage it manually
+        self.route_counts = defaultdict(int)
+        self.recurrent_counts = defaultdict(int)
+        self.total_events = 0
         self.sequence_counter = 0
 
         self.inference_count = 0
         self.node_radius = 0.15
 
+    def compute_route_data(
+        self, route: List[int]
+    ) -> Tuple[Dict[Tuple[int, int], int], Dict[int, int], int]:
+        """Pre-compute all route statistics and count total events"""
+        transitions = defaultdict(int)
+        recurrences = defaultdict(int)
+        seen_experts = set()
+        event_count = 1  # Start with 1 for the route itself
+
+        # Calculate transitions
+        for i in range(len(route) - 1):
+            edge = (route[i], route[i + 1])
+            transitions[edge] += 1
+            event_count += 1  # Each transition is an event
+
+        # Calculate recurrences
+        for expert in route:
+            if expert in seen_experts:
+                recurrences[expert] += 1
+                event_count += 1  # Each recurrence is an event
+            seen_experts.add(expert)
+
+        return dict(transitions), dict(recurrences), event_count
+
+    def prune_history(self, new_events_count: int):
+        """Remove oldest events to maintain max_history limit"""
+        while (
+            self.total_events + new_events_count > self.max_history
+            and self.route_history
+        ):
+            oldest_data = self.route_history.popleft()
+
+            # Remove counts for oldest route
+            events_removed = 1  # Route itself
+
+            # Remove transition counts
+            for edge, count in oldest_data.transitions.items():
+                self.route_counts[edge] -= count
+                if self.route_counts[edge] == 0:
+                    del self.route_counts[edge]
+                events_removed += count
+
+            # Remove recurrence counts
+            for expert, count in oldest_data.recurrences.items():
+                self.recurrent_counts[expert] -= count
+                if self.recurrent_counts[expert] == 0:
+                    del self.recurrent_counts[expert]
+                events_removed += count
+
+            self.total_events -= events_removed
+
     def add_route(self, route: List[int]):
-        # Add the complete route as an event
-        self.event_history.append(
-            RoutingEvent(
-                type=EventType.ROUTE, data=route.copy(), sequence=self.sequence_counter
-            )
+        # Compute route statistics
+        transitions, recurrences, event_count = self.compute_route_data(route)
+
+        # Prune history if needed
+        self.prune_history(event_count)
+
+        # Create new route data
+        route_data = RouteData(
+            sequence=self.sequence_counter,
+            route=route,
+            transitions=transitions,
+            recurrences=recurrences,
         )
         self.sequence_counter += 1
 
-        # Add each transition as an event
-        for i in range(len(route) - 1):
-            edge = (route[i], route[i + 1])
-            self.event_history.append(
-                RoutingEvent(
-                    type=EventType.TRANSITION, data=edge, sequence=self.sequence_counter
-                )
-            )
-            self.sequence_counter += 1
+        # Add new route data
+        self.route_history.append(route_data)
+        self.total_events += event_count
 
-        # Add recurrent expert usage as events
-        seen_experts = set()
-        for i, expert in enumerate(route):
-            if expert in seen_experts:
-                self.event_history.append(
-                    RoutingEvent(
-                        type=EventType.RECURRENCE,
-                        data=expert,
-                        sequence=self.sequence_counter,
-                    )
-                )
-                self.sequence_counter += 1
-            seen_experts.add(expert)
+        # Update current counts
+        for edge, count in transitions.items():
+            self.route_counts[edge] += count
+        for expert, count in recurrences.items():
+            self.recurrent_counts[expert] += count
 
         self.inference_count += 1
         if self.inference_count % self.save_rate == 0:
             self.save_visualization()
             if self.inference_count == self.save_rate:
                 print(f"Saving graph visualization to: {self.save_dir}/route_viz.png")
+                print(f"Current total events: {self.total_events}")
 
     def get_current_counts(self) -> Tuple[Dict, Dict, List]:
-        """Calculate current statistics from event history"""
-        route_counts = defaultdict(int)
-        recurrent_counts = defaultdict(int)
-        routes = []
-        total_routes = 0
-
-        # Count routes to get normalization factor
-        for event in self.event_history:
-            if event.type == EventType.ROUTE:
-                total_routes += 1
-
-        # Skip if no routes
-        if total_routes == 0:
-            return route_counts, recurrent_counts, routes
-
-        # Normalization factor to scale counts to max_history
-        scale_factor = self.max_history / total_routes if total_routes > 0 else 1
-
-        # Calculate normalized counts
-        for event in self.event_history:
-            if event.type == EventType.TRANSITION:
-                route_counts[event.data] += scale_factor
-            elif event.type == EventType.RECURRENCE:
-                recurrent_counts[event.data] += scale_factor
-            elif event.type == EventType.ROUTE:
-                routes.append(event.data)
-
-        # Round counts to integers
-        route_counts = {k: int(v) for k, v in route_counts.items()}
-        recurrent_counts = {k: int(v) for k, v in recurrent_counts.items()}
-
-        return route_counts, recurrent_counts, routes
+        """Get current statistics - returns pre-computed counts"""
+        routes = [data.route for data in self.route_history]
+        return self.route_counts, self.recurrent_counts, routes
 
     def _get_loop_parameters(self, pos, node, count, total_edge_weight):
         """Generate parameters for varied self-loops using transformed circles"""
@@ -445,15 +459,15 @@ class RouteVisualizer:
             G,
             k=2.0,
             iterations=50,
-            scale=min(x_scale, y_scale),  # Use smaller scale to ensure containment
-            center=(0, 0),  # Center the layout
+            scale=min(x_scale, y_scale),
+            center=(0, 0),
         )
 
         blue_to_red = LinearSegmentedColormap.from_list("", ["blue", "red"])
-        max_edge_count = max(self.route_counts.values())
+        max_edge_count = max(route_counts.values()) if route_counts else 1
 
         # Draw edges
-        for (src, dst), count in self.route_counts.items():
+        for (src, dst), count in route_counts.items():
             color_val = count / max_edge_count
             edge_color = blue_to_red(color_val)
 
@@ -461,9 +475,8 @@ class RouteVisualizer:
                 loops = self._get_loop_parameters(pos, src, count, total_edge_weight)
 
                 for loop in loops:
-                    # Create circle with transform for proper aspect ratio
                     circle = Circle(
-                        loop["center"],  # Centered at origin
+                        loop["center"],
                         loop["radius"],
                         facecolor="none",
                         edgecolor=edge_color,
@@ -473,7 +486,6 @@ class RouteVisualizer:
                     )
                     ax.add_patch(circle)
             else:
-                # Regular edges can now access edge_color
                 num_curves = min(int(np.sqrt(count)), 10)
                 for _ in range(num_curves):
                     rad = 0.2 + np.random.uniform(-0.1, 0.1)
@@ -490,9 +502,9 @@ class RouteVisualizer:
                     )
 
         # Draw nodes
+        max_usage = max(node_usage.values()) if node_usage else 1
         node_colors = [
-            plt.cm.YlOrRd(node_usage[node] / max(node_usage.values()))
-            for node in G.nodes()
+            plt.cm.YlOrRd(node_usage[node] / max_usage) for node in G.nodes()
         ]
         nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1500)
         nodes.set_zorder(1000)
@@ -511,8 +523,8 @@ class RouteVisualizer:
 
         for node in sorted(node_usage.keys()):
             count = node_usage[node]
-            percentage = (count / total_usage) * 100
-            color = plt.cm.YlOrRd(node_usage[node] / max(node_usage.values()))
+            percentage = (count / total_usage) * 100 if total_usage > 0 else 0
+            color = plt.cm.YlOrRd(node_usage[node] / max_usage)
             legend_lines.append(
                 plt.Line2D(
                     [0], [0], color=color, marker="o", linestyle="", markersize=10
@@ -526,9 +538,7 @@ class RouteVisualizer:
         legend_labels.append("Top Transitions")
         legend_lines.append(plt.Line2D([0], [0], color="none"))
 
-        sorted_edges = sorted(
-            self.route_counts.items(), key=lambda x: x[1], reverse=True
-        )
+        sorted_edges = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)
         for (src, dst), count in sorted_edges[:5]:
             color_val = count / max_edge_count
             edge_color = blue_to_red(color_val)
