@@ -67,13 +67,10 @@ class PraxisGraph(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.reset_parameters()
 
-        visualize_routes = self.debug
-        self.route_visualizer = (
-            RouteVisualizer(num_experts=config.num_experts)
-            if visualize_routes
-            else None
+        # Extra functionality
+        self.visualizer = (
+            RouteVisualizer(num_experts=config.num_experts) if self.debug else False
         )
-        self.current_route = []
 
     def reset_parameters(self):
         # Base layer features - keep subtle
@@ -302,24 +299,12 @@ class PraxisGraph(nn.Module):
             print(f"Selected expert: {next_idx}")
             print(f"Used experts: {self.used_experts}")
 
-        # Initialize or update route
-        if current_depth == 0:
-            self.current_route = [current_idx]
-        elif not self.training and self.route_visualizer is not None:
-            self.current_route.append(next_idx)
-            if current_depth == self.num_layers - 1:  # At end of sequence
-                self.route_visualizer.add_route(self.current_route)
-                self.current_route = []
+        # Update route
+        if not self.training and self.visualizer:
+            # Just send the immediate transition
+            self.visualizer.add_transition(current_idx, next_idx)
 
         return routing_loss, next_idx
-
-
-@dataclass
-class RouteData:
-    sequence: int  # Global sequence number
-    route: List[int]
-    transitions: Dict[Tuple[int, int], int]  # (src, dst) -> count
-    recurrences: Dict[int, int]  # expert_id -> count
 
 
 class RouteVisualizer:
@@ -336,103 +321,54 @@ class RouteVisualizer:
         self.save_rate = save_rate
 
         # Core data structures
-        self.route_history = deque(maxlen=None)  # No maxlen - we'll manage it manually
+        self.transition_history = deque(
+            maxlen=None
+        )  # Store (from_expert, to_expert) tuples
         self.route_counts = defaultdict(int)
         self.recurrent_counts = defaultdict(int)
         self.total_events = 0
-        self.sequence_counter = 0
 
         self.inference_count = 0
         self.node_radius = 0.15
 
-    def compute_route_data(
-        self, route: List[int]
-    ) -> Tuple[Dict[Tuple[int, int], int], Dict[int, int], int]:
-        """Pre-compute all route statistics and count total events"""
-        transitions = defaultdict(int)
-        recurrences = defaultdict(int)
-        seen_experts = set()
-        event_count = 1  # Start with 1 for the route itself
+    def prune_history(self):
+        """Remove oldest transitions to maintain max_history limit"""
+        while self.total_events > self.max_history and self.transition_history:
+            # Remove oldest transition
+            from_expert, to_expert = self.transition_history.popleft()
 
-        # Calculate transitions
-        for i in range(len(route) - 1):
-            edge = (route[i], route[i + 1])
-            transitions[edge] += 1
-            event_count += 1  # Each transition is an event
+            # Update counts
+            self.route_counts[(from_expert, to_expert)] -= 1
+            if self.route_counts[(from_expert, to_expert)] == 0:
+                del self.route_counts[(from_expert, to_expert)]
 
-        # Calculate recurrences
-        for expert in route:
-            if expert in seen_experts:
-                recurrences[expert] += 1
-                event_count += 1  # Each recurrence is an event
-            seen_experts.add(expert)
+            # Update recurrence counts if applicable
+            if from_expert == to_expert:
+                self.recurrent_counts[from_expert] -= 1
+                if self.recurrent_counts[from_expert] == 0:
+                    del self.recurrent_counts[from_expert]
 
-        return dict(transitions), dict(recurrences), event_count
+            self.total_events -= 1
 
-    def prune_history(self, new_events_count: int):
-        """Remove oldest events to maintain max_history limit"""
-        while (
-            self.total_events + new_events_count > self.max_history
-            and self.route_history
-        ):
-            oldest_data = self.route_history.popleft()
+    def add_transition(self, from_expert: int, to_expert: int):
+        # Add new transition
+        self.transition_history.append((from_expert, to_expert))
+        self.route_counts[(from_expert, to_expert)] += 1
+        if from_expert == to_expert:
+            self.recurrent_counts[from_expert] += 1
+        self.total_events += 1
 
-            # Remove counts for oldest route
-            events_removed = 1  # Route itself
+        # Prune if needed
+        self.prune_history()
 
-            # Remove transition counts
-            for edge, count in oldest_data.transitions.items():
-                self.route_counts[edge] -= count
-                if self.route_counts[edge] == 0:
-                    del self.route_counts[edge]
-                events_removed += count
-
-            # Remove recurrence counts
-            for expert, count in oldest_data.recurrences.items():
-                self.recurrent_counts[expert] -= count
-                if self.recurrent_counts[expert] == 0:
-                    del self.recurrent_counts[expert]
-                events_removed += count
-
-            self.total_events -= events_removed
-
-    def add_route(self, route: List[int]):
-        # Compute route statistics
-        transitions, recurrences, event_count = self.compute_route_data(route)
-
-        # Prune history if needed
-        self.prune_history(event_count)
-
-        # Create new route data
-        route_data = RouteData(
-            sequence=self.sequence_counter,
-            route=route,
-            transitions=transitions,
-            recurrences=recurrences,
-        )
-        self.sequence_counter += 1
-
-        # Add new route data
-        self.route_history.append(route_data)
-        self.total_events += event_count
-
-        # Update current counts
-        for edge, count in transitions.items():
-            self.route_counts[edge] += count
-        for expert, count in recurrences.items():
-            self.recurrent_counts[expert] += count
-
+        # Handle visualization saving
         self.inference_count += 1
         if self.inference_count % self.save_rate == 0:
             self.save_visualization()
-            if self.inference_count == self.save_rate:
-                print(f"Saving graph visualization to: {self.save_dir}/route_viz.png")
-                print(f"Current total events: {self.total_events}")
 
     def get_current_counts(self) -> Tuple[Dict, Dict, List]:
         """Get current statistics - returns pre-computed counts"""
-        routes = [data.route for data in self.route_history]
-        return self.route_counts, self.recurrent_counts, routes
+        return self.route_counts, self.recurrent_counts
 
     def _get_loop_parameters(self, pos, node, count, total_edge_weight):
         """Generate parameters for varied self-loops using transformed circles"""
@@ -577,7 +513,7 @@ class RouteVisualizer:
         for i in range(self.num_experts):
             G.add_node(i)
 
-        route_counts, recurrent_counts, _ = self.get_current_counts()
+        route_counts, recurrent_counts = self.get_current_counts()
 
         total_edge_weight = sum(route_counts.values())
         if total_edge_weight == 0:
@@ -688,17 +624,55 @@ class RouteVisualizer:
         legend_lines.append(plt.Line2D([0], [0], color="none"))
         legend_labels.append("")
 
+        sorted_edges = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)
+
+        # Use log scale for color mapping to better distribute colors
+        counts = np.array(list(route_counts.values()))
+        min_count = min(counts)
+        max_count = max(counts)
+
+        def get_color_val(count):
+            # Use log scale to better distribute colors
+            if min_count == max_count:
+                return 1.0
+            log_min = np.log1p(min_count)
+            log_max = np.log1p(max_count)
+            log_count = np.log1p(count)
+            return (log_count - log_min) / (log_max - log_min)
+
+        # Show more transitions in legend with better distribution
         legend_labels.append("Top Transitions")
         legend_lines.append(plt.Line2D([0], [0], color="none"))
 
+        # Show more transitions (e.g., top 10 instead of 5)
+        num_transitions_to_show = 10
         sorted_edges = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)
-        for (src, dst), count in sorted_edges[:5]:
-            color_val = count / max_edge_count
+
+        # Also show some edges from different percentiles for better distribution
+        percentile_indices = [
+            int(len(sorted_edges) * p) for p in [0.0, 0.25, 0.5, 0.75, 0.9, 1.0]
+        ]
+        edges_to_show = set()
+
+        # Add top N transitions
+        edges_to_show.update(sorted_edges[:num_transitions_to_show])
+
+        # Add percentile-based transitions
+        edges_to_show.update(
+            sorted_edges[i] for i in percentile_indices if i < len(sorted_edges)
+        )
+
+        # Sort final selection by count
+        edges_to_show = sorted(edges_to_show, key=lambda x: x[1], reverse=True)
+
+        for (src, dst), count in edges_to_show:
+            color_val = get_color_val(count)
             edge_color = blue_to_red(color_val)
             legend_lines.append(
                 plt.Line2D([0], [0], color=edge_color, marker=">", markersize=8)
             )
-            legend_labels.append(f"{src}→{dst}: {count}")
+            percentage = (count / total_edge_weight) * 100
+            legend_labels.append(f"{src}→{dst}: {count} ({percentage:.1f}%)")
 
         legend = ax.legend(
             legend_lines,
@@ -733,26 +707,30 @@ if __name__ == "__main__":
     import random
 
     num_experts = 5
-    num_routes = 10000
-    max_route_length = 10
+    num_transitions = 10000
     recurrent_loop_probability = 0.3
 
     visualizer = RouteVisualizer(
-        num_experts=num_experts, save_dir="data", save_rate=100
+        num_experts=num_experts, save_dir="data", save_rate=100, max_history=1000
     )
 
-    for _ in range(num_routes):
-        route_length = random.randint(1, max_route_length)
-        route = [random.randint(0, num_experts - 1)]
+    current_expert = random.randint(0, num_experts - 1)
 
-        for _ in range(route_length - 1):
-            if random.random() < recurrent_loop_probability:
-                route.append(route[-1])  # Generate a recurrent loop
-            else:
-                route.append(
-                    random.randint(0, num_experts - 1)
-                )  # Generate a regular transition
+    for _ in range(num_transitions):
+        # Determine next expert
+        if random.random() < recurrent_loop_probability:
+            next_expert = current_expert  # Generate a recurrent loop
+        else:
+            next_expert = random.randint(
+                0, num_experts - 1
+            )  # Generate a regular transition
+            while next_expert == current_expert:  # Avoid accidental loops
+                next_expert = random.randint(0, num_experts - 1)
 
-        visualizer.add_route(route)
+        # Add transition to visualizer
+        visualizer.add_transition(current_expert, next_expert)
+
+        # Update current expert for next iteration
+        current_expert = next_expert
 
     print("Visualization saved to data/route_viz.png")

@@ -6,7 +6,7 @@ import torch.nn.functional as F
 class SingleHeadGatedAttention(nn.Module):
     """
     According to MEGA, "Single-head gated attention has been empirically
-    shown as performant as vanilla multi-head attention."
+    shown [to be] as performant as vanilla multi-head attention."
     https://arxiv.org/abs/2209.10655
     """
 
@@ -21,7 +21,7 @@ class SingleHeadGatedAttention(nn.Module):
 
         # Gate generator G(X)
         if gate_hidden_dim is None:
-            gate_hidden_dim = embed_dim * 2
+            gate_hidden_dim = embed_dim * 4
 
         self.gate_net = nn.Sequential(
             nn.Linear(embed_dim, gate_hidden_dim),
