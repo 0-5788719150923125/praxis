@@ -474,18 +474,88 @@ class RouteVisualizer:
 
         return loops
 
+    def _create_feathered_node(self, ax, pos, color, alpha=1.0, zorder=1000):
+        """Create a feathered node using stacked rings with fixed alpha"""
+        import numpy as np
+        from matplotlib.collections import PathCollection
+        from matplotlib.path import Path
+
+        center_x, center_y = pos
+        base_radius = self.node_radius * 0.05
+
+        # More rings for smoother gradient
+        n_rings = 30
+        n_points = 50  # Points per ring for smooth circle
+
+        # Convert color to RGBA
+        if isinstance(color, np.ndarray):
+            if len(color) == 4:
+                rgba = color
+            else:
+                rgba = np.append(color, alpha)
+        else:
+            rgba = plt.cm.colors.to_rgba(color, alpha)
+
+        # Create points for all rings
+        theta = np.linspace(0, 2 * np.pi, n_points)
+        paths = []
+
+        # Fixed alpha for all rings
+        ring_alpha = 4.0 / n_rings  # Fixed transparency
+        ring_scale = 7.0
+
+        # Create rings from largest to smallest for proper stacking
+        for i in range(n_rings - 1, -1, -1):
+            # Linear spacing for more uniform gradient
+            progress = i / (n_rings - 1)
+            ring_radius = base_radius * (1 + progress * ring_scale)
+
+            # Create circle points
+            x = center_x + ring_radius * np.cos(theta)
+            y = center_y + ring_radius * np.sin(theta)
+
+            # Create path for this ring
+            vertices = np.column_stack((x, y))
+            vertices = np.vstack((vertices, vertices[0]))
+            codes = [Path.MOVETO] + [Path.LINETO] * (n_points - 1) + [Path.CLOSEPOLY]
+            paths.append(Path(vertices, codes))
+
+        # Create uniform colors array with fixed alpha
+        colors = [(rgba[0], rgba[1], rgba[2], ring_alpha)] * n_rings
+
+        # Create path collection
+        collection = PathCollection(
+            paths, facecolors=colors, edgecolors="none", zorder=zorder
+        )
+
+        ax.add_collection(collection)
+
+    def _get_text_color(self, background_color):
+        """
+        Determine appropriate text color (black or white) based on background color.
+        Uses relative luminance formula to determine brightness.
+        """
+        if isinstance(background_color, np.ndarray):
+            r, g, b = background_color[:3]
+        else:
+            rgb = plt.cm.colors.to_rgb(background_color)
+            r, g, b = rgb
+
+        # Calculate relative luminance
+        luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+        # Return white for dark backgrounds, black for light backgrounds
+        return "white" if luminance < 0.5 else "black"
+
     def save_visualization(self):
         fig, ax = plt.subplots(figsize=(15, 10))
         plt.suptitle("Expert-Routing Graph", fontsize=16, y=0.98)
-
-        # Force aspect ratio early
         ax.set_aspect("equal", adjustable="datalim")
 
         G = nx.DiGraph()
         for i in range(self.num_experts):
             G.add_node(i)
 
-        # Get current statistics from unified history
         route_counts, recurrent_counts, _ = self.get_current_counts()
 
         total_edge_weight = sum(route_counts.values())
@@ -548,21 +618,33 @@ class RouteVisualizer:
                         width=1.5,
                         alpha=alpha,
                         connectionstyle=f"arc3,rad={rad}",
-                        arrowsize=20,
+                        arrowsize=1,
                     )
 
-        # Draw nodes
+        # Draw nodes with feathering effect
         max_usage = max(node_usage.values()) if node_usage else 1
-        node_colors = [
-            plt.cm.YlOrRd(node_usage[node] / max_usage) for node in G.nodes()
-        ]
-        nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=1500)
-        nodes.set_zorder(1000)
+        node_colors = {}
 
-        # Add labels
-        labels = nx.draw_networkx_labels(G, pos)
-        for text in labels.values():
-            text.set_zorder(2000)
+        # Draw nodes with feathering effect
+        for node in G.nodes():
+            color = plt.cm.YlOrRd(node_usage[node] / max_usage)
+            node_colors[node] = color
+            self._create_feathered_node(ax, pos[node], color)
+
+        # Draw labels with adaptive colors
+        labels = {node: str(node) for node in G.nodes()}
+        for node, (x, y) in pos.items():
+            text_color = self._get_text_color(node_colors[node])
+            ax.text(
+                x,
+                y,
+                labels[node],
+                horizontalalignment="center",
+                verticalalignment="center",
+                color=text_color,
+                fontweight="bold",
+                zorder=2000,
+            )
 
         # Create legend
         legend_lines = []
