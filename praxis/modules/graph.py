@@ -27,10 +27,10 @@ class PraxisGraph(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.debug = config.debug
+        self.super_debug = False
         self.causal = config.causal
         self.num_layers = config.num_experts
         self.hidden_dim = config.num_dims
-        self.num_heads = 3
         self.num_context_tokens = 3
         self.routing_scale = 0.01
         self.step = 0
@@ -271,15 +271,15 @@ class PraxisGraph(nn.Module):
         next_idx = torch.argmax(batch_averaged_probs, dim=-1).item()
 
         # Inference-only logging at the end
-        # if not self.training:
-        #     print("\nDEBUG Information:")
-        #     print(f"Current expert index: {current_idx}")
-        #     print(f"Available indices: {available_indices}")
-        #     print(f"Attention shape: {scores.shape}")
-        #     print(f"Raw attention: {scores[0].detach().cpu().numpy()}")
-        #     print(f"Softmax probs: {softmax_probs[0].detach().cpu().numpy()}")
-        #     print(f"Selected expert: {next_idx}")
-        #     print(f"Used experts: {self.used_experts}")
+        if not self.training and self.super_debug:
+            print("\nDEBUG Information:")
+            print(f"Current expert index: {current_idx}")
+            print(f"Available indices: {available_indices}")
+            print(f"Attention shape: {scores.shape}")
+            print(f"Raw attention: {scores[0].detach().cpu().numpy()}")
+            print(f"Softmax probs: {softmax_probs[0].detach().cpu().numpy()}")
+            print(f"Selected expert: {next_idx}")
+            print(f"Used experts: {self.used_experts}")
 
         # Initialize or update route
         if current_depth == 0:
@@ -476,7 +476,7 @@ class RouteVisualizer:
 
     def save_visualization(self):
         fig, ax = plt.subplots(figsize=(15, 10))
-        plt.suptitle("Graph Routing", fontsize=16, y=0.98)
+        plt.suptitle("Expert-Routing Graph", fontsize=16, y=0.98)
 
         # Force aspect ratio early
         ax.set_aspect("equal", adjustable="datalim")
