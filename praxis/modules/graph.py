@@ -27,6 +27,7 @@ class PraxisGraph(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.debug = config.debug
+        self.causal = config.causal
         self.num_layers = config.num_experts
         self.hidden_dim = config.num_dims
         self.num_heads = 3
@@ -120,61 +121,92 @@ class PraxisGraph(nn.Module):
         current_layer: int,
         available_indices: List[int],
     ) -> torch.Tensor:
+        # Get current layer representation (now expanded for sequence length)
+        current_embed = self.layer_embeddings[current_layer]  # [H]
+        current_embed = current_embed.unsqueeze(0).unsqueeze(1)  # [1, 1, H]
+        current_embed = current_embed.expand(
+            hidden_states.shape[0], hidden_states.shape[1], -1
+        )  # [B, S, H]
 
-        # Get current layer representation
-        current_embed = self.layer_embeddings[current_layer]
-        normalized_states = self.norm(hidden_states)
-        hidden_mean = normalized_states.mean(dim=1)
-        query_input = (current_embed + hidden_mean).unsqueeze(1)
+        # Normalize states
+        normalized_states = self.norm(hidden_states)  # [B, S, H]
+
+        # Combine current embed with states
+        query_input = current_embed + normalized_states  # [B, S, H]
 
         # Add centrality encoding
-        layer_features = self.layer_embeddings + self.centrality_embeddings
+        layer_features = (
+            self.layer_embeddings + self.centrality_embeddings
+        )  # [num_layers, H]
 
         # Project for attention
-        q = self.query(query_input)
-        k = self.key(layer_features)
-        v = self.value(layer_features)
+        q = self.query(query_input)  # [B, S, H]
+        k = self.key(layer_features)  # [num_layers, H]
+        v = self.value(layer_features)  # [num_layers, H]
 
         # Force ensembling
         q = self.dropout(q)
         k = self.dropout(k)
         v = self.dropout(v)
 
-        # Compute attention scores
-        attention = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.hidden_dim)
-        attention = attention.squeeze(1)
+        # Compute raw attention scores
+        attention = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(
+            self.hidden_dim
+        )  # [B, S, num_layers]
 
-        # Add spatial bias
+        if self.causal:
+            _, seq_len, num_experts = attention.shape
+            # Create causal mask
+            seq_mask = torch.triu(
+                torch.ones((seq_len, num_experts), device=q.device), diagonal=1
+            ).bool()
+            # Apply to attention scores
+            attention = attention.masked_fill(seq_mask.unsqueeze(0), -1e9)
+
+        # Add spatial bias before softmax
         distances = torch.abs(
             torch.arange(self.num_layers, device=q.device) - current_layer
         )
-        spatial_bias = self.spatial_embeddings[distances].transpose(0, 1)
-        spatial_bias = spatial_bias.expand(attention.shape[0], -1)
+        spatial_bias = self.spatial_embeddings[distances].transpose(
+            0, 1
+        )  # [1, num_layers]
+        spatial_bias = spatial_bias.unsqueeze(1)  # [1, 1, num_layers]
+        spatial_bias = spatial_bias.expand(
+            attention.shape[0], attention.shape[1], -1
+        )  # [B, S, num_layers]
 
-        scores = attention + spatial_bias
+        attention = attention + spatial_bias
 
-        # Add edge encoding
-        edge_bias = torch.zeros_like(scores)
-
-        for i in range(scores.shape[1]):
+        # Add edge bias before softmax
+        edge_bias = torch.zeros_like(attention)
+        for i in range(attention.shape[2]):  # iterate over num_layers
             if i in available_indices and i != current_layer:
-                # Debug edge computation
                 distance = abs(current_layer - i)
-                edge_feat = self.edge_embeddings[i]  # [edge_dim]
-
-                # Correct the projection
+                edge_feat = self.edge_embeddings[i]
                 edge_weight = torch.matmul(
-                    edge_feat.unsqueeze(0),  # [1, edge_dim]
-                    self.edge_embeddings.T,  # [edge_dim, num_layers]
-                )  # Result: [1, num_layers]
-
-                # Expand to match batch size
-                edge_weight = edge_weight.expand(scores.shape[0], -1)
+                    edge_feat.unsqueeze(0),
+                    self.edge_embeddings.T,
+                )  # [1, num_layers]
+                edge_weight = edge_weight.unsqueeze(1)  # [1, 1, num_layers]
+                edge_weight = edge_weight.expand(
+                    attention.shape[0], attention.shape[1], -1
+                )  # [B, S, num_layers]
                 edge_weight = edge_weight / max(distance, 1)
-
                 edge_bias = edge_bias + edge_weight
 
-        return scores + edge_bias
+        attention = attention + edge_bias
+
+        # Convert to probabilities
+        attention_probs = F.softmax(attention, dim=-1)  # [B, S, num_layers]
+
+        # Apply to values
+        weighted_values = torch.matmul(attention_probs, v)  # [B, S, H]
+
+        # Project to get scores for each layer
+        scores = self.output(weighted_values)  # [B, num_layers]
+
+        # Return per-example consensus scores
+        return scores.mean(dim=1)  # [B, num_layers]
 
     def get_next_expert(
         self,
