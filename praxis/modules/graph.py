@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
@@ -70,7 +71,11 @@ class PraxisGraph(nn.Module):
         # Extra functionality
         self.current_route = []
         self.visualizer = (
-            RouteVisualizer(num_experts=config.num_experts) if self.debug else False
+            RouteVisualizer(
+                num_experts=config.num_experts, max_history=10000, save_rate=1000
+            )
+            if self.debug
+            else False
         )
 
     def reset_parameters(self):
@@ -417,14 +422,6 @@ class RouteVisualizer:
                 .translate(circle_center_x, circle_center_y)
             )
 
-            # Calculate arrow parameters (scaled down with circle size)
-            arrow_angle = angle + np.pi / 4
-            arrow_length = radius * 0.4  # Shorter arrows for smaller circles
-            arrow_start_x = circle_center_x + radius * 0.6 * np.cos(arrow_angle)
-            arrow_start_y = circle_center_y + radius * 0.6 * np.sin(arrow_angle)
-            arrow_end_x = arrow_start_x + arrow_length * np.cos(arrow_angle)
-            arrow_end_y = arrow_start_y + arrow_length * np.sin(arrow_angle)
-
             # Alpha based on count
             base_alpha = 0.8 / np.sqrt(num_loops)
             alpha = max(0.1, min(0.8, base_alpha))
@@ -434,8 +431,6 @@ class RouteVisualizer:
                     "center": (0, 0),  # Will be transformed
                     "radius": radius,
                     "transform": transform,
-                    "arrow_start": (arrow_start_x, arrow_start_y),
-                    "arrow_end": (arrow_end_x, arrow_end_y),
                     "alpha": alpha,
                 }
             )
@@ -515,53 +510,136 @@ class RouteVisualizer:
         # Return white for dark backgrounds, black for light backgrounds
         return "white" if luminance < 0.5 else "black"
 
+    def _get_curved_path_points(
+        self, pos, src, dst, rad, num_points=20
+    ):  # Reduced from 100
+        """Generate points along a curved path between two nodes"""
+
+        # Ensure positions are numpy arrays
+        src_pos = np.array(pos[src], dtype=float)
+        dst_pos = np.array(pos[dst], dtype=float)
+
+        # Calculate midpoint
+        mid_pos = (src_pos + dst_pos) / 2
+
+        # Calculate perpendicular offset for control point
+        diff = dst_pos - src_pos
+        norm = np.array([-diff[1], diff[0]])  # Perpendicular vector
+
+        # Normalize and scale
+        length = np.linalg.norm(norm)
+        if length > 0:
+            norm = norm / length * rad
+
+        # Control point
+        ctrl_pos = mid_pos + norm
+
+        # Generate curve points
+        t = np.linspace(0, 1, num_points)
+        t = t.reshape(-1, 1)
+
+        # Quadratic Bezier curve
+        curve = (1 - t) ** 2 * src_pos + 2 * (1 - t) * t * ctrl_pos + t**2 * dst_pos
+
+        return curve
+
+    def _draw_gradient_edge(self, ax, pos, src, dst, alpha):
+        """Draw a single edge with a blue-to-red gradient"""
+
+        # Get curved path points
+        rad = 0.2 + np.random.uniform(-0.1, 0.1)
+        points = self._get_curved_path_points(pos, src, dst, rad)
+
+        # Create segments for LineCollection
+        segments = np.concatenate(
+            [points[:-1, np.newaxis], points[1:, np.newaxis]], axis=1
+        )
+
+        # Create blue-to-red gradient colors
+        t = np.linspace(0, 1, len(segments))
+        colors = np.zeros((len(segments), 4))
+        colors[:, 0] = t  # Red increases
+        colors[:, 2] = 1 - t  # Blue decreases
+        colors[:, 3] = alpha  # Constant alpha
+
+        # Create and add LineCollection with solid lines
+        lc = LineCollection(
+            segments,
+            colors=colors,
+            linewidth=1.5,
+            zorder=0,
+            capstyle=None,
+            joinstyle=None,
+            linestyle="solid",
+        )
+        ax.add_collection(lc)
+
     def _save_visualization(self):
         fig, ax = plt.subplots(figsize=(15, 10))
-        plt.suptitle("Expert-Routing Graph", fontsize=16, y=0.98)
+        plt.suptitle("Expert-Routing Graph", fontsize=16, y=0.93)
+        plt.subplots_adjust(top=0.90)
         ax.set_aspect("equal", adjustable="datalim")
+        ax.set_axis_on()
+        # Remove ticks
+        ax.set_xticks([])
+        ax.set_yticks([])
 
+        # Remove tick labels
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+
+        # Keep spines (border) visible
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_color("black")
+            spine.set_linewidth(1.0)
+
+        # Initialize graph and get counts
         G = nx.DiGraph()
         for i in range(self.num_experts):
             G.add_node(i)
 
         route_counts, recurrent_counts = self._get_current_counts()
-
         total_edge_weight = sum(route_counts.values())
         if total_edge_weight == 0:
             print("Warning: No edges found!")
             return
 
-        # Calculate node usage from current transitions
+        # Calculate node usage
         node_usage = defaultdict(int)
         for (src, dst), count in route_counts.items():
             node_usage[src] += count
             node_usage[dst] += count
-
         total_usage = sum(node_usage.values())
 
-        # Constrain spring_layout to keep nodes fully visible
-        x_scale = 0.8  # Shrink layout area to ensure nodes stay in bounds
-        y_scale = 0.7  # Adjusted for aspect ratio
-
+        # Generate layout with increased scale
         pos = nx.spring_layout(
-            G,
-            k=2.0,
-            iterations=50,
-            scale=min(x_scale, y_scale),
-            center=(0, 0),
+            G, k=2.0, iterations=50, scale=2.0, center=(0, 0)  # Increased scale
         )
 
+        # Scale positions while maintaining proportions
+        positions = np.array(list(pos.values()))
+        max_range = max(np.ptp(positions[:, 0]), np.ptp(positions[:, 1]))
+
+        if max_range > 0:
+            for key in pos:
+                pos[key] = pos[key] / max_range
+
+        # Set bounds with reduced margins
+        ax.set_xlim(-0.7, 0.7)
+        ax.set_ylim(-0.7, 0.7)
+
+        # Define color maps
         blue_to_red = LinearSegmentedColormap.from_list("", ["blue", "red"])
         max_edge_count = max(route_counts.values()) if route_counts else 1
 
-        # Draw edges
+        # Draw edges with gradients
         for (src, dst), count in route_counts.items():
             color_val = count / max_edge_count
             edge_color = blue_to_red(color_val)
-
             if src == dst:
+                # Self-loops
                 loops = self._get_loop_parameters(pos, src, count, total_edge_weight)
-
                 for loop in loops:
                     circle = Circle(
                         loop["center"],
@@ -574,32 +652,22 @@ class RouteVisualizer:
                     )
                     ax.add_patch(circle)
             else:
-                num_curves = min(int(np.sqrt(count)), 10)
+                # Regular edges with gradient
+                num_curves = min(int(np.sqrt(count)), 100)
                 for _ in range(num_curves):
-                    rad = 0.2 + np.random.uniform(-0.1, 0.1)
                     alpha = 0.15 + np.random.uniform(0, 0.1)
-                    nx.draw_networkx_edges(
-                        G,
-                        pos,
-                        edgelist=[(src, dst)],
-                        edge_color=[edge_color],
-                        width=1.5,
-                        alpha=alpha,
-                        connectionstyle=f"arc3,rad={rad}",
-                        arrowsize=1,
-                    )
+                    self._draw_gradient_edge(ax, pos, src, dst, alpha)
 
-        # Draw nodes with feathering effect
+        # Draw nodes
         max_usage = max(node_usage.values()) if node_usage else 1
         node_colors = {}
 
-        # Draw nodes with feathering effect
         for node in G.nodes():
             color = plt.cm.YlOrRd(node_usage[node] / max_usage)
             node_colors[node] = color
             self._create_feathered_node(ax, pos[node], color)
 
-        # Draw labels with adaptive colors
+        # Add node labels
         labels = {node: str(node) for node in G.nodes()}
         for node, (x, y) in pos.items():
             text_color = self._get_text_color(node_colors[node])
@@ -614,10 +682,11 @@ class RouteVisualizer:
                 zorder=2000,
             )
 
-        # Create legend
+        # Create legend content
         legend_lines = []
         legend_labels = []
 
+        # Expert usage section
         legend_labels.append("Expert Usage")
         legend_lines.append(plt.Line2D([0], [0], color="none"))
 
@@ -632,52 +701,22 @@ class RouteVisualizer:
             )
             legend_labels.append(f"E{node}: {count} ({percentage:.1f}%)")
 
+        # Spacing between sections
         legend_lines.append(plt.Line2D([0], [0], color="none"))
         legend_labels.append("")
 
-        sorted_edges = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)
-
-        # Use log scale for color mapping to better distribute colors
-        counts = np.array(list(route_counts.values()))
-        min_count = min(counts)
-        max_count = max(counts)
-
-        def get_color_val(count):
-            # Use log scale to better distribute colors
-            if min_count == max_count:
-                return 1.0
-            log_min = np.log1p(min_count)
-            log_max = np.log1p(max_count)
-            log_count = np.log1p(count)
-            return (log_count - log_min) / (log_max - log_min)
-
-        # Show more transitions in legend with better distribution
+        # Transitions section
         legend_labels.append("Top Transitions")
         legend_lines.append(plt.Line2D([0], [0], color="none"))
 
-        # Show more transitions (e.g., top 10 instead of 5)
+        # Sort and select transitions to show
         num_transitions_to_show = 10
         sorted_edges = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)
+        edges_to_show = sorted_edges[:num_transitions_to_show]
 
-        # Also show some edges from different percentiles for better distribution
-        percentile_indices = [
-            int(len(sorted_edges) * p) for p in [0.0, 0.25, 0.5, 0.75, 0.9, 1.0]
-        ]
-        edges_to_show = set()
-
-        # Add top N transitions
-        edges_to_show.update(sorted_edges[:num_transitions_to_show])
-
-        # Add percentile-based transitions
-        edges_to_show.update(
-            sorted_edges[i] for i in percentile_indices if i < len(sorted_edges)
-        )
-
-        # Sort final selection by count
-        edges_to_show = sorted(edges_to_show, key=lambda x: x[1], reverse=True)
-
+        # Add transitions to legend
         for (src, dst), count in edges_to_show:
-            color_val = get_color_val(count)
+            color_val = count / max_edge_count
             edge_color = blue_to_red(color_val)
             legend_lines.append(
                 plt.Line2D([0], [0], color=edge_color, marker=">", markersize=8)
@@ -703,14 +742,14 @@ class RouteVisualizer:
         legend.get_frame().set_facecolor("white")
         legend.set_zorder(2000)
 
-        plt.tight_layout(rect=[0, 0, 1, 1.0])
-
+        # Save with tight layout
         plt.savefig(
             os.path.join(self.save_dir, f"route_viz.png"),
             dpi=300,
             bbox_inches="tight",
             pad_inches=0.1,
         )
+
         plt.close()
 
 
@@ -718,11 +757,11 @@ if __name__ == "__main__":
     import random
 
     num_experts = 5
-    num_transitions = 10000
+    num_transitions = 1000000
     recurrent_loop_probability = 0.3
 
     visualizer = RouteVisualizer(
-        num_experts=num_experts, save_dir="data", save_rate=100, max_history=1000
+        num_experts=num_experts, save_dir="data", save_rate=1000, max_history=10000
     )
 
     current_expert = random.randint(0, num_experts - 1)
