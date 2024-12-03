@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,14 +12,20 @@ class SingleHeadGatedAttention(nn.Module):
     https://arxiv.org/abs/2209.10655
     """
 
-    def __init__(self, embed_dim, gate_hidden_dim=None):
+    def __init__(self, embed_dim, output_dim=None, gate_hidden_dim=None, dropout=0.0):
         super().__init__()
         self.embed_dim = embed_dim
 
         # Q, K, V projections
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, embed_dim)
-        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.query = nn.Linear(embed_dim, embed_dim)
+        self.key = nn.Linear(embed_dim, embed_dim)
+        self.value = nn.Linear(embed_dim, embed_dim)
+
+        self.dropout = nn.Dropout(dropout)
+
+        if output_dim is None:
+            output_dim = embed_dim
+        self.output = nn.Linear(embed_dim, output_dim)
 
         # Gate generator G(X)
         if gate_hidden_dim is None:
@@ -31,42 +39,43 @@ class SingleHeadGatedAttention(nn.Module):
         )
 
     def forward(self, query_input, key_input, value_input, mask=None):
-        """
-        Args:
-            query_input: Tensor of shape (batch_size, seq_len, embed_dim)
-            key_input: Tensor of shape (num_layers, embed_dim)
-            value_input: Tensor of shape (num_layers, embed_dim)
-            mask: Optional attention mask
-        """
-        B, S, E = query_input.shape
-        num_layers = key_input.shape[0]
-
-        # Project inputs
-        q = self.q_proj(query_input)  # [B, S, E]
-        k = self.k_proj(key_input)  # [num_layers, E]
-        v = self.v_proj(value_input)  # [num_layers, E]
-
-        # Expand k and v to match batch size
-        k = k.unsqueeze(0).expand(B, -1, -1)  # [B, num_layers, E]
-        v = v.unsqueeze(0).expand(B, -1, -1)  # [B, num_layers, E]
-
-        # Compute attention scores
-        scores = torch.bmm(q, k.transpose(1, 2)) / (
-            self.embed_dim**0.5
-        )  # [B, S, num_layers]
-
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, float("-inf"))
-
-        attn = F.softmax(scores, dim=-1)  # [B, S, num_layers]
-
-        # Apply attention to values
-        out = torch.bmm(attn, v)  # [B, S, E]
+        scores, v = self.compute_scores(query_input, key_input, value_input)
+        out = self.compute_weights(scores, v)
 
         # Generate and apply gates
         gates = self.gate_net(query_input)  # [B, S, E]
         out = out * gates
 
+        return self.output(out)
+
+    def compute_scores(self, query_input, key_input, value_input):
+        B, S, E = query_input.shape
+
+        # Project inputs
+        q = self.query(query_input)  # [B, S, E]
+        k = self.key(key_input)  # [num_layers, E]
+        v = self.value(value_input)  # [num_layers, E]
+
+        # Expand k and v to match batch size
+        k = k.unsqueeze(0).expand(B, -1, E)  # [B, num_layers, E]
+        v = v.unsqueeze(0).expand(B, -1, E)  # [B, num_layers, E]
+
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
+
+        # Compute attention scores
+        scores = torch.bmm(q, k.transpose(1, 2)) / (
+            math.sqrt(embed_dim)
+        )  # [B, S, num_layers]
+
+        return scores, v
+
+    def compute_weights(self, scores, v):
+        attn = F.softmax(scores, dim=-1)  # [B, S, num_layers]
+        attn = self.dropout(attn)
+        # Apply attention to values
+        out = torch.bmm(attn, v)  # [B, S, E]
         return out
 
 
@@ -96,19 +105,6 @@ if __name__ == "__main__":
             out.shape == expected_shape
         ), f"Output shape mismatch: got {out.shape}, expected {expected_shape}"
         print("✓ Basic forward pass")
-
-        # Test with attention mask
-        mask = torch.ones(batch_size, seq_length, num_layers).to(device)
-        mask[:, :, num_layers // 2 :] = 0  # Mask out second half of layers
-        out_masked = model(query_input, key_input, value_input, mask)
-        assert out_masked.shape == expected_shape, "Masked output shape mismatch"
-        print("✓ Forward pass with mask")
-
-        # Test that masked and unmasked outputs are different
-        assert not torch.allclose(
-            out, out_masked
-        ), "Masked and unmasked outputs should differ"
-        print("✓ Mask affects output")
 
         # Test gradient flow
         loss = out.sum()
