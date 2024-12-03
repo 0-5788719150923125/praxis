@@ -33,6 +33,7 @@ class PraxisGraph(nn.Module):
         self.num_heads = 3
         self.num_context_tokens = 3
         self.routing_scale = 0.01
+        self.step = 0
 
         # Layer embeddings (nodes)
         self.layer_embeddings = nn.Parameter(
@@ -208,6 +209,21 @@ class PraxisGraph(nn.Module):
         # Return per-example consensus scores
         return scores.mean(dim=1)  # [B, num_layers]
 
+    def _get_temperature(self, step: int, tau_min=0.1, tau_max=1.0, period=10000):
+        """
+        Calculates the temperature for a given step using a cyclical schedule.
+
+        The temperature oscillates between tau_min and tau_max following a cosine wave,
+        starting at tau_max at step 0.
+        """
+        if tau_min < 0 or tau_max <= tau_min:
+            raise ValueError("Ensure that 0 <= tau_min < tau_max.")
+
+        base = (tau_max + tau_min) / 2
+        amplitude = (tau_max - tau_min) / 2
+        tau = base + amplitude * math.cos(2 * math.pi * step / period)
+        return tau
+
     def get_next_expert(
         self,
         hidden_states: torch.Tensor,
@@ -246,7 +262,9 @@ class PraxisGraph(nn.Module):
 
         # Select next expert
         if self.training:
-            probs = F.gumbel_softmax(scores, tau=1.0, hard=True)
+            tau = self._get_temperature(self.step)
+            self.step += 1
+            probs = F.gumbel_softmax(scores, tau=tau, hard=True)
 
         # Mean across batch before selection
         batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
