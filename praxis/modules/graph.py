@@ -3,8 +3,7 @@ import os
 import random
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from enum import Enum, auto
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
@@ -14,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Circle, ConnectionPatch, FancyArrowPatch
+from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
 
 from praxis.modules.dense import PraxisGLU
@@ -22,7 +21,7 @@ from praxis.modules.dense import PraxisGLU
 
 class PraxisGraph(nn.Module):
     """
-    Graph-based expert routing inspired by Graphformer
+    Graph-based expert routing, inspired by Graphformer.
     https://arxiv.org/abs/2209.10655
     """
 
