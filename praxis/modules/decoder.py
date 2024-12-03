@@ -34,15 +34,12 @@ class PraxisDecoder(nn.Module):
         hidden_states = inputs
         aux_losses = []
 
-        route = [str(original_order.index(experts[0]))]
-
         next_expert_idx = None
         for i in range(self.stack.depth):
             try:
                 expert = experts[i]
                 if next_expert_idx is not None:
                     expert = experts[next_expert_idx]
-                    route.append(str(next_expert_idx))
 
                 new_states, aux_loss = self._create_forward(
                     expert, hidden_states, attention_mask, i
@@ -69,11 +66,8 @@ class PraxisDecoder(nn.Module):
                 self.manager.handle_failure(expert)
                 continue
 
-        if self.debug and self.stack.behavior:
-            if not self.training:
-                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
-            # else:
-            #     print(f"DEBUG: training through: {' -> '.join(route)}")
+        if hasattr(self.stack.behavior, "reset_route"):
+            self.stack.behavior.reset_route()
 
         return hidden_states, sum(aux_losses)
 

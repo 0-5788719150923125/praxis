@@ -68,6 +68,7 @@ class PraxisGraph(nn.Module):
         self.reset_parameters()
 
         # Extra functionality
+        self.current_route = []
         self.visualizer = (
             RouteVisualizer(num_experts=config.num_experts) if self.debug else False
         )
@@ -252,6 +253,7 @@ class PraxisGraph(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[int]]:
         # Reset used experts at the start of new sequence
         current_idx = original_experts.index(current_expert)
+        self.current_route.append(current_idx)
 
         # Get available expert indices
         available_indices = [
@@ -306,6 +308,15 @@ class PraxisGraph(nn.Module):
 
         return routing_loss, next_idx
 
+    def reset_route(self):
+        if self.debug:
+            route = [str(r) for r in self.current_route]
+            if not self.training:
+                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
+            elif self.super_debug:
+                print(f"DEBUG: training through: {' -> '.join(route)}")
+        self.current_route = []
+
 
 class RouteVisualizer:
     def __init__(
@@ -313,7 +324,7 @@ class RouteVisualizer:
         num_experts: int,
         save_dir: str = "data",
         max_history: int = 10000,
-        save_rate: int = 100,
+        save_rate: int = 1000,
     ):
         self.num_experts = num_experts
         self.save_dir = save_dir
@@ -331,7 +342,23 @@ class RouteVisualizer:
         self.inference_count = 0
         self.node_radius = 0.15
 
-    def prune_history(self):
+    def add_transition(self, from_expert: int, to_expert: int):
+        # Add new transition
+        self.transition_history.append((from_expert, to_expert))
+        self.route_counts[(from_expert, to_expert)] += 1
+        if from_expert == to_expert:
+            self.recurrent_counts[from_expert] += 1
+        self.total_events += 1
+
+        # Prune if needed
+        self._prune_history()
+
+        # Handle visualization saving
+        self.inference_count += 1
+        if self.inference_count % self.save_rate == 0:
+            self._save_visualization()
+
+    def _prune_history(self):
         """Remove oldest transitions to maintain max_history limit"""
         while self.total_events > self.max_history and self.transition_history:
             # Remove oldest transition
@@ -350,23 +377,7 @@ class RouteVisualizer:
 
             self.total_events -= 1
 
-    def add_transition(self, from_expert: int, to_expert: int):
-        # Add new transition
-        self.transition_history.append((from_expert, to_expert))
-        self.route_counts[(from_expert, to_expert)] += 1
-        if from_expert == to_expert:
-            self.recurrent_counts[from_expert] += 1
-        self.total_events += 1
-
-        # Prune if needed
-        self.prune_history()
-
-        # Handle visualization saving
-        self.inference_count += 1
-        if self.inference_count % self.save_rate == 0:
-            self.save_visualization()
-
-    def get_current_counts(self) -> Tuple[Dict, Dict, List]:
+    def _get_current_counts(self) -> Tuple[Dict, Dict, List]:
         """Get current statistics - returns pre-computed counts"""
         return self.route_counts, self.recurrent_counts
 
@@ -504,7 +515,7 @@ class RouteVisualizer:
         # Return white for dark backgrounds, black for light backgrounds
         return "white" if luminance < 0.5 else "black"
 
-    def save_visualization(self):
+    def _save_visualization(self):
         fig, ax = plt.subplots(figsize=(15, 10))
         plt.suptitle("Expert-Routing Graph", fontsize=16, y=0.98)
         ax.set_aspect("equal", adjustable="datalim")
@@ -513,7 +524,7 @@ class RouteVisualizer:
         for i in range(self.num_experts):
             G.add_node(i)
 
-        route_counts, recurrent_counts = self.get_current_counts()
+        route_counts, recurrent_counts = self._get_current_counts()
 
         total_edge_weight = sum(route_counts.values())
         if total_edge_weight == 0:
