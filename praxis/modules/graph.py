@@ -300,7 +300,7 @@ class PraxisGraph(nn.Module):
             print(f"Used experts: {self.used_experts}")
 
         # Update route
-        if not self.training and self.visualizer:
+        if not self.training and self.visualizer and hidden_states.size(0) == 1:
             # Just send the immediate transition
             self.visualizer.add_transition(current_idx, next_idx)
 
