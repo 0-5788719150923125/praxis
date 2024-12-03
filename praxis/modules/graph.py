@@ -17,6 +17,8 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle, ConnectionPatch, FancyArrowPatch
 from matplotlib.transforms import Affine2D
 
+from praxis.modules.dense import PraxisGLU
+
 
 class PraxisGraph(nn.Module):
     """
@@ -52,10 +54,12 @@ class PraxisGraph(nn.Module):
         edge_dim = self.hidden_dim // 4
         self.edge_embeddings = nn.Parameter(torch.randn(self.num_layers, edge_dim))
 
-        # Normalize the hidden states
-        self.norm = nn.LayerNorm(self.hidden_dim)
+        # Transform the hidden states
+        self.mix_norm = nn.LayerNorm(self.hidden_dim)
+        self.mixer = PraxisGLU(config)
 
         # Graph attention components
+        self.attn_norm = nn.LayerNorm(self.hidden_dim)
         self.query = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.key = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.value = nn.Linear(self.hidden_dim, self.hidden_dim)
@@ -74,7 +78,7 @@ class PraxisGraph(nn.Module):
 
     def reset_parameters(self):
         # Base layer features - keep subtle
-        nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
+        nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.1)
 
         # Importance should be distinct
         nn.init.orthogonal_(self.centrality_embeddings, gain=0.1)
@@ -131,11 +135,18 @@ class PraxisGraph(nn.Module):
         current_layer: int,
         available_indices: List[int],
     ) -> torch.Tensor:
+
+        # Projection stage with residual
+        residual = hidden_states
+        projected_states = self.mixer(self.mix_norm(hidden_states))
+        hidden_states = projected_states + residual  # [B, S, H]
+
+        # Attention stage with residual
+        residual = hidden_states
+        normalized_states = self.attn_norm(hidden_states)  # [B, S, H]
+
         # Get current layer representation
         current_embed = self.layer_embeddings[current_layer]  # [H]
-
-        # Normalize states
-        normalized_states = self.norm(hidden_states)  # [B, S, H]
 
         # Combine current embed with states
         query_input = current_embed.view(1, 1, -1) + normalized_states  # [B, S, H]
@@ -159,6 +170,9 @@ class PraxisGraph(nn.Module):
         attention = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(
             self.hidden_dim
         )  # [B, S, num_layers]
+
+        # Force sparsity
+        attention = self.dropout(attention)
 
         if self.causal:
             _, seq_len, num_experts = attention.shape
@@ -208,8 +222,11 @@ class PraxisGraph(nn.Module):
         # Apply to values
         weighted_values = torch.matmul(attention_probs, v)  # [B, S, H]
 
+        # Final residual connection for attention
+        hidden_states = weighted_values + residual
+
         # Project to get scores for each layer
-        scores = self.output(weighted_values)  # [B, num_layers]
+        scores = self.output(hidden_states)  # [B, num_layers]
 
         # Return per-example consensus scores
         return scores.mean(dim=1)  # [B, num_layers]
