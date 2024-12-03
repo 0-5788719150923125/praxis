@@ -73,10 +73,19 @@ class PraxisGraph(nn.Module):
         self.current_route = []
 
     def reset_parameters(self):
+        # Base layer features - keep subtle
         nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
-        nn.init.normal_(self.centrality_embeddings, mean=0.0, std=0.02)
-        nn.init.normal_(self.spatial_embeddings, mean=0.0, std=0.02)
-        nn.init.normal_(self.edge_embeddings, mean=0.0, std=0.02)
+
+        # Importance should be distinct
+        nn.init.orthogonal_(self.centrality_embeddings, gain=0.1)
+
+        # Spatial embeddings should be based on distance
+        dist_init = torch.arange(self.max_distance + 1).float()
+        dist_init = -0.1 * dist_init  # Negative correlation with distance
+        self.spatial_embeddings.data = dist_init.unsqueeze(-1)
+
+        # Edge features should be differentiable
+        nn.init.normal_(self.edge_embeddings, mean=0.0, std=0.05)
 
     def add_context(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, position: int
@@ -122,18 +131,14 @@ class PraxisGraph(nn.Module):
         current_layer: int,
         available_indices: List[int],
     ) -> torch.Tensor:
-        # Get current layer representation (now expanded for sequence length)
+        # Get current layer representation
         current_embed = self.layer_embeddings[current_layer]  # [H]
-        current_embed = current_embed.unsqueeze(0).unsqueeze(1)  # [1, 1, H]
-        current_embed = current_embed.expand(
-            hidden_states.shape[0], hidden_states.shape[1], -1
-        )  # [B, S, H]
 
         # Normalize states
         normalized_states = self.norm(hidden_states)  # [B, S, H]
 
         # Combine current embed with states
-        query_input = current_embed + normalized_states  # [B, S, H]
+        query_input = current_embed.view(1, 1, -1) + normalized_states  # [B, S, H]
 
         # Add centrality encoding
         layer_features = (
