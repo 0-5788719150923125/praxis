@@ -10,6 +10,7 @@ from transformers import AutoConfig
 from praxis.activations import ACT2FN
 from praxis.modules.controller import PraxisController
 from praxis.modules.graph import PraxisGraph
+from praxis.modules.visualization import RouteVisualizer
 
 
 class LayerShuffle(nn.Module):
@@ -131,6 +132,16 @@ class MixtureRouter(nn.Module):
         self.router = nn.Linear(reduced_dim, config.num_experts)
         self.current_route = []
 
+        self.visualizer = (
+            RouteVisualizer(
+                num_experts=config.num_experts,
+                max_history=10000,
+                save_rate=100 * config.depth,
+            )
+            if self.debug
+            else False
+        )
+
     def get_next_expert(
         self,
         hidden_states: Tensor,
@@ -175,6 +186,12 @@ class MixtureRouter(nn.Module):
 
         # Return batch consensus
         next_idx = expert_indices.mode(dim=0).values.item()
+
+        # Update route
+        if not self.training and self.visualizer and hidden_states.size(0) == 1:
+            # Just send the immediate transition
+            self.visualizer.add_transition(current_idx, next_idx)
+
         return aux_loss, next_idx
 
     def reset_route(self):
