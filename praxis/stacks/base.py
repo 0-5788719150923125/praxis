@@ -8,7 +8,7 @@ from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
-from praxis.modules.behaviors import LayerShuffle, PraxisGraph
+from praxis.modules.behaviors import LayerShuffle, MixtureRouter, PraxisGraph
 from praxis.modules.evolution import GenomicBottleneck
 from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
 from praxis.modules.router import PraxisMixtureOfDepths
@@ -32,6 +32,8 @@ class PraxisStack(nn.Module):
         self.sparse = config.sparse
         if config.graph:
             self.behavior = PraxisGraph(config)
+        elif config.router:
+            self.behavior = MixtureRouter(config)
         else:
             self.behavior = (
                 LayerShuffle(config, num_context_tokens=3) if config.shuffle else False

@@ -28,9 +28,6 @@ class PraxisMixtureOfDepths(nn.Linear):
         b, s, d = inputs.shape
         k = int(s * self.capacity)
 
-        if "chaos" in self.config.meta:
-            k = random.randint(int(s * 0.1), int(s * 0.9))
-
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
 

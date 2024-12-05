@@ -25,6 +25,7 @@ class PraxisConfig(PretrainedConfig):
         shuffle=False,
         autopilot=False,
         graph=False,
+        router=False,
         linear=False,
         differential=False,
         stickbreaking=False,
@@ -73,6 +74,7 @@ class PraxisConfig(PretrainedConfig):
         self.shuffle = shuffle
         self.autopilot = autopilot
         self.graph = graph
+        self.router = router
         self.compression = compression
         self.memory = memory
         self.mega = mega
