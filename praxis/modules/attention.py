@@ -411,7 +411,7 @@ class Differential(ScaledDotProduct):
         return q, k, v, scores
 
     def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
-        weights = [F.softmax(score, dim=-1) for score in scores]
+        weights = [self._softmax(score, dim=-1) for score in scores]
         # Compute scalar lambda
         lambda_scalar = (
             torch.exp(torch.dot(self.lambdas["q1"], self.lambdas["k1"]))

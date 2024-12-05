@@ -34,6 +34,7 @@ class PraxisGraph(nn.Module):
         self.hidden_dim = config.num_dims
         self.num_context_tokens = 3
         self.routing_scale = 0.01
+        self.variance_scale = 0.01
 
         # Layer embeddings (nodes)
         self.layer_embeddings = nn.Parameter(
@@ -164,10 +165,6 @@ class PraxisGraph(nn.Module):
             query_input, layer_features, layer_features
         )
 
-        if self.causal:
-            # Create causal mask
-            attention = self.attn.apply_causal_mask(attention)
-
         # Add spatial bias before softmax
         distances = torch.abs(
             torch.arange(self.num_layers, device=attention.device) - current_layer
@@ -209,6 +206,10 @@ class PraxisGraph(nn.Module):
         full_edge_bias[:, :, available_indices] = edge_weight
         attention = attention + full_edge_bias
 
+        if self.causal:
+            # Create causal mask
+            attention = self.attn.apply_causal_mask(attention)
+
         # Compute weighted values
         weighted_values = self.attn.compute_weights(attention, v)  # [B, S, H]
 
@@ -217,8 +218,7 @@ class PraxisGraph(nn.Module):
             query_input, weighted_values, residual
         )  # [B, num_layers]
 
-        # Return per-example consensus scores
-        return scores.mean(dim=1)  # [B, num_layers]
+        return scores
 
     def get_next_expert(
         self,
@@ -246,8 +246,11 @@ class PraxisGraph(nn.Module):
             hidden_states, current_depth, available_indices
         )
 
+        # Return per-example consensus scores
+        seq_averaged_scores = scores.mean(dim=1)  # [B, num_layers]
+
         # Compute batch consensus first
-        batch_averaged_scores = scores.mean(dim=0)  # [num_experts]
+        batch_averaged_scores = seq_averaged_scores.mean(dim=0)  # [num_experts]
 
         if self.training:
             # Apply temperature to averaged scores
@@ -259,14 +262,22 @@ class PraxisGraph(nn.Module):
             )
             next_idx = torch.argmax(probs[0], dim=-1).item()
 
-            # Compute losses
+            # Compute importance losses
             importance = probs.sum(dim=0)
             importance = importance / importance.sum()
-            routing_loss = (importance * probs).sum() * self.routing_scale
+            importance_loss = (importance * probs).sum() * self.routing_scale
 
-            # # Add variance penalty
-            # route_variance = individual_probs.var(dim=0).mean()
-            # routing_loss += route_variance * self.variance_scale
+            # Add variance penalty with safety checks
+            individual_probs = F.softmax(
+                torch.clamp(seq_averaged_scores, min=-100, max=100), dim=-1
+            )
+            variance_loss = 0
+            if individual_probs.size(0) > 1:
+                route_variance = individual_probs.var(dim=0, unbiased=False).mean()
+                variance_loss = route_variance * self.variance_scale
+
+            # Sum the losses
+            routing_loss = importance_loss + variance_loss
         else:
             # Use similar logic for inference
             temperature = 0.5
@@ -349,7 +360,9 @@ class GraphAttention(nn.Module):
         v = self.dropout(v)
 
         # Compute attention scores
-        scores = torch.bmm(q, k.transpose(1, 2)) / (math.sqrt(E))  # [B, S, num_layers]
+        scores = torch.bmm(q, k.transpose(1, 2)) * (
+            1.0 / math.sqrt(E)
+        )  # [B, S, num_layers]
 
         return scores, v
 
