@@ -60,10 +60,11 @@ class PraxisGraph(nn.Module):
 
         # Graph attention components
         self.attn_norm = nn.LayerNorm(self.hidden_dim)
-        self.query = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.key = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.value = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.output = nn.Linear(self.hidden_dim, self.num_layers)
+        self.attn = GraphAttention(
+            embed_dim=self.hidden_dim,
+            output_dim=self.num_layers,
+            dropout=config.dropout,
+        )
 
         self.dropout = nn.Dropout(config.dropout)
         self.reset_parameters()
@@ -72,7 +73,9 @@ class PraxisGraph(nn.Module):
         self.current_route = []
         self.visualizer = (
             RouteVisualizer(
-                num_experts=config.num_experts, max_history=10000, save_rate=1000
+                num_experts=config.num_experts,
+                max_history=10000,
+                save_rate=100 * config.depth,
             )
             if self.debug
             else False
@@ -158,36 +161,18 @@ class PraxisGraph(nn.Module):
             self.layer_embeddings + self.centrality_embeddings
         )  # [num_layers, H]
 
-        # Project for attention
-        q = self.query(query_input)  # [B, S, H]
-        k = self.key(layer_features)  # [num_layers, H]
-        v = self.value(layer_features)  # [num_layers, H]
-
-        # Force ensembling
-        q = self.dropout(q)
-        k = self.dropout(k)
-        v = self.dropout(v)
-
-        # Compute raw attention scores
-        attention = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(
-            self.hidden_dim
-        )  # [B, S, num_layers]
-
-        # Force sparsity
-        attention = self.dropout(attention)
+        # Compute attention scores
+        attention, v = self.attn.compute_scores(
+            query_input, layer_features, layer_features
+        )
 
         if self.causal:
-            _, seq_len, num_experts = attention.shape
             # Create causal mask
-            seq_mask = torch.triu(
-                torch.ones((seq_len, num_experts), device=q.device), diagonal=1
-            ).bool()
-            # Apply to attention scores
-            attention = attention.masked_fill(seq_mask.unsqueeze(0), -1e9)
+            attention = self.attn.apply_causal_mask(attention)
 
         # Add spatial bias before softmax
         distances = torch.abs(
-            torch.arange(self.num_layers, device=q.device) - current_layer
+            torch.arange(self.num_layers, device=attention.device) - current_layer
         )
         spatial_bias = self.spatial_embeddings[distances].transpose(
             0, 1
@@ -218,17 +203,13 @@ class PraxisGraph(nn.Module):
 
         attention = attention + edge_bias
 
-        # Convert to probabilities
-        attention_probs = F.softmax(attention, dim=-1)  # [B, S, num_layers]
-
-        # Apply to values
-        weighted_values = torch.matmul(attention_probs, v)  # [B, S, H]
-
-        # Final residual connection for attention
-        hidden_states = weighted_values + residual
+        # Compute weighted values
+        weighted_values = self.attn.compute_weights(attention, v)  # [B, S, H]
 
         # Project to get scores for each layer
-        scores = self.output(hidden_states)  # [B, num_layers]
+        scores = self.attn.compute_gated_output(
+            query_input, weighted_values, residual
+        )  # [B, num_layers]
 
         # Return per-example consensus scores
         return scores.mean(dim=1)  # [B, num_layers]
@@ -287,8 +268,9 @@ class PraxisGraph(nn.Module):
 
         # Select next expert
         if self.training:
-            tau = self._get_temperature(self.step)
+            # tau = self._get_temperature(self.step)
             self.step += 1
+            tau = 0.1
             probs = F.gumbel_softmax(scores, tau=tau, hard=True)
 
         # Mean across batch before selection
@@ -321,6 +303,89 @@ class PraxisGraph(nn.Module):
             elif self.super_debug:
                 print(f"DEBUG: training through: {' -> '.join(route)}")
         self.current_route = []
+
+
+class GraphAttention(nn.Module):
+    """
+    According to MEGA, "Single-head gated attention has been empirically
+    shown [to be] as performant as vanilla multi-head attention."
+    https://arxiv.org/abs/2209.10655
+    """
+
+    def __init__(self, embed_dim, output_dim=None, gate_hidden_dim=None, dropout=0.0):
+        super().__init__()
+        self.embed_dim = embed_dim
+
+        # Q, K, V projections
+        self.query = nn.Linear(embed_dim, embed_dim)
+        self.key = nn.Linear(embed_dim, embed_dim)
+        self.value = nn.Linear(embed_dim, embed_dim)
+
+        self.dropout = nn.Dropout(dropout)
+
+        if output_dim is None:
+            output_dim = embed_dim
+        self.output = nn.Linear(embed_dim, output_dim)
+
+        # Gate generator G(X)
+        if gate_hidden_dim is None:
+            gate_hidden_dim = embed_dim * 4
+
+        self.gate_net = nn.Sequential(
+            nn.Linear(embed_dim, gate_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(gate_hidden_dim, embed_dim),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, query_input, key_input, value_input, mask=None):
+        scores, v = self.compute_scores(query_input, key_input, value_input)
+        out = self.compute_weights(scores, v)
+        return self.compute_gated_output(query_input, out)
+
+    def compute_scores(self, query_input, key_input, value_input):
+        B, S, E = query_input.shape
+
+        # Project inputs
+        q = self.query(query_input)  # [B, S, E]
+        k = self.key(key_input)  # [num_layers, E]
+        v = self.value(value_input)  # [num_layers, E]
+
+        # Expand k and v to match batch size
+        k = k.unsqueeze(0).expand(B, -1, E)  # [B, num_layers, E]
+        v = v.unsqueeze(0).expand(B, -1, E)  # [B, num_layers, E]
+
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
+
+        # Compute attention scores
+        scores = torch.bmm(q, k.transpose(1, 2)) / (math.sqrt(E))  # [B, S, num_layers]
+
+        return scores, v
+
+    def apply_causal_mask(self, inputs):
+        _, seq_len, num_experts = inputs.shape
+        # Create causal mask
+        seq_mask = torch.triu(
+            torch.ones((seq_len, num_experts), device=inputs.device), diagonal=1
+        ).bool()
+        # Apply to attention scores
+        inputs = inputs.masked_fill(seq_mask.unsqueeze(0), -1e9)
+        return inputs
+
+    def compute_weights(self, scores, v):
+        attn = F.softmax(scores, dim=-1)  # [B, S, num_layers]
+        attn = self.dropout(attn)
+        # Apply attention to values
+        out = torch.bmm(attn, v)  # [B, S, E]
+        return out
+
+    def compute_gated_output(self, query_input, outputs, residual):
+        # Generate and apply gates
+        gates = self.gate_net(query_input)  # [B, S, E]
+        out = outputs * gates
+        return self.output(out + residual)
 
 
 class RouteVisualizer:
