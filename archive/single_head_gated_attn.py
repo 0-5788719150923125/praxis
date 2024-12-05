@@ -41,12 +41,7 @@ class SingleHeadGatedAttention(nn.Module):
     def forward(self, query_input, key_input, value_input, mask=None):
         scores, v = self.compute_scores(query_input, key_input, value_input)
         out = self.compute_weights(scores, v)
-
-        # Generate and apply gates
-        gates = self.gate_net(query_input)  # [B, S, E]
-        out = out * gates
-
-        return self.output(out)
+        return self.compute_gated_output(query_input, out)
 
     def compute_scores(self, query_input, key_input, value_input):
         B, S, E = query_input.shape
@@ -65,11 +60,19 @@ class SingleHeadGatedAttention(nn.Module):
         v = self.dropout(v)
 
         # Compute attention scores
-        scores = torch.bmm(q, k.transpose(1, 2)) / (
-            math.sqrt(embed_dim)
-        )  # [B, S, num_layers]
+        scores = torch.bmm(q, k.transpose(1, 2)) / (math.sqrt(E))  # [B, S, num_layers]
 
         return scores, v
+
+    def apply_causal_mask(self, inputs):
+        _, seq_len, num_experts = inputs.shape
+        # Create causal mask
+        seq_mask = torch.triu(
+            torch.ones((seq_len, num_experts), device=inputs.device), diagonal=1
+        ).bool()
+        # Apply to attention scores
+        inputs = inputs.masked_fill(seq_mask.unsqueeze(0), -1e9)
+        return inputs
 
     def compute_weights(self, scores, v):
         attn = F.softmax(scores, dim=-1)  # [B, S, num_layers]
@@ -77,6 +80,14 @@ class SingleHeadGatedAttention(nn.Module):
         # Apply attention to values
         out = torch.bmm(attn, v)  # [B, S, E]
         return out
+
+    def compute_gated_output(self, query_input, outputs, residual=None):
+        # Generate and apply gates
+        gates = self.gate_net(query_input)  # [B, S, E]
+        out = outputs * gates
+        if residual is not None:
+            out = out + residual
+        return self.output(out)
 
 
 if __name__ == "__main__":

@@ -35,7 +35,6 @@ class PraxisGraph(nn.Module):
         self.hidden_dim = config.num_dims
         self.num_context_tokens = 3
         self.routing_scale = 0.01
-        self.step = 0
 
         # Layer embeddings (nodes)
         self.layer_embeddings = nn.Parameter(
@@ -184,24 +183,32 @@ class PraxisGraph(nn.Module):
 
         attention = attention + spatial_bias
 
-        # Add edge bias before softmax
-        edge_bias = torch.zeros_like(attention)
-        for i in range(attention.shape[2]):  # iterate over num_layers
-            if i in available_indices and i != current_layer:
-                distance = abs(current_layer - i)
-                edge_feat = self.edge_embeddings[i]
-                edge_weight = torch.matmul(
-                    edge_feat.unsqueeze(0),
-                    self.edge_embeddings.T,
-                )  # [1, num_layers]
-                edge_weight = edge_weight.unsqueeze(1)  # [1, 1, num_layers]
-                edge_weight = edge_weight.expand(
-                    attention.shape[0], attention.shape[1], -1
-                )  # [B, S, num_layers]
-                edge_weight = edge_weight / max(distance, 1)
-                edge_bias = edge_bias + edge_weight
+        # Compute edge weights between current layer and available experts
+        edge_feat_current = self.edge_embeddings[current_layer]
+        edge_feats_available = self.edge_embeddings[
+            available_indices
+        ]  # [num_available, edge_dim]
 
-        attention = attention + edge_bias
+        edge_weight = torch.matmul(
+            edge_feat_current.unsqueeze(0),
+            edge_feats_available.T,
+        )  # [1, num_available]
+
+        # Apply distance factors and expand
+        distances = torch.abs(
+            torch.tensor(available_indices, device=attention.device) - current_layer
+        ).float()
+        distance_factors = 1.0 / (distances.clamp(min=1) + 1e-6)
+        edge_weight = (
+            (edge_weight / distance_factors)
+            .unsqueeze(1)
+            .expand(attention.shape[0], attention.shape[1], -1)
+        )  # [B, S, num_available]
+
+        # Map edge_weight to full attention size
+        full_edge_bias = torch.zeros_like(attention)
+        full_edge_bias[:, :, available_indices] = edge_weight
+        attention = attention + full_edge_bias
 
         # Compute weighted values
         weighted_values = self.attn.compute_weights(attention, v)  # [B, S, H]
@@ -213,21 +220,6 @@ class PraxisGraph(nn.Module):
 
         # Return per-example consensus scores
         return scores.mean(dim=1)  # [B, num_layers]
-
-    def _get_temperature(self, step: int, tau_min=0.1, tau_max=1.0, period=10000):
-        """
-        Calculates the temperature for a given step using a cyclical schedule.
-
-        The temperature oscillates between tau_min and tau_max following a cosine wave,
-        starting at tau_max at step 0.
-        """
-        if tau_min < 0 or tau_max <= tau_min:
-            raise ValueError("Ensure that 0 <= tau_min < tau_max.")
-
-        base = (tau_max + tau_min) / 2
-        amplitude = (tau_max - tau_min) / 2
-        tau = base + amplitude * math.cos(2 * math.pi * step / period)
-        return tau
 
     def get_next_expert(
         self,
@@ -255,38 +247,24 @@ class PraxisGraph(nn.Module):
             hidden_states, current_depth, available_indices
         )
 
+        # Compute routing loss with importance
         probs = F.softmax(scores, dim=-1)
-
-        # Compute routing loss with safe computation
-        num_experts = len(available_indices)
-        uniform_target = torch.ones_like(probs) / num_experts
-        probs_safe = torch.clamp(probs, min=1e-10)
-        routing_loss = (
-            F.kl_div(probs_safe.log(), uniform_target, reduction="batchmean")
-            * self.routing_scale
-        )
+        importance = probs.sum(dim=0)  # [num_experts]
+        importance = importance / importance.sum()  # Normalize
+        routing_loss = (importance * probs).sum() * self.routing_scale
 
         # Select next expert
         if self.training:
-            # tau = self._get_temperature(self.step)
-            self.step += 1
-            tau = 0.1
-            probs = F.gumbel_softmax(scores, tau=tau, hard=True)
-
-        # Mean across batch before selection
-        batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
-        next_idx = torch.argmax(batch_averaged_probs, dim=-1).item()
-
-        # Inference-only logging at the end
-        if not self.training and self.super_debug:
-            print("\nDEBUG Information:")
-            print(f"Current expert index: {current_idx}")
-            print(f"Available indices: {available_indices}")
-            print(f"Attention shape: {scores.shape}")
-            print(f"Raw attention: {scores[0].detach().cpu().numpy()}")
-            print(f"Softmax probs: {softmax_probs[0].detach().cpu().numpy()}")
-            print(f"Selected expert: {next_idx}")
-            print(f"Used experts: {self.used_experts}")
+            temperature = 0.1
+            probs = F.gumbel_softmax(scores, tau=temperature, hard=False)
+            batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
+            next_idx = torch.argmax(batch_averaged_probs, dim=-1).item()
+        else:
+            temperature = 0.5
+            scaled_scores = scores / temperature
+            probs = F.softmax(scaled_scores, dim=-1)
+            batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
+            next_idx = torch.multinomial(batch_averaged_probs, num_samples=1).item()
 
         # Update route
         if not self.training and self.visualizer and hidden_states.size(0) == 1:
@@ -381,11 +359,11 @@ class GraphAttention(nn.Module):
         out = torch.bmm(attn, v)  # [B, S, E]
         return out
 
-    def compute_gated_output(self, query_input, outputs, residual):
+    def compute_gated_output(self, query_input, weights, residual):
         # Generate and apply gates
         gates = self.gate_net(query_input)  # [B, S, E]
-        out = outputs * gates
-        return self.output(out + residual)
+        gated_weights = weights * gates
+        return self.output(gated_weights + residual)
 
 
 class RouteVisualizer:
