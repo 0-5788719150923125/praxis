@@ -1,5 +1,5 @@
 import random
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -117,19 +117,13 @@ class MixtureRouter(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.debug = config.debug
-        # Reduce hidden dim to something smaller
-        reduced_dim = config.num_dims // 4
+        self.depth = config.depth
 
-        # Transform hidden states before routing
-        self.transform = nn.Sequential(
-            nn.LayerNorm(config.num_dims),
-            nn.Linear(config.num_dims, reduced_dim),
-            nn.GELU(),
-            nn.Linear(reduced_dim, reduced_dim),
-        )
+        # Depth embedding matching the hidden size of a token
+        self.depth_embedding = nn.Embedding(config.depth, config.num_dims)
 
-        # Router projects from reduced dim to num experts
-        self.router = nn.Linear(reduced_dim, config.num_experts)
+        # Final linear layer to produce routing logits
+        self.router = nn.Linear(config.num_dims, config.num_experts)
         self.current_route = []
 
         self.visualizer = (
@@ -149,9 +143,9 @@ class MixtureRouter(nn.Module):
         original_experts: List[nn.Module],
         current_experts: List[nn.Module],
         current_expert: nn.Module,
-    ) -> tuple[Tensor, Optional[int]]:
+    ) -> Tuple[Tensor, Optional[int]]:
 
-        # Reset used experts at the start of new sequence
+        # Record the current expert index
         current_idx = original_experts.index(current_expert)
         self.current_route.append(current_idx)
 
@@ -162,34 +156,58 @@ class MixtureRouter(nn.Module):
         if not available_indices:
             return 0, None
 
-        # Transform and reduce sequence dimension
-        transformed = self.transform(hidden_states)  # [B, S, reduced_dim]
-        batch_reduced = transformed.sum(dim=1)  # [B, reduced_dim]
+        batch_size, seq_len, hidden_size = hidden_states.size()
 
-        # Get router logits
-        router_logits = self.router(batch_reduced)  # [B, num_experts]
+        # Get depth embeddings
+        depth_tensor = torch.full(
+            (batch_size,), current_depth, dtype=torch.long, device=hidden_states.device
+        )  # Shape: [B]
+        depth_emb = self.depth_embedding(depth_tensor)  # Shape: [B, hidden_size]
 
-        # Mask unavailable experts
-        # mask = torch.ones_like(router_logits, dtype=torch.bool)
-        # mask[:, available_indices] = False
-        # router_logits = router_logits.masked_fill(mask, -1e9)
+        # Reshape depth embedding to [B, 1, hidden_size]
+        depth_emb = depth_emb.unsqueeze(1)  # Shape: [B, 1, hidden_size]
 
-        # Select single expert
-        expert_weights, expert_indices = torch.topk(
-            router_logits, k=1, dim=-1, sorted=False
+        # Prepend depth embedding to the hidden states
+        extended_sequence = torch.cat(
+            [depth_emb, hidden_states], dim=1
+        )  # Shape: [B, S+1, hidden_size]
+
+        # Pass the full sequence through the router layer
+        router_outputs = self.router(extended_sequence)  # Shape: [B, S+1, router_dim]
+
+        # Perform pooling after the router processes the sequence
+        sequence_representation = router_outputs.mean(dim=1)  # Shape: [B, router_dim]
+
+        router_probs = F.softmax(
+            sequence_representation, dim=-1
+        )  # Shape: [B, num_experts]
+
+        # Compute expert usage over the batch
+        expert_usage = router_probs.mean(dim=0)  # Shape: [num_experts]
+
+        # Compute KL divergence loss to encourage balanced expert usage
+        num_experts = expert_usage.size(0)
+        uniform_distribution = torch.full_like(expert_usage, 1.0 / num_experts)
+        kl_loss = F.kl_div(
+            torch.log(expert_usage + 1e-9),  # To avoid log(0)
+            uniform_distribution,
+            reduction="sum",
         )
 
-        # Compute balancing loss
-        router_targets = torch.zeros_like(router_logits)
-        router_targets.scatter_(1, expert_indices, 1.0)
-        aux_loss = F.binary_cross_entropy_with_logits(router_logits, router_targets)
+        # Scale the KL divergence loss based on current depth
+        base_loss_coefficient = 0.01
+        loss_coefficient = base_loss_coefficient * (current_depth / self.depth)
+        aux_loss = loss_coefficient * kl_loss
 
-        # Return batch consensus
-        next_idx = expert_indices.mode(dim=0).values.item()
+        # Select expert with highest probability for each sample in the batch
+        expert_indices = router_probs.argmax(dim=-1)  # Shape: [B]
+
+        # Optionally, select the most common expert among the batch
+        next_idx = expert_indices.mode().values.item()
 
         # Update route
         if not self.training and self.visualizer and hidden_states.size(0) == 1:
-            # Just send the immediate transition
+            # Send the immediate transition to the visualizer
             self.visualizer.add_transition(current_idx, next_idx)
 
         return aux_loss, next_idx
@@ -198,9 +216,9 @@ class MixtureRouter(nn.Module):
         if self.debug:
             route = [str(r) for r in self.current_route]
             if not self.training:
-                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
+                print(f"DEBUG: Inference route: {' -> '.join(route)}")
             elif random.random() < 0.005:
-                print(f"DEBUG: training through: {' -> '.join(route)}")
+                print(f"DEBUG: Training route: {' -> '.join(route)}")
         self.current_route = []
 
     # No-op methods
@@ -218,6 +236,7 @@ if __name__ == "__main__":
             self.num_dims = 512
             self.num_experts = 8
             self.debug = False
+            self.depth = 5
 
     # Test settings
     batch_size = 4
