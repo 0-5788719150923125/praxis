@@ -29,7 +29,6 @@ class PraxisGraph(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.debug = config.debug
-        self.super_debug = False
         self.causal = config.causal
         self.num_layers = config.num_experts
         self.hidden_dim = config.num_dims
@@ -247,24 +246,36 @@ class PraxisGraph(nn.Module):
             hidden_states, current_depth, available_indices
         )
 
-        # Compute routing loss with importance
-        probs = F.softmax(scores, dim=-1)
-        importance = probs.sum(dim=0)  # [num_experts]
-        importance = importance / importance.sum()  # Normalize
-        routing_loss = (importance * probs).sum() * self.routing_scale
+        # Compute batch consensus first
+        batch_averaged_scores = scores.mean(dim=0)  # [num_experts]
 
-        # Select next expert
         if self.training:
+            # Apply temperature to averaged scores
             temperature = 0.1
-            probs = F.gumbel_softmax(scores, tau=temperature, hard=False)
-            batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
-            next_idx = torch.argmax(batch_averaged_probs, dim=-1).item()
+            probs = F.gumbel_softmax(
+                batch_averaged_scores.unsqueeze(0),
+                tau=temperature,
+                hard=False,
+            )
+            next_idx = torch.argmax(probs[0], dim=-1).item()
+
+            # Compute losses
+            importance = probs.sum(dim=0)
+            importance = importance / importance.sum()
+            routing_loss = (importance * probs).sum() * self.routing_scale
+
+            # # Add variance penalty
+            # route_variance = individual_probs.var(dim=0).mean()
+            # routing_loss += route_variance * self.variance_scale
         else:
+            # Use similar logic for inference
             temperature = 0.5
-            scaled_scores = scores / temperature
+            scaled_scores = batch_averaged_scores / temperature
             probs = F.softmax(scaled_scores, dim=-1)
-            batch_averaged_probs = probs.mean(dim=0)  # [num_experts]
-            next_idx = torch.multinomial(batch_averaged_probs, num_samples=1).item()
+            next_idx = torch.multinomial(probs, num_samples=1).item()
+            routing_loss = 0
+
+        return routing_loss, next_idx
 
         # Update route
         if not self.training and self.visualizer and hidden_states.size(0) == 1:
@@ -278,7 +289,7 @@ class PraxisGraph(nn.Module):
             route = [str(r) for r in self.current_route]
             if not self.training:
                 print(f"DEBUG: inferencing through: {' -> '.join(route)}")
-            elif self.super_debug:
+            elif random.random() < 0.005:
                 print(f"DEBUG: training through: {' -> '.join(route)}")
         self.current_route = []
 

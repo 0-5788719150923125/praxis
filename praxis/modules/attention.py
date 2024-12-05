@@ -217,6 +217,10 @@ class ScaledDotProduct(nn.Module):
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = self.hidden_size // self.num_heads
+        if "escape" in config.meta:
+            self._softmax = self._softmax1
+        else:
+            self._softmax = F.softmax
 
     def _compute_score(self, q, k):
         scaling = 1.0 / math.sqrt(self.head_dim)
@@ -235,7 +239,7 @@ class ScaledDotProduct(nn.Module):
         causal_mask: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
     ):
-        weights = [F.softmax(score, dim=-1) for score in scores]
+        weights = [self._softmax(score, dim=-1) for score in scores]
         return self._compute_outputs(weights[0], v)
 
     def _compute_outputs(self, weights, v):
@@ -263,6 +267,25 @@ class ScaledDotProduct(nn.Module):
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
         scores = [score + attention_mask for score in scores]
         return scores, causal_mask, attention_mask
+
+    def _softmax1(self, x: Tensor, dim: int = -1) -> Tensor:
+        """
+        Implementation of softmax1, which adds 1 to denominator
+        to allow for "no-op" attention.
+        https://www.evanmiller.org/attention-is-off-by-one.html
+        """
+        # Get max value for numerical stability (like in standard softmax)
+        max_score, _ = torch.max(x, dim=dim, keepdim=True)
+        x = x - max_score
+
+        # Calculate exponentials
+        exp_x = torch.exp(x)
+
+        # Sum exponentials and add 1
+        sum_exp = torch.sum(exp_x, dim=dim, keepdim=True) + 1.0
+
+        # Divide by sum plus 1
+        return exp_x / sum_exp
 
 
 class LinearAttention(ScaledDotProduct):
