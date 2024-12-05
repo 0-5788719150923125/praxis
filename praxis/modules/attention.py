@@ -217,7 +217,7 @@ class ScaledDotProduct(nn.Module):
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = self.hidden_size // self.num_heads
-        if "escape" in config.meta:
+        if "one" in config.meta:
             self._softmax = self._softmax1
         else:
             self._softmax = F.softmax

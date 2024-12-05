@@ -31,34 +31,34 @@ HUGGINGFACE_DATASETS = [
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
-        weight=0.002,
+        weight=0.001,
     ),
     dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
         format=DataFormat.INSTRUCTION,
-        weight=0.005,
+        weight=0.001,
     ),
     dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
-        weight=0.005,
+        weight=0.001,
     ),
     dict(
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
         format=DataFormat.PERSONACHAT,
-        weight=0.005,
+        weight=0.001,
     ),
     dict(
         path="HuggingFaceTB/smoltalk",
         name="all",
         keys=["messages"],
         format=DataFormat.SMOLTALK,
-        weight=0.005,
+        weight=0.001,
     ),
     dict(
         path="codeparrot/github-code",
@@ -343,7 +343,8 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"] = [HUGGINGFACE_DATASETS[0]]
     else:
         config["validation"].append(HUGGINGFACE_DATASETS[6])
-
+    print("training on:")
+    [print(entry) for entry in config["primary"]]
     return config
 
 

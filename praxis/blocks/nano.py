@@ -14,6 +14,8 @@ class PraxisNano(nn.Module):
     A special kind of block that omits all self-attention mechanisms, in favor
     of dense layers with periodic activations. Inspired by NanoFFT:
     https://github.com/timurgepard/nanoFFT
+    I later found this same idea published in MLP-Mixer:
+    https://arxiv.org/abs/2105.01601
     """
 
     __version__ = "0.1.0"

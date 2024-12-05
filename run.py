@@ -228,7 +228,7 @@ parser.add_argument(
 parser.add_argument(
     "--optimizer",
     type=str,
-    choices=["adamw", "soap"],
+    choices=["adamg", "adamw", "prodigy", "soap"],
     default="adamw",
     help="The optimizer profile to use",
 )
@@ -510,24 +510,53 @@ train_params = dict(
 optimizer_defaults = dict(
     wd_ban_list=[
         "bias",
+        "edge_embeddings",
+        "spatial_embeddings",
         "Embedding",
         "BatchNorm",
         "BatchNorm1d",
+        "BatchNorm2d",
+        "BatchNorm3d",
         "GroupNorm",
         "LayerNorm",
         "RMSNorm",
         "InstanceNorm",
+        "InstanceNorm1d",
+        "InstanceNorm3d",
+        "InstanceNorm2d",
         "PReLU",
         "SinLU",
         "NMDA",
     ],
 )
-if optimizer.lower() == "soap":
+if optimizer.lower() == "adamg":
     optimizer_profile = dict(
-        optimizer_name="SOAP",
+        optimizer_name="AdamG",
         lr=1e-3,
         min_lr=1e-5,
-        weight_decay=1e-2,
+        weight_decay=1e-3,
+        weight_decouple=True,
+        p=0.2,
+        q=0.24,
+        warmup_steps=512,
+        eps=1e-8,
+    )
+elif optimizer.lower() == "prodigy":
+    optimizer_profile = dict(
+        optimizer_name="Prodigy",
+        lr=1.0,
+        min_lr=1e-2,
+        weight_decay=1e-3,
+        weight_decouple=True,
+        bias_correction=True,
+        safeguard_warmup=True,
+    )
+elif optimizer.lower() == "soap":
+    optimizer_profile = dict(
+        optimizer_name="SOAP",
+        lr=2e-4,
+        min_lr=2e-5,
+        weight_decay=1e-3,
         precondition_frequency=10,
         max_precondition_dim=1024,
         normalize_gradient=False,
@@ -538,9 +567,9 @@ if optimizer.lower() == "soap":
 else:
     optimizer_profile = dict(
         optimizer_name="GrokFastAdamW",
-        lr=1e-3,
-        min_lr=1e-5,
-        weight_decay=1e-2,
+        lr=2e-4,
+        min_lr=2e-5,
+        weight_decay=1e-3,
     )
 
 # Merge the optimizer profile with the default profile
@@ -553,7 +582,7 @@ scheduler_func = partial(
     max_lr=hparams["optimizer"]["lr"],
     min_lr=hparams["optimizer"]["min_lr"],
     gamma=1.0,
-    warmup_steps=512,
+    warmup_steps=hparams["optimizer"].get("warmup_steps", 512),
 )
 
 
