@@ -25,49 +25,48 @@ class DataFormat(Enum):
     SMOLTALK = "smoltalk"
 
 
-HUGGINGFACE_PROBS = [0, 0, 0, 0, 0, 0, 0, 2.3, 0.666666, 0.333, 0.1]
-HUGGINGFACE_DATASETS = [
-    dict(
+HUGGINGFACE_DATASETS = {
+    "textbooks": dict(
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
         weight=0.001,
     ),
-    dict(
+    "smollm-corpus": dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
         format=DataFormat.INSTRUCTION,
         weight=0.001,
     ),
-    dict(
+    "natural-instructions": dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
         weight=0.001,
     ),
-    dict(
+    "persona-chat": dict(
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
         format=DataFormat.PERSONACHAT,
         weight=0.001,
     ),
-    dict(
+    "smoltalk": dict(
         path="HuggingFaceTB/smoltalk",
         name="all",
         keys=["messages"],
         format=DataFormat.SMOLTALK,
         weight=0.001,
     ),
-    dict(
+    "github-code": dict(
         path="codeparrot/github-code",
         name="all-all",
         keys=["code"],
         format=DataFormat.SIMPLE,
         weight=0.001,
     ),
-    dict(
+    "redpajama": dict(
         path="togethercomputer/RedPajama-Data-V2",
         name="sample-10B",
         snapshots=["2023-14"],
@@ -75,35 +74,35 @@ HUGGINGFACE_DATASETS = [
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
-    dict(
+    "fineweb-edu-10bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-10BT",
         keys=["text"],
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
-    dict(
+    "fineweb-edu-100bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-100BT",
         keys=["text"],
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
-    dict(
+    "fineweb-edu-350bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-350BT",
         keys=["text"],
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
-    dict(
+    "fineweb": dict(
         path="HuggingFaceFW/fineweb",
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
+        weight=0.5,
     ),
-]
+}
 
 
 def format_simple(document: Dict, keys: List[str]) -> str:
@@ -320,21 +319,20 @@ def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
 
 def get_dataset_configs(dev: bool, phi: bool):
     config = {"primary": [], "validation": []}
-    config["primary"].append(
-        random.choices(HUGGINGFACE_DATASETS, HUGGINGFACE_PROBS, k=1)[0]
-    )
+    config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))
+    config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb"))
     if phi:
-        config["primary"].append(HUGGINGFACE_DATASETS[0])
-        config["primary"].append(HUGGINGFACE_DATASETS[1])
-        config["primary"].append(HUGGINGFACE_DATASETS[2])
-        config["primary"].append(HUGGINGFACE_DATASETS[3])
-        config["primary"].append(HUGGINGFACE_DATASETS[4])
-        config["primary"].append(HUGGINGFACE_DATASETS[5])
+        config["primary"].append(HUGGINGFACE_DATASETS.get("textbooks"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("smollm-corpus"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("natural-instructions"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("persona-chat"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
     if dev:
         # Overwrite with simpler dataset
-        config["primary"] = [HUGGINGFACE_DATASETS[0]]
+        config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]
     else:
-        config["validation"].append(HUGGINGFACE_DATASETS[6])
+        config["validation"].append(HUGGINGFACE_DATASETS.get("redpajama"))
     print("training on:")
     [print(entry) for entry in config["primary"]]
     return config
