@@ -5,6 +5,10 @@ import torch.nn.functional as F
 
 
 class MiLeLoss(nn.Module):
+    """
+    https://github.com/suu990901/LLaMA-MiLe-Loss
+    """
+
     def __init__(self, gamma=1.0, reduction="mean"):
         super().__init__()
         self.base_gamma = gamma

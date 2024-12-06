@@ -1,171 +1,193 @@
+import math
+import time
+from typing import Tuple
+
+import numpy as np
 import torch
-from torch.autograd import Function
-
-
-class LmulFunction(Function):
-    @staticmethod
-    def forward(ctx, x, y, mantissa_bits):
-        # Save tensors for backward
-        ctx.save_for_backward(x, y)
-        ctx.mantissa_bits = mantissa_bits
-
-        # Implement the lmul forward pass
-        result = lmul_approximation(x, y, mantissa_bits)
-        return result
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, y = ctx.saved_tensors
-        mantissa_bits = ctx.mantissa_bits
-
-        # Approximate gradients using lmul
-        grad_x = lmul_approximation(grad_output, y, mantissa_bits)
-        grad_y = lmul_approximation(grad_output, x, mantissa_bits)
-
-        return grad_x, grad_y, None  # None for mantissa_bits
-
-
-def lmul(x, y, mantissa_bits=10):
-    return LmulFunction.apply(x, y, mantissa_bits)
-
-
-def lmul_approximation(x, y, mantissa_bits):
-    x = x.float()
-    y = y.float()
-
-    # Handle zero inputs
-    x_zero_mask = x == 0
-    y_zero_mask = y == 0
-
-    # Extract mantissa and exponent
-    x_mantissa, x_exponent = torch.frexp(x)
-    y_mantissa, y_exponent = torch.frexp(y)
-
-    # Replace mantissa and exponent for zero values
-    x_mantissa = x_mantissa.masked_fill(x_zero_mask, 0)
-    x_exponent = x_exponent.masked_fill(x_zero_mask, 0)
-    y_mantissa = y_mantissa.masked_fill(y_zero_mask, 0)
-    y_exponent = y_exponent.masked_fill(y_zero_mask, 0)
-
-    # Quantize mantissas
-    quantization_level = 2**mantissa_bits
-    x_mantissa_q = torch.round(x_mantissa * quantization_level) / quantization_level
-    y_mantissa_q = torch.round(y_mantissa * quantization_level) / quantization_level
-
-    # Define l(m)
-    if mantissa_bits <= 3:
-        l_m = mantissa_bits
-    elif mantissa_bits == 4:
-        l_m = 3
-    else:
-        l_m = 4
-
-    offset = 2 ** (-l_m)
-
-    # Approximate multiplication
-    lmul_mantissa = x_mantissa_q + y_mantissa_q + offset
-    lmul_exponent = x_exponent + y_exponent
-    result = torch.ldexp(lmul_mantissa, lmul_exponent)
-
-    # Handle zero inputs
-    result = result.masked_fill(x_zero_mask | y_zero_mask, 0)
-
-    return result
-
-
 import torch.nn as nn
 
 
-class LmulLinear(nn.Module):
-    def __init__(self, in_features, out_features, bias=True, mantissa_bits=10):
-        super(LmulLinear, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
+class LMul(nn.Module):
+    """Linear-complexity multiplication (L-Mul) implementation from the paper
+    'Addition is All You Need for Energy-efficient Language Models'.
+    https://arxiv.org/abs/2410.00907
+    """
+
+    def __init__(self, mantissa_bits=3):
+        super().__init__()
         self.mantissa_bits = mantissa_bits
-        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
-        if bias:
-            self.bias = nn.Parameter(torch.Tensor(out_features))
+
+    def get_exponent_mantissa(self, x):
+        """Extract exponent and mantissa from floating point number."""
+        # Get absolute value to handle signs separately
+        abs_x = torch.abs(x)
+
+        # Get exponent using log2
+        exponent = torch.floor(torch.log2(abs_x + 1e-10))
+
+        # Calculate mantissa
+        mantissa = abs_x / (2.0**exponent) - 1.0
+
+        # Quantize mantissa to specified bits
+        scale = 2**self.mantissa_bits
+        mantissa = torch.floor(mantissa * scale) / scale
+
+        return exponent, mantissa
+
+    def l_function(self, m):
+        """Implement the l(m) function from the paper."""
+        if m <= 3:
+            return m
+        elif m == 4:
+            return 3
         else:
-            self.register_parameter("bias", None)
-        self.reset_parameters()
+            return 4
 
-    def reset_parameters(self):
-        nn.init.kaiming_uniform_(self.weight, a=5**0.5)
-        if self.bias is not None:
-            fan_in = self.in_features
-            bound = 1 / (fan_in**0.5)
-            nn.init.uniform_(self.bias, -bound, bound)
+    def forward(self, x, y):
+        """Forward pass implementing L-Mul algorithm.
 
-    def forward(self, input):
-        output = lmul_matmul(input, self.weight.t(), self.mantissa_bits)
-        if self.bias is not None:
-            output += self.bias
-        return output
+        Args:
+            x (Tensor): First input tensor
+            y (Tensor): Second input tensor
+
+        Returns:
+            Tensor: Result of L-Mul operation
+        """
+        # Handle zero values
+        zero_mask = (x == 0) | (y == 0)
+
+        # Get exponents and mantissas
+        x_exp, x_man = self.get_exponent_mantissa(x)
+        y_exp, y_man = self.get_exponent_mantissa(y)
+
+        # Calculate result using L-Mul formula
+        l_m = self.l_function(self.mantissa_bits)
+        result = (1 + x_man + y_man + 2 ** (-l_m)) * 2 ** (x_exp + y_exp)
+
+        # Handle signs
+        signs = torch.sign(x) * torch.sign(y)
+        result = result * signs
+
+        # Zero out results where inputs were zero
+        result = torch.where(zero_mask, torch.zeros_like(result), result)
+
+        return result
 
 
-def lmul_matmul(input, weight, mantissa_bits=10):
-    return torch.sum(
-        lmul(input.unsqueeze(2), weight.unsqueeze(0), mantissa_bits), dim=1
+def lmul(x, y, mantissa_bits=3):
+    """Functional interface for L-Mul operation.
+
+    Args:
+        x (Tensor): First input tensor
+        y (Tensor): Second input tensor
+        mantissa_bits (int): Number of mantissa bits to use
+
+    Returns:
+        Tensor: Result of L-Mul operation
+    """
+    module = LMul(mantissa_bits)
+    return module(x, y)
+
+
+def profile_memory(func) -> Tuple[float, float]:
+    """Profile peak memory usage of a function."""
+    torch.cuda.reset_peak_memory_stats()
+    start_mem = torch.cuda.memory_allocated()
+
+    start_time = time.time()
+    result = func()
+    end_time = time.time()
+
+    peak_mem = torch.cuda.max_memory_allocated()
+    return result, peak_mem - start_mem, end_time - start_time
+
+
+if __name__ == "__main__":
+    print("Running L-Mul tests and comparisons...")
+
+    # Set random seed for reproducibility
+    torch.manual_seed(42)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Test 1: Basic functionality with small tensors
+    print("\n1. Basic Functionality Test:")
+    x = torch.tensor([1.0, 2.0, 3.0, 4.0]).to(device)
+    y = torch.tensor([2.0, 3.0, 4.0, 5.0]).to(device)
+
+    standard_result = x * y
+    lmul_result = lmul(x, y)
+
+    print(f"Standard multiplication: {standard_result}")
+    print(f"L-Mul result:           {lmul_result}")
+    print(
+        f"Relative error: {torch.mean(torch.abs(standard_result - lmul_result) / standard_result):.6f}"
     )
 
+    # Test 2: Memory usage comparison with large tensors
+    print("\n2. Memory Usage Test:")
+    size = 1000
 
-class LmulMLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, mantissa_bits=10):
-        super(LmulMLP, self).__init__()
-        self.layer1 = LmulLinear(input_size, hidden_size, mantissa_bits=mantissa_bits)
-        self.relu = nn.ReLU()
-        self.layer2 = LmulLinear(hidden_size, output_size, mantissa_bits=mantissa_bits)
+    def standard_mul():
+        a = torch.randn(size, size).to(device)
+        b = torch.randn(size, size).to(device)
+        return torch.matmul(a, b)
 
-    def forward(self, x):
-        x = self.layer1(x)
-        x = self.relu(x)
-        x = self.layer2(x)
-        return x
+    def lmul_operation():
+        a = torch.randn(size, size).to(device)
+        b = torch.randn(size, size).to(device)
+        return lmul(a, b)
 
+    # Profile standard multiplication
+    _, std_memory, std_time = profile_memory(standard_mul)
+    print(f"Standard multiplication memory: {std_memory/1024**2:.2f} MB")
+    print(f"Standard multiplication time: {std_time:.2f} seconds")
 
-import torch.optim as optim
+    # Profile L-Mul
+    _, lmul_memory, lmul_time = profile_memory(lmul_operation)
+    print(f"L-Mul memory: {lmul_memory/1024**2:.2f} MB")
+    print(f"L-Mul time: {lmul_time:.2f} seconds")
+    print(f"Memory reduction: {(1 - lmul_memory/std_memory)*100:.1f}%")
 
-# Generate a simple dataset
-torch.manual_seed(0)
-num_samples = 1000
-X = torch.randn(num_samples, 2)
+    # Test 3: Accuracy comparison with different mantissa bits
+    print("\n3. Accuracy vs Mantissa Bits Test:")
+    x = torch.randn(1000, 1000).to(device)
+    y = torch.randn(1000, 1000).to(device)
+    standard_result = x * y
 
-# Normalize input data
-X = X / X.abs().max()
-
-Y = (X[:, 0] * X[:, 1] > 0).long()  # Label is 1 if x and y have the same sign
-
-# Split into training and test sets
-train_X, test_X = X[:800], X[800:]
-train_Y, test_Y = Y[:800], Y[800:]
-
-# Initialize the model
-model = LmulMLP(input_size=2, hidden_size=64, output_size=2, mantissa_bits=10)
-
-# Define loss and optimizer
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-# Training loop
-num_epochs = 10000
-for epoch in range(num_epochs):
-    optimizer.zero_grad()
-    outputs = model(train_X)
-    loss = criterion(outputs, train_Y)
-    loss.backward()
-    optimizer.step()
-
-    # Calculate accuracy
-    _, predicted = torch.max(outputs.data, 1)
-    accuracy = (predicted == train_Y).sum().item() / train_Y.size(0)
-    if (epoch + 1) % 10 == 0:
-        print(
-            f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}, Accuracy: {accuracy*100:.2f}%"
+    for bits in [2, 3, 4, 5]:
+        lmul_result = lmul(x, y, mantissa_bits=bits)
+        relative_error = torch.mean(
+            torch.abs(standard_result - lmul_result) / torch.abs(standard_result)
         )
+        print(f"Mantissa bits: {bits}, Average relative error: {relative_error:.6f}")
 
-# Test the model
-with torch.no_grad():
-    test_outputs = model(test_X)
-    _, predicted = torch.max(test_outputs.data, 1)
-    test_accuracy = (predicted == test_Y).sum().item() / test_Y.size(0)
-    print(f"Test Accuracy: {test_accuracy*100:.2f}%")
+    # Test 4: Matrix multiplication comparison
+    print("\n4. Matrix Multiplication Test:")
+    batch_size = 32
+    seq_len = 512
+    hidden_dim = 768  # Typical transformer dimensions
+
+    def standard_matmul():
+        q = torch.randn(batch_size, seq_len, hidden_dim).to(device)
+        k = torch.randn(batch_size, seq_len, hidden_dim).to(device)
+        return torch.matmul(q, k.transpose(-2, -1))
+
+    def lmul_matmul():
+        q = torch.randn(batch_size, seq_len, hidden_dim).to(device)
+        k = torch.randn(batch_size, seq_len, hidden_dim).to(device)
+        # Implement matrix multiplication using L-Mul
+        result = torch.zeros(batch_size, seq_len, seq_len).to(device)
+        for i in range(hidden_dim):
+            result += lmul(q[..., i : i + 1], k[..., i : i + 1].transpose(-2, -1))
+        return result
+
+    # Profile matrix multiplication
+    std_result, std_mem, std_time = profile_memory(standard_matmul)
+    lmul_result, lmul_mem, lmul_time = profile_memory(lmul_matmul)
+
+    print(f"Standard matmul memory: {std_mem/1024**2:.2f} MB")
+    print(f"L-Mul matmul memory: {lmul_mem/1024**2:.2f} MB")
+    print(f"Memory reduction: {(1 - lmul_mem/std_mem)*100:.1f}%")
+    print(
+        f"Relative error: {torch.mean(torch.abs(std_result - lmul_result) / torch.abs(std_result)):.6f}"
+    )
