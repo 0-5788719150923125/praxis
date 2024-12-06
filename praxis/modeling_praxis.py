@@ -10,6 +10,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
+from praxis.losses import LOSS_REGISTRY
 from praxis.modules import EMBEDDING_REGISTRY
 from praxis.modules.decoder import PraxisDecoder
 
@@ -62,6 +63,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         config.causal = True
         super().__init__(config)
         self.head = nn.Linear(config.num_dims, config.vocab_size, bias=False)
+        self.loss_func = LOSS_REGISTRY["cross_entropy"]()
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
         return {
@@ -95,7 +97,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if labels is not None:
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            loss = F.cross_entropy(
+            loss = self.loss_func(
                 shift_logits.view(-1, shift_logits.shape[-1]), shift_labels.view(-1)
             )
             loss = loss + sum(self.aux_losses)

@@ -789,9 +789,11 @@ class PraxisDataModule(LightningDataModule):
             oversample_chance,
             supersample_chance,
         )
-        self.val_datasets = self.create_datasets(
-            val_datasets, tokenizer, block_size, batch_size, 0, 0
-        )
+        self.val_datasets = False
+        if len(val_datasets) > 0:
+            self.val_datasets = self.create_datasets(
+                val_datasets, tokenizer, block_size, batch_size, 0, 0
+            )
 
     def create_datasets(
         self,
@@ -824,12 +826,15 @@ class PraxisDataModule(LightningDataModule):
         )
 
     def val_dataloader(self):
-        return DataLoader(
-            dataset=self.val_datasets,
-            batch_size=None,
-            num_workers=1,
-            pin_memory=True,
-        )
+        if self.val_datasets:
+            return DataLoader(
+                dataset=self.val_datasets,
+                batch_size=None,
+                num_workers=1,
+                pin_memory=True,
+            )
+        else:
+            return {}
 
     def state_dict(self) -> Dict[str, Any]:
         sampler_states = []

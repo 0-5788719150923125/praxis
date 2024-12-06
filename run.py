@@ -122,6 +122,7 @@ from praxis import (
     BLOCK_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
+    LOSS_REGISTRY,
     PraxisConfig,
     PraxisForCausalLM,
     PraxisModel,
@@ -231,6 +232,13 @@ parser.add_argument(
     choices=["adamg", "adamw", "prodigy", "soap"],
     default="adamw",
     help="The optimizer profile to use",
+)
+parser.add_argument(
+    "--loss_func",
+    type=str,
+    choices=LOSS_REGISTRY.keys(),
+    default="cross_entropy",
+    help="The loss function to use",
 )
 parser.add_argument(
     "--block_type",
@@ -460,6 +468,7 @@ config = PraxisConfig(
     expert=expert_type,
     encoding=encoding_type,
     strategy=strategy,
+    loss_func=loss_func,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
