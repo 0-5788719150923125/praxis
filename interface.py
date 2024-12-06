@@ -85,6 +85,7 @@ class TerminalDashboard:
         self.fitness = None
         self.memory_churn = None
         self.accuracy = None
+        self.num_tokens = 0
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -206,6 +207,11 @@ class TerminalDashboard:
     def update_rate(self, seconds):
         with self.lock:
             self.rate = seconds
+
+    def update_tokens(self, num_tokens):
+        with self.lock:
+            in_billions = num_tokens / 1_000_000_000
+            self.num_tokens = in_billions
 
     def update_expert_count(self, num_local, num_remote):
         with self.lock:
@@ -434,7 +440,7 @@ class TerminalDashboard:
             elapsed = self.hours_since()
             footer_text = (
                 f" PRAXIS:{str(self.seed)} | {self.total_params} | MODE: {self.mode} | "
-                f"AGE: {elapsed:.2f}h | BATCH: {int(self.batch)}, STEP: {int(self.step)}, "
+                f"AGE: {elapsed:.2f}h | TOKENS: {self.num_tokens:.2f}B | BATCH: {int(self.batch)}, STEP: {int(self.step)}, "
                 f"RATE: {self.rate:.2f}s | {self.local_experts} local experts, "
                 f"{self.remote_experts} remote | {self.url}"
             )

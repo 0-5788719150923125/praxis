@@ -781,9 +781,11 @@ class TerminalInterface(Callback):
             batch = trainer.callback_metrics.get("batch", 0)
             step = trainer.callback_metrics.get("step", 0)
             rate = trainer.callback_metrics.get("avg_step_time", 0)
+            tokens = trainer.callback_metrics.get("num_tokens", 0)
             self.dashboard.update_batch(batch.item())
             self.dashboard.update_step(step.item())
             self.dashboard.update_rate(rate.item())
+            self.dashboard.update_tokens(tokens.item())
             self.dashboard.update_loss(self.ema_loss)
             self.dashboard.update_expert_count(local_experts, remote_experts)
             if "fitness" in data:
