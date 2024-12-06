@@ -1252,9 +1252,7 @@ api_server = APIServer(generator, host_name, port)
 api_server.start()
 
 # Load datasets
-train_datamodule, validation_datamodule = get_datamodules(
-    seed, dev, phi, gun, source, tokenizer, hparams, data_path
-)
+datamodule = get_datamodules(seed, dev, phi, gun, source, tokenizer, hparams, data_path)
 
 # create the optimizer
 optimizer = create_optimizer(model, **hparams["optimizer"])
@@ -1278,12 +1276,7 @@ train_params["callbacks"].append(
 trainer = Trainer(**train_params)
 trainer.fit(
     train_model,
-    train_datamodule.train_dataloader(),
-    val_dataloaders=(
-        validation_datamodule.val_dataloader()
-        if hasattr(validation_datamodule, "val_dataloader")
-        else None
-    ),
+    datamodule,
     ckpt_path=ckpt_path,
 )
 

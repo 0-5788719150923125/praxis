@@ -267,6 +267,7 @@ def get_datamodules(
 
     train_dataloader = PraxisDataModule(
         train_data,
+        validation_data,
         tokenizer,
         hparams["batch_size"],
         hparams["block_size"],
@@ -274,16 +275,7 @@ def get_datamodules(
         hparams["supersample_chance"],
     )
 
-    validation_dataloader = None
-    if len(validation_data) > 0:
-        validation_dataloader = PraxisDataModule(
-            validation_data,
-            tokenizer,
-            hparams["batch_size"],
-            hparams["block_size"],
-        )
-
-    return train_dataloader, validation_dataloader
+    return train_dataloader
 
 
 def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
@@ -535,6 +527,16 @@ class HuggingfaceDataset(PraxisSampler):
     def _format_document(self, document):
         return self.format_handler(document, self.keys)
 
+    def state_dict(self):
+        # Get the internal state of the shuffled dataset
+        return self.shuffled_dataset.state_dict()
+
+    def load_state_dict(self, state_dict):
+        # Restore the internal state so iteration picks up where we left off
+        self.shuffled_dataset.load_state_dict(state_dict)
+        # Recreate the iterator from the restored state
+        self.dataset_iterator = iter(self.shuffled_dataset)
+
 
 class MultiDirectoryDataset(PraxisSampler):
     def __init__(
@@ -762,6 +764,7 @@ class PraxisDataModule(LightningDataModule):
     def __init__(
         self,
         train_datasets: List[Dict],
+        val_datasets: List[Dict],
         tokenizer: PreTrainedTokenizer,
         batch_size: int = 16,
         block_size: int = 512,
@@ -769,13 +772,32 @@ class PraxisDataModule(LightningDataModule):
         supersample_chance: float = 0,
     ):
         super().__init__()
-
-        # Get weights and normalize them while preserving relative magnitudes
-        raw_weights = [dataset.weight for dataset in train_datasets]
-        weights = [w / sum(raw_weights) for w in raw_weights]
-
-        self.weighted_dataset = WeightedIterableDataset(
+        self.train_datasets = self.create_datasets(
             train_datasets,
+            tokenizer,
+            block_size,
+            batch_size,
+            oversample_chance,
+            supersample_chance,
+        )
+        self.val_datasets = self.create_datasets(
+            val_datasets, tokenizer, block_size, batch_size, 0, 0
+        )
+
+    def create_datasets(
+        self,
+        datasets,
+        tokenizer,
+        block_size,
+        batch_size,
+        oversample_chance=0,
+        supersample_chance=0,
+    ):
+        # Get weights and normalize them while preserving relative magnitudes
+        raw_weights = [dataset.weight for dataset in datasets]
+        weights = [w / sum(raw_weights) for w in raw_weights]
+        return WeightedIterableDataset(
+            datasets,
             weights,
             tokenizer,
             block_size,
@@ -786,7 +808,7 @@ class PraxisDataModule(LightningDataModule):
 
     def train_dataloader(self):
         return DataLoader(
-            dataset=self.weighted_dataset,
+            dataset=self.train_datasets,
             batch_size=None,
             num_workers=1,
             pin_memory=True,
@@ -794,8 +816,30 @@ class PraxisDataModule(LightningDataModule):
 
     def val_dataloader(self):
         return DataLoader(
-            dataset=self.weighted_dataset,
+            dataset=self.val_datasets,
             batch_size=None,
             num_workers=1,
             pin_memory=True,
         )
+
+    def state_dict(self) -> Dict[str, Any]:
+        sampler_states = []
+        for sampler in self.train_datasets.data_manager.samplers:
+            if hasattr(sampler, "state_dict") and callable(sampler.state_dict):
+                sampler_states.append(sampler.state_dict())
+            else:
+                # If sampler doesn't support state, append None
+                sampler_states.append(None)
+
+        return {"sampler_states": sampler_states}
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        sampler_states = state_dict.get("sampler_states", [])
+        samplers = self.train_datasets.data_manager.samplers
+        for sampler, s_state in zip(samplers, sampler_states):
+            if (
+                s_state is not None
+                and hasattr(sampler, "load_state_dict")
+                and callable(sampler.load_state_dict)
+            ):
+                sampler.load_state_dict(s_state)
