@@ -107,7 +107,7 @@ HUGGINGFACE_DATASETS = {
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=0.5,
+        weight=0.1,
     ),
 }
 
@@ -342,7 +342,10 @@ def get_dataset_configs(dev: bool, phi: bool):
     else:
         config["validation"].append(HUGGINGFACE_DATASETS.get("redpajama"))
     print("training on:")
-    [print(entry) for entry in config["primary"]]
+    [
+        print(f"dataset: {entry['path']}, weight: {entry['weight']}")
+        for entry in config["primary"]
+    ]
     return config
 
 

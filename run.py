@@ -532,14 +532,12 @@ optimizer_defaults = dict(
 if optimizer.lower() == "adamg":
     optimizer_profile = dict(
         optimizer_name="AdamG",
-        lr=1e-3,
-        min_lr=1e-5,
-        weight_decay=1e-3,
+        lr=1.0,
+        min_lr=1e-2,
+        weight_decay=1e-4,
         weight_decouple=True,
         p=0.2,
         q=0.24,
-        warmup_steps=512,
-        eps=1e-8,
     )
 elif optimizer.lower() == "prodigy":
     optimizer_profile = dict(
