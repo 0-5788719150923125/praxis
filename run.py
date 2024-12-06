@@ -546,7 +546,7 @@ elif optimizer.lower() == "prodigy":
         optimizer_name="Prodigy",
         lr=1.0,
         min_lr=1e-2,
-        weight_decay=1e-3,
+        weight_decay=1e-4,
         weight_decouple=True,
         bias_correction=True,
         safeguard_warmup=True,

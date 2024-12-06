@@ -66,6 +66,13 @@ HUGGINGFACE_DATASETS = {
         format=DataFormat.SIMPLE,
         weight=0.001,
     ),
+    "tinystories": dict(
+        path="roneneldan/TinyStories",
+        name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=0.001,
+    ),
     "redpajama": dict(
         path="togethercomputer/RedPajama-Data-V2",
         name="sample-10B",
@@ -328,6 +335,7 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"].append(HUGGINGFACE_DATASETS.get("persona-chat"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
     if dev:
         # Overwrite with simpler dataset
         config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]
