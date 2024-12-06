@@ -63,7 +63,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         config.causal = True
         super().__init__(config)
         self.head = nn.Linear(config.num_dims, config.vocab_size, bias=False)
-        self.loss_func = LOSS_REGISTRY["cross_entropy"]()
+        self.loss_func = LOSS_REGISTRY[config.loss_func]()
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
         return {
