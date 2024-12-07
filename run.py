@@ -221,6 +221,12 @@ parser.add_argument(
     help="Disable the terminal dashboard",
 )
 parser.add_argument(
+    "--no_schedule",
+    action="store_true",
+    default=False,
+    help="Disable the learning rate scheduler",
+)
+parser.add_argument(
     "--wandb",
     action="store_true",
     default=False,
@@ -545,7 +551,7 @@ if optimizer.lower() == "adamg":
         min_lr=1e-2,
         weight_decay=1e-4,
         weight_decouple=True,
-        p=0.2,
+        p=0.5,
         q=0.24,
     )
 elif optimizer.lower() == "prodigy":
@@ -563,7 +569,7 @@ elif optimizer.lower() == "soap":
         optimizer_name="SOAP",
         lr=2e-4,
         min_lr=2e-5,
-        weight_decay=1e-3,
+        weight_decay=1e-4,
         precondition_frequency=10,
         max_precondition_dim=1024,
         normalize_gradient=False,
@@ -576,21 +582,26 @@ else:
         optimizer_name="GrokFastAdamW",
         lr=2e-4,
         min_lr=2e-5,
-        weight_decay=1e-3,
+        weight_decay=1e-4,
     )
 
 # Merge the optimizer profile with the default profile
 hparams["optimizer"] = {**optimizer_defaults, **optimizer_profile}
 
 # Configure the learning rate scheduler
-scheduler_func = partial(
-    CosineAnnealingWarmupRestarts,
-    first_cycle_steps=4096 * 4,
-    max_lr=hparams["optimizer"]["lr"],
-    min_lr=hparams["optimizer"]["min_lr"],
-    gamma=1.0,
-    warmup_steps=hparams["optimizer"].get("warmup_steps", 512),
-)
+if no_schedule:
+    scheduler_func = partial(
+        torch.optim.lr_scheduler.ConstantLR, factor=1.0, total_iters=0
+    )
+else:
+    scheduler_func = partial(
+        CosineAnnealingWarmupRestarts,
+        first_cycle_steps=4096 * 4,
+        max_lr=hparams["optimizer"]["lr"],
+        min_lr=hparams["optimizer"]["min_lr"],
+        gamma=1.0,
+        warmup_steps=hparams["optimizer"].get("warmup_steps", 512),
+    )
 
 
 class PraxisTrainer(LightningModule):

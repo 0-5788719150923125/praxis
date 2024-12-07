@@ -217,8 +217,8 @@ class ScaledDotProduct(nn.Module):
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = self.hidden_size // self.num_heads
-        if "one" in config.meta:
-            self._softmax = self._softmax1
+        if "ghost" in config.meta:
+            self._softmax = self._ghostmax
         else:
             self._softmax = F.softmax
 
@@ -268,7 +268,7 @@ class ScaledDotProduct(nn.Module):
         scores = [score + attention_mask for score in scores]
         return scores, causal_mask, attention_mask
 
-    def _softmax1(self, x: Tensor, dim: int = -1) -> Tensor:
+    def _ghostmax(self, x: Tensor, dim: int = -1) -> Tensor:
         """
         Implementation of softmax1, which adds 1 to denominator
         to allow for "no-op" attention.
