@@ -102,9 +102,9 @@ class LayerShuffle(nn.Module):
         During inference, returns actual expert index.
         """
 
-        # Record the current expert index
-        current_idx = original_experts.index(current_expert)
-        self.current_route.append(current_idx)
+        # Record the original index in the route
+        original_idx = original_experts.index(current_expert)
+        self.current_route.append(original_idx)
 
         if self.navigator:
             return self.navigator(
@@ -115,8 +115,12 @@ class LayerShuffle(nn.Module):
                 current_expert,
             )
         else:
-            if -len(current_experts) <= current_depth + 1 < len(current_experts):
-                return 0, original_experts.index(current_experts[current_depth + 1])
+            # Look up the next expert in the shuffled sequence
+            if current_depth + 1 < len(current_experts):
+                # The next expert we want is at current_depth + 1 in the shuffled list
+                next_expert = current_experts[current_depth + 1]
+                # Return its position in the shuffled list as next_expert_idx
+                return 0, current_experts.index(next_expert)
             else:
                 return 0, None
 
@@ -124,9 +128,7 @@ class LayerShuffle(nn.Module):
         if self.debug:
             route = [str(r) for r in self.current_route]
             if not self.training:
-                print(f"DEBUG: Inference route: {' -> '.join(route)}")
-            elif random.random() < 0.005:
-                print(f"DEBUG: Training route: {' -> '.join(route)}")
+                print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
         self.current_route = []
 
 
@@ -233,9 +235,9 @@ class MixtureRouter(nn.Module):
         if self.debug:
             route = [str(r) for r in self.current_route]
             if not self.training:
-                print(f"DEBUG: Inference route: {' -> '.join(route)}")
+                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
             elif random.random() < 0.005:
-                print(f"DEBUG: Training route: {' -> '.join(route)}")
+                print(f"DEBUG: training through: {' -> '.join(route)}")
         self.current_route = []
 
     # No-op methods
