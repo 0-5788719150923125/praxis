@@ -35,9 +35,7 @@ class PraxisStack(nn.Module):
         elif config.router:
             self.behavior = MixtureRouter(config)
         else:
-            self.behavior = (
-                LayerShuffle(config, num_context_tokens=3) if config.shuffle else False
-            )
+            self.behavior = LayerShuffle(config) if config.shuffle else False
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = False
         self.locals = nn.ModuleList()

@@ -21,8 +21,11 @@ class LayerShuffle(nn.Module):
     https://arxiv.org/abs/2407.04513
     """
 
-    def __init__(self, config: AutoConfig, num_context_tokens: int = 1):
+    def __init__(self, config: AutoConfig, num_context_tokens: int = 0):
         super().__init__()
+        self.debug = config.debug
+        self.depth = config.depth
+        self.current_route = []
         assert (
             config.num_experts == config.depth
         ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
@@ -80,7 +83,7 @@ class LayerShuffle(nn.Module):
         return trimmed_states, trimmed_mask
 
     def shuffle_experts(self, experts: list, allow_resampling: bool = False) -> list:
-        depth = self.embeddings.shape[0]
+        depth = self.depth
         if allow_resampling:
             return random.choices(experts, k=depth)
         else:
@@ -98,6 +101,11 @@ class LayerShuffle(nn.Module):
         Compute next expert selection and associated loss.
         During inference, returns actual expert index.
         """
+
+        # Record the current expert index
+        current_idx = original_experts.index(current_expert)
+        self.current_route.append(current_idx)
+
         if self.navigator:
             return self.navigator(
                 hidden_states,
@@ -111,6 +119,15 @@ class LayerShuffle(nn.Module):
                 return 0, original_experts.index(current_experts[current_depth + 1])
             else:
                 return 0, None
+
+    def reset_route(self):
+        if self.debug:
+            route = [str(r) for r in self.current_route]
+            if not self.training:
+                print(f"DEBUG: Inference route: {' -> '.join(route)}")
+            elif random.random() < 0.005:
+                print(f"DEBUG: Training route: {' -> '.join(route)}")
+        self.current_route = []
 
 
 class MixtureRouter(nn.Module):
