@@ -580,9 +580,9 @@ elif optimizer.lower() == "soap":
 else:
     optimizer_profile = dict(
         optimizer_name="GrokFastAdamW",
-        lr=2e-4,
-        min_lr=2e-5,
-        weight_decay=1e-4,
+        lr=1e-3,
+        min_lr=1e-5,
+        weight_decay=1e-5,
     )
 
 # Merge the optimizer profile with the default profile

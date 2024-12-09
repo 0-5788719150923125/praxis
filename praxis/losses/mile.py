@@ -1,5 +1,4 @@
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -13,7 +12,6 @@ class MiLeLoss(nn.Module):
         super().__init__()
         self.base_gamma = gamma
         self.reduction = reduction
-        self.loss_fct = nn.CrossEntropyLoss(reduction="none", ignore_index=-100)
         self.sigma = 1
 
     def entropy(self, logits):
@@ -25,16 +23,13 @@ class MiLeLoss(nn.Module):
         entropy = torch.sum(-1 * (probs * torch.log(probs)), dim=-1)
         return entropy
 
-    def forward(self, inputs, targets, global_steps):
-        ce_loss = self.loss_fct(inputs, targets)
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction="none", ignore_index=-100)
         pt = self.entropy(inputs)
         gamma = self.base_gamma
         alpha = 1.0 / (((self.sigma + pt) ** gamma).mean())
-        torch.distributed.all_reduce(alpha)
         # Alpha is a normalization factor that allows the training loss to be comparable to the cross-entropy loss.
-        alpha = alpha / dist.get_world_size()
         loss = alpha * ((self.sigma + pt) ** gamma) * ce_loss
-
         if self.reduction == "mean":
             return loss.mean()
         elif self.reduction == "sum":
