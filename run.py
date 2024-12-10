@@ -1226,7 +1226,7 @@ print(f"parameters: {reduced}")
 
 # File cleanup
 if reset:
-    directories = ["datasets", "lightning", "wandb"]
+    directories = ["lightning", "wandb"]
     for directory in directories:
         shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):

@@ -214,16 +214,33 @@ class PraxisGatedAttention(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
         hidden_dim = config.num_dims
+        double_dim = hidden_dim * 2
 
-        # Q, K, V projections
-        self.query = nn.Linear(hidden_dim, hidden_dim)
-        self.key = nn.Linear(hidden_dim, hidden_dim)
+        # Projections
+        self.query = nn.Linear(hidden_dim, double_dim)
+        self.key = nn.Linear(hidden_dim, double_dim)
         self.value = nn.Linear(hidden_dim, hidden_dim)
 
+        self.encoding = ENCODING_REGISTRY[config.encoding](config)
+
+        # Lambda parameters
+        self.lambda_q1 = nn.Parameter(
+            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k1 = nn.Parameter(
+            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+        )
+        self.lambda_q2 = nn.Parameter(
+            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k2 = nn.Parameter(
+            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+        )
+        self.lambda_init = 0.8
+
+        self.norm = nn.RMSNorm(hidden_dim, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
-
         self.output = nn.Linear(hidden_dim, hidden_dim)
-
         self.approximator = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 4),
             nn.ReLU(),
@@ -233,8 +250,9 @@ class PraxisGatedAttention(nn.Module):
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         scores, v = self.compute_scores(inputs)
-        masked = self.apply_causal_mask(scores)
-        masked = self.apply_attention_mask(masked, attention_mask)
+        # Apply masks before any attention computations
+        scores = self.apply_causal_mask(scores)
+        scores = self.apply_attention_mask(scores, attention_mask)
         weights = self.compute_weights(scores, v)
         return self.compute_gated_output(inputs, weights)
 
@@ -242,42 +260,88 @@ class PraxisGatedAttention(nn.Module):
         B, S, E = inputs.shape
 
         # Project inputs
-        q = self.query(inputs)  # [B, S, E]
-        k = self.key(inputs)  # [num_layers, E]
-        v = self.value(inputs)  # [num_layers, E]
+        q = self.query(inputs)  # [B, S, 2*E]
+        k = self.key(inputs)  # [B, S, 2*E]
+        v = self.value(inputs)  # [B, S, E]
 
-        q = self.dropout(q)
-        k = self.dropout(k)
-        v = self.dropout(v)
+        # Reshape for RoPE: [B, S, 2*E] -> [B, 2, S, E]
+        q = q.view(B, S, 2, E).transpose(1, 2)
+        k = k.view(B, S, 2, E).transpose(1, 2)
 
-        # Compute attention scores
-        scores = torch.bmm(q, k.transpose(1, 2)) * (
-            1.0 / math.sqrt(E)
-        )  # [B, S, num_layers]
+        # Apply RoPE
+        q, k, v = self.encoding.before_scores(q, k, v)
+
+        # Reshape back: [B, 2, S, E] -> [B, S, 2*E]
+        q = q.transpose(1, 2).reshape(B, S, 2 * E)
+        k = k.transpose(1, 2).reshape(B, S, 2 * E)
+
+        # Split into two components
+        q1, q2 = q.chunk(2, dim=-1)  # Each [B, S, E]
+        k1, k2 = k.chunk(2, dim=-1)  # Each [B, S, E]
+
+        # Compute unified attention scores
+        scale = 1.0 / math.sqrt(E)
+        scores1 = torch.bmm(q1, k1.transpose(1, 2)) * scale  # [B, S, S]
+        scores2 = torch.bmm(q2, k2.transpose(1, 2)) * scale  # [B, S, S]
+
+        # Stack the scores
+        scores = torch.stack([scores1, scores2], dim=2)  # [B, S, 2, S]
 
         return scores, v
 
+    def compute_weights(self, scores, v):
+        B, S, _, _ = scores.shape
+
+        # Apply softmax
+        attn_weights = F.softmax(scores, dim=-1)  # [B, S, 2, S]
+        attn_weights = self.dropout(attn_weights)
+
+        # Compute lambda scaling
+        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1))
+        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1))
+        lambda_full = lambda_1 - lambda_2 + self.lambda_init
+
+        # Apply differential attention
+        diff_weights = (
+            attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+        )  # [B, S, S]
+
+        # Apply attention to values and normalize
+        out = torch.bmm(diff_weights, v)  # [B, S, E]
+        out = self.norm(out)
+        out = out * (1 - self.lambda_init)
+
+        return out
+
     def apply_causal_mask(self, scores):
-        _, seq_len, num_experts = scores.shape
+        # scores shape: [B, S, 2, S]
+        B, S, _, _ = scores.shape
+
         # Create causal mask
         seq_mask = torch.triu(
-            torch.ones((seq_len, num_experts), device=scores.device), diagonal=1
+            torch.ones((S, S), device=scores.device), diagonal=1
         ).bool()
-        # Apply to attention scores
-        scores = scores.masked_fill(seq_mask.unsqueeze(0), -1e9)
+
+        # Expand mask for broadcasting
+        # [S, S] -> [1, S, 1, S]
+        seq_mask = seq_mask.unsqueeze(0).unsqueeze(2)
+
+        # Apply to both attention components
+        # Broadcasting: [1, S, 1, S] -> [B, S, 2, S]
+        scores = scores.masked_fill(seq_mask, -1e9)
         return scores
 
     def apply_attention_mask(self, scores, attention_mask):
-        attention_mask = (1.0 - attention_mask.unsqueeze(1)) * -1e9
+        # scores shape: [B, S, 2, S]
+        # attention_mask shape: [B, S]
+
+        # Reshape attention_mask for broadcasting
+        # [B, S] -> [B, 1, 1, S]
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(1)) * -1e9
+
+        # Broadcasting: [B, 1, 1, S] -> [B, S, 2, S]
         scores = scores + attention_mask
         return scores
-
-    def compute_weights(self, scores, v):
-        attn = F.softmax(scores, dim=-1)  # [B, S, num_layers]
-        attn = self.dropout(attn)
-        # Apply attention to values
-        out = torch.bmm(attn, v)  # [B, S, E]
-        return out
 
     def compute_gated_output(self, inputs, weights):
         # Generate and apply gates
