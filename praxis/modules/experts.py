@@ -9,6 +9,7 @@ from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly
 from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
+from praxis.modules.router import PraxisMixtureOfDepths
 
 EXPERT_REGISTRY = {
     "glu": PraxisGLU,
@@ -65,31 +66,34 @@ class PraxisExpert(nn.Module):
         self.sparse = config.sparse
         self.is_remote = is_remote
         self.router = router
+        if config.sparse and not self.router:
+            self.router = PraxisMixtureOfDepths(config)
         self.block = block
 
     def forward(self, inputs: Tensor, attention_mask: Tensor, current_depth: int):
         d = current_depth
+        use_router = self.sparse and current_depth % 2 != 0
         if self.is_remote:
-            return self._remote_forward(inputs, attention_mask)
+            return self._remote_forward(inputs, attention_mask, use_router)
         else:
-            return self._local_forward(inputs, attention_mask)
+            return self._local_forward(inputs, attention_mask, use_router)
 
-    def _local_forward(self, inputs: Tensor, attention_mask: Tensor):
+    def _local_forward(self, inputs: Tensor, attention_mask: Tensor, use_router: bool):
         aux_losses = []
-        if self.router:
+        if use_router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
             hidden_states = self.block(inputs, attention_mask)
         return hidden_states, sum(aux_losses)
 
-    def _remote_forward(self, inputs, attention_mask):
+    def _remote_forward(self, inputs, attention_mask, use_router: bool):
         # because we would otherwise break gradient flow
         residual = inputs
         aux_losses = []
         inputs = inputs.to("cpu")
         attention_mask = attention_mask.to("cpu")
-        if self.router:
+        if use_router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:

@@ -53,8 +53,8 @@ class PraxisDecoder(nn.Module):
                     )
                     aux_losses.append(aux_loss)
 
-                if self.stack.genome and i == 4:
-                    new_states = self.stack.genome(new_states)
+                if hasattr(self.stack, "post_compute"):
+                    new_states = self.stack.post_compute(new_states, i)
 
                 # Commit to self
                 hidden_states = new_states
@@ -119,13 +119,4 @@ class PraxisDecoder(nn.Module):
 
     def get_metrics(self):
         """Return current prediction accuracies"""
-        extras = {}
-        if self.stack.genome:
-            extras = {**extras, **self.stack.genome.get_metrics()}
-        return {
-            "experts": dict(
-                local=len(self.stack.locals),
-                remote=len(self.stack.remotes),
-            ),
-            **extras,
-        }
+        return self.stack.get_metrics()

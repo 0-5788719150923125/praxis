@@ -49,11 +49,7 @@ class PraxisStack(nn.Module):
             ]
             for i in range(self.num_experts):
                 mixture = BLOCK_REGISTRY["recurrent"](config, blocks)
-                router = False
-                use_router = config.sparse and i % 2 != 0
-                if use_router:
-                    router = PraxisMixtureOfDepths(config)
-                expert = PraxisExpert(config, block=mixture, router=router)
+                expert = PraxisExpert(config, block=mixture)
                 self.locals.append(expert)
         else:
             for i in range(self.num_experts):
@@ -61,16 +57,26 @@ class PraxisStack(nn.Module):
                     block = self.manager.register_expert(config)
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
-                router = False
-                if "chaos" in config.meta:
-                    use_router = config.sparse
-                elif "thin" in config.meta:
-                    use_router = config.sparse and i % 4 != 0
-                else:
-                    use_router = config.sparse and i % 2 != 0
-                if use_router:
-                    router = PraxisMixtureOfDepths(config)
-                expert = PraxisExpert(config, block=block, router=router)
+                expert = PraxisExpert(config, block=block)
                 self.locals.append(expert)
         if self.manager:
             self.manager.serve_experts()
+
+    def post_compute(self, states, current_depth):
+        processed_states = states
+        if self.genome and current_depth == 4:
+            processed_states = self.genome(processed_states)
+        return processed_states
+
+    def get_metrics(self):
+        """Return current prediction accuracies"""
+        extras = {}
+        if self.genome:
+            extras = {**extras, **self.genome.get_metrics()}
+        return {
+            "experts": dict(
+                local=len(self.locals),
+                remote=len(self.remotes),
+            ),
+            **extras,
+        }

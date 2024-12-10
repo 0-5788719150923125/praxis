@@ -101,12 +101,12 @@ class PraxisAttention(nn.Module):
         # Initialize QKV projections
         q = (
             self.query(inputs)
-            .view(batch_size, -1, self.num_query_heads, self.head_dim * self.multiplier)
+            .view(batch_size, -1, self.num_query_heads * self.multiplier, self.head_dim)
             .transpose(1, 2)
         )
         k = (
             self.key(inputs)
-            .view(batch_size, -1, self.num_heads, self.head_dim * self.multiplier)
+            .view(batch_size, -1, self.num_heads * self.multiplier, self.head_dim)
             .transpose(1, 2)
         )
         v = (
@@ -227,7 +227,7 @@ class ScaledDotProduct(nn.Module):
         return torch.matmul(q, k.transpose(-2, -1)) * scaling
 
     def compute_scores(self, q, k, v):
-        scores = [self._compute_score(q, k)]
+        scores = self._compute_score(q, k)
         return q, k, v, scores
 
     def compute_weights(
@@ -239,8 +239,8 @@ class ScaledDotProduct(nn.Module):
         causal_mask: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
     ):
-        weights = [self._softmax(score, dim=-1) for score in scores]
-        return self._compute_outputs(weights[0], v)
+        weights = self._softmax(scores, dim=-1)
+        return self._compute_outputs(weights, v)
 
     def _compute_outputs(self, weights, v):
         # Compute attention output
@@ -251,13 +251,13 @@ class ScaledDotProduct(nn.Module):
         if causal:
             causal_mask = (
                 torch.triu(
-                    torch.full((seq_len, hist_len), -1e9, device=scores[0].device),
+                    torch.full((seq_len, hist_len), -1e9, device=scores.device),
                     diagonal=1,
                 )
                 .unsqueeze(0)
                 .unsqueeze(0)
             )
-            scores = [score + causal_mask for score in scores]
+            scores = scores + causal_mask
 
         # Expand attention mask to historical length
         attention_mask = F.pad(
@@ -265,7 +265,7 @@ class ScaledDotProduct(nn.Module):
         )
 
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-        scores = [score + attention_mask for score in scores]
+        scores = scores + attention_mask
         return scores, causal_mask, attention_mask
 
     def _ghostmax(self, x: Tensor, dim: int = -1) -> Tensor:
@@ -386,54 +386,64 @@ class Differential(ScaledDotProduct):
     def __init__(self, config: AutoConfig):
         super().__init__(config)
         self.lambda_init = 0.8  # A good default, per the paper
-        self.lambdas = nn.ParameterDict(
-            dict(
-                q1=nn.Parameter(torch.randn(self.head_dim)),
-                q2=nn.Parameter(torch.randn(self.head_dim)),
-                k1=nn.Parameter(torch.randn(self.head_dim)),
-                k2=nn.Parameter(torch.randn(self.head_dim)),
-            )
+        # Initialize lambda parameters similar to Microsoft
+        self.lambda_q1 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
         )
-        self.norm = nn.GroupNorm(
-            num_groups=self.num_query_heads,
-            num_channels=self.num_query_heads * self.head_dim,
-            eps=config.epsilon,
+        self.lambda_k1 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
         )
+        self.lambda_q2 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k2 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
+        )
+        self.norm = nn.RMSNorm(2 * self.head_dim, eps=config.epsilon)
 
     def compute_scores(self, q, k, v):
-        # Split queries and keys
-        q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
-        k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
-        # Compute differential attention scores
-        scores = [
-            self._compute_score(q_chunks[i], k_chunks[i]) for i in range(len(q_chunks))
-        ]
-        return q, k, v, scores
+        # Keep all heads for attention computation
+        scaling = 1.0 / math.sqrt(self.head_dim)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
+        return q, k, v, scores  # Return list to match parent class
 
     def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
-        weights = [self._softmax(score, dim=-1) for score in scores]
-        # Compute scalar lambda
-        lambda_scalar = (
-            torch.exp(torch.dot(self.lambdas["q1"], self.lambdas["k1"]))
-            - torch.exp(torch.dot(self.lambdas["q2"], self.lambdas["k2"]))
-            + self.lambda_init
-        )
-        weights = weights[0] - lambda_scalar * weights[1]
-        outputs = self._compute_outputs(weights, v)
-        return self._normalize_outputs(outputs)
+        batch_size, num_heads, seq_len, _ = scores.shape
+        attn_weights = self._softmax(scores, dim=-1)
 
-    def _normalize_outputs(self, weights):
-        batch_size, num_heads, seq_len, head_dim = weights.shape
-        # Combine heads and head_dim for channels dimension
-        attention_output = weights.reshape(batch_size, num_heads * head_dim, seq_len)
-        # Apply GroupNorm
-        attention_output = self.norm(attention_output)
-        # Restore original shape
-        attention_output = attention_output.reshape(
-            batch_size, num_heads, head_dim, seq_len
-        ).transpose(-2, -1)
-        # Apply scaling factor
-        return attention_output * (1 - self.lambda_init)
+        # First fix v's sequence length and head dimension
+        v = v.transpose(2, 3).reshape(batch_size, self.num_heads, seq_len, -1)
+
+        # Handle attention weights
+        attn_weights = attn_weights.view(
+            batch_size, self.num_query_heads, 2, seq_len, seq_len
+        )
+
+        # Compute lambda
+        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float())
+        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float())
+        lambda_full = lambda_1 - lambda_2 + self.lambda_init
+
+        attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+
+        # Handle GQA
+        if self.num_query_heads > self.num_heads:
+            v = v.repeat_interleave(self.num_query_heads // self.num_heads, dim=1)
+
+        # Compute attention
+        outputs = torch.matmul(attn_weights, v)
+
+        b, h, s, d = outputs.shape
+        outputs = outputs.view(b * h, s, d)  # [batch*heads, seq_len, head_dim*2]
+        outputs = self.norm(outputs)
+        outputs = outputs.view(b, h, s, d)  # [batch, heads, seq_len, head_dim*2]
+        outputs = outputs * (1 - self.lambda_init)
+
+        # Final reshape for output projection
+        outputs = outputs[..., : d // 2]
+        outputs = outputs.transpose(1, 2).reshape(batch_size, seq_len, -1)
+
+        return outputs
 
 
 class Stickbreaking(ScaledDotProduct):
@@ -464,7 +474,7 @@ class Stickbreaking(ScaledDotProduct):
         *args,
         **kwargs,
     ) -> Tensor:
-        logits = scores[0]
+        logits = scores
         batch_size, num_heads, seq_len, hist_len = logits.shape
 
         # Get cumulative weight matrix of appropriate size and expand it
