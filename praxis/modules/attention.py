@@ -275,6 +275,7 @@ class PraxisGatedAttention(nn.Module):
         # q: [B, 2, S, E]
         # k: [B, 2, S, E]
         # -> scores: [B, 2, S, S]
+        scale = 1.0 / math.sqrt(E)
         scores = torch.matmul(q, k.transpose(-1, -2)) * scale
 
         # Rearrange scores to [B, S, 2, S] to maintain original downstream expectations
