@@ -242,9 +242,9 @@ class PraxisGatedAttention(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.output = nn.Linear(hidden_dim, hidden_dim)
         self.approximator = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.Linear(hidden_dim, hidden_dim * 3),
             nn.ReLU(),
-            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Linear(hidden_dim * 3, hidden_dim),
             nn.Sigmoid(),
         )
 
@@ -271,21 +271,14 @@ class PraxisGatedAttention(nn.Module):
         # Apply RoPE
         q, k, v = self.encoding.before_scores(q, k, v)
 
-        # Reshape back: [B, 2, S, E] -> [B, S, 2*E]
-        q = q.transpose(1, 2).reshape(B, S, 2 * E)
-        k = k.transpose(1, 2).reshape(B, S, 2 * E)
+        # Compute unified attention scores in one go
+        # q: [B, 2, S, E]
+        # k: [B, 2, S, E]
+        # -> scores: [B, 2, S, S]
+        scores = torch.matmul(q, k.transpose(-1, -2)) * scale
 
-        # Split into two components
-        q1, q2 = q.chunk(2, dim=-1)  # Each [B, S, E]
-        k1, k2 = k.chunk(2, dim=-1)  # Each [B, S, E]
-
-        # Compute unified attention scores
-        scale = 1.0 / math.sqrt(E)
-        scores1 = torch.bmm(q1, k1.transpose(1, 2)) * scale  # [B, S, S]
-        scores2 = torch.bmm(q2, k2.transpose(1, 2)) * scale  # [B, S, S]
-
-        # Stack the scores
-        scores = torch.stack([scores1, scores2], dim=2)  # [B, S, 2, S]
+        # Rearrange scores to [B, S, 2, S] to maintain original downstream expectations
+        scores = scores.transpose(1, 2)  # [B, S, 2, S]
 
         return scores, v
 
