@@ -57,9 +57,8 @@ class PraxisTransformer(nn.Module):
         outputs = self.mlp(normalized)
         if torch.is_tensor(router_weights):
             # this is a super hack because hivemind
-            if self._is_zero_tensor(router_weights):
-                router_weights = None
-            outputs = outputs + router_weights
+            if not self._is_zero_tensor(router_weights):
+                outputs = outputs * router_weights
         outputs = outputs + residual
         return self.dropout(outputs)
 
