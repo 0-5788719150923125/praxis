@@ -26,6 +26,7 @@ class PraxisConfig(PretrainedConfig):
         autopilot=False,
         graph=False,
         router=False,
+        attention_type="standard",
         linear=False,
         differential=False,
         stickbreaking=False,
@@ -59,6 +60,7 @@ class PraxisConfig(PretrainedConfig):
         self.num_queries = num_queries
         self.depth = depth
         self.num_experts = num_experts
+        self.attention_type = attention_type
         self.linear = linear
         self.differential = differential
         self.stickbreaking = stickbreaking

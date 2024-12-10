@@ -119,6 +119,7 @@ from builders import get_datamodules
 from interface import TerminalDashboard
 from praxis import (
     ACTIVATION_REGISTRY,
+    ATTENTION_REGISTRY,
     BLOCK_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
@@ -193,6 +194,13 @@ parser.add_argument(
     choices=ACTIVATION_REGISTRY.keys(),
     default="mish",
     help="The primary activation function to use",
+)
+parser.add_argument(
+    "--attention_type",
+    type=str,
+    choices=ATTENTION_REGISTRY.keys(),
+    default="standard",
+    help="The base attention implementation to use",
 )
 parser.add_argument(
     "--strategy",
@@ -460,6 +468,7 @@ config = PraxisConfig(
     autopilot=autopilot,
     graph=graph,
     router=router,
+    attention_type=attention_type,
     linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,

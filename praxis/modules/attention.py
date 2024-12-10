@@ -204,6 +204,91 @@ class PraxisAttention(nn.Module):
         return chunk_output
 
 
+class PraxisGatedAttention(nn.Module):
+    """
+    According to MEGA, "Single-head gated attention has been empirically
+    shown [to be] as performant as vanilla multi-head attention."
+    https://arxiv.org/abs/2209.10655
+    """
+
+    def __init__(self, config: AutoConfig):
+        super().__init__()
+        hidden_dim = config.num_dims
+
+        # Q, K, V projections
+        self.query = nn.Linear(hidden_dim, hidden_dim)
+        self.key = nn.Linear(hidden_dim, hidden_dim)
+        self.value = nn.Linear(hidden_dim, hidden_dim)
+
+        self.dropout = nn.Dropout(config.dropout)
+
+        self.output = nn.Linear(hidden_dim, hidden_dim)
+
+        self.approximator = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.ReLU(),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
+        scores, v = self.compute_scores(inputs)
+        masked = self.apply_causal_mask(scores)
+        masked = self.apply_attention_mask(masked, attention_mask)
+        weights = self.compute_weights(scores, v)
+        return self.compute_gated_output(inputs, weights)
+
+    def compute_scores(self, inputs):
+        B, S, E = inputs.shape
+
+        # Project inputs
+        q = self.query(inputs)  # [B, S, E]
+        k = self.key(inputs)  # [num_layers, E]
+        v = self.value(inputs)  # [num_layers, E]
+
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
+
+        # Compute attention scores
+        scores = torch.bmm(q, k.transpose(1, 2)) * (
+            1.0 / math.sqrt(E)
+        )  # [B, S, num_layers]
+
+        return scores, v
+
+    def apply_causal_mask(self, scores):
+        _, seq_len, num_experts = scores.shape
+        # Create causal mask
+        seq_mask = torch.triu(
+            torch.ones((seq_len, num_experts), device=scores.device), diagonal=1
+        ).bool()
+        # Apply to attention scores
+        scores = scores.masked_fill(seq_mask.unsqueeze(0), -1e9)
+        return scores
+
+    def apply_attention_mask(self, scores, attention_mask):
+        attention_mask = (1.0 - attention_mask.unsqueeze(1)) * -1e9
+        scores = scores + attention_mask
+        return scores
+
+    def compute_weights(self, scores, v):
+        attn = F.softmax(scores, dim=-1)  # [B, S, num_layers]
+        attn = self.dropout(attn)
+        # Apply attention to values
+        out = torch.bmm(attn, v)  # [B, S, E]
+        return out
+
+    def compute_gated_output(self, inputs, weights):
+        # Generate and apply gates
+        gates = self.approximator(inputs)  # [B, S, E]
+        gated_weights = weights * gates
+        return self.output(gated_weights)
+
+
+ATTENTION_REGISTRY = {"standard": PraxisAttention, "gated": PraxisGatedAttention}
+
+
 class ScaledDotProduct(nn.Module):
     """
     This class implements scaled dot-product attention:
