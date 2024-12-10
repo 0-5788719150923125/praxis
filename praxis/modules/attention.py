@@ -27,7 +27,6 @@ class PraxisAttention(nn.Module):
         self.num_heads = config.num_heads
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
-        self.head_dim = self.hidden_size // self.num_heads
 
         # Set the core attention mechanism
         self.linear = config.linear
@@ -37,12 +36,14 @@ class PraxisAttention(nn.Module):
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
+        self.multiplier = 2 if self.differential else 1
+        self.head_dim = self.hidden_size // self.num_heads // self.multiplier
+
         self.gating = config.mega
         if self.gating:
             self.gating = PraxisGatedEMA(config)
 
         # Query and key projections for differential heads
-        self.multiplier = 2 if self.differential else 1
         self.query = nn.Linear(
             self.hidden_size,
             self.num_query_heads * self.head_dim * self.multiplier,
@@ -216,7 +217,8 @@ class ScaledDotProduct(nn.Module):
         self.hidden_size = config.num_dims
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
-        self.head_dim = self.hidden_size // self.num_heads
+        self.multiplier = 2 if config.differential else 1
+        self.head_dim = self.hidden_size // self.num_heads // self.multiplier
         # if "ghost" in config.meta:
         self._softmax = self._ghostmax
         # else:
