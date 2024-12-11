@@ -14,12 +14,13 @@ class PraxisMLP(nn.Sequential):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: AutoConfig, activation=None):
+        activation = activation or config.activation
         super().__init__(
             OrderedDict(
                 [
                     ("up", nn.Linear(config.num_dims, 4 * config.num_dims)),
-                    ("act", ACT2FN[config.activation]),
+                    ("act", ACT2FN[activation]),
                     ("dropout", nn.Dropout(config.dropout)),
                     ("down", nn.Linear(4 * config.num_dims, config.num_dims)),
                 ]
@@ -34,10 +35,11 @@ class PraxisGLU(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, *args, **kwargs):
+    def __init__(self, config: AutoConfig, activation=None, *args, **kwargs):
         super().__init__()
+        activation = activation or config.activation
         self.up = nn.Linear(config.num_dims, int((8 / 3) * config.num_dims))
-        self.act = ACT2CLS[config.activation](*args, **kwargs)
+        self.act = ACT2CLS[activation](*args, **kwargs)
         self.dropout = nn.Dropout(config.dropout)
         self.down = nn.Linear(int((4 / 3) * config.num_dims), config.num_dims)
 

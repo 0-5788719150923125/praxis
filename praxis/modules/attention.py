@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import AutoConfig
 
+from praxis.modules.dense import PraxisGLU
 from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.memory import PraxisCompressiveMemory
 
@@ -215,36 +216,36 @@ class PraxisGatedAttention(nn.Module):
         super().__init__()
         hidden_dim = config.num_dims
         double_dim = hidden_dim * 2
+        head_dim = hidden_dim // 2
 
         # Projections
         self.query = nn.Linear(hidden_dim, double_dim)
         self.key = nn.Linear(hidden_dim, double_dim)
         self.value = nn.Linear(hidden_dim, hidden_dim)
 
+        # Positional encoding
         self.encoding = ENCODING_REGISTRY[config.encoding](config)
 
         # Lambda parameters
+        self.lambda_init = 0.8
         self.lambda_q1 = nn.Parameter(
-            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
         )
         self.lambda_k1 = nn.Parameter(
-            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
         )
         self.lambda_q2 = nn.Parameter(
-            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
         )
         self.lambda_k2 = nn.Parameter(
-            torch.zeros(hidden_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
+            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
         )
-        self.lambda_init = 0.8
 
-        self.norm = nn.RMSNorm(hidden_dim, eps=config.epsilon)
+        self.norm = nn.RMSNorm(2 * head_dim, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
         self.output = nn.Linear(hidden_dim, hidden_dim)
         self.approximator = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 3),
-            nn.ReLU(),
-            nn.Linear(hidden_dim * 3, hidden_dim),
+            PraxisGLU(config, activation="mish"),
             nn.Sigmoid(),
         )
 
@@ -271,12 +272,14 @@ class PraxisGatedAttention(nn.Module):
         # Apply RoPE
         q, k, v = self.encoding.before_scores(q, k, v)
 
-        # Compute unified attention scores in one go
-        # q: [B, 2, S, E]
-        # k: [B, 2, S, E]
-        # -> scores: [B, 2, S, S]
+        # Ensemble the representations
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
+
+        # Compute unified attention scores
         scale = 1.0 / math.sqrt(E)
-        scores = torch.matmul(q, k.transpose(-1, -2)) * scale
+        scores = torch.matmul(q, k.transpose(-1, -2)) * scale  # [B, 2, S, S]
 
         # Rearrange scores to [B, S, 2, S] to maintain original downstream expectations
         scores = scores.transpose(1, 2)  # [B, S, 2, S]
@@ -287,7 +290,7 @@ class PraxisGatedAttention(nn.Module):
         B, S, _, _ = scores.shape
 
         # Apply softmax
-        attn_weights = F.softmax(scores, dim=-1)  # [B, S, 2, S]
+        attn_weights = ghostmax(scores, dim=-1)  # [B, S, 2, S]
         attn_weights = self.dropout(attn_weights)
 
         # Compute lambda scaling
@@ -305,34 +308,24 @@ class PraxisGatedAttention(nn.Module):
         out = self.norm(out)
         out = out * (1 - self.lambda_init)
 
-        return out
+        return self.dropout(out)
 
     def apply_causal_mask(self, scores):
         # scores shape: [B, S, 2, S]
         B, S, _, _ = scores.shape
-
         # Create causal mask
         seq_mask = torch.triu(
             torch.ones((S, S), device=scores.device), diagonal=1
         ).bool()
-
         # Expand mask for broadcasting
-        # [S, S] -> [1, S, 1, S]
         seq_mask = seq_mask.unsqueeze(0).unsqueeze(2)
-
         # Apply to both attention components
-        # Broadcasting: [1, S, 1, S] -> [B, S, 2, S]
-        scores = scores.masked_fill(seq_mask, -1e9)
+        scores = scores.masked_fill(seq_mask, -1e9)  # [B, S, 2, S]
         return scores
 
     def apply_attention_mask(self, scores, attention_mask):
-        # scores shape: [B, S, 2, S]
-        # attention_mask shape: [B, S]
-
         # Reshape attention_mask for broadcasting
-        # [B, S] -> [B, 1, 1, S]
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(1)) * -1e9
-
         # Broadcasting: [B, 1, 1, S] -> [B, S, 2, S]
         scores = scores + attention_mask
         return scores
@@ -345,6 +338,26 @@ class PraxisGatedAttention(nn.Module):
 
 
 ATTENTION_REGISTRY = {"standard": PraxisAttention, "gated": PraxisGatedAttention}
+
+
+def ghostmax(x: Tensor, dim: int = -1) -> Tensor:
+    """
+    Implementation of softmax1, which adds 1 to denominator
+    to allow for "no-op" attention.
+    https://www.evanmiller.org/attention-is-off-by-one.html
+    """
+    # Get max value for numerical stability (like in standard softmax)
+    max_score, _ = torch.max(x, dim=dim, keepdim=True)
+    x = x - max_score
+
+    # Calculate exponentials
+    exp_x = torch.exp(x)
+
+    # Sum exponentials and add 1
+    sum_exp = torch.sum(exp_x, dim=dim, keepdim=True) + 1.0
+
+    # Divide by sum plus 1
+    return exp_x / sum_exp
 
 
 class ScaledDotProduct(nn.Module):
@@ -363,7 +376,7 @@ class ScaledDotProduct(nn.Module):
         self.multiplier = 2 if config.differential else 1
         self.head_dim = self.hidden_size // self.num_heads // self.multiplier
         # if "ghost" in config.meta:
-        self._softmax = self._ghostmax
+        self._softmax = ghostmax
         # else:
         #     self._softmax = F.softmax
 
@@ -412,25 +425,6 @@ class ScaledDotProduct(nn.Module):
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
         scores = scores + attention_mask
         return scores, causal_mask, attention_mask
-
-    def _ghostmax(self, x: Tensor, dim: int = -1) -> Tensor:
-        """
-        Implementation of softmax1, which adds 1 to denominator
-        to allow for "no-op" attention.
-        https://www.evanmiller.org/attention-is-off-by-one.html
-        """
-        # Get max value for numerical stability (like in standard softmax)
-        max_score, _ = torch.max(x, dim=dim, keepdim=True)
-        x = x - max_score
-
-        # Calculate exponentials
-        exp_x = torch.exp(x)
-
-        # Sum exponentials and add 1
-        sum_exp = torch.sum(exp_x, dim=dim, keepdim=True) + 1.0
-
-        # Divide by sum plus 1
-        return exp_x / sum_exp
 
 
 class LinearAttention(ScaledDotProduct):
