@@ -7,6 +7,21 @@ from torch import Tensor
 from transformers import AutoConfig
 
 
+class PraxisEmbeddings(nn.Sequential):
+    """
+    A simple embeddings module with dropout.
+    """
+
+    def __init__(self, config: AutoConfig):
+        layers = OrderedDict(
+            [
+                ("tokens", nn.Embedding(config.vocab_size, config.num_dims)),
+                ("dropout", nn.Dropout(config.dropout)),
+            ]
+        )
+        super().__init__(layers)
+
+
 class PraxisLearnedEmbeddings(nn.Sequential):
     """
     Praxis embeddings with learned positional encodings (GPT2-style).
@@ -80,7 +95,7 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
 
 # Registry mapping architecture names to embedding classes
 EMBEDDING_REGISTRY = {
-    "transformer": PraxisFactorizedEmbeddings,
+    "transformer": PraxisEmbeddings,
     "nano": PraxisLearnedEmbeddings,
     "conv": PraxisFactorizedEmbeddings,
     "recurrent": PraxisFactorizedEmbeddings,

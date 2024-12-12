@@ -24,11 +24,6 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
         self.causal = config.causal
-        self.hidden_size = config.num_dims
-        self.num_heads = config.num_heads
-        self.num_queries = config.num_queries
-        self.num_query_heads = self.num_heads * self.num_queries
-
         # Set the core attention mechanism
         self.linear = config.linear
         self.differential = config.differential
@@ -36,6 +31,15 @@ class PraxisAttention(nn.Module):
         assert (
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
+
+        self.hidden_size = config.num_dims
+        self.num_heads = (
+            config.num_heads
+            if not self.differential
+            else (config.num_heads + 2 - 1) // 2
+        )
+        self.num_queries = config.num_queries
+        self.num_query_heads = self.num_heads * self.num_queries
 
         self.multiplier = 2 if self.differential else 1
         self.head_dim = self.hidden_size // self.num_heads // self.multiplier
@@ -96,10 +100,6 @@ class PraxisAttention(nn.Module):
             # Compute an exponential moving average-based gating mechanism
             inputs = self.gating(inputs)
 
-        # Determine chunk size
-        chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
-        num_chunks = (seq_len + chunk_size - 1) // chunk_size
-
         # Initialize QKV projections
         q = (
             self.query(inputs)
@@ -120,6 +120,10 @@ class PraxisAttention(nn.Module):
         q = self.dropout(q)
         k = self.dropout(k)
         v = self.dropout(v)
+
+        # Determine chunk size
+        chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
+        num_chunks = (seq_len + chunk_size - 1) // chunk_size
 
         outputs = []
 
@@ -210,6 +214,9 @@ class PraxisGatedAttention(nn.Module):
     According to MEGA, "Single-head gated attention has been empirically
     shown [to be] as performant as vanilla multi-head attention."
     https://arxiv.org/abs/2209.10655
+    We implement a second attention head, and subtract it from the first, as
+    a form of Differential Attention:
+    https://arxiv.org/abs/2410.05258
     """
 
     def __init__(self, config: AutoConfig):
@@ -219,9 +226,9 @@ class PraxisGatedAttention(nn.Module):
         head_dim = hidden_dim // 2
 
         # Projections
-        self.query = nn.Linear(hidden_dim, double_dim)
-        self.key = nn.Linear(hidden_dim, double_dim)
-        self.value = nn.Linear(hidden_dim, hidden_dim)
+        self.query = nn.Linear(hidden_dim, double_dim, bias=False)
+        self.key = nn.Linear(hidden_dim, double_dim, bias=False)
+        self.value = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
         # Positional encoding
         self.encoding = ENCODING_REGISTRY[config.encoding](config)
@@ -245,7 +252,7 @@ class PraxisGatedAttention(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.output = nn.Linear(hidden_dim, hidden_dim)
         self.approximator = nn.Sequential(
-            PraxisGLU(config, activation="mish"),
+            PraxisGLU(config, activation="gelu"),
             nn.Sigmoid(),
         )
 
@@ -305,8 +312,7 @@ class PraxisGatedAttention(nn.Module):
 
         # Apply attention to values and normalize
         out = torch.bmm(diff_weights, v)  # [B, S, E]
-        out = self.norm(out)
-        out = out * (1 - self.lambda_init)
+        out = self.norm(out) * (1 - self.lambda_init)
 
         return self.dropout(out)
 
