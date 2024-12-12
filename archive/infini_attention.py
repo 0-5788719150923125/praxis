@@ -21,7 +21,7 @@ class PraxisMemory(nn.Module):
         self.epsilon = 1e-8
         self.use_delta = True
         self.num_heads = config.num_heads
-        self.head_dim = config.num_dims // self.num_heads
+        self.head_dim = config.hidden_size // self.num_heads
         multiplier = 2 if config.differential else 1
         self.betas = nn.Parameter(torch.ones(self.num_heads, 1, self.head_dim))
         self.memory_states = nn.Parameter(

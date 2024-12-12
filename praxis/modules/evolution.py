@@ -18,9 +18,9 @@ class GenomicBottleneck(nn.Module):
         num_trials: int = 5,
     ):
         super().__init__()
-        self.input_dim = config.num_dims
+        self.input_dim = config.hidden_size
         self.quarter_input_dim = self.input_dim // 4
-        self.output_dim = config.num_dims
+        self.output_dim = config.hidden_size
         self.genome_dim = genome_dim
         self.population_size = population_size
         self.mutation_rate = mutation_rate
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     print("Running tests for GenomicBottleneck...")
 
     class MockConfig:
-        num_dims = 512  # Must be divisible by 4 for splitting
+        hidden_size = 512  # Must be divisible by 4 for splitting
 
     # Test parameters
     config = MockConfig()
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     )
 
     # Test forward pass
-    test_input = torch.randn(batch_size, sequence_length, config.num_dims)
+    test_input = torch.randn(batch_size, sequence_length, config.hidden_size)
     output = layer(test_input)
     print(f"\nForward pass shape test:")
     print(f"Input shape: {test_input.shape}")
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     assert output.shape == (
         batch_size,
         sequence_length,
-        config.num_dims,
+        config.hidden_size,
     ), "Shape mismatch!"
 
     # Test gradient flow
@@ -225,7 +225,7 @@ if __name__ == "__main__":
 
     # Generate different test inputs for diversity
     test_inputs = [
-        torch.randn(batch_size, sequence_length, config.num_dims) for _ in range(5)
+        torch.randn(batch_size, sequence_length, config.hidden_size) for _ in range(5)
     ]
 
     fitness_history = []

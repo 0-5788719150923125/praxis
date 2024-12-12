@@ -15,7 +15,7 @@ class PraxisEmbeddings(nn.Sequential):
     def __init__(self, config: AutoConfig):
         layers = OrderedDict(
             [
-                ("tokens", nn.Embedding(config.vocab_size, config.num_dims)),
+                ("tokens", nn.Embedding(config.vocab_size, config.hidden_size)),
                 ("dropout", nn.Dropout(config.dropout)),
             ]
         )
@@ -31,10 +31,10 @@ class PraxisLearnedEmbeddings(nn.Sequential):
     def __init__(self, config: AutoConfig):
         layers = OrderedDict(
             [
-                ("wte", nn.Embedding(config.vocab_size, config.num_embeds)),
-                ("wpe", nn.Embedding(config.context_length, config.num_embeds)),
+                ("wte", nn.Embedding(config.vocab_size, config.embed_size)),
+                ("wpe", nn.Embedding(config.context_length, config.embed_size)),
                 ("dropout", nn.Dropout(config.dropout)),
-                ("reduction", nn.Linear(config.num_embeds, config.num_dims)),
+                ("reduction", nn.Linear(config.embed_size, config.hidden_size)),
             ]
         )
         super().__init__(layers)
@@ -64,13 +64,13 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
     """
 
     def __init__(self, config: AutoConfig):
-        bottleneck_dim = config.num_dims // 2
+        bottleneck_dim = config.hidden_size // 2
         layers = OrderedDict(
             [
-                ("tokens", nn.Embedding(config.vocab_size, config.num_embeds)),
-                ("residual", nn.Linear(config.num_embeds, config.num_dims)),
-                ("compress", nn.Linear(config.num_embeds, bottleneck_dim)),
-                ("decompress", nn.Linear(bottleneck_dim, config.num_dims)),
+                ("tokens", nn.Embedding(config.vocab_size, config.embed_size)),
+                ("residual", nn.Linear(config.embed_size, config.hidden_size)),
+                ("compress", nn.Linear(config.embed_size, bottleneck_dim)),
+                ("decompress", nn.Linear(bottleneck_dim, config.hidden_size)),
                 ("dropout", nn.Dropout(config.dropout)),
             ]
         )

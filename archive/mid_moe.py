@@ -11,20 +11,20 @@ class SparseMoEMLP(nn.Module):
         super().__init__()
         self.num_experts = num_experts
         self.top_k = top_k
-        self.num_dims = config.num_dims
+        self.hidden_size = config.hidden_size
 
         # Single set of expert weights
         self.w1 = nn.Parameter(
-            torch.randn(num_experts, config.num_dims, 4 * config.num_dims)
+            torch.randn(num_experts, config.hidden_size, 4 * config.hidden_size)
         )
         self.w2 = nn.Parameter(
-            torch.randn(num_experts, 4 * config.num_dims, config.num_dims)
+            torch.randn(num_experts, 4 * config.hidden_size, config.hidden_size)
         )
-        self.b1 = nn.Parameter(torch.zeros(num_experts, 4 * config.num_dims))
-        self.b2 = nn.Parameter(torch.zeros(num_experts, config.num_dims))
+        self.b1 = nn.Parameter(torch.zeros(num_experts, 4 * config.hidden_size))
+        self.b2 = nn.Parameter(torch.zeros(num_experts, config.hidden_size))
 
         # Router network
-        self.router = nn.Linear(config.num_dims, num_experts)
+        self.router = nn.Linear(config.hidden_size, num_experts)
 
         self.act = ACT2FN[config.activation]
 
@@ -44,7 +44,7 @@ class SparseMoEMLP(nn.Module):
         # Expert computation (in parallel)
         x_e = x.unsqueeze(2).expand(
             -1, -1, self.num_experts, -1
-        )  # (batch_size, seq_len, num_experts, num_dims)
+        )  # (batch_size, seq_len, num_experts, hidden_size)
         h = torch.einsum("bsed,edh->bseh", x_e, self.w1) + self.b1.unsqueeze(
             0
         ).unsqueeze(0)
@@ -60,8 +60,8 @@ class SparseMoEMLP(nn.Module):
 
 
 # Usage
-config = PraxisConfig(num_dims=512, activation="gelu")
+config = PraxisConfig(hidden_size=512, activation="gelu")
 moe_mlp = SparseMoEMLP(config, num_experts=8, top_k=2)
-input_tensor = torch.randn(32, 64, 512)  # (batch_size, seq_len, num_dims)
+input_tensor = torch.randn(32, 64, 512)  # (batch_size, seq_len, hidden_size)
 output = moe_mlp(input_tensor)
 print(output)

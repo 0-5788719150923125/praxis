@@ -32,7 +32,7 @@ class PraxisAttention(nn.Module):
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
-        self.hidden_size = config.num_dims
+        self.hidden_size = config.hidden_size
         self.num_heads = (
             config.num_heads
             if not self.differential
@@ -221,7 +221,7 @@ class PraxisGatedAttention(nn.Module):
 
     def __init__(self, config: AutoConfig):
         super().__init__()
-        hidden_dim = config.num_dims
+        hidden_dim = config.hidden_size
         double_dim = hidden_dim * 2
         head_dim = hidden_dim // 2
 
@@ -376,7 +376,7 @@ class ScaledDotProduct(nn.Module):
 
     def __init__(self, config: AutoConfig):
         super().__init__()
-        self.hidden_size = config.num_dims
+        self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.multiplier = 2 if config.differential else 1
@@ -752,7 +752,7 @@ class PraxisGatedEMA(nn.Module):
 
     def __init__(self, config: AutoConfig):
         super().__init__()
-        self.embed_dim = config.num_dims
+        self.embed_dim = config.hidden_size
         self.ndim = 3  # Adjust as needed
         self.scale = math.sqrt(1.0 / self.ndim)
 
@@ -897,13 +897,13 @@ def test_memory_scaling():
             self.context_length = 8192
 
     base_config = DummyConfig()
-    base_config.num_dims = HIDDEN_SIZE
+    base_config.hidden_size = HIDDEN_SIZE
     base_config.num_heads = NUM_HEADS
     base_config.num_queries = NUM_QUERIES
     base_config.memory = False
 
     memory_config = DummyConfig()
-    memory_config.num_dims = HIDDEN_SIZE
+    memory_config.hidden_size = HIDDEN_SIZE
     memory_config.num_heads = NUM_HEADS
     memory_config.num_queries = NUM_QUERIES
     memory_config.memory = True

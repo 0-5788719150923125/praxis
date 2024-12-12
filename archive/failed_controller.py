@@ -40,7 +40,7 @@ class PraxisController(nn.Module):
         self.next_free_idx = 0
 
         # Predictor network
-        hidden_size = config.num_dims
+        hidden_size = config.hidden_size
         self.prism = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Dropout(config.dropout),

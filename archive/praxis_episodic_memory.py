@@ -17,7 +17,7 @@ class PraxisMemory(nn.Module):
 
     def __init__(self, config: PretrainedConfig):
         super().__init__()
-        self.hidden_dim = config.num_dims
+        self.hidden_dim = config.hidden_size
         self.dropout = config.dropout
         self.surprise_threshold = 0.5
         self.max_memory_length = 32
@@ -655,7 +655,7 @@ def test_praxis_memory():
         def __init__(self, config):
             super().__init__()
             self.memory = PraxisMemory(config)
-            self.attn_norm = nn.LayerNorm(config.num_dims)
+            self.attn_norm = nn.LayerNorm(config.hidden_size)
             self.attn = PraxisAttention(config)
 
         def forward(
@@ -704,7 +704,7 @@ def test_praxis_memory():
 
     # Initialize model with proper parameters
     config = PretrainedConfig(
-        num_dims=embed_dim,
+        hidden_size=embed_dim,
         num_heads=num_heads,
         dropout=dropout,
         context_length=512,

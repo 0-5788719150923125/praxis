@@ -18,7 +18,7 @@ class PraxisController(nn.Module):
         super().__init__()
         assert config.shuffle, "To use `autopilot`, you must also use `shuffle=True`."
 
-        hidden_size = config.num_dims
+        hidden_size = config.hidden_size
         self.loss_scale = 0.001
 
         # Learn embeddings for all possible experts

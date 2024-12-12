@@ -6,8 +6,8 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        num_embeds=720,
-        num_dims=360,
+        embed_size=720,
+        hidden_size=360,
         num_heads=3,
         num_queries=2,
         depth=7,
@@ -54,8 +54,8 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
-        self.num_embeds = num_embeds
-        self.num_dims = num_dims
+        self.embed_size = embed_size
+        self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.num_queries = num_queries
         self.depth = depth

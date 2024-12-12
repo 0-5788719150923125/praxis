@@ -16,7 +16,7 @@ class PraxisRecurrent(nn.Module):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__()
-        hidden_dim = config.num_dims
+        hidden_dim = config.hidden_size
 
         self.norm = nn.LayerNorm(hidden_dim)
         self.lstm = nn.LSTM(
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # Mock AutoConfig class
     @dataclass
     class AutoConfig:
-        num_dims: int = 768
+        hidden_size: int = 768
         dropout: float = 0.1
         causal: bool = True
 
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     # Test 1: Basic Functionality (Short Sequence)
     print("\nTest 1: Short Sequence Test")
     batch_size, seq_len = 2, 32
-    x_short = torch.randn(batch_size, seq_len, config.num_dims).to(device)
+    x_short = torch.randn(batch_size, seq_len, config.hidden_size).to(device)
 
     try:
         output_short = model(x_short)
@@ -132,7 +132,7 @@ if __name__ == "__main__":
     # Test 3: Memory and Speed Test
     print("\nTest 3: Memory and Speed Test")
     batch_size, seq_len = 4, 512
-    x_long = torch.randn(batch_size, seq_len, config.num_dims).to(device)
+    x_long = torch.randn(batch_size, seq_len, config.hidden_size).to(device)
 
     try:
         output, elapsed_time, max_memory = run_memory_test(model, x_long)

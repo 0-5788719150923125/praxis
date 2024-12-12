@@ -113,8 +113,8 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 config = PraxisConfig(
-    num_embeds=512,
-    num_dims=384,
+    embed_size=512,
+    hidden_size=384,
     depth=6,
     num_heads=8,
     device_map="cuda:0",

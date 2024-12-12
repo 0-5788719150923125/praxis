@@ -18,7 +18,7 @@ class NoPE(nn.Module):
         super().__init__()
         self.num_query_heads = config.num_heads * config.num_queries
         self.multiplier = 2 if config.differential else 1
-        self.head_dim = config.num_dims // config.num_heads // self.multiplier
+        self.head_dim = config.hidden_size // config.num_heads // self.multiplier
         # Initialize scaling factors - one per head with linspace
         self.scaled = scaled
         if self.scaled:

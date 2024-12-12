@@ -51,7 +51,7 @@ class PraxisDecoder(nn.Module):
                 # identity_path=os.path.join(os.getcwd(), "id.key"),
             )
             schema = BatchTensorDescriptor(
-                config.num_dims,
+                config.hidden_size,
             )
             attn_schema = BatchTensorDescriptor(
                 1,

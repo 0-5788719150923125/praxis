@@ -42,7 +42,7 @@ class LayerShuffle(nn.Module):
 
         # Keep learned embeddings for each position and context token
         self.embeddings = nn.Parameter(
-            torch.randn(config.depth, num_context_tokens, config.num_dims)
+            torch.randn(config.depth, num_context_tokens, config.hidden_size)
         )
         # Initialize with small values for stability
         nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
@@ -139,10 +139,10 @@ class MixtureRouter(nn.Module):
         self.depth = config.depth
 
         # Depth embedding matching the hidden size of a token
-        self.depth_embedding = nn.Embedding(config.depth, config.num_dims)
+        self.depth_embedding = nn.Embedding(config.depth, config.hidden_size)
 
         # Final linear layer to produce routing logits
-        self.router = nn.Linear(config.num_dims, config.num_experts)
+        self.router = nn.Linear(config.hidden_size, config.num_experts)
         self.current_route = []
 
         self.visualizer = (
@@ -252,7 +252,7 @@ if __name__ == "__main__":
     # Mock config
     class MockConfig:
         def __init__(self):
-            self.num_dims = 512
+            self.hidden_size = 512
             self.num_experts = 8
             self.debug = False
             self.depth = 5

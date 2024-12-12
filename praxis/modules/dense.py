@@ -19,10 +19,10 @@ class PraxisMLP(nn.Sequential):
         super().__init__(
             OrderedDict(
                 [
-                    ("up", nn.Linear(config.num_dims, 4 * config.num_dims)),
+                    ("up", nn.Linear(config.hidden_size, 4 * config.hidden_size)),
                     ("act", ACT2FN[activation]),
                     ("dropout", nn.Dropout(config.dropout)),
-                    ("down", nn.Linear(4 * config.num_dims, config.num_dims)),
+                    ("down", nn.Linear(4 * config.hidden_size, config.hidden_size)),
                 ]
             )
         )
@@ -38,10 +38,10 @@ class PraxisGLU(nn.Module):
     def __init__(self, config: AutoConfig, activation=None, *args, **kwargs):
         super().__init__()
         activation = activation or config.activation
-        self.up = nn.Linear(config.num_dims, int((8 / 3) * config.num_dims))
+        self.up = nn.Linear(config.hidden_size, int((8 / 3) * config.hidden_size))
         self.act = ACT2CLS[activation](*args, **kwargs)
         self.dropout = nn.Dropout(config.dropout)
-        self.down = nn.Linear(int((4 / 3) * config.num_dims), config.num_dims)
+        self.down = nn.Linear(int((4 / 3) * config.hidden_size), config.hidden_size)
 
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)
@@ -67,7 +67,7 @@ class PraxisPoly(nn.Module):
         **kwargs
     ):
         super().__init__()
-        dim = config.num_dims
+        dim = config.hidden_size
         self.dim = dim
         self.degree = degree
         self.reduced_dim = int(dim * bottleneck)

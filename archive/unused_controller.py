@@ -11,10 +11,12 @@ class PraxisController(nn.Module):
         self.epsilon = 1e-8
         self.tau = 0.5
 
-        self.recurrent = nn.GRU(config.num_dims, config.num_dims, batch_first=True)
-        self.reduction = SequenceReduction(config.num_dims, config.num_dims // 2)
-        self.psi = nn.Linear(config.num_dims, config.num_layers)
-        self.alpha = nn.Linear(1, config.num_dims)
+        self.recurrent = nn.GRU(
+            config.hidden_size, config.hidden_size, batch_first=True
+        )
+        self.reduction = SequenceReduction(config.hidden_size, config.hidden_size // 2)
+        self.psi = nn.Linear(config.hidden_size, config.num_layers)
+        self.alpha = nn.Linear(1, config.hidden_size)
 
         self.register_buffer(
             "order_ema", torch.zeros(config.num_layers, config.num_layers)
@@ -24,13 +26,13 @@ class PraxisController(nn.Module):
 
     def forward(self, inputs):
         # Pass through GRU
-        gru_out, _ = self.recurrent(inputs)  # Shape: (batch_size, seq_len, num_dims)
+        gru_out, _ = self.recurrent(inputs)  # Shape: (batch_size, seq_len, hidden_size)
 
         # Learnable reduction of GRU outputs
-        reduced_gru = self.reduction(gru_out)  # Shape: (batch_size, num_dims)
+        reduced_gru = self.reduction(gru_out)  # Shape: (batch_size, hidden_size)
 
         # Average across batches
-        reduced_gru = reduced_gru.mean(dim=0)  # Shape: (num_dims)
+        reduced_gru = reduced_gru.mean(dim=0)  # Shape: (hidden_size)
 
         # Compute logits for each expert
         logits = self.psi(reduced_gru)  # Shape: (num_experts)
@@ -77,14 +79,14 @@ class PraxisController(nn.Module):
 
 
 class SequenceReduction(nn.Module):
-    def __init__(self, input_dim, hiddenum_dims):
+    def __init__(self, input_dim, hiddehidden_size):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hiddenum_dims)
-        self.fc2 = nn.Linear(hiddenum_dims, 1)
+        self.fc1 = nn.Linear(input_dim, hiddehidden_size)
+        self.fc2 = nn.Linear(hiddehidden_size, 1)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, input_dim)
-        proj = self.fc1(x)  # (batch_size, seq_len, hiddenum_dims)
+        proj = self.fc1(x)  # (batch_size, seq_len, hiddehidden_size)
         weights = F.softmax(self.fc2(proj).squeeze(-1), dim=1)  # (batch_size, seq_len)
         x_reduced = torch.bmm(weights.unsqueeze(1), x)  # (batch_size, 1, input_dim)
         return x_reduced.squeeze(1)  # (batch_size, input_dim)

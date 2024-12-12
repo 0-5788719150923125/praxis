@@ -12,7 +12,7 @@ from transformers import AutoConfig
 class SMEARConfig:
     """Configuration class for SMEAR module"""
 
-    num_dims: int
+    hidden_size: int
     num_experts: int
     dropout: float = 0.1
 
@@ -29,12 +29,12 @@ class PraxisSMEAR(nn.Module):
         super().__init__()
 
         self.num_experts = config.num_experts
-        self.num_dims = config.num_dims
+        self.hidden_size = config.hidden_size
         self.experts = nn.ModuleList(experts)  # Properly register experts as submodules
 
         # Router network: simple linear -> softmax
         self.router = nn.Sequential(
-            nn.Linear(self.num_dims, self.num_experts),
+            nn.Linear(self.hidden_size, self.num_experts),
             nn.Softmax(dim=-1),
         )
 
@@ -150,7 +150,7 @@ if __name__ == "__main__":
 
     experts = [SimpleMLP(input_dim, hidden_dim, output_dim) for _ in range(num_experts)]
 
-    config = SMEARConfig(num_dims=input_dim, num_experts=num_experts)
+    config = SMEARConfig(hidden_size=input_dim, num_experts=num_experts)
     smear = PraxisSMEAR(config, experts)
 
     batch_size = 4
@@ -187,7 +187,7 @@ if __name__ == "__main__":
         for _ in range(num_experts)
     ]
 
-    config = SMEARConfig(num_dims=hidden_size, num_experts=num_experts)
+    config = SMEARConfig(hidden_size=hidden_size, num_experts=num_experts)
     attention_smear = PraxisSMEAR(config, attention_experts)
 
     batch_size = 4
@@ -218,7 +218,7 @@ if __name__ == "__main__":
         for _ in range(num_experts)
     ]
 
-    config = SMEARConfig(num_dims=input_size, num_experts=num_experts)
+    config = SMEARConfig(hidden_size=input_size, num_experts=num_experts)
     lstm_smear = PraxisSMEAR(config, lstm_experts)
 
     # Test LSTM with sequence data

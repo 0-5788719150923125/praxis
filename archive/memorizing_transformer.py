@@ -33,7 +33,7 @@ class PraxisMemory(nn.Module):
             max_memories = self.chunk_size * 64
             self.sample_size = 0.25
 
-        head_dim = config.num_dims // config.num_heads
+        head_dim = config.hidden_size // config.num_heads
         num_query_heads = self.num_heads * config.num_queries
 
         # Gating parameter: one gate per query head

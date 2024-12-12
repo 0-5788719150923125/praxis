@@ -31,8 +31,8 @@ class PraxisKAN(nn.Module):
         spline_weight_init_scale: float = 0.1,
     ) -> None:
         super().__init__()
-        input_dim = config.num_dims
-        output_dim = config.num_dims
+        input_dim = config.hidden_size
+        output_dim = config.hidden_size
         base_activation = ACT2FN[config.activation]
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         print(f"\nTesting configuration: {config}")
 
         class DummyConfig:
-            num_dims = config["dim"]
+            hidden_size = config["dim"]
             activation = "silu"
 
         # Create model
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     print("\nAdditional tests for edge cases:")
 
     class DummyConfig:
-        num_dims = 2
+        hidden_size = 2
         activation = "silu"
 
     # Test with zero inputs

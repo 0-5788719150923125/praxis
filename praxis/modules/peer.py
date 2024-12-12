@@ -20,7 +20,7 @@ class PraxisPEER(nn.Module):
     def __init__(self, config: AutoConfig):
         super().__init__()
 
-        num_dims = config.num_dims
+        hidden_size = config.hidden_size
         key_dims = config.expert["key_dims"]
         self.k = config.expert["k"]
         self.num_heads = config.expert["num_heads"]
@@ -34,7 +34,7 @@ class PraxisPEER(nn.Module):
         assert (
             self.num_experts**0.5
         ).is_integer(), "`self.num_experts` needs to be a perfect square"
-        assert (num_dims % 2) == 0, "`num_dims` should be divisible by 2"
+        assert (hidden_size % 2) == 0, "`hidden_size` should be divisible by 2"
 
         class Permute(nn.Module):
             def __init__(self):
@@ -55,8 +55,8 @@ class PraxisPEER(nn.Module):
                 return x.view(b, s, d)
 
         self.queries = nn.Sequential(
-            BatchNorm1d(num_dims),
-            nn.Linear(num_dims, key_dims * self.num_heads * 2, bias=False),
+            BatchNorm1d(hidden_size),
+            nn.Linear(hidden_size, key_dims * self.num_heads * 2, bias=False),
             nn.Unflatten(-1, (2, self.num_heads, key_dims)),
             Permute(),
         )
@@ -66,11 +66,11 @@ class PraxisPEER(nn.Module):
         )
         nn.init.normal_(self.keys, std=0.02)
 
-        self.down = nn.Embedding(self.num_experts * self.num_sets, num_dims)
+        self.down = nn.Embedding(self.num_experts * self.num_sets, hidden_size)
         nn.init.xavier_uniform_(self.down.weight)
         self.act = ACT2FN[config.activation]
         self.dropout = nn.Dropout(config.dropout)
-        self.up = nn.Embedding(self.num_experts * self.num_sets, num_dims)
+        self.up = nn.Embedding(self.num_experts * self.num_sets, hidden_size)
         nn.init.xavier_uniform_(self.up.weight)
 
     def forward(self, inputs: Tensor):

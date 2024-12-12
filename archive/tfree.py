@@ -241,7 +241,7 @@ class TFreeModelForCausalLM(nn.Module):
         self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
         lm_config = GPT2Config(
             vocab_size=config.vocab_size,
-            num_embedsd=config.embedding_dim,
+            embed_size=config.embedding_dim,
             num_layers=3,
             num_heads=4,
         )

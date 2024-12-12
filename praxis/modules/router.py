@@ -16,7 +16,7 @@ class PraxisMixtureOfDepths(nn.Linear):
     __version__ = "0.1.0"
 
     def __init__(self, config: AutoConfig):
-        super().__init__(in_features=config.num_dims, out_features=1)
+        super().__init__(in_features=config.hidden_size, out_features=1)
         self.config = config
         self.capacity = config.capacity
         assert (

@@ -18,7 +18,7 @@ class PraxisCompressiveMemory(nn.Module):
 
     def __init__(self, config: AutoConfig):
         super().__init__()
-        self.hidden_size = config.num_dims
+        self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries

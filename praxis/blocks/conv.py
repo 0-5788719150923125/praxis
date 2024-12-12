@@ -21,7 +21,7 @@ class PraxisConv(nn.Module):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
-        hidden_dim = config.num_dims
+        hidden_dim = config.hidden_size
         projection = int(hidden_dim * (1 + config.capacity))
 
         # Local processing
@@ -308,8 +308,8 @@ if __name__ == "__main__":
     # Mock AutoConfig class to simulate the configuration
     @dataclass
     class AutoConfig:
-        num_dims: int = 768
-        num_embeds: int = 768
+        hidden_size: int = 768
+        embed_size: int = 768
         num_heads: int = 4
         context_length: int = 2048
         vocab_size: int = 50257
@@ -348,7 +348,7 @@ if __name__ == "__main__":
     # Test 1: Basic Functionality (Short Sequence)
     print("\nTest 1: Short Sequence Test")
     # Test with a sequence length that's exactly half of chunk_size
-    x_short = torch.randn(2, chunk_size // 2, config.num_dims).to(device)
+    x_short = torch.randn(2, chunk_size // 2, config.hidden_size).to(device)
 
     try:
         output_short = model(x_short)
@@ -360,7 +360,7 @@ if __name__ == "__main__":
 
     # Test 2: Long Sequence Handling
     print("\nTest 2: Long Sequence Test")
-    x_long = torch.randn(2, chunk_size * 4, config.num_dims).to(
+    x_long = torch.randn(2, chunk_size * 4, config.hidden_size).to(
         device
     )  # Test with multiple of chunk_size
 
@@ -386,7 +386,7 @@ if __name__ == "__main__":
         # Adjust stride accordingly (for simplicity, stride = cs // 2)
         current_stride = cs // 2
         model_test = PraxisConv(config, chunk_size=cs, stride=current_stride).to(device)
-        x_test = torch.randn(1, cs * 4, config.num_dims).to(device)
+        x_test = torch.randn(1, cs * 4, config.hidden_size).to(device)
         output, duration, memory = run_memory_test(model_test, x_test)
         results.append((cs, duration, memory))
         print(f"\nChunk Size: {cs}")
@@ -396,7 +396,9 @@ if __name__ == "__main__":
     # Test 4: Gradient Flow Test
     print("\nTest 4: Gradient Flow Test")
     model.zero_grad()
-    x = torch.randn(2, chunk_size * 2, config.num_dims, requires_grad=True).to(device)
+    x = torch.randn(2, chunk_size * 2, config.hidden_size, requires_grad=True).to(
+        device
+    )
 
     try:
         output = model(x)
@@ -417,7 +419,7 @@ if __name__ == "__main__":
 
     # Test 5: Chunk Boundary Test
     print("\nTest 5: Chunk Boundary Test")
-    x = torch.randn(1, chunk_size * 2, config.num_dims).to(device)
+    x = torch.randn(1, chunk_size * 2, config.hidden_size).to(device)
 
     try:
         # Get outputs for consecutive chunks
@@ -445,7 +447,7 @@ if __name__ == "__main__":
 
     # Test 6: Random Offset Consistency
     print("\nTest 6: Random Offset Test")
-    x = torch.randn(1, chunk_size * 3, config.num_dims).to(device)
+    x = torch.randn(1, chunk_size * 3, config.hidden_size).to(device)
 
     try:
         # Multiple forward passes should give similar results due to deterministic processing

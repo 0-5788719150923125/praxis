@@ -19,7 +19,7 @@ class PraxisGraph(nn.Module):
         # Core dimensions
         self.causal = config.causal
         self.num_experts = config.num_experts
-        self.hidden_size = config.num_dims
+        self.hidden_size = config.hidden_size
         self.num_context_tokens = 3  # Maintain API compatibility
 
         # Expert node embeddings
