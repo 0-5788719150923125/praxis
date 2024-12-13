@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.functional import ghostmax
 from praxis.modules.dense import PraxisGLU
 from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.memory import PraxisCompressiveMemory
@@ -37,7 +38,7 @@ class PraxisAttention(nn.Module):
         self.num_query_heads = self.num_heads * self.num_queries
 
         self.multiplier = 2 if self.differential else 1
-        self.head_dim = hidden_size // self.num_heads // self.multiplier
+        self.head_dim = hidden_size // self.num_heads
 
         self.gating = config.mega
         if self.gating:
@@ -324,26 +325,6 @@ class PraxisGatedAttention(nn.Module):
 ATTENTION_REGISTRY = {"standard": PraxisAttention, "gated": PraxisGatedAttention}
 
 
-def ghostmax(x: Tensor, dim: int = -1) -> Tensor:
-    """
-    Implementation of softmax1, which adds 1 to denominator
-    to allow for "no-op" attention.
-    https://www.evanmiller.org/attention-is-off-by-one.html
-    """
-    # Get max value for numerical stability (like in standard softmax)
-    max_score, _ = torch.max(x, dim=dim, keepdim=True)
-    x = x - max_score
-
-    # Calculate exponentials
-    exp_x = torch.exp(x)
-
-    # Sum exponentials and add 1
-    sum_exp = torch.sum(exp_x, dim=dim, keepdim=True) + 1.0
-
-    # Divide by sum plus 1
-    return exp_x / sum_exp
-
-
 class ScaledDotProduct(nn.Module):
     """
     This class implements scaled dot-product attention:
@@ -358,8 +339,7 @@ class ScaledDotProduct(nn.Module):
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.multiplier = 2 if config.differential else 1
-        self.head_dim = self.hidden_size // self.num_heads // self.multiplier
-        self._softmax = ghostmax
+        self.head_dim = self.hidden_size // self.num_heads
 
     def compute_scores(self, q, k, v):
         scaling = 1.0 / math.sqrt(self.head_dim)
@@ -375,7 +355,7 @@ class ScaledDotProduct(nn.Module):
         causal_mask: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
     ):
-        weights = self._softmax(scores, dim=-1)
+        weights = ghostmax(scores, dim=-1)
         return self._compute_outputs(weights, v)
 
     def _compute_outputs(self, weights, v):
@@ -520,7 +500,7 @@ class Differential(ScaledDotProduct):
 
     def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
         batch_size, num_heads, seq_len, _ = scores.shape
-        attn_weights = self._softmax(scores, dim=-1)
+        attn_weights = ghostmax(scores, dim=-1)
 
         # First fix v's sequence length and head dimension
         v = v.transpose(2, 3).reshape(batch_size, self.num_heads, seq_len, -1)
