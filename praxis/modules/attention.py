@@ -295,10 +295,10 @@ class PraxisGatedAttention(nn.Module):
         )  # [B, S, S]
 
         # Apply attention to values and normalize
-        out = torch.bmm(diff_weights, v)  # [B, S, E]
-        out = self.norm(out) * (1 - self.lambda_init)
-
-        return self.dropout(out)
+        attn = torch.bmm(diff_weights, v)  # [B, S, E]
+        attn = self.norm(attn)
+        attn = attn * (1 - self.lambda_init)
+        return self.dropout(attn)
 
     def apply_causal_mask(self, scores):
         # scores shape: [B, S, 2, S]
