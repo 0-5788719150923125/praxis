@@ -4,7 +4,6 @@ from typing import OrderedDict
 import torch
 import torch.nn as nn
 from torch import Tensor
-from transformers import AutoConfig
 
 
 class PraxisEmbeddings(nn.Sequential):
@@ -12,7 +11,7 @@ class PraxisEmbeddings(nn.Sequential):
     A simple embeddings module with dropout.
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         layers = OrderedDict(
             [
                 ("tokens", nn.Embedding(config.vocab_size, config.hidden_size)),
@@ -28,7 +27,7 @@ class PraxisLearnedEmbeddings(nn.Sequential):
     Uses Sequential organization of layers.
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         layers = OrderedDict(
             [
                 ("wte", nn.Embedding(config.vocab_size, config.embed_size)),
@@ -63,7 +62,7 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
     Uses Sequential organization of layers.
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         bottleneck_dim = config.hidden_size // 2
         layers = OrderedDict(
             [

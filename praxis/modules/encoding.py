@@ -3,7 +3,6 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import AutoConfig
 
 
 class NoPE(nn.Module):
@@ -14,7 +13,7 @@ class NoPE(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, scaled: bool = False):
+    def __init__(self, config: "AutoConfig", scaled: bool = False):
         super().__init__()
         self.num_query_heads = config.num_heads * config.num_queries
         self.multiplier = 2 if config.differential else 1
@@ -52,7 +51,7 @@ class ALiBi(NoPE):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
         # Pre-compute the ALiBi slopes
         slopes = 2 ** (-8 * torch.arange(1, config.num_heads + 1) / config.num_heads)
@@ -84,7 +83,7 @@ class RoPE(NoPE):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
         # Important: RoPE operates on pairs of dimensions
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
@@ -173,7 +172,7 @@ class YaRN(RoPE):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 

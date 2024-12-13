@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.modules.dense import PraxisGLU
 from praxis.modules.encoding import ENCODING_REGISTRY
@@ -21,7 +20,7 @@ class PraxisAttention(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.causal = config.causal
         # Set the core attention mechanism
@@ -32,7 +31,7 @@ class PraxisAttention(nn.Module):
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
-        self.hidden_size = config.hidden_size
+        hidden_size = config.hidden_size
         self.num_heads = (
             config.num_heads
             if not self.differential
@@ -42,7 +41,7 @@ class PraxisAttention(nn.Module):
         self.num_query_heads = self.num_heads * self.num_queries
 
         self.multiplier = 2 if self.differential else 1
-        self.head_dim = self.hidden_size // self.num_heads // self.multiplier
+        self.head_dim = hidden_size // self.num_heads // self.multiplier
 
         self.gating = config.mega
         if self.gating:
@@ -50,18 +49,16 @@ class PraxisAttention(nn.Module):
 
         # Query and key projections for differential heads
         self.query = nn.Linear(
-            self.hidden_size,
+            hidden_size,
             self.num_query_heads * self.head_dim * self.multiplier,
             bias=False,
         )
         self.key = nn.Linear(
-            self.hidden_size,
+            hidden_size,
             self.num_heads * self.head_dim * self.multiplier,
             bias=False,
         )
-        self.value = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
-        )
+        self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
 
         self.memory = config.memory
         self.chunk_size = 0
@@ -90,7 +87,7 @@ class PraxisAttention(nn.Module):
 
         # Standard output projection
         self.output = nn.Linear(
-            self.num_query_heads * self.head_dim, self.hidden_size, bias=False
+            self.num_query_heads * self.head_dim, hidden_size, bias=False
         )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
@@ -219,11 +216,10 @@ class PraxisGatedAttention(nn.Module):
     https://arxiv.org/abs/2410.05258
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         hidden_dim = config.hidden_size
         double_dim = hidden_dim * 2
-        head_dim = hidden_dim // 2
 
         # Projections
         self.query = nn.Linear(hidden_dim, double_dim, bias=False)
@@ -235,30 +231,21 @@ class PraxisGatedAttention(nn.Module):
 
         # Lambda parameters
         self.lambda_init = 0.8
-        self.lambda_q1 = nn.Parameter(
-            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
-        )
-        self.lambda_k1 = nn.Parameter(
-            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
-        )
-        self.lambda_q2 = nn.Parameter(
-            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
-        )
-        self.lambda_k2 = nn.Parameter(
-            torch.zeros(head_dim, dtype=torch.float32).normal_(mean=0, std=0.1)
-        )
+        self.lambda_q1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_k1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_q2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_k2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
 
-        self.norm = nn.RMSNorm(2 * head_dim, eps=config.epsilon)
+        self.norm = nn.RMSNorm(hidden_dim, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
-        self.output = nn.Linear(hidden_dim, hidden_dim)
+        self.output = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.approximator = nn.Sequential(
-            PraxisGLU(config, activation="gelu"),
+            PraxisGLU(config, activation="swish"),
             nn.Sigmoid(),
         )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
         scores, v = self.compute_scores(inputs)
-        # Apply masks before any attention computations
         scores = self.apply_causal_mask(scores)
         scores = self.apply_attention_mask(scores, attention_mask)
         weights = self.compute_weights(scores, v)
@@ -294,11 +281,8 @@ class PraxisGatedAttention(nn.Module):
         return scores, v
 
     def compute_weights(self, scores, v):
-        B, S, _, _ = scores.shape
-
         # Apply softmax
-        attn_weights = ghostmax(scores, dim=-1)  # [B, S, 2, S]
-        attn_weights = self.dropout(attn_weights)
+        attn_weights = self.dropout(ghostmax(scores, dim=-1))  # [B, S, 2, S]
 
         # Compute lambda scaling
         lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1))
@@ -318,23 +302,21 @@ class PraxisGatedAttention(nn.Module):
 
     def apply_causal_mask(self, scores):
         # scores shape: [B, S, 2, S]
-        B, S, _, _ = scores.shape
+        seq_len = scores.size(1)
         # Create causal mask
         seq_mask = torch.triu(
-            torch.ones((S, S), device=scores.device), diagonal=1
+            torch.ones((seq_len, seq_len), device=scores.device), diagonal=1
         ).bool()
         # Expand mask for broadcasting
         seq_mask = seq_mask.unsqueeze(0).unsqueeze(2)
         # Apply to both attention components
-        scores = scores.masked_fill(seq_mask, -1e9)  # [B, S, 2, S]
-        return scores
+        return scores.masked_fill(seq_mask, float("-inf"))  # [B, S, 2, S]
 
     def apply_attention_mask(self, scores, attention_mask):
         # Reshape attention_mask for broadcasting
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(1)) * -1e9
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(1)) * -1e12
         # Broadcasting: [B, 1, 1, S] -> [B, S, 2, S]
-        scores = scores + attention_mask
-        return scores
+        return scores + attention_mask
 
     def compute_gated_output(self, inputs, weights):
         # Generate and apply gates
@@ -374,7 +356,7 @@ class ScaledDotProduct(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
@@ -439,7 +421,7 @@ class LinearAttention(ScaledDotProduct):
     Based on 'Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention'
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__(config)
         self.epsilon = 1e-6
         self.causal = config.causal
@@ -528,7 +510,7 @@ class Differential(ScaledDotProduct):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__(config)
         self.lambda_init = 0.8  # A good default, per the paper
         # Initialize lambda parameters similar to Microsoft
@@ -597,7 +579,7 @@ class Stickbreaking(ScaledDotProduct):
     https://github.com/IBM/ModuleFormer
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__(config)
         self.register_buffer("key_history", None)
         self.register_buffer("value_history", None)
@@ -750,7 +732,7 @@ class PraxisGatedEMA(nn.Module):
     Original Code: https://github.com/facebookresearch/mega/blob/main/fairseq/modules/exponential_moving_average.py
     """
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.embed_dim = config.hidden_size
         self.ndim = 3  # Adjust as needed

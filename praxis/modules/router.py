@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 
 class PraxisMixtureOfDepths(nn.Linear):
@@ -15,7 +14,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__(in_features=config.hidden_size, out_features=1)
         self.config = config
         self.capacity = config.capacity

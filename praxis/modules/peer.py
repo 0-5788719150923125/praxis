@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
 
@@ -17,7 +16,7 @@ class PraxisPEER(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
 
         hidden_size = config.hidden_size

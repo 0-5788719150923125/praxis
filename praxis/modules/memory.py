@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 
 class PraxisCompressiveMemory(nn.Module):
@@ -16,7 +15,7 @@ class PraxisCompressiveMemory(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads

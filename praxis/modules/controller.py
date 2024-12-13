@@ -3,7 +3,6 @@ from typing import List, Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import AutoConfig
 
 
 class PraxisController(nn.Module):
@@ -14,7 +13,7 @@ class PraxisController(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config, max_num_experts: int):
+    def __init__(self, config: "AutoConfig", max_num_experts: int):
         super().__init__()
         assert config.shuffle, "To use `autopilot`, you must also use `shuffle=True`."
 

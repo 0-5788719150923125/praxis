@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.modules.attention import ATTENTION_REGISTRY
 from praxis.modules.experts import EXPERT_REGISTRY, get_expert_config
@@ -30,13 +29,12 @@ class PraxisTransformer(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
         self.mlp_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.mlp = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
-        # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(

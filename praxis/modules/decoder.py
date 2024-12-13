@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
 from praxis.stacks import PraxisStack
@@ -18,7 +17,7 @@ class PraxisDecoder(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.debug = config.debug
         self.stack = PraxisStack(config)

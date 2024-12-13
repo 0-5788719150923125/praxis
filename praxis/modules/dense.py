@@ -2,7 +2,6 @@ from typing import Optional, OrderedDict
 
 import torch
 from torch import nn
-from transformers import AutoConfig
 
 from praxis.activations import ACT2CLS, ACT2FN
 
@@ -14,7 +13,7 @@ class PraxisMLP(nn.Sequential):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, activation=None):
+    def __init__(self, config: "AutoConfig", activation=None):
         activation = activation or config.activation
         super().__init__(
             OrderedDict(
@@ -35,7 +34,7 @@ class PraxisGLU(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig, activation=None, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", activation=None, *args, **kwargs):
         super().__init__()
         activation = activation or config.activation
         self.up = nn.Linear(config.hidden_size, int((8 / 3) * config.hidden_size))
@@ -60,7 +59,7 @@ class PraxisPoly(nn.Module):
 
     def __init__(
         self,
-        config: AutoConfig,
+        config: "AutoConfig",
         degree: int = 6,
         bottleneck: float = 0.5,
         *args,

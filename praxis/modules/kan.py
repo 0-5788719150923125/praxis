@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
 
@@ -23,7 +22,7 @@ class PraxisKAN(nn.Module):
 
     def __init__(
         self,
-        config: AutoConfig,
+        config: "AutoConfig",
         grid_min: float = -2.0,
         grid_max: float = 2.0,
         num_grids: int = 8,

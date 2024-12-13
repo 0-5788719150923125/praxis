@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
@@ -22,7 +21,7 @@ class PraxisStack(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.depth = config.depth
         self.num_experts = config.num_experts

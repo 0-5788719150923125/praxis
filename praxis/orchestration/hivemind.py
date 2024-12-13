@@ -19,7 +19,6 @@ from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils import BatchTensorDescriptor
 from hivemind.utils.networking import log_visible_maddrs
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.modules.experts import PraxisExpert
 from praxis.modules.router import PraxisMixtureOfDepths
@@ -32,7 +31,7 @@ class PraxisManagement:
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
 
         self.config = config
@@ -98,7 +97,9 @@ class PraxisManagement:
     def get_visible_maddrs(self):
         log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=self.use_ipfs)
 
-    def register_expert(self, config: AutoConfig, expert_cls: str = "hivemind_expert"):
+    def register_expert(
+        self, config: "AutoConfig", expert_cls: str = "hivemind_expert"
+    ):
         assert expert_cls in name_to_block
 
         hidden_schema = BatchTensorDescriptor(

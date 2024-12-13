@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.activations import ACT2FN
 from praxis.modules.controller import PraxisController
@@ -21,7 +20,7 @@ class LayerShuffle(nn.Module):
     https://arxiv.org/abs/2407.04513
     """
 
-    def __init__(self, config: AutoConfig, num_context_tokens: int = 0):
+    def __init__(self, config: "AutoConfig", num_context_tokens: int = 0):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth
@@ -133,7 +132,7 @@ class LayerShuffle(nn.Module):
 
 
 class MixtureRouter(nn.Module):
-    def __init__(self, config: AutoConfig):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth

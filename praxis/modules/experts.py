@@ -3,7 +3,6 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from torch import Tensor
-from transformers import AutoConfig
 
 from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly
 from praxis.modules.kan import PraxisKAN
@@ -57,7 +56,7 @@ class PraxisExpert(nn.Module):
 
     def __init__(
         self,
-        config: AutoConfig,
+        config: "AutoConfig",
         block: nn.Module = False,
         router: nn.Module = False,
         is_remote=False,
