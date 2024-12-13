@@ -32,11 +32,7 @@ class PraxisAttention(nn.Module):
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
         hidden_size = config.hidden_size
-        self.num_heads = (
-            config.num_heads
-            if not self.differential
-            else (config.num_heads + 2 - 1) // 2
-        )
+        self.num_heads = config.num_heads
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
 
