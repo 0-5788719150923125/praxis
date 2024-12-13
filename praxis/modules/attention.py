@@ -363,17 +363,11 @@ class ScaledDotProduct(nn.Module):
         self.num_query_heads = self.num_heads * config.num_queries
         self.multiplier = 2 if config.differential else 1
         self.head_dim = self.hidden_size // self.num_heads // self.multiplier
-        # if "ghost" in config.meta:
         self._softmax = ghostmax
-        # else:
-        #     self._softmax = F.softmax
-
-    def _compute_score(self, q, k):
-        scaling = 1.0 / math.sqrt(self.head_dim)
-        return torch.matmul(q, k.transpose(-2, -1)) * scaling
 
     def compute_scores(self, q, k, v):
-        scores = self._compute_score(q, k)
+        scaling = 1.0 / math.sqrt(self.head_dim)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
         return q, k, v, scores
 
     def compute_weights(
@@ -527,12 +521,6 @@ class Differential(ScaledDotProduct):
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
         )
         self.norm = nn.RMSNorm(2 * self.head_dim, eps=config.epsilon)
-
-    def compute_scores(self, q, k, v):
-        # Keep all heads for attention computation
-        scaling = 1.0 / math.sqrt(self.head_dim)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
-        return q, k, v, scores  # Return list to match parent class
 
     def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
         batch_size, num_heads, seq_len, _ = scores.shape
