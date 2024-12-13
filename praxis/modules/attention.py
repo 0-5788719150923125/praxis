@@ -547,7 +547,7 @@ class Stickbreaking(ScaledDotProduct):
         super().__init__(config)
         self.register_buffer("key_history", None)
         self.register_buffer("value_history", None)
-        self.capacity = config.capacity
+        self.history_size = 32
         self.use_history = True
 
     def compute_scores(self, q, k, v):
@@ -588,16 +588,27 @@ class Stickbreaking(ScaledDotProduct):
 
         return self._compute_outputs(weights, v)
 
-    def _get_random_slice(self, tensor: Tensor) -> Tensor:
-        """Get random slice of history with size history_slice_size"""
-        _, _, seq_len, _ = tensor.shape
-        seg_len = int(seq_len * self.capacity)
-        if seq_len <= seg_len:
-            return tensor
+    def _sample_kv_history(
+        self, k_hist: Tensor, v_hist: Tensor
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Sample fixed-size, aligned segments from key and value history tensors.
+        """
+        _, _, seq_len, _ = k_hist.shape
 
-        # Random starting point that ensures we can get history_slice_size tokens
-        start_idx = torch.randint(0, seq_len - seg_len + 1, (1,)).item()
-        return tensor[:, :, start_idx : start_idx + seg_len, :]
+        # If sequence length is less than or equal to desired history size,
+        # return full history
+        if seq_len <= self.history_size:
+            return k_hist, v_hist
+
+        # Generate random starting point that ensures we can get history_size tokens
+        start_idx = torch.randint(0, seq_len - self.history_size + 1, (1,)).item()
+
+        # Sample aligned segments from both tensors
+        k_sample = k_hist[:, :, start_idx : start_idx + self.history_size, :]
+        v_sample = v_hist[:, :, start_idx : start_idx + self.history_size, :]
+
+        return k_sample, v_sample
 
     def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         # First forward pass - initialize history
@@ -622,20 +633,12 @@ class Stickbreaking(ScaledDotProduct):
             self.value_history = v.detach()
             return k, v
 
-        try:
-            # Get random slice from history
-            hist_k = self._get_random_slice(self.key_history)
-            hist_v = self._get_random_slice(self.value_history)
+        # Get aligned history samples
+        hist_k, hist_v = self._sample_kv_history(self.key_history, self.value_history)
 
-            # Concatenate [history slice, current sequence]
-            new_k = torch.cat([hist_k, k], dim=2)
-            new_v = torch.cat([hist_v, v], dim=2)
-
-        except RuntimeError:
-            # Safety fallback
-            self.key_history = k.detach()
-            self.value_history = v.detach()
-            return k, v
+        # Concatenate [history slice, current sequence]
+        new_k = torch.cat([hist_k, k], dim=2)
+        new_v = torch.cat([hist_v, v], dim=2)
 
         # Update history
         self.key_history = new_k.detach()
