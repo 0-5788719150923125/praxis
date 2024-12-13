@@ -121,3 +121,112 @@ class PraxisPEER(nn.Module):
         outputs = torch.einsum("b n h k, b n h k d -> b n d", outputs, weights_up)
 
         return outputs
+
+
+if __name__ == "__main__":
+    # Define a suite of configurations to test
+    # Note: We ensure num_experts is always a perfect square for correctness.
+    test_configs = [
+        {
+            "hidden_size": 256,
+            "activation": "gelu",
+            "dropout": 0.1,
+            "expert": {
+                "key_dims": 16,
+                "k": 8,
+                "num_heads": 4,
+                "offset_heads": False,
+                "num_experts": 64,  # 8x8 = 64
+            },
+            "description": "Base configuration",
+        },
+        {
+            "hidden_size": 512,
+            "activation": "gelu",
+            "dropout": 0.1,
+            "expert": {
+                "key_dims": 32,
+                "k": 16,
+                "num_heads": 8,
+                "offset_heads": False,
+                "num_experts": 256,  # 16x16 = 256
+            },
+            "description": "Larger hidden size, more experts, bigger k",
+        },
+        {
+            "hidden_size": 256,
+            "activation": "gelu",
+            "dropout": 0.1,
+            "expert": {
+                "key_dims": 16,
+                "k": 4,
+                "num_heads": 2,
+                "offset_heads": True,
+                "num_experts": 49,  # 7x7 = 49
+            },
+            "description": "Fewer heads, smaller k, offset heads enabled",
+        },
+        {
+            "hidden_size": 128,
+            "activation": "gelu",
+            "dropout": 0.1,
+            "expert": {
+                "key_dims": 8,
+                "k": 8,
+                "num_heads": 4,
+                "offset_heads": False,
+                "num_experts": 81,  # 9x9=81
+            },
+            "description": "Smaller hidden size, moderate experts",
+        },
+    ]
+
+    # Define a set of test input shapes (batch_size, seq_len)
+    test_input_shapes = [
+        (2, 16),
+        (8, 64),
+        (16, 128),
+        (32, 128),
+    ]
+
+    # Helper function for running tests on a given model and input
+    def run_test(model, batch_size, seq_len, hidden_size):
+        inp = torch.randn(batch_size, seq_len, hidden_size, device="cuda")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        mem_before = torch.cuda.memory_allocated()
+        out = model(inp)
+        torch.cuda.synchronize()
+        mem_after = torch.cuda.memory_allocated()
+        mem_diff_mb = (mem_after - mem_before) / (1024**2)
+        return out.shape, mem_diff_mb
+
+    # Iterate over each config
+    for cfg in test_configs:
+        # Dynamically build a config object
+        class Config:
+            pass
+
+        config = Config()
+        config.hidden_size = cfg["hidden_size"]
+        config.activation = cfg["activation"]
+        config.dropout = cfg["dropout"]
+        config.expert = cfg["expert"]
+
+        print(f"=== Testing Configuration: {cfg['description']} ===")
+        print(config.expert)
+        print(
+            f"hidden_size={config.hidden_size}, activation={config.activation}, dropout={config.dropout}"
+        )
+
+        model = PraxisPEER(config)
+        model = model.to("cuda")
+
+        # Test multiple input shapes
+        for bs, sl in test_input_shapes:
+            shape, mem_usage = run_test(model, bs, sl, config.hidden_size)
+            print(
+                f"Input: batch_size={bs}, seq_len={sl} => Output Shape: {shape}, Memory Diff: {mem_usage:.2f} MB"
+            )
+
+        print("---------------------------------------------------")
