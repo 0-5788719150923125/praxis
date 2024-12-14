@@ -1315,9 +1315,14 @@ if not use_dashboard:
             super().__init__(refresh_rate, process_position, leave)
             self._last_print_lines = 0
             self._is_jupyter = self._check_jupyter()
-            self._jupyter_width = (
-                self._get_jupyter_width() if self._is_jupyter else None
-            )
+
+        def _check_jupyter(self) -> bool:
+            try:
+                from IPython import get_ipython
+
+                return get_ipython().__class__.__name__ == "ZMQInteractiveShell"
+            except Exception:
+                return False
 
         def print(self, *args: Any, sep: str = " ", **kwargs: Any) -> None:
             active_progress_bar = None
@@ -1342,26 +1347,27 @@ if not use_dashboard:
                 active_progress_bar = self.predict_progress_bar
 
             if active_progress_bar is not None:
-                # Create the message first
                 message = sep.join(map(str, args))
-                if not message.endswith("\n"):
-                    message += "\n"
 
-                # Calculate number of lines in new message
-                new_lines = message.count("\n")
+                if self._is_jupyter:
+                    from IPython.display import clear_output
 
-                # Prepare the clear sequence if needed
-                clear_sequence = ""
-                if self._last_print_lines > 0:
-                    clear_sequence = "\033[F\033[K" * self._last_print_lines
-
-                # Write everything in a single call
-                active_progress_bar.write(
-                    clear_sequence + message.rstrip("\n"), end="\n"
-                )
-
-                # Update line count for next time
-                self._last_print_lines = new_lines
+                    clear_output(wait=True)
+                    active_progress_bar.write(message)
+                else:
+                    # Terminal version - keep original ANSI approach
+                    if not message.endswith("\n"):
+                        message += "\n"
+                    new_lines = message.count("\n")
+                    clear_sequence = (
+                        "\033[F\033[K" * self._last_print_lines
+                        if self._last_print_lines > 0
+                        else ""
+                    )
+                    active_progress_bar.write(
+                        clear_sequence + message.rstrip("\n"), end="\n"
+                    )
+                    self._last_print_lines = new_lines
 
     progress_bar = ClearingTQDMProgressBar(process_position=0, leave=True)
     train_params["callbacks"].append(progress_bar)
