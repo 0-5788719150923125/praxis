@@ -553,6 +553,7 @@ optimizer_defaults = dict(
         "NMDA",
     ],
 )
+min_lr = 0
 if optimizer.lower() == "adamg":
     optimizer_profile = dict(
         optimizer_name="AdamG",
@@ -590,10 +591,13 @@ else:
     optimizer_profile = dict(
         optimizer_name="AdamW",
         lr=5e-4,
-        weight_decay=0,
-        eps=1e-6,
+        weight_decay=1e-4,
+        # eps=1e-6,
     )
     min_lr = 5e-6
+
+if shuffle:
+    optimizer_profile["weight_decay"] = 0
 
 # Merge the optimizer profile with the default profile
 hparams["optimizer"] = {**optimizer_defaults, **optimizer_profile}
