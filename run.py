@@ -100,6 +100,7 @@ from lightning.pytorch.callbacks import (
     GradientAccumulationScheduler,
     ModelCheckpoint,
     RichProgressBar,
+    TQDMProgressBar,
 )
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -520,7 +521,7 @@ train_params = dict(
     benchmark=True,
     deterministic=False,
     enable_checkpointing=True,
-    enable_progress_bar=False if use_dashboard else True,
+    # enable_progress_bar=None,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
     val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
