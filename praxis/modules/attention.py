@@ -314,7 +314,7 @@ class Differential(ScaledDotProduct):
         # Reshape back
         outputs = outputs.permute(0, 2, 1).contiguous()
 
-        return outputs
+        return outputs * (1 - self.lambda_init)
 
 
 class LinearAttention(ScaledDotProduct):
