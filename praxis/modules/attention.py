@@ -37,7 +37,7 @@ class PraxisAttention(nn.Module):
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
 
-        self.multiplier = 2 if self.differential else 1
+        self.factor = 2 if self.differential else 1
         self.head_dim = hidden_size // self.num_heads
 
         self.gating = config.mega
@@ -47,15 +47,19 @@ class PraxisAttention(nn.Module):
         # Query and key projections for differential heads
         self.query = nn.Linear(
             hidden_size,
-            self.num_query_heads * self.head_dim * self.multiplier,
+            self.num_query_heads * self.head_dim,
             bias=False,
         )
         self.key = nn.Linear(
             hidden_size,
-            self.num_heads * self.head_dim * self.multiplier,
+            self.num_heads * self.head_dim,
             bias=False,
         )
-        self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
+        self.value = nn.Linear(
+            hidden_size,
+            self.num_heads * self.head_dim,
+            bias=False,
+        )
 
         self.memory = config.memory
         self.chunk_size = 0
@@ -84,7 +88,7 @@ class PraxisAttention(nn.Module):
 
         # Standard output projection
         self.output = nn.Linear(
-            self.num_query_heads * self.head_dim * self.multiplier,
+            self.num_query_heads * self.head_dim,
             hidden_size,
             bias=False,
         )
@@ -99,17 +103,27 @@ class PraxisAttention(nn.Module):
         # Initialize QKV projections
         q = (
             self.query(inputs)
-            .view(batch_size, -1, self.num_query_heads * self.multiplier, self.head_dim)
+            .view(
+                batch_size,
+                seq_len,
+                self.num_query_heads * self.factor,
+                self.head_dim // self.factor,
+            )
             .transpose(1, 2)
         )
         k = (
             self.key(inputs)
-            .view(batch_size, -1, self.num_heads * self.multiplier, self.head_dim)
+            .view(
+                batch_size,
+                seq_len,
+                self.num_heads * self.factor,
+                self.head_dim // self.factor,
+            )
             .transpose(1, 2)
         )
         v = (
             self.value(inputs)
-            .view(batch_size, -1, self.num_heads, self.head_dim)
+            .view(batch_size, seq_len, self.num_heads, -1)
             .transpose(1, 2)
         )
 
@@ -218,29 +232,13 @@ class ScaledDotProduct(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
-        self.multiplier = 2 if config.differential else 1
         self.head_dim = self.hidden_size // self.num_heads
 
     def compute_scores(self, q, k, v):
         scaling = 1.0 / math.sqrt(self.head_dim)
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
+
         return q, k, v, scores
-
-    def compute_weights(
-        self,
-        q: Tensor,
-        k: Tensor,
-        v: Tensor,
-        scores,
-        causal_mask: Optional[Tensor] = None,
-        attention_mask: Optional[Tensor] = None,
-    ):
-        weights = ghostmax(scores, dim=-1)
-        return self._compute_outputs(weights, v)
-
-    def _compute_outputs(self, weights, v):
-        # Compute attention output
-        return weights @ v  # Shape: (batch_size, num_heads, seq_len, head_dim)
 
     def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
         causal_mask = None
@@ -255,14 +253,79 @@ class ScaledDotProduct(nn.Module):
             )
             scores = scores + causal_mask
 
-        # Expand attention mask to historical length
         attention_mask = F.pad(
             attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
         )
 
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+
         scores = scores + attention_mask
         return scores, causal_mask, attention_mask
+
+    def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
+        weights = ghostmax(scores, dim=-1)
+        return self._compute_outputs(weights, v)
+
+    def _compute_outputs(self, weights, v):
+        return weights @ v
+
+
+class Differential(ScaledDotProduct):
+    """
+    This class implements Differential Attention, to filter the noise from attention maps:
+    https://arxiv.org/abs/2410.05258
+    """
+
+    __version__ = "0.1.0"
+
+    def __init__(self, config: "AutoConfig"):
+        super().__init__(config)
+        factor = 2
+        self.head_dim = self.hidden_size // self.num_heads // factor
+        self.lambda_init = 0.8  # A good default, per the paper
+        self.lambda_q1 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k1 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_q2 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k2 = nn.Parameter(
+            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
+        )
+        self.norm = nn.GroupNorm(
+            num_groups=self.num_query_heads * factor,
+            num_channels=self.num_query_heads * self.head_dim * factor,
+            eps=config.epsilon,
+        )
+
+    def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
+        batch_size, _, seq_len, _ = scores.shape
+
+        attn_weights = ghostmax(scores, dim=-1)
+
+        attn_weights = attn_weights.view(batch_size, -1, 2, seq_len, seq_len)
+
+        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float())
+        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float())
+        lambda_full = lambda_1 - lambda_2 + self.lambda_init
+
+        attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+
+        outputs = torch.matmul(attn_weights, v)
+
+        # Prepare for GroupNorm
+        outputs = outputs.reshape(batch_size, seq_len, -1).permute(0, 2, 1).contiguous()
+
+        # Apply GroupNorm
+        outputs = self.norm(outputs)
+
+        # Reshape back
+        outputs = outputs.permute(0, 2, 1).contiguous()
+
+        return outputs
 
 
 class LinearAttention(ScaledDotProduct):
@@ -350,74 +413,6 @@ class LinearAttention(ScaledDotProduct):
         output = output / z.unsqueeze(-1)  # (B, H, L, D)
 
         return output
-
-
-class Differential(ScaledDotProduct):
-    """
-    This class implements Differential Attention, to filter the noise from attention maps:
-    https://arxiv.org/abs/2410.05258
-    """
-
-    __version__ = "0.1.0"
-
-    def __init__(self, config: "AutoConfig"):
-        super().__init__(config)
-        self.lambda_init = 0.8  # A good default, per the paper
-        self.lambda_q1 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.lambda_k1 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.lambda_q2 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.lambda_k2 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.norm = nn.GroupNorm(
-            num_groups=self.num_query_heads,
-            num_channels=self.num_query_heads * self.head_dim * 2,
-            eps=config.epsilon,
-        )
-
-    def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
-        batch_size, num_heads, seq_len, _ = scores.shape
-
-        attn_weights = ghostmax(scores, dim=-1)
-
-        v = v.reshape(batch_size, self.num_heads, seq_len, -1)
-
-        attn_weights = attn_weights.view(
-            batch_size, self.num_query_heads, 2, seq_len, seq_len
-        )
-
-        # Compute lambda
-        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float())
-        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float())
-        lambda_full = lambda_1 - lambda_2 + self.lambda_init
-
-        attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
-
-        if self.num_query_heads > self.num_heads:
-            v = v.repeat_interleave(self.num_query_heads // self.num_heads, dim=1)
-
-        outputs = torch.matmul(attn_weights, v)
-
-        # Prepare for GroupNorm
-        outputs = (
-            outputs.reshape(batch_size, seq_len, -1)  # [batch, seq, total_features]
-            .permute(0, 2, 1)  # [batch, total_features, seq]
-            .contiguous()
-        )
-
-        # Apply GroupNorm
-        outputs = self.norm(outputs)
-
-        # Reshape back, preserving all features
-        outputs = outputs.permute(0, 2, 1).contiguous()  # [batch, seq, total_features]
-
-        return outputs
 
 
 class Stickbreaking(ScaledDotProduct):
