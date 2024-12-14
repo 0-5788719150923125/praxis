@@ -84,7 +84,9 @@ class PraxisAttention(nn.Module):
 
         # Standard output projection
         self.output = nn.Linear(
-            self.num_query_heads * self.head_dim, hidden_size, bias=False
+            self.num_query_heads * self.head_dim * self.multiplier,
+            hidden_size,
+            bias=False,
         )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
@@ -201,128 +203,6 @@ class PraxisAttention(nn.Module):
         )
 
         return chunk_output
-
-
-class PraxisGatedAttention(nn.Module):
-    """
-    According to MEGA, "Single-head gated attention has been empirically
-    shown [to be] as performant as vanilla multi-head attention."
-    https://arxiv.org/abs/2209.10655
-    We implement a second attention head, and subtract it from the first, as
-    a form of Differential Attention:
-    https://arxiv.org/abs/2410.05258
-    """
-
-    def __init__(self, config: "AutoConfig"):
-        super().__init__()
-        hidden_dim = config.hidden_size
-        double_dim = hidden_dim * 2
-
-        # Projections
-        self.query = nn.Linear(hidden_dim, double_dim, bias=False)
-        self.key = nn.Linear(hidden_dim, double_dim, bias=False)
-        self.value = nn.Linear(hidden_dim, hidden_dim, bias=False)
-
-        # Positional encoding
-        self.encoding = ENCODING_REGISTRY[config.encoding](config)
-
-        # Lambda parameters
-        self.lambda_init = 0.8
-        self.lambda_q1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-        self.lambda_k1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-        self.lambda_q2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-        self.lambda_k2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-
-        self.norm = nn.RMSNorm(hidden_dim, eps=config.epsilon)
-        self.dropout = nn.Dropout(config.dropout)
-        self.output = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.approximator = nn.Sequential(
-            PraxisGLU(config, activation="swish"),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, inputs: Tensor, attention_mask: Tensor):
-        scores, v = self.compute_scores(inputs)
-        scores = self.apply_causal_mask(scores)
-        scores = self.apply_attention_mask(scores, attention_mask)
-        weights = self.compute_weights(scores, v)
-        return self.compute_gated_output(inputs, weights)
-
-    def compute_scores(self, inputs):
-        B, S, E = inputs.shape
-
-        # Project inputs
-        q = self.query(inputs)  # [B, S, 2*E]
-        k = self.key(inputs)  # [B, S, 2*E]
-        v = self.value(inputs)  # [B, S, E]
-
-        # Reshape for RoPE: [B, S, 2*E] -> [B, 2, S, E]
-        q = q.view(B, S, 2, E).transpose(1, 2)
-        k = k.view(B, S, 2, E).transpose(1, 2)
-
-        # Apply RoPE
-        q, k, v = self.encoding.before_scores(q, k, v)
-
-        # Ensemble the representations
-        q = self.dropout(q)
-        k = self.dropout(k)
-        v = self.dropout(v)
-
-        # Compute unified attention scores
-        scale = 1.0 / math.sqrt(E)
-        scores = torch.matmul(q, k.transpose(-1, -2)) * scale  # [B, 2, S, S]
-
-        # Rearrange scores to [B, S, 2, S] to maintain original downstream expectations
-        scores = scores.transpose(1, 2)  # [B, S, 2, S]
-
-        return scores, v
-
-    def compute_weights(self, scores, v):
-        # Apply softmax
-        attn_weights = self.dropout(ghostmax(scores, dim=-1))  # [B, S, 2, S]
-
-        # Compute lambda scaling
-        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1))
-        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1))
-        lambda_full = lambda_1 - lambda_2 + self.lambda_init
-
-        # Apply differential attention
-        diff_weights = (
-            attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
-        )  # [B, S, S]
-
-        # Apply attention to values and normalize
-        attn = torch.bmm(diff_weights, v)  # [B, S, E]
-        attn = self.norm(attn)
-        attn = attn * (1 - self.lambda_init)
-        return self.dropout(attn)
-
-    def apply_causal_mask(self, scores):
-        # scores shape: [B, S, 2, S]
-        seq_len = scores.size(1)
-        # Create causal mask
-        seq_mask = torch.triu(
-            torch.ones((seq_len, seq_len), device=scores.device), diagonal=1
-        ).bool()
-        # Expand mask for broadcasting
-        seq_mask = seq_mask.unsqueeze(0).unsqueeze(2)
-        # Apply to both attention components
-        return scores.masked_fill(seq_mask, float("-inf"))  # [B, S, 2, S]
-
-    def apply_attention_mask(self, scores, attention_mask):
-        # Reshape attention_mask for broadcasting
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(1)) * -1e12
-        # Broadcasting: [B, 1, 1, S] -> [B, S, 2, S]
-        return scores + attention_mask
-
-    def compute_gated_output(self, inputs, weights):
-        # Generate and apply gates
-        gates = self.approximator(inputs)  # [B, S, E]
-        gated_weights = weights * gates
-        return self.output(gated_weights)
-
-
-ATTENTION_REGISTRY = {"standard": PraxisAttention, "gated": PraxisGatedAttention}
 
 
 class ScaledDotProduct(nn.Module):
@@ -483,7 +363,6 @@ class Differential(ScaledDotProduct):
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
         self.lambda_init = 0.8  # A good default, per the paper
-        # Initialize lambda parameters similar to Microsoft
         self.lambda_q1 = nn.Parameter(
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
         )
@@ -496,16 +375,19 @@ class Differential(ScaledDotProduct):
         self.lambda_k2 = nn.Parameter(
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
         )
-        self.norm = nn.RMSNorm(2 * self.head_dim, eps=config.epsilon)
+        self.norm = nn.GroupNorm(
+            num_groups=self.num_query_heads,
+            num_channels=self.num_query_heads * self.head_dim * 2,
+            eps=config.epsilon,
+        )
 
     def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
         batch_size, num_heads, seq_len, _ = scores.shape
+
         attn_weights = ghostmax(scores, dim=-1)
 
-        # First fix v's sequence length and head dimension
-        v = v.transpose(2, 3).reshape(batch_size, self.num_heads, seq_len, -1)
+        v = v.reshape(batch_size, self.num_heads, seq_len, -1)
 
-        # Handle attention weights
         attn_weights = attn_weights.view(
             batch_size, self.num_query_heads, 2, seq_len, seq_len
         )
@@ -517,22 +399,23 @@ class Differential(ScaledDotProduct):
 
         attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
 
-        # Handle GQA
         if self.num_query_heads > self.num_heads:
             v = v.repeat_interleave(self.num_query_heads // self.num_heads, dim=1)
 
-        # Compute attention
         outputs = torch.matmul(attn_weights, v)
 
-        b, h, s, d = outputs.shape
-        outputs = outputs.view(b * h, s, d)  # [batch*heads, seq_len, head_dim*2]
-        outputs = self.norm(outputs)
-        outputs = outputs.view(b, h, s, d)  # [batch, heads, seq_len, head_dim*2]
-        outputs = outputs * (1 - self.lambda_init)
+        # Prepare for GroupNorm
+        outputs = (
+            outputs.reshape(batch_size, seq_len, -1)  # [batch, seq, total_features]
+            .permute(0, 2, 1)  # [batch, total_features, seq]
+            .contiguous()
+        )
 
-        # Final reshape for output projection
-        outputs = outputs[..., : d // 2]
-        outputs = outputs.transpose(1, 2).reshape(batch_size, seq_len, -1)
+        # Apply GroupNorm
+        outputs = self.norm(outputs)
+
+        # Reshape back, preserving all features
+        outputs = outputs.permute(0, 2, 1).contiguous()  # [batch, seq, total_features]
 
         return outputs
 
@@ -796,6 +679,128 @@ class PraxisGatedEMA(nn.Module):
         # Transpose back to (batch_size, seq_len, embed_dim)
         y = y.transpose(1, 2)
         return y
+
+
+class PraxisGatedAttention(nn.Module):
+    """
+    According to MEGA, "Single-head gated attention has been empirically
+    shown [to be] as performant as vanilla multi-head attention."
+    https://arxiv.org/abs/2209.10655
+    We implement a second attention head, and subtract it from the first, as
+    a form of Differential Attention:
+    https://arxiv.org/abs/2410.05258
+    """
+
+    def __init__(self, config: "AutoConfig"):
+        super().__init__()
+        hidden_dim = config.hidden_size
+        double_dim = hidden_dim * 2
+
+        # Projections
+        self.query = nn.Linear(hidden_dim, double_dim, bias=False)
+        self.key = nn.Linear(hidden_dim, double_dim, bias=False)
+        self.value = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        # Positional encoding
+        self.encoding = ENCODING_REGISTRY[config.encoding](config)
+
+        # Lambda parameters
+        self.lambda_init = 0.8
+        self.lambda_q1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_k1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_q2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_k2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+
+        self.norm = nn.RMSNorm(hidden_dim, eps=config.epsilon)
+        self.dropout = nn.Dropout(config.dropout)
+        self.output = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.approximator = nn.Sequential(
+            PraxisGLU(config, activation="swish"),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
+        scores, v = self.compute_scores(inputs)
+        scores = self.apply_causal_mask(scores)
+        scores = self.apply_attention_mask(scores, attention_mask)
+        weights = self.compute_weights(scores, v)
+        return self.compute_gated_output(inputs, weights)
+
+    def compute_scores(self, inputs):
+        B, S, E = inputs.shape
+
+        # Project inputs
+        q = self.query(inputs)  # [B, S, 2*E]
+        k = self.key(inputs)  # [B, S, 2*E]
+        v = self.value(inputs)  # [B, S, E]
+
+        # Reshape for RoPE: [B, S, 2*E] -> [B, 2, S, E]
+        q = q.view(B, S, 2, E).transpose(1, 2)
+        k = k.view(B, S, 2, E).transpose(1, 2)
+
+        # Apply RoPE
+        q, k, v = self.encoding.before_scores(q, k, v)
+
+        # Ensemble the representations
+        q = self.dropout(q)
+        k = self.dropout(k)
+        v = self.dropout(v)
+
+        # Compute unified attention scores
+        scale = 1.0 / math.sqrt(E)
+        scores = torch.matmul(q, k.transpose(-1, -2)) * scale  # [B, 2, S, S]
+
+        # Rearrange scores to [B, S, 2, S] to maintain original downstream expectations
+        scores = scores.transpose(1, 2)  # [B, S, 2, S]
+
+        return scores, v
+
+    def compute_weights(self, scores, v):
+        # Apply softmax
+        attn_weights = self.dropout(ghostmax(scores, dim=-1))  # [B, S, 2, S]
+
+        # Compute lambda scaling
+        lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1))
+        lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1))
+        lambda_full = lambda_1 - lambda_2 + self.lambda_init
+
+        # Apply differential attention
+        diff_weights = (
+            attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+        )  # [B, S, S]
+
+        # Apply attention to values and normalize
+        attn = torch.bmm(diff_weights, v)  # [B, S, E]
+        attn = self.norm(attn)
+        attn = attn * (1 - self.lambda_init)
+        return self.dropout(attn)
+
+    def apply_causal_mask(self, scores):
+        # scores shape: [B, S, 2, S]
+        seq_len = scores.size(1)
+        # Create causal mask
+        seq_mask = torch.triu(
+            torch.ones((seq_len, seq_len), device=scores.device), diagonal=1
+        ).bool()
+        # Expand mask for broadcasting
+        seq_mask = seq_mask.unsqueeze(0).unsqueeze(2)
+        # Apply to both attention components
+        return scores.masked_fill(seq_mask, float("-inf"))  # [B, S, 2, S]
+
+    def apply_attention_mask(self, scores, attention_mask):
+        # Reshape attention_mask for broadcasting
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(1)) * -1e12
+        # Broadcasting: [B, 1, 1, S] -> [B, S, 2, S]
+        return scores + attention_mask
+
+    def compute_gated_output(self, inputs, weights):
+        # Generate and apply gates
+        gates = self.approximator(inputs)  # [B, S, E]
+        gated_weights = weights * gates
+        return self.output(gated_weights)
+
+
+ATTENTION_REGISTRY = {"standard": PraxisAttention, "gated": PraxisGatedAttention}
 
 
 def test_memory_scaling():
