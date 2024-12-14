@@ -38,7 +38,7 @@ class PraxisAttention(nn.Module):
         self.num_query_heads = self.num_heads * self.num_queries
 
         self.factor = 2 if self.differential else 1
-        self.head_dim = hidden_size // self.num_heads
+        self.head_dim = hidden_size // self.num_heads // self.factor
 
         self.gating = config.mega
         if self.gating:
@@ -47,17 +47,17 @@ class PraxisAttention(nn.Module):
         # Query and key projections for differential heads
         self.query = nn.Linear(
             hidden_size,
-            self.num_query_heads * self.head_dim,
+            self.num_query_heads * self.head_dim * self.factor,
             bias=False,
         )
         self.key = nn.Linear(
             hidden_size,
-            self.num_heads * self.head_dim,
+            self.num_heads * self.head_dim * self.factor,
             bias=False,
         )
         self.value = nn.Linear(
             hidden_size,
-            self.num_heads * self.head_dim,
+            self.num_heads * self.head_dim * self.factor,
             bias=False,
         )
 
@@ -68,11 +68,8 @@ class PraxisAttention(nn.Module):
             self.memory = PraxisCompressiveMemory(config)
 
         # The core attention mechanism
-        scale_encoding = True
         if self.stickbreaking:
             self.algorithm = Stickbreaking(config)
-            config.encoding = "nope"
-            scale_encoding = False
         elif self.differential:
             self.algorithm = Differential(config)
         elif self.linear:
@@ -81,14 +78,16 @@ class PraxisAttention(nn.Module):
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.encoding = ENCODING_REGISTRY[config.encoding](config, scale_encoding)
+        self.encoding = ENCODING_REGISTRY[config.encoding](
+            config, not self.stickbreaking
+        )
 
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
         # Standard output projection
         self.output = nn.Linear(
-            self.num_query_heads * self.head_dim,
+            self.num_query_heads * self.head_dim * self.factor,
             hidden_size,
             bias=False,
         )
@@ -103,22 +102,12 @@ class PraxisAttention(nn.Module):
         # Initialize QKV projections
         q = (
             self.query(inputs)
-            .view(
-                batch_size,
-                seq_len,
-                self.num_query_heads * self.factor,
-                self.head_dim // self.factor,
-            )
+            .view(batch_size, seq_len, self.num_query_heads * self.factor, -1)
             .transpose(1, 2)
         )
         k = (
             self.key(inputs)
-            .view(
-                batch_size,
-                seq_len,
-                self.num_heads * self.factor,
-                self.head_dim // self.factor,
-            )
+            .view(batch_size, seq_len, self.num_heads * self.factor, -1)
             .transpose(1, 2)
         )
         v = (
@@ -180,7 +169,7 @@ class PraxisAttention(nn.Module):
     ) -> Tensor:
         batch_size = q.size(0)
 
-        # Handle multiple queries
+        # Handle GQA (Grouped Query Attention)
         if self.num_queries > 1:
             k = k.repeat_interleave(self.num_queries, dim=1)
             v = v.repeat_interleave(self.num_queries, dim=1)
@@ -206,7 +195,7 @@ class PraxisAttention(nn.Module):
         )
 
         if self.memory:
-            # Get memory output and blend (memory doesn't need position info)
+            # Blend with memories
             attention_output = self.memory(q, k, v, attention_output)
 
         attention_output = self.dropout(attention_output)
@@ -245,7 +234,7 @@ class ScaledDotProduct(nn.Module):
         if causal:
             causal_mask = (
                 torch.triu(
-                    torch.full((seq_len, hist_len), -1e9, device=scores.device),
+                    torch.full((seq_len, hist_len), -1e12, device=scores.device),
                     diagonal=1,
                 )
                 .unsqueeze(0)
@@ -257,7 +246,7 @@ class ScaledDotProduct(nn.Module):
             attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
         )
 
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e12
 
         scores = scores + attention_mask
         return scores, causal_mask, attention_mask
@@ -333,6 +322,8 @@ class LinearAttention(ScaledDotProduct):
     Implements Linear Attention using kernel feature maps.
     Based on 'Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention'
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
@@ -421,8 +412,13 @@ class Stickbreaking(ScaledDotProduct):
     https://github.com/IBM/ModuleFormer
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
+        assert (
+            config.encoding == "nope"
+        ), "Please use NoPE (No Positional Encoding) with Stickbreaking attention."
         self.register_buffer("key_history", None)
         self.register_buffer("value_history", None)
         self.history_size = 32
