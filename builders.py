@@ -822,7 +822,7 @@ class PraxisDataModule(LightningDataModule):
             dataset=self.train_datasets,
             batch_size=None,
             num_workers=1,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def val_dataloader(self):
@@ -831,7 +831,7 @@ class PraxisDataModule(LightningDataModule):
                 dataset=self.val_datasets,
                 batch_size=None,
                 num_workers=1,
-                pin_memory=True,
+                pin_memory=False,
             )
         else:
             return {}
