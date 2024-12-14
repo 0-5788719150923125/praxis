@@ -726,7 +726,7 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
-    def __init__(self, use_dashboard=False, url=None):
+    def __init__(self, use_dashboard=False, url=None, progress_bar=None):
         super().__init__()
         self.alpha = 1e-2
         self.ema_loss = 0
@@ -746,6 +746,9 @@ class TerminalInterface(Callback):
                 self.dashboard.update_url(url)
             except KeyboardInterrupt:
                 self.dashboard.stop()
+            self.print = print
+        elif progress_bar is not None:
+            self.print = progress_bar.print
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
@@ -897,7 +900,7 @@ class TerminalInterface(Callback):
         elif self.dashboard:
             self.dashboard.update_status(self.text)
         else:
-            print(self.text)
+            self.print(self.text)
 
         # allow for multiple tokens
         if random.random() < 0.1:
@@ -1299,15 +1302,17 @@ scheduler = scheduler_func(optimizer)
 train_model = PraxisTrainer(model, optimizer, scheduler, hparams)
 
 # Load the callbacks
+progress_bar = None
+if not use_dashboard:
+    progress_bar = TQDMProgressBar(process_position=0, leave=True)
+    train_params["callbacks"].append(progress_bar)
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
 train_params["callbacks"].append(
-    TerminalInterface(use_dashboard, api_server.get_api_addr())
+    TerminalInterface(use_dashboard, api_server.get_api_addr(), progress_bar)
 )
-if not use_dashboard:
-    train_params["callbacks"].append(TQDMProgressBar(process_position=0, leave=True))
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)
