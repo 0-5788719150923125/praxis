@@ -87,16 +87,6 @@ class TerminalDashboard:
         self.accuracy = None
         self.num_tokens = 0
 
-        # Detect Jupyter environment
-        try:
-            from IPython import get_ipython
-
-            self.in_notebook = (
-                get_ipython() is not None and "IPKernelApp" in get_ipython().config
-            )
-        except:
-            self.in_notebook = False
-
         # Set up logging
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.ERROR)
@@ -156,22 +146,7 @@ class TerminalDashboard:
         self.running = True
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
-
-        if self.in_notebook:
-            import ipywidgets as widgets
-            from IPython.display import clear_output, display
-
-            self.out = widgets.Output()
-            display(self.out)
-            # Start Jupyter thread
-            from threading import Thread
-
-            Thread(target=self._run_dashboard_jupyter, daemon=True).start()
-        else:
-            # Terminal mode
-            from threading import Thread
-
-            Thread(target=self._run_dashboard_terminal, daemon=True).start()
+        Thread(target=self._run_dashboard).start()
 
     def stop(self):
         self.running = False
@@ -534,34 +509,18 @@ class TerminalDashboard:
             return [line.ljust(width)[:width] for line in lines]
         return [" " * width for _ in range(height)]
 
-    def _run_dashboard_terminal(self):
+    def _run_dashboard(self):
         with self.managed_terminal():
             while self.running:
                 try:
                     new_frame = self._create_frame()
                     if not self._check_border_alignment(new_frame):
-                        self.previous_frame = None
+                        self.previous_frame = None  # Force a redraw
                     self._update_screen(new_frame)
                     time.sleep(0.1)
                 except Exception as e:
                     self.add_log(f"Dashboard error: {str(e)}")
-                    time.sleep(1)
-
-    def _run_dashboard_jupyter(self):
-        from IPython.display import clear_output
-
-        while self.running:
-            try:
-                new_frame = self._create_frame()
-                with self.out:
-                    clear_output(wait=True)
-                    for line in new_frame:
-                        print(line)
-                time.sleep(0.1)
-            except Exception as e:
-                with self.out:
-                    print(f"Dashboard error: {str(e)}")
-                time.sleep(1)
+                    time.sleep(1)  # Add a delay to prevent rapid error logging
 
 
 fake_system_messages = [
@@ -698,20 +657,31 @@ if __name__ == "__main__":
     try:
         batch = 0
         accumulated_text = ""
+
+        # Get chunks of our test text
         chunks = get_random_chunks(TEST_TEXT)
 
         for i, chunk in enumerate(chunks):
+            # Update various metrics
             train_loss = 1 / (i + 1) + random.uniform(0, 0.1)
             val_loss = train_loss + random.uniform(0, 0.05)
+
+            # Accumulate text and update status
             accumulated_text += chunk
             dashboard.update_status(accumulated_text)
+
+            # Update other dashboard elements
             dashboard.update_loss(train_loss)
             dashboard.update_validator(val_loss)
             dashboard.update_batch(i)
             dashboard.update_step(i)
             dashboard.update_rate(0.5)
+
+            # Add some test logs
             dashboard.logger.info(f"Processing chunk {i}")
-            time.sleep(0.1)
+
+            # Simulate processing time
+            time.sleep(0.1)  # Shorter delay for faster testing
 
     except KeyboardInterrupt:
         print("Shutting down gracefully...")
