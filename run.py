@@ -175,7 +175,7 @@ parser.add_argument(
 parser.add_argument(
     "--target_batch_size",
     type=int,
-    default=256,
+    default=64,
     help="The actual batch size to use, including accumulation steps",
 )
 parser.add_argument(
@@ -516,12 +516,12 @@ train_params = dict(
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
     precision="32-true",
-    gradient_clip_val=1.0,
+    gradient_clip_val=5.0,
     gradient_clip_algorithm="norm",
     benchmark=True,
     deterministic=False,
     enable_checkpointing=True,
-    # enable_progress_bar=None,
+    enable_progress_bar=not use_dashboard,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
     val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
@@ -595,6 +595,7 @@ else:
         optimizer_name="AdamW",
         lr=5e-4,
         weight_decay=1e-4,
+        betas=(0.9, 0.95),
         # eps=1e-6,
     )
     min_lr = 5e-6
