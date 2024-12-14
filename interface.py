@@ -91,8 +91,10 @@ class TerminalDashboard:
         try:
             from IPython import get_ipython
 
-            self.in_notebook = get_ipython() is not None
-        except ImportError:
+            self.in_notebook = (
+                get_ipython() is not None and "IPKernelApp" in get_ipython().config
+            )
+        except:
             self.in_notebook = False
 
         # Set up logging
@@ -150,17 +152,25 @@ class TerminalDashboard:
         finally:
             self._reset_terminal()
 
-    def start(self, handle=None):
+    def start(self):
         self.running = True
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
+
         if self.in_notebook:
-            # Running in Jupyter: Use the handle-based updates
-            Thread(
-                target=self._run_dashboard_jupyter, args=(handle,), daemon=True
-            ).start()
+            import ipywidgets as widgets
+            from IPython.display import clear_output, display
+
+            self.out = widgets.Output()
+            display(self.out)
+            # Start Jupyter thread
+            from threading import Thread
+
+            Thread(target=self._run_dashboard_jupyter, daemon=True).start()
         else:
-            # Running in a terminal: Use the original terminal dashboard loop
+            # Terminal mode
+            from threading import Thread
+
             Thread(target=self._run_dashboard_terminal, daemon=True).start()
 
     def stop(self):
@@ -537,18 +547,20 @@ class TerminalDashboard:
                     self.add_log(f"Dashboard error: {str(e)}")
                     time.sleep(1)
 
-    def _run_dashboard_jupyter(self, handle):
-        from IPython.display import HTML
+    def _run_dashboard_jupyter(self):
+        from IPython.display import clear_output
 
         while self.running:
             try:
                 new_frame = self._create_frame()
-                content = "<pre>" + "\n".join(new_frame) + "</pre>"
-                handle.update(HTML(content))
+                with self.out:
+                    clear_output(wait=True)
+                    for line in new_frame:
+                        print(line)
                 time.sleep(0.1)
             except Exception as e:
-                # You can still add logs, which will show up in the log section of your dashboard
-                self.add_log(f"Dashboard error: {str(e)}")
+                with self.out:
+                    print(f"Dashboard error: {str(e)}")
                 time.sleep(1)
 
 
@@ -681,45 +693,25 @@ def get_random_chunks(text, min_size=1, max_size=3):
 
 if __name__ == "__main__":
     dashboard = TerminalDashboard(42)
-
-    # If we're in a Jupyter environment, create a display handle
-    # If not, we just proceed with the terminal logic
-    # if dashboard.in_notebook:
-    from IPython.display import HTML, display
-
-    handle = display(HTML("<pre>Initializing...</pre>"), display_id=True)
-    dashboard.start(handle=handle)
-    # else:
-    #     dashboard.start()
+    dashboard.start()
 
     try:
         batch = 0
         accumulated_text = ""
-
-        # Get chunks of our test text
         chunks = get_random_chunks(TEST_TEXT)
 
         for i, chunk in enumerate(chunks):
-            # Update various metrics
             train_loss = 1 / (i + 1) + random.uniform(0, 0.1)
             val_loss = train_loss + random.uniform(0, 0.05)
-
-            # Accumulate text and update status
             accumulated_text += chunk
             dashboard.update_status(accumulated_text)
-
-            # Update other dashboard elements
             dashboard.update_loss(train_loss)
             dashboard.update_validator(val_loss)
             dashboard.update_batch(i)
             dashboard.update_step(i)
             dashboard.update_rate(0.5)
-
-            # Add some test logs
             dashboard.logger.info(f"Processing chunk {i}")
-
-            # Simulate processing time
-            time.sleep(0.1)  # Shorter delay for faster testing
+            time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("Shutting down gracefully...")
