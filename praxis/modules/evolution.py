@@ -238,7 +238,7 @@ if __name__ == "__main__":
         # Evolve and print detailed stats
         layer.evolve_population(num_trials=num_trials)
         print(f"Generation {generation + 1}:")
-        print(f"  Best Fitness = {layer.get_metrics()["fitness"]:.6f}")
+        print(f"  Best Fitness = {layer.get_metrics()['fitness']:.6f}")
         print(f"  Avg Fitness = {layer.fitness_scores.mean().item():.6f}")
         print(f"  Min Fitness = {layer.fitness_scores.min().item():.6f}")
         fitness_history.append(layer.get_metrics()["fitness"])
