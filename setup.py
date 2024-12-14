@@ -18,6 +18,7 @@ host_requirements = [
     "lm_eval",
     "pytorch_optimizer",
     "rich",
+    "rich[jupyter]",
     "werkzeug",
 ]
 

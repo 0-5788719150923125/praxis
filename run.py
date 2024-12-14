@@ -1307,7 +1307,7 @@ train_params["callbacks"].append(
     TerminalInterface(use_dashboard, api_server.get_api_addr())
 )
 if not use_dashboard:
-    train_params["callbacks"].append(RichProgressBar())
+    train_params["callbacks"].append(RichProgressBar(leave=True))
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)
