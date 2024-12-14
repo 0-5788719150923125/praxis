@@ -15,7 +15,7 @@ def sigint_handler(signum, frame):
 
 
 # Create a new process group
-os.setpgrp()
+# os.setpgrp()
 
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
@@ -588,11 +588,12 @@ elif optimizer.lower() == "soap":
     )
 else:
     optimizer_profile = dict(
-        optimizer_name="GrokFastAdamW",
-        lr=1e-3,
-        min_lr=1e-5,
-        weight_decay=1e-5,
+        optimizer_name="AdamW",
+        lr=5e-4,
+        weight_decay=0,
+        eps=1e-6,
     )
+    min_lr = 5e-6
 
 # Merge the optimizer profile with the default profile
 hparams["optimizer"] = {**optimizer_defaults, **optimizer_profile}
@@ -607,7 +608,7 @@ else:
         CosineAnnealingWarmupRestarts,
         first_cycle_steps=4096 * 16,
         max_lr=hparams["optimizer"]["lr"],
-        min_lr=hparams["optimizer"]["min_lr"],
+        min_lr=hparams["optimizer"].get("min_lr", min_lr),
         gamma=1.0,
         warmup_steps=hparams["optimizer"].get("warmup_steps", 512),
     )
