@@ -684,13 +684,13 @@ if __name__ == "__main__":
 
     # If we're in a Jupyter environment, create a display handle
     # If not, we just proceed with the terminal logic
-    if dashboard.in_notebook:
-        from IPython.display import HTML, display
+    # if dashboard.in_notebook:
+    from IPython.display import HTML, display
 
-        handle = display(HTML("<pre>Initializing...</pre>"), display_id=True)
-        dashboard.start(handle=handle)
-    else:
-        dashboard.start()
+    handle = display(HTML("<pre>Initializing...</pre>"), display_id=True)
+    dashboard.start(handle=handle)
+    # else:
+    #     dashboard.start()
 
     try:
         batch = 0
