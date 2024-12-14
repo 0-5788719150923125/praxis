@@ -150,11 +150,18 @@ class TerminalDashboard:
         finally:
             self._reset_terminal()
 
-    def start(self):
+    def start(self, handle=None):
         self.running = True
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
-        Thread(target=self._run_dashboard).start()
+        if self.in_notebook:
+            # Running in Jupyter: Use the handle-based updates
+            Thread(
+                target=self._run_dashboard_jupyter, args=(handle,), daemon=True
+            ).start()
+        else:
+            # Running in a terminal: Use the original terminal dashboard loop
+            Thread(target=self._run_dashboard_terminal, daemon=True).start()
 
     def stop(self):
         self.running = False
@@ -517,34 +524,32 @@ class TerminalDashboard:
             return [line.ljust(width)[:width] for line in lines]
         return [" " * width for _ in range(height)]
 
-    def _run_dashboard(self):
-        if self.in_notebook:
-            from IPython.display import clear_output
-
-            # No terminal management here
+    def _run_dashboard_terminal(self):
+        with self.managed_terminal():
             while self.running:
                 try:
                     new_frame = self._create_frame()
-                    clear_output(wait=True)
-                    for line in new_frame:
-                        print(line)
+                    if not self._check_border_alignment(new_frame):
+                        self.previous_frame = None
+                    self._update_screen(new_frame)
                     time.sleep(0.1)
                 except Exception as e:
-                    print(f"Dashboard error: {str(e)}")
+                    self.add_log(f"Dashboard error: {str(e)}")
                     time.sleep(1)
-        else:
-            # Original terminal-based approach
-            with self.managed_terminal():
-                while self.running:
-                    try:
-                        new_frame = self._create_frame()
-                        if not self._check_border_alignment(new_frame):
-                            self.previous_frame = None
-                        self._update_screen(new_frame)
-                        time.sleep(0.1)
-                    except Exception as e:
-                        self.add_log(f"Dashboard error: {str(e)}")
-                        time.sleep(1)
+
+    def _run_dashboard_jupyter(self, handle):
+        from IPython.display import HTML
+
+        while self.running:
+            try:
+                new_frame = self._create_frame()
+                content = "<pre>" + "\n".join(new_frame) + "</pre>"
+                handle.update(HTML(content))
+                time.sleep(0.1)
+            except Exception as e:
+                # You can still add logs, which will show up in the log section of your dashboard
+                self.add_log(f"Dashboard error: {str(e)}")
+                time.sleep(1)
 
 
 fake_system_messages = [
@@ -676,7 +681,16 @@ def get_random_chunks(text, min_size=1, max_size=3):
 
 if __name__ == "__main__":
     dashboard = TerminalDashboard(42)
-    dashboard.start()
+
+    # If we're in a Jupyter environment, create a display handle
+    # If not, we just proceed with the terminal logic
+    if dashboard.in_notebook:
+        from IPython.display import HTML, display
+
+        handle = display(HTML("<pre>Initializing...</pre>"), display_id=True)
+        dashboard.start(handle=handle)
+    else:
+        dashboard.start()
 
     try:
         batch = 0
