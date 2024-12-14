@@ -87,6 +87,14 @@ class TerminalDashboard:
         self.accuracy = None
         self.num_tokens = 0
 
+        # Detect Jupyter environment
+        try:
+            from IPython import get_ipython
+
+            self.in_notebook = get_ipython() is not None
+        except ImportError:
+            self.in_notebook = False
+
         # Set up logging
         self.logger = logging.getLogger()
         self.logger.setLevel(logging.ERROR)
@@ -510,17 +518,33 @@ class TerminalDashboard:
         return [" " * width for _ in range(height)]
 
     def _run_dashboard(self):
-        with self.managed_terminal():
+        if self.in_notebook:
+            from IPython.display import clear_output
+
+            # No terminal management here
             while self.running:
                 try:
                     new_frame = self._create_frame()
-                    if not self._check_border_alignment(new_frame):
-                        self.previous_frame = None  # Force a redraw
-                    self._update_screen(new_frame)
+                    clear_output(wait=True)
+                    for line in new_frame:
+                        print(line)
                     time.sleep(0.1)
                 except Exception as e:
-                    self.add_log(f"Dashboard error: {str(e)}")
-                    time.sleep(1)  # Add a delay to prevent rapid error logging
+                    print(f"Dashboard error: {str(e)}")
+                    time.sleep(1)
+        else:
+            # Original terminal-based approach
+            with self.managed_terminal():
+                while self.running:
+                    try:
+                        new_frame = self._create_frame()
+                        if not self._check_border_alignment(new_frame):
+                            self.previous_frame = None
+                        self._update_screen(new_frame)
+                        time.sleep(0.1)
+                    except Exception as e:
+                        self.add_log(f"Dashboard error: {str(e)}")
+                        time.sleep(1)
 
 
 fake_system_messages = [
