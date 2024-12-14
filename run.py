@@ -1304,7 +1304,122 @@ train_model = PraxisTrainer(model, optimizer, scheduler, hparams)
 # Load the callbacks
 progress_bar = None
 if not use_dashboard:
-    progress_bar = TQDMProgressBar(process_position=0, leave=True)
+    from typing import Any
+
+    from lightning.pytorch.callbacks import TQDMProgressBar
+    from tqdm.auto import tqdm as Tqdm
+
+    class ClearingTQDMProgressBar(TQDMProgressBar):
+        def __init__(
+            self, refresh_rate: int = 1, process_position: int = 0, leave: bool = False
+        ):
+            super().__init__(refresh_rate, process_position, leave)
+            self._last_print_lines = 0
+            self._is_jupyter = self._check_jupyter()
+            self._jupyter_width = (
+                self._get_jupyter_width() if self._is_jupyter else None
+            )
+
+        def print(self, *args: Any, sep: str = " ", **kwargs: Any) -> None:
+            active_progress_bar = None
+            if (
+                self._train_progress_bar is not None
+                and not self.train_progress_bar.disable
+            ):
+                active_progress_bar = self.train_progress_bar
+            elif (
+                self._val_progress_bar is not None and not self.val_progress_bar.disable
+            ):
+                active_progress_bar = self.val_progress_bar
+            elif (
+                self._test_progress_bar is not None
+                and not self.test_progress_bar.disable
+            ):
+                active_progress_bar = self.test_progress_bar
+            elif (
+                self._predict_progress_bar is not None
+                and not self.predict_progress_bar.disable
+            ):
+                active_progress_bar = self.predict_progress_bar
+
+            if active_progress_bar is not None:
+                # Create the message first
+                message = sep.join(map(str, args))
+                if not message.endswith("\n"):
+                    message += "\n"
+
+                # Calculate number of lines in new message
+                new_lines = message.count("\n")
+
+                # Prepare the clear sequence if needed
+                clear_sequence = ""
+                if self._last_print_lines > 0:
+                    clear_sequence = "\033[F\033[K" * self._last_print_lines
+
+                # Write everything in a single call
+                active_progress_bar.write(
+                    clear_sequence + message.rstrip("\n"), end="\n"
+                )
+
+                # Update line count for next time
+                self._last_print_lines = new_lines
+
+        def _check_jupyter(self) -> bool:
+            """Check if we're running in a Jupyter environment."""
+            try:
+                from IPython import get_ipython
+
+                return get_ipython().__class__.__name__ == "ZMQInteractiveShell"
+            except Exception:
+                return False
+
+        def _get_jupyter_width(self) -> int:
+            """Get the display width in Jupyter."""
+            try:
+                from IPython import get_ipython
+
+                return get_ipython().terminal_width
+            except Exception:
+                return 100  # Reasonable default for Jupyter
+
+        def init_train_tqdm(self) -> Tqdm:
+            """Initialize progress bar with environment-specific settings."""
+            kwargs = {
+                "desc": self.train_description,
+                "position": (2 * self.process_position),
+                "disable": self.is_disabled,
+                "leave": True,
+                "file": sys.stdout,
+                "smoothing": 0,
+                "bar_format": self.BAR_FORMAT,
+            }
+
+            if self._is_jupyter:
+                kwargs.update({"dynamic_ncols": False, "ncols": self._jupyter_width})
+            else:
+                kwargs["dynamic_ncols"] = True
+
+            return Tqdm(**kwargs)
+
+        def init_validation_tqdm(self) -> Tqdm:
+            has_main_bar = self.trainer.state.fn != "validate"
+            kwargs = {
+                "desc": self.validation_description,
+                "position": (2 * self.process_position + has_main_bar),
+                "disable": self.is_disabled,
+                "leave": not has_main_bar,
+                "file": sys.stdout,
+                "bar_format": self.BAR_FORMAT,
+            }
+
+            if self._is_jupyter:
+                kwargs.update({"dynamic_ncols": False, "ncols": self._jupyter_width})
+            else:
+                kwargs["dynamic_ncols"] = True
+
+            return Tqdm(**kwargs)
+
+    progress_bar = ClearingTQDMProgressBar(process_position=0, leave=True)
     train_params["callbacks"].append(progress_bar)
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(
