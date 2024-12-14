@@ -17,11 +17,20 @@ host_requirements = [
     "lightning",
     "lm_eval",
     "pytorch_optimizer",
+    "rich",
     "werkzeug",
 ]
 
 # Requirements primarily for IDE-related tooling
-dev_requirements = ["attrs", "isort", "lsprotocol", "matplotlib", "networkx", "pygls"]
+dev_requirements = [
+    "attrs",
+    "isort",
+    "lsprotocol",
+    "matplotlib",
+    "networkx",
+    "pygls",
+    "wandb",
+]
 
 setup(
     name="praxis",

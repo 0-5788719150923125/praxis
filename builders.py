@@ -834,7 +834,7 @@ class PraxisDataModule(LightningDataModule):
                 pin_memory=False,
             )
         else:
-            return {}
+            return []
 
     def state_dict(self) -> Dict[str, Any]:
         sampler_states = []

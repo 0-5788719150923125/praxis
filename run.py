@@ -99,6 +99,7 @@ from lightning.pytorch.callbacks import (
     Callback,
     GradientAccumulationScheduler,
     ModelCheckpoint,
+    RichProgressBar,
 )
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
@@ -523,6 +524,7 @@ train_params = dict(
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
     val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
+    num_sanity_val_steps=0,
     limit_val_batches=1024,
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
@@ -1303,6 +1305,8 @@ train_params["callbacks"].append(
 train_params["callbacks"].append(
     TerminalInterface(use_dashboard, api_server.get_api_addr())
 )
+if not use_dashboard:
+    train_params["callbacks"].append(RichProgressBar())
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)
