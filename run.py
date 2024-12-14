@@ -1307,7 +1307,6 @@ if not use_dashboard:
     from typing import Any
 
     from lightning.pytorch.callbacks import TQDMProgressBar
-    from tqdm.auto import tqdm as Tqdm
 
     class ClearingTQDMProgressBar(TQDMProgressBar):
         def __init__(
@@ -1363,61 +1362,6 @@ if not use_dashboard:
 
                 # Update line count for next time
                 self._last_print_lines = new_lines
-
-        def _check_jupyter(self) -> bool:
-            """Check if we're running in a Jupyter environment."""
-            try:
-                from IPython import get_ipython
-
-                return get_ipython().__class__.__name__ == "ZMQInteractiveShell"
-            except Exception:
-                return False
-
-        def _get_jupyter_width(self) -> int:
-            """Get the display width in Jupyter."""
-            try:
-                from IPython import get_ipython
-
-                return get_ipython().terminal_width
-            except Exception:
-                return 100  # Reasonable default for Jupyter
-
-        def init_train_tqdm(self) -> Tqdm:
-            """Initialize progress bar with environment-specific settings."""
-            kwargs = {
-                "desc": self.train_description,
-                "position": (2 * self.process_position),
-                "disable": self.is_disabled,
-                "leave": True,
-                "file": sys.stdout,
-                "smoothing": 0,
-                "bar_format": self.BAR_FORMAT,
-            }
-
-            if self._is_jupyter:
-                kwargs.update({"dynamic_ncols": False, "ncols": self._jupyter_width})
-            else:
-                kwargs["dynamic_ncols"] = True
-
-            return Tqdm(**kwargs)
-
-        def init_validation_tqdm(self) -> Tqdm:
-            has_main_bar = self.trainer.state.fn != "validate"
-            kwargs = {
-                "desc": self.validation_description,
-                "position": (2 * self.process_position + has_main_bar),
-                "disable": self.is_disabled,
-                "leave": not has_main_bar,
-                "file": sys.stdout,
-                "bar_format": self.BAR_FORMAT,
-            }
-
-            if self._is_jupyter:
-                kwargs.update({"dynamic_ncols": False, "ncols": self._jupyter_width})
-            else:
-                kwargs["dynamic_ncols"] = True
-
-            return Tqdm(**kwargs)
 
     progress_bar = ClearingTQDMProgressBar(process_position=0, leave=True)
     train_params["callbacks"].append(progress_bar)
