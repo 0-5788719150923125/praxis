@@ -41,13 +41,20 @@ class PraxisModel(PreTrainedModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         embeds = None
+        decoder_tokens = None
+        patch_lengths = None
         if self.encoder:
-            tokens = self.encoder.create_tokens(input_ids)
-            embeds = self.encoder.compute_embeds(tokens)
+            encoder_tokens, decoder_tokens, num_patches, patch_lengths, patch_ids = (
+                self.encoder.create_tokens(input_ids)
+            )
+            embeds = self.encoder.compute_embeds(encoder_tokens)
             # inputs = self.encoder.encode(tokens, embeds)[0][0]
-            inputs, patch_ids = self.encoder.encode(tokens, embeds)
-            print(inputs)
             print(patch_ids)
+            (inputs, _), _ = self.encoder.encode(
+                encoder_tokens, embeds, num_patches=num_patches, patch_ids=patch_ids
+            )
+            print(inputs)
+            # print(patch_ids)
             # print(patch_embeds)
             # print(input_ids.shape)
             # print(tokens.shape)
@@ -70,6 +77,8 @@ class PraxisModel(PreTrainedModel):
                 attentions=None,
             ),
             embeds,
+            decoder_tokens,
+            patch_lengths,
         )
 
     def get_addr(self):
@@ -105,7 +114,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
-        outputs, embeds = super().forward(
+        outputs, embeds, decoder_tokens, patch_lengths = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
@@ -116,9 +125,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         hidden_states = outputs[0]
 
         if self.encoder:
-            # print(embeds)
-            patch_embeds = hidden_states[0]
-            logits = self.encoder.decode(hidden_states[0], embeds, patch_embeds)[0][0]
+            logits = self.encoder.decode(
+                hidden_states[0], decoder_tokens, embeds, patch_lengths
+            )[0][0]
         else:
             logits = self.head(hidden_states)
 

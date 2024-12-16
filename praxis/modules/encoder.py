@@ -1,10 +1,12 @@
 import torch
+from bytelatent.data.patcher import Patcher, PatcherArgs
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
     compute_hash_embeddings,
     create_local_decoder,
     create_local_encoder,
+    decoder_patch_ids_from_lengths,
     get_blt_input,
     get_global_dim_patch_emb,
     init_embeddings,
@@ -32,8 +34,8 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args.n_layers_local_decoder = 2
         self.args.n_heads_local_encoder = 1
         self.args.n_heads_local_decoder = 1
-        self.args.cross_attn_encoder = True
-        self.args.cross_attn_decoder = True
+        self.args.cross_attn_encoder = False
+        self.args.cross_attn_decoder = False
         self.args.cross_attn_init_by_pooling = True
         self.args.cross_attn_all_layers_decoder = False
         self.args.cross_attn_all_layers_encoder = False
@@ -46,6 +48,7 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args.share_encoder_decoder_emb = False
         self.args.max_length = config.hidden_size
         self.args.max_seqlen = max_seq_len
+        # self.args.data_loader_patching = False
 
         self.encoder = create_local_encoder(self.args)
         self.embeds = init_embeddings(
@@ -55,20 +58,40 @@ class PraxisByteLatentEncoder(nn.Module):
             encoder_hash_byte_group_size=[4],
         )
         self.decoder = create_local_decoder(self.args)
+        self.patcher = Patcher(
+            PatcherArgs(
+                patch_size=self.args.patch_size,
+                patching_mode=self.args.patching_mode,
+                patching_threshold=self.args.patching_threshold,
+                patching_threshold_add=self.args.patching_threshold_add,
+                monotonicity=self.args.monotonicity,
+                max_patch_length=self.args.max_patch_length,
+            )
+        )
 
     def create_tokens(self, input_ids):
-        patch_lengths = batch_to_tensors_and_gpu(input_ids)
-        local_encoder_tokens, _, _ = get_blt_input(
+        local_encoder_tokens, _, local_decoder_tokens = get_blt_input(
             tokens=input_ids,
             enforce_patch_size_multiple=False,
             nb_boe=0,
             patch_size=self.encoder.patch_size,
             boe_id=self.encoder.boe_id,
         )
+        patch_lengths, tok_scores = self.patcher.patch(
+            local_encoder_tokens,
+            include_next_token=True,
+            threshold=self.patcher.threshold,
+        )
         patch_ids = patch_ids_from_lengths(
             patch_lengths, local_encoder_tokens.shape[-1]
         )
-        return local_encoder_tokens, patch_ids
+        return (
+            local_encoder_tokens,
+            local_decoder_tokens,
+            patch_lengths.shape[1],
+            patch_lengths,
+            patch_ids,
+        )
 
     def compute_embeds(self, tokens):
         return compute_hash_embeddings(
@@ -80,11 +103,31 @@ class PraxisByteLatentEncoder(nn.Module):
             encoder_hash_byte_group_vocab=self.args.encoder_hash_byte_group_vocab,
         )
 
-    def encode(self, tokens, embeds):
-        return self.encoder(tokens, embeds)
+    def encode(
+        self,
+        tokens,
+        embeds,
+        patch_embeds=None,
+        cross_mask=None,
+        num_patches=None,
+        patch_ids=None,
+    ):
+        return self.encoder(
+            tokens, embeds, patch_embeds, cross_mask, num_patches, patch_ids
+        )
 
-    def decode(self, tokens, embeds, patch_embeds=None):
-        return self.decoder(tokens, embeds, patch_embeds)
+    def decode(self, encoder_tokens, decoder_tokens, embeds, patch_lengths):
+        nb_boe = self.args.patch_size - 1
+        # dec_embeds = tokens[:, nb_boe : nb_boe + N, :]
+        decoder_patch_ids = decoder_patch_ids_from_lengths(
+            patch_lengths, nb_boe, decoder_tokens.shape[-1]
+        )
+        tokens = torch.gather(
+            encoder_tokens,
+            1,
+            decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1]),
+        )
+        return self.decoder(tokens=tokens, patch_embeds=encoder_tokens, embeds=embeds)
 
 
 def create_args():
