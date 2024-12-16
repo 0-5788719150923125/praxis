@@ -17,8 +17,6 @@ host_requirements = [
     "lightning",
     "lm_eval",
     "pytorch_optimizer",
-    "rich",
-    "rich[jupyter]",
     "werkzeug",
 ]
 

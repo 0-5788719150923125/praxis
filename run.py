@@ -99,7 +99,6 @@ from lightning.pytorch.callbacks import (
     Callback,
     GradientAccumulationScheduler,
     ModelCheckpoint,
-    RichProgressBar,
     TQDMProgressBar,
 )
 from lightning.pytorch.loggers import CSVLogger
@@ -1287,8 +1286,12 @@ if wandb:
 
 generator = Generator(model, tokenizer)
 
-api_server = APIServer(generator, host_name, port)
-api_server.start()
+try:
+    api_server = APIServer(generator, host_name, port)
+    api_server.start()
+finally:
+    api_server.stop()
+
 
 # Load datasets
 datamodule = get_datamodules(seed, dev, phi, gun, source, tokenizer, hparams, data_path)
@@ -1309,13 +1312,14 @@ if not use_dashboard:
 
     from lightning.pytorch.callbacks import TQDMProgressBar
 
-    class ClearingTQDMProgressBar(TQDMProgressBar):
+    class PrintingProgressBar(TQDMProgressBar):
         def __init__(
             self, refresh_rate: int = 1, process_position: int = 0, leave: bool = False
         ):
             super().__init__(refresh_rate, process_position, leave)
             self._last_print_lines = 0
             self._is_jupyter = self._check_jupyter()
+            self._output_div = None
 
         def _check_jupyter(self) -> bool:
             try:
@@ -1325,7 +1329,7 @@ if not use_dashboard:
             except Exception:
                 return False
 
-        def print(self, *args: Any, sep: str = " ", **kwargs: Any) -> None:
+        def _get_active_progress_bar(self):
             active_progress_bar = None
             if (
                 self._train_progress_bar is not None
@@ -1347,30 +1351,64 @@ if not use_dashboard:
             ):
                 active_progress_bar = self.predict_progress_bar
 
-            if active_progress_bar is not None:
-                message = sep.join(map(str, args))
+            return active_progress_bar
 
-                if self._is_jupyter:
-                    from IPython.display import clear_output
+        def _escape_html(self, text: str) -> str:
+            """Escape HTML special characters while preserving whitespace"""
+            import html
 
-                    clear_output(wait=True)
-                    active_progress_bar.write(message)
-                else:
-                    # Terminal version - keep original ANSI approach
-                    if not message.endswith("\n"):
-                        message += "\n"
-                    new_lines = message.count("\n")
-                    clear_sequence = (
-                        "\033[F\033[K" * self._last_print_lines
-                        if self._last_print_lines > 0
-                        else ""
+            # First escape special characters
+            escaped = html.escape(str(text))
+            # Replace newlines with <br> tags to preserve formatting
+            escaped = escaped.replace("\n", "<br>")
+            # Replace spaces with &nbsp; to preserve multiple spaces
+            escaped = escaped.replace("  ", "&nbsp;&nbsp;")
+            return escaped
+
+        def print(self, *args: Any, sep: str = " ", **kwargs: Any) -> None:
+            active_progress_bar = self._get_active_progress_bar()
+            if active_progress_bar is None:
+                return
+
+            message = sep.join(map(str, args))
+
+            if self._is_jupyter:
+                from IPython.display import HTML, display
+
+                # Escape the message
+                safe_message = self._escape_html(message)
+
+                # Create a dedicated output area if it doesn't exist
+                if self._output_div is None:
+                    self._output_div = display(
+                        HTML(
+                            '<div id="custom-output" style="white-space: pre-wrap;"></div>'
+                        ),
+                        display_id=True,
                     )
-                    active_progress_bar.write(
-                        clear_sequence + message.rstrip("\n"), end="\n"
-                    )
-                    self._last_print_lines = new_lines
 
-    progress_bar = ClearingTQDMProgressBar(process_position=0, leave=True)
+                # Update the output area with the escaped message
+                self._output_div.update(
+                    HTML(
+                        f'<div id="custom-output" style="white-space: pre-wrap;">{safe_message}</div>'
+                    )
+                )
+            else:
+                # Terminal version - keep original ANSI approach
+                if not message.endswith("\n"):
+                    message += "\n"
+                new_lines = message.count("\n")
+                clear_sequence = (
+                    "\033[F\033[K" * self._last_print_lines
+                    if self._last_print_lines > 0
+                    else ""
+                )
+                active_progress_bar.write(
+                    clear_sequence + message.rstrip("\n"), end="\n"
+                )
+                self._last_print_lines = new_lines
+
+    progress_bar = PrintingProgressBar(process_position=0, leave=True)
     train_params["callbacks"].append(progress_bar)
 train_params["callbacks"].append(checkpoint_callback)
 train_params["callbacks"].append(
