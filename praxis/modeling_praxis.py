@@ -36,11 +36,10 @@ class PraxisModel(PreTrainedModel):
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         if self.encoder:
-            embeds = self.encoder.compute_embeds(input_ids)
-            tokens = self.encoder.encode(input_ids, embeds)
-            # print(embeds)
-            # embeds = self.embeds(embeds)
-            self.encoder.decode(tokens[0][0][0], embeds)
+            tokens = self.encoder.create_tokens(input_ids)
+            embeds = self.encoder.compute_embeds(tokens)
+            encoded_tokens = self.encoder.encode(tokens, embeds)[0][0][0]
+            decoded_tokens = self.encoder.decode(encoded_tokens, embeds)[0][0]
 
         inputs = self.embeds(input_ids)
 

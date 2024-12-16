@@ -4,6 +4,7 @@ from bytelatent.model.blt import (
     compute_hash_embeddings,
     create_local_decoder,
     create_local_encoder,
+    get_blt_input,
     init_embeddings,
 )
 from torch import nn
@@ -13,9 +14,15 @@ class PraxisByteLatentEncoder(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
 
+        max_seq_len = config.context_length // 2
         self.args = create_args(cross_attention=False)
         self.args.encoder_hash_byte_group_vocab = config.vocab_size
         self.args.dim = config.hidden_size
+        self.args.dim_token = config.hidden_size
+        self.args.dim_local_encoder = max_seq_len
+        self.args.dim_local_decoder = config.hidden_size
+        # self.args.dim_token_emb = config.hidden_size
+        # self.args.dim_patch_emb = config.hidden_size
         self.args.vocab_size = config.vocab_size
         self.args.n_layers_local_encoder = 1
         self.args.n_layers_local_decoder = 1
@@ -23,27 +30,34 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args.n_heads_local_decoder = 1
         self.args.cross_attn_decoder = False
         self.args.attn_bias_type = "local_block_causal"
-        self.args.max_encoder_seq_length = config.context_length
+        self.args.max_encoder_seq_length = max_seq_len
         self.args.efficient_attn = "sdpa"
         self.args.share_encoder_decoder_emb = False
-        self.args.dim_token = config.hidden_size
-        self.args.dim_local_encoder = config.hidden_size
-        self.args.dim_local_decoder = config.hidden_size
-        self.args.max_length = config.context_length
-        self.args.max_seqlen = config.context_length
+        self.args.max_length = config.hidden_size
+        self.args.max_seqlen = max_seq_len
 
         self.encoder = create_local_encoder(self.args)
         self.embeds = init_embeddings(
             self.args,
             EmbeddingType.HASH_TOK,
-            local_encoder_dim=config.hidden_size,
+            local_encoder_dim=self.args.dim_local_encoder,
             encoder_hash_byte_group_size=[4],
         )
         self.decoder = create_local_decoder(self.args)
 
-    def compute_embeds(self, input_ids):
+    def create_tokens(self, input_ids):
+        local_encoder_tokens, _, _ = get_blt_input(
+            tokens=input_ids,
+            enforce_patch_size_multiple=False,
+            nb_boe=0,
+            patch_size=self.encoder.patch_size,
+            boe_id=self.encoder.boe_id,
+        )
+        return local_encoder_tokens
+
+    def compute_embeds(self, tokens):
         return compute_hash_embeddings(
-            local_encoder_tokens=input_ids,
+            local_encoder_tokens=tokens,
             local_encoder=self.encoder,
             encoder_hash_tok_embedding=self.embeds,
             encoder_hash_byte_group_nb_functions=self.args.encoder_hash_byte_group_nb_functions,
