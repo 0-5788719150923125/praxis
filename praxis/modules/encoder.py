@@ -1,3 +1,4 @@
+import torch
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
@@ -7,6 +8,7 @@ from bytelatent.model.blt import (
     get_blt_input,
     get_global_dim_patch_emb,
     init_embeddings,
+    patch_ids_from_lengths,
 )
 from torch import nn
 
@@ -16,7 +18,7 @@ class PraxisByteLatentEncoder(nn.Module):
         super().__init__()
 
         max_seq_len = 512
-        self.args = create_args(cross_attention=False)
+        self.args = create_args()
         self.args.encoder_hash_byte_group_vocab = config.vocab_size
         self.args.dim = config.hidden_size
         # self.args.dim_global = config.hidden_size
@@ -26,14 +28,14 @@ class PraxisByteLatentEncoder(nn.Module):
         # self.args.dim_token_emb = config.hidden_size
         self.args.dim_patch_emb = config.hidden_size
         self.args.vocab_size = config.vocab_size
-        self.args.n_layers_local_encoder = 1
-        self.args.n_layers_local_decoder = 1
+        self.args.n_layers_local_encoder = 2
+        self.args.n_layers_local_decoder = 2
         self.args.n_heads_local_encoder = 1
         self.args.n_heads_local_decoder = 1
-        self.args.cross_attn_encoder = False
+        self.args.cross_attn_encoder = True
         self.args.cross_attn_decoder = True
         self.args.cross_attn_init_by_pooling = True
-        self.args.cross_attn_all_layers_decoder = True
+        self.args.cross_attn_all_layers_decoder = False
         self.args.cross_attn_all_layers_encoder = False
         self.args.attn_bias_type = "local_block_causal"
         self.args.max_encoder_seq_length = max_seq_len
@@ -55,6 +57,7 @@ class PraxisByteLatentEncoder(nn.Module):
         self.decoder = create_local_decoder(self.args)
 
     def create_tokens(self, input_ids):
+        patch_lengths = batch_to_tensors_and_gpu(input_ids)
         local_encoder_tokens, _, _ = get_blt_input(
             tokens=input_ids,
             enforce_patch_size_multiple=False,
@@ -62,7 +65,10 @@ class PraxisByteLatentEncoder(nn.Module):
             patch_size=self.encoder.patch_size,
             boe_id=self.encoder.boe_id,
         )
-        return local_encoder_tokens
+        patch_ids = patch_ids_from_lengths(
+            patch_lengths, local_encoder_tokens.shape[-1]
+        )
+        return local_encoder_tokens, patch_ids
 
     def compute_embeds(self, tokens):
         return compute_hash_embeddings(
@@ -77,11 +83,11 @@ class PraxisByteLatentEncoder(nn.Module):
     def encode(self, tokens, embeds):
         return self.encoder(tokens, embeds)
 
-    def decode(self, tokens, embeds, patch_embeds):
+    def decode(self, tokens, embeds, patch_embeds=None):
         return self.decoder(tokens, embeds, patch_embeds)
 
 
-def create_args(cross_attention=False):
+def create_args():
     transformer_args = ByteLatentTransformerArgs(
         # Base args provided
         n_heads=8,
@@ -101,8 +107,8 @@ def create_args(cross_attention=False):
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=50002,
         encoder_hash_byte_group_nb_functions=3,
-        cross_attn_encoder=cross_attention,  # True,
-        cross_attn_decoder=cross_attention,  # True,
+        cross_attn_encoder=True,  # True,
+        cross_attn_decoder=True,  # True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
         dim_local_encoder=256,
@@ -135,3 +141,25 @@ def create_args(cross_attention=False):
         downsampling_by_pooling="max",
     )
     return transformer_args
+
+
+def batch_to_tensors_and_gpu(batch):
+    # x = torch.from_numpy(batch.x)
+    # y = torch.from_numpy(batch.y)
+    # mask = None if batch.mask is None else torch.from_numpy(batch.mask)
+    # patch_lengths = (
+    #     None if batch.patch_lengths is None else torch.from_numpy(batch.patch_lengths)
+    # )
+    patch_lengths = None
+    # ngram_ids = None if batch.ngram_ids is None else torch.from_numpy(batch.ngram_ids)
+
+    # if torch.cuda.is_available():
+    #     x = x.cuda()
+    #     y = y.cuda()
+    #     if mask is not None:
+    #         mask = mask.cuda()
+    #     if patch_lengths is not None:
+    #         patch_lengths = patch_lengths.cuda()
+    #     if ngram_ids is not None:
+    #         ngram_ids = ngram_ids.cuda()
+    return patch_lengths
