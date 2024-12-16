@@ -139,8 +139,17 @@ AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
+
 # User args, accepted via CLI
-parser = argparse.ArgumentParser(description="User-supplied arguments to this script.")
+class CustomHelpFormatter(argparse.HelpFormatter):
+    def _format_usage(self, usage, actions, groups, prefix):
+        return ""  # This effectively removes the usage section
+
+
+parser = argparse.ArgumentParser(
+    description="User-supplied arguments to this script.",
+    formatter_class=CustomHelpFormatter,
+)
 parser.add_argument(
     "--seed",
     type=int,
