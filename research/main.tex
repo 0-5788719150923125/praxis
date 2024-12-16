@@ -41,6 +41,7 @@ The remainder of this paper is organized as follows: Section 2 reviews related w
 \begin{itemize}
     \item tricks ratio; hyperparameter tuning is restricted to adjusting ratios of various "tricks", like: 10\% differential attention, 2\% SwiGLU, 14\% AdamW, etc. The actual tuning is performed deterministically, via a swarm ruleset.
     \item relate epochs to hashes on IPFS; save checkpoints; restore at certain periods of time; relate all of it to time and evolution; DNA fingerprinting
+    \item Shuffling provides enough regularization; weight decay with shuffling destroys performance.
 \end{itemize}
 
 \section{Ruleset}
