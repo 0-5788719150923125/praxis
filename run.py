@@ -166,6 +166,10 @@ use_dashboard = False if no_dashboard else True
 
 # Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
+if byte_latent:
+    from praxis.tokenizer_praxis import ByteLevelTokenizer
+
+    tokenizer = ByteLevelTokenizer()
 try:
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
 except Exception as e:

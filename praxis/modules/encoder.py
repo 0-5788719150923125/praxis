@@ -5,6 +5,7 @@ from bytelatent.model.blt import (
     create_local_decoder,
     create_local_encoder,
     get_blt_input,
+    get_global_dim_patch_emb,
     init_embeddings,
 )
 from torch import nn
@@ -18,17 +19,22 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args = create_args(cross_attention=False)
         self.args.encoder_hash_byte_group_vocab = config.vocab_size
         self.args.dim = config.hidden_size
+        # self.args.dim_global = config.hidden_size
         self.args.dim_token = config.hidden_size
-        self.args.dim_local_encoder = max_seq_len
+        self.args.dim_local_encoder = config.hidden_size
         self.args.dim_local_decoder = config.hidden_size
         # self.args.dim_token_emb = config.hidden_size
-        # self.args.dim_patch_emb = config.hidden_size
+        self.args.dim_patch_emb = config.hidden_size
         self.args.vocab_size = config.vocab_size
         self.args.n_layers_local_encoder = 1
         self.args.n_layers_local_decoder = 1
         self.args.n_heads_local_encoder = 1
         self.args.n_heads_local_decoder = 1
-        self.args.cross_attn_decoder = False
+        self.args.cross_attn_encoder = False
+        self.args.cross_attn_decoder = True
+        self.args.cross_attn_init_by_pooling = True
+        self.args.cross_attn_all_layers_decoder = True
+        self.args.cross_attn_all_layers_encoder = False
         self.args.attn_bias_type = "local_block_causal"
         self.args.max_encoder_seq_length = max_seq_len
         self.args.efficient_attn = "sdpa"
@@ -71,8 +77,8 @@ class PraxisByteLatentEncoder(nn.Module):
     def encode(self, tokens, embeds):
         return self.encoder(tokens, embeds)
 
-    def decode(self, tokens, embeds):
-        return self.encoder(tokens, embeds)
+    def decode(self, tokens, embeds, patch_embeds):
+        return self.decoder(tokens, embeds, patch_embeds)
 
 
 def create_args(cross_attention=False):

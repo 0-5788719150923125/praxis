@@ -35,13 +35,20 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
+        embeds = None
         if self.encoder:
             tokens = self.encoder.create_tokens(input_ids)
             embeds = self.encoder.compute_embeds(tokens)
-            encoded_tokens = self.encoder.encode(tokens, embeds)[0][0][0]
-            decoded_tokens = self.encoder.decode(encoded_tokens, embeds)[0][0]
-
-        inputs = self.embeds(input_ids)
+            # inputs = self.encoder.encode(tokens, embeds)[0][0]
+            inputs = self.encoder.encode(tokens, embeds)
+            print(inputs)
+            # print(patch_embeds)
+            # print(input_ids.shape)
+            # print(tokens.shape)
+            # print(embeds.shape)
+            # print(inputs.shape)
+        else:
+            inputs = self.embeds(input_ids)
 
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
@@ -49,11 +56,14 @@ class PraxisModel(PreTrainedModel):
         last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
         self.aux_losses.append(aux_loss)
 
-        return BaseModelOutputWithPast(
-            last_hidden_state=last_hidden_state,
-            past_key_values=None,
-            hidden_states=None,
-            attentions=None,
+        return (
+            BaseModelOutputWithPast(
+                last_hidden_state=last_hidden_state,
+                past_key_values=None,
+                hidden_states=None,
+                attentions=None,
+            ),
+            embeds,
         )
 
     def get_addr(self):
@@ -89,7 +99,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
-        outputs = super().forward(
+        outputs, embeds = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
@@ -99,7 +109,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         hidden_states = outputs[0]
 
-        logits = self.head(hidden_states)
+        if self.encoder:
+            # print(embeds)
+            logits = self.encoder.decode(hidden_states[0], embeds)[0][0]
+        else:
+            logits = self.head(hidden_states)
 
         loss = 0
         if labels is not None:
