@@ -32,6 +32,11 @@ dev_requirements = [
     "wandb",
 ]
 
+# Requirements that don't work in every environment
+quirky_requirements = [
+    "bytelatent @ git+https://github.com/Vectorrent/blt.git@package-module"
+]
+
 setup(
     name="praxis",
     version="0.1.0",
@@ -43,7 +48,11 @@ setup(
     license="MIT",
     install_requires=base_requirements,
     extras_require={
-        "all": base_requirements + host_requirements + dev_requirements,
+        "all": base_requirements
+        + host_requirements
+        + dev_requirements
+        + quirky_requirements,
+        "most": base_requirements + host_requirements + dev_requirements,
         "dev": dev_requirements,
     },
 )
