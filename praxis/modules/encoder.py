@@ -14,7 +14,7 @@ class PraxisByteLatentEncoder(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
 
-        max_seq_len = config.context_length // 2
+        max_seq_len = 512
         self.args = create_args(cross_attention=False)
         self.args.encoder_hash_byte_group_vocab = config.vocab_size
         self.args.dim = config.hidden_size
@@ -32,6 +32,9 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args.attn_bias_type = "local_block_causal"
         self.args.max_encoder_seq_length = max_seq_len
         self.args.efficient_attn = "sdpa"
+        self.args.sliding_window = (
+            config.hidden_size  # basically required, else encoder dim is equal to max_seq_len
+        )
         self.args.share_encoder_decoder_emb = False
         self.args.max_length = config.hidden_size
         self.args.max_seqlen = max_seq_len
