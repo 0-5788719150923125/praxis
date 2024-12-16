@@ -192,6 +192,7 @@ config = PraxisConfig(
     memory=memory,
     mega=mega,
     evolve=evolve,
+    byte_latent=byte_latent,
     activation=activation,
     hivemind=hivemind,
     initial_peers=initial_peers,
