@@ -2,14 +2,6 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 from bytelatent.tokenizers.blt_tokenizer import BltTokenizer
-from bytelatent.tokenizers.constants import (
-    BOE_ID,
-    BOS_ID,
-    BPE_ID,
-    BYTE_UNITS,
-    EOS_ID,
-    PAD_ID,
-)
 from transformers import PreTrainedTokenizer
 
 
@@ -18,8 +10,6 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
     Custom tokenizer class that wraps the BltTokenizer while conforming to
     the HuggingFace PreTrainedTokenizer interface.
     """
-
-    model_max_length = 2048  # Default max length for the model
 
     def __init__(
         self,
@@ -39,8 +29,14 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             "add_eos": add_eos,
         }
 
-        # Flag to track initialization state
-        self._is_fully_initialized = False
+        # Define our special tokens with specific IDs
+        # IDs 0-3 reserved for special tokens
+        self._special_token_ids = {
+            "bos_token": 0,
+            "eos_token": 1,
+            "pad_token": 2,
+            "unk_token": 3,
+        }
 
         # Define our default special tokens
         special_tokens = {
@@ -58,7 +54,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         # Initialize parent class first
         super().__init__(**kwargs)
 
-        # Now we can safely initialize the byte tokenizer
+        # Now we can safely initialize the byte tokenizer with our special token IDs
         self._tokenizer = BltTokenizer(
             vocab_size_unit_1=self._init_params["vocab_size_unit_1"],
             bpe_delim=self._init_params["bpe_delim"],
@@ -67,7 +63,11 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             add_eos=False,
         )
 
-        self._is_fully_initialized = True
+        # Override BltTokenizer's special token IDs with our own
+        self._tokenizer.bos_id = self._special_token_ids["bos_token"]
+        self._tokenizer.eos_id = self._special_token_ids["eos_token"]
+        self._tokenizer.pad_id = self._special_token_ids["pad_token"]
+        # Note: BOE and BPE IDs aren't used in our implementation
 
     def get_vocab(self) -> Dict[str, int]:
         """
@@ -75,17 +75,16 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         """
         vocab = {}
 
-        # Add special tokens first - they always exist
-        for i, token in enumerate(
-            [self.bos_token, self.eos_token, self.pad_token, self.unk_token]
-        ):
-            vocab[token] = i
+        # Add special tokens first with their predefined IDs
+        vocab[self.bos_token] = self._special_token_ids["bos_token"]
+        vocab[self.eos_token] = self._special_token_ids["eos_token"]
+        vocab[self.pad_token] = self._special_token_ids["pad_token"]
+        vocab[self.unk_token] = self._special_token_ids["unk_token"]
 
-        # Add byte tokens only if fully initialized
-        if self._is_fully_initialized:
-            offset = len(vocab)
-            for i in range(self._init_params["vocab_size_unit_1"]):
-                vocab[str(i)] = i + offset
+        # Add byte tokens, starting byte token IDs after special tokens
+        offset = max(self._special_token_ids.values()) + 1
+        for i in range(self._init_params["vocab_size_unit_1"]):
+            vocab[str(i)] = i + offset
 
         return vocab
 
@@ -97,9 +96,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         special_tokens_count = len(
             [self.bos_token, self.eos_token, self.pad_token, self.unk_token]
         )
-        if self._is_fully_initialized:
-            return self._init_params["vocab_size_unit_1"] + special_tokens_count
-        return special_tokens_count
+        return self._init_params["vocab_size_unit_1"] + special_tokens_count
 
     def _tokenize(self, text: str, **kwargs) -> List[str]:
         """
@@ -116,17 +113,36 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         """
         Converts a token string to its ID.
         """
-        vocab = self.get_vocab()
-        return vocab.get(token, vocab[self.unk_token])
+        # Handle special tokens using our predefined IDs
+        special_tokens_map = {
+            self.bos_token: self._special_token_ids["bos_token"],
+            self.eos_token: self._special_token_ids["eos_token"],
+            self.pad_token: self._special_token_ids["pad_token"],
+            self.unk_token: self._special_token_ids["unk_token"],
+        }
+
+        if token in special_tokens_map:
+            return special_tokens_map[token]
+
+        # For regular tokens, they are already string representations of IDs
+        try:
+            return int(token) + max(self._special_token_ids.values()) + 1
+        except ValueError:
+            return self._special_token_ids["unk_token"]
 
     def _convert_id_to_token(self, index: int) -> str:
         """
         Converts an ID to its string token representation.
         """
-        vocab = self.get_vocab()
-        for token, idx in vocab.items():
-            if idx == index:
-                return token
+        # Handle special token IDs
+        id_to_special_token = {v: k for k, v in self._special_token_ids.items()}
+        if index in id_to_special_token:
+            return getattr(self, id_to_special_token[index])
+
+        # For regular tokens, adjust the index back to byte value
+        adjusted_index = index - max(self._special_token_ids.values()) - 1
+        if 0 <= adjusted_index < self._init_params["vocab_size_unit_1"]:
+            return str(adjusted_index)
         return self.unk_token
 
     def convert_tokens_to_string(self, tokens: List[str]) -> str:
@@ -148,13 +164,6 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
                     continue
 
         return self._tokenizer.decode(byte_tokens)
-
-    @property
-    def initial_text(self) -> str:
-        """
-        Property to support common usage patterns.
-        """
-        return self.bos_token
 
 
 def run_comprehensive_tests():
@@ -273,9 +282,6 @@ def run_comprehensive_tests():
 
     def test_common_usage_patterns():
         print("6. Testing common usage patterns...")
-
-        # Test pattern from example 1
-        assert isinstance(tokenizer.initial_text, str), "Initial text property failed"
 
         # Test pattern from example 2
         special_tokens = [

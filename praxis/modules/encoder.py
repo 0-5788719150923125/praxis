@@ -23,8 +23,8 @@ class PraxisByteLatentEncoder(nn.Module):
             PatcherArgs(
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
-                patching_threshold=self.args.patching_threshold,
-                patching_threshold_add=self.args.patching_threshold_add,
+                threshold=self.args.patching_threshold,
+                threshold_add=self.args.patching_threshold_add,
                 monotonicity=self.args.monotonicity,
                 max_patch_length=self.args.max_patch_length,
             )
@@ -51,7 +51,7 @@ class PraxisByteLatentEncoder(nn.Module):
         )
         patch_lengths, tok_scores = self.patcher.patch(
             encoder_tokens,
-            include_next_token=True,
+            include_next_token=False,  # fails with some patching_mode implementations
             threshold=self.patcher.threshold,
         )
         patch_ids = patch_ids_from_lengths(patch_lengths, encoder_tokens.shape[-1])
@@ -109,15 +109,18 @@ def create_args(config):
         dim_token=config.hidden_size,
         dim_patch_emb=config.hidden_size,
         dim_global=config.hidden_size,
-        patch_size=6,
-        tokenization_mode="bytes",
-        patching_mode="space",
         tie_local_encoder_decoder_logits=False,
         data_loader_patching=True,
         max_encoder_seq_length=config.context_length,
         pad_to_max_length=True,
         encoder_lm_loss=False,
-        patching_threshold=3.1439168453216553,
+        # patching_threshold=3.1439168453216553,
+        patching_threshold=1.335442066192627,
+        # patch_size=6,
+        patch_size=4.5,
+        tokenization_mode="bytes",
+        # patching_mode="space",
+        patching_mode="bpe",
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
@@ -127,15 +130,15 @@ def create_args(config):
         cross_attn_window_decoder=512,
         dim_local_encoder=config.hidden_size,
         dim_local_decoder=config.hidden_size,
-        cross_attn_k=8,
-        cross_attn_nheads=4,
+        cross_attn_k=1,
+        cross_attn_nheads=1,
         n_layers_local_encoder=1,
         n_layers_local_decoder=1,
         n_heads_local_encoder=1,
         n_heads_local_decoder=1,
         cross_attn_all_layers_decoder=True,
         cross_attn_all_layers_encoder=True,
-        cross_attn_use_flex_attention=True,
+        cross_attn_use_flex_attention=False,  # not supported on CPU and many GPUs
         cross_attn_init_by_pooling=True,
         log_patch_lengths=True,
         non_linearity="swiglu",
