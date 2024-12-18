@@ -51,7 +51,7 @@ class PraxisByteLatentEncoder(nn.Module):
         )
         patch_lengths, tok_scores = self.patcher.patch(
             encoder_tokens,
-            include_next_token=False,  # fails with some patching_mode implementations
+            include_next_token=True,
             threshold=self.patcher.threshold,
         )
         patch_ids = patch_ids_from_lengths(patch_lengths, encoder_tokens.shape[-1])
@@ -114,13 +114,13 @@ def create_args(config):
         max_encoder_seq_length=config.context_length,
         pad_to_max_length=True,
         encoder_lm_loss=False,
-        # patching_threshold=3.1439168453216553,
-        patching_threshold=1.335442066192627,
-        # patch_size=6,
-        patch_size=4.5,
+        patching_threshold=3.1439168453216553,
+        # patching_threshold=1.335442066192627,
+        patch_size=6,
+        # patch_size=4.5,
         tokenization_mode="bytes",
-        # patching_mode="space",
-        patching_mode="bpe",
+        patching_mode="space",
+        # patching_mode="bpe",
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,

@@ -33,7 +33,8 @@ dev_requirements = [
 
 # Requirements that don't work in every environment
 quirky_requirements = [
-    "bytelatent @ git+https://github.com/Vectorrent/blt.git@package-module"
+    # "bytelatent @ git+https://github.com/Vectorrent/blt.git@package-module"
+    "bytelatent @ file:///home/crow/repos/blt"
 ]
 
 setup(
