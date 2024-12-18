@@ -19,7 +19,7 @@ class PraxisByteLatentEncoder(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
 
-        max_seq_len = 512
+        max_seq_len = 2048
         self.args = create_args()
         self.args.encoder_hash_byte_group_vocab = config.vocab_size
         self.args.dim = config.hidden_size
@@ -27,18 +27,17 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args.dim_token = config.hidden_size
         self.args.dim_local_encoder = config.hidden_size
         self.args.dim_local_decoder = config.hidden_size
-        # self.args.dim_token_emb = config.hidden_size
         self.args.dim_patch_emb = config.hidden_size
         self.args.vocab_size = config.vocab_size
-        self.args.n_layers_local_encoder = 2
-        self.args.n_layers_local_decoder = 2
+        self.args.n_layers_local_encoder = 1
+        self.args.n_layers_local_decoder = 1
         self.args.n_heads_local_encoder = 1
         self.args.n_heads_local_decoder = 1
         self.args.cross_attn_encoder = False
         self.args.cross_attn_decoder = False
         self.args.cross_attn_init_by_pooling = True
-        self.args.cross_attn_all_layers_decoder = False
-        self.args.cross_attn_all_layers_encoder = False
+        self.args.cross_attn_all_layers_decoder = True
+        self.args.cross_attn_all_layers_encoder = True
         self.args.attn_bias_type = "local_block_causal"
         self.args.max_encoder_seq_length = max_seq_len
         self.args.efficient_attn = "sdpa"
@@ -48,7 +47,6 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args.share_encoder_decoder_emb = False
         self.args.max_length = config.hidden_size
         self.args.max_seqlen = max_seq_len
-        # self.args.data_loader_patching = False
 
         self.encoder = create_local_encoder(self.args)
         self.embeds = init_embeddings(
@@ -69,8 +67,11 @@ class PraxisByteLatentEncoder(nn.Module):
             )
         )
 
-    def create_tokens(self, input_ids):
-        local_encoder_tokens, _, local_decoder_tokens = get_blt_input(
+    def __repr__(self):
+        return f"PraxisByteLatentEncoder({self.args.vocab_size, self.args.dim_global})"
+
+    def encode(self, input_ids):
+        encoder_tokens, _, decoder_tokens = get_blt_input(
             tokens=input_ids,
             enforce_patch_size_multiple=False,
             nb_boe=0,
@@ -78,55 +79,28 @@ class PraxisByteLatentEncoder(nn.Module):
             boe_id=self.encoder.boe_id,
         )
         patch_lengths, tok_scores = self.patcher.patch(
-            local_encoder_tokens,
+            encoder_tokens,
             include_next_token=True,
             threshold=self.patcher.threshold,
         )
-        patch_ids = patch_ids_from_lengths(
-            patch_lengths, local_encoder_tokens.shape[-1]
-        )
-        return (
-            local_encoder_tokens,
-            local_decoder_tokens,
-            patch_lengths.shape[1],
-            patch_lengths,
-            patch_ids,
-        )
-
-    def compute_embeds(self, tokens):
-        return compute_hash_embeddings(
-            local_encoder_tokens=tokens,
+        patch_ids = patch_ids_from_lengths(patch_lengths, encoder_tokens.shape[-1])
+        embeds = compute_hash_embeddings(
+            local_encoder_tokens=encoder_tokens,
             local_encoder=self.encoder,
             encoder_hash_tok_embedding=self.embeds,
             encoder_hash_byte_group_nb_functions=self.args.encoder_hash_byte_group_nb_functions,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
             encoder_hash_byte_group_vocab=self.args.encoder_hash_byte_group_vocab,
         )
-
-    def encode(
-        self,
-        tokens,
-        embeds,
-        patch_embeds=None,
-        cross_mask=None,
-        num_patches=None,
-        patch_ids=None,
-    ):
-        return self.encoder(
-            tokens, embeds, patch_embeds, cross_mask, num_patches, patch_ids
+        num_patches = patch_lengths.shape[1]
+        patch_embeds = None
+        cross_mask = None
+        (encoder_output, _), _ = self.encoder(
+            encoder_tokens, embeds, patch_embeds, cross_mask, num_patches, patch_ids
         )
+        return encoder_output, decoder_tokens, embeds, patch_lengths
 
     def decode(self, encoder_tokens, decoder_tokens, embeds, patch_lengths):
-        """
-        Prepare encoded tokens for decoding and run through local decoder.
-
-        Args:
-            encoder_tokens: Already processed by external transformer
-            decoder_tokens: Original decoder tokens from create_tokens
-            embeds: Original embeddings from compute_embeds
-            patch_lengths: Patch length information from create_tokens
-        """
-        # nb_boe = self.args.patch_size - 1
         nb_boe = 0 if self.args.patching_mode != "" else self.args.patch_size - 1
 
         # Create decoder patch ids to align tokens
@@ -150,6 +124,9 @@ class PraxisByteLatentEncoder(nn.Module):
 
 
 def create_args():
+    """
+    Defaults from the original Facebook code.
+    """
     transformer_args = ByteLatentTransformerArgs(
         # Base args provided
         n_heads=8,
@@ -227,34 +204,15 @@ if __name__ == "__main__":
             input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len))
             print(f"Input shape: {input_ids.shape}")
 
-            # Step 1: Create tokens
-            print("\nStep 1: Creating tokens...")
-            encoder_tokens, decoder_tokens, num_patches, patch_lengths, patch_ids = (
-                model.create_tokens(input_ids)
-            )
-            print(f"Encoder tokens shape: {encoder_tokens.shape}")
-            print(f"Decoder tokens shape: {decoder_tokens.shape}")
-            print(f"Number of patches: {num_patches}")
-
-            # Step 2: Compute embeddings
-            print("\nStep 2: Computing embeddings...")
-            embeds = model.compute_embeds(encoder_tokens)
-            print(f"Embeddings shape: {embeds.shape}")
-
-            # Step 3: Encode
-            print("\nStep 3: Encoding...")
-            (encoder_output, _), _ = model.encode(
-                tokens=encoder_tokens,
-                embeds=embeds,
-                patch_embeds=None,  # Optional, can be None
-                cross_mask=None,  # Optional, can be None
-                num_patches=num_patches,
-                patch_ids=patch_ids,
+            # Step 1: Encode
+            print("\nStep 1: Encoding...")
+            encoder_output, decoder_tokens, embeds, patch_lengths = model.encode(
+                input_ids=input_ids
             )
             print(f"Encoder output shape: {encoder_output.shape}")
 
             # Step 4: Decode
-            print("\nStep 4: Decoding...")
+            print("\nStep 2: Decoding...")
             decoder_output = model.decode(
                 encoder_tokens=encoder_output,
                 decoder_tokens=decoder_tokens,

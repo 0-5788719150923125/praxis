@@ -27,7 +27,8 @@ class PraxisModel(PreTrainedModel):
             self.encoder = (
                 PraxisByteLatentEncoder(config) if config.byte_latent else False
             )
-        self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
+        else:
+            self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = PraxisDecoder(config)
         self.aux_losses = []
 
@@ -44,12 +45,8 @@ class PraxisModel(PreTrainedModel):
         decoder_tokens = None
         patch_lengths = None
         if self.encoder:
-            encoder_tokens, decoder_tokens, num_patches, patch_lengths, patch_ids = (
-                self.encoder.create_tokens(input_ids)
-            )
-            embeds = self.encoder.compute_embeds(encoder_tokens)
-            (inputs, _), _ = self.encoder.encode(
-                encoder_tokens, embeds, num_patches=num_patches, patch_ids=patch_ids
+            inputs, decoder_tokens, embeds, patch_lengths = self.encoder.encode(
+                input_ids
             )
         else:
             inputs = self.embeds(input_ids)
@@ -86,7 +83,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def __init__(self, config: PraxisConfig):
         config.causal = True
         super().__init__(config)
-        self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if not config.byte_latent:
+            self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.loss_func = LOSS_REGISTRY[config.loss_func]()
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
