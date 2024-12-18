@@ -276,12 +276,13 @@ optimizer_defaults = dict(
     ],
 )
 min_lr = 0
+weight_decay = 1e-12
 if optimizer.lower() == "adamg":
     optimizer_profile = dict(
         optimizer_name="AdamG",
         lr=1.0,
         min_lr=1e-2,
-        weight_decay=1e-7,
+        weight_decay=weight_decay,
         weight_decouple=True,
         p=0.5,
         q=0.24,
@@ -291,7 +292,7 @@ elif optimizer.lower() == "prodigy":
         optimizer_name="Prodigy",
         lr=1.0,
         min_lr=1e-2,
-        weight_decay=1e-7,
+        weight_decay=weight_decay,
         weight_decouple=True,
         bias_correction=True,
         safeguard_warmup=True,
@@ -301,7 +302,7 @@ elif optimizer.lower() == "soap":
         optimizer_name="SOAP",
         lr=2e-4,
         min_lr=2e-5,
-        weight_decay=1e-7,
+        weight_decay=weight_decay,
         precondition_frequency=10,
         max_precondition_dim=1024,
         normalize_gradient=False,
@@ -313,7 +314,7 @@ else:
     optimizer_profile = dict(
         optimizer_name="AdamW",
         lr=5e-4,
-        weight_decay=1e-7,
+        weight_decay=weight_decay,
         betas=(0.9, 0.95),
     )
     min_lr = 5e-6

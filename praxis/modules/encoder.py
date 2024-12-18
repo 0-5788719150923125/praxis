@@ -10,14 +10,10 @@ from torch import nn
 
 class SimpleCrossAttention(CrossAttention):
     """
-    A a monkey-patch for CrossAttention, which doesn't use FlexAttention.
+    A monkey-patch for CrossAttention, which doesn't use FlexAttention.
     """
 
-    def __init__(
-        self,
-        *args,
-        **kwargs,
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.use_sdpa = True
 
@@ -105,7 +101,9 @@ class PraxisByteLatentEncoder(nn.Module):
         self.decoder = create_local_decoder(self.args)
 
     def __repr__(self):
-        return f"PraxisByteLatentEncoder({self.args.vocab_size, self.args.dim_global})"
+        return (
+            f"PraxisByteLatentEncoder({self.args.vocab_size}, {self.args.dim_global})"
+        )
 
     def encode(self, input_ids):
         encoder_tokens, _, decoder_tokens = get_blt_input(
@@ -171,10 +169,11 @@ def create_args(config):
         dim=config.hidden_size,
         vocab_size=config.vocab_size,
         dim_token=config.hidden_size,
+        # dim_token_emb=config.hidden_size // 16,
         dim_patch_emb=config.hidden_size,
         dim_global=config.hidden_size,
         tie_local_encoder_decoder_logits=False,
-        data_loader_patching=True,
+        data_loader_patching=False,
         max_encoder_seq_length=config.context_length,
         pad_to_max_length=True,
         encoder_lm_loss=False,
@@ -188,7 +187,7 @@ def create_args(config):
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
-        cross_attn_encoder=True,
+        cross_attn_encoder=False,
         cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
@@ -200,8 +199,8 @@ def create_args(config):
         n_layers_local_decoder=1,
         n_heads_local_encoder=1,
         n_heads_local_decoder=1,
-        cross_attn_all_layers_decoder=True,
         cross_attn_all_layers_encoder=True,
+        cross_attn_all_layers_decoder=True,
         cross_attn_use_flex_attention=False,  # not supported on CPU and many GPUs
         cross_attn_init_by_pooling=True,
         log_patch_lengths=True,
