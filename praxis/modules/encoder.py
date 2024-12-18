@@ -1,4 +1,71 @@
+from typing import Optional, Union
+
+import bytelatent
 import torch
+import torch.nn.functional as F
+from bytelatent.base_transformer import flex_attention_comp, repeat_kv
+from bytelatent.model.transformer import CrossAttention
+from torch import nn
+
+
+class SimpleCrossAttention(CrossAttention):
+    """
+    A a monkey-patch for CrossAttention, which doesn't use FlexAttention.
+    """
+
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.use_sdpa = True
+
+    def forward(self, x, kv, mask=None) -> torch.Tensor:
+        # B S D
+        bsz, seq_len, _ = x.shape
+        _, slen_kv, _ = kv.shape
+        x = self.cross_attn_norm_q(x)
+        kv = self.cross_attn_norm_kv(kv)
+
+        xq = self.wq(x)
+        xk = self.wk(kv)
+        xv = self.wv(kv)
+
+        output_shape = xq.shape
+        # B S D -> B S H D
+        xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
+        xk = xk.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
+        xv = xv.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
+
+        xk = repeat_kv(xk, self.heads_per_group, dim=2)
+        xv = repeat_kv(xv, self.heads_per_group, dim=2)
+
+        assert mask is None or isinstance(mask, BlockMask)
+        xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
+        if self.use_sdpa:
+            # Convert BlockMask to attention mask if needed
+            attn_mask = (
+                mask.materialize((seq_len, slen_kv)) if mask is not None else None
+            )
+
+            # Apply scaled dot-product attention
+            output = F.scaled_dot_product_attention(
+                xq, xk, xv, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
+            )
+        else:
+            # Use original flex attention
+            output = flex_attention_comp(xq, xk, xv, block_mask=mask)
+        output = output.transpose(1, 2).contiguous()  # B H S D -> B S H D
+
+        output = self.wo(output.reshape(output_shape))
+
+        return x + output
+
+
+# Monkey patch the import
+bytelatent.model.transformer.CrossAttention = SimpleCrossAttention
+
 from bytelatent.data.patcher import Patcher, PatcherArgs
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
@@ -12,7 +79,6 @@ from bytelatent.model.blt import (
     init_embeddings,
     patch_ids_from_lengths,
 )
-from torch import nn
 
 
 class PraxisByteLatentEncoder(nn.Module):
@@ -101,11 +167,9 @@ def create_args(config):
     """
 
     return ByteLatentTransformerArgs(
-        # Base args provided
-        n_heads=8,
+        n_heads=1,
         dim=config.hidden_size,
         vocab_size=config.vocab_size,
-        # Additional args from command line
         dim_token=config.hidden_size,
         dim_patch_emb=config.hidden_size,
         dim_global=config.hidden_size,
@@ -124,8 +188,8 @@ def create_args(config):
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
-        cross_attn_encoder=False,
-        cross_attn_decoder=False,
+        cross_attn_encoder=True,
+        cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
         dim_local_encoder=config.hidden_size,
@@ -149,8 +213,8 @@ def create_args(config):
         custom_bwd=False,
         layer_ckpt="none",
         efficient_attn="sdpa",
-        patch_only_encoder=False,
-        patch_only_decoder=False,
+        # patch_only_encoder=False, # doesn't do anything
+        # patch_only_decoder=False,
         use_local_encoder_transformer=True,
         init_use_gaussian=True,
         init_use_depth="current",
