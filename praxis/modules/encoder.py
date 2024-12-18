@@ -18,44 +18,7 @@ from torch import nn
 class PraxisByteLatentEncoder(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
-
-        max_seq_len = 2048
-        self.args = create_args()
-        self.args.encoder_hash_byte_group_vocab = config.vocab_size
-        self.args.dim = config.hidden_size
-        self.args.dim_global = config.hidden_size
-        self.args.dim_token = config.hidden_size
-        self.args.dim_local_encoder = config.hidden_size
-        self.args.dim_local_decoder = config.hidden_size
-        self.args.dim_patch_emb = config.hidden_size
-        self.args.vocab_size = config.vocab_size
-        self.args.n_layers_local_encoder = 1
-        self.args.n_layers_local_decoder = 1
-        self.args.n_heads_local_encoder = 1
-        self.args.n_heads_local_decoder = 1
-        self.args.cross_attn_encoder = False
-        self.args.cross_attn_decoder = False
-        self.args.cross_attn_init_by_pooling = True
-        self.args.cross_attn_all_layers_decoder = True
-        self.args.cross_attn_all_layers_encoder = True
-        self.args.attn_bias_type = "local_block_causal"
-        self.args.max_encoder_seq_length = max_seq_len
-        self.args.efficient_attn = "sdpa"
-        self.args.sliding_window = (
-            config.hidden_size  # basically required, else encoder dim is equal to max_seq_len
-        )
-        self.args.share_encoder_decoder_emb = False
-        self.args.max_length = config.hidden_size
-        self.args.max_seqlen = max_seq_len
-
-        self.encoder = create_local_encoder(self.args)
-        self.embeds = init_embeddings(
-            self.args,
-            EmbeddingType.HASH_TOK,
-            local_encoder_dim=self.args.dim_local_encoder,
-            encoder_hash_byte_group_size=[4],
-        )
-        self.decoder = create_local_decoder(self.args)
+        self.args = create_args(config)
         self.patcher = Patcher(
             PatcherArgs(
                 patch_size=self.args.patch_size,
@@ -66,6 +29,14 @@ class PraxisByteLatentEncoder(nn.Module):
                 max_patch_length=self.args.max_patch_length,
             )
         )
+        self.embeds = init_embeddings(
+            self.args,
+            EmbeddingType.HASH_TOK,
+            local_encoder_dim=self.args.dim_local_encoder,
+            encoder_hash_byte_group_size=[4],
+        )
+        self.encoder = create_local_encoder(self.args)
+        self.decoder = create_local_decoder(self.args)
 
     def __repr__(self):
         return f"PraxisByteLatentEncoder({self.args.vocab_size, self.args.dim_global})"
@@ -92,11 +63,11 @@ class PraxisByteLatentEncoder(nn.Module):
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
             encoder_hash_byte_group_vocab=self.args.encoder_hash_byte_group_vocab,
         )
-        num_patches = patch_lengths.shape[1]
-        patch_embeds = None
-        cross_mask = None
         (encoder_output, _), _ = self.encoder(
-            encoder_tokens, embeds, patch_embeds, cross_mask, num_patches, patch_ids
+            encoder_tokens,
+            embeds,
+            num_patches=patch_lengths.shape[1],
+            patch_ids=patch_ids,
         )
         return encoder_output, decoder_tokens, embeds, patch_lengths
 
@@ -123,37 +94,45 @@ class PraxisByteLatentEncoder(nn.Module):
         return output
 
 
-def create_args():
+def create_args(config):
     """
     Defaults from the original Facebook code.
+    https://github.com/facebookresearch/blt/blob/main/bytelatent/test_blt.py
     """
-    transformer_args = ByteLatentTransformerArgs(
+
+    return ByteLatentTransformerArgs(
         # Base args provided
         n_heads=8,
-        dim=512,
-        vocab_size=260,
+        dim=config.hidden_size,
+        vocab_size=config.vocab_size,
         # Additional args from command line
-        dim_token=256,
+        dim_token=config.hidden_size,
+        dim_patch_emb=config.hidden_size,
+        dim_global=config.hidden_size,
         patch_size=6,
         tokenization_mode="bytes",
         patching_mode="space",
         tie_local_encoder_decoder_logits=False,
         data_loader_patching=True,
-        max_encoder_seq_length=12288,
+        max_encoder_seq_length=config.context_length,
         pad_to_max_length=True,
         encoder_lm_loss=False,
         patching_threshold=3.1439168453216553,
         encoder_hash_byte_group_size=[4],
-        encoder_hash_byte_group_vocab=50002,
+        encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
-        cross_attn_encoder=True,  # True,
-        cross_attn_decoder=True,  # True,
+        cross_attn_encoder=False,
+        cross_attn_decoder=False,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
-        dim_local_encoder=256,
-        dim_local_decoder=256,
+        dim_local_encoder=config.hidden_size,
+        dim_local_decoder=config.hidden_size,
         cross_attn_k=8,
         cross_attn_nheads=4,
+        n_layers_local_encoder=1,
+        n_layers_local_decoder=1,
+        n_heads_local_encoder=1,
+        n_heads_local_decoder=1,
         cross_attn_all_layers_decoder=True,
         cross_attn_all_layers_encoder=True,
         cross_attn_use_flex_attention=True,
@@ -172,14 +151,15 @@ def create_args():
         use_local_encoder_transformer=True,
         init_use_gaussian=True,
         init_use_depth="current",
-        attn_bias_type="block_causal",
+        attn_bias_type="local_block_causal",
         alpha_depth="disabled",
-        max_length=256,
+        max_length=config.hidden_size,
         local_attention_window_len=512,
-        max_seqlen=12288,
+        sliding_window=config.hidden_size,  # basically required, else encoder dim is equal to max_seq_len
+        max_seqlen=config.context_length,
         downsampling_by_pooling="max",
+        share_encoder_decoder_emb=False,
     )
-    return transformer_args
 
 
 if __name__ == "__main__":
@@ -190,6 +170,7 @@ if __name__ == "__main__":
     class Dummy:
         vocab_size = 50002
         hidden_size = 256
+        context_length = 2048
 
     config = Dummy()
 
