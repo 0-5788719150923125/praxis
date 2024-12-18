@@ -186,23 +186,81 @@ def create_args():
     return transformer_args
 
 
-def batch_to_tensors_and_gpu(batch):
-    # x = torch.from_numpy(batch.x)
-    # y = torch.from_numpy(batch.y)
-    # mask = None if batch.mask is None else torch.from_numpy(batch.mask)
-    # patch_lengths = (
-    #     None if batch.patch_lengths is None else torch.from_numpy(batch.patch_lengths)
-    # )
-    patch_lengths = None
-    # ngram_ids = None if batch.ngram_ids is None else torch.from_numpy(batch.ngram_ids)
+if __name__ == "__main__":
+    import torch
+    from transformers import AutoConfig
 
-    # if torch.cuda.is_available():
-    #     x = x.cuda()
-    #     y = y.cuda()
-    #     if mask is not None:
-    #         mask = mask.cuda()
-    #     if patch_lengths is not None:
-    #         patch_lengths = patch_lengths.cuda()
-    #     if ngram_ids is not None:
-    #         ngram_ids = ngram_ids.cuda()
-    return patch_lengths
+    # Initialize test configuration
+    class Dummy:
+        vocab_size = 50002
+        hidden_size = 256
+
+    config = Dummy()
+
+    # Initialize model
+    model = PraxisByteLatentEncoder(config)
+
+    def run_test():
+        try:
+            # Create sample input
+            batch_size = 2
+            seq_len = 128  # Should be less than max_seq_len (512)
+            input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len))
+            print(f"Input shape: {input_ids.shape}")
+
+            # Step 1: Create tokens
+            print("\nStep 1: Creating tokens...")
+            encoder_tokens, decoder_tokens, num_patches, patch_lengths, patch_ids = (
+                model.create_tokens(input_ids)
+            )
+            print(f"Encoder tokens shape: {encoder_tokens.shape}")
+            print(f"Decoder tokens shape: {decoder_tokens.shape}")
+            print(f"Number of patches: {num_patches}")
+
+            # Step 2: Compute embeddings
+            print("\nStep 2: Computing embeddings...")
+            embeds = model.compute_embeds(encoder_tokens)
+            print(f"Embeddings shape: {embeds.shape}")
+
+            # Step 3: Encode
+            print("\nStep 3: Encoding...")
+            (encoder_output, _), _ = model.encode(
+                tokens=encoder_tokens,
+                embeds=embeds,
+                patch_embeds=None,  # Optional, can be None
+                cross_mask=None,  # Optional, can be None
+                num_patches=num_patches,
+                patch_ids=patch_ids,
+            )
+            print(f"Encoder output shape: {encoder_output.shape}")
+
+            # Step 4: Decode
+            print("\nStep 4: Decoding...")
+            decoder_output = model.decode(
+                encoder_tokens=encoder_output,
+                decoder_tokens=decoder_tokens,
+                embeds=embeds,
+                patch_lengths=patch_lengths,
+            )
+            print(f"Decoder output shape: {decoder_output.shape}")
+
+            # Basic shape assertions
+            assert len(decoder_output.shape) == 3, "Expected 3D output from decoder"
+            assert (
+                decoder_output.shape[0] == batch_size
+            ), "Batch size mismatch in output"
+
+            print("\nTest completed successfully!")
+            return True
+
+        except Exception as e:
+            print(f"\nTest failed with error: {str(e)}")
+            print(f"Error type: {type(e)}")
+            import traceback
+
+            print(traceback.format_exc())
+            return False
+
+    # Run the test
+    print("Starting ByteLatent test...")
+    run_test()
