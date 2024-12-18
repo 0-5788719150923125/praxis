@@ -23,7 +23,7 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args = create_args()
         self.args.encoder_hash_byte_group_vocab = config.vocab_size
         self.args.dim = config.hidden_size
-        # self.args.dim_global = config.hidden_size
+        self.args.dim_global = config.hidden_size
         self.args.dim_token = config.hidden_size
         self.args.dim_local_encoder = config.hidden_size
         self.args.dim_local_decoder = config.hidden_size
@@ -117,17 +117,36 @@ class PraxisByteLatentEncoder(nn.Module):
         )
 
     def decode(self, encoder_tokens, decoder_tokens, embeds, patch_lengths):
-        nb_boe = self.args.patch_size - 1
-        # dec_embeds = tokens[:, nb_boe : nb_boe + N, :]
+        """
+        Prepare encoded tokens for decoding and run through local decoder.
+
+        Args:
+            encoder_tokens: Already processed by external transformer
+            decoder_tokens: Original decoder tokens from create_tokens
+            embeds: Original embeddings from compute_embeds
+            patch_lengths: Patch length information from create_tokens
+        """
+        # nb_boe = self.args.patch_size - 1
+        nb_boe = 0 if self.args.patching_mode != "" else self.args.patch_size - 1
+
+        # Create decoder patch ids to align tokens
         decoder_patch_ids = decoder_patch_ids_from_lengths(
             patch_lengths, nb_boe, decoder_tokens.shape[-1]
         )
-        tokens = torch.gather(
+
+        # Gather encoded tokens according to patch ids
+        gathered_tokens = torch.gather(
             encoder_tokens,
             1,
-            decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1]),
+            decoder_patch_ids.unsqueeze(-1).expand(-1, -1, encoder_tokens.shape[-1]),
         )
-        return self.decoder(tokens=tokens, patch_embeds=encoder_tokens, embeds=embeds)
+
+        # Run through local decoder
+        output, _ = self.decoder(
+            tokens=decoder_tokens, patch_embeds=gathered_tokens, embeds=embeds
+        )
+
+        return output
 
 
 def create_args():

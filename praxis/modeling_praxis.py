@@ -48,18 +48,9 @@ class PraxisModel(PreTrainedModel):
                 self.encoder.create_tokens(input_ids)
             )
             embeds = self.encoder.compute_embeds(encoder_tokens)
-            # inputs = self.encoder.encode(tokens, embeds)[0][0]
-            print(patch_ids)
             (inputs, _), _ = self.encoder.encode(
                 encoder_tokens, embeds, num_patches=num_patches, patch_ids=patch_ids
             )
-            print(inputs)
-            # print(patch_ids)
-            # print(patch_embeds)
-            # print(input_ids.shape)
-            # print(tokens.shape)
-            # print(embeds.shape)
-            # print(inputs.shape)
         else:
             inputs = self.embeds(input_ids)
 
@@ -126,8 +117,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         if self.encoder:
             logits = self.encoder.decode(
-                hidden_states[0], decoder_tokens, embeds, patch_lengths
-            )[0][0]
+                hidden_states, decoder_tokens, embeds, patch_lengths
+            )
         else:
             logits = self.head(hidden_states)
 
