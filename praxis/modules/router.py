@@ -23,7 +23,11 @@ class PraxisMixtureOfDepths(nn.Linear):
         ), "'capacity' must be set to a value between 0 and 1."
 
     def forward(
-        self, layer: nn.Module, inputs: Tensor, state: Tensor, attention_mask: Tensor
+        self,
+        layer: nn.Module,
+        inputs: Tensor,
+        current_state: Tensor,
+        attention_mask: Tensor,
     ):
 
         b, s, d = inputs.shape
@@ -71,7 +75,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         # pass the selected tokens through a transformer block
         layer_outputs, state_update, aux_loss = layer(
-            filtered_inputs, state, filtered_attention_mask, token_weights
+            filtered_inputs, current_state, filtered_attention_mask, token_weights
         )
 
         # reintegrate the processed tokens with our residual stream

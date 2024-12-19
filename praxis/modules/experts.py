@@ -70,27 +70,37 @@ class PraxisExpert(nn.Module):
         self.block = block
 
     def forward(
-        self, inputs: Tensor, state: Tensor, attention_mask: Tensor, current_depth: int
+        self,
+        inputs: Tensor,
+        current_state: Tensor,
+        attention_mask: Tensor,
+        current_depth: int,
     ):
         d = current_depth
         use_router = self.sparse and current_depth % 2 != 0
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask, use_router)
         else:
-            return self._local_forward(inputs, state, attention_mask, use_router)
+            return self._local_forward(
+                inputs, current_state, attention_mask, use_router
+            )
 
     def _local_forward(
-        self, inputs: Tensor, state: Tensor, attention_mask: Tensor, use_router: bool
+        self,
+        inputs: Tensor,
+        current_state: Tensor,
+        attention_mask: Tensor,
+        use_router: bool,
     ):
         aux_losses = []
         if use_router:
             hidden_states, state_update, aux_loss = self.router(
-                self.block, inputs, state, attention_mask
+                self.block, inputs, current_state, attention_mask
             )
             aux_losses.append(aux_loss)
         else:
             hidden_states, state_update, aux_loss = self.block(
-                inputs, state, attention_mask
+                inputs, current_state, attention_mask
             )
         return hidden_states, state_update, sum(aux_losses)
 

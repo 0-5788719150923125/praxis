@@ -31,7 +31,6 @@ class PraxisMRU(nn.Module):
             self.state_head_order * self.num_heads
         )
 
-        # Initialize state matrices with explicit requires_grad
         self.state_matrices_up = nn.Parameter(
             torch.zeros(
                 self.num_heads, self.embedding_chunk_size, self.state_head_order
@@ -78,13 +77,13 @@ class PraxisMRU(nn.Module):
     def forward(
         self,
         x: Tensor,
-        state: Tensor = None,
+        current_state: Tensor = None,
         attention_mask: Optional[Tensor] = None,
         *args,
         **kwargs,
     ) -> Tensor:
 
-        mru_out, new_state = self._parallel_mru(self.first_ln(x), state)
+        mru_out, new_state = self._parallel_mru(self.first_ln(x), current_state)
 
         x = x + mru_out
         x = x + self.ffn(self.second_ln(x))

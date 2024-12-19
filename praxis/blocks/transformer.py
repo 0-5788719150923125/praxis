@@ -40,7 +40,7 @@ class PraxisTransformer(nn.Module):
     def forward(
         self,
         inputs: Tensor,
-        state: Tensor,
+        current_state: Tensor,
         attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         *args,

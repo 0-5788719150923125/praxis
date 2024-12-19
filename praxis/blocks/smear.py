@@ -39,7 +39,7 @@ class PraxisSMEAR(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, inputs, state, *args, **kwargs):
+    def forward(self, inputs, current_state, *args, **kwargs):
         # Get routing probabilities
         routing_probs = self.router(inputs.mean(dim=1))  # [batch_size, num_experts]
 

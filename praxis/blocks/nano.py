@@ -48,7 +48,7 @@ class PraxisNano(nn.Module):
     def forward(
         self,
         x: Tensor,
-        state: Tensor,
+        current_state: Tensor,
         attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         *args,

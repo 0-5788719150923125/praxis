@@ -24,13 +24,12 @@ class PraxisDecoder(nn.Module):
         self.manager = self.stack.manager
         self._define_checkpoints(config.strategy, self.stack.depth)
 
-    def forward(self, inputs: Tensor, state: Tensor, attention_mask: Tensor):
+    def forward(self, inputs: Tensor, current_state: Tensor, attention_mask: Tensor):
         experts = list(self.stack.locals) + list(self.stack.remotes)
         original_order = experts.copy()
         if hasattr(self.stack.behavior, "shuffle_experts"):
             experts = self.stack.behavior.shuffle_experts(experts)
 
-        current_state = state
         hidden_states = inputs
         aux_losses = []
 

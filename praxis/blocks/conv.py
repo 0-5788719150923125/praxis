@@ -40,7 +40,7 @@ class PraxisConv(nn.Module):
     def forward(
         self,
         x: Tensor,
-        state: Tensor,
+        current_state: Tensor,
         attention_mask: Optional[Tensor] = None,
         router_weights: Optional[Tensor] = None,
         *args,
