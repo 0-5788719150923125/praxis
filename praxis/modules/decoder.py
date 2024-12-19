@@ -24,12 +24,13 @@ class PraxisDecoder(nn.Module):
         self.manager = self.stack.manager
         self._define_checkpoints(config.strategy, self.stack.depth)
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor):
+    def forward(self, inputs: Tensor, state: Tensor, attention_mask: Tensor):
         experts = list(self.stack.locals) + list(self.stack.remotes)
         original_order = experts.copy()
         if hasattr(self.stack.behavior, "shuffle_experts"):
             experts = self.stack.behavior.shuffle_experts(experts)
 
+        current_state = state
         hidden_states = inputs
         aux_losses = []
 
@@ -41,7 +42,7 @@ class PraxisDecoder(nn.Module):
                     expert = experts[next_expert_idx]
 
                 new_states, aux_loss = self._create_forward(
-                    expert, hidden_states, attention_mask, i
+                    expert, hidden_states, current_state, attention_mask, i
                 )
                 aux_losses.append(aux_loss)
 
@@ -68,41 +69,59 @@ class PraxisDecoder(nn.Module):
         if hasattr(self.stack.behavior, "reset_route"):
             self.stack.behavior.reset_route()
 
-        return hidden_states, sum(aux_losses)
+        return hidden_states, current_state, sum(aux_losses)
 
     def _create_forward(
         self,
         expert: nn.Module,
         hidden_states: Tensor,
+        current_state: Tensor,
         attention_mask: Tensor,
         current_depth: int,
     ):
-        def custom_forward(hidden_states, attention_mask, current_depth):
+        def custom_forward(hidden_states, current_state, attention_mask, current_depth):
             if self.stack.behavior:
                 # Add positional context to both hidden states and attention mask
                 hidden_states, attention_mask = self.stack.behavior.add_context(
                     hidden_states, attention_mask, current_depth
                 )
                 # Forward pass
-                states, aux_loss = expert(hidden_states, attention_mask, current_depth)
+                states, state_update, aux_loss = expert(
+                    hidden_states,
+                    current_state[current_depth],
+                    attention_mask,
+                    current_depth,
+                )
                 # Remove context from both hidden states and attention mask
                 states, attention_mask = self.stack.behavior.remove_context(
                     states, attention_mask
                 )
-                return states, aux_loss
             else:
-                return expert(hidden_states, attention_mask, current_depth)
+                states, state_update, aux_loss = expert(
+                    hidden_states,
+                    current_state[current_depth],
+                    attention_mask,
+                    current_depth,
+                )
+
+            if state_update is not None:
+                current_state[current_depth] = state_update
+
+            return states, aux_loss
 
         if self.training and self._should_checkpoint(current_depth):
             return torch.utils.checkpoint.checkpoint(
                 custom_forward,
                 hidden_states,
+                current_state,
                 attention_mask,
                 current_depth,
                 use_reentrant=False,
             )
         else:
-            return custom_forward(hidden_states, attention_mask, current_depth)
+            return custom_forward(
+                hidden_states, current_state, attention_mask, current_depth
+            )
 
     def _define_checkpoints(self, strategy="speed", num_layers=0):
         self.checkpoint_indices = []  # speed / no gradient checkpointing

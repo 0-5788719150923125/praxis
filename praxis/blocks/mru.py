@@ -10,6 +10,11 @@ from praxis.modules.dense import PraxisMLP
 
 
 class PraxisMRU(nn.Module):
+    """
+    A recurrent model with efficient parallel scan capabilities. Based upon:
+    https://github.com/mikayahlevi/mru-lm/tree/main
+    """
+
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
 
@@ -72,7 +77,20 @@ class PraxisMRU(nn.Module):
         nn.init.normal_(self.ffn.up.weight, mean=0, std=0.02)
         nn.init.normal_(self.ffn.down.weight, mean=0, std=0.02 / math.sqrt(self.depth))
 
-        self.last_state = []
+    def forward(
+        self,
+        x: Tensor,
+        state: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> Tensor:
+
+        mru_out, new_state = self._parallel_mru(self.first_ln(x), state)
+
+        x = x + mru_out
+        x = x + self.ffn(self.second_ln(x))
+        return x, new_state, 0
 
     def _parallel_mru(
         self, x: Tensor, last_state: Optional[Tensor]
@@ -117,26 +135,6 @@ class PraxisMRU(nn.Module):
             self.output_dropout(self.mru_out(output)),
             states[-1],  # Changed to match original indexing
         )
-
-    def forward(
-        self, x: Tensor, attention_mask: Optional[Tensor] = None, *args, **kwargs
-    ) -> Tensor:
-
-        last_state = None
-        if len(self.last_state) > 0:
-            last_state = self.last_state[0]
-
-        mru_out, new_state = self._parallel_mru(self.first_ln(x), last_state)
-
-        self.last_state.clear()
-        self.last_state.append(new_state)
-
-        x = x + mru_out
-        x = x + self.ffn(self.second_ln(x))
-        return x
-
-    def reset_state(self):
-        self.last_state = []
 
 
 # hs: Hillis-Steele scan
@@ -371,7 +369,7 @@ if __name__ == "__main__":
         # Second forward pass should use saved state
         out2 = model(x[:, 64:, :])
         # Reset state
-        model.reset_state()
+        # model.reset_state()
         # Third forward pass should start fresh
         out3 = model(x[:, :64, :])
 

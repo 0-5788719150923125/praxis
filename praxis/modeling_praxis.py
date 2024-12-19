@@ -30,11 +30,13 @@ class PraxisModel(PreTrainedModel):
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = PraxisDecoder(config)
+        self.state = []
         self.aux_losses = []
 
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        state: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_hidden_states: Optional[bool] = None,
@@ -54,7 +56,9 @@ class PraxisModel(PreTrainedModel):
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
-        last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
+        state = self.get_initial_state() if state is None else state
+
+        last_hidden_state, state, aux_loss = self.decoder(inputs, state, attention_mask)
         self.aux_losses.append(aux_loss)
 
         return (
@@ -64,6 +68,7 @@ class PraxisModel(PreTrainedModel):
                 hidden_states=None,
                 attentions=None,
             ),
+            state,
             embeds,
             decoder_tokens,
             patch_lengths,
@@ -96,6 +101,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        state: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -103,8 +109,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
-        outputs, embeds, decoder_tokens, patch_lengths = super().forward(
+        outputs, state, embeds, decoder_tokens, patch_lengths = super().forward(
             input_ids=input_ids,
+            state=state,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             output_hidden_states=output_hidden_states,
@@ -131,6 +138,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         self.aux_losses = []
 
+        self._save_state(state)
+
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -138,3 +147,19 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def _save_state(self, state):
+        self.state = state
+
+    def get_initial_state(self) -> list[torch.Tensor]:
+        if len(self.state) > 0:
+            return [
+                (
+                    self.state[i].detach()
+                    if torch.is_tensor(self.state[i])
+                    else self.state[i]
+                )
+                for i in range(self.config.depth)
+            ]
+        else:
+            return [None for _ in range(self.config.depth)]

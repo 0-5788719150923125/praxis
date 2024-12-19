@@ -366,8 +366,10 @@ class PraxisTrainer(LightningModule):
 
         current_time = datetime.now()
 
-        outputs = self.model(input_ids=batch, labels=batch)
-        loss = outputs[0]
+        state = self.model.get_initial_state()
+
+        outputs = self.model(input_ids=batch, state=state, labels=batch)
+        loss = outputs["loss"]
 
         batch_size, num_tokens = batch.shape
         self.num_tokens += batch_size * num_tokens
@@ -393,7 +395,10 @@ class PraxisTrainer(LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        outputs = self.model(input_ids=batch, labels=batch)
+
+        state = self.model.get_initial_state()
+
+        outputs = self.model(input_ids=batch, state=state, labels=batch)
         loss = outputs[0]
         perplexity = torch.exp(loss)
 
