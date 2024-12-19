@@ -164,19 +164,24 @@ def create_args(config):
     https://github.com/facebookresearch/blt/blob/main/bytelatent/test_blt.py
     """
 
+    hidden_size = config.hidden_size
+    # embed_size = config.embed_size
+
     return ByteLatentTransformerArgs(
-        n_heads=1,
-        dim=config.hidden_size,
         vocab_size=config.vocab_size,
-        dim_token=config.hidden_size,
-        # dim_token_emb=config.hidden_size // 16,
-        dim_patch_emb=config.hidden_size,
-        dim_global=config.hidden_size,
-        tie_local_encoder_decoder_logits=False,
+        n_heads=1,
+        dim=hidden_size,
+        # dim_token=hidden_size,
+        # dim_token_emb=hidden_size,
+        # dim_patch_emb=hidden_size,
+        dim_global=hidden_size,
+        # tie_local_encoder_decoder_logits=False,
         data_loader_patching=False,
+        max_seqlen=config.context_length,
         max_encoder_seq_length=config.context_length,
+        max_length=hidden_size,
         pad_to_max_length=True,
-        encoder_lm_loss=False,
+        # encoder_lm_loss=False,
         patching_threshold=3.1439168453216553,
         # patching_threshold=1.335442066192627,
         patch_size=6,
@@ -184,6 +189,7 @@ def create_args(config):
         tokenization_mode="bytes",
         patching_mode="space",
         # patching_mode="bpe",
+        # patching_mode="entropy",
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
@@ -191,8 +197,8 @@ def create_args(config):
         cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
-        dim_local_encoder=config.hidden_size,
-        dim_local_decoder=config.hidden_size,
+        dim_local_encoder=hidden_size,
+        dim_local_decoder=hidden_size,
         cross_attn_k=1,
         cross_attn_nheads=1,
         n_layers_local_encoder=1,
@@ -219,10 +225,8 @@ def create_args(config):
         init_use_depth="current",
         attn_bias_type="local_block_causal",
         alpha_depth="disabled",
-        max_length=config.hidden_size,
         local_attention_window_len=512,
-        sliding_window=config.hidden_size,  # basically required, else encoder dim is equal to max_seq_len
-        max_seqlen=config.context_length,
+        sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
         downsampling_by_pooling="max",
         share_encoder_decoder_emb=False,
     )
@@ -236,6 +240,7 @@ if __name__ == "__main__":
     class Dummy:
         vocab_size = 50002
         hidden_size = 256
+        embed_size = 512
         context_length = 2048
 
     config = Dummy()
