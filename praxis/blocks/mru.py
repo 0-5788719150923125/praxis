@@ -35,8 +35,7 @@ class PraxisMRU(nn.Module):
         self.state_matrices_up = nn.Parameter(
             torch.zeros(
                 self.num_heads, self.embedding_chunk_size, self.state_head_order
-            ),
-            requires_grad=True,
+            )
         )
 
         self.state_matrices_update_scale = (
@@ -57,7 +56,6 @@ class PraxisMRU(nn.Module):
                     self.embedding_chunk_size,
                 ),
             ),
-            requires_grad=True,
         )
 
         # Output projection and layer norms
@@ -133,7 +131,7 @@ class PraxisMRU(nn.Module):
 
         return (
             self.output_dropout(self.mru_out(output)),
-            states[-1],  # Changed to match original indexing
+            states[-1],
         )
 
 
