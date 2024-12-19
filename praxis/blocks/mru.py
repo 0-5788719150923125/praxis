@@ -80,7 +80,7 @@ class PraxisMRU(nn.Module):
     def forward(
         self,
         x: Tensor,
-        state: Tensor,
+        state: Tensor = None,
         attention_mask: Optional[Tensor] = None,
         *args,
         **kwargs,
@@ -354,7 +354,7 @@ if __name__ == "__main__":
     print("\nTest 1: Basic Functionality")
     x = torch.randn(2, 128, config.hidden_size).to(device)
     try:
-        output = model(x)
+        output, _, _ = model(x)
         print(f"✓ Output shape: {output.shape}")
         assert output.shape == x.shape, "Output shape mismatch"
         print("✓ Basic functionality test passed")
@@ -365,13 +365,13 @@ if __name__ == "__main__":
     print("\nTest 2: State Persistence")
     try:
         # First forward pass
-        out1 = model(x[:, :64, :])
+        out1, _, _ = model(x[:, :64, :])
         # Second forward pass should use saved state
-        out2 = model(x[:, 64:, :])
+        out2, _, _ = model(x[:, 64:, :])
         # Reset state
         # model.reset_state()
         # Third forward pass should start fresh
-        out3 = model(x[:, :64, :])
+        out3, _, _ = model(x[:, :64, :])
 
         # Check that outputs are different (due to state influence)
         diff = (out1[:, -1, :] - out3[:, -1, :]).abs().mean().item()
@@ -386,7 +386,7 @@ if __name__ == "__main__":
     model.zero_grad()
     x = torch.randn(2, 64, config.hidden_size, requires_grad=True).to(device)
     try:
-        output = model(x)
+        output, _, _ = model(x)
         loss = output.sum()
         loss.backward()
 
@@ -414,7 +414,7 @@ if __name__ == "__main__":
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
 
-            output = model(x)
+            output, _, _ = model(x)
 
             if device.type == "cuda":
                 max_memory = torch.cuda.max_memory_allocated() / 1024**2
@@ -429,13 +429,13 @@ if __name__ == "__main__":
     x = torch.randn(2, 64, config.hidden_size).to(device)
     try:
         model.train()
-        out1 = model(x)
-        out2 = model(x)
+        out1, _, _ = model(x)
+        out2, _, _ = model(x)
         train_diff = (out1 - out2).abs().mean().item()
 
         model.eval()
-        out3 = model(x)
-        out4 = model(x)
+        out3, _, _ = model(x)
+        out4, _, _ = model(x)
         eval_diff = (out3 - out4).abs().mean().item()
 
         print(f"✓ Training difference: {train_diff:.6f}")
