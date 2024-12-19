@@ -33,8 +33,8 @@ class PraxisTransformer(nn.Module):
         super().__init__()
         self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
-        self.mlp_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
-        self.mlp = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
+        self.ffn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
+        self.ffn = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
@@ -51,8 +51,8 @@ class PraxisTransformer(nn.Module):
         outputs = outputs + residual
         outputs = self.dropout(outputs)
         residual = outputs
-        normalized = self.mlp_norm(outputs)
-        outputs = self.mlp(normalized)
+        normalized = self.ffn_norm(outputs)
+        outputs = self.ffn(normalized)
         if torch.is_tensor(router_weights):
             # this is a super hack because hivemind
             if not self._is_zero_tensor(router_weights):

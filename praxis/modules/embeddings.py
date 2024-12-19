@@ -98,4 +98,5 @@ EMBEDDING_REGISTRY = {
     "nano": PraxisLearnedEmbeddings,
     "conv": PraxisFactorizedEmbeddings,
     "recurrent": PraxisFactorizedEmbeddings,
+    "mru": PraxisEmbeddings,
 }
