@@ -230,7 +230,7 @@ hparams = dict(
 train_params = dict(
     accelerator=f"cpu" if device == "cpu" else "gpu",
     strategy="auto",
-    devices=[int(device.split(":")[1])] if device.startswith("cuda") else "auto",
+    devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
     max_steps=-1,
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
@@ -461,27 +461,28 @@ class TerminalInterface(Callback):
         self.text = self.initial_text
         self.max_length = 4096
         self.interval = 3
-        self.dashboard = False
-        if use_dashboard:
-            max_data_points = 1000
-            self.dashboard = TerminalDashboard(seed, max_data_points)
-            try:
-                self.dashboard.start()
-                self.dashboard.update_seed(seed)
-                self.dashboard.update_url(url)
-            except KeyboardInterrupt:
-                self.dashboard.stop()
-            self.print = print
-        elif progress_bar is not None:
-            self.print = progress_bar.print
+        self.url = url
+        self.dashboard = use_dashboard
+        self.progress_bar = progress_bar
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
         lm.model.get_addr()
         if self.dashboard:
+            max_data_points = 1000
+            self.dashboard = TerminalDashboard(seed, max_data_points)
+            try:
+                self.dashboard.start()
+                self.dashboard.update_seed(seed)
+                self.dashboard.update_url(self.url)
+            except KeyboardInterrupt:
+                self.dashboard.stop()
+            self.print = print
             total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)
             self.dashboard.set_start_time(self.start_time)
+        elif self.progress_bar is not None:
+            self.print = self.progress_bar.print
 
     def on_train_batch_start(self, trainer, lm, batch, batch_idx):
         super().on_train_batch_start(trainer, lm, batch, batch_idx)
@@ -947,7 +948,7 @@ checkpoint_callback = TimeBasedCheckpoint(
     dirpath=os.path.join(cache_dir, "praxis"),
     filename="model-{loss:.4f}",
     enable_version_counter=False,
-    save_interval=3600,
+    save_interval=60,
 )
 
 # Bootstrap the model and trainer
@@ -1134,14 +1135,18 @@ if not use_dashboard:
                 self._last_print_lines = new_lines
 
     progress_bar = PrintingProgressBar(process_position=0, leave=True)
-    train_params["callbacks"].append(progress_bar)
-train_params["callbacks"].append(checkpoint_callback)
-train_params["callbacks"].append(
-    AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
-)
-train_params["callbacks"].append(
-    TerminalInterface(use_dashboard, api_server.get_api_addr(), progress_bar)
-)
+
+current_rank = int(os.environ.get("LOCAL_RANK", 0))
+if current_rank == 0:
+    if progress_bar is not None:
+        train_params["callbacks"].append(progress_bar)
+    train_params["callbacks"].append(checkpoint_callback)
+    train_params["callbacks"].append(
+        AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
+    )
+    train_params["callbacks"].append(
+        TerminalInterface(use_dashboard, api_server.get_api_addr(), progress_bar)
+    )
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)

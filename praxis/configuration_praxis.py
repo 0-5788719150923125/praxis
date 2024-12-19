@@ -20,7 +20,7 @@ class PraxisConfig(PretrainedConfig):
         activation="mish",
         block="transformer",
         expert="glu",
-        encoding="yarn",
+        encoding="rope",
         sparse=False,
         shuffle=False,
         autopilot=False,

@@ -154,7 +154,7 @@ parser.add_argument(
     "--encoding_type",
     type=str,
     choices=ENCODING_REGISTRY.keys(),
-    default="yarn",
+    default="rope",
     help="The positional encoding to use for sequence length extrapolation",
 )
 parser.add_argument(
