@@ -228,11 +228,11 @@ def create_args(config):
         efficient_attn="sdpa",
         # patch_only_encoder=False, # doesn't do anything
         # patch_only_decoder=False,
-        use_local_encoder_transformer=True,
-        init_use_gaussian=True,
-        init_use_depth="current",
-        attn_bias_type="local_block_causal",
-        alpha_depth="disabled",
+        # use_local_encoder_transformer=True,
+        # init_use_gaussian=True,
+        # init_use_depth="current",
+        # attn_bias_type="local_block_causal",
+        # alpha_depth="disabled",
         local_attention_window_len=512,
         sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
         downsampling_by_pooling="max",
@@ -246,9 +246,9 @@ if __name__ == "__main__":
 
     # Initialize test configuration
     class Dummy:
-        vocab_size = 50002
-        hidden_size = 256
-        embed_size = 512
+        vocab_size = 260
+        hidden_size = 360
+        # embed_size = 512
         context_length = 2048
 
     config = Dummy()
