@@ -11,6 +11,15 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
     the HuggingFace PreTrainedTokenizer interface.
     """
 
+    # Single source of truth for special tokens
+    SPECIAL_TOKENS = {
+        "boe_token": ("<|boe|>", 0),
+        "pad_token": ("<|pad|>", 1),
+        "bos_token": ("<|bos|>", 2),
+        "eos_token": ("<|eos|>", 3),
+        "bpe_token": ("<|bpe|>", 4),
+    }
+
     def __init__(
         self,
         bpe_tokenizer_path: str = None,
@@ -20,7 +29,12 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         add_eos: bool = False,
         **kwargs,
     ):
-        # Store initialization parameters for later
+        # Initialize special token attributes from SPECIAL_TOKENS
+        for token_name, (token_value, _) in self.SPECIAL_TOKENS.items():
+            if token_name not in kwargs:
+                kwargs[token_name] = token_value
+
+        # Store initialization parameters
         self._init_params = {
             "bpe_tokenizer_path": bpe_tokenizer_path,
             "vocab_size_unit_1": vocab_size_unit_1,
@@ -29,155 +43,86 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             "add_eos": add_eos,
         }
 
-        # Define our special tokens with specific IDs
-        # IDs 0-3 reserved for special tokens
-        self._special_token_ids = {
-            "boe_token": 0,
-            "pad_token": 1,
-            "bos_token": 2,
-            "eos_token": 3,
-            "bpe_token": 4,
-        }
-
-        # Define our default special tokens
-        special_tokens = {
-            "boe_token": "<|boe|>",
-            "pad_token": "<|pad|>",
-            "bos_token": "<|bos|>",
-            "eos_token": "<|eos|>",
-            "bpe_token": "<|bpe|>",
-        }
-
-        # Update with any provided tokens from kwargs
-        for key, default_value in special_tokens.items():
-            if key not in kwargs:
-                kwargs[key] = default_value
-
-        self.boe_token = special_tokens["boe_token"]
-        self.bpe_token = special_tokens["bpe_token"]
-
-        # Initialize parent class first
         super().__init__(**kwargs)
 
-        # Now we can safely initialize the byte tokenizer with our special token IDs
+        # Initialize the byte tokenizer
         self._tokenizer = BltTokenizer(
-            vocab_size_unit_1=self._init_params["vocab_size_unit_1"],
-            bpe_delim=self._init_params["bpe_delim"],
-            bpe_tokenizer_path=self._init_params["bpe_tokenizer_path"],
-            add_bos=False,  # We'll handle special tokens ourselves
+            vocab_size_unit_1=vocab_size_unit_1,
+            bpe_delim=bpe_delim,
+            bpe_tokenizer_path=bpe_tokenizer_path,
+            add_bos=False,  # We handle special tokens ourselves
             add_eos=False,
         )
 
-        # Override BltTokenizer's special token IDs with our own
-        self._tokenizer.bos_id = self._special_token_ids["bos_token"]
-        self._tokenizer.eos_id = self._special_token_ids["eos_token"]
-        self._tokenizer.pad_id = self._special_token_ids["pad_token"]
-        self._tokenizer.boe_id = self._special_token_ids["boe_token"]
-        self._tokenizer.bpe_id = self._special_token_ids["bpe_token"]
-        # Note: BOE and BPE IDs aren't used in our implementation
+        # Set special token IDs in the underlying tokenizer
+        for token_name, (_, token_id) in self.SPECIAL_TOKENS.items():
+            setattr(self._tokenizer, f"{token_name[:-6]}_id", token_id)
 
     def get_vocab(self) -> Dict[str, int]:
-        """
-        Returns the vocabulary as a dictionary of token to index.
-        """
-        vocab = {}
+        """Returns the vocabulary as a dictionary of token to index."""
+        vocab = {
+            token_value: token_id
+            for _, (token_value, token_id) in self.SPECIAL_TOKENS.items()
+        }
 
-        # Add special tokens first with their predefined IDs
-        vocab[self.bos_token] = self._special_token_ids["bos_token"]
-        vocab[self.eos_token] = self._special_token_ids["eos_token"]
-        vocab[self.pad_token] = self._special_token_ids["pad_token"]
-        vocab[self.boe_token] = self._special_token_ids["boe_token"]
-        vocab[self.bpe_token] = self._special_token_ids["bpe_token"]
-
-        # Add byte tokens, starting byte token IDs after special tokens
-        offset = max(self._special_token_ids.values()) + 1
+        # Add byte tokens after special tokens
         for i in range(self._init_params["vocab_size_unit_1"]):
-            vocab[str(i)] = i + offset
+            vocab[str(i)] = i + self._token_id_offset
 
         return vocab
 
     @property
     def vocab_size(self) -> int:
-        """
-        Returns the size of vocabulary.
-        """
-        special_tokens_count = len(
-            [
-                self.bos_token,
-                self.eos_token,
-                self.pad_token,
-                self.boe_token,
-                self.bpe_token,
-            ]
-        )
-        return self._init_params["vocab_size_unit_1"] + special_tokens_count
+        """Returns the size of vocabulary."""
+        return self._init_params["vocab_size_unit_1"] + len(self.SPECIAL_TOKENS)
+
+    @property
+    def _token_id_offset(self) -> int:
+        """Return the offset for regular token IDs after special tokens."""
+        return max(id for _, id in self.SPECIAL_TOKENS.values()) + 1
 
     def _tokenize(self, text: str, **kwargs) -> List[str]:
-        """
-        Converts a string into a sequence of tokens.
-        """
-        byte_ids = self._tokenizer.encode(
-            text,
-            add_bos=False,
-            add_eos=False,
-        )
-        return byte_ids
+        """Converts a string into a sequence of tokens."""
+        return self._tokenizer.encode(text, add_bos=False, add_eos=False)
 
     def _convert_token_to_id(self, token: str) -> int:
-        """
-        Converts a token string to its ID.
-        """
-        # Handle special tokens using our predefined IDs
-        special_tokens_map = {
-            self.bos_token: self._special_token_ids["bos_token"],
-            self.eos_token: self._special_token_ids["eos_token"],
-            self.pad_token: self._special_token_ids["pad_token"],
-            self.boe_token: self._special_token_ids["boe_token"],
-            self.bpe_token: self._special_token_ids["bpe_token"],
-        }
+        """Converts a token string to its ID."""
+        # Check special tokens first
+        for _, (token_value, token_id) in self.SPECIAL_TOKENS.items():
+            if token == token_value:
+                return token_id
 
-        if token in special_tokens_map:
-            return special_tokens_map[token]
-
-        # For regular tokens, they are already string representations of IDs
-        return int(token) + max(self._special_token_ids.values()) + 1
+        # Regular tokens are offset by special token count
+        return int(token) + self._token_id_offset
 
     def _convert_id_to_token(self, index: int) -> str:
-        """
-        Converts an ID to its string token representation.
-        """
-        # Handle special token IDs
-        id_to_special_token = {v: k for k, v in self._special_token_ids.items()}
-        if index in id_to_special_token:
-            return getattr(self, id_to_special_token[index])
+        """Converts an ID to its string token representation."""
+        # Check special token IDs
+        for _, (token_value, token_id) in self.SPECIAL_TOKENS.items():
+            if index == token_id:
+                return token_value
 
-        # For regular tokens, adjust the index back to byte value
-        adjusted_index = index - max(self._special_token_ids.values()) - 1
-        return str(adjusted_index)
+        # Regular tokens
+        return str(index - self._token_id_offset)
+
+    def _is_special_token(self, token: str) -> bool:
+        """Helper method to check if a token is special."""
+        return any(
+            token == special_token for special_token, _ in self.SPECIAL_TOKENS.values()
+        )
 
     def convert_tokens_to_string(self, tokens: List[str]) -> str:
-        """
-        Converts a sequence of tokens to a single string.
-        """
-        # Filter out special tokens
+        """Converts a sequence of tokens to a single string."""
         byte_tokens = []
         for token in tokens:
-            if token not in [
-                self.bos_token,
-                self.eos_token,
-                self.pad_token,
-                self.boe_token,
-                self.bpe_token,
-            ]:
+            if not self._is_special_token(token):
                 try:
                     byte_tokens.append(int(token))
                 except ValueError:
                     continue
 
         decoded = self._tokenizer.decode(byte_tokens)
-        if len(decoded) == 0:
-            decoded = " "
-        return decoded
+        return decoded if decoded else " "
 
 
 def run_comprehensive_tests():
