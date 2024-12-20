@@ -110,9 +110,7 @@ class PraxisByteLatentEncoder(nn.Module):
         self.decoder = create_local_decoder(self.args)
 
     def __repr__(self):
-        return (
-            f"PraxisByteLatentEncoder({self.args.vocab_size}, {self.args.dim_global})"
-        )
+        return f"PraxisByteLatentEncoder(vocab_size={self.args.vocab_size}, out_features={self.args.dim_global})"
 
     def encode(self, input_ids):
         encoder_tokens, _, decoder_tokens = get_blt_input(

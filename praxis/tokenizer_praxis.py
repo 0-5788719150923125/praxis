@@ -32,19 +32,19 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         # Define our special tokens with specific IDs
         # IDs 0-3 reserved for special tokens
         self._special_token_ids = {
-            "pad_token": 0,
-            "bos_token": 1,
-            "eos_token": 2,
-            "boe_token": 3,
+            "boe_token": 0,
+            "pad_token": 1,
+            "bos_token": 2,
+            "eos_token": 3,
             "bpe_token": 4,
         }
 
         # Define our default special tokens
         special_tokens = {
+            "boe_token": "<|boe|>",
             "pad_token": "<|pad|>",
             "bos_token": "<|bos|>",
             "eos_token": "<|eos|>",
-            "boe_token": "<|boe|>",
             "bpe_token": "<|bpe|>",
         }
 
