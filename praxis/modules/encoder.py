@@ -115,7 +115,12 @@ class PraxisByteLatentEncoder(nn.Module):
         self.decoder = create_local_decoder(self.args)
 
     def __repr__(self):
-        return f"PraxisByteLatentEncoder(in_features={self.args.vocab_size}, out_features={self.args.dim_global})"
+        return (
+            f"PraxisByteLatentEncoder(in_features={self.args.vocab_size}, "
+            + f"out_features={self.args.dim_global}, "
+            + f"n_encoders={len(self.encoder.layers)}, "
+            + f"n_decoders={len(self.decoder.layers)})"
+        )
 
     def encode(self, input_ids):
         encoder_tokens, _, decoder_tokens = get_blt_input(
@@ -262,7 +267,7 @@ def create_args(config):
         # patching_threshold=1.335442066192627, # use this for "entropy" patch_mode
         patch_size=6,  # use this for "space" patch_mode
         # patch_size=4.5, # use this for "entropy" patch_mode
-        tokenization_mode="bytes",
+        # tokenization_mode="bytes",
         patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
         # patching_mode="bpe",
         # patching_mode="entropy",
@@ -283,7 +288,7 @@ def create_args(config):
         cross_attn_all_layers_decoder=True,
         cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
         cross_attn_init_by_pooling=True,
-        log_patch_lengths=True,
+        # log_patch_lengths=True,
         # non_linearity="swiglu", # not implemented
         use_rope=True,
         # recompute_fc1_out=False, # I don't think these do anything
@@ -366,3 +371,5 @@ if __name__ == "__main__":
     # Run the test
     print("Starting ByteLatent test...")
     run_test()
+    print(model)
+    print("Done!")

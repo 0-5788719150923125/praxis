@@ -365,7 +365,7 @@ class PraxisTrainer(LightningModule):
         current_state = self.model.get_initial_state()
 
         outputs = self.model(input_ids=batch, current_state=current_state, labels=batch)
-        loss = outputs["loss"]
+        loss = outputs.loss
 
         batch_size, num_tokens = batch.shape
         self.num_tokens += batch_size * num_tokens
@@ -395,16 +395,27 @@ class PraxisTrainer(LightningModule):
         current_state = self.model.get_initial_state()
 
         outputs = self.model(input_ids=batch, current_state=current_state, labels=batch)
-        loss = outputs[0]
-        perplexity = torch.exp(loss)
 
-        batch_size, _ = batch.shape
+        stats = {}
+
+        loss = outputs.loss
+        stats["val_loss"] = loss
+
+        batch_size, seq_length = batch.shape
+        if byte_latent:
+            # Calculate number of bytes
+            num_bytes = batch_size * seq_length
+            # Convert mean loss back to sum loss
+            sum_loss = loss * num_bytes
+            # Calculate bits per byte using sum loss
+            bits_per_byte = sum_loss / (torch.log(torch.tensor(2.0)) * num_bytes)
+            stats["val_bits_per_byte"] = bits_per_byte
+        else:
+            perplexity = torch.exp(loss)
+            stats["val_perplexity"] = perplexity
 
         self.log_dict(
-            {
-                "val_loss": loss,
-                "val_perplexity": perplexity,
-            },
+            stats,
             on_step=False,
             on_epoch=True,
             logger=True,
