@@ -78,6 +78,11 @@ from bytelatent.model.blt import (
 
 
 class PraxisByteLatentEncoder(nn.Module):
+    """
+    An implementation of the Byte Latent Encoder/Decoder, from:
+    https://arxiv.org/abs/2412.09871
+    """
+
     def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.args = create_args(config)

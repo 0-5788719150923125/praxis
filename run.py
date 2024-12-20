@@ -479,6 +479,7 @@ class TerminalInterface(Callback):
                 self.dashboard.update_url(self.url)
             except KeyboardInterrupt:
                 self.dashboard.stop()
+                api_server.stop()
             self.print = print
             total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)
@@ -1014,11 +1015,8 @@ if wandb:
 
 generator = Generator(model, tokenizer)
 
-try:
-    api_server = APIServer(generator, host_name, port)
-    api_server.start()
-finally:
-    api_server.stop()
+api_server = APIServer(generator, host_name, port)
+api_server.start()
 
 
 # Load datasets

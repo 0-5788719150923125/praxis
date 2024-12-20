@@ -121,7 +121,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             add_bos=False,
             add_eos=False,
         )
-        return [str(id) for id in byte_ids]
+        return byte_ids
 
     def _convert_token_to_id(self, token: str) -> int:
         """
