@@ -173,6 +173,12 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
 - [Language Models are Hidden Reasoners: Unlocking Latent Reasoning Capabilities via Self-Rewarding](https://arxiv.org/abs/2411.04282)
 - https://github.com/jinyeom/lsh-knn/tree/main
+- [Hyper-Connections](https://arxiv.org/abs/2409.19606) (an alternative to residual connections)
+- [Training Large Language Models to Reason in a Continuous Latent Space](https://arxiv.org/abs/2412.06769)
+- [tons of useful Pytorch modules from Fairseq](https://github.com/facebookresearch/mega/blob/main/fairseq/modules)
+- [Multimodal Latent Language Modeling with Next-Token Diffusion](https://arxiv.org/abs/2412.08635)
+- [Transformers Struggle to Learn to Search](https://arxiv.org/abs/2412.04703)
+- [Survey on Memory-Augmented Neural Networks: Cognitive Insights to AI Applications](https://arxiv.org/abs/2312.06141)
 
 ## won't do
 

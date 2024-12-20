@@ -160,18 +160,18 @@ use_dashboard = False if no_dashboard else True
 
 # Tokenizer initialization
 tokenizer_model = os.path.join(cache_dir, "praxis")
-# if byte_latent:
-#     from praxis.tokenizer_praxis import ByteLevelTokenizer
+if byte_latent:
+    from praxis.tokenizer_praxis import ByteLevelTokenizer
 
-#     # vocab_size = 1024
-#     tokenizer = ByteLevelTokenizer()
-# else:
-#     try:
-#         tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
-#     except Exception as e:
-tokenizer = AutoTokenizer.from_pretrained(
-    f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
-)
+    # vocab_size = 1024
+    tokenizer = ByteLevelTokenizer()
+else:
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_model, cache_dir=cache_dir)
+    except Exception as e:
+        tokenizer = AutoTokenizer.from_pretrained(
+            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
+        )
 
 # Transformers config
 config = PraxisConfig(
