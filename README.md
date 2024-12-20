@@ -39,9 +39,6 @@ Alternatively, you may use the VSCode command bar (`Ctrl + Shift + P`), and choo
 Then, install dependencies:
 
 ```sh
-# Install core model dependencies
-pip install -e .
-
 # Install training dependencies
 pip install -e .[all]
 ```
@@ -101,6 +98,10 @@ Chat and swarm management interface is available here:
 ```
 http://localhost:2100
 ```
+
+## mobile app
+
+We're building a mobile app with [Godot](https://godotengine.org/), to control your experts! You can see that code in the [./axis](./axis) directory.
 
 ## to register with transformers
 

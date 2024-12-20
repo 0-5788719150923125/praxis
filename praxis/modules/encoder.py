@@ -178,11 +178,13 @@ def create_args(config):
     return ByteLatentTransformerArgs(
         vocab_size=260,
         n_heads=1,
-        dim=hidden_size,
-        dim_token=hidden_size,  # controls the number of features for encoder outputs
+        # dim=hidden_size,
+        # dim_token=hidden_size,  # controls the number of features for encoder outputs
         # dim_token_emb=hidden_size,
         # dim_patch_emb=hidden_size,
         dim_global=hidden_size,
+        dim_local_encoder=hidden_size,
+        dim_local_decoder=hidden_size,
         # tie_local_encoder_decoder_logits=False,
         data_loader_patching=False,
         # max_seqlen=config.context_length,
@@ -205,8 +207,6 @@ def create_args(config):
         cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
-        dim_local_encoder=hidden_size,
-        dim_local_decoder=hidden_size,
         cross_attn_k=4,
         cross_attn_nheads=2,
         n_layers_local_encoder=1,
