@@ -1,4 +1,5 @@
 import math
+import random
 from typing import Optional
 
 import torch
@@ -19,6 +20,8 @@ class PraxisMRU(nn.Module):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
+
+        self.debug = config.debug
 
         # Architecture parameters
         self.num_heads = config.num_heads
@@ -106,6 +109,11 @@ class PraxisMRU(nn.Module):
 
         if last_state is not None and last_state.size(0) != x.size(0):
             last_state = last_state[-1:].expand(x.size(0), -1, -1, -1)
+            # last_state = torch.sigmoid(last_state)
+
+            if self.debug and random.random() < 0.01:
+                avg_state = last_state.detach().mean().cpu().item()
+                print(f"DEBUG: average state value: {avg_state:.6f}")
 
         reshaped = x.unflatten(
             -1, (self.num_heads, self.state_head_order, self.embedding_chunk_size)
