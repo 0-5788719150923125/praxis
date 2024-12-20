@@ -36,9 +36,9 @@ class PraxisMRU(nn.Module):
         assert (
             self.state_size % self.num_heads == 0
         ), "state size must be divisible by the number of heads"
-        # assert (
-        #     self.state_head_size == math.isqrt(self.state_head_size) ** 2
-        # ), "state head size must be a perfect square to form the state head matrix"
+        assert (
+            self.state_head_size == math.isqrt(self.state_head_size) ** 2
+        ), "state head size must be a perfect square to form the state head matrix"
         assert (
             self.embed_size % self.state_head_order == 0
         ), "embedding size must be divisible by the state head order"
@@ -103,6 +103,7 @@ class PraxisMRU(nn.Module):
     def _parallel_mru(
         self, x: Tensor, last_state: Optional[Tensor]
     ) -> tuple[Tensor, Tensor]:
+
         if last_state is not None and last_state.size(0) != x.size(0):
             last_state = last_state[-1:].expand(x.size(0), -1, -1, -1)
 
@@ -128,6 +129,7 @@ class PraxisMRU(nn.Module):
         parallel_mru_op_output = parallel_mru_op(
             full_matrices.transpose(-3, -4)
         ).transpose(-3, -4)
+
         states = (
             parallel_mru_op_output
             if last_state is None

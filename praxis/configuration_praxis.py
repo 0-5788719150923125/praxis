@@ -55,6 +55,10 @@ class PraxisConfig(PretrainedConfig):
             **kwargs,
         )
 
+        if block == "mru" and hidden_size == 360:
+            hidden_size = 384
+            num_heads = 6
+
         self.embed_size = embed_size
         self.hidden_size = hidden_size
         self.num_heads = num_heads
