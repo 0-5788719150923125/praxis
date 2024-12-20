@@ -19,6 +19,7 @@ The Praxis architecture is a fluid, peer-to-peer, always online, continuously-le
 - [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps. Alternatively (and perhaps in-addition to, in the future), we implement an option for [Stickbreaking Attention](https://arxiv.org/abs/2306.04640), which naturally-encodes positional information, uses a Sigmoid-based mechanism, instead of a Softmax (i.e. parameters "work together", instead of "competing" against each other).
 - Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
+- We implement an optional [Byte Latent Tokenizer](https://github.com/facebookresearch/blt), for realtime language learning.
 - There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
 
 ## join us
@@ -101,7 +102,7 @@ http://localhost:2100
 
 ## mobile app
 
-We're building a mobile app with [Godot](https://godotengine.org/), to control your experts! You can see that code in the [./axis](./axis) directory.
+We're building a mobile app, to control your experts! You can see that code in the [./axis](./axis) directory.
 
 ## to register with transformers
 
@@ -172,7 +173,6 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
 - [Language Models are Hidden Reasoners: Unlocking Latent Reasoning Capabilities via Self-Rewarding](https://arxiv.org/abs/2411.04282)
 - https://github.com/jinyeom/lsh-knn/tree/main
-- [Byte Latent Transformer](https://github.com/facebookresearch/blt) (hard, because it replaces the tokenizer)
 
 ## won't do
 
