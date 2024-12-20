@@ -461,7 +461,6 @@ class TerminalInterface(Callback):
         self.last_time = datetime.now()
         self.initial_text = tokenizer.bos_token
         self.text = self.initial_text
-        self.max_length = 4096
         self.interval = 3
         self.url = url
         self.dashboard = use_dashboard
@@ -470,6 +469,7 @@ class TerminalInterface(Callback):
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
         lm.model.get_addr()
+        self.max_length = int(lm.model.config.context_length * 0.9)
         if self.dashboard:
             max_data_points = 1000
             self.dashboard = TerminalDashboard(seed, max_data_points)
@@ -594,8 +594,9 @@ class TerminalInterface(Callback):
                 # eta_cutoff=0.002,
                 # penalty_alpha=0.6,
                 # top_k=4,
-                repetition_penalty=1.15,
+                repetition_penalty=1.1,
                 skip_special_tokens=False,
+                truncate_to=self.max_length,
             ),
         )
         while True:
@@ -810,8 +811,13 @@ class Generator:
             if combined["skip_special_tokens"] == False:
                 skip_special_tokens = False
             del combined["skip_special_tokens"]
+        if "truncate_to" in combined:
+            if input_ids.size(1) > combined["truncate_to"]:
+                input_ids = input_ids[: combined["truncate_to"]]
+            del combined["truncate_to"]
 
         generated_tokens = input_ids
+
         max_attempts = 10
         attempts = 0
 

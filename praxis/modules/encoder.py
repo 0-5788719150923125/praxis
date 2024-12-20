@@ -110,7 +110,7 @@ class PraxisByteLatentEncoder(nn.Module):
         self.decoder = create_local_decoder(self.args)
 
     def __repr__(self):
-        return f"PraxisByteLatentEncoder(vocab_size={self.args.vocab_size}, out_features={self.args.dim_global})"
+        return f"PraxisByteLatentEncoder(in_features={self.args.vocab_size}, out_features={self.args.dim_global})"
 
     def encode(self, input_ids):
         encoder_tokens, _, decoder_tokens = get_blt_input(
@@ -177,10 +177,11 @@ def create_args(config):
 
     return ByteLatentTransformerArgs(
         vocab_size=260,
+        norm_eps=config.epsilon,
         n_heads=1,
         # dim=hidden_size,
-        # dim_token=hidden_size,  # controls the number of features for encoder outputs
         # dim_token_emb=hidden_size,
+        dim_token=hidden_size,  # must be set, else creates an unused module called self.token_embedding_projection
         # dim_patch_emb=hidden_size,
         dim_global=hidden_size,
         dim_local_encoder=hidden_size,
@@ -203,7 +204,7 @@ def create_args(config):
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
-        cross_attn_encoder=False,  # We find that using cross-attention in the decoder is most effective.
+        cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
@@ -215,7 +216,7 @@ def create_args(config):
         n_heads_local_decoder=1,
         cross_attn_all_layers_encoder=True,
         cross_attn_all_layers_decoder=True,
-        cross_attn_use_flex_attention=False,  # not supported on CPU and many GPUs
+        cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
         cross_attn_init_by_pooling=True,
         log_patch_lengths=True,
         # non_linearity="swiglu", # not implemented
@@ -250,6 +251,7 @@ if __name__ == "__main__":
         hidden_size = 360
         # embed_size = 512
         context_length = 2048
+        epsilon = 1e-5
 
     config = Dummy()
 
