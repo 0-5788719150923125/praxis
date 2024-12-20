@@ -44,7 +44,7 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        embeds = None
+        h_encoder = None
         decoder_tokens = None
         patch_lengths = None
         if self.encoder:

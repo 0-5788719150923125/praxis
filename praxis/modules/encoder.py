@@ -258,10 +258,10 @@ def create_args(config):
         # max_length=hidden_size,
         # pad_to_max_length=True,
         # encoder_lm_loss=False,
-        patching_threshold=3.1439168453216553,
-        # patching_threshold=1.335442066192627,
-        patch_size=6,
-        # patch_size=4.5,
+        patching_threshold=3.1439168453216553,  # use this for "space" patch_mode
+        # patching_threshold=1.335442066192627, # use this for "entropy" patch_mode
+        patch_size=6,  # use this for "space" patch_mode
+        # patch_size=4.5, # use this for "entropy" patch_mode
         tokenization_mode="bytes",
         patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
         # patching_mode="bpe",
