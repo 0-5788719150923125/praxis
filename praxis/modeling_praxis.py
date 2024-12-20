@@ -48,7 +48,7 @@ class PraxisModel(PreTrainedModel):
         decoder_tokens = None
         patch_lengths = None
         if self.encoder:
-            inputs, decoder_tokens, embeds, patch_lengths = self.encoder.encode(
+            inputs, h_encoder, decoder_tokens, patch_lengths = self.encoder.encode(
                 input_ids
             )
         else:
@@ -72,7 +72,7 @@ class PraxisModel(PreTrainedModel):
             hidden_states=None,
             attentions=None,
             current_state=current_state,
-            embeds=embeds,
+            h_encoder=h_encoder,
             decoder_tokens=decoder_tokens,
             patch_lengths=patch_lengths,
         )
@@ -126,8 +126,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if self.encoder:
             logits = self.encoder.decode(
                 hidden_states,
+                outputs.h_encoder,
                 outputs.decoder_tokens,
-                outputs.embeds,
                 outputs.patch_lengths,
             )
         else:
@@ -174,6 +174,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 @dataclass
 class PraxisModelOutput(BaseModelOutputWithPast):
     current_state: Optional[torch.LongTensor] = None
-    embeds: Optional[torch.FloatTensor] = None
+    h_encoder: Optional[torch.FloatTensor] = None
     decoder_tokens: Optional[torch.LongTensor] = None
     patch_lengths: Optional[torch.LongTensor] = None
