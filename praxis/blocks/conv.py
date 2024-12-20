@@ -40,6 +40,7 @@ class PraxisConv(nn.Module):
     def forward(
         self,
         x: Tensor,
+        current_state: Tensor,
         attention_mask: Optional[Tensor] = None,
         router_weights: Optional[Tensor] = None,
         *args,
@@ -62,7 +63,7 @@ class PraxisConv(nn.Module):
 
         x_norm = self.ffw_norm(residual)
         x_ffw = self.ffw(x_norm)
-        return x_ffw + residual
+        return x_ffw + residual, None, 0
 
 
 class MultiHeadCausalConv1d(nn.Module):

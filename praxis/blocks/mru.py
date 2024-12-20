@@ -10,6 +10,11 @@ from praxis.modules.dense import PraxisMLP
 
 
 class PraxisMRU(nn.Module):
+    """
+    A recurrent model with efficient parallel scan capabilities. Based upon:
+    https://github.com/mikayahlevi/mru-lm/tree/main
+    """
+
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
 
@@ -26,12 +31,20 @@ class PraxisMRU(nn.Module):
             self.state_head_order * self.num_heads
         )
 
-        # Initialize state matrices with explicit requires_grad
+        assert (
+            self.state_size % self.num_heads == 0
+        ), "state size must be divisible by the number of heads"
+        assert (
+            self.state_head_size == math.isqrt(self.state_head_size) ** 2
+        ), "state head size must be a perfect square to form the state head matrix"
+        assert (
+            self.embed_size % self.state_head_order == 0
+        ), "embedding size must be divisible by the state head order"
+
         self.state_matrices_up = nn.Parameter(
             torch.zeros(
                 self.num_heads, self.embedding_chunk_size, self.state_head_order
-            ),
-            requires_grad=True,
+            )
         )
 
         self.state_matrices_update_scale = (
@@ -52,27 +65,38 @@ class PraxisMRU(nn.Module):
                     self.embedding_chunk_size,
                 ),
             ),
-            requires_grad=True,
         )
 
         # Output projection and layer norms
         self.mru_out = nn.Linear(self.embed_size, self.embed_size, bias=False)
+        nn.init.normal_(self.mru_out.weight, mean=0, std=0.02 / math.sqrt(self.depth))
+
+        # Normalization
         self.first_ln = nn.LayerNorm(self.embed_size, bias=False)
         self.second_ln = nn.LayerNorm(self.embed_size, bias=False)
 
-        # Dropout layers
-        self.matrix_dropout = nn.Dropout(self.dropout_rate)
-        self.output_dropout = nn.Dropout(self.dropout_rate)
+        # Regularization
+        self.dropout = nn.Dropout(self.dropout_rate)
 
         # MLP block
         self.ffn = PraxisMLP(config)
-
-        # Initialize weights with proper scaling
-        nn.init.normal_(self.mru_out.weight, mean=0, std=0.02 / math.sqrt(self.depth))
         nn.init.normal_(self.ffn.up.weight, mean=0, std=0.02)
         nn.init.normal_(self.ffn.down.weight, mean=0, std=0.02 / math.sqrt(self.depth))
 
-        self.last_state = []
+    def forward(
+        self,
+        x: Tensor,
+        current_state: Tensor = None,
+        attention_mask: Optional[Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> Tensor:
+
+        mru_out, new_state = self._parallel_mru(self.first_ln(x), current_state)
+
+        x = x + mru_out
+        x = x + self.ffn(self.second_ln(x))
+        return x, new_state, 0
 
     def _parallel_mru(
         self, x: Tensor, last_state: Optional[Tensor]
@@ -85,7 +109,7 @@ class PraxisMRU(nn.Module):
         )
 
         new_matrices = (
-            self.matrix_dropout(reshaped @ self.state_matrices_up)
+            self.dropout(reshaped @ self.state_matrices_up)
             * self.state_matrices_update_scale
         )
 
@@ -114,29 +138,9 @@ class PraxisMRU(nn.Module):
         ).flatten(-3, -1)
 
         return (
-            self.output_dropout(self.mru_out(output)),
-            states[-1],  # Changed to match original indexing
+            self.dropout(self.mru_out(output)),
+            states[-1],
         )
-
-    def forward(
-        self, x: Tensor, attention_mask: Optional[Tensor] = None, *args, **kwargs
-    ) -> Tensor:
-
-        last_state = None
-        if len(self.last_state) > 0:
-            last_state = self.last_state[0]
-
-        mru_out, new_state = self._parallel_mru(self.first_ln(x), last_state)
-
-        self.last_state.clear()
-        self.last_state.append(new_state)
-
-        x = x + mru_out
-        x = x + self.ffn(self.second_ln(x))
-        return x
-
-    def reset_state(self):
-        self.last_state = []
 
 
 # hs: Hillis-Steele scan
@@ -356,7 +360,7 @@ if __name__ == "__main__":
     print("\nTest 1: Basic Functionality")
     x = torch.randn(2, 128, config.hidden_size).to(device)
     try:
-        output = model(x)
+        output, _, _ = model(x)
         print(f"✓ Output shape: {output.shape}")
         assert output.shape == x.shape, "Output shape mismatch"
         print("✓ Basic functionality test passed")
@@ -367,13 +371,13 @@ if __name__ == "__main__":
     print("\nTest 2: State Persistence")
     try:
         # First forward pass
-        out1 = model(x[:, :64, :])
+        out1, _, _ = model(x[:, :64, :])
         # Second forward pass should use saved state
-        out2 = model(x[:, 64:, :])
+        out2, _, _ = model(x[:, 64:, :])
         # Reset state
-        model.reset_state()
+        # model.reset_state()
         # Third forward pass should start fresh
-        out3 = model(x[:, :64, :])
+        out3, _, _ = model(x[:, :64, :])
 
         # Check that outputs are different (due to state influence)
         diff = (out1[:, -1, :] - out3[:, -1, :]).abs().mean().item()
@@ -388,7 +392,7 @@ if __name__ == "__main__":
     model.zero_grad()
     x = torch.randn(2, 64, config.hidden_size, requires_grad=True).to(device)
     try:
-        output = model(x)
+        output, _, _ = model(x)
         loss = output.sum()
         loss.backward()
 
@@ -416,7 +420,7 @@ if __name__ == "__main__":
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
 
-            output = model(x)
+            output, _, _ = model(x)
 
             if device.type == "cuda":
                 max_memory = torch.cuda.max_memory_allocated() / 1024**2
@@ -431,13 +435,13 @@ if __name__ == "__main__":
     x = torch.randn(2, 64, config.hidden_size).to(device)
     try:
         model.train()
-        out1 = model(x)
-        out2 = model(x)
+        out1, _, _ = model(x)
+        out2, _, _ = model(x)
         train_diff = (out1 - out2).abs().mean().item()
 
         model.eval()
-        out3 = model(x)
-        out4 = model(x)
+        out3, _, _ = model(x)
+        out4, _, _ = model(x)
         eval_diff = (out3 - out4).abs().mean().item()
 
         print(f"✓ Training difference: {train_diff:.6f}")

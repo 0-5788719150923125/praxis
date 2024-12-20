@@ -48,6 +48,7 @@ class PraxisNano(nn.Module):
     def forward(
         self,
         x: Tensor,
+        current_state: Tensor,
         attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         *args,
@@ -68,7 +69,7 @@ class PraxisNano(nn.Module):
         # Feedforward
         chunk_ffw = self.ffw(chunk_ffw)
         # Residual connection
-        return chunk_ffw + residual
+        return chunk_ffw + residual, None, 0
 
 
 class ElasticLinear(nn.Module):

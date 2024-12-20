@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
 import torch
@@ -30,11 +31,13 @@ class PraxisModel(PreTrainedModel):
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = PraxisDecoder(config)
+        self.current_state = []
         self.aux_losses = []
 
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        current_state: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_hidden_states: Optional[bool] = None,
@@ -54,19 +57,24 @@ class PraxisModel(PreTrainedModel):
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
-        last_hidden_state, aux_loss = self.decoder(inputs, attention_mask)
+        current_state = (
+            self.get_initial_state() if current_state is None else current_state
+        )
+
+        last_hidden_state, current_state, aux_loss = self.decoder(
+            inputs, current_state, attention_mask
+        )
         self.aux_losses.append(aux_loss)
 
-        return (
-            BaseModelOutputWithPast(
-                last_hidden_state=last_hidden_state,
-                past_key_values=None,
-                hidden_states=None,
-                attentions=None,
-            ),
-            embeds,
-            decoder_tokens,
-            patch_lengths,
+        return PraxisModelOutput(
+            last_hidden_state=last_hidden_state,
+            past_key_values=None,
+            hidden_states=None,
+            attentions=None,
+            current_state=current_state,
+            embeds=embeds,
+            decoder_tokens=decoder_tokens,
+            patch_lengths=patch_lengths,
         )
 
     def get_addr(self):
@@ -96,6 +104,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
+        current_state: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -103,19 +112,23 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
-        outputs, embeds, decoder_tokens, patch_lengths = super().forward(
+        outputs = super().forward(
             input_ids=input_ids,
+            current_state=current_state,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
 
-        hidden_states = outputs[0]
+        hidden_states = outputs.last_hidden_state
 
         if self.encoder:
             logits = self.encoder.decode(
-                hidden_states, decoder_tokens, embeds, patch_lengths
+                hidden_states,
+                outputs.decoder_tokens,
+                outputs.embeds,
+                outputs.patch_lengths,
             )
         else:
             logits = self.head(hidden_states)
@@ -131,6 +144,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         self.aux_losses = []
 
+        self._save_state(outputs.current_state)
+
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -138,3 +153,27 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def _save_state(self, state):
+        self.current_state = state
+
+    def get_initial_state(self) -> list[torch.Tensor]:
+        if len(self.current_state) > 0:
+            return [
+                (
+                    self.current_state[i].detach()
+                    if torch.is_tensor(self.current_state[i])
+                    else self.current_state[i]
+                )
+                for i in range(self.config.depth)
+            ]
+        else:
+            return [None for _ in range(self.config.depth)]
+
+
+@dataclass
+class PraxisModelOutput(BaseModelOutputWithPast):
+    current_state: Optional[torch.LongTensor] = None
+    embeds: Optional[torch.FloatTensor] = None
+    decoder_tokens: Optional[torch.LongTensor] = None
+    patch_lengths: Optional[torch.LongTensor] = None

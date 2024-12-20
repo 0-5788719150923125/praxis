@@ -22,7 +22,13 @@ class PraxisMixtureOfDepths(nn.Linear):
             self.capacity > 0 and self.capacity < 1.0
         ), "'capacity' must be set to a value between 0 and 1."
 
-    def forward(self, layer: nn.Module, inputs: Tensor, attention_mask: Tensor):
+    def forward(
+        self,
+        layer: nn.Module,
+        inputs: Tensor,
+        current_state: Tensor,
+        attention_mask: Tensor,
+    ):
 
         b, s, d = inputs.shape
         k = int(s * self.capacity)
@@ -45,11 +51,11 @@ class PraxisMixtureOfDepths(nn.Linear):
         token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
 
         # compute aux loss, in order to enforce causality in the top-k operation
-        aux_loss = self.aux_loss(router_logits, token_indices)
+        router_loss = self.aux_loss(router_logits, token_indices)
 
         # when inputs have a length of 1, the router will sometimes select no tokens at all
         if token_weights.size(1) == 0:
-            return inputs, aux_loss
+            return inputs, router_loss
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
@@ -68,7 +74,9 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        layer_outputs = layer(filtered_inputs, filtered_attention_mask, token_weights)
+        layer_outputs, state_update, aux_loss = layer(
+            filtered_inputs, current_state, filtered_attention_mask, token_weights
+        )
 
         # reintegrate the processed tokens with our residual stream
         outputs = torch.scatter(
@@ -78,7 +86,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             src=layer_outputs,
         )
 
-        return outputs, aux_loss
+        return outputs, state_update, aux_loss + router_loss
 
     def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
         router_targets = torch.zeros_like(router_logits)

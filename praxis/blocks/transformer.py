@@ -40,6 +40,7 @@ class PraxisTransformer(nn.Module):
     def forward(
         self,
         inputs: Tensor,
+        current_state: Tensor,
         attention_mask: Tensor,
         router_weights: Optional[Tensor] = None,
         *args,
@@ -58,7 +59,7 @@ class PraxisTransformer(nn.Module):
             if not self._is_zero_tensor(router_weights):
                 outputs = outputs * router_weights
         outputs = outputs + residual
-        return self.dropout(outputs)
+        return self.dropout(outputs), None, 0
 
     def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
         """Check if a tensor is filled with zeros (within numerical tolerance)"""
