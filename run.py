@@ -169,7 +169,7 @@ tokenizer_model = os.path.join(cache_dir, "praxis")
 if byte_latent:
     from praxis.tokenizer_praxis import ByteLevelTokenizer
 
-    vocab_size = 1024
+    # vocab_size = 1024
     tokenizer = ByteLevelTokenizer()
 else:
     try:

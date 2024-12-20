@@ -16,8 +16,8 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         bpe_tokenizer_path: str = None,
         vocab_size_unit_1: int = 256,  # Basic byte vocabulary
         bpe_delim: bool = False,
-        add_bos: bool = True,
-        add_eos: bool = True,
+        add_bos: bool = False,
+        add_eos: bool = False,
         **kwargs,
     ):
         # Store initialization parameters for later
@@ -32,24 +32,29 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         # Define our special tokens with specific IDs
         # IDs 0-3 reserved for special tokens
         self._special_token_ids = {
-            "bos_token": 0,
-            "eos_token": 1,
-            "pad_token": 2,
-            "unk_token": 3,
+            "pad_token": 0,
+            "bos_token": 1,
+            "eos_token": 2,
+            "boe_token": 3,
+            "bpe_token": 4,
         }
 
         # Define our default special tokens
         special_tokens = {
+            "pad_token": "<|pad|>",
             "bos_token": "<|bos|>",
             "eos_token": "<|eos|>",
-            "pad_token": "<|pad|>",
-            "unk_token": "<|unk|>",
+            "boe_token": "<|boe|>",
+            "bpe_token": "<|bpe|>",
         }
 
         # Update with any provided tokens from kwargs
         for key, default_value in special_tokens.items():
             if key not in kwargs:
                 kwargs[key] = default_value
+
+        self.boe_token = special_tokens["boe_token"]
+        self.bpe_token = special_tokens["bpe_token"]
 
         # Initialize parent class first
         super().__init__(**kwargs)
@@ -67,6 +72,8 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         self._tokenizer.bos_id = self._special_token_ids["bos_token"]
         self._tokenizer.eos_id = self._special_token_ids["eos_token"]
         self._tokenizer.pad_id = self._special_token_ids["pad_token"]
+        self._tokenizer.boe_id = self._special_token_ids["boe_token"]
+        self._tokenizer.bpe_id = self._special_token_ids["bpe_token"]
         # Note: BOE and BPE IDs aren't used in our implementation
 
     def get_vocab(self) -> Dict[str, int]:
@@ -79,7 +86,8 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         vocab[self.bos_token] = self._special_token_ids["bos_token"]
         vocab[self.eos_token] = self._special_token_ids["eos_token"]
         vocab[self.pad_token] = self._special_token_ids["pad_token"]
-        vocab[self.unk_token] = self._special_token_ids["unk_token"]
+        vocab[self.boe_token] = self._special_token_ids["boe_token"]
+        vocab[self.bpe_token] = self._special_token_ids["bpe_token"]
 
         # Add byte tokens, starting byte token IDs after special tokens
         offset = max(self._special_token_ids.values()) + 1
@@ -94,7 +102,13 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         Returns the size of vocabulary.
         """
         special_tokens_count = len(
-            [self.bos_token, self.eos_token, self.pad_token, self.unk_token]
+            [
+                self.bos_token,
+                self.eos_token,
+                self.pad_token,
+                self.boe_token,
+                self.bpe_token,
+            ]
         )
         return self._init_params["vocab_size_unit_1"] + special_tokens_count
 
@@ -118,17 +132,15 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             self.bos_token: self._special_token_ids["bos_token"],
             self.eos_token: self._special_token_ids["eos_token"],
             self.pad_token: self._special_token_ids["pad_token"],
-            self.unk_token: self._special_token_ids["unk_token"],
+            self.boe_token: self._special_token_ids["boe_token"],
+            self.bpe_token: self._special_token_ids["bpe_token"],
         }
 
         if token in special_tokens_map:
             return special_tokens_map[token]
 
         # For regular tokens, they are already string representations of IDs
-        try:
-            return int(token) + max(self._special_token_ids.values()) + 1
-        except ValueError:
-            return self._special_token_ids["unk_token"]
+        return int(token) + max(self._special_token_ids.values()) + 1
 
     def _convert_id_to_token(self, index: int) -> str:
         """
@@ -141,9 +153,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
 
         # For regular tokens, adjust the index back to byte value
         adjusted_index = index - max(self._special_token_ids.values()) - 1
-        if 0 <= adjusted_index < self._init_params["vocab_size_unit_1"]:
-            return str(adjusted_index)
-        return self.unk_token
+        return str(adjusted_index)
 
     def convert_tokens_to_string(self, tokens: List[str]) -> str:
         """
@@ -156,7 +166,8 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
                 self.bos_token,
                 self.eos_token,
                 self.pad_token,
-                self.unk_token,
+                self.boe_token,
+                self.bpe_token,
             ]:
                 try:
                     byte_tokens.append(int(token))

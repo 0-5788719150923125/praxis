@@ -250,25 +250,58 @@ class TerminalDashboard:
         with self.lock:
             self.placeholder_text = text
 
-    def _visual_ljust(self, string, width):
-        """Left-justify a string to a specified width, considering character display width."""
-        visual_width = sum(max(wcwidth.wcwidth(char), 0) for char in string)
-        padding = max(0, width - visual_width)
-        return string + " " * padding
+    def _sanitize_text(self, text):
+        """
+        Sanitize text by replacing problematic characters with safe alternatives.
+        Returns sanitized text with consistent character widths.
+        """
+        if not text:
+            return ""
 
-    def _truncate_to_width(self, text, width):
-        """Truncate text to fit within a given width, accounting for wide characters."""
-        current_width = 0
         result = []
         for char in text:
+            width = wcwidth.wcwidth(char)
+            if width < 0 or width > 1:  # Problematic character detected
+                result.append("♻️")  # Using an emoji as a safe replacement
+            else:
+                result.append(char)
+
+        return "".join(result)
+
+    # Update the _truncate_to_width method to use sanitization
+    def _truncate_to_width(self, text, width):
+        """Truncate text to fit within a given width, accounting for wide characters."""
+        if not text:
+            return ""
+
+        # Sanitize the input text first
+        sanitized_text = self._sanitize_text(text)
+
+        current_width = 0
+        result = []
+        for char in sanitized_text:
             char_width = wcwidth.wcwidth(char)
             if char_width < 0:
-                char_width = 0  # Treat non-printable characters as zero width
+                char_width = 1  # Treat any remaining problematic characters as width 1
             if current_width + char_width > width:
                 break
             result.append(char)
             current_width += char_width
+
         return "".join(result)
+
+    # Update the _visual_ljust method to use sanitization
+    def _visual_ljust(self, string, width):
+        """Left-justify a string to a specified width, considering character display width."""
+        if not string:
+            return " " * width
+
+        # Sanitize the input string first
+        sanitized_string = self._sanitize_text(string)
+
+        visual_width = sum(max(wcwidth.wcwidth(char), 0) for char in sanitized_string)
+        padding = max(0, width - visual_width)
+        return sanitized_string + " " * padding
 
     def _visual_len(self, s):
         """Calculate the visual display width of a string."""
