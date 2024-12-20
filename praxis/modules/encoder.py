@@ -95,7 +95,7 @@ class PraxisByteLatentEncoder(nn.Module):
             self.args,
             EmbeddingType.HASH_TOK,
             local_encoder_dim=self.args.dim_local_encoder,
-            encoder_hash_byte_group_size=[4],
+            encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
         self.encoder = create_local_encoder(self.args)
         self.decoder = create_local_decoder(self.args)
