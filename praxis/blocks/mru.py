@@ -31,6 +31,16 @@ class PraxisMRU(nn.Module):
             self.state_head_order * self.num_heads
         )
 
+        assert (
+            self.state_size % self.num_heads == 0
+        ), "state size must be divisible by the number of heads"
+        assert (
+            self.state_head_size == math.isqrt(self.state_head_size) ** 2
+        ), "state head size must be a perfect square to form the state head matrix"
+        assert (
+            self.embed_size % self.state_head_order == 0
+        ), "embedding size must be divisible by the state head order"
+
         self.state_matrices_up = nn.Parameter(
             torch.zeros(
                 self.num_heads, self.embedding_chunk_size, self.state_head_order
@@ -59,18 +69,17 @@ class PraxisMRU(nn.Module):
 
         # Output projection and layer norms
         self.mru_out = nn.Linear(self.embed_size, self.embed_size, bias=False)
+        nn.init.normal_(self.mru_out.weight, mean=0, std=0.02 / math.sqrt(self.depth))
+
+        # Normalization
         self.first_ln = nn.LayerNorm(self.embed_size, bias=False)
         self.second_ln = nn.LayerNorm(self.embed_size, bias=False)
 
-        # Dropout layers
-        self.matrix_dropout = nn.Dropout(self.dropout_rate)
-        self.output_dropout = nn.Dropout(self.dropout_rate)
+        # Regularization
+        self.dropout = nn.Dropout(self.dropout_rate)
 
         # MLP block
         self.ffn = PraxisMLP(config)
-
-        # Initialize weights with proper scaling
-        nn.init.normal_(self.mru_out.weight, mean=0, std=0.02 / math.sqrt(self.depth))
         nn.init.normal_(self.ffn.up.weight, mean=0, std=0.02)
         nn.init.normal_(self.ffn.down.weight, mean=0, std=0.02 / math.sqrt(self.depth))
 
@@ -100,7 +109,7 @@ class PraxisMRU(nn.Module):
         )
 
         new_matrices = (
-            self.matrix_dropout(reshaped @ self.state_matrices_up)
+            self.dropout(reshaped @ self.state_matrices_up)
             * self.state_matrices_update_scale
         )
 
@@ -129,7 +138,7 @@ class PraxisMRU(nn.Module):
         ).flatten(-3, -1)
 
         return (
-            self.output_dropout(self.mru_out(output)),
+            self.dropout(self.mru_out(output)),
             states[-1],
         )
 
