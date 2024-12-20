@@ -262,7 +262,7 @@ class TerminalDashboard:
         for char in text:
             width = wcwidth.wcwidth(char)
             if width < 0 or width > 1:  # Problematic character detected
-                result.append("♻️")  # Using an emoji as a safe replacement
+                result.append("�")  # Using an emoji as a safe replacement
             else:
                 result.append(char)
 
