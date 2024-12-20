@@ -138,7 +138,7 @@ class PraxisByteLatentEncoder(nn.Module):
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
         )
-        print(encoder_output.shape)
+
         return encoder_output, decoder_tokens, embeds, patch_lengths
 
     def decode(self, encoder_tokens, decoder_tokens, embeds, patch_lengths):
@@ -199,7 +199,7 @@ def create_args(config):
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
-        cross_attn_encoder=False,  # We find that using cross-attention in the decoder is most effective.
+        cross_attn_encoder=True,  # We find that using cross-attention in the decoder is most effective.
         cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
