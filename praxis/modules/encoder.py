@@ -164,12 +164,11 @@ def create_args(config):
     https://github.com/facebookresearch/blt/blob/main/bytelatent/test_blt.py
     """
 
-    vocab_size = config.vocab_size
     hidden_size = config.hidden_size
     # embed_size = config.embed_size
 
     return ByteLatentTransformerArgs(
-        vocab_size=vocab_size,
+        vocab_size=260,
         n_heads=1,
         dim=hidden_size,
         # dim_token=hidden_size,
@@ -192,7 +191,7 @@ def create_args(config):
         # patching_mode="bpe",
         # patching_mode="entropy",
         encoder_hash_byte_group_size=[4],
-        encoder_hash_byte_group_vocab=vocab_size,
+        encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
         cross_attn_encoder=False,  # We find that using cross-attention in the decoder is most effective.
         cross_attn_decoder=True,
