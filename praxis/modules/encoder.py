@@ -21,6 +21,10 @@ class SimpleCrossAttention(CrossAttention):
         # B S D
         bsz, seq_len, _ = x.shape
         _, slen_kv, _ = kv.shape
+
+        # without detaching x, there is unbounded memory growth; only required in the encoder
+        # x = x.detach()
+
         x = self.cross_attn_norm_q(x)
         kv = self.cross_attn_norm_kv(kv)
 
@@ -177,16 +181,16 @@ def create_args(config):
         vocab_size=260,
         n_heads=1,
         dim=hidden_size,
-        # dim_token=hidden_size,
+        dim_token=hidden_size,  # controls the number of features for encoder outputs
         # dim_token_emb=hidden_size,
         # dim_patch_emb=hidden_size,
         dim_global=hidden_size,
         # tie_local_encoder_decoder_logits=False,
         data_loader_patching=False,
-        max_seqlen=config.context_length,
+        # max_seqlen=config.context_length,
         max_encoder_seq_length=config.context_length,
-        max_length=hidden_size,
-        pad_to_max_length=True,
+        # max_length=hidden_size,
+        # pad_to_max_length=True,
         # encoder_lm_loss=False,
         patching_threshold=3.1439168453216553,
         # patching_threshold=1.335442066192627,
@@ -205,8 +209,8 @@ def create_args(config):
         cross_attn_window_decoder=512,
         dim_local_encoder=hidden_size,
         dim_local_decoder=hidden_size,
-        cross_attn_k=1,
-        cross_attn_nheads=1,
+        cross_attn_k=4,
+        cross_attn_nheads=2,
         n_layers_local_encoder=1,
         n_layers_local_decoder=1,
         n_heads_local_encoder=1,
