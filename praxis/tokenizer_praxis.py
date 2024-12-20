@@ -163,7 +163,10 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
                 except ValueError:
                     continue
 
-        return self._tokenizer.decode(byte_tokens)
+        decoded = self._tokenizer.decode(byte_tokens)
+        if len(decoded) == 0:
+            decoded = " "
+        return decoded
 
 
 def run_comprehensive_tests():

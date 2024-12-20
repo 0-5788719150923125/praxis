@@ -11,7 +11,7 @@ from praxis.modules.dense import PraxisMLP
 
 class PraxisMRU(nn.Module):
     """
-    A recurrent model with efficient parallel scan capabilities. Based upon:
+    A recurrent model with efficient parallel scan. Based upon:
     https://github.com/mikayahlevi/mru-lm/tree/main
     """
 
@@ -34,9 +34,9 @@ class PraxisMRU(nn.Module):
         assert (
             self.state_size % self.num_heads == 0
         ), "state size must be divisible by the number of heads"
-        assert (
-            self.state_head_size == math.isqrt(self.state_head_size) ** 2
-        ), "state head size must be a perfect square to form the state head matrix"
+        # assert (
+        #     self.state_head_size == math.isqrt(self.state_head_size) ** 2
+        # ), "state head size must be a perfect square to form the state head matrix"
         assert (
             self.embed_size % self.state_head_order == 0
         ), "embedding size must be divisible by the state head order"
