@@ -15,6 +15,8 @@ class PraxisMRU(nn.Module):
     https://github.com/mikayahlevi/mru-lm/tree/main
     """
 
+    __version__ = "0.1.0"
+
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
 

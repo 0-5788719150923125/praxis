@@ -138,6 +138,7 @@ class PraxisByteLatentEncoder(nn.Module):
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
         )
+        print(encoder_output.shape)
         return encoder_output, decoder_tokens, embeds, patch_lengths
 
     def decode(self, encoder_tokens, decoder_tokens, embeds, patch_lengths):

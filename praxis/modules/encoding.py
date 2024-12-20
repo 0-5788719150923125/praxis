@@ -85,29 +85,25 @@ class RoPE(NoPE):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
-        # Important: RoPE operates on pairs of dimensions
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 
-        # Generate inverse frequencies for base head_dim
+        theta = 10000
         inv_freq = 1.0 / (
-            10000 ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
+            theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
         )
         self.register_buffer("inv_freq", inv_freq)
-
-        # Linear scaling
         self.scale = 1.0
 
-        # Cache buffers
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
 
+    # before_scores and after_scores remain the same
     def before_scores(self, q, k, v, offset: int = 0):
         seq_len = q.size(2)
         device = q.device
         dtype = q.dtype
 
-        # Pass offset to compute_rope_embeddings
         self._compute_rope_embeddings(seq_len, device, dtype, offset)
 
         cos = self._cached_cos[:, :, :seq_len, :]
@@ -144,24 +140,36 @@ class RoPE(NoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
-            # Add offset to positions
             positions = (torch.arange(seq_len, device=device) + offset) * self.scale
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
-            cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
-            sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
+            # Compute basic sin and cos
+            cos = torch.cos(pos_emb)
+            sin = torch.sin(pos_emb)
+
+            # Stack properly to match Meta's implementation
+            # For each position and frequency, create alternating pairs
+            cos = torch.stack([cos, cos], dim=-1).view(1, 1, seq_len, -1)
+            sin = torch.stack([-sin, sin], dim=-1).view(
+                1, 1, seq_len, -1
+            )  # Note the negative sign
 
             self._cached_cos = cos.to(dtype)
             self._cached_sin = sin.to(dtype)
             self._cached_seq_length = seq_len
 
-    def _rotate_half(self, x):
-        """Rotates half the hidden dims of the input."""
-        x1, x2 = x.chunk(2, dim=-1)
-        return torch.cat((-x2, x1), dim=-1)
-
     def _apply_rotary_pos_emb(self, x, cos, sin):
-        return (x * cos) + (self._rotate_half(x) * sin)
+        # Split input into pairs
+        x1, x2 = x.chunk(2, dim=-1)
+        # Apply rotation using the correct signs
+        # [cos·x1 - sin·x2, sin·x1 + cos·x2]
+        return torch.cat(
+            [
+                x1 * cos[:, :, :, 0::2] - x2 * sin[:, :, :, 0::2],
+                x1 * sin[:, :, :, 1::2] + x2 * cos[:, :, :, 1::2],
+            ],
+            dim=-1,
+        )
 
 
 class YaRN(RoPE):
