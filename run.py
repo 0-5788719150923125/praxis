@@ -579,10 +579,11 @@ class TerminalInterface(Callback):
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
 
+        max_new_tokens = 1 if not byte_latent else self._biased_randint(1, 7)
         request_id = generator.request_generation(
             self.text,
             dict(
-                max_new_tokens=1,
+                max_new_tokens=max_new_tokens,
                 temperature=0.5,
                 # min_p=0.02,
                 # eta_cutoff=0.002,
@@ -637,6 +638,13 @@ class TerminalInterface(Callback):
         return distribution + (
             amplitude * math.sin(2 * math.pi * frequency * step + phase_shift)
         )
+
+    def _biased_randint(self, low, high):
+        # Take average of multiple random numbers to create center bias
+        # Using 3 numbers gives a nice bell curve shape
+        avg = sum(random.randint(low, high) for _ in range(3)) / 3
+        # Round to nearest integer since we want whole numbers
+        return round(avg)
 
     def _detect_repetition(self, top_n, threshold, excluded_ngrams=None):
         text = self.text
