@@ -70,8 +70,11 @@ trainer = trainers.BpeTrainer(
     ],
 )
 
-tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(
-    add_prefix_space=True, use_regex=True
+tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
+    [
+        pre_tokenizers.WhitespaceSplit(),
+        pre_tokenizers.ByteLevel(add_prefix_space=True, use_regex=True),
+    ]
 )
 
 tokenizer.normalizer = normalizers.NFKC()
