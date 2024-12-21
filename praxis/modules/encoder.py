@@ -163,11 +163,10 @@ class PraxisByteLatentEncoder(nn.Module):
         )
 
         # Local encoder with cross attention
-        h_cross = None
         (h_encoder, h_cross), _ = self.encoder(
             tokens=encoder_tokens,
             embeds=embeds,
-            patch_embeds=h_cross if self.args.cross_attn_encoder else None,
+            patch_embeds=None,
             cross_mask=cross_attn_mask_enc,
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
@@ -281,9 +280,9 @@ def create_args(config):
         cross_attn_k=4,
         cross_attn_nheads=2,
         n_layers_local_encoder=1,
-        n_layers_local_decoder=1,
-        n_heads_local_encoder=1,
-        n_heads_local_decoder=1,
+        n_layers_local_decoder=2,
+        n_heads_local_encoder=3,
+        n_heads_local_decoder=3,
         cross_attn_all_layers_encoder=True,
         cross_attn_all_layers_decoder=True,
         cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs

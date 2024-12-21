@@ -23,6 +23,7 @@ class DataFormat(Enum):
     PERSONACHAT = "persona_chat"
     CUSTOM = "custom"
     SMOLTALK = "smoltalk"
+    WIKI = "wiki"
 
 
 HUGGINGFACE_DATASETS = {
@@ -80,6 +81,13 @@ HUGGINGFACE_DATASETS = {
         keys=["raw_content"],
         format=DataFormat.SIMPLE,
         weight=1.0,
+    ),
+    "wikipedia": dict(
+        path="wikimedia/wikipedia",
+        name="20231101.en",
+        keys=["title", "text"],
+        format=DataFormat.WIKI,
+        weight=0.001,
     ),
     "fineweb-edu-10bt": dict(
         path="HuggingFaceFW/fineweb-edu",
@@ -210,12 +218,21 @@ def format_smoltalk(document: Dict, keys: List[str]) -> str:
     return "".join(formatted_messages)
 
 
+def format_wiki(document: Dict, keys: List[str]) -> str:
+    """Format wiki text."""
+    assert len(keys) == 2, "Wiki format requires exactly 2 keys"
+    title = document.get(keys[0], "")
+    body = document.get(keys[1], "")
+    return f"{title}\n{body}"
+
+
 FORMAT_HANDLERS = {
     DataFormat.SIMPLE: format_simple,
     DataFormat.INSTRUCTION: format_instruction,
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.PERSONACHAT: format_personachat,
     DataFormat.SMOLTALK: format_smoltalk,
+    DataFormat.WIKI: format_wiki,
 }
 
 
@@ -336,6 +353,7 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("wikipedia"))
     if dev:
         # Overwrite with simpler dataset
         config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]
