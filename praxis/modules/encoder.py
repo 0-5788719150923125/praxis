@@ -16,9 +16,10 @@ class SimpleCrossAttention(CrossAttention):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.use_sdpa = True
+        self.window_size = 256
+        self.chunk_size = 256
 
     def forward(self, x, kv, mask=None) -> torch.Tensor:
-        # B S D
         bsz, seq_len, _ = x.shape
         _, slen_kv, _ = kv.shape
 
@@ -33,7 +34,7 @@ class SimpleCrossAttention(CrossAttention):
         xv = self.wv(kv)
 
         output_shape = xq.shape
-        # B S D -> B S H D
+        # [B, S, D] -> [B, S, H, D]
         xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
         xk = xk.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
         xv = xv.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
@@ -41,26 +42,44 @@ class SimpleCrossAttention(CrossAttention):
         xk = repeat_kv(xk, self.heads_per_group, dim=2)
         xv = repeat_kv(xv, self.heads_per_group, dim=2)
 
+        # [B, S, H, D] -> [B, H, S, D]
         xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
-        if self.use_sdpa:
-            # Convert BlockMask to attention mask if needed
-            if not torch.is_tensor(mask):
-                attn_mask = (
-                    mask.materialize((seq_len, slen_kv)) if mask is not None else None
-                )
-            else:
-                attn_mask = mask
 
-            # Apply scaled dot-product attention
-            output = F.scaled_dot_product_attention(
-                xq, xk, xv, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
-            )
+        if self.use_sdpa:
+            outputs = []
+            for start in range(0, seq_len, self.chunk_size):
+                end = start + self.chunk_size
+                q_chunk = xq[:, :, start:end, :]  # [B, H, chunk_size, D]
+
+                kv_start = max(0, start - self.window_size)
+                kv_end = min(slen_kv, end + self.window_size)
+                k_chunk = xk[:, :, kv_start:kv_end, :]  # [B, H, window_width, D]
+                v_chunk = xv[:, :, kv_start:kv_end, :]
+
+                # Slice the mask to match [chunk_size, window_width]
+                # Assuming mask has shape [B, H, seq_len, seq_len]
+                attn_mask_chunk = None
+                if mask is not None:
+                    attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]
+
+                chunk_output = F.scaled_dot_product_attention(
+                    q_chunk,
+                    k_chunk,
+                    v_chunk,
+                    attn_mask=attn_mask_chunk,
+                    dropout_p=0.0,
+                    is_causal=False,
+                )  # [B, H, chunk_size, D]
+                outputs.append(chunk_output)
+
+            # Concatenate all chunks along the query dimension
+            output = torch.cat(outputs, dim=2)  # [B, H, S, D]
         else:
-            assert mask is None or isinstance(mask, BlockMask)
             # Use original flex attention
             output = flex_attention_comp(xq, xk, xv, block_mask=mask)
-        output = output.transpose(1, 2).contiguous()  # B H S D -> B S H D
 
+        # [B, H, S, D] -> [B, S, H, D]
+        output = output.transpose(1, 2).contiguous()
         output = self.wo(output.reshape(output_shape))
 
         return x + output
@@ -116,8 +135,7 @@ class PraxisByteLatentEncoder(nn.Module):
 
     def __repr__(self):
         return (
-            f"PraxisByteLatentEncoder(in_features={self.args.vocab_size}, "
-            + f"out_features={self.args.dim_global}, "
+            f"PraxisByteLatentEncoder("
             + f"n_encoders={len(self.encoder.layers)}, "
             + f"n_decoders={len(self.decoder.layers)})"
         )
@@ -277,12 +295,12 @@ def create_args(config):
         cross_attn_decoder=True,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
-        cross_attn_k=4,
-        cross_attn_nheads=2,
+        cross_attn_k=4,  # is a multiplier for token and patch embedding
+        cross_attn_nheads=2,  # num heads used in cross attn
         n_layers_local_encoder=1,
-        n_layers_local_decoder=2,
-        n_heads_local_encoder=3,
-        n_heads_local_decoder=3,
+        n_layers_local_decoder=1,
+        n_heads_local_encoder=1,
+        n_heads_local_decoder=1,
         cross_attn_all_layers_encoder=True,
         cross_attn_all_layers_decoder=True,
         cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
@@ -303,7 +321,7 @@ def create_args(config):
         # init_use_depth="current",
         # attn_bias_type="local_block_causal",
         # alpha_depth="disabled",
-        local_attention_window_len=512,
+        # local_attention_window_len=512,
         sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
         downsampling_by_pooling="max",
         share_encoder_decoder_emb=False,

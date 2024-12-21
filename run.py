@@ -156,6 +156,7 @@ if gun and seed and not dev:
 
 # Global configuration
 vocab_size = 8192
+block_size = 1024 if byte_latent else 512
 use_dashboard = False if no_dashboard else True
 
 # Tokenizer initialization
@@ -163,7 +164,6 @@ tokenizer_model = os.path.join(cache_dir, "praxis")
 if byte_latent:
     from praxis.tokenizer_praxis import ByteLevelTokenizer
 
-    # vocab_size = 1024
     tokenizer = ByteLevelTokenizer()
 else:
     try:
@@ -201,6 +201,7 @@ config = PraxisConfig(
     encoding=encoding_type,
     strategy=strategy,
     loss_func=loss_func,
+    context_length=block_size * 8,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -215,7 +216,7 @@ config = PraxisConfig(
 hparams = dict(
     batch_size=batch_size if batch_size else 1,
     target_batch_size=target_batch_size,
-    block_size=512,
+    block_size=block_size,
     oversample_chance=0.1,  # double the block_size
     supersample_chance=0.01,  # quadruple the block_size
     training_data=dict(primary=[], validation=[]),
