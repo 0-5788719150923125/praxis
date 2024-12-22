@@ -36,7 +36,7 @@ dataset = load_dataset(
     trust_remote_code=True,
     cache_dir="data/datasets",
 ).shuffle(
-    seed=59,
+    seed=42,
     buffer_size=10_000,
 )
 

@@ -58,9 +58,11 @@ class PraxisStack(nn.Module):
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert = PraxisExpert(config, block=block)
                 self.locals.append(expert)
-        self.norm = False
-        if config.block_type == "mru":
-            self.norm = nn.LayerNorm(config.hidden_size, bias=True)
+        self.norm = (
+            nn.LayerNorm(config.hidden_size, bias=True)
+            if config.block_type == "mru"
+            else False
+        )
         if self.manager:
             self.manager.serve_experts()
 

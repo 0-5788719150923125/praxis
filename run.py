@@ -273,7 +273,7 @@ optimizer_defaults = dict(
     ],
 )
 min_lr = 0
-weight_decay = 1e-12
+weight_decay = 0
 if optimizer.lower() == "adamg":
     optimizer_profile = dict(
         optimizer_name="AdamG",
