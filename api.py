@@ -1,6 +1,8 @@
 import asyncio
 import inspect
 import logging
+import os
+import sys
 import time
 from threading import Event, Thread
 
@@ -23,17 +25,51 @@ class APIServer:
         self.server_thread = None
         self.server = None
         self.started = Event()
+        self.shutdown_event = Event()
         self.host = host
         self.port = port
+        self.parent_pid = os.getppid()
+
+    def _monitor_parent(self):
+        """Monitor thread that checks if parent process is alive"""
+        while not self.shutdown_event.is_set():
+            try:
+                # Check if parent process still exists
+                os.kill(self.parent_pid, 0)
+                time.sleep(1)  # Check every second
+            except OSError:  # Parent process no longer exists
+                print("Parent process died, shutting down API server...")
+                self.stop()
+                break
 
     def start(self):
+        if self.server_thread is not None:
+            return  # Already started
+
+        # Start the server thread
         self.server_thread = Thread(target=self._run_server)
         self.server_thread.daemon = True
         self.server_thread.start()
-        self.started.wait(timeout=5)  # Wait up to 5 seconds for the server to start
+
+        # Start the monitor thread
+        self.monitor_thread = Thread(target=self._monitor_parent)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+
+        self.started.wait(timeout=5)
         if not self.started.is_set():
             raise RuntimeError("Server failed to start within the timeout period")
         print(f"API server started at: {self.get_api_addr()}")
+
+    def stop(self):
+        self.shutdown_event.set()  # Signal monitor thread to stop
+        if self.server:
+            print("Shutting down API server...")
+            self.server.shutdown()
+            self.server = None
+        if self.server_thread:
+            self.server_thread.join(timeout=5)
+            self.server_thread = None
 
     def _run_server(self):
         with app.app_context():
@@ -41,12 +77,6 @@ class APIServer:
             self.server = make_server("0.0.0.0", self.port, app)
             self.started.set()  # Signal that the server has started
             self.server.serve_forever()
-
-    def stop(self):
-        if self.server:
-            self.server.shutdown()
-        if self.server_thread:
-            self.server_thread.join()
 
     def get_api_addr(self):
         return f"{self.host}:{self.port}"
