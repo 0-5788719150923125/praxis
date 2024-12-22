@@ -21,10 +21,42 @@ class PraxisGRU(nn.Module):
         super().__init__()
         self.norm = nn.LayerNorm(config.hidden_size)
         self.recurrent = minGRU(config.hidden_size, expansion_factor=1.0, proj_out=None)
+        self.ffn = PraxisMLP(config)
 
     def forward(self, x: Tensor, *args, **kwargs):
         out, _ = self.recurrent(self.norm(x))
-        return out + x, None, 0
+        return self.ffn(stretch(out, target_min=-1.0)) + x, None, 0
+
+
+def stretch(
+    x: torch.Tensor, target_min: float = None, target_max: float = None
+) -> torch.Tensor:
+    """
+    Stretches tensor values using linear interpolation.
+    At least one target bound must be specified.
+    """
+    assert (
+        target_min is not None or target_max is not None
+    ), "At least one target bound must be specified"
+
+    max_val = x.max()
+    min_val = x.min()
+
+    # If only target_min specified
+    if target_max is None:
+        # Keep max_val fixed, stretch everything else to target_min
+        progress = (x - min_val) / (max_val - min_val)
+        return target_min + progress * (max_val - target_min)
+
+    # If only target_max specified
+    if target_min is None:
+        # Keep min_val fixed, stretch everything else to target_max
+        progress = (x - min_val) / (max_val - min_val)
+        return min_val + progress * (target_max - min_val)
+
+    # If both targets specified
+    progress = (x - min_val) / (max_val - min_val)
+    return target_min + progress * (target_max - target_min)
 
 
 if __name__ == "__main__":
@@ -36,6 +68,8 @@ if __name__ == "__main__":
     @dataclass
     class MockConfig:
         hidden_size: int = 64
+        activation: str = "gelu"
+        dropout: float = 0
 
     # Initialize model and test input
     config = MockConfig()

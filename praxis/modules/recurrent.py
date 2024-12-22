@@ -7,9 +7,6 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn import Identity, Linear, Module
 
-# log-space version of minGRU - B.3.1
-# they enforce the hidden states to be positive
-
 
 class minGRU(Module):
     """
@@ -76,6 +73,7 @@ def g(x):
     return torch.where(x >= 0, x + 0.5, x.sigmoid())
 
 
+# they enforce the hidden states to be positive
 def log_g(x):
     return torch.where(x >= 0, (F.relu(x) + 0.5).log(), -F.softplus(-x))
 
