@@ -471,7 +471,8 @@ class TerminalInterface(Callback):
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
         lm.model.get_addr()
-        self.max_length = int(lm.model.config.context_length * 0.9)
+        # we limit to the max size seen during training, to keep memory usage consistent
+        self.max_length = block_size * 4
         if self.dashboard:
             max_data_points = 1000
             self.dashboard = TerminalDashboard(seed, max_data_points)
@@ -609,9 +610,6 @@ class TerminalInterface(Callback):
                 self.text = result
                 break
             time.sleep(0.1)
-
-        while len(self.text) > self.max_length:
-            self.text = self.text[1:]
 
         n_gram_size = 7
         frequency = 20
@@ -967,7 +965,7 @@ checkpoint_callback = TimeBasedCheckpoint(
     dirpath=os.path.join(cache_dir, "praxis"),
     filename="model-{loss:.4f}",
     enable_version_counter=False,
-    save_interval=60,
+    save_interval=3600,
 )
 
 # Bootstrap the model and trainer

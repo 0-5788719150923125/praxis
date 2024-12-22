@@ -20,36 +20,21 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         "bpe_token": ("<|bpe|>", 4),
     }
 
-    def __init__(
-        self,
-        bpe_tokenizer_path: str = None,
-        vocab_size_unit_1: int = 256,  # Basic byte vocabulary
-        bpe_delim: bool = False,
-        add_bos: bool = False,
-        add_eos: bool = False,
-        **kwargs,
-    ):
+    def __init__(self, add_bos: bool = False, add_eos: bool = False, **kwargs):
         # Initialize special token attributes from SPECIAL_TOKENS
         for token_name, (token_value, _) in self.SPECIAL_TOKENS.items():
             if token_name not in kwargs:
                 kwargs[token_name] = token_value
 
         # Store initialization parameters
-        self._init_params = {
-            "bpe_tokenizer_path": bpe_tokenizer_path,
-            "vocab_size_unit_1": vocab_size_unit_1,
-            "bpe_delim": bpe_delim,
-            "add_bos": add_bos,
-            "add_eos": add_eos,
-        }
+        self.vocab_size_unit_1 = 256
 
         super().__init__(**kwargs)
 
         # Initialize the byte tokenizer
         self._tokenizer = BltTokenizer(
-            vocab_size_unit_1=vocab_size_unit_1,
-            bpe_delim=bpe_delim,
-            bpe_tokenizer_path=bpe_tokenizer_path,
+            vocab_size_unit_1=self.vocab_size_unit_1,
+            bpe_delim=False,
             add_bos=False,  # We handle special tokens ourselves
             add_eos=False,
         )
@@ -66,7 +51,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         }
 
         # Add byte tokens after special tokens
-        for i in range(self._init_params["vocab_size_unit_1"]):
+        for i in range(self.vocab_size_unit_1):
             vocab[str(i)] = i + self._token_id_offset
 
         return vocab
@@ -74,7 +59,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
     @property
     def vocab_size(self) -> int:
         """Returns the size of vocabulary."""
-        return self._init_params["vocab_size_unit_1"] + len(self.SPECIAL_TOKENS)
+        return self.vocab_size_unit_1 + len(self.SPECIAL_TOKENS)
 
     @property
     def _token_id_offset(self) -> int:

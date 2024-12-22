@@ -17,7 +17,6 @@ from transformers import PreTrainedTokenizerFast
 num_examples = 10_000_000
 
 vocab_size = 8192
-dropout = 0.1
 
 save_path = "data/praxis"
 archive_path = save_path + f"-{vocab_size}"
@@ -43,9 +42,7 @@ dataset = load_dataset(
 column = "text"
 iterator = islice((item[column] for item in dataset), num_examples)
 
-tokenizer = Tokenizer(
-    models.BPE(dropout=dropout, cache_capacity=4096, byte_fallback=True)
-)
+tokenizer = Tokenizer(models.BPE(cache_capacity=4096 * 16, byte_fallback=True))
 
 tokenizer.add_special_tokens(
     [

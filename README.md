@@ -10,16 +10,19 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 The Praxis architecture is a fluid, peer-to-peer, always online, continuously-learning and decentralized place to practice [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into core infrastructure of our ecosystem, the goal is to build a multi-modal language model that is small and simple, easy to parallelize, fault-tolerant, and performant at a scale of hundreds/thousands of self-hosted peers. We will achieve this via a sparse mixture of experts, user-curated multipath routing, symbolic decision-making and weighted self-modeling of network components.
 
-## architecture
+## features
 
-- A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence to remote peers - reducing the time required for remote computation, and the amount of data transferred.
+- A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence through a layer, and to remote peers - reducing the time required for remote computation. All other tokens bypass the layer via a residual connection.
 - [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. We take this a step further, and implement the `PraxisController`, which teaches the model how to predict an optimal route through expert layers during inference. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
+- As an alternative to LayerShuffle's controller, we have an experiment that implements elements from [Graphformer](https://arxiv.org/abs/2105.02605), teaching the model to route through layers as if they were nodes in a graph.
 - In addition to the shuffling, we implement a simplified version of [CALM](https://arxiv.org/abs/2207.07061), which allows the model to early-exit from computation.
 - We implement RoPE, ALiBi and NoPE as options for positional encoding, because they're easy, work well at sane contexts lengths, and require little to no trainable parameters.
-- [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps. Alternatively (and perhaps in-addition to, in the future), we implement an option for [Stickbreaking Attention](https://arxiv.org/abs/2306.04640), which naturally-encodes positional information, uses a Sigmoid-based mechanism, instead of a Softmax (i.e. parameters "work together", instead of "competing" against each other).
-- Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. In this design, dense feedforward layers are replaced with singleton Multi-Layer Perceptron networks.
+- [Differential Attention](https://arxiv.org/abs/2410.05258) is used to improve hallucination performance, reduce parameter counts required for attention, and filter-out noise in attention maps. Alternatively (and perhaps in-addition to, in the future), we implement an option for [Stickbreaking Attention](https://arxiv.org/abs/2306.04640), which naturally-encodes positional information, uses a Sigmoid-based mechanism, instead of a Softmax (i.e. parameters "work together", instead of "competing" against each other). We also implement various methods from [MEGA](https://arxiv.org/abs/2209.10655), including the Exponential Moving Average-based attention gating, and Gated Single-Head Attention modules.
+- Parameter-Efficient Expert Retrieval (PEER) from the [Mixture of a Million Experts](https://arxiv.org/abs/2407.04153) paper. Here, feedforward layers are replaced with a swarm of singleton MLP networks.
 - While simple, a [Soft-Merging of Experts with Adaptive Routing](https://arxiv.org/abs/2306.03745) class allows us to dynamically-route through a dense feedforward layer, while maintaining differentiability and enhancing expressivity.
-- We implement an optional [Byte Latent Tokenizer](https://github.com/facebookresearch/blt), for realtime language learning.
+- We support Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143), to reduce the O(n^2) memory complexity of transformer attention to O(n). This is the same technique that Google uses in Gemini.
+- We have a [Kolmogorov-Arnold Networks](https://arxiv.org/abs/2404.19756) experiment, which replaces MLPs with KANs.
+- We implement an optional [Byte Latent Tokenizer](https://github.com/facebookresearch/blt), which allows us to represent tokens as patches of byte-sequences, instead of discrete tokens. This way, we can remove the tokenizer - and represent data in much more interesting ways, within the latent space.
 - There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
 
 ## join us
@@ -183,4 +186,3 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 ## won't do
 
 - cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
-- We implemented a simplified version of Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143), but found it to be ineffective. Particularly, we were looking for long-term memory, whereas this is primarly used for extremely long context lengths (i.e. "memories" do not persist between forward passes).

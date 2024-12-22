@@ -62,12 +62,7 @@ class SimpleCrossAttention(CrossAttention):
                     attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]
 
                 chunk_output = F.scaled_dot_product_attention(
-                    q_chunk,
-                    k_chunk,
-                    v_chunk,
-                    attn_mask=attn_mask_chunk,
-                    dropout_p=0.0,
-                    is_causal=False,
+                    q_chunk, k_chunk, v_chunk, attn_mask=attn_mask_chunk
                 )  # [B, H, chunk_size, D]
                 outputs.append(chunk_output)
 
