@@ -14,7 +14,7 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-num_examples = 10_000_000
+num_examples = 5_000_000
 
 vocab_size = 8192
 dropout = 0.1
