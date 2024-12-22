@@ -94,9 +94,10 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
 
 # Registry mapping architecture names to embedding classes
 EMBEDDING_REGISTRY = {
-    "transformer": PraxisEmbeddings,
-    "nano": PraxisLearnedEmbeddings,
     "conv": PraxisFactorizedEmbeddings,
-    "recurrent": PraxisFactorizedEmbeddings,
+    "min": PraxisEmbeddings,
     "mru": PraxisEmbeddings,
+    "nano": PraxisLearnedEmbeddings,
+    "recurrent": PraxisFactorizedEmbeddings,
+    "transformer": PraxisEmbeddings,
 }
