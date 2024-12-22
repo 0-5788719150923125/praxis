@@ -57,7 +57,6 @@ class SimpleCrossAttention(CrossAttention):
                 v_chunk = xv[:, :, kv_start:kv_end, :]
 
                 # Slice the mask to match [chunk_size, window_width]
-                # Assuming mask has shape [B, H, seq_len, seq_len]
                 attn_mask_chunk = None
                 if mask is not None:
                     attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]

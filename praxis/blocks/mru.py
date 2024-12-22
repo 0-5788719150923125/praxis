@@ -21,8 +21,6 @@ class PraxisMRU(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
 
-        self.debug = config.debug
-
         # Architecture parameters
         self.num_heads = config.num_heads
         self.state_size = config.hidden_size
@@ -53,7 +51,7 @@ class PraxisMRU(nn.Module):
         )
 
         self.state_matrices_update_scale = (
-            0.08
+            0.01
             * (1 / self.state_head_order)
             * (self.embed_size / self.embedding_chunk_size)
         )
@@ -77,8 +75,8 @@ class PraxisMRU(nn.Module):
         nn.init.normal_(self.mru_out.weight, mean=0, std=0.02 / math.sqrt(self.depth))
 
         # Normalization
-        self.first_ln = nn.LayerNorm(self.embed_size, bias=False)
-        self.second_ln = nn.LayerNorm(self.embed_size, bias=False)
+        self.mru_norm = nn.LayerNorm(self.embed_size, bias=False)
+        self.ffn_norm = nn.LayerNorm(self.embed_size, bias=False)
 
         # Regularization
         self.dropout = nn.Dropout(self.dropout_rate)
@@ -97,10 +95,11 @@ class PraxisMRU(nn.Module):
         **kwargs,
     ) -> Tensor:
 
-        mru_out, new_state = self._parallel_mru(self.first_ln(x), current_state)
+        mru_out, new_state = self._parallel_mru(self.mru_norm(x), current_state)
 
         x = x + mru_out
-        x = x + self.ffn(self.second_ln(x))
+        x = x + self.ffn(self.ffn_norm(x))
+
         return x, new_state, 0
 
     def _parallel_mru(
@@ -109,11 +108,6 @@ class PraxisMRU(nn.Module):
 
         if last_state is not None and last_state.size(0) != x.size(0):
             last_state = last_state[-1:].expand(x.size(0), -1, -1, -1)
-            # last_state = torch.sigmoid(last_state)
-
-            if self.debug and random.random() < 0.01:
-                avg_state = last_state.detach().mean().cpu().item()
-                print(f"DEBUG: average state value: {avg_state:.6f}")
 
         reshaped = x.unflatten(
             -1, (self.num_heads, self.state_head_order, self.embedding_chunk_size)

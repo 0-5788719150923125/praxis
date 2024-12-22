@@ -58,7 +58,9 @@ class PraxisModel(PreTrainedModel):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
         current_state = (
-            self.get_initial_state() if current_state is None else current_state
+            [None for _ in range(self.config.depth)]
+            if current_state is None
+            else current_state
         )
 
         last_hidden_state, current_state, aux_loss = self.decoder(
@@ -161,7 +163,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if len(self.current_state) > 0:
             return [
                 (
-                    self.current_state[i].detach()
+                    self.current_state[i]
                     if torch.is_tensor(self.current_state[i])
                     else self.current_state[i]
                 )
