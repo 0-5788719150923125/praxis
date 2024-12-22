@@ -58,6 +58,9 @@ class PraxisStack(nn.Module):
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert = PraxisExpert(config, block=block)
                 self.locals.append(expert)
+        self.norm = False
+        if config.block_type == "mru":
+            self.norm = nn.LayerNorm(config.hidden_size, bias=True)
         if self.manager:
             self.manager.serve_experts()
 
@@ -66,6 +69,12 @@ class PraxisStack(nn.Module):
         if self.genome and current_depth == 4:
             processed_states = self.genome(processed_states)
         return processed_states
+
+    def post_decoding(self, states):
+        if self.norm:
+            return self.norm(states)
+        else:
+            return states
 
     def get_metrics(self):
         """Return current prediction accuracies"""

@@ -65,6 +65,9 @@ class PraxisDecoder(nn.Module):
                 self.manager.handle_failure(expert)
                 continue
 
+        if hasattr(self.stack, "post_decoding"):
+            hidden_states = self.stack.post_decoding(hidden_states)
+
         if hasattr(self.stack.behavior, "reset_route"):
             self.stack.behavior.reset_route()
 
