@@ -149,90 +149,6 @@ class PraxisMRU(nn.Module):
         )
 
 
-# hs: Hillis-Steele scan
-class hs_parallel_mru_op_class(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, start_matrix_states):
-        final_matrix_states = start_matrix_states.clone()
-
-        sequence_length = start_matrix_states.size(-3)
-
-        n_stages = math.ceil(math.log2(sequence_length))
-        for stage in range(n_stages):
-            stage_stride = 2**stage
-            final_matrix_states[..., stage_stride:, :, :] = (
-                final_matrix_states[..., :-stage_stride, :, :]
-                @ final_matrix_states[..., stage_stride:, :, :]
-            )
-
-        ctx.save_for_backward(start_matrix_states, final_matrix_states)
-        ctx.sequence_length = sequence_length
-
-        return final_matrix_states
-
-    @staticmethod
-    def backward(ctx, grad_final_matrix_states):
-        def create_eye_for_shift(shape):
-            resized_eye = torch.eye(*shape[-2:], device=grad_final_matrix_states.device)
-            while resized_eye.dim() < len(shape):
-                resized_eye = resized_eye.unsqueeze(0)
-
-            resized_eye_shape = shape[:-3]
-            resized_eye_shape = list(resized_eye_shape)
-
-            while len(resized_eye_shape) < len(shape):
-                resized_eye_shape.append(1)
-
-            resized_eye = resized_eye.repeat(*resized_eye_shape)
-            return resized_eye
-
-        def create_zeros_for_shift(shape):
-            new_shape = list(shape)
-            new_shape[-3] = 1
-            return torch.zeros(new_shape, device=grad_final_matrix_states.device)
-
-        start_matrix_states, final_matrix_states = ctx.saved_tensors
-
-        # grad_before_start_matrix_states is A as described in the README
-        # tl is U as described in the README
-        # bl is L as described in the README
-
-        # grad_before_start_matrix_states = torch.cat((create_eye_for_shift(transposed_final_matrix_states.shape), transposed_final_matrix_states[..., :-1, :, :]), dim = -3)
-
-        # faster implementation:
-        grad_before_start_matrix_states = final_matrix_states.transpose(-1, -2).roll(
-            1, dims=-3
-        )
-        grad_before_start_matrix_states[..., 0, :, :] = torch.eye(
-            grad_before_start_matrix_states.size(-2),
-            device=grad_before_start_matrix_states.device,
-        )
-
-        # tl = torch.cat((start_matrix_states[..., 1:, :, :], create_zeros_for_shift(start_matrix_states.shape)), dim = -3).transpose(-1, -2)
-
-        # faster implementation:
-        tl = start_matrix_states.transpose(-1, -2).roll(-1, dims=-3)
-        tl[..., -1, :, :] = torch.zeros((tl.size(-2), tl.size(-1)), device=tl.device)
-
-        bl = grad_final_matrix_states
-
-        sequence_length = ctx.sequence_length
-        n_stages = math.ceil(math.log2(sequence_length))
-        for stage in range(n_stages):
-            stage_stride = 2**stage
-            bl[..., :-stage_stride, :, :] = (
-                bl[..., stage_stride:, :, :] @ tl[..., :-stage_stride, :, :]
-                + bl[..., :-stage_stride, :, :]
-            )
-            tl[..., :-stage_stride, :, :] = (
-                tl[..., stage_stride:, :, :] @ tl[..., :-stage_stride, :, :]
-            )
-
-        grad_start_matrix_states = grad_before_start_matrix_states @ bl
-
-        return grad_start_matrix_states
-
-
 # bk: Brent-Kung scan
 class bk_parallel_mru_op_class(torch.autograd.Function):
     @staticmethod
@@ -458,3 +374,158 @@ if __name__ == "__main__":
         print(f"✗ Test failed: {str(e)}")
 
     print("\nAll tests completed!")
+
+    from dataclasses import dataclass
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import seaborn as sns
+    import torch
+
+    @dataclass
+    class MockConfig:
+        hidden_size: int = 16
+        num_heads: int = 2
+        dropout: float = 0.0
+        depth: int = 1
+
+    def analyze_gradients(seq_length=16, plot_type="heatmap"):
+        """
+        Analyze gradients through the parallel scan operation.
+
+        Args:
+            seq_length: Length of sequence to test
+            plot_type: Either 'heatmap' or 'line' for different visualizations
+        """
+        # Create a minimal test case
+        batch_size = 1
+        hidden_size = 4  # Small size for visualization
+
+        # Create test input
+        test_input = torch.randn(
+            batch_size, seq_length, hidden_size, hidden_size, requires_grad=True
+        )
+
+        # Register hooks to capture gradients
+        gradients = []
+
+        def grad_hook(grad):
+            gradients.append(grad.detach().cpu().numpy())
+            return grad
+
+        test_input.register_hook(grad_hook)
+
+        # Forward pass
+        output = parallel_mru_op(test_input)
+
+        # Create loss and backward pass
+        loss = output.mean()
+        loss.backward()
+
+        # Convert gradients to numpy for visualization
+        grad_tensor = test_input.grad.squeeze(0)
+        grad_norms = torch.norm(grad_tensor.view(seq_length, -1), dim=1)
+        grad_norms = grad_norms.detach().cpu().numpy()
+
+        # Create visualizations
+        plt.figure(figsize=(15, 10))
+
+        if plot_type == "heatmap":
+            # Plot gradient heatmap
+            plt.subplot(2, 1, 1)
+            sns.heatmap(
+                grad_tensor[:, 0, :].detach().cpu().numpy(),
+                cmap="RdBu",
+                center=0,
+                annot=True,
+                fmt=".2f",
+            )
+            plt.title("Gradient Matrix for First Channel")
+            plt.xlabel("Hidden Dimension")
+            plt.ylabel("Sequence Position")
+
+            # Plot gradient norms
+            plt.subplot(2, 1, 2)
+            plt.plot(grad_norms, "-o")
+            plt.title("Gradient Norms across Sequence Positions")
+            plt.xlabel("Sequence Position")
+            plt.ylabel("Gradient Norm")
+            plt.yscale("log")  # Log scale to better show explosion
+
+        else:  # line plot
+            positions = np.arange(seq_length)
+            plt.plot(positions, grad_norms, "-o", label="Gradient Norm")
+            plt.fill_between(
+                positions,
+                grad_norms - grad_norms.std(),
+                grad_norms + grad_norms.std(),
+                alpha=0.3,
+            )
+            plt.yscale("log")
+            plt.title("Gradient Magnitude Analysis")
+            plt.xlabel("Sequence Position")
+            plt.ylabel("Gradient Norm (log scale)")
+            plt.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+        # Print statistics
+        print(f"\nGradient Statistics:")
+        print(f"Mean gradient norm: {grad_norms.mean():.4f}")
+        print(f"Max gradient norm: {grad_norms.max():.4f}")
+        print(f"Min gradient norm: {grad_norms.min():.4f}")
+        print(f"Gradient norm std: {grad_norms.std():.4f}")
+
+        # Check for potential issues
+        print("\nDiagnostic Checks:")
+        print(
+            f"Gradient explosion check (max/mean ratio): {grad_norms.max() / grad_norms.mean():.2f}"
+        )
+        print(
+            f"Gradient vanishing check (min/mean ratio): {grad_norms.min() / grad_norms.mean():.2f}"
+        )
+
+        return grad_norms
+
+    def compare_scan_algorithms(seq_length=16):
+        """Compare gradients between Hillis-Steele and Brent-Kung implementations."""
+        global parallel_mru_op
+
+        # Store original op
+        original_op = parallel_mru_op
+
+        results = {}
+        for name, op in [
+            ("Hillis-Steele", hs_parallel_mru_op_class.apply),
+            ("Brent-Kung", bk_parallel_mru_op_class.apply),
+        ]:
+            parallel_mru_op = op
+            grad_norms = analyze_gradients(seq_length)
+            results[name] = grad_norms
+
+        # Restore original op
+        parallel_mru_op = original_op
+
+        # Plot comparison
+        plt.figure(figsize=(10, 6))
+        positions = np.arange(seq_length)
+
+        for name, norms in results.items():
+            plt.plot(positions, norms, "-o", label=name)
+
+        plt.yscale("log")
+        plt.title("Gradient Comparison: Hillis-Steele vs Brent-Kung")
+        plt.xlabel("Sequence Position")
+        plt.ylabel("Gradient Norm (log scale)")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    # Test with different sequence lengths
+    for seq_len in [8, 16, 32]:
+        print(f"\nAnalyzing sequence length: {seq_len}")
+        analyze_gradients(seq_len, plot_type="heatmap")
+
+    # Compare algorithms
+    compare_scan_algorithms(16)

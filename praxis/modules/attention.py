@@ -38,7 +38,7 @@ class PraxisAttention(nn.Module):
         self.num_query_heads = self.num_heads * self.num_queries
 
         self.factor = 2 if self.differential else 1
-        self.head_dim = hidden_size // self.num_heads // self.factor
+        self.head_dim = hidden_size // self.num_heads
 
         self.gating = config.mega
         if self.gating:
@@ -46,20 +46,10 @@ class PraxisAttention(nn.Module):
 
         # Query and key projections for differential heads
         self.query = nn.Linear(
-            hidden_size,
-            self.num_query_heads * self.head_dim * self.factor,
-            bias=False,
+            hidden_size, self.num_query_heads * self.head_dim, bias=False
         )
-        self.key = nn.Linear(
-            hidden_size,
-            self.num_heads * self.head_dim * self.factor,
-            bias=False,
-        )
-        self.value = nn.Linear(
-            hidden_size,
-            self.num_heads * self.head_dim * self.factor,
-            bias=False,
-        )
+        self.key = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
+        self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
 
         self.memory = config.memory
         self.chunk_size = 0
@@ -68,8 +58,10 @@ class PraxisAttention(nn.Module):
             self.memory = PraxisCompressiveMemory(config)
 
         # The core attention mechanism
+        use_scaling = True
         if self.stickbreaking:
             self.algorithm = Stickbreaking(config)
+            use_scaling = False
         elif self.differential:
             self.algorithm = Differential(config)
         elif self.linear:
@@ -78,18 +70,14 @@ class PraxisAttention(nn.Module):
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.encoding = ENCODING_REGISTRY[config.encoding](
-            config, not self.stickbreaking
-        )
+        self.encoding = ENCODING_REGISTRY[config.encoding](config, use_scaling)
 
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
         # Standard output projection
         self.output = nn.Linear(
-            self.num_query_heads * self.head_dim * self.factor,
-            hidden_size,
-            bias=False,
+            self.num_query_heads * self.head_dim, hidden_size, bias=False
         )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
@@ -117,8 +105,6 @@ class PraxisAttention(nn.Module):
         )
 
         q = self.dropout(q)
-        k = self.dropout(k)
-        v = self.dropout(v)
 
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
@@ -234,7 +220,9 @@ class ScaledDotProduct(nn.Module):
         if causal:
             causal_mask = (
                 torch.triu(
-                    torch.full((seq_len, hist_len), -1e12, device=scores.device),
+                    torch.full(
+                        (seq_len, hist_len), float("-inf"), device=scores.device
+                    ),
                     diagonal=1,
                 )
                 .unsqueeze(0)
@@ -734,8 +722,6 @@ class PraxisGatedAttention(nn.Module):
 
         # Ensemble the representations
         q = self.dropout(q)
-        k = self.dropout(k)
-        v = self.dropout(v)
 
         # Compute unified attention scores
         scale = 1.0 / math.sqrt(E)

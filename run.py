@@ -177,6 +177,8 @@ else:
 config = PraxisConfig(
     depth=3 if dev else depth,
     num_experts=3 if dev else (num_experts if num_experts else depth),
+    num_heads=int(num_heads.split(":")[0]),
+    num_queries=int(num_heads.split(":")[1]),
     dropout=0.01,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
@@ -283,6 +285,17 @@ if optimizer.lower() == "adamg":
         weight_decouple=True,
         p=0.5,
         q=0.24,
+    )
+elif optimizer.lower() == "ademamix":
+    optimizer_profile = dict(
+        optimizer_name="AdEMAMix",
+        lr=0.001,
+        min_lr=0.00001,
+        weight_decay=weight_decay,
+        weight_decouple=True,
+        betas=(0.9, 0.95, 0.9999),
+        alpha=5.0,
+        cautious=False,
     )
 elif optimizer.lower() == "prodigy":
     optimizer_profile = dict(

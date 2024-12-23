@@ -71,6 +71,23 @@ parser.add_argument(
     help="Number of experts to host (defaults to depth)",
 )
 parser.add_argument(
+    "--num_heads",
+    type=lambda x: (
+        x
+        if ":" in x
+        and len(parts := x.split(":")) == 2
+        and all(p.isdigit() for p in parts)
+        and all(int(p) > 0 for p in parts)
+        else (_ for _ in ()).throw(
+            argparse.ArgumentTypeError(
+                f"'{x}' is not in format 'X:Y', where X and Y are positive integers"
+            )
+        )
+    ),
+    default="3:2",
+    help="The ratio of heads to queries per-head. (example: '3:2' is equal to 3 heads, with 2 queries per head)",
+)
+parser.add_argument(
     "--activation",
     type=str,
     choices=ACTIVATION_REGISTRY.keys(),
@@ -125,7 +142,7 @@ parser.add_argument(
 parser.add_argument(
     "--optimizer",
     type=str,
-    choices=["adamg", "adamw", "prodigy", "soap"],
+    choices=["adamg", "adamw", "ademamix", "prodigy", "soap"],
     default="adamw",
     help="The optimizer profile to use",
 )
