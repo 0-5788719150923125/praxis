@@ -55,7 +55,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         # when inputs have a length of 1, the router will sometimes select no tokens at all
         if token_weights.size(1) == 0:
-            return inputs, router_loss
+            return inputs, current_state, router_loss
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
