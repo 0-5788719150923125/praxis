@@ -259,6 +259,12 @@ parser.add_argument(
     help="Use a Byte Latent Tokenizer (BLT)",
 )
 parser.add_argument(
+    "--hyper",
+    action="store_true",
+    default=False,
+    help="Replace residual connections with hyper-connections",
+)
+parser.add_argument(
     "--hivemind",
     action="store_true",
     default=False,

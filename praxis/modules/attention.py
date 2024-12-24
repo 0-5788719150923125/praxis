@@ -40,9 +40,7 @@ class PraxisAttention(nn.Module):
         self.factor = 2 if self.differential else 1
         self.head_dim = hidden_size // self.num_heads
 
-        self.gating = config.mega
-        if self.gating:
-            self.gating = PraxisGatedEMA(config)
+        self.gating = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
         self.query = nn.Linear(
@@ -88,21 +86,11 @@ class PraxisAttention(nn.Module):
             inputs = self.gating(inputs)
 
         # Initialize QKV projections
-        q = (
-            self.query(inputs)
-            .view(batch_size, seq_len, self.num_query_heads * self.factor, -1)
-            .transpose(1, 2)
+        q = self.query(inputs).view(
+            batch_size, self.num_query_heads * self.factor, seq_len, -1
         )
-        k = (
-            self.key(inputs)
-            .view(batch_size, seq_len, self.num_heads * self.factor, -1)
-            .transpose(1, 2)
-        )
-        v = (
-            self.value(inputs)
-            .view(batch_size, seq_len, self.num_heads, -1)
-            .transpose(1, 2)
-        )
+        k = self.key(inputs).view(batch_size, self.num_heads * self.factor, seq_len, -1)
+        v = self.value(inputs).view(batch_size, self.num_heads, seq_len, -1)
 
         q = self.dropout(q)
 
@@ -212,7 +200,6 @@ class ScaledDotProduct(nn.Module):
     def compute_scores(self, q, k, v):
         scaling = 1.0 / math.sqrt(self.head_dim)
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
-
         return q, k, v, scores
 
     def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
@@ -257,8 +244,7 @@ class Differential(ScaledDotProduct):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
-        factor = 2
-        self.head_dim = self.hidden_size // self.num_heads // factor
+        self.head_dim = self.hidden_size // self.num_heads // 2
         self.lambda_init = 0.8  # A good default, per the paper
         self.lambda_q1 = nn.Parameter(
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
@@ -273,8 +259,8 @@ class Differential(ScaledDotProduct):
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
         )
         self.norm = nn.GroupNorm(
-            num_groups=self.num_query_heads * factor,
-            num_channels=self.num_query_heads * self.head_dim * factor,
+            num_groups=self.num_query_heads,
+            num_channels=self.num_query_heads * self.head_dim * 2,
             eps=config.epsilon,
         )
 
@@ -673,11 +659,11 @@ class PraxisGatedAttention(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
         hidden_dim = config.hidden_size
-        double_dim = hidden_dim * 2
+        head_dim = hidden_dim // 2
 
         # Projections
-        self.query = nn.Linear(hidden_dim, double_dim, bias=False)
-        self.key = nn.Linear(hidden_dim, double_dim, bias=False)
+        self.query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.key = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.value = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
         # Positional encoding
@@ -685,10 +671,10 @@ class PraxisGatedAttention(nn.Module):
 
         # Lambda parameters
         self.lambda_init = 0.8
-        self.lambda_q1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-        self.lambda_k1 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-        self.lambda_q2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
-        self.lambda_k2 = nn.Parameter(torch.empty(hidden_dim).normal_(mean=0, std=0.1))
+        self.lambda_q1 = nn.Parameter(torch.empty(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_k1 = nn.Parameter(torch.empty(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_q2 = nn.Parameter(torch.empty(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_k2 = nn.Parameter(torch.empty(head_dim).normal_(mean=0, std=0.1))
 
         self.norm = nn.RMSNorm(hidden_dim, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
@@ -707,28 +693,33 @@ class PraxisGatedAttention(nn.Module):
 
     def compute_scores(self, inputs):
         B, S, E = inputs.shape
+        head_dim = E // 2  # Half dimension for each component
 
-        # Project inputs
-        q = self.query(inputs)  # [B, S, 2*E]
-        k = self.key(inputs)  # [B, S, 2*E]
+        # Project inputs to regular hidden_dim
+        q = self.query(inputs)  # [B, S, E]
+        k = self.key(inputs)  # [B, S, E]
         v = self.value(inputs)  # [B, S, E]
 
-        # Reshape for RoPE: [B, S, 2*E] -> [B, 2, S, E]
-        q = q.view(B, S, 2, E).transpose(1, 2)
-        k = k.view(B, S, 2, E).transpose(1, 2)
+        # First apply RoPE on full dimensions
+        q = q.view(B, S, 1, E)  # [B, S, 1, E]
+        k = k.view(B, S, 1, E)  # [B, S, 1, E]
 
         # Apply RoPE
         q, k, v = self.encoding.before_scores(q, k, v)
+
+        # Reshape for differential attention
+        q = q.view(B, 2, S, head_dim)  # [B, 2, S, E/2]
+        k = k.view(B, 2, S, head_dim)  # [B, 2, S, E/2]
 
         # Ensemble the representations
         q = self.dropout(q)
 
         # Compute unified attention scores
-        scale = 1.0 / math.sqrt(E)
+        scale = 1.0 / math.sqrt(head_dim)
         scores = torch.matmul(q, k.transpose(-1, -2)) * scale  # [B, 2, S, S]
 
-        # Rearrange scores to [B, S, 2, S] to maintain original downstream expectations
-        scores = scores.transpose(1, 2)  # [B, S, 2, S]
+        # Rearrange scores to [B, S, 2, S]
+        scores = scores.transpose(1, 2)
 
         return scores, v
 
@@ -777,7 +768,40 @@ class PraxisGatedAttention(nn.Module):
         return self.output(gated_weights)
 
 
-ATTENTION_REGISTRY = {"standard": PraxisAttention, "gated": PraxisGatedAttention}
+class VanillaMHA(nn.MultiheadAttention):
+    def __init__(self, config: "AutoConfig"):
+        super().__init__(
+            embed_dim=config.hidden_size,
+            num_heads=config.num_heads,
+            dropout=config.dropout,
+            bias=False,
+            batch_first=True,
+        )
+
+    def forward(self, inputs: Tensor, attention_mask: Tensor):
+        # scores shape: [B, S, E]
+        seq_len = inputs.size(1)
+        # Create causal mask
+        causal_mask = torch.triu(
+            torch.ones((seq_len, seq_len), device=inputs.device), diagonal=1
+        ).bool()
+        # Compute SDPA
+        outputs, _ = super().forward(
+            query=inputs,
+            key=inputs,
+            value=inputs,
+            need_weights=False,
+            is_causal=True,
+            attn_mask=causal_mask,
+        )
+        return outputs
+
+
+ATTENTION_REGISTRY = {
+    "standard": PraxisAttention,
+    "gated": PraxisGatedAttention,
+    "vanilla": VanillaMHA,
+}
 
 
 def test_memory_scaling():

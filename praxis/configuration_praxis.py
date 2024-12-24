@@ -35,6 +35,7 @@ class PraxisConfig(PretrainedConfig):
         mega=False,
         evolve=False,
         byte_latent=False,
+        hyper=False,
         hivemind=False,
         initial_peers=[],
         strategy="speed",
@@ -88,6 +89,7 @@ class PraxisConfig(PretrainedConfig):
         self.mega = mega
         self.evolve = evolve
         self.byte_latent = byte_latent
+        self.hyper = hyper
         self.hivemind = hivemind
         self.initial_peers = initial_peers
         self.strategy = strategy

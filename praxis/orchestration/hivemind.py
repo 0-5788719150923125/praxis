@@ -27,6 +27,15 @@ from praxis.modules.router import PraxisMixtureOfDepths
 class PraxisManagement:
     """
     A helper class, with convenience methods for Hivemind swarm management.
+
+    When using Hivemind, there are certain limitations:
+
+    1. All inputs to the `forward()` method of an expert must be Tensors.
+    2. No inputs are allowed to be empty (None) types.
+    3. All inputs must be of a constant shape.
+    3. All inputs/outputs must be a part of the computation graph (i.e. returning detached aux_loss tensors is invalid).
+
+    Essentially, Hivemind experts have static inputs/outputs - in contrast to the "dynamic" nature of Pytorch.
     """
 
     __version__ = "0.1.0"

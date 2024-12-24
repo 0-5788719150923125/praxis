@@ -195,6 +195,7 @@ config = PraxisConfig(
     mega=mega,
     evolve=evolve,
     byte_latent=byte_latent,
+    hyper=hyper,
     activation=activation,
     hivemind=hivemind,
     initial_peers=initial_peers,
@@ -323,11 +324,11 @@ elif optimizer.lower() == "soap":
 else:
     optimizer_profile = dict(
         optimizer_name="AdamW",
-        lr=5e-4,
+        lr=1e-3,
         weight_decay=weight_decay,
         betas=(0.9, 0.95),
     )
-    min_lr = 5e-6
+    min_lr = 1e-5
 
 if shuffle:
     optimizer_profile["weight_decay"] = 0
