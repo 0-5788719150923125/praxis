@@ -74,13 +74,12 @@ HUGGINGFACE_DATASETS = {
         format=DataFormat.SIMPLE,
         weight=0.001,
     ),
-    "redpajama": dict(
-        path="togethercomputer/RedPajama-Data-V2",
-        name="sample-10B",
-        snapshots=["2023-14"],
-        keys=["raw_content"],
+    "legal": dict(
+        path="pile-of-law/pile-of-law",
+        name="all",
+        keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
+        weight=0.001,
     ),
     "wikipedia": dict(
         path="wikimedia/wikipedia",
@@ -88,6 +87,14 @@ HUGGINGFACE_DATASETS = {
         keys=["title", "text"],
         format=DataFormat.WIKI,
         weight=0.001,
+    ),
+    "redpajama": dict(
+        path="togethercomputer/RedPajama-Data-V2",
+        name="sample-10B",
+        snapshots=["2023-14"],
+        keys=["raw_content"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
     ),
     "fineweb-edu-10bt": dict(
         path="HuggingFaceFW/fineweb-edu",
@@ -354,6 +361,7 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("wikipedia"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("legal"))
     if dev:
         # Overwrite with simpler dataset
         config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]

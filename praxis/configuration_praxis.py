@@ -33,6 +33,7 @@ class PraxisConfig(PretrainedConfig):
         compression=False,
         memory=False,
         mega=False,
+        gated=False,
         evolve=False,
         byte_latent=False,
         hyper=False,
@@ -87,6 +88,7 @@ class PraxisConfig(PretrainedConfig):
         self.compression = compression
         self.memory = memory
         self.mega = mega
+        self.gated = gated
         self.evolve = evolve
         self.byte_latent = byte_latent
         self.hyper = hyper

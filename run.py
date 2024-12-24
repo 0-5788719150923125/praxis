@@ -193,6 +193,7 @@ config = PraxisConfig(
     compression=compression,
     memory=memory,
     mega=mega,
+    gated=gated,
     evolve=evolve,
     byte_latent=byte_latent,
     hyper=hyper,

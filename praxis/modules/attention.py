@@ -1,4 +1,5 @@
 import math
+from copy import copy
 from typing import List, Optional, Tuple
 
 import torch
@@ -40,7 +41,12 @@ class PraxisAttention(nn.Module):
         self.factor = 2 if self.differential else 1
         self.head_dim = hidden_size // self.num_heads
 
-        self.gating = PraxisGatedEMA(config) if config.mega else False
+        assert (
+            sum([config.mega, config.gated]) <= 1
+        ), "Only one of 'mega' or 'gated' can be used at a time."
+
+        # For query gating
+        self.ema = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
         self.query = nn.Linear(
@@ -70,6 +76,9 @@ class PraxisAttention(nn.Module):
         # For handling length extrapolation
         self.encoding = ENCODING_REGISTRY[config.encoding](config, use_scaling)
 
+        # For attention gating
+        self.gates = UniversalAttentionGate(config) if config.gated else False
+
         # Standard output projection
         self.output = nn.Linear(
             self.num_query_heads * self.head_dim, hidden_size, bias=False
@@ -78,9 +87,9 @@ class PraxisAttention(nn.Module):
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
 
-        if self.gating:
+        if self.ema:
             # Compute an exponential moving average-based gating mechanism
-            inputs = self.gating(inputs)
+            inputs = self.ema(inputs)
 
         # Initialize QKV projections
         q = (
@@ -133,6 +142,9 @@ class PraxisAttention(nn.Module):
 
         if self.memory:
             self.memory.reset_states()
+
+        if self.gates:
+            output = self.gates(inputs, output)
 
         # Final output projection
         return self.output(output)
@@ -237,6 +249,62 @@ class ScaledDotProduct(nn.Module):
 
     def _compute_outputs(self, weights, v):
         return self.dropout(weights) @ v
+
+
+class UniversalAttentionGate(nn.Module):
+    """
+    According to MEGA, "Single-head gated attention has been empirically
+    shown [to be] as performant as vanilla multi-head attention."
+    https://arxiv.org/abs/2209.10655
+    """
+
+    def __init__(self, config: "AutoConfig"):
+        super().__init__()
+        self.num_queries = config.num_queries
+        self.hidden_size = config.hidden_size
+
+        # Use original hidden size, no doubling needed
+        self.approximator = nn.Sequential(
+            PraxisGLU(config, activation="swish"),  # Original hidden size
+            nn.Sigmoid(),
+        )
+
+    def forward(self, inputs: Tensor, weights: Tensor) -> Tensor:
+        batch_size, seq_len = inputs.shape[:2]
+
+        if self.num_queries > 1:
+            # Reshape weights to separate queries
+            # From [B, S, Q*H] -> [B*Q, S, H]
+            weights = (
+                weights.view(batch_size, seq_len, self.num_queries, self.hidden_size)
+                .transpose(1, 2)
+                .reshape(batch_size * self.num_queries, seq_len, self.hidden_size)
+            )
+
+            # Repeat inputs for each query
+            # From [B, S, H] -> [B*Q, S, H]
+            inputs = (
+                inputs.unsqueeze(1)
+                .expand(-1, self.num_queries, -1, -1)
+                .reshape(batch_size * self.num_queries, seq_len, self.hidden_size)
+            )
+
+            # Generate gates with original hidden size
+            gates = self.approximator(inputs)  # [B*Q, S, H]
+
+            # Apply gates and reshape back
+            gated = gates * weights  # [B*Q, S, H]
+
+            # Reshape back to original format
+            # From [B*Q, S, H] -> [B, S, Q*H]
+            return (
+                gated.view(batch_size, self.num_queries, seq_len, self.hidden_size)
+                .transpose(1, 2)
+                .reshape(batch_size, seq_len, self.num_queries * self.hidden_size)
+            )
+        else:
+            # Simple case: direct gating
+            return self.approximator(inputs) * weights  # [B, S, H]
 
 
 class Differential(ScaledDotProduct):

@@ -87,13 +87,11 @@ class RoPE(NoPE):
         super().__init__(config)
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 
-        theta = 10000
+        theta = 100000
         inv_freq = 1.0 / (
             theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
         )
         self.register_buffer("inv_freq", inv_freq)
-        self.scale = 1.0
-
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
@@ -140,7 +138,7 @@ class RoPE(NoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
-            positions = (torch.arange(seq_len, device=device) + offset) * self.scale
+            positions = torch.arange(seq_len, device=device) + offset
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
             # Compute basic sin and cos

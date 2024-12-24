@@ -247,6 +247,12 @@ parser.add_argument(
     help="Equip the attention mechanism with exponentially-moving average-based gating",
 )
 parser.add_argument(
+    "--gated",
+    action="store_true",
+    default=False,
+    help="Add a gating network to attention outputs",
+)
+parser.add_argument(
     "--evolve",
     action="store_true",
     default=False,

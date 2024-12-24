@@ -182,6 +182,8 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Multimodal Latent Language Modeling with Next-Token Diffusion](https://arxiv.org/abs/2412.08635)
 - [Transformers Struggle to Learn to Search](https://arxiv.org/abs/2412.04703)
 - [Survey on Memory-Augmented Neural Networks: Cognitive Insights to AI Applications](https://arxiv.org/abs/2312.06141)
+- Explore "Scheduled Sampling", where the model is trained on it's own predictions.
+- Explore contrastive learning, to mitigate text repetition, by showing the model good and bad examples during training, create embeddings compute similarities, and calculate contrastive loss.
 
 ## won't do
 
