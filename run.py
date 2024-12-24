@@ -214,6 +214,7 @@ config = PraxisConfig(
     debug=debug,
     seed=seed,
     meta=meta,
+    trust_remote_code=True,
 )
 
 # Misc hyperparameters
@@ -614,7 +615,7 @@ class TerminalInterface(Callback):
                 # eta_cutoff=0.002,
                 # penalty_alpha=0.6,
                 # top_k=4,
-                repetition_penalty=1.1,
+                repetition_penalty=1.23,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
             ),
