@@ -70,9 +70,6 @@ class PraxisAttention(nn.Module):
         # For handling length extrapolation
         self.encoding = ENCODING_REGISTRY[config.encoding](config, use_scaling)
 
-        # Force exploration of attention subnetworks
-        self.dropout = nn.Dropout(config.dropout)
-
         # Standard output projection
         self.output = nn.Linear(
             self.num_query_heads * self.head_dim, hidden_size, bias=False
@@ -86,13 +83,21 @@ class PraxisAttention(nn.Module):
             inputs = self.gating(inputs)
 
         # Initialize QKV projections
-        q = self.query(inputs).view(
-            batch_size, self.num_query_heads * self.factor, seq_len, -1
+        q = (
+            self.query(inputs)
+            .view(batch_size, seq_len, self.num_query_heads * self.factor, -1)
+            .transpose(1, 2)
         )
-        k = self.key(inputs).view(batch_size, self.num_heads * self.factor, seq_len, -1)
-        v = self.value(inputs).view(batch_size, self.num_heads, seq_len, -1)
-
-        q = self.dropout(q)
+        k = (
+            self.key(inputs)
+            .view(batch_size, seq_len, self.num_heads * self.factor, -1)
+            .transpose(1, 2)
+        )
+        v = (
+            self.value(inputs)
+            .view(batch_size, seq_len, self.num_heads, -1)
+            .transpose(1, 2)
+        )
 
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
@@ -172,8 +177,6 @@ class PraxisAttention(nn.Module):
             # Blend with memories
             attention_output = self.memory(q, k, v, attention_output)
 
-        attention_output = self.dropout(attention_output)
-
         # Reshape for output projection
         chunk_output = attention_output.transpose(1, 2).reshape(
             batch_size, chunk_size, -1
@@ -196,6 +199,8 @@ class ScaledDotProduct(nn.Module):
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
         self.head_dim = self.hidden_size // self.num_heads
+        # Force exploration of attention subnetworks
+        self.dropout = nn.Dropout(config.dropout)
 
     def compute_scores(self, q, k, v):
         scaling = 1.0 / math.sqrt(self.head_dim)
@@ -231,7 +236,7 @@ class ScaledDotProduct(nn.Module):
         return self._compute_outputs(weights, v)
 
     def _compute_outputs(self, weights, v):
-        return weights @ v
+        return self.dropout(weights) @ v
 
 
 class Differential(ScaledDotProduct):
@@ -277,16 +282,16 @@ class Differential(ScaledDotProduct):
 
         attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
 
-        outputs = torch.matmul(attn_weights, v)
+        outputs = torch.matmul(self.dropout(attn_weights), v)
 
         # Prepare for GroupNorm
-        outputs = outputs.reshape(batch_size, seq_len, -1).permute(0, 2, 1).contiguous()
+        outputs = outputs.reshape(batch_size, -1, seq_len).contiguous()
 
         # Apply GroupNorm
         outputs = self.norm(outputs)
 
         # Reshape back
-        outputs = outputs.permute(0, 2, 1).contiguous()
+        outputs = outputs.transpose(2, 1).contiguous()
 
         return outputs * (1 - self.lambda_init)
 
@@ -358,7 +363,9 @@ class LinearAttention(ScaledDotProduct):
                 z = z * attention_mask.unsqueeze(1)  # Shape: (B, 1, L)
 
             # Compute numerator
-            output = torch.einsum("bhld,bhld->bhld", q, kv_cumsum)  # (B, H, L, D)
+            output = torch.einsum(
+                "bhld,bhld->bhld", q, self.dropout(kv_cumsum)
+            )  # (B, H, L, D)
         else:
             # Non-causal linear attention
             k_sum = k.sum(dim=2)  # (B, H, D)
@@ -372,7 +379,9 @@ class LinearAttention(ScaledDotProduct):
                 z = z * attention_mask.unsqueeze(1)  # Shape: (B, 1, L)
 
             # Compute numerator
-            output = torch.einsum("bhld,bhd->bhld", q, kv_sum)  # (B, H, L, D)
+            output = torch.einsum(
+                "bhld,bhd->bhld", q, self.dropout(kv_sum)
+            )  # (B, H, L, D)
 
         # Normalize output
         output = output / z.unsqueeze(-1)  # (B, H, L, D)
@@ -646,7 +655,7 @@ class PraxisGatedEMA(nn.Module):
         return y
 
 
-class PraxisGatedAttention(nn.Module):
+class GatedSingleHeadAttention(nn.Module):
     """
     According to MEGA, "Single-head gated attention has been empirically
     shown [to be] as performant as vanilla multi-head attention."
@@ -701,15 +710,15 @@ class PraxisGatedAttention(nn.Module):
         v = self.value(inputs)  # [B, S, E]
 
         # First apply RoPE on full dimensions
-        q = q.view(B, S, 1, E)  # [B, S, 1, E]
-        k = k.view(B, S, 1, E)  # [B, S, 1, E]
+        q = q.unsqueeze(2)  # [B, S, 1, E]
+        k = k.unsqueeze(2)  # [B, S, 1, E]
 
         # Apply RoPE
         q, k, v = self.encoding.before_scores(q, k, v)
 
         # Reshape for differential attention
-        q = q.view(B, 2, S, head_dim)  # [B, 2, S, E/2]
-        k = k.view(B, 2, S, head_dim)  # [B, 2, S, E/2]
+        q = q.view(B, S, 2, head_dim).transpose(2, 1)  # [B, 2, S, E/2]
+        k = k.view(B, S, 2, head_dim).transpose(2, 1)  # [B, 2, S, E/2]
 
         # Ensemble the representations
         q = self.dropout(q)
@@ -725,7 +734,7 @@ class PraxisGatedAttention(nn.Module):
 
     def compute_weights(self, scores, v):
         # Apply softmax
-        attn_weights = self.dropout(ghostmax(scores, dim=-1))  # [B, S, 2, S]
+        attn_weights = ghostmax(scores, dim=-1)  # [B, S, 2, S]
 
         # Compute lambda scaling
         lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1))
@@ -738,7 +747,7 @@ class PraxisGatedAttention(nn.Module):
         )  # [B, S, S]
 
         # Apply attention to values and normalize
-        attn = torch.bmm(diff_weights, v)  # [B, S, E]
+        attn = torch.bmm(self.dropout(diff_weights), v)  # [B, S, E]
         attn = self.norm(attn)
         attn = attn * (1 - self.lambda_init)
         return self.dropout(attn)
@@ -799,7 +808,7 @@ class VanillaMHA(nn.MultiheadAttention):
 
 ATTENTION_REGISTRY = {
     "standard": PraxisAttention,
-    "gated": PraxisGatedAttention,
+    "gated": GatedSingleHeadAttention,
     "vanilla": VanillaMHA,
 }
 

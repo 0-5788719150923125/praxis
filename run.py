@@ -179,7 +179,7 @@ config = PraxisConfig(
     num_experts=3 if dev else (num_experts if num_experts else depth),
     num_heads=int(num_heads.split(":")[0]),
     num_queries=int(num_heads.split(":")[1]),
-    dropout=0.0,
+    dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
     shuffle=shuffle,
@@ -276,7 +276,7 @@ optimizer_defaults = dict(
     ],
 )
 min_lr = 0
-weight_decay = 1e-7
+weight_decay = 0.1
 if optimizer.lower() == "adamg":
     optimizer_profile = dict(
         optimizer_name="AdamG",
@@ -286,6 +286,7 @@ if optimizer.lower() == "adamg":
         weight_decouple=True,
         p=0.5,
         q=0.24,
+        betas=(0.95, 0.999, 0.95),
     )
 elif optimizer.lower() == "ademamix":
     optimizer_profile = dict(

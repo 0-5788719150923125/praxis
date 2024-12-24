@@ -62,8 +62,8 @@ class PraxisTransformer(nn.Module):
                 ffn_output = ffn_output * router_weights
 
         # Merge expansions
-        final_h = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
-        return self._format_state(final_h), None, 0
+        final_output = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
+        return self._format_state(final_output), None, 0
 
     def _format_state(self, h: torch.Tensor):
         return h[..., 0, :] if h.dim() == 4 else h
