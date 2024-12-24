@@ -1,5 +1,8 @@
+import random
+
 import torch
-from torch import Tensor, nn
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 class HyperConnection(nn.Module):
@@ -9,46 +12,82 @@ class HyperConnection(nn.Module):
     https://arxiv.org/abs/2409.19606
     """
 
-    def __init__(self, hidden_size: int, expansion_rate: int = 4, layer_idx: int = 0):
+    def __init__(
+        self, dim: int, rate: int = 2, layer_id: int = None, dynamic: bool = False
+    ):
         super().__init__()
-        self.expansion_rate = expansion_rate
-        self.hidden_size = hidden_size
-        self.layer_idx = layer_idx
+        if layer_id is None:
+            layer_id = random.randint(0, rate - 1)
+        self.layer_id = layer_id
+        self.rate = rate
+        self.dynamic = dynamic
 
-        # Core HC parameters
-        self.alpha_merger = nn.Parameter(torch.ones(expansion_rate, 1))
-        self.alpha_residual = nn.Parameter(torch.ones(expansion_rate, expansion_rate))
-        self.beta = nn.Parameter(torch.ones(expansion_rate))
+        # Static alpha/beta
+        self.static_beta = nn.Parameter(torch.ones(rate))
+        init_alpha0 = torch.zeros(rate, 1)
+        init_alpha0[self.layer_id % rate, 0] = 1.0
+        eye_alpha = torch.eye(rate)
+        self.static_alpha = nn.Parameter(torch.cat([init_alpha0, eye_alpha], dim=1))
 
-        # Initialize as per paper's equation (8)
-        with torch.no_grad():
-            self.alpha_residual.fill_(0)
-            self.alpha_residual.diagonal().fill_(1)
-            self.alpha_merger.fill_(0)
-            self.alpha_merger[layer_idx % expansion_rate] = 1
-            self.beta.fill_(1)
+        if self.dynamic:
+            # Dynamic offsets
+            self.dynamic_alpha_fn = nn.Parameter(torch.zeros(dim, rate + 1))
+            self.dynamic_alpha_scale = nn.Parameter(torch.tensor([0.01]))
+            self.dynamic_beta_fn = nn.Parameter(torch.zeros(dim))
+            self.dynamic_beta_scale = nn.Parameter(torch.tensor([0.01]))
+            self.layer_norm = nn.RMSNorm(dim, eps=1e-5)
 
-        self.register_buffer("hidden_states", None)
+    def connect_width(self, h: torch.Tensor):
+        # Flatten (B,L) to (BL) and do one batched matmul to form mix_h
+        B, L, D = h.shape
+        BL = B * L
 
-    def forward(self, inputs: Tensor = None, outputs: Tensor = None) -> Tensor:
-        if self.hidden_states is None:
-            self.hidden_states = inputs.unsqueeze(0).expand(
-                self.expansion_rate, *inputs.shape
+        alpha, beta = self._compute_alpha_beta(h)
+        alpha_2d = alpha.reshape(BL, self.rate, self.rate + 1)
+        alpha_bmm = alpha_2d.transpose(1, 2)
+        h_2d = h.reshape(BL, D)
+        h_3d = h_2d.unsqueeze(1).expand(BL, self.rate, D)
+        mix_h_2d = torch.bmm(alpha_bmm, h_3d)
+        mix_h = mix_h_2d.reshape(B, L, self.rate + 1, D)
+        return mix_h, beta
+
+    def connect_depth(self, mix_h: torch.Tensor, h_o: torch.Tensor, beta: torch.Tensor):
+        # Combine new layer output with previously merged expansions, then sum
+        B, L, D = h_o.shape
+        BL = B * L
+        h_o_2d = h_o.reshape(BL, D)
+        beta_2d = beta.reshape(BL, self.rate)
+        beta_3d = beta_2d.unsqueeze(2)
+        h_o_3d = h_o_2d.unsqueeze(1)
+        part_new_3d = torch.bmm(beta_3d, h_o_3d)
+        part_new = part_new_3d.reshape(B, L, self.rate, D)
+        part_old = mix_h[:, :, 1:, :]
+        final_exp = part_new + part_old
+        return final_exp.sum(dim=2)
+
+    def _compute_alpha_beta(self, h: torch.Tensor):
+        B, L, D = h.shape
+        if self.dynamic:
+            h_norm = self.layer_norm(h)
+            alpha_offset = torch.tanh(h_norm @ self.dynamic_alpha_fn)
+            alpha_offset = alpha_offset * self.dynamic_alpha_scale
+            alpha_offset_4d = alpha_offset.unsqueeze(2)
+            static_alpha_4d = self.static_alpha.view(1, 1, self.rate, self.rate + 1)
+            static_alpha_4d = static_alpha_4d.expand(B, L, self.rate, self.rate + 1)
+            alpha = alpha_offset_4d + static_alpha_4d
+
+            beta_offset = torch.tanh(
+                h_norm @ self.dynamic_beta_fn.unsqueeze(-1)
+            ).squeeze(-1)
+            beta_offset = beta_offset * self.dynamic_beta_scale
+            beta_offset_3d = beta_offset.unsqueeze(-1)
+            static_beta_3d = self.static_beta.view(1, 1, self.rate).expand(
+                B, L, self.rate
             )
-            return (self.alpha_merger.view(-1, 1, 1, 1) * self.hidden_states).sum(dim=0)
-
-        if outputs is not None:
-            # Replace einsum with reshape + mm + reshape
-            orig_shape = self.hidden_states.shape
-            flat_hidden = self.hidden_states.reshape(self.expansion_rate, -1)
-            hidden_states = torch.mm(self.alpha_residual, flat_hidden)
-            hidden_states = hidden_states.reshape(orig_shape)
-
-            self.hidden_states = hidden_states + self.beta.view(
-                -1, 1, 1, 1
-            ) * outputs.unsqueeze(0)
-            output = self.hidden_states.sum(dim=0)
-            self.hidden_states = None
-            return output
-
-        return (self.alpha_merger.view(-1, 1, 1, 1) * self.hidden_states).sum(dim=0)
+            beta = beta_offset_3d + static_beta_3d
+        else:
+            alpha_4d = self.static_alpha.view(1, 1, self.rate, self.rate + 1)
+            alpha = alpha_4d.expand(B, L, self.rate, self.rate + 1)
+            beta_3d = self.static_beta.view(1, 1, self.rate)
+            beta = beta_3d.expand(B, L, self.rate)
+        return alpha, beta
