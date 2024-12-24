@@ -23,6 +23,7 @@ The Praxis architecture is a fluid, peer-to-peer, always online, continuously-le
 - We support Infini-Attention, from [Leave No Context Behind](https://arxiv.org/abs/2404.07143), to reduce the O(n^2) memory complexity of transformer attention to O(n). This is the same technique that Google uses in Gemini.
 - We have a [Kolmogorov-Arnold Networks](https://arxiv.org/abs/2404.19756) experiment, which replaces MLPs with KANs.
 - We implement an optional [Byte Latent Tokenizer](https://github.com/facebookresearch/blt), which allows us to represent tokens as patches of byte-sequences, instead of discrete tokens. This way, we can remove the tokenizer - and represent data in much more interesting ways, within the latent space.
+- We support [Hyper-Connections](https://arxiv.org/abs/2409.19606), which are an alternative to residual connections.
 - There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
 
 ## join us
@@ -176,7 +177,6 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Funnel Transformers](https://arxiv.org/pdf/2006.03236) for sequence compression
 - [Language Models are Hidden Reasoners: Unlocking Latent Reasoning Capabilities via Self-Rewarding](https://arxiv.org/abs/2411.04282)
 - https://github.com/jinyeom/lsh-knn/tree/main
-- [Hyper-Connections](https://arxiv.org/abs/2409.19606) (an alternative to residual connections)
 - [Training Large Language Models to Reason in a Continuous Latent Space](https://arxiv.org/abs/2412.06769)
 - [tons of useful Pytorch modules from Fairseq](https://github.com/facebookresearch/mega/blob/main/fairseq/modules)
 - [Multimodal Latent Language Modeling with Next-Token Diffusion](https://arxiv.org/abs/2412.08635)

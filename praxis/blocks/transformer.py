@@ -47,19 +47,13 @@ class PraxisTransformer(nn.Module):
     ):
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)
-        attn_input = self.attn_norm(
-            residual[..., 0, :] if residual.dim() == 4 else residual
-        )
+        attn_input = self.attn_norm(self._format_state(residual))
         attn_output = self.attn(attn_input, attention_mask)
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
 
         # =========== FeedForward Block ===========
-        residual, beta_ffn = self.ffn_res.connect_width(
-            attn_merged[..., 0, :] if attn_merged.dim() == 4 else attn_merged
-        )
-        ffn_input = self.ffn_norm(
-            residual[..., 0, :] if residual.dim() == 4 else residual
-        )
+        residual, beta_ffn = self.ffn_res.connect_width(self._format_state(attn_merged))
+        ffn_input = self.ffn_norm(self._format_state(residual))
         ffn_output = self.ffn(ffn_input)
 
         if torch.is_tensor(router_weights):
@@ -69,7 +63,10 @@ class PraxisTransformer(nn.Module):
 
         # Merge expansions
         final_h = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
-        return final_h[..., 0, :] if final_h.dim() == 4 else final_h, None, 0
+        return self._format_state(final_h), None, 0
+
+    def _format_state(self, h: torch.Tensor):
+        return h[..., 0, :] if h.dim() == 4 else h
 
     def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
         if tensor.dtype == torch.int64:
