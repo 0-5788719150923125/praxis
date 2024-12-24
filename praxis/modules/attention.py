@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.functional import ghostmax
+from praxis.functional import alpha_entmax, ghostmax
 from praxis.modules.dense import PraxisGLU
 from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.memory import PraxisCompressiveMemory
@@ -207,6 +207,7 @@ class ScaledDotProduct(nn.Module):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__()
+        self.meta = config.meta
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
@@ -244,7 +245,12 @@ class ScaledDotProduct(nn.Module):
         return scores, causal_mask, attention_mask
 
     def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
-        weights = ghostmax(scores, dim=-1)
+        if "entmax" in self.meta:
+            weights = alpha_entmax(scores, dim=-1)
+        elif "softmax" in self.meta:
+            weights = F.softmax(scores, dim=-1)
+        else:
+            weights = ghostmax(scores, dim=-1)
         return self._compute_outputs(weights, v)
 
     def _compute_outputs(self, weights, v):

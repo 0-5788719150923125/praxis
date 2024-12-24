@@ -327,11 +327,11 @@ elif optimizer.lower() == "soap":
 else:
     optimizer_profile = dict(
         optimizer_name="AdamW",
-        lr=1e-3,
+        lr=1e-4,
         weight_decay=weight_decay,
         betas=(0.9, 0.95),
     )
-    min_lr = 1e-5
+    min_lr = 1e-6
 
 if shuffle:
     optimizer_profile["weight_decay"] = 0
@@ -615,7 +615,7 @@ class TerminalInterface(Callback):
                 # eta_cutoff=0.002,
                 # penalty_alpha=0.6,
                 # top_k=4,
-                repetition_penalty=1.23,
+                repetition_penalty=1.1,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
             ),
@@ -848,12 +848,16 @@ class Generator:
 
         with self._eval_mode():
             while attempts < max_attempts:
-                outputs = self.model.generate(
-                    generated_tokens,
-                    **combined,
-                    tokenizer=self.tokenizer,
-                    # token_healing=True,
-                )
+                try:
+                    outputs = self.model.generate(
+                        generated_tokens,
+                        **combined,
+                        tokenizer=self.tokenizer,
+                        # token_healing=True,
+                    )
+                except Exception as e:
+                    print(e)
+                    return request.prompt
 
                 # Update generated_tokens with the new token
                 generated_tokens = outputs
