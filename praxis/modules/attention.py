@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.functional import alpha_entmax, ghostmax
+from praxis.functional import alpha_entmax, alpha_relu, ghostmax
 from praxis.modules.dense import PraxisGLU
 from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.memory import PraxisCompressiveMemory
@@ -247,6 +247,8 @@ class ScaledDotProduct(nn.Module):
     def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
         if "entmax" in self.meta:
             weights = alpha_entmax(scores, dim=-1)
+        elif "relu" in self.meta:
+            weights = alpha_relu(scores, dim=-1, alpha=1.5, tau=None)
         elif "softmax" in self.meta:
             weights = F.softmax(scores, dim=-1)
         else:
