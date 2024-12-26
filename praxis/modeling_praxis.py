@@ -140,7 +140,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             loss = self.loss_func(
-                shift_logits.view(-1, shift_logits.shape[-1]), shift_labels.view(-1)
+                shift_logits.view(-1, shift_logits.shape[-1]),
+                shift_labels.view(-1),
+                input_ids.view(-1),
             )
             loss = loss + sum(self.aux_losses)
 

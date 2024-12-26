@@ -214,7 +214,6 @@ config = PraxisConfig(
     debug=debug,
     seed=seed,
     meta=meta,
-    trust_remote_code=True,
 )
 
 # Misc hyperparameters
@@ -327,11 +326,11 @@ elif optimizer.lower() == "soap":
 else:
     optimizer_profile = dict(
         optimizer_name="AdamW",
-        lr=1e-4,
+        lr=1e-3,
         weight_decay=weight_decay,
         betas=(0.9, 0.95),
     )
-    min_lr = 1e-6
+    min_lr = 1e-5
 
 if shuffle:
     optimizer_profile["weight_decay"] = 0

@@ -129,7 +129,9 @@ HUGGINGFACE_DATASETS = {
 
 def format_simple(document: Dict, keys: List[str]) -> str:
     """Just concatenate content with spaces"""
-    return " ".join(document.get(key, "") for key in keys)
+    return (
+        start_token + " ".join(document.get(key, "") for key in keys) + end_token + "\n"
+    )
 
 
 def format_instruction(document: Dict, keys: List[str]) -> str:
@@ -230,7 +232,7 @@ def format_wiki(document: Dict, keys: List[str]) -> str:
     assert len(keys) == 2, "Wiki format requires exactly 2 keys"
     title = document.get(keys[0], "")
     body = document.get(keys[1], "")
-    return f"{title}\n{body}"
+    return f"{start_token}{title}\n{body}{end_token}\n"
 
 
 FORMAT_HANDLERS = {
@@ -495,9 +497,7 @@ class InterleaveDataManager:
             sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
-            sequence += (
-                self.tokenizer.bos_token + new_sequences[0] + self.tokenizer.eos_token
-            )
+            sequence += new_sequences[0]
         return sequence
 
     def fill_token_cache(self):

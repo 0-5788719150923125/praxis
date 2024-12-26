@@ -14,9 +14,9 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
     # Single source of truth for special tokens
     SPECIAL_TOKENS = {
         "boe_token": ("<|boe|>", 0),
-        "pad_token": ("<|pad|>", 1),
-        "bos_token": ("<|bos|>", 2),
-        "eos_token": ("<|eos|>", 3),
+        "pad_token": ("<|endoftext|>", 1),
+        "bos_token": ("<|im_start|>", 2),
+        "eos_token": ("<|im_end|>", 3),
         "bpe_token": ("<|bpe|>", 4),
     }
 
@@ -119,17 +119,17 @@ def run_comprehensive_tests():
     # Initialize tokenizer with custom tokens
     tokenizer = ByteLevelTokenizer(
         bpe_delim=False,
-        bos_token="<|bos|>",
-        eos_token="<|eos|>",
-        pad_token="<|pad|>",
+        bos_token="<|im_start|>",
+        eos_token="<|im_end|>",
+        pad_token="<|endoftext|>",
     )
 
     def test_special_tokens():
         print("1. Testing special token properties...")
         # Test direct property access
-        assert tokenizer.bos_token == "<|bos|>", "BOS token mismatch"
-        assert tokenizer.eos_token == "<|eos|>", "EOS token mismatch"
-        assert tokenizer.pad_token == "<|pad|>", "PAD token mismatch"
+        assert tokenizer.bos_token == "<|im_start|>", "BOS token mismatch"
+        assert tokenizer.eos_token == "<|im_end|>", "EOS token mismatch"
+        assert tokenizer.pad_token == "<|endoftext|>", "PAD token mismatch"
 
         # Test special token IDs
         assert tokenizer.bos_token_id is not None, "BOS token ID is None"

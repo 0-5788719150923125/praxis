@@ -14,7 +14,7 @@ from tokenizers import (
 )
 from transformers import PreTrainedTokenizerFast
 
-num_examples = 5_000_000
+num_examples = 25_000_000
 
 vocab_size = 8192
 dropout = 0.1
@@ -22,15 +22,13 @@ dropout = 0.1
 save_path = "data/praxis"
 archive_path = save_path + f"-{vocab_size}"
 
-pad_token = "<|pad|>"
-bos_token = "<|bos|>"
-eos_token = "<|eos|>"
-start_token = "<|im_start|>"
-end_token = "<|im_end|>"
+pad_token = "<|endoftext|>"
+bos_token = "<|im_start|>"
+eos_token = "<|im_end|>"
 
 dataset = load_dataset(
-    "HuggingFaceFW/fineweb-edu",
-    name="sample-100BT",
+    "tiiuae/falcon-refinedweb",
+    name="default",
     split="train",
     streaming=True,
     trust_remote_code=True,
@@ -40,11 +38,11 @@ dataset = load_dataset(
     buffer_size=10_000,
 )
 
-column = "text"
+column = "content"
 iterator = islice((item[column] for item in dataset), num_examples)
 
 tokenizer = Tokenizer(
-    models.BPE(dropout=dropout, cache_capacity=4096 * 16, byte_fallback=True)
+    models.BPE(dropout=dropout, cache_capacity=4096 * 8, byte_fallback=True)
 )
 
 tokenizer.add_special_tokens(
@@ -52,8 +50,6 @@ tokenizer.add_special_tokens(
         pad_token,
         bos_token,
         eos_token,
-        start_token,
-        end_token,
     ]
 )
 
@@ -65,16 +61,11 @@ trainer = trainers.BpeTrainer(
         pad_token,
         bos_token,
         eos_token,
-        start_token,
-        end_token,
     ],
 )
 
-tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
-    [
-        pre_tokenizers.WhitespaceSplit(),
-        pre_tokenizers.ByteLevel(add_prefix_space=True, use_regex=True),
-    ]
+tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(
+    add_prefix_space=True, use_regex=True
 )
 
 tokenizer.normalizer = normalizers.NFKC()
@@ -105,7 +96,6 @@ trained_tokenizer.add_special_tokens(
         "pad_token": pad_token,
         "bos_token": bos_token,
         "eos_token": eos_token,
-        "additional_special_tokens": [start_token, end_token],
     }
 )
 

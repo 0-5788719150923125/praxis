@@ -87,7 +87,7 @@ class RoPE(NoPE):
         super().__init__(config)
         assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 
-        theta = 1000
+        theta = 10000
         inv_freq = 1.0 / (
             theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
         )

@@ -26,9 +26,9 @@ class MiLeLoss(nn.Module):
         entropy = -(probs * log_probs).sum(dim=-1)
         return entropy
 
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, reduction="none", ignore_index=-100)
-        pt = self.entropy(inputs)
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor, *args, **kwargs):
+        ce_loss = F.cross_entropy(logits, labels, reduction="none", ignore_index=-100)
+        pt = self.entropy(logits)
         gamma = self.base_gamma
         # Alpha is a normalization factor that allows the training loss to be comparable to the cross-entropy loss.
         scale = (self.sigma + pt) ** gamma

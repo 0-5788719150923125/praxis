@@ -10,8 +10,8 @@ class FocalLoss(nn.Module):
         self.base_gamma = gamma
         self.reduction = reduction
 
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, reduction="none", ignore_index=-100)
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor, *args, **kwargs):
+        ce_loss = F.cross_entropy(logits, labels, reduction="none", ignore_index=-100)
         pt = torch.exp(-ce_loss)
         # Detach can help the model stay stable during the training process.
         pt = pt.detach()
