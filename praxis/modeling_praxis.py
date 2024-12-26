@@ -95,7 +95,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         super().__init__(config)
         if not config.byte_latent:
             self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self.loss_func = LOSS_REGISTRY[config.loss_func]()
+        self.criterion = LOSS_REGISTRY[config.loss_func]()
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
         return {
@@ -139,7 +139,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if labels is not None:
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            loss = self.loss_func(
+            loss = self.criterion(
                 shift_logits.view(-1, shift_logits.shape[-1]),
                 shift_labels.view(-1),
                 input_ids.view(-1),

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class PraxisCrossEntropyLoss(nn.Module):
-    def __init__(self, penalty_weight=1.0):
+    def __init__(self, penalty_weight=0):
         super().__init__()
         self.penalty_weight = penalty_weight
 
@@ -18,8 +18,7 @@ class PraxisCrossEntropyLoss(nn.Module):
         duplicated_masks = (
             torch.eq(input_ids, token_output.unsqueeze(-1)).any(dim=-1).float()
         )
-        penalty = duplicated_masks * self.penalty_weight
-        loss = ce_loss + penalty
+        loss = ce_loss * (1 + duplicated_masks * self.penalty_weight)
         return loss.mean()
 
 

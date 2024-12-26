@@ -8,7 +8,7 @@ from praxis.losses.mile import MiLeLoss
 
 LOSS_REGISTRY = {
     "cross_entropy": partial(PraxisCrossEntropyLoss, penalty_weight=0),
-    "dedup": PraxisCrossEntropyLoss,
+    "dedup": partial(PraxisCrossEntropyLoss, penalty_weight=0.1),
     "focal": FocalLoss,
     "mile": MiLeLoss,
 }

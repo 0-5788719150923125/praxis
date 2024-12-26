@@ -632,9 +632,9 @@ class TerminalInterface(Callback):
         ignored_n_grams = [
             tokenizer.bos_token,
             tokenizer.eos_token,
-            "<|im_start|> user",
-            "<|im_start|> assistant",
-            "<|im_end|>",
+            f"{tokenizer.bos_token}user",
+            f"{tokenizer.bos_token}assistant",
+            tokenizer.eos_token,
         ]
         if (
             self._detect_repetition(n_gram_size, frequency)
