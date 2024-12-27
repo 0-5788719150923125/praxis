@@ -837,7 +837,7 @@ class Generator:
             del combined["skip_special_tokens"]
         if "truncate_to" in combined:
             if input_ids.size(1) > combined["truncate_to"]:
-                input_ids = input_ids[:, : combined["truncate_to"]]
+                input_ids = input_ids[:, -combined["truncate_to"] :]
             del combined["truncate_to"]
 
         generated_tokens = input_ids
