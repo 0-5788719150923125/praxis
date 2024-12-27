@@ -609,7 +609,7 @@ class TerminalInterface(Callback):
             self.text,
             dict(
                 max_new_tokens=max_new_tokens,
-                temperature=0.5,
+                temperature=0.7,
                 # min_p=0.02,
                 # eta_cutoff=0.002,
                 # penalty_alpha=0.6,
@@ -627,8 +627,8 @@ class TerminalInterface(Callback):
                 break
             time.sleep(0.1)
 
-        n_gram_size = 7
-        frequency = 20
+        n_gram_size = 13 if byte_latent else 7
+        frequency = 50 if byte_latent else 20
         ignored_n_grams = [
             tokenizer.bos_token,
             tokenizer.eos_token,

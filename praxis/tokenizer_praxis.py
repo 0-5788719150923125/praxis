@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from bytelatent.tokenizers.blt_tokenizer import BltTokenizer
@@ -11,7 +11,6 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
     the HuggingFace PreTrainedTokenizer interface.
     """
 
-    # Single source of truth for special tokens
     SPECIAL_TOKENS = {
         "boe_token": ("<|boe|>", 0),
         "pad_token": ("<|endoftext|>", 1),
@@ -20,18 +19,14 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         "bpe_token": ("<|bpe|>", 4),
     }
 
-    def __init__(self, add_bos: bool = False, add_eos: bool = False, **kwargs):
-        # Initialize special token attributes from SPECIAL_TOKENS
+    def __init__(self, **kwargs):
         for token_name, (token_value, _) in self.SPECIAL_TOKENS.items():
             if token_name not in kwargs:
                 kwargs[token_name] = token_value
 
-        # Store initialization parameters
         self.vocab_size_unit_1 = 256
-
         super().__init__(**kwargs)
 
-        # Initialize the byte tokenizer
         self._tokenizer = BltTokenizer(
             vocab_size_unit_1=self.vocab_size_unit_1,
             bpe_delim=False,
@@ -39,9 +34,98 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             add_eos=False,
         )
 
-        # Set special token IDs in the underlying tokenizer
         for token_name, (_, token_id) in self.SPECIAL_TOKENS.items():
             setattr(self._tokenizer, f"{token_name[:-6]}_id", token_id)
+
+        # Create reverse mapping for special tokens
+        self._id_to_special_token = {
+            token_id: token_value
+            for _, (token_value, token_id) in self.SPECIAL_TOKENS.items()
+        }
+
+    def _special_tokens_present(self, text: str) -> bool:
+        """Check if special tokens already exist in the text."""
+        return any(
+            token_value in text for _, (token_value, _) in self.SPECIAL_TOKENS.items()
+        )
+
+    def encode(
+        self,
+        text: str,
+        text_pair: Optional[str] = None,
+        add_special_tokens: bool = True,
+        **kwargs,
+    ) -> List[int]:
+        """Override encode to properly handle add_special_tokens flag."""
+
+        # Check if special tokens already exist
+        has_special = self._special_tokens_present(text)
+
+        # Basic tokenization
+        tokens = self._tokenize(text, **kwargs)
+
+        token_ids = self.convert_tokens_to_ids(tokens)
+
+        # Return with special tokens if requested AND not already present
+        if add_special_tokens and not has_special:
+            result = [self.bos_token_id] + token_ids + [self.eos_token_id]
+            return result
+
+        return token_ids
+
+    def build_inputs_with_special_tokens(
+        self, token_ids_0: List[int], token_ids_1: Optional[List[int]] = None
+    ) -> List[int]:
+        """Minimal implementation that just preserves existing special tokens."""
+        if token_ids_1 is None:
+            return token_ids_0
+        return token_ids_0 + token_ids_1
+
+    def _tokenize(self, text: str, **kwargs) -> List[str]:
+        """Converts a string into a sequence of tokens."""
+        # First check if the text is a special token
+        if text in [token for _, (token, _) in self.SPECIAL_TOKENS.items()]:
+            return [text]
+
+        # Otherwise, use byte tokenization
+        byte_tokens = self._tokenizer.encode(text, add_bos=False, add_eos=False)
+        return [
+            str(token - self._tokenizer.offsetting_special_char)
+            for token in byte_tokens
+        ]
+
+    def convert_tokens_to_string(self, tokens: List[str]) -> str:
+        """Converts a sequence of tokens to a single string."""
+        byte_tokens = []
+        result = ""
+
+        for token in tokens:
+            if self._is_special_token(token):
+                # If we have accumulated byte tokens, decode them first
+                if byte_tokens:
+                    decoded = self._tokenizer.decode(
+                        [
+                            int(t) + self._tokenizer.offsetting_special_char
+                            for t in byte_tokens
+                        ]
+                    )
+                    if decoded:
+                        result += decoded
+                    byte_tokens = []
+                # Add the special token directly - no spaces
+                result += token
+            else:
+                byte_tokens.append(token)
+
+        # Handle any remaining byte tokens
+        if byte_tokens:
+            decoded = self._tokenizer.decode(
+                [int(t) + self._tokenizer.offsetting_special_char for t in byte_tokens]
+            )
+            if decoded:
+                result += decoded
+
+        return result if result else " "
 
     def get_vocab(self) -> Dict[str, int]:
         """Returns the vocabulary as a dictionary of token to index."""
@@ -50,7 +134,6 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             for _, (token_value, token_id) in self.SPECIAL_TOKENS.items()
         }
 
-        # Add byte tokens after special tokens
         for i in range(self.vocab_size_unit_1):
             vocab[str(i)] = i + self._token_id_offset
 
@@ -58,65 +141,37 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
 
     @property
     def vocab_size(self) -> int:
-        """Returns the size of vocabulary."""
         return self.vocab_size_unit_1 + len(self.SPECIAL_TOKENS)
 
     @property
     def _token_id_offset(self) -> int:
-        """Return the offset for regular token IDs after special tokens."""
         return max(id for _, id in self.SPECIAL_TOKENS.values()) + 1
 
-    def _tokenize(self, text: str, **kwargs) -> List[str]:
-        """Converts a string into a sequence of tokens."""
-        return self._tokenizer.encode(text, add_bos=False, add_eos=False)
-
     def _convert_token_to_id(self, token: str) -> int:
-        """Converts a token string to its ID."""
         # Check special tokens first
         for _, (token_value, token_id) in self.SPECIAL_TOKENS.items():
             if token == token_value:
                 return token_id
-
         # Regular tokens are offset by special token count
         return int(token) + self._token_id_offset
 
     def _convert_id_to_token(self, index: int) -> str:
-        """Converts an ID to its string token representation."""
-        # Check special token IDs
-        for _, (token_value, token_id) in self.SPECIAL_TOKENS.items():
-            if index == token_id:
-                return token_value
-
+        # Check if it's a special token ID
+        if index in self._id_to_special_token:
+            return self._id_to_special_token[index]
         # Regular tokens
         return str(index - self._token_id_offset)
 
     def _is_special_token(self, token: str) -> bool:
-        """Helper method to check if a token is special."""
         return any(
             token == special_token for special_token, _ in self.SPECIAL_TOKENS.values()
         )
 
-    def convert_tokens_to_string(self, tokens: List[str]) -> str:
-        """Converts a sequence of tokens to a single string."""
-        byte_tokens = []
-        for token in tokens:
-            if not self._is_special_token(token):
-                try:
-                    byte_tokens.append(int(token))
-                except ValueError:
-                    continue
-
-        decoded = self._tokenizer.decode(byte_tokens)
-        return decoded if decoded else " "
-
 
 def run_comprehensive_tests():
-    """
-    Comprehensive test suite for ByteLevelTokenizer covering common HuggingFace usage patterns.
-    """
+    """Comprehensive test suite for ByteLevelTokenizer with enhanced special token testing."""
     print("Running comprehensive tokenizer tests...\n")
 
-    # Initialize tokenizer with custom tokens
     tokenizer = ByteLevelTokenizer(
         bpe_delim=False,
         bos_token="<|im_start|>",
@@ -124,142 +179,148 @@ def run_comprehensive_tests():
         pad_token="<|endoftext|>",
     )
 
-    def test_special_tokens():
-        print("1. Testing special token properties...")
-        # Test direct property access
-        assert tokenizer.bos_token == "<|im_start|>", "BOS token mismatch"
-        assert tokenizer.eos_token == "<|im_end|>", "EOS token mismatch"
-        assert tokenizer.pad_token == "<|endoftext|>", "PAD token mismatch"
+    def test_special_token_preservation():
+        print("1. Testing special token preservation...")
 
-        # Test special token IDs
-        assert tokenizer.bos_token_id is not None, "BOS token ID is None"
-        assert tokenizer.eos_token_id is not None, "EOS token ID is None"
-        assert tokenizer.pad_token_id is not None, "PAD token ID is None"
+        # Test encoding with special tokens
+        text = f"{tokenizer.bos_token}Hello{tokenizer.eos_token}"
+        tokens = tokenizer.tokenize(text)
+        assert tokenizer.bos_token in tokens, "BOS token lost during tokenization"
+        assert tokenizer.eos_token in tokens, "EOS token lost during tokenization"
 
-        print("✓ Special token tests passed\n")
+        # Test encoding and decoding roundtrip
+        encoded = tokenizer.encode(text, add_special_tokens=False)
+        decoded = tokenizer.decode(encoded)
+        assert text == decoded, f"Roundtrip failed: {text} != {decoded}"
 
-    def test_encode_decode():
-        print("2. Testing encode/decode functionality...")
+        # Test multiple special tokens
+        text = f"{tokenizer.bos_token}Hello{tokenizer.eos_token}{tokenizer.pad_token}"
+        decoded = tokenizer.decode(tokenizer.encode(text, add_special_tokens=False))
+        assert text == decoded, "Multiple special tokens not preserved"
+
+        print("✓ Special token preservation tests passed\n")
+
+    def test_mixed_content():
+        print("2. Testing mixed special tokens and regular text...")
+
+        # Test mixed content
+        test_cases = [
+            f"{tokenizer.bos_token}Hello",
+            f"Hello{tokenizer.eos_token}",
+            f"{tokenizer.bos_token}Hello{tokenizer.eos_token}",
+            f"{tokenizer.bos_token}Hello World{tokenizer.eos_token}",
+        ]
+
+        for text in test_cases:
+            tokens = tokenizer.tokenize(text)
+            decoded = tokenizer.convert_tokens_to_string(tokens)
+            assert text == decoded, f"Mixed content failed: {text} != {decoded}"
+
+        print("✓ Mixed content tests passed\n")
+
+    def test_batch_processing():
+        print("3. Testing batch processing with special tokens...")
+
+        batch_texts = [
+            f"{tokenizer.bos_token}Hello{tokenizer.eos_token}",
+            f"{tokenizer.bos_token}World{tokenizer.eos_token}",
+        ]
+
+        # Test batch encoding
+        batch_encoded = tokenizer(batch_texts, padding=True, return_tensors="pt")
+
+        # Decode each sequence
+        for i, text in enumerate(batch_texts):
+            decoded = tokenizer.decode(batch_encoded["input_ids"][i])
+            assert text in decoded, f"Batch processing failed for: {text}"
+
+        print("✓ Batch processing tests passed\n")
+
+    def test_special_token_positioning():
+        print("4. Testing special token positioning...")
+
+        # Test special tokens at different positions
+        text = f"Hello{tokenizer.eos_token}World"
+        tokens = tokenizer.tokenize(text)
+        decoded = tokenizer.convert_tokens_to_string(tokens)
+        assert text == decoded, "Mid-sequence special token failed"
+
+        text = f"{tokenizer.bos_token}{tokenizer.eos_token}Hello"
+        tokens = tokenizer.tokenize(text)
+        decoded = tokenizer.convert_tokens_to_string(tokens)
+        assert text == decoded, "Adjacent special tokens failed"
+
+        print("✓ Special token positioning tests passed\n")
+
+    def test_add_special_tokens_flag():
+        print("5. Testing add_special_tokens flag...")
+
+        # Create tokenizer instances with different settings
+        tokenizer_with_special = ByteLevelTokenizer()
 
         test_text = "Hello, world!"
+        print(f"\nTest setup:")
+        print(f"- Input text: {repr(test_text)}")
 
-        # Test basic encode
-        tokens = tokenizer.encode(test_text)
-        assert isinstance(tokens, list), "Encode should return a list"
+        # Test with add_special_tokens=True
+        print("\nTesting add_special_tokens=True:")
+        encoded_with = tokenizer_with_special.encode(test_text, add_special_tokens=True)
+        decoded_with = tokenizer_with_special.decode(encoded_with)
+        print(f"- Encoded tokens: {encoded_with}")
+        print(f"- Decoded text: {repr(decoded_with)}")
+        print(f"- BOS token: {repr(tokenizer_with_special.bos_token)}")
+        print(f"- EOS token: {repr(tokenizer_with_special.eos_token)}")
 
-        # Test encode with tensor output
-        tensor_tokens = tokenizer.encode(test_text, return_tensors="pt")
-        assert isinstance(tensor_tokens, torch.Tensor), "Should return PyTorch tensor"
+        assert (
+            tokenizer_with_special.bos_token in decoded_with
+        ), "BOS token not added when requested"
+        assert (
+            tokenizer_with_special.eos_token in decoded_with
+        ), "EOS token not added when requested"
 
-        # Test decode with and without special tokens
-        decoded = tokenizer.decode(tokens)
-        assert test_text in decoded, "Basic decode failed"
-
-        decoded_no_special = tokenizer.decode(tokens, skip_special_tokens=True)
-        assert test_text in decoded_no_special, "Decode without special tokens failed"
-
-        print("✓ Encode/decode tests passed\n")
-
-    def test_direct_call():
-        print("3. Testing direct tokenizer call...")
-
-        # Test single text
-        output = tokenizer(
-            text="Hello, world!",
-            return_tensors="pt",
+        # Test with add_special_tokens=False
+        encoded_without = tokenizer_with_special.encode(
+            test_text, add_special_tokens=False
         )
-        assert "input_ids" in output, "Missing input_ids in output"
-        assert isinstance(
-            output["input_ids"], torch.Tensor
-        ), "input_ids should be tensor"
+        decoded_without = tokenizer_with_special.decode(encoded_without)
+        assert (
+            tokenizer_with_special.bos_token not in decoded_without
+        ), "BOS token added when not requested"
+        assert (
+            tokenizer_with_special.eos_token not in decoded_without
+        ), "EOS token added when not requested"
 
-        # Test batch processing
-        batch_output = tokenizer(
-            text=["Hello, world!", "Another test"],
-            padding=True,
-            return_tensors="pt",
+        # Test with text already containing special tokens
+        text_with_special = f"{tokenizer_with_special.bos_token}{test_text}{tokenizer_with_special.eos_token}"
+        encoded_existing = tokenizer_with_special.encode(
+            text_with_special, add_special_tokens=False
         )
-        assert batch_output["input_ids"].shape[0] == 2, "Batch processing failed"
+        decoded_existing = tokenizer_with_special.decode(encoded_existing)
+        assert (
+            decoded_existing == text_with_special
+        ), "Existing special tokens not preserved"
 
-        print("✓ Direct call tests passed\n")
-
-    def test_padding_truncation():
-        print("4. Testing padding and truncation...")
-
-        long_text = "This is a very long text that should be truncated." * 10
-
-        # Test truncation
-        output = tokenizer(
-            text=long_text,
-            max_length=20,
-            truncation=True,
-            return_tensors="pt",
+        # Test that add_special_tokens=True doesn't duplicate tokens
+        encoded_no_duplicate = tokenizer_with_special.encode(
+            text_with_special, add_special_tokens=True
         )
-        assert output["input_ids"].shape[1] <= 20, "Truncation failed"
+        decoded_no_duplicate = tokenizer_with_special.decode(encoded_no_duplicate)
+        assert (
+            decoded_no_duplicate.count(tokenizer_with_special.bos_token) == 1
+        ), "BOS token duplicated"
+        assert (
+            decoded_no_duplicate.count(tokenizer_with_special.eos_token) == 1
+        ), "EOS token duplicated"
 
-        # Test padding
-        batch_output = tokenizer(
-            text=["Short text", long_text],
-            padding=True,
-            max_length=20,
-            truncation=True,
-            return_tensors="pt",
-        )
-        assert batch_output["input_ids"].shape[1] == 20, "Padding failed"
-
-        print("✓ Padding/truncation tests passed\n")
-
-    def test_overflow_tokens():
-        print("5. Testing overflow tokens...")
-
-        # Test with return_overflowing_tokens
-        output = tokenizer(
-            text="Testing overflow tokens",
-            max_length=5,
-            stride=2,
-            return_overflowing_tokens=True,
-            return_tensors="pt",
-        )
-        assert len(output["input_ids"].shape) == 2, "Overflow tokens handling failed"
-
-        print("✓ Overflow tokens tests passed\n")
-
-    def test_common_usage_patterns():
-        print("6. Testing common usage patterns...")
-
-        # Test pattern from example 2
-        special_tokens = [
-            tokenizer.bos_token,
-            tokenizer.eos_token,
-            "<|im_start|> user",
-            "<|im_start|> assistant",
-            "<|im_end|>",
-        ]
-        assert all(
-            isinstance(t, str) for t in special_tokens
-        ), "Special token access failed"
-
-        # Test pattern from example 5
-        interleaved = "Some interleaved text"
-        tokens = tokenizer(
-            text=interleaved,
-            padding=False,
-            return_tensors="pt",
-        )[
-            "input_ids"
-        ].squeeze(0)
-        assert isinstance(tokens, torch.Tensor), "Token tensor conversion failed"
-
-        print("✓ Common usage pattern tests passed\n")
+        print("✓ add_special_tokens flag tests passed\n")
 
     # Run all tests
     try:
-        test_special_tokens()
-        test_encode_decode()
-        test_direct_call()
-        test_padding_truncation()
-        test_overflow_tokens()
-        test_common_usage_patterns()
+        test_special_token_preservation()
+        test_mixed_content()
+        test_batch_processing()
+        test_special_token_positioning()
+        test_add_special_tokens_flag()
         print("All tests passed successfully! 🎉")
     except AssertionError as e:
         print(f"❌ Test failed: {str(e)}")

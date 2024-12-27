@@ -10,8 +10,6 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
-debug = False
-
 start_token = "<|im_start|> "
 end_token = "<|im_end|> "
 
@@ -426,7 +424,6 @@ class InterleaveDataManager:
         self.token_stream = torch.tensor(
             [], dtype=torch.long
         )  # Single continuous stream
-        self.debug = debug
 
     def extend_token_stream(self):
         """Add more tokens to our stream when needed"""
@@ -474,18 +471,6 @@ class InterleaveDataManager:
 
         # Remove used tokens from the stream
         self.token_stream = self.token_stream[tokens_needed:]
-
-        if self.debug:
-            batch_tensor = torch.stack(batch)
-            # print(f"\nBatch shape: {batch_tensor.shape}")
-
-            if random.random() < 0.05:
-                first_seq = batch_tensor[0].tolist()
-                decoded = self.tokenizer.decode(first_seq, skip_special_tokens=False)
-                print("\nSample sequence (with special tokens):")
-                print("-" * 50)
-                print(decoded)
-                print("-" * 50)
 
         return batch
 
