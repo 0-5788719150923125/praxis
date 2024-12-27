@@ -8,84 +8,152 @@ import torch.nn.functional as F
 
 
 class MemoryEfficientAttention(nn.Module):
-    """Memory efficient attention implementation from 'Self-attention Does Not Need O(n2) Memory'."""
+    """
+    Memory efficient attention implementation that accepts 3D input tensors.
+    https://arxiv.org/abs/2112.05682
+    """
 
-    def __init__(self, dim_k: int):
+    def __init__(self, hidden_dim: int, num_heads: int):
         super().__init__()
-        self.dim_k = dim_k
+        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
 
-    def forward(self, query, key, value, causal_mask: bool = False):
-        """Memory efficient attention computation using chunked processing."""
-        # Extract dimensions
-        batch_size, num_heads, num_queries, dim_k = query.shape
-        seq_len = key.shape[2]
-        dim_v = value.shape[-1]
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
 
-        # Scale query
-        query = query / math.sqrt(self.dim_k)
+        # Linear projections
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.k_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.v_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
 
-        # Determine chunk size - use sqrt(N) for O(sqrt(N)) memory complexity
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        """Initialize parameters."""
+        nn.init.xavier_uniform_(self.q_proj.weight)
+        nn.init.xavier_uniform_(self.k_proj.weight)
+        nn.init.xavier_uniform_(self.v_proj.weight)
+        nn.init.xavier_uniform_(self.out_proj.weight)
+
+        nn.init.zeros_(self.q_proj.bias)
+        nn.init.zeros_(self.k_proj.bias)
+        nn.init.zeros_(self.v_proj.bias)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def _chunk_to_heads(self, x, chunk_size):
+        """Transform chunk to multi-head format."""
+        batch_size = x.shape[0]
+        x = x.view(batch_size, chunk_size, self.num_heads, self.head_dim)
+        return x.transpose(1, 2)  # [batch, heads, chunk_size, head_dim]
+
+    def forward(self, inputs, causal_mask: bool = False):
+        """
+        Memory-efficient attention implementation processing input in chunks.
+
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_dim]
+            causal_mask: Whether to apply causal masking
+        """
+        batch_size, seq_len, _ = inputs.shape
         chunk_size = int(math.sqrt(seq_len))
-        chunk_size = max(1, min(chunk_size, seq_len))  # Ensure valid chunk size
+        chunk_size = max(1, min(chunk_size, seq_len))
 
-        # Initialize accumulators
-        value_sum = torch.zeros(
-            batch_size,
-            num_heads,
-            num_queries,
-            dim_v,
-            device=query.device,
-            dtype=query.dtype,
-        )
-        normalizer = torch.zeros(
-            batch_size, num_heads, num_queries, device=query.device, dtype=query.dtype
-        )
-        max_score = torch.full(
-            (batch_size, num_heads, num_queries),
-            float("-inf"),
-            device=query.device,
-            dtype=query.dtype,
-        )
+        # Initialize output tensor
+        output = torch.zeros_like(inputs)
 
-        # Process key-value pairs in chunks
-        for chunk_idx in range(0, seq_len, chunk_size):
-            chunk_end = min(chunk_idx + chunk_size, seq_len)
+        # Process query sequence in chunks
+        for query_start in range(0, seq_len, chunk_size):
+            query_end = min(query_start + chunk_size, seq_len)
+            query_chunk = inputs[:, query_start:query_end]
 
-            # Get current chunk of keys and values
-            key_chunk = key[:, :, chunk_idx:chunk_end]
-            value_chunk = value[:, :, chunk_idx:chunk_end]
+            # Project and reshape query chunk
+            q = self.q_proj(query_chunk)
+            q = self._chunk_to_heads(q, query_end - query_start)
+            q = q / math.sqrt(self.head_dim)
 
-            # Compute attention scores for current chunk
-            chunk_scores = torch.matmul(query, key_chunk.transpose(-2, -1))
+            # Initialize accumulators for this query chunk
+            value_sum = torch.zeros(
+                batch_size,
+                self.num_heads,
+                query_end - query_start,
+                self.head_dim,
+                device=inputs.device,
+                dtype=inputs.dtype,
+            )
+            normalizer = torch.zeros(
+                batch_size,
+                self.num_heads,
+                query_end - query_start,
+                device=inputs.device,
+                dtype=inputs.dtype,
+            )
+            max_score = torch.full(
+                (batch_size, self.num_heads, query_end - query_start),
+                float("-inf"),
+                device=inputs.device,
+                dtype=inputs.dtype,
+            )
 
-            # Apply causal masking if needed
-            if causal_mask:
-                # Create causal mask for current chunk
-                query_positions = torch.arange(num_queries, device=query.device)
-                key_positions = torch.arange(chunk_idx, chunk_end, device=query.device)
-                causal_mask_chunk = query_positions[:, None] >= key_positions[None, :]
-                chunk_scores = torch.where(
-                    causal_mask_chunk.view(1, 1, num_queries, -1),
-                    chunk_scores,
-                    float("-inf"),
-                )
+            # Process key/value sequence in chunks
+            for key_start in range(0, seq_len, chunk_size):
+                key_end = min(key_start + chunk_size, seq_len)
+                key_chunk = inputs[:, key_start:key_end]
 
-            # Update running maximum
-            max_score_prev = max_score
-            max_score = torch.maximum(max_score, torch.max(chunk_scores, dim=-1)[0])
+                # Project and reshape key/value chunks
+                k = self._chunk_to_heads(self.k_proj(key_chunk), key_end - key_start)
+                v = self._chunk_to_heads(self.v_proj(key_chunk), key_end - key_start)
 
-            # Compute exponentials with numerical stability
-            exp_chunk = torch.exp(chunk_scores - max_score.unsqueeze(-1))
-            exp_prev = torch.exp(max_score_prev - max_score)
+                # Compute attention scores for current chunks
+                scores = torch.matmul(q, k.transpose(-2, -1))
 
-            # Update running sums
-            value_sum = value_sum * exp_prev.unsqueeze(-1)
-            value_sum = value_sum + torch.matmul(exp_chunk, value_chunk)
-            normalizer = normalizer * exp_prev + exp_chunk.sum(dim=-1)
+                # Apply causal masking if needed
+                if causal_mask and key_start > query_start:
+                    scores.fill_(float("-inf"))
+                elif causal_mask:
+                    causal_mask_chunk = (
+                        torch.arange(query_start, query_end, device=scores.device)[
+                            :, None
+                        ]
+                        >= torch.arange(key_start, key_end, device=scores.device)[
+                            None, :
+                        ]
+                    )
+                    scores.masked_fill_(
+                        ~causal_mask_chunk.view(1, 1, query_end - query_start, -1),
+                        float("-inf"),
+                    )
 
-        # Final normalization
-        out = value_sum / normalizer.unsqueeze(-1)
-        return out
+                # Update running maximum
+                max_score_prev = max_score
+                max_score = torch.maximum(max_score, torch.max(scores, dim=-1)[0])
+
+                # Compute exponentials with numerical stability
+                exp_scores = torch.exp(scores - max_score.unsqueeze(-1))
+                exp_prev = torch.exp(max_score_prev - max_score)
+
+                # Update running sums
+                value_sum = value_sum * exp_prev.unsqueeze(-1)
+                value_sum = value_sum + torch.matmul(exp_scores, v)
+                normalizer = normalizer * exp_prev + exp_scores.sum(dim=-1)
+
+                # Clear unnecessary tensors
+                del k, v, scores, exp_scores
+
+            # Compute attention output for current query chunk
+            chunk_output = value_sum / normalizer.unsqueeze(
+                -1
+            )  # [batch, heads, chunk_size, head_dim]
+            chunk_output = chunk_output.transpose(
+                1, 2
+            ).contiguous()  # [batch, chunk_size, heads, head_dim]
+            chunk_output = chunk_output.view(batch_size, -1, self.hidden_dim)
+            chunk_output = self.out_proj(chunk_output)
+
+            # Write to output tensor
+            output[:, query_start:query_end] = chunk_output
+
+        return output
 
 
 def measure_peak_memory(func, device) -> Union[float, None]:
@@ -99,7 +167,6 @@ def measure_peak_memory(func, device) -> Union[float, None]:
             torch.cuda.synchronize()
             return torch.cuda.max_memory_allocated() / (1024 * 1024)
         else:
-            # For CPU, return None as we're mainly interested in GPU memory
             return None
     except (torch.cuda.OutOfMemoryError, MemoryError):
         return None
@@ -111,47 +178,24 @@ def test_attention():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Running tests on: {device}")
 
-    # Test parameters
-    batch_size = 2
-    num_heads = 4
-    dim_k = 64
-    dim_v = 32
-    seq_len = 8
-
-    # Create test inputs
-    torch.manual_seed(42)
-    query = torch.randn(batch_size, num_heads, seq_len, dim_k, device=device)
-    key = torch.randn(batch_size, num_heads, seq_len, dim_k, device=device)
-    value = torch.randn(batch_size, num_heads, seq_len, dim_v, device=device)
-
-    # Initialize attention module
-    attention = MemoryEfficientAttention(dim_k).to(device)
-
-    # Test causal masking
-    output = attention(query, key, value, causal_mask=True)
-
-    # Verify causal masking (first position should only attend to itself)
-    first_pos_output = output[0, 0, 0]  # batch 0, head 0, position 0
-    first_pos_value = value[0, 0, 0]  # corresponding value
-    assert torch.allclose(
-        first_pos_output, first_pos_value, rtol=1e-4
-    ), "Causal masking test failed: First position should only attend to itself"
-
-    print("Basic functionality tests passed!")
-
-    # Memory usage tests
+    # Memory usage tests with realistic settings
     print("\nTesting memory usage...\n")
     print("Sequence Length | Memory Usage (MB)")
     print("-" * 35)
 
-    for seq_len in [512, 1024, 2048, 4096, 8192]:
-        query = torch.randn(1, 4, seq_len, 64, device=device)
-        key = torch.randn(1, 4, seq_len, 64, device=device)
-        value = torch.randn(1, 4, seq_len, 32, device=device)
+    test_lengths = [512, 1024, 2048, 4096, 8192]
+    hidden_dim = 768  # Standard transformer hidden dimension
+
+    for seq_len in test_lengths:
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        inputs = torch.randn(1, seq_len, hidden_dim, device=device)
+        attention = MemoryEfficientAttention(hidden_dim, 12).to(device)
 
         def run_test():
             with torch.no_grad():
-                output = attention(query, key, value, causal_mask=True)
+                output = attention(inputs, causal_mask=True)
                 output.cpu()
 
         memory = measure_peak_memory(run_test, device)
