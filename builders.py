@@ -10,9 +10,6 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
-start_token = "<|im_start|> "
-end_token = "<|im_end|> "
-
 
 class DataFormat(Enum):
     SIMPLE = "simple"
@@ -125,25 +122,31 @@ HUGGINGFACE_DATASETS = {
 }
 
 
-def format_simple(document: Dict, keys: List[str]) -> str:
+def format_simple(
+    document: Dict, keys: List[str], bos_token: str, eos_token: str
+) -> str:
     """Just concatenate content with spaces"""
     return (
-        start_token + " ".join(document.get(key, "") for key in keys) + end_token + "\n"
+        bos_token + " ".join(document.get(key, "") for key in keys) + eos_token + "\n"
     )
 
 
-def format_instruction(document: Dict, keys: List[str]) -> str:
+def format_instruction(
+    document: Dict, keys: List[str], bos_token: str, eos_token: str
+) -> str:
     """Format as instruction/output pairs in ChatML format."""
     assert len(keys) == 2, "Instruction format requires exactly 2 keys"
     instruction = document.get(keys[0], "")
     output = document.get(keys[1], "")
     return (
-        f"{start_token}user\n{instruction}\n{end_token}\n"
-        f"{start_token}assistant\n{output}\n{end_token}\n"
+        f"{bos_token}user\n{instruction}\n{eos_token}\n"
+        f"{bos_token}assistant\n{output}\n{eos_token}\n"
     )
 
 
-def format_conversation(document: Dict, keys: List[str]) -> str:
+def format_conversation(
+    document: Dict, keys: List[str], bos_token: str, eos_token: str
+) -> str:
     """Format as a conversation in ChatML format."""
     assert len(keys) == 3, "Conversation format requires exactly 3 keys"
     parts = []
@@ -155,11 +158,13 @@ def format_conversation(document: Dict, keys: List[str]) -> str:
         elif i == 2:
             role = "assistant"
         message = document.get(key, "")
-        parts.append(f"{start_token}{role}\n{message}\n{end_token}\n")
+        parts.append(f"{bos_token}{role}\n{message}\n{eos_token}\n")
     return "".join(parts)
 
 
-def format_personachat(document: Dict, keys: List[str]) -> str:
+def format_personachat(
+    document: Dict, keys: List[str], bos_token: str, eos_token: str
+) -> str:
     """Format persona chat conversations into ChatML format."""
     # Extract personas
     user_personas = document.get("user 1 personas", "").split("\n")
@@ -178,7 +183,7 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
         )
 
     # Initialize the formatted text with system message
-    formatted = f"{start_token}system\n{system_message.strip()}\n{end_token}\n"
+    formatted = f"{bos_token}system\n{system_message.strip()}\n{eos_token}\n"
 
     # Map speaker labels to ChatML roles
     speaker_map = {
@@ -199,12 +204,14 @@ def format_personachat(document: Dict, keys: List[str]) -> str:
             # Alternate speakers if no prefix is present
             role = "user" if i % 2 == 0 else "assistant"
             text = utterance
-        formatted += f"{start_token}{role}\n{text.strip()}\n{end_token}\n"
+        formatted += f"{bos_token}{role}\n{text.strip()}\n{eos_token}\n"
 
     return formatted
 
 
-def format_smoltalk(document: Dict, keys: List[str]) -> str:
+def format_smoltalk(
+    document: Dict, keys: List[str], bos_token: str, eos_token: str
+) -> str:
     """Format Smoltalk-style message arrays into ChatML format."""
     assert (
         len(keys) == 1 and keys[0] == "messages"
@@ -219,18 +226,18 @@ def format_smoltalk(document: Dict, keys: List[str]) -> str:
         role = message.get("role", "user")  # Default to user if role missing
         content = message.get("content", "").strip()
         if content:  # Only add non-empty messages
-            formatted_messages.append(f"{start_token}{role}\n{content}\n{end_token}\n")
+            formatted_messages.append(f"{bos_token}{role}\n{content}\n{eos_token}\n")
 
     # Join all messages together
     return "".join(formatted_messages)
 
 
-def format_wiki(document: Dict, keys: List[str]) -> str:
+def format_wiki(document: Dict, keys: List[str], bos_token: str, eos_token: str) -> str:
     """Format wiki text."""
     assert len(keys) == 2, "Wiki format requires exactly 2 keys"
     title = document.get(keys[0], "")
     body = document.get(keys[1], "")
-    return f"{start_token}{title}\n{body}{end_token}\n"
+    return f"{bos_token}{title}\n{body}{eos_token}\n"
 
 
 FORMAT_HANDLERS = {
@@ -545,7 +552,9 @@ class HuggingfaceDataset(PraxisSampler):
             self.fill_sequence_cache()
 
     def _format_document(self, document):
-        return self.format_handler(document, self.keys)
+        return self.format_handler(
+            document, self.keys, self.tokenizer.bos_token, self.tokenizer.eos_token
+        )
 
     def state_dict(self):
         # Get the internal state of the shuffled dataset
@@ -740,12 +749,12 @@ class GunChatDataset(PraxisSampler):
         system_prompt = f"{user_description}\n{assistant_description}"
 
         # Initialize the formatted text with system message
-        formatted = f"{start_token}system\n{system_prompt}\n{end_token}\n"
+        formatted = f"{self.tokenizer.bos_token}system\n{system_prompt}\n{self.tokenizer.eos_token}\n"
 
         # Build the conversation by randomly assigning text to user or assistant
         for text in text_list:
             role = random.choice(["user", "assistant"])
-            formatted += f"{start_token}{role}\n{text.strip()}\n{end_token}\n"
+            formatted += f"{self.tokenizer.bos_token}{role}\n{text.strip()}\n{self.tokenizer.eos_token}\n"
 
         # Add the conversation to the sequence cache
         self.sequence_cache.append(formatted)
