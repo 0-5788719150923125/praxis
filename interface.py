@@ -210,8 +210,7 @@ class TerminalDashboard:
 
     def update_tokens(self, num_tokens):
         with self.lock:
-            in_billions = num_tokens / 1_000_000_000
-            self.num_tokens = in_billions
+            self.num_tokens = num_tokens
 
     def update_expert_count(self, num_local, num_remote):
         with self.lock:

@@ -156,7 +156,7 @@ if gun and seed and not dev:
 
 # Global configuration
 vocab_size = 8192
-block_size = 1024 if byte_latent else 512
+block_size = 2048 if byte_latent else 512
 use_dashboard = False if no_dashboard else True
 
 # Tokenizer initialization
@@ -394,7 +394,7 @@ class PraxisTrainer(LightningModule):
                 "loss": loss,
                 "batch": int(batch_idx),
                 "learning_rate": self.scheduler.get_lr()[0],
-                "num_tokens": self.num_tokens,
+                "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
                 "avg_step_time": self.train_step_ema,
             },
             on_step=True,

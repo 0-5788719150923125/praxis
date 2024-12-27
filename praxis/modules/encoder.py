@@ -3,81 +3,121 @@ from typing import Optional, Union
 import bytelatent
 import torch
 import torch.nn.functional as F
+
+# from bytelatent.base_transformer import (
+#     Attention,
+#     apply_rotary_emb,
+#     flex_attention_comp,
+#     repeat_kv,
+# )
+# from bytelatent.model.local_models import LocalModelBase
+# from bytelatent.model.transformer import CrossAttention
+from torch import nn
+
+from praxis.modules.recurrent import minGRU
+
+# class ChunkedCrossAttention(CrossAttention):
+#     """
+#     A monkey-patch for CrossAttention, which doesn't use FlexAttention.
+#     """
+
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.window_size = 16
+#         self.chunk_size = 256
+
+#     def forward(self, x, kv, mask=None) -> torch.Tensor:
+#         bsz, seq_len, _ = x.shape
+#         _, slen_kv, _ = kv.shape
+
+#         # without detaching x, there is unbounded memory growth; only required in the encoder
+#         # x = x.detach()
+
+#         x = self.cross_attn_norm_q(x)
+#         kv = self.cross_attn_norm_kv(kv)
+
+#         xq = self.wq(x)
+#         xk = self.wk(kv)
+#         xv = self.wv(kv)
+
+#         output_shape = xq.shape
+#         # [B, S, D] -> [B, S, H, D]
+#         xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
+#         xk = xk.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
+#         xv = xv.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
+
+#         xk = repeat_kv(xk, self.heads_per_group, dim=2)
+#         xv = repeat_kv(xv, self.heads_per_group, dim=2)
+
+#         # [B, S, H, D] -> [B, H, S, D]
+#         xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
+
+#         outputs = []
+#         for start in range(0, seq_len, self.chunk_size):
+#             end = start + self.chunk_size
+#             q_chunk = xq[:, :, start:end, :]  # [B, H, chunk_size, D]
+
+#             kv_start = max(0, start - self.window_size)
+#             kv_end = min(slen_kv, end + self.window_size)
+#             k_chunk = xk[:, :, kv_start:kv_end, :]  # [B, H, window_width, D]
+#             v_chunk = xv[:, :, kv_start:kv_end, :]
+
+#             # Slice the mask to match [chunk_size, window_width]
+#             attn_mask_chunk = None
+#             if mask is not None:
+#                 attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]
+
+#             chunk_output = F.scaled_dot_product_attention(
+#                 q_chunk, k_chunk, v_chunk, attn_mask=attn_mask_chunk
+#             )  # [B, H, chunk_size, D]
+#             outputs.append(chunk_output)
+
+#         # Concatenate all chunks along the query dimension
+#         output = torch.cat(outputs, dim=2)  # [B, H, S, D]
+
+#         # [B, H, S, D] -> [B, S, H, D]
+#         output = output.transpose(1, 2).contiguous()
+#         output = self.wo(output.reshape(output_shape))
+
+#         return x + output
+
+
+class RecurrentBlock(minGRU):
+    def __init__(self, args):
+        super().__init__(dim=args.dim)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        out, _ = super().forward(x)
+        return out
+
+
+from bytelatent import base_transformer
+
+bytelatent.base_transformer.TransformerBlock = RecurrentBlock
+
 from bytelatent.base_transformer import (
     Attention,
     apply_rotary_emb,
     flex_attention_comp,
     repeat_kv,
 )
+from bytelatent.data.patcher import Patcher, PatcherArgs
+from bytelatent.model.blt import (
+    ByteLatentTransformerArgs,
+    EmbeddingType,
+    compute_hash_embeddings,
+    create_local_decoder,
+    create_local_encoder,
+    cross_attn_mask,
+    decoder_patch_ids_from_lengths,
+    get_blt_input,
+    get_global_dim_patch_emb,
+    init_embeddings,
+    patch_ids_from_lengths,
+)
+from bytelatent.model.local_models import LocalModelBase
 from bytelatent.model.transformer import CrossAttention
-from torch import nn
-
-
-class ChunkedCrossAttention(CrossAttention):
-    """
-    A monkey-patch for CrossAttention, which doesn't use FlexAttention.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.window_size = 16
-        self.chunk_size = 256
-
-    def forward(self, x, kv, mask=None) -> torch.Tensor:
-        bsz, seq_len, _ = x.shape
-        _, slen_kv, _ = kv.shape
-
-        # without detaching x, there is unbounded memory growth; only required in the encoder
-        # x = x.detach()
-
-        x = self.cross_attn_norm_q(x)
-        kv = self.cross_attn_norm_kv(kv)
-
-        xq = self.wq(x)
-        xk = self.wk(kv)
-        xv = self.wv(kv)
-
-        output_shape = xq.shape
-        # [B, S, D] -> [B, S, H, D]
-        xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
-        xk = xk.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
-        xv = xv.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
-
-        xk = repeat_kv(xk, self.heads_per_group, dim=2)
-        xv = repeat_kv(xv, self.heads_per_group, dim=2)
-
-        # [B, S, H, D] -> [B, H, S, D]
-        xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
-
-        outputs = []
-        for start in range(0, seq_len, self.chunk_size):
-            end = start + self.chunk_size
-            q_chunk = xq[:, :, start:end, :]  # [B, H, chunk_size, D]
-
-            kv_start = max(0, start - self.window_size)
-            kv_end = min(slen_kv, end + self.window_size)
-            k_chunk = xk[:, :, kv_start:kv_end, :]  # [B, H, window_width, D]
-            v_chunk = xv[:, :, kv_start:kv_end, :]
-
-            # Slice the mask to match [chunk_size, window_width]
-            attn_mask_chunk = None
-            if mask is not None:
-                attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]
-
-            chunk_output = F.scaled_dot_product_attention(
-                q_chunk, k_chunk, v_chunk, attn_mask=attn_mask_chunk
-            )  # [B, H, chunk_size, D]
-            outputs.append(chunk_output)
-
-        # Concatenate all chunks along the query dimension
-        output = torch.cat(outputs, dim=2)  # [B, H, S, D]
-
-        # [B, H, S, D] -> [B, S, H, D]
-        output = output.transpose(1, 2).contiguous()
-        output = self.wo(output.reshape(output_shape))
-
-        return x + output
-
+from bytelatent.model.utils import downsample
 
 # class ChunkedAttention(Attention):
 #     def __init__(self, *args, **kwargs):
@@ -156,24 +196,10 @@ class ChunkedCrossAttention(CrossAttention):
 
 
 # Monkey patch the import
-bytelatent.model.transformer.CrossAttention = ChunkedCrossAttention
+# bytelatent.model.transformer.CrossAttention = ChunkedCrossAttention
+# bytelatent.model.local_models.LocalModelBase = RecurrentModelBase
+# bytelatent.base_transformer.TransformerBlock = RecurrentBlock
 # bytelatent.base_transformer.Attention = ChunkedAttention
-
-from bytelatent.data.patcher import Patcher, PatcherArgs
-from bytelatent.model.blt import (
-    ByteLatentTransformerArgs,
-    EmbeddingType,
-    compute_hash_embeddings,
-    create_local_decoder,
-    create_local_encoder,
-    cross_attn_mask,
-    decoder_patch_ids_from_lengths,
-    get_blt_input,
-    get_global_dim_patch_emb,
-    init_embeddings,
-    patch_ids_from_lengths,
-)
-from bytelatent.model.utils import downsample
 
 
 class PraxisByteLatentEncoder(nn.Module):
@@ -204,12 +230,12 @@ class PraxisByteLatentEncoder(nn.Module):
         self.encoder = create_local_encoder(self.args)
         self.decoder = create_local_decoder(self.args)
 
-    def __repr__(self):
-        return (
-            f"PraxisByteLatentEncoder("
-            + f"n_encoders={len(self.encoder.layers)}, "
-            + f"n_decoders={len(self.decoder.layers)})"
-        )
+    # def __repr__(self):
+    #     return (
+    #         f"PraxisByteLatentEncoder("
+    #         + f"n_encoders={len(self.encoder.layers)}, "
+    #         + f"n_decoders={len(self.decoder.layers)})"
+    #     )
 
     def encode(self, input_ids):
         encoder_tokens, _, decoder_tokens = get_blt_input(
@@ -363,7 +389,7 @@ def create_args(config):
         encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_nb_functions=3,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
-        cross_attn_decoder=True,
+        cross_attn_decoder=False,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
         cross_attn_k=4,  # is a multiplier for token and patch embedding
