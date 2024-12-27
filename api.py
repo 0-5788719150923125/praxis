@@ -15,12 +15,16 @@ logger.setLevel(logging.ERROR)
 app = Flask(__name__)
 app.static_folder = "templates"
 
-start_token = "<|im_start|> "
-end_token = "<|im_end|> "
-
 
 class APIServer:
-    def __init__(self, generator, host="localhost", port=5000):
+    def __init__(
+        self,
+        generator,
+        host="localhost",
+        port=5000,
+        bos_token="<bos>",
+        eos_token="<eos>",
+    ):
         self.generator = generator
         self.server_thread = None
         self.server = None
@@ -29,6 +33,8 @@ class APIServer:
         self.host = host
         self.port = port
         self.parent_pid = os.getppid()
+        self.bos_token = bos_token
+        self.eos_token = eos_token
 
     def _monitor_parent(self):
         """Monitor thread that checks if parent process is alive"""
@@ -74,6 +80,8 @@ class APIServer:
     def _run_server(self):
         with app.app_context():
             app.config["generator"] = self.generator
+            app.config["bos_token"] = self.bos_token
+            app.config["eos_token"] = self.eos_token
             self.server = make_server("0.0.0.0", self.port, app)
             self.started.set()  # Signal that the server has started
             self.server.serve_forever()
@@ -93,7 +101,7 @@ def serve_static(filename):
         return send_from_directory(app.static_folder, filename)
 
 
-def format_messages_to_chatml(messages):
+def format_messages_to_chatml(messages, bos_token, eos_token):
     """Format a list of message objects into a ChatML-formatted string."""
     formatted = ""
     for message in messages:
@@ -101,17 +109,17 @@ def format_messages_to_chatml(messages):
         content = message.get("content", "").strip()
         if role not in {"system", "user", "assistant"}:
             raise ValueError(f"Invalid role: {role}")
-        formatted += f"{start_token}{role}\n{content}\n{end_token}\n"
+        formatted += f"{bos_token}{role}\n{content}\n{eos_token}\n"
     # Ensure the prompt ends with the assistant's role
     if not formatted.strip().endswith("<|im_start|> assistant"):
-        formatted += f"{start_token}assistant\n"
+        formatted += f"{bos_token}assistant\n"
     return formatted
 
 
-def extract_assistant_reply(generated_text):
+def extract_assistant_reply(generated_text, bos_token, eos_token):
     """Extract the assistant's reply from the generated text."""
     # Tokens used in ChatML
-    begin_token = f"{start_token}assistant\n"
+    begin_token = f"{bos_token}assistant\n"
     # Find the last occurrence of the assistant's start token
     start_index = generated_text.rfind(begin_token)
     if start_index == -1:
@@ -120,7 +128,7 @@ def extract_assistant_reply(generated_text):
     else:
         start_index += len(begin_token)
     # Find the end token after the start_index
-    end_index = generated_text.find(end_token, start_index)
+    end_index = generated_text.find(eos_token, start_index)
     if end_index == -1:
         # If the end token is not found, return everything after the start token
         assistant_reply = generated_text[start_index:].strip()
@@ -152,9 +160,11 @@ def generate():
         if messages is not None:
             # Format messages into ChatML format
             try:
-                prompt = format_messages_to_chatml(messages)
+                prompt = format_messages_to_chatml(
+                    messages, app.config["bos_token"], app.config["eos_token"]
+                )
                 is_chatml = True
-                kwargs["stop_strings"] = [end_token]
+                kwargs["stop_strings"] = [app.config["eos_token"]]
                 kwargs["skip_special_tokens"] = False
                 del kwargs["messages"]
             except ValueError as ve:
@@ -175,7 +185,9 @@ def generate():
 
         if is_chatml:
             # Extract only the assistant's reply
-            assistant_reply = extract_assistant_reply(output)
+            assistant_reply = extract_assistant_reply(
+                output, app.config["bos_token"], app.config["eos_token"]
+            )
             response = {"response": assistant_reply}
         else:
             # Return the full output as before
