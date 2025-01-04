@@ -36,7 +36,7 @@ The Praxis architecture is a fluid, peer-to-peer, always online, continuously-le
 Setup a virtual environment:
 
 ```sh
-source make-venv.sh
+source venv.sh
 ```
 
 Alternatively, you may use the VSCode command bar (`Ctrl + Shift + P`), and choose: `Python: Create Environment...`

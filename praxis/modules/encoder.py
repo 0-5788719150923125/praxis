@@ -3,86 +3,17 @@ from typing import Optional, Union
 import bytelatent
 import torch
 import torch.nn.functional as F
-
-# from bytelatent.base_transformer import (
-#     Attention,
-#     apply_rotary_emb,
-#     flex_attention_comp,
-#     repeat_kv,
-# )
-# from bytelatent.model.local_models import LocalModelBase
-# from bytelatent.model.transformer import CrossAttention
 from torch import nn
 
 from praxis.modules.recurrent import minGRU
 
-# class ChunkedCrossAttention(CrossAttention):
-#     """
-#     A monkey-patch for CrossAttention, which doesn't use FlexAttention.
-#     """
-
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.window_size = 16
-#         self.chunk_size = 256
-
-#     def forward(self, x, kv, mask=None) -> torch.Tensor:
-#         bsz, seq_len, _ = x.shape
-#         _, slen_kv, _ = kv.shape
-
-#         # without detaching x, there is unbounded memory growth; only required in the encoder
-#         # x = x.detach()
-
-#         x = self.cross_attn_norm_q(x)
-#         kv = self.cross_attn_norm_kv(kv)
-
-#         xq = self.wq(x)
-#         xk = self.wk(kv)
-#         xv = self.wv(kv)
-
-#         output_shape = xq.shape
-#         # [B, S, D] -> [B, S, H, D]
-#         xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
-#         xk = xk.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
-#         xv = xv.view(bsz, slen_kv, self.n_kv_heads, self.head_dim)
-
-#         xk = repeat_kv(xk, self.heads_per_group, dim=2)
-#         xv = repeat_kv(xv, self.heads_per_group, dim=2)
-
-#         # [B, S, H, D] -> [B, H, S, D]
-#         xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
-
-#         outputs = []
-#         for start in range(0, seq_len, self.chunk_size):
-#             end = start + self.chunk_size
-#             q_chunk = xq[:, :, start:end, :]  # [B, H, chunk_size, D]
-
-#             kv_start = max(0, start - self.window_size)
-#             kv_end = min(slen_kv, end + self.window_size)
-#             k_chunk = xk[:, :, kv_start:kv_end, :]  # [B, H, window_width, D]
-#             v_chunk = xv[:, :, kv_start:kv_end, :]
-
-#             # Slice the mask to match [chunk_size, window_width]
-#             attn_mask_chunk = None
-#             if mask is not None:
-#                 attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]
-
-#             chunk_output = F.scaled_dot_product_attention(
-#                 q_chunk, k_chunk, v_chunk, attn_mask=attn_mask_chunk
-#             )  # [B, H, chunk_size, D]
-#             outputs.append(chunk_output)
-
-#         # Concatenate all chunks along the query dimension
-#         output = torch.cat(outputs, dim=2)  # [B, H, S, D]
-
-#         # [B, H, S, D] -> [B, S, H, D]
-#         output = output.transpose(1, 2).contiguous()
-#         output = self.wo(output.reshape(output_shape))
-
-#         return x + output
-
 
 class RecurrentBlock(minGRU):
+    """
+    We replace the encoder/decoder transformer blocks with something that is more
+    memory-efficient, at longer sequence lengths.
+    """
+
     def __init__(self, args):
         super().__init__(dim=args.dim)
 
@@ -119,88 +50,6 @@ from bytelatent.model.local_models import LocalModelBase
 from bytelatent.model.transformer import CrossAttention
 from bytelatent.model.utils import downsample
 
-# class ChunkedAttention(Attention):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.window_size = 16
-#         self.chunk_size = 1024
-
-#     def forward(
-#         self,
-#         x: torch.Tensor,
-#         freq_cis: torch.Tensor,
-#         tok_idx: Optional[torch.Tensor] = None,
-#         mask=None,
-#         **kwargs,
-#     ) -> torch.Tensor:
-#         # B S D
-#         bsz, seq_len, dim = x.shape
-#         xq = self.wq(x.view_as(x))
-#         xk = self.wk(x.view_as(x))
-#         xv = self.wv(x.view_as(x))
-
-#         output_shape = xq.shape
-#         # B S D -> B S H D
-#         xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
-#         xk = xk.view(bsz, seq_len, self.n_kv_heads, self.head_dim)
-#         xv = xv.view(bsz, seq_len, self.n_kv_heads, self.head_dim)
-
-#         xq, xk = apply_rotary_emb(xq, xk, 1, freq_cis[0:seq_len])
-
-#         # This condition helps us be easily compatible
-#         # with inference by adding a pluggable KVCache
-#         if hasattr(self, "kv_cache"):
-#             xk, xv = self.kv_cache.update(xk, xv, tok_idx)
-
-#         xk = repeat_kv(xk, self.heads_per_group, dim=2)
-#         xv = repeat_kv(xv, self.heads_per_group, dim=2)
-
-#         xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
-#         assert mask is None or isinstance(mask, (str, torch.Tensor))
-#         is_causal = (mask == "causal") if isinstance(mask, str) else False
-#         mask = mask if isinstance(mask, torch.Tensor) else None
-
-#         outputs = []
-#         for start in range(0, seq_len, self.chunk_size):
-#             end = start + self.chunk_size
-#             q_chunk = xq[:, :, start:end, :]  # [B, H, chunk_size, D]
-
-#             kv_start = max(0, start - self.window_size)
-#             kv_end = min(seq_len, end + self.window_size)
-#             k_chunk = xk[:, :, kv_start:kv_end, :]  # [B, H, window_width, D]
-#             v_chunk = xv[:, :, kv_start:kv_end, :]
-
-#             # Slice the mask to match [chunk_size, window_width]
-#             attn_mask_chunk = None
-#             if mask is not None:
-#                 attn_mask_chunk = mask[:, :, start:end, kv_start:kv_end]
-
-#             chunk_output = F.scaled_dot_product_attention(
-#                 q_chunk,
-#                 k_chunk,
-#                 v_chunk,
-#                 is_causal=is_causal,
-#                 attn_mask=attn_mask_chunk,
-#             )  # [B, H, chunk_size, D]
-#             outputs.append(chunk_output)
-
-#         # Concatenate all chunks along the query dimension
-#         output = torch.cat(outputs, dim=2)  # [B, H, S, D]
-
-#         # [B, H, S, D] -> [B, S, H, D]
-#         output = output.transpose(1, 2).contiguous()
-
-#         output = self.wo(output.reshape(output_shape))
-
-#         return output
-
-
-# Monkey patch the import
-# bytelatent.model.transformer.CrossAttention = ChunkedCrossAttention
-# bytelatent.model.local_models.LocalModelBase = RecurrentModelBase
-# bytelatent.base_transformer.TransformerBlock = RecurrentBlock
-# bytelatent.base_transformer.Attention = ChunkedAttention
-
 
 class PraxisByteLatentEncoder(nn.Module):
     """
@@ -230,12 +79,12 @@ class PraxisByteLatentEncoder(nn.Module):
         self.encoder = create_local_encoder(self.args)
         self.decoder = create_local_decoder(self.args)
 
-    # def __repr__(self):
-    #     return (
-    #         f"PraxisByteLatentEncoder("
-    #         + f"n_encoders={len(self.encoder.layers)}, "
-    #         + f"n_decoders={len(self.decoder.layers)})"
-    #     )
+    def __repr__(self):
+        return (
+            f"PraxisByteLatentEncoder("
+            + f"n_encoders={len(self.encoder.layers)}, "
+            + f"n_decoders={len(self.decoder.layers)})"
+        )
 
     def encode(self, input_ids):
         encoder_tokens, _, decoder_tokens = get_blt_input(
