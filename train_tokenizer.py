@@ -20,7 +20,7 @@ vocab_size = 8192
 dropout = 0.1
 
 save_path = "data/praxis"
-archive_path = save_path + f"-{vocab_size}"
+archive_path = f"{save_path}-{vocab_size}"
 
 pad_token = "<|endoftext|>"
 bos_token = "<|im_start|>"

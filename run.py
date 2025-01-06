@@ -487,8 +487,9 @@ class TerminalInterface(Callback):
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
         lm.model.get_addr()
-        # we limit to the max size seen during training, to keep memory usage consistent
-        self.max_length = block_size * 4
+        # we limit to 50% of the context length seen during training, to keep memory
+        # usage consistent; very long sequences have a negative impact on training speed.
+        self.max_length = block_size * 2
         if self.dashboard:
             max_data_points = 1000
             self.dashboard = TerminalDashboard(seed, max_data_points)
