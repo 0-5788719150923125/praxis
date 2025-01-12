@@ -26,12 +26,6 @@ from bytelatent import base_transformer
 
 bytelatent.base_transformer.TransformerBlock = RecurrentBlock
 
-from bytelatent.base_transformer import (
-    Attention,
-    apply_rotary_emb,
-    flex_attention_comp,
-    repeat_kv,
-)
 from bytelatent.data.patcher import Patcher, PatcherArgs
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
@@ -42,12 +36,9 @@ from bytelatent.model.blt import (
     cross_attn_mask,
     decoder_patch_ids_from_lengths,
     get_blt_input,
-    get_global_dim_patch_emb,
     init_embeddings,
     patch_ids_from_lengths,
 )
-from bytelatent.model.local_models import LocalModelBase
-from bytelatent.model.transformer import CrossAttention
 from bytelatent.model.utils import downsample
 
 

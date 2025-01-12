@@ -981,10 +981,10 @@ class AccumulationSchedule(GradientAccumulationScheduler):
 checkpoint_callback = TimeBasedCheckpoint(
     save_top_k=3,
     save_last="link",
-    monitor="loss",
-    mode="min",
+    monitor="batch",
+    mode="max",
     dirpath=os.path.join(cache_dir, "praxis"),
-    filename="model-{loss:.4f}",
+    filename="model-{batch:.10f}",
     enable_version_counter=False,
     save_interval=3600,
 )

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.functional import alpha_entmax, alpha_relu, ghostmax
-from praxis.modules.dense import PraxisGLU
+from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.memory import PraxisCompressiveMemory
 
@@ -270,11 +270,8 @@ class UniversalAttentionGate(nn.Module):
         super().__init__()
         self.num_queries = config.num_queries
         self.hidden_size = config.hidden_size
-
-        # Use original hidden size, no doubling needed
         self.approximator = nn.Sequential(
-            PraxisGLU(config, activation="swish"),  # Original hidden size
-            nn.Sigmoid(),
+            PraxisMLP(config, activation=config.activation)
         )
 
     def forward(self, inputs: Tensor, weights: Tensor) -> Tensor:
