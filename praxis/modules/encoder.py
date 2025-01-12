@@ -1,17 +1,15 @@
 from typing import Optional, Union
 
-import bytelatent
 import torch
 import torch.nn.functional as F
-from torch import nn
 
 from praxis.modules.recurrent import minGRU
 
 
 class RecurrentBlock(minGRU):
     """
-    We replace the encoder/decoder transformer blocks with something that is more
-    memory-efficient, at longer sequence lengths.
+    We replace transformer blocks in the encoder/decoder with something
+    that is more memory-efficient, and faster to compute.
     """
 
     def __init__(self, args):
@@ -19,9 +17,10 @@ class RecurrentBlock(minGRU):
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         out, _ = super().forward(x)
-        return out
+        return out + x
 
 
+import bytelatent
 from bytelatent import base_transformer
 
 bytelatent.base_transformer.TransformerBlock = RecurrentBlock
@@ -40,6 +39,7 @@ from bytelatent.model.blt import (
     patch_ids_from_lengths,
 )
 from bytelatent.model.utils import downsample
+from torch import nn
 
 
 class PraxisByteLatentEncoder(nn.Module):
