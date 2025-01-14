@@ -5,10 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.nn import Identity, Linear, Module
 
 
-class minGRU(Module):
+class minGRU(nn.Module):
     """
     This is a log-space implementation of minGRU:
     https://arxiv.org/abs/2410.01201
@@ -21,8 +20,10 @@ class minGRU(Module):
         dim_inner = int(dim * expansion_factor)
         proj_out = proj_out if proj_out is not None else expansion_factor != 1.0
 
-        self.to_hidden_and_gate = Linear(dim, dim_inner * 2, bias=False)
-        self.to_out = Linear(dim_inner, dim, bias=False) if proj_out else Identity()
+        self.to_hidden_and_gate = nn.Linear(dim, dim_inner * 2, bias=False)
+        self.to_out = (
+            nn.Linear(dim_inner, dim, bias=False) if proj_out else nn.Identity()
+        )
 
     def forward(self, x, prev_hidden=None):
         seq_len = x.shape[1]
@@ -30,7 +31,6 @@ class minGRU(Module):
 
         if seq_len == 1:
             # handle sequential
-
             hidden = g(hidden)
             gate = gate.sigmoid()
             out = (
@@ -40,9 +40,7 @@ class minGRU(Module):
             )
         else:
             # parallel
-
             log_coeffs = -F.softplus(gate)
-
             log_z = -F.softplus(-gate)
             log_tilde_h = log_g(hidden)
             log_values = log_z + log_tilde_h

@@ -14,6 +14,7 @@ from praxis import PraxisConfig
 from praxis.losses import LOSS_REGISTRY
 from praxis.modules import EMBEDDING_REGISTRY
 from praxis.modules.decoder import PraxisDecoder
+from praxis.modules.encoder import PraxisByteLatentEncoder
 
 
 class PraxisModel(PreTrainedModel):
@@ -23,11 +24,7 @@ class PraxisModel(PreTrainedModel):
         super().__init__(config)
         self.encoder = False
         if config.byte_latent:
-            from praxis.modules.encoder import PraxisByteLatentEncoder
-
-            self.encoder = (
-                PraxisByteLatentEncoder(config) if config.byte_latent else False
-            )
+            self.encoder = PraxisByteLatentEncoder(config)
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = PraxisDecoder(config)

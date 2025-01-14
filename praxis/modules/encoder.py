@@ -2,8 +2,49 @@ from typing import Optional, Union
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from praxis.modules.recurrent import minGRU
+
+# class RecurrentBlock(nn.GRU):
+#     """
+#     We replace transformer blocks in the encoder/decoder with something
+#     that is faster to compute.
+#     """
+
+#     def __init__(self, args):
+#         super().__init__(
+#             input_size=args.dim,
+#             hidden_size=args.dim,
+#             batch_first=True,
+#             dropout=args.dropout,
+#         )
+#         self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
+#         # self.reset_parameters()
+
+#     def forward(self, x: torch.Tensor, *args, **kwargs):
+#         out, _ = super().forward(self.norm(x))
+#         return out
+
+# def reset_parameters(self, init_std=None, factor=1.0):
+#     init_std = init_std or (self.hidden_size ** (-0.5))
+#     nn.init.trunc_normal_(
+#         self.weight_ih_l0,
+#         mean=0.0,
+#         std=init_std,
+#         a=-3 * init_std,
+#         b=3 * init_std,
+#     )
+#     nn.init.trunc_normal_(
+#         self.weight_hh_l0,
+#         mean=0.0,
+#         std=init_std / factor,
+#         a=-3 * init_std,
+#         b=3 * init_std,
+#     )
+#     if self.bias:
+#         nn.init.zeros_(self.bias_ih_l0)
+#         nn.init.zeros_(self.bias_hh_l0)
 
 
 class RecurrentBlock(minGRU):
@@ -14,9 +55,10 @@ class RecurrentBlock(minGRU):
 
     def __init__(self, args):
         super().__init__(dim=args.dim)
+        self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
-        out, _ = super().forward(x)
+        out, _ = super().forward(self.norm(x))
         return out + x
 
 
@@ -262,6 +304,7 @@ def create_args(config):
         sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
         downsampling_by_pooling="max",
         share_encoder_decoder_emb=False,
+        dropout=config.dropout,
     )
 
 

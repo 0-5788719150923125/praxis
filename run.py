@@ -3,6 +3,7 @@ import signal
 import subprocess
 import sys
 
+os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 sys.dont_write_bytecode = True
 
 
@@ -13,9 +14,6 @@ def sigint_handler(signum, frame):
     os.killpg(os.getpgid(0), signal.SIGTERM)
     sys.exit(1)
 
-
-# Create a new process group
-# os.setpgrp()
 
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
@@ -126,9 +124,8 @@ AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
-
-args = get_cli_args()
-globals().update(vars(args))
+# Transform CLI args into global variables
+globals().update(vars(get_cli_args()))
 
 
 # Ensure errors are written to a log file
@@ -817,9 +814,10 @@ class Generator:
         """
         input_ids = self.tokenizer.encode(request.prompt, return_tensors="pt")
 
+        if isinstance(input_ids, list):
+            input_ids = torch.tensor([input_ids], dtype=torch.long)
+
         if device.startswith("cuda"):
-            if isinstance(input_ids, list):
-                input_ids = torch.tensor([input_ids], dtype=torch.long)
             input_ids = input_ids.to(device)
 
         defaults = dict(
@@ -1192,57 +1190,3 @@ trainer.fit(
     datamodule,
     ckpt_path=ckpt_path,
 )
-
-# import ipaddress
-# from functools import partial
-# from hivemind.utils.networking import log_visible_maddrs
-# from lightning.fabric.utilities.seed import reset_seed, seed_everything
-# from lightning_hivemind.strategy import HivemindStrategy
-
-
-# # set some basic configuration values
-# initial_peers = flatten_list(args.initial_peers)
-# target_batch_size = 8192
-
-# # define the hivemind strategy
-# strategy = HivemindStrategy(
-#     run_id=f"hiveminer",
-#     batch_size=batch_size,
-#     target_batch_size=target_batch_size,
-#     initial_peers=initial_peers,
-#     use_ipfs=False,
-#     use_relay=True,
-#     use_auto_relay=True,
-#     verbose=False,
-#     wait_timeout=60,
-#     bootstrap_timeout=45,
-#     matchmaking_time=90.0,
-#     averaging_timeout=300.0,
-#     delay_state_averaging=True,
-#     delay_grad_averaging=True,
-#     delay_optimizer_step=True,
-#     offload_optimizer=True,
-#     reuse_grad_buffers=False,
-#     # grad_compression=Float16Compression(),
-#     # state_averaging_compression=Float16Compression(),
-#     # load_state_compression=NoCompression(),
-#     # scheduler_fn=partial(torch.optim.lr_scheduler.ExponentialLR, gamma=0.9999),
-# )
-
-# # print my peer id to console
-# visible_addresses = [
-#     str(a)
-#     for a in strategy.dht.get_visible_maddrs()
-#     if not ipaddress.ip_address(a.values()[0]).is_loopback
-# ]
-
-# log_visible_maddrs(strategy.dht.get_visible_maddrs(), only_p2p=False)
-# # my_ids = []
-# # pattern = r"(/p2p/.*)"
-# # for peer in list(visible_addresses):
-# #     match = re.search(pattern, peer)
-# #     if match:
-# #         my_ids.append(match.group(1))
-
-# # for peer in list(set(my_ids)):
-# #     print(f"PEER-ID: {peer}")
