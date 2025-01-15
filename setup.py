@@ -2,7 +2,8 @@ from setuptools import find_packages, setup
 
 # Base requirements for the custom transformers model
 base_requirements = [
-    "bytelatent @ git+https://github.com/Vectorrent/blt.git@patch-for-no-flex-attn",
+    "bytelatent @ git+https://github.com/facebookresearch/blt",
+    # "bytelatent @ git+https://github.com/Vectorrent/blt.git@patch-for-no-flex-attn",
     # "bytelatent @ file:///home/crow/repos/blt",
     "hivemind @ git+https://github.com/learning-at-home/hivemind.git@213bff98a62accb91f254e2afdccbf1d69ebdea9",
     "torch",

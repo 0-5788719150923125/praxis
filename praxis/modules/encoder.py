@@ -80,21 +80,21 @@ class PraxisByteLatentEncoder(nn.Module):
         )
 
     def encode(self, input_ids):
-        encoder_tokens, _, decoder_tokens = get_blt_input(
-            tokens=input_ids,
-            enforce_patch_size_multiple=False,
-            nb_boe=0,
-            patch_size=self.encoder.patch_size,
-            boe_id=self.encoder.boe_id,
-        )
+        # encoder_tokens, _, decoder_tokens = get_blt_input(
+        #     tokens=input_ids,
+        #     enforce_patch_size_multiple=False,
+        #     nb_boe=0,
+        #     patch_size=self.encoder.patch_size,
+        #     boe_id=self.encoder.boe_id,
+        # )
 
         # Patching
         patch_lengths, tok_scores = self.patcher.patch(
-            encoder_tokens,
+            input_ids,
             include_next_token=True,
             threshold=self.patcher.threshold,
         )
-        patch_ids = patch_ids_from_lengths(patch_lengths, encoder_tokens.shape[-1])
+        patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -102,7 +102,7 @@ class PraxisByteLatentEncoder(nn.Module):
             cross_attn_mask_enc = cross_attn_mask(
                 patch_ids,
                 patch_lengths,
-                encoder_tokens.shape[-1],  # N
+                input_ids.shape[-1],  # N
                 patches_as_queries=True,
                 cross_attn_k=self.args.cross_attn_k,
                 window=self.args.cross_attn_window_encoder,
@@ -111,7 +111,7 @@ class PraxisByteLatentEncoder(nn.Module):
 
         # Compute embeddings
         embeds = compute_hash_embeddings(
-            local_encoder_tokens=encoder_tokens,
+            local_encoder_tokens=input_ids,
             local_encoder=self.encoder,
             encoder_hash_tok_embedding=self.embeds,
             encoder_hash_byte_group_nb_functions=self.args.encoder_hash_byte_group_nb_functions,
@@ -121,7 +121,7 @@ class PraxisByteLatentEncoder(nn.Module):
 
         # Local encoder with cross attention
         (h_encoder, h_cross), _ = self.encoder(
-            tokens=encoder_tokens,
+            tokens=input_ids,
             embeds=embeds,
             patch_embeds=None,
             cross_mask=cross_attn_mask_enc,
@@ -130,7 +130,9 @@ class PraxisByteLatentEncoder(nn.Module):
         )
 
         # Downsampling
-        if not self.args.cross_attn_encoder:
+        if self.args.cross_attn_encoder:
+            h = h_cross.view(h_encoder.shape[0], -1, h_encoder.shape[-1])
+        else:
             h = downsample(
                 h_encoder,
                 patch_lengths.shape[1],
@@ -139,31 +141,30 @@ class PraxisByteLatentEncoder(nn.Module):
                 downsampling_by_pooling=self.args.downsampling_by_pooling,
                 patch_size=self.args.patch_size,
             )
-        else:
-            h = h_cross.view(h_encoder.shape[0], -1, h_encoder.shape[-1])
 
-        return h, h_encoder, decoder_tokens, patch_lengths
+        return h, h_encoder, patch_lengths
 
-    def decode(self, encoder_tokens, h_encoder, decoder_tokens, patch_lengths):
-        nb_boe = 0 if self.args.patching_mode != "" else self.args.patch_size - 1
-        N = decoder_tokens.shape[-1]
+    def decode(self, h, h_encoder, input_ids, patch_lengths):
+        nb_boe = 0
+        # nb_boe = 0 if self.args.patching_mode != "" else self.args.patch_size - 1
+        # N = input_ids.shape[-1]
 
-        dec_embeds = h_encoder[:, nb_boe : nb_boe + N, :]
+        # dec_embeds = h_encoder[:, nb_boe : nb_boe + N, :]
         decoder_patch_ids = decoder_patch_ids_from_lengths(
-            patch_lengths, nb_boe, decoder_tokens.shape[-1]
+            patch_lengths, nb_boe, input_ids.shape[-1]
         )
 
         # Upsampling
         if self.args.cross_attn_decoder:
             h = (
-                encoder_tokens
+                h
                 if self.args.cross_attn_encoder
-                else encoder_tokens.repeat_interleave(self.args.cross_attn_k, dim=1)
+                else h.repeat_interleave(self.args.cross_attn_k, dim=1)
             )
             cross_mask = cross_attn_mask(
                 decoder_patch_ids,
                 patch_lengths,
-                decoder_tokens.shape[-1],
+                input_ids.shape[-1],
                 patches_as_queries=False,
                 cross_attn_k=self.args.cross_attn_k,
                 window=self.args.cross_attn_window_decoder,
@@ -171,21 +172,19 @@ class PraxisByteLatentEncoder(nn.Module):
             )
         else:
             h = torch.gather(
-                encoder_tokens,
+                h,
                 1,
-                decoder_patch_ids.unsqueeze(-1).expand(
-                    -1, -1, encoder_tokens.shape[-1]
-                ),
+                decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1]),
             )
             cross_mask = None
             assert (
-                h.shape[1] == decoder_tokens.shape[1]
+                h.shape[1] == input_ids.shape[1]
             ), "Sequence length mismatch after gathering"
 
         output, _ = self.decoder(
-            tokens=decoder_tokens,
+            tokens=input_ids,
             patch_embeds=h,
-            embeds=dec_embeds,
+            embeds=h_encoder,
             cross_mask=cross_mask,
         )
 
@@ -219,17 +218,18 @@ def create_args(config):
         # max_length=hidden_size,
         # pad_to_max_length=True,
         # encoder_lm_loss=False,
-        patching_threshold=3.1439168453216553,  # not used with "space" patching
+        patching_threshold=3.1439168453216553,  # not used with "space" patch_mode
         # patching_threshold=1.335442066192627, # use this for "entropy" patch_mode
-        patch_size=6,  # not used with "space" patching
+        patch_size=6,  # use this for "space" patch_mode
         # patch_size=4.5, # use this for "entropy" patch_mode
         # tokenization_mode="bytes",
         patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
         # patching_mode="bpe",
         # patching_mode="entropy",
-        encoder_hash_byte_group_nb_functions=3,
+        encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[4],
-        encoder_hash_byte_group_vocab=config.vocab_size,
+        # encoder_hash_byte_group_vocab=config.vocab_size,
+        encoder_hash_byte_group_vocab=config.vocab_size * 8,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
@@ -301,9 +301,9 @@ if __name__ == "__main__":
 
             # Step 2: Decode
             decoder_output = model.decode(
-                encoder_tokens=h,
+                h=h,
                 h_encoder=h_encoder,
-                decoder_tokens=decoder_tokens,
+                input_ids=decoder_tokens,
                 patch_lengths=patch_lengths,
             )
             print(f"Decoder output shape: {decoder_output.shape}")
