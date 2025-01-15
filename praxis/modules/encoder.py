@@ -6,46 +6,6 @@ from torch import nn
 
 from praxis.modules.recurrent import minGRU
 
-# class RecurrentBlock(nn.GRU):
-#     """
-#     We replace transformer blocks in the encoder/decoder with something
-#     that is faster to compute.
-#     """
-
-#     def __init__(self, args):
-#         super().__init__(
-#             input_size=args.dim,
-#             hidden_size=args.dim,
-#             batch_first=True,
-#             dropout=args.dropout,
-#         )
-#         self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
-#         # self.reset_parameters()
-
-#     def forward(self, x: torch.Tensor, *args, **kwargs):
-#         out, _ = super().forward(self.norm(x))
-#         return out
-
-# def reset_parameters(self, init_std=None, factor=1.0):
-#     init_std = init_std or (self.hidden_size ** (-0.5))
-#     nn.init.trunc_normal_(
-#         self.weight_ih_l0,
-#         mean=0.0,
-#         std=init_std,
-#         a=-3 * init_std,
-#         b=3 * init_std,
-#     )
-#     nn.init.trunc_normal_(
-#         self.weight_hh_l0,
-#         mean=0.0,
-#         std=init_std / factor,
-#         a=-3 * init_std,
-#         b=3 * init_std,
-#     )
-#     if self.bias:
-#         nn.init.zeros_(self.bias_ih_l0)
-#         nn.init.zeros_(self.bias_hh_l0)
-
 
 class RecurrentBlock(minGRU):
     """
@@ -259,17 +219,17 @@ def create_args(config):
         # max_length=hidden_size,
         # pad_to_max_length=True,
         # encoder_lm_loss=False,
-        patching_threshold=3.1439168453216553,  # use this for "space" patch_mode
+        patching_threshold=3.1439168453216553,  # not used with "space" patching
         # patching_threshold=1.335442066192627, # use this for "entropy" patch_mode
-        patch_size=6,  # use this for "space" patch_mode
+        patch_size=6,  # not used with "space" patching
         # patch_size=4.5, # use this for "entropy" patch_mode
         # tokenization_mode="bytes",
         patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
         # patching_mode="bpe",
         # patching_mode="entropy",
+        encoder_hash_byte_group_nb_functions=3,
         encoder_hash_byte_group_size=[4],
         encoder_hash_byte_group_vocab=config.vocab_size,
-        encoder_hash_byte_group_nb_functions=3,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,

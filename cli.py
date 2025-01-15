@@ -71,6 +71,18 @@ parser.add_argument(
     help="Number of experts to host (defaults to depth)",
 )
 parser.add_argument(
+    "--hidden_size",
+    type=int,
+    default=360,
+    help="The size of the model's hidden dimensions",
+)
+parser.add_argument(
+    "--embed_size",
+    type=int,
+    default=720,
+    help="The size of the model's embedding dimension (if applicable)",
+)
+parser.add_argument(
     "--num_heads",
     type=lambda x: (
         x
