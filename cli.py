@@ -2,6 +2,7 @@ import argparse
 import math
 import random
 
+from optimizers import OPTIMIZER_PROFILES
 from praxis import (
     ACTIVATION_REGISTRY,
     ATTENTION_REGISTRY,
@@ -154,7 +155,7 @@ parser.add_argument(
 parser.add_argument(
     "--optimizer",
     type=str,
-    choices=["adamg", "adamw", "ademamix", "prodigy", "soap"],
+    choices=OPTIMIZER_PROFILES.keys(),
     default="adamw",
     help="The optimizer profile to use",
 )

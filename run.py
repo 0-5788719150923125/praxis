@@ -101,8 +101,16 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
-from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from pytorch_optimizer import create_optimizer
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    get_cosine_with_hard_restarts_schedule_with_warmup,
+)
+
+from optimizers import get_optimizer_profile
 
 warnings.filterwarnings("ignore", ".*Checkpoint directory.*exists and is not empty*")
 warnings.filterwarnings(
@@ -252,90 +260,9 @@ train_params = dict(
 )
 
 # Optimizer configuration
-# https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
-optimizer_defaults = dict(
-    wd_ban_list=[
-        "bias",
-        "edge_embeddings",
-        "spatial_embeddings",
-        "Embedding",
-        "BatchNorm",
-        "BatchNorm1d",
-        "BatchNorm2d",
-        "BatchNorm3d",
-        "GroupNorm",
-        "LayerNorm",
-        "RMSNorm",
-        "InstanceNorm",
-        "InstanceNorm1d",
-        "InstanceNorm3d",
-        "InstanceNorm2d",
-        "PReLU",
-        "SinLU",
-        "NMDA",
-    ],
-)
-min_lr = 0
-weight_decay = 0.1
-if optimizer.lower() == "adamg":
-    optimizer_profile = dict(
-        optimizer_name="AdamG",
-        lr=1.0,
-        min_lr=1e-2,
-        weight_decay=weight_decay,
-        weight_decouple=True,
-        p=0.5,
-        q=0.24,
-        betas=(0.95, 0.999, 0.95),
-    )
-elif optimizer.lower() == "ademamix":
-    optimizer_profile = dict(
-        optimizer_name="AdEMAMix",
-        lr=0.001,
-        min_lr=0.00001,
-        weight_decay=weight_decay,
-        weight_decouple=True,
-        betas=(0.9, 0.95, 0.9999),
-        alpha=5.0,
-        cautious=False,
-    )
-elif optimizer.lower() == "prodigy":
-    optimizer_profile = dict(
-        optimizer_name="Prodigy",
-        lr=1.0,
-        min_lr=1e-2,
-        weight_decay=weight_decay,
-        weight_decouple=True,
-        bias_correction=True,
-        safeguard_warmup=True,
-    )
-elif optimizer.lower() == "soap":
-    optimizer_profile = dict(
-        optimizer_name="SOAP",
-        lr=2e-4,
-        min_lr=2e-5,
-        weight_decay=weight_decay,
-        precondition_frequency=10,
-        max_precondition_dim=1024,
-        normalize_gradient=False,
-        correct_bias=True,
-        precondition_1d=False,
-        merge_dims=False,
-    )
-else:
-    optimizer_profile = dict(
-        optimizer_name="AdamW",
-        lr=1e-3,
-        weight_decay=weight_decay,
-        betas=(0.9, 0.95),
-    )
-    min_lr = 1e-5
-
+hparams["optimizer"] = get_optimizer_profile(optimizer)
 if shuffle:
-    optimizer_profile["weight_decay"] = 0
-
-# Merge the optimizer profile with the default profile
-hparams["optimizer"] = {**optimizer_defaults, **optimizer_profile}
+    hparams["optimizer"]["weight_decay"] = 0
 
 # Configure the learning rate scheduler
 if no_schedule:
@@ -344,12 +271,10 @@ if no_schedule:
     )
 else:
     scheduler_func = partial(
-        CosineAnnealingWarmupRestarts,
-        first_cycle_steps=4096 * 16,
-        max_lr=hparams["optimizer"]["lr"],
-        min_lr=hparams["optimizer"].get("min_lr", min_lr),
-        gamma=1.0,
-        warmup_steps=hparams["optimizer"].get("warmup_steps", 512),
+        get_cosine_with_hard_restarts_schedule_with_warmup,
+        num_training_steps=4096 * 16,
+        num_warmup_steps=4096,
+        num_cycles=-1,
     )
 
 
@@ -574,6 +499,9 @@ class TerminalInterface(Callback):
             self.dashboard.update_tokens(tokens.item())
             self.dashboard.update_loss(self.ema_loss)
             self.dashboard.update_expert_count(local_experts, remote_experts)
+            val_loss = trainer.callback_metrics.get("val_loss", None)
+            if val_loss is not None:
+                self.dashboard.update_val(val_loss)
             if "fitness" in data:
                 self.dashboard.update_fitness(data["fitness"])
             if "memory_churn" in data:
@@ -582,7 +510,7 @@ class TerminalInterface(Callback):
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
             self.dashboard.fake_log(chance=0.000002)
             if random.random() < 0.25:
-                self.dashboard.update_validator(
+                self.dashboard.update_sign(
                     self._sign_wave(
                         amplitude=1.0,
                         frequency=0.00333,

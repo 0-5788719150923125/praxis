@@ -62,7 +62,8 @@ class TerminalDashboard:
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         self.max_data_points = max_data_points
         self.train_losses = deque(maxlen=max_data_points)
-        self.val_losses = deque(maxlen=max_data_points)
+        self.sign_losses = deque(maxlen=max_data_points)
+        self.val_loss = None
         self.status_text = "_initializing"
         self.log_buffer = deque(maxlen=max_log_lines)
         self.batch = 0
@@ -180,6 +181,10 @@ class TerminalDashboard:
         with self.lock:
             self.train_losses.append(train_loss) if train_loss is not None else None
 
+    def update_val(self, val_loss):
+        with self.lock:
+            self.val_loss = val_loss
+
     def update_accuracy(self, acc0, acc1):
         with self.lock:
             self.accuracy = [acc0, acc1]
@@ -192,9 +197,9 @@ class TerminalDashboard:
         with self.lock:
             self.memory_churn = churn
 
-    def update_validator(self, val_loss):
+    def update_sign(self, sign_loss):
         with self.lock:
-            self.val_losses.append(val_loss) if val_loss is not None else None
+            self.sign_losses.append(sign_loss) if sign_loss is not None else None
 
     def update_step(self, step):
         with self.lock:
@@ -391,7 +396,9 @@ class TerminalDashboard:
             train_chart = self._draw_chart(
                 self.train_losses, right_width, (height // 2) - 1
             )
-            val_chart = self._draw_chart(self.val_losses, half_width, (height // 2) - 1)
+            val_chart = self._draw_chart(
+                self.sign_losses, half_width, (height // 2) - 1
+            )
 
         # Wrap the entire status text
         status_lines = self._wrap_text(self.status_text, half_width)
@@ -417,6 +424,8 @@ class TerminalDashboard:
             if i == 0:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
                 text = f" ERROR: {train_loss:.4f}"
+                if self.val_loss is not None:
+                    text += f" || VALIDATION: {self.val_loss:.4f}%"
                 if self.fitness is not None:
                     text += f" || FITNESS: {self.fitness:.4f}%"
                 if self.memory_churn is not None:
@@ -440,7 +449,7 @@ class TerminalDashboard:
                 left_content = "═" * half_width
                 right_content = "═" * right_width
             elif i == (height // 2):
-                val_loss = self.val_losses[-1] if self.val_losses else 0
+                val_loss = self.sign_losses[-1] if self.sign_losses else 0
                 left_content = f" SIGN: {val_loss:.4f}"
                 left_content = left_content.ljust(half_width)[:half_width]
                 right_content = " LOG".ljust(right_width)[:right_width]
@@ -704,7 +713,7 @@ if __name__ == "__main__":
 
             # Update other dashboard elements
             dashboard.update_loss(train_loss)
-            dashboard.update_validator(val_loss)
+            dashboard.update_sign(val_loss)
             dashboard.update_batch(i)
             dashboard.update_step(i)
             dashboard.update_rate(0.5)
