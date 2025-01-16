@@ -425,7 +425,7 @@ class TerminalDashboard:
                 train_loss = self.train_losses[-1] if self.train_losses else 0
                 text = f" ERROR: {train_loss:.4f}"
                 if self.val_loss is not None:
-                    text += f" || VALIDATION: {self.val_loss:.4f}%"
+                    text += f" || VALIDATION: {self.val_loss:.4f}"
                 if self.fitness is not None:
                     text += f" || FITNESS: {self.fitness:.4f}%"
                 if self.memory_churn is not None:
