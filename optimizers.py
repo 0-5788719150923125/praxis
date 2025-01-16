@@ -5,7 +5,7 @@ def get_optimizer_profile(name="adamw"):
 # Most optimizer settings can be found here:
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 OPTIMIZER_PROFILES = {
-    "adamg": dict(
+    "AdamG": dict(
         optimizer_name="AdamG",
         lr=1.0,
         weight_decay=0.1,
@@ -14,13 +14,13 @@ OPTIMIZER_PROFILES = {
         q=0.24,
         betas=(0.95, 0.999, 0.95),
     ),
-    "adamw": dict(
+    "AdamW": dict(
         optimizer_name="AdamW",
         lr=1e-3,
         weight_decay=0.1,
         betas=(0.9, 0.95),
     ),
-    "ademamix": dict(
+    "AdEMAMix": dict(
         optimizer_name="AdEMAMix",
         lr=0.001,
         weight_decay=0.1,
@@ -29,7 +29,7 @@ OPTIMIZER_PROFILES = {
         alpha=5.0,
         cautious=False,
     ),
-    "lion": dict(
+    "Lion": dict(
         optimizer_name="Lion",
         lr=0.000333,
         weight_decay=0.1,
@@ -39,7 +39,7 @@ OPTIMIZER_PROFILES = {
         adanorm=True,
         cautious=True,
     ),
-    "prodigy": dict(
+    "Prodigy": dict(
         optimizer_name="Prodigy",
         lr=1.0,
         weight_decay=0.1,
@@ -47,7 +47,7 @@ OPTIMIZER_PROFILES = {
         bias_correction=True,
         safeguard_warmup=True,
     ),
-    "soap": dict(
+    "SOAP": dict(
         optimizer_name="SOAP",
         lr=2e-4,
         weight_decay=0.1,
