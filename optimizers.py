@@ -1,5 +1,6 @@
-def get_optimizer_profile(name="adamw"):
-    return {**OPTIMIZER_PROFILES.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
+def get_optimizer_profile(name="AdamW"):
+    lowercase_profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
+    return {**lowercase_profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
 
 
 # Most optimizer settings can be found here:
