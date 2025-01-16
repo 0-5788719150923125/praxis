@@ -39,7 +39,8 @@ class PraxisAttention(nn.Module):
         self.num_query_heads = self.num_heads * self.num_queries
 
         self.factor = 2 if self.differential else 1
-        self.head_dim = hidden_size // self.num_heads
+        init_head_dim = hidden_size // self.num_heads
+        self.head_dim = init_head_dim + (init_head_dim % 2)
 
         assert (
             sum([config.mega, config.gated]) <= 1
@@ -211,7 +212,8 @@ class ScaledDotProduct(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
-        self.head_dim = self.hidden_size // self.num_heads
+        init_head_dim = self.hidden_size // self.num_heads
+        self.head_dim = init_head_dim + (init_head_dim % 2)
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
@@ -322,7 +324,8 @@ class Differential(ScaledDotProduct):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
-        self.head_dim = self.hidden_size // self.num_heads // 2
+        init_head_dim = self.hidden_size // self.num_heads // 2
+        self.head_dim = init_head_dim + (init_head_dim % 2)
         self.lambda_init = 0.8  # A good default, per the paper
         self.lambda_q1 = nn.Parameter(
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
@@ -894,7 +897,8 @@ class MemoryEfficientAttention(nn.Module):
 
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
-        self.head_dim = hidden_dim // num_heads
+        init_head_dim = hidden_dim // num_heads
+        self.head_dim = init_head_dim + (init_head_dim % 2)
 
         # Linear projections
         self.q_proj = nn.Linear(hidden_dim, hidden_dim)

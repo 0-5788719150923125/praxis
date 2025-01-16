@@ -17,7 +17,8 @@ class NoPE(nn.Module):
         super().__init__()
         self.num_query_heads = config.num_heads * config.num_queries
         self.multiplier = 2 if config.differential else 1
-        self.head_dim = config.hidden_size // config.num_heads // self.multiplier
+        init_head_dim = config.hidden_size // config.num_heads // self.multiplier
+        self.head_dim = init_head_dim + (init_head_dim % 2)
         # Initialize scaling factors - one per head with linspace
         self.scaled = scaled
         if self.scaled:
@@ -85,16 +86,18 @@ class RoPE(NoPE):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
+        assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 
         theta = 10000
-        # Generate frequencies for pairs
-        num_pairs = self.head_dim // 2
-        inv_freq = 1.0 / (theta ** (torch.arange(0, num_pairs).float() / num_pairs))
+        inv_freq = 1.0 / (
+            theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
+        )
         self.register_buffer("inv_freq", inv_freq)
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
 
+    # before_scores and after_scores remain the same
     def before_scores(self, q, k, v, offset: int = 0):
         seq_len = q.size(2)
         device = q.device
@@ -105,8 +108,22 @@ class RoPE(NoPE):
         cos = self._cached_cos[:, :, :seq_len, :]
         sin = self._cached_sin[:, :, :seq_len, :]
 
-        q_rope = self._apply_rotary_pos_emb(q, cos, sin)
-        k_rope = self._apply_rotary_pos_emb(k, cos, sin)
+        q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
+        k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
+
+        q_rope_chunks = [
+            self._apply_rotary_pos_emb(q_chunk, cos, sin) for q_chunk in q_chunks
+        ]
+        k_rope_chunks = [
+            self._apply_rotary_pos_emb(k_chunk, cos, sin) for k_chunk in k_chunks
+        ]
+
+        q_rope = (
+            torch.cat(q_rope_chunks, dim=-1) if len(q_chunks) > 1 else q_rope_chunks[0]
+        )
+        k_rope = (
+            torch.cat(k_rope_chunks, dim=-1) if len(k_chunks) > 1 else k_rope_chunks[0]
+        )
 
         return q_rope, k_rope, v
 
@@ -123,59 +140,35 @@ class RoPE(NoPE):
             or self._cached_cos.dtype != dtype
         ):
             positions = torch.arange(seq_len, device=device) + offset
-            num_pairs = self.head_dim // 2
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
-            # Compute basic sin and cos for pairs
-            cos_pairs = torch.cos(pos_emb)  # [seq_len, num_pairs]
-            sin_pairs = torch.sin(pos_emb)  # [seq_len, num_pairs]
+            # Compute basic sin and cos
+            cos = torch.cos(pos_emb)
+            sin = torch.sin(pos_emb)
 
-            # Interleave pairs properly
-            cos = torch.stack([cos_pairs, cos_pairs], dim=2)  # [seq_len, num_pairs, 2]
-            sin = torch.stack([-sin_pairs, sin_pairs], dim=2)  # [seq_len, num_pairs, 2]
-
-            # Reshape to match the expected format
-            cos = cos.reshape(
-                1, 1, seq_len, 2 * num_pairs
-            )  # [1, 1, seq_len, head_dim] or [1, 1, seq_len, head_dim-1]
-            sin = sin.reshape(1, 1, seq_len, 2 * num_pairs)
-
-            # For odd dimensions, add an extra column of 1s for cos and 0s for sin
-            if self.head_dim % 2 == 1:
-                cos = torch.cat(
-                    [cos, torch.ones(1, 1, seq_len, 1, device=device)], dim=-1
-                )
-                sin = torch.cat(
-                    [sin, torch.zeros(1, 1, seq_len, 1, device=device)], dim=-1
-                )
+            # Stack properly to match Meta's implementation
+            # For each position and frequency, create alternating pairs
+            cos = torch.stack([cos, cos], dim=-1).view(1, 1, seq_len, -1)
+            sin = torch.stack([-sin, sin], dim=-1).view(
+                1, 1, seq_len, -1
+            )  # Note the negative sign
 
             self._cached_cos = cos.to(dtype)
             self._cached_sin = sin.to(dtype)
             self._cached_seq_length = seq_len
 
     def _apply_rotary_pos_emb(self, x, cos, sin):
-        """Apply rotary embeddings handling both odd and even dimensions."""
-        # Handle pairs first
-        num_pairs = self.head_dim // 2
-        pairs = x[..., : 2 * num_pairs]
-
-        # Split and rotate pairs
-        x1, x2 = pairs.chunk(2, dim=-1)
-        rotated = torch.cat(
+        # Split input into pairs
+        x1, x2 = x.chunk(2, dim=-1)
+        # Apply rotation using the correct signs
+        # [cos·x1 - sin·x2, sin·x1 + cos·x2]
+        return torch.cat(
             [
-                x1 * cos[..., : num_pairs * 2 : 2] - x2 * sin[..., : num_pairs * 2 : 2],
-                x2 * cos[..., 1 : num_pairs * 2 : 2]
-                + x1 * sin[..., 1 : num_pairs * 2 : 2],
+                x1 * cos[:, :, :, 0::2] - x2 * sin[:, :, :, 0::2],
+                x1 * sin[:, :, :, 1::2] + x2 * cos[:, :, :, 1::2],
             ],
             dim=-1,
         )
-
-        # For odd dimensions, handle the last element
-        if self.head_dim % 2 == 1:
-            last = x[..., -1:]
-            rotated = torch.cat([rotated, last], dim=-1)
-
-        return rotated
 
 
 class YaRN(RoPE):
