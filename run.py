@@ -119,7 +119,7 @@ warnings.filterwarnings(
 
 from api import APIServer
 from builders import get_datamodules
-from cli import get_cli_args
+from cli import get_cli_args, log_command
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
@@ -134,6 +134,7 @@ AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 # Transform CLI args into global variables
 globals().update(vars(get_cli_args()))
+log_command()
 
 
 # Ensure errors are written to a log file
@@ -501,7 +502,7 @@ class TerminalInterface(Callback):
             self.dashboard.update_expert_count(local_experts, remote_experts)
             val_loss = trainer.callback_metrics.get("val_loss", None)
             if val_loss is not None:
-                self.dashboard.update_val(val_loss)
+                self.dashboard.update_val(val_loss.item())
             if "fitness" in data:
                 self.dashboard.update_fitness(data["fitness"])
             if "memory_churn" in data:

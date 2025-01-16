@@ -1,6 +1,9 @@
 import argparse
 import math
+import os
 import random
+import sys
+from datetime import datetime
 
 from optimizers import OPTIMIZER_PROFILES
 from praxis import (
@@ -351,3 +354,31 @@ args = parser.parse_args()
 
 def get_cli_args():
     return args
+
+
+def log_command():
+    """
+    Logs the current command line execution to history.log in the root directory.
+    New commands are added to the top of the file.
+    Returns the logged command string.
+    """
+    # Construct the command and log entry
+    script_name = os.path.basename(sys.argv[0])
+    full_command = f"python {script_name} {' '.join(sys.argv[1:])}"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_entry = f"{timestamp} | {full_command}\n"
+
+    # Get the path for history.log in root directory
+    log_file = "history.log"
+
+    # Read existing content (if any)
+    existing_content = ""
+    if os.path.exists(log_file):
+        with open(log_file, "r") as f:
+            existing_content = f.read()
+
+    # Write new entry followed by existing content
+    with open(log_file, "w") as f:
+        f.write(new_entry + existing_content)
+
+    return full_command
