@@ -156,7 +156,7 @@ seed_everything(seed, workers=True)
 # An important warning
 if gun and seed and not dev:
     print(
-        "WARNING: GUN data is never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
+        "WARNING: GUN chats are never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
     )
     time.sleep(5)
 
@@ -164,6 +164,8 @@ if gun and seed and not dev:
 vocab_size = 8192
 block_size = 2048 if byte_latent else 512
 use_dashboard = False if no_dashboard else True
+
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
 # Tokenizer initialization
 if byte_latent:
@@ -238,7 +240,7 @@ hparams = dict(
 # Training config
 train_params = dict(
     accelerator=f"cpu" if device == "cpu" else "gpu",
-    strategy="auto",
+    strategy="ddp_find_unused_parameters_true" if device == "cuda" else "auto",
     devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
     max_steps=-1,
     max_epochs=-1,
@@ -561,9 +563,9 @@ class TerminalInterface(Callback):
         ignored_n_grams = [
             tokenizer.bos_token,
             tokenizer.eos_token,
+            f"{tokenizer.bos_token}system",
             f"{tokenizer.bos_token}user",
             f"{tokenizer.bos_token}assistant",
-            tokenizer.eos_token,
         ]
         if (
             self._detect_repetition(n_gram_size, frequency)
@@ -808,12 +810,8 @@ class Generator:
                     generated_tokens = input_ids
                     combined["max_new_tokens"] += 1
             else:
-                # print(
-                #     f"Warning: Request {request.id} reached maximum attempts without generating a valid token"
-                # )
                 # Return the original text
                 return_text = request.prompt
-                # return_text = decoded_new
 
             return return_text
 
@@ -913,7 +911,7 @@ checkpoint_callback = TimeBasedCheckpoint(
     monitor="batch",
     mode="max",
     dirpath=os.path.join(cache_dir, "praxis"),
-    filename="model-{batch:.10f}",
+    filename="model-{batch}",
     enable_version_counter=False,
     save_interval=3600,
 )
@@ -979,10 +977,11 @@ if wandb:
 
 generator = Generator(model, tokenizer)
 
-api_server = APIServer(
-    generator, host_name, port, tokenizer.bos_token, tokenizer.eos_token
-)
-api_server.start()
+if local_rank == 0:
+    api_server = APIServer(
+        generator, host_name, port, tokenizer.bos_token, tokenizer.eos_token
+    )
+    api_server.start()
 
 
 # Load datasets
@@ -1102,17 +1101,17 @@ if not use_dashboard:
 
     progress_bar = PrintingProgressBar(process_position=0, leave=True)
 
-current_rank = int(os.environ.get("LOCAL_RANK", 0))
-if current_rank == 0:
+if local_rank == 0:
     if progress_bar is not None:
         train_params["callbacks"].append(progress_bar)
     train_params["callbacks"].append(checkpoint_callback)
     train_params["callbacks"].append(
-        AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
-    )
-    train_params["callbacks"].append(
         TerminalInterface(use_dashboard, api_server.get_api_addr(), progress_bar)
     )
+
+train_params["callbacks"].append(
+    AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
+)
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)
