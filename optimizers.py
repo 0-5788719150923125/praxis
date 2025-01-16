@@ -8,7 +8,6 @@ OPTIMIZER_PROFILES = {
     "adamg": dict(
         optimizer_name="AdamG",
         lr=1.0,
-        min_lr=1e-2,
         weight_decay=0.1,
         weight_decouple=True,
         p=0.5,
@@ -24,7 +23,6 @@ OPTIMIZER_PROFILES = {
     "ademamix": dict(
         optimizer_name="AdEMAMix",
         lr=0.001,
-        min_lr=0.00001,
         weight_decay=0.1,
         weight_decouple=True,
         betas=(0.9, 0.95, 0.9999),
@@ -33,8 +31,7 @@ OPTIMIZER_PROFILES = {
     ),
     "lion": dict(
         optimizer_name="Lion",
-        lr=0.0003,
-        min_lr=0.000003,
+        lr=0.000333,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         r=0.95,
@@ -45,7 +42,6 @@ OPTIMIZER_PROFILES = {
     "prodigy": dict(
         optimizer_name="Prodigy",
         lr=1.0,
-        min_lr=1e-2,
         weight_decay=0.1,
         weight_decouple=True,
         bias_correction=True,
@@ -54,7 +50,6 @@ OPTIMIZER_PROFILES = {
     "soap": dict(
         optimizer_name="SOAP",
         lr=2e-4,
-        min_lr=2e-5,
         weight_decay=0.1,
         precondition_frequency=10,
         max_precondition_dim=1024,
