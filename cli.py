@@ -159,7 +159,7 @@ parser.add_argument(
     "--optimizer",
     type=str,
     choices=OPTIMIZER_PROFILES.keys(),
-    default="adamw",
+    default="AdamW",
     help="The optimizer profile to use",
 )
 parser.add_argument(

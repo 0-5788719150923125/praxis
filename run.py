@@ -101,14 +101,8 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
-from pytorch_optimizer import create_optimizer
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    get_cosine_with_hard_restarts_schedule_with_warmup,
-)
+from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from optimizers import get_optimizer_profile
 
@@ -274,10 +268,12 @@ if no_schedule:
     )
 else:
     scheduler_func = partial(
-        get_cosine_with_hard_restarts_schedule_with_warmup,
-        num_training_steps=4096 * 16,
-        num_warmup_steps=4096,
-        num_cycles=-1,
+        CosineAnnealingWarmupRestarts,
+        first_cycle_steps=4096 * 16,
+        max_lr=hparams["optimizer"]["lr"],
+        min_lr=hparams["optimizer"]["lr"] * 1e-2,
+        gamma=1.0,
+        warmup_steps=512,
     )
 
 
