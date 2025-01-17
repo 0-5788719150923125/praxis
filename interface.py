@@ -235,11 +235,6 @@ class TerminalDashboard:
             ]
             self.log_buffer.extend(new_lines)
 
-    def fake_log(self, chance=0.001):
-        if random.random() < chance:
-            self.add_log(random.choice(fake_system_messages))
-        return
-
     def _strip_ansi(self, text):
         """Remove ANSI escape sequences from the text."""
         return self.ansi_escape.sub("", text)
@@ -562,40 +557,6 @@ class TerminalDashboard:
                 except Exception as e:
                     self.add_log(f"Dashboard error: {str(e)}")
                     time.sleep(1)  # Add a delay to prevent rapid error logging
-
-
-fake_system_messages = [
-    "Error: Coffee machine exploded. Caffeine levels critical.",
-    "Warning: Quantum fluctuation detected in the lawn mower.",
-    "System updated: Now with more cowbell.",
-    "Warning: Keyboard cat attempting hostile takeover.",
-    "Warning: Memory leak detected. But I forgot to tell the boss.",
-    "Critical error: Pizza delivery address not found.",
-    "Warning: CPU temperature is rising. Applying ice cream.",
-    "Warning: Network congestion.",
-    "Info: Antivirus updated.",
-    "Fatal error: Division by zero.",
-    "Warning: The system will restart in 1 minute. You can blame Ryan.",
-    "Error: Database corrupted. Recycling it.",
-    "Warning: Solar flare incoming. Brace for impact.",
-    "Info: Bug found in code. Squashing it...",
-    "Warning: Cloud storage full. Please delete the excess cat photos.",
-    "Error: Unexpected input: User said 'please'.",
-    "Info: Update failed successfully.",
-    "Reminder: Take out the trash.",
-    "Reminder: Time to change air filter.",
-    "Reminder: Due for an oil change, soon.",
-    "Info: Laundry cycle complete. Time to fold.",
-    "Reminder: Dentist appointment next week. Confirm?",
-    "Reminder: The smoke detector is beeping.",
-    "Reminder: Lawn needs mowing.",
-    "Info: Calendar sync complete.",
-    "Warning: Time to update password.",
-    "Info: Add bananas to the grocery list.",
-    "Reminder: Get dog food.",
-    "Reminder: Call mom for birthday.",
-    "Info: Adjusted your thermostat for energy savings.",
-]
 
 
 # Test text with various newline patterns

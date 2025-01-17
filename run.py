@@ -507,7 +507,6 @@ class TerminalInterface(Callback):
                 self.dashboard.update_memory(data["memory_churn"])
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
-            self.dashboard.fake_log(chance=0.000002)
             if random.random() < 0.25:
                 self.dashboard.update_sign(
                     self._sign_wave(
