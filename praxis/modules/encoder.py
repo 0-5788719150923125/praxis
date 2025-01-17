@@ -14,7 +14,7 @@ class RecurrentBlock(minGRU):
     """
 
     def __init__(self, args):
-        super().__init__(dim=args.dim)
+        super().__init__(dim=args.dim, proj_out=True)
         self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
