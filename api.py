@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import os
+import socket
 import sys
 import time
 from threading import Event, Thread
@@ -21,7 +22,7 @@ class APIServer:
         self,
         generator,
         host="localhost",
-        port=5000,
+        port=2100,
         bos_token="<bos>",
         eos_token="<eos>",
     ):
@@ -31,10 +32,16 @@ class APIServer:
         self.started = Event()
         self.shutdown_event = Event()
         self.host = host
+        while self._is_port_in_use(port):
+            port += 1
         self.port = port
         self.parent_pid = os.getppid()
         self.bos_token = bos_token
         self.eos_token = eos_token
+
+    def _is_port_in_use(self, port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(("localhost", port)) == 0
 
     def _monitor_parent(self):
         """Monitor thread that checks if parent process is alive"""
