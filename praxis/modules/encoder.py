@@ -61,24 +61,12 @@ class PraxisEncoder(nn.Module):
 
             # Threshold optimization parameters
             self.target_len = 0.125  # 1/8th of original length
-            self.min_threshold = 0.1
-            self.max_threshold = 10.0
-            self.absolute_max_attempts = 50
 
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
                 "optimal_threshold",
                 torch.tensor(self.args.patching_threshold, dtype=torch.float32),
             )
-            self.register_buffer(
-                "ema_threshold",
-                torch.tensor(self.args.patching_threshold, dtype=torch.float32),
-            )
-
-            # Parameters for stability vs exploration
-            self.ema_alpha = 0.001  # Weight for new values (0.9 for history)
-            self.decay_rate = 0.999  # Slight decay each forward pass
-            self.random_scale = 0  # Random perturbations in update step
 
         self.patcher = Patcher(
             PatcherArgs(
@@ -109,43 +97,58 @@ class PraxisEncoder(nn.Module):
             + f"n_decoders={len(self.decoder.layers)})"
         )
 
-    def update_threshold(self, new_threshold):
-        """Update threshold using EMA and small perturbations"""
-        # Apply decay
-        decayed_threshold = new_threshold * self.decay_rate
+    def find_safe_threshold(self, input_ids, entropy_scores, target_ratio=0.125):
+        # Start with current threshold
+        threshold = float(self.optimal_threshold.item())
+        target_len = int(input_ids.shape[1] * target_ratio)
 
-        # Update EMA
-        current_ema = float(self.ema_threshold.item())
-        new_ema = (
-            current_ema * (1 - self.ema_alpha) + decayed_threshold * self.ema_alpha
-        )
+        # First, find any working threshold by doubling until we succeed
+        while True:
+            patch_lengths, _ = self.patcher.patch(
+                input_ids,
+                include_next_token=True,
+                threshold=threshold,
+                entropies=entropy_scores,
+            )
 
-        # Add tiny random perturbation to EMA
-        random_factor = 1.0 + (torch.rand(1).item() - 0.5) * self.random_scale
-        final_threshold = new_ema * random_factor
+            if patch_lengths.shape[1] <= target_len:
+                # Found a working threshold
+                safe_threshold = threshold
+                break
 
-        # Update buffers with bounds checking
-        final_threshold = max(
-            self.min_threshold, min(self.max_threshold, final_threshold)
-        )
-        self.optimal_threshold.fill_(float(final_threshold))
-        self.ema_threshold.fill_(float(new_ema))
+            # If still too long, double the threshold
+            threshold *= 2.0
 
-        return float(final_threshold)
+            # Safety check - if we've increased too much, something is wrong
+            if threshold > 1000.0:  # Arbitrary large number
+                raise ValueError("Could not find a working threshold")
 
-    def adjust_threshold(self, original_len, reduced_len, current_threshold, attempt):
-        """Compute next threshold based on current length"""
-        target_len = int(original_len * self.target_len)
-        if reduced_len <= target_len:
-            if reduced_len < 0.5 * target_len:
-                # Too small, careful decrease
-                return current_threshold * 0.98
-            return current_threshold  # Keep current if in good range
+        # Now we can do binary search to optimize it
+        left = threshold / 4.0  # Go back a bit to find better threshold
+        right = threshold
 
-        # We're above target, increase based on how far we are
-        ratio = reduced_len / target_len
-        adjustment = max(0.001, current_threshold * 0.05 * min(ratio, 2.0))
-        return current_threshold + adjustment
+        for _ in range(10):  # Usually converges in < 10 steps
+            mid = (left + right) / 2
+            patch_lengths, _ = self.patcher.patch(
+                input_ids,
+                include_next_token=True,
+                threshold=mid,
+                entropies=entropy_scores,
+            )
+
+            current_len = patch_lengths.shape[1]
+            if current_len > target_len:
+                # Sequence too long, need higher threshold
+                left = mid
+            else:
+                # Sequence acceptable, but might be able to go lower
+                right = mid
+                safe_threshold = mid  # Keep track of last working threshold
+
+            if abs(right - left) < 1e-4:
+                break
+
+        return safe_threshold
 
     def encode(self, input_ids):
         if self.entropy is None:
@@ -163,90 +166,72 @@ class PraxisEncoder(nn.Module):
                 enable_grad=True,
             )
             if self.training:
-                # Start from current EMA with small perturbation
-                current_threshold = self.update_threshold(
-                    float(self.optimal_threshold.item())
-                )
-                best_threshold = current_threshold
-                best_length = float("inf")
-
-                attempt = 0
-                consecutive_failures = 0
 
                 original_len = input_ids.size(1)
-                target_len = int(original_len * self.target_len)
 
-                while attempt < self.absolute_max_attempts:
-                    attempt += 1
-                    patch_lengths, tok_scores = self.patcher.patch(
+                # First, find a safe threshold that guarantees we're under target length
+                safe_threshold = self.find_safe_threshold(input_ids, entropy_scores)
+
+                # Now sample thresholds that are guaranteed to be safe
+                n_samples = 10
+                # Sample only multipliers >= 1.0 to stay above safe_threshold
+                multipliers = 1.0 + torch.abs(
+                    torch.normal(
+                        mean=0.0,
+                        std=0.1,
+                        size=(n_samples - 1,),
+                        device=input_ids.device,
+                    )
+                )
+
+                # Always include the safe threshold itself
+                multipliers = torch.cat(
+                    [multipliers, torch.tensor([1.0], device=input_ids.device)]
+                )
+
+                candidates = safe_threshold * multipliers
+
+                # Rest proceeds as before, but now we're guaranteed safe
+                best_threshold = safe_threshold
+                best_ratio = float("inf")
+                target_ratio = self.target_len
+
+                # Try each candidate
+                for threshold in candidates:
+                    patch_lengths, _ = self.patcher.patch(
                         input_ids,
                         include_next_token=True,
-                        threshold=current_threshold,
+                        threshold=float(threshold),  # Convert to float for patcher
                         entropies=entropy_scores,
                     )
-                    reduced_len = patch_lengths.shape[1]
 
-                    # Update best if this gives valid length
-                    if reduced_len <= target_len:
-                        if best_length == float("inf") or reduced_len > best_length:
-                            best_length = reduced_len
-                            best_threshold = current_threshold
-                            consecutive_failures = 0
+                    actual_ratio = patch_lengths.shape[1] / input_ids.shape[1]
+                    distance = abs(actual_ratio - target_ratio)
 
-                            # Update with this good threshold
-                            current_threshold = self.update_threshold(best_threshold)
+                    if distance < best_ratio and actual_ratio <= target_ratio:
+                        best_ratio = distance
+                        best_threshold = float(threshold)
 
-                            # If we're close enough to target, we can stop
-                            if reduced_len >= 0.5 * target_len:
-                                break
-
-                    else:
-                        consecutive_failures += 1
-
-                    # Break if we're stuck
-                    if consecutive_failures >= 10:
-                        break
-
-                    # Get next threshold and update
-                    next_threshold = self.adjust_threshold(
-                        original_len, reduced_len, current_threshold, attempt
-                    )
-                    current_threshold = self.update_threshold(next_threshold)
-
-                # Use best threshold found
-                if best_length <= target_len:
-                    current_threshold = self.update_threshold(best_threshold)
-
-                # Final patch with current threshold
-                patch_lengths, tok_scores = self.patcher.patch(
+                # Use best threshold
+                self.optimal_threshold.fill_(best_threshold)
+                patch_lengths, _ = self.patcher.patch(
                     input_ids,
                     include_next_token=True,
-                    threshold=current_threshold,
+                    threshold=best_threshold,
                     entropies=entropy_scores,
                 )
 
-                # Emergency adjustment if still over target
-                while patch_lengths.shape[1] > target_len:
-                    current_threshold *= 1.1
-                    current_threshold = self.update_threshold(current_threshold)
-                    patch_lengths, tok_scores = self.patcher.patch(
-                        input_ids,
-                        include_next_token=True,
-                        threshold=current_threshold,
-                        entropies=entropy_scores,
-                    )
-
                 if self.debug and random.random() < self.log_rate:
                     print(
-                        f"DEBUG: original length={original_len}, reduced length={patch_lengths.shape[1]}, patching threshold={current_threshold:.10f}"
+                        f"DEBUG: original length={original_len}, reduced length={patch_lengths.shape[1]}, patching threshold={best_threshold:.10f}"
                     )
 
             else:
                 # During inference, use stored optimal threshold
-                patch_lengths, tok_scores = self.patcher.patch(
+                patch_lengths, _ = self.patcher.patch(
                     input_ids,
                     include_next_token=True,
-                    threshold=float(self.ema_threshold.item()),
+                    threshold=float(self.optimal_threshold.item()),
                     entropies=entropy_scores,
                 )
 

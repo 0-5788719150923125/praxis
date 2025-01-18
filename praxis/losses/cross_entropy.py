@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class PraxisCrossEntropyLoss(nn.Module):
+class CrossEntropyLoss(nn.Module):
     def __init__(self, penalty_weight=0):
         super().__init__()
         self.penalty_weight = penalty_weight
@@ -43,7 +43,7 @@ def test_dedup_loss():
     )
 
     # Create loss function
-    criterion = PraxisCrossEntropyLoss(penalty_weight=1.0)
+    criterion = CrossEntropyLoss(penalty_weight=1.0)
 
     # Test case 1: Normal case
     loss1 = criterion(logits, labels, input_tokens)
@@ -60,7 +60,7 @@ def test_dedup_loss():
     print(f"Test 2 - With forced duplicate loss: {loss2.item()}")
 
     # Test case 3: No penalty
-    criterion_no_penalty = PraxisCrossEntropyLoss(penalty_weight=0.0)
+    criterion_no_penalty = CrossEntropyLoss(penalty_weight=0.0)
     loss3 = criterion_no_penalty(logits, labels, input_tokens)
     print(f"Test 3 - No penalty loss: {loss3.item()}")
 
