@@ -184,6 +184,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [Survey on Memory-Augmented Neural Networks: Cognitive Insights to AI Applications](https://arxiv.org/abs/2312.06141)
 - Explore "Scheduled Sampling", where the model is trained on it's own predictions.
 - Explore contrastive learning, to mitigate text repetition, by showing the model good and bad examples during training, create embeddings compute similarities, and calculate contrastive loss.
+- [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663) (a possible alternative to Infini-Attention, which is closer to the Human-Like Episodic Memory project)
 
 ## won't do
 

@@ -6,11 +6,13 @@ from typing import Optional, Union
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
 os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 
+from contextlib import nullcontext
+
 import bytelatent
 import torch
 import torch.nn.functional as F
 from bytelatent import base_transformer
-from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
+from bytelatent.data.patcher import Patcher, PatcherArgs, entropy
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
@@ -45,7 +47,7 @@ class PraxisEncoder(nn.Module):
         self.debug = config.debug
         self.log_rate = 0.005
         self.device_map = config.device_map
-        self.args = create_args(config)
+        self.args = create_base_args(config)
 
         realtime_patching = False
         self.entropy = None
@@ -57,14 +59,7 @@ class PraxisEncoder(nn.Module):
                 vocab_size=260, channels=config.hidden_size, n_layers=1, kernel_size=3
             )
             realtime_patching = True
-            # self.entropy = LMTransformer(
-            #     LMTransformerArgs(
-            #         dim=config.hidden_size // 2,
-            #         n_heads=1,
-            #         n_layers=1,
-            #         vocab_size=1024,
-            #     )
-            # )
+
             # Threshold optimization parameters
             self.target_len = 256
             self.min_threshold = 0.1
@@ -84,7 +79,7 @@ class PraxisEncoder(nn.Module):
             # Parameters for stability vs exploration
             self.ema_alpha = 0.001  # Weight for new values (0.9 for history)
             self.decay_rate = 0.999  # Slight decay each forward pass
-            self.random_scale = 0  # Reduced scale of random perturbations
+            self.random_scale = 0  # Random perturbations in update step
 
         self.patcher = Patcher(
             PatcherArgs(
@@ -165,7 +160,7 @@ class PraxisEncoder(nn.Module):
             )
         else:
             # Entropy patching mode
-            scores = calculate_entropies(
+            entropy_scores, entropy_preds = calculate_entropies(
                 tokens=input_ids,
                 entropy_model=self.entropy,
                 patching_batch_size=input_ids.size(0),
@@ -189,13 +184,9 @@ class PraxisEncoder(nn.Module):
                         input_ids,
                         include_next_token=True,
                         threshold=current_threshold,
-                        entropies=scores,
+                        entropies=entropy_scores,
                     )
                     reduced_len = patch_lengths.shape[1]
-
-                    # print(
-                    #     f"Attempt {attempt}: length={reduced_len}, target={self.target_len}, threshold={current_threshold:.10f}"
-                    # )
 
                     # Update best if this gives valid length
                     if reduced_len <= self.target_len:
@@ -233,7 +224,7 @@ class PraxisEncoder(nn.Module):
                     input_ids,
                     include_next_token=True,
                     threshold=current_threshold,
-                    entropies=scores,
+                    entropies=entropy_scores,
                 )
 
                 # Emergency adjustment if still over target
@@ -244,7 +235,7 @@ class PraxisEncoder(nn.Module):
                         input_ids,
                         include_next_token=True,
                         threshold=current_threshold,
-                        entropies=scores,
+                        entropies=entropy_scores,
                     )
 
                 if self.debug and random.random() < self.log_rate:
@@ -258,7 +249,7 @@ class PraxisEncoder(nn.Module):
                     input_ids,
                     include_next_token=True,
                     threshold=float(self.ema_threshold.item()),
-                    entropies=scores,
+                    entropies=entropy_scores,
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
@@ -298,19 +289,11 @@ class PraxisEncoder(nn.Module):
 
         aux_loss = 0
         if self.training and self.entropy is not None:
-            # Normalize embeddings per position
-            embed_dist = F.normalize(embeds, p=2, dim=-1)  # [batch, seq_len, embed_dim]
-
-            # Convert scores to attention-like weights
-            score_weights = F.softmax(scores, dim=-1)  # [batch, seq_len]
-
-            # Compute loss that encourages diversity in attended positions
-            weighted_embeds = score_weights.unsqueeze(-1) * embed_dist
-            diversity_loss = -torch.sum(
-                torch.std(weighted_embeds, dim=1)  # std across sequence length
+            # Compute cross entropy loss
+            aux_loss = F.cross_entropy(
+                entropy_preds[:, :-1].reshape(-1, entropy_preds.size(-1)),
+                input_ids[:, 1:].reshape(-1),
             )
-
-            aux_loss = diversity_loss
 
         # Downsampling
         if self.args.cross_attn_encoder:
@@ -465,7 +448,55 @@ class EntropyModel(nn.Module):
 #         return self.output(x)  # [batch, seq_len, vocab_size]
 
 
-def create_args(config):
+def calculate_entropies(
+    tokens: torch.tensor,
+    entropy_model,
+    patching_batch_size,
+    device: str | None = None,
+    enable_grad: bool = False,
+):
+    """
+    tokens: 2D tensor of shape [batch_size, seq_len]
+    Return 2D tensor of shape [batch_size, seq_len] with entropies for each token.
+
+    Splits the tokens into chunks of size max_length and calculates entropies for each chunk.
+    Entropy model can be executed on cpu or gpu, specify either 'cuda' or 'cpu' in the device argument.
+    """
+
+    grad_context = nullcontext() if enable_grad else torch.no_grad()
+
+    with grad_context:
+        entropies = []
+        logits_list = []
+        max_length = getattr(entropy_model, "max_length", 8192)
+        batch_numel = max_length * patching_batch_size
+        splits = torch.split(tokens.flatten(), batch_numel)
+        for split in splits:
+            pad_size = (max_length - (split.numel() % max_length)) % max_length
+            pad = torch.zeros(
+                pad_size, dtype=split.dtype, device=split.device, requires_grad=False
+            )
+            split = torch.cat((split, pad), dim=0)
+            split = split.reshape(-1, max_length)
+            if device is not None:
+                split = split.to(device)
+            assert torch.all(split >= 0) and torch.all(split < 260)
+            pred = entropy_model(split)
+            pred = pred.reshape(-1, pred.shape[-1])[
+                : split.numel() - pad_size, :
+            ]  # [batch_size * seq_len, vocab]
+            logits_list.append(pred)
+            pred_entropies = entropy(pred)
+            entropies.append(pred_entropies)
+
+        concat_entropies = torch.cat(entropies, dim=0)
+        concat_entropies = concat_entropies.reshape(tokens.shape)
+        concat_logits = torch.cat(logits_list, dim=0)
+        concat_logits = concat_logits.reshape(tokens.shape[0], tokens.shape[1], -1)
+    return concat_entropies, concat_logits
+
+
+def create_base_args(config):
     """
     Defaults from the original Facebook code.
     https://github.com/facebookresearch/blt/blob/main/bytelatent/test_blt.py
