@@ -56,7 +56,7 @@ class PraxisEncoder(nn.Module):
             realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
             self.entropy = EntropyModel(
-                vocab_size=260, channels=config.hidden_size, n_layers=3, kernel_size=3
+                vocab_size=260, channels=config.hidden_size, n_layers=2, kernel_size=3
             )
 
             # Threshold optimization parameters
@@ -97,59 +97,6 @@ class PraxisEncoder(nn.Module):
             + f"n_decoders={len(self.decoder.layers)})"
         )
 
-    def find_safe_threshold(self, input_ids, entropy_scores, target_ratio=0.125):
-        # Start with current threshold
-        threshold = float(self.optimal_threshold.item())
-        target_len = int(input_ids.shape[1] * target_ratio)
-
-        # First, find any working threshold by doubling until we succeed
-        while True:
-            patch_lengths, _ = self.patcher.patch(
-                input_ids,
-                include_next_token=True,
-                threshold=threshold,
-                entropies=entropy_scores,
-            )
-
-            if patch_lengths.shape[1] <= target_len:
-                # Found a working threshold
-                safe_threshold = threshold
-                break
-
-            # If still too long, double the threshold
-            threshold *= 2.0
-
-            # Safety check - if we've increased too much, something is wrong
-            if threshold > 1000.0:  # Arbitrary large number
-                raise ValueError("Could not find a working threshold")
-
-        # Now we can do binary search to optimize it
-        left = threshold / 4.0  # Go back a bit to find better threshold
-        right = threshold
-
-        for _ in range(10):  # Usually converges in < 10 steps
-            mid = (left + right) / 2
-            patch_lengths, _ = self.patcher.patch(
-                input_ids,
-                include_next_token=True,
-                threshold=mid,
-                entropies=entropy_scores,
-            )
-
-            current_len = patch_lengths.shape[1]
-            if current_len > target_len:
-                # Sequence too long, need higher threshold
-                left = mid
-            else:
-                # Sequence acceptable, but might be able to go lower
-                right = mid
-                safe_threshold = mid  # Keep track of last working threshold
-
-            if abs(right - left) < 1e-4:
-                break
-
-        return safe_threshold
-
     def encode(self, input_ids):
         if self.entropy is None:
             # Space patching mode
@@ -170,7 +117,7 @@ class PraxisEncoder(nn.Module):
                 original_len = input_ids.size(1)
 
                 # First, find a safe threshold that guarantees we're under target length
-                safe_threshold = self.find_safe_threshold(input_ids, entropy_scores)
+                safe_threshold = self._find_safe_threshold(input_ids, entropy_scores)
 
                 # Now sample thresholds that are guaranteed to be safe
                 n_samples = 10
@@ -336,6 +283,59 @@ class PraxisEncoder(nn.Module):
 
         return output
 
+    def _find_safe_threshold(self, input_ids, entropy_scores, target_ratio=0.125):
+        # Start with current threshold
+        threshold = float(self.optimal_threshold.item())
+        target_len = int(input_ids.shape[1] * target_ratio)
+
+        # First, find any working threshold by doubling until we succeed
+        while True:
+            patch_lengths, _ = self.patcher.patch(
+                input_ids,
+                include_next_token=True,
+                threshold=threshold,
+                entropies=entropy_scores,
+            )
+
+            if patch_lengths.shape[1] <= target_len:
+                # Found a working threshold
+                safe_threshold = threshold
+                break
+
+            # If still too long, double the threshold
+            threshold *= 2.0
+
+            # Safety check - if we've increased too much, something is wrong
+            if threshold > 1000.0:  # Arbitrary large number
+                raise ValueError("Could not find a working threshold")
+
+        # Now we can do binary search to optimize it
+        left = threshold / 4.0  # Go back a bit to find better threshold
+        right = threshold
+
+        for _ in range(10):  # Usually converges in < 10 steps
+            mid = (left + right) / 2
+            patch_lengths, _ = self.patcher.patch(
+                input_ids,
+                include_next_token=True,
+                threshold=mid,
+                entropies=entropy_scores,
+            )
+
+            current_len = patch_lengths.shape[1]
+            if current_len > target_len:
+                # Sequence too long, need higher threshold
+                left = mid
+            else:
+                # Sequence acceptable, but might be able to go lower
+                right = mid
+                safe_threshold = mid  # Keep track of last working threshold
+
+            if abs(right - left) < 1e-4:
+                break
+
+        return safe_threshold
+
 
 class RecurrentBlock(minGRU):
     """
@@ -381,8 +381,8 @@ class EntropyModel(nn.Module):
                     channels,
                     channels,
                     kernel_size=kernel_size,
-                    padding=(kernel_size - 1) * (2**i),
-                    dilation=2**i,
+                    padding=(kernel_size - 1),
+                    dilation=1,
                 )
                 for i in range(n_layers)
             ]
