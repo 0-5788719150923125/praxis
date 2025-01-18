@@ -53,7 +53,9 @@ class PraxisEncoder(nn.Module):
         if self.args.patching_mode == "entropy":
             self.args.patch_size = 4
             self.args.patching_threshold = 1.335442066192627
-            self.entropy = EntropyModel()
+            self.entropy = EntropyModel(
+                vocab_size=260, channels=256, n_layers=1, kernel_size=3
+            )
             realtime_patching = True
             # self.entropy = LMTransformer(
             #     LMTransformerArgs(
@@ -162,6 +164,7 @@ class PraxisEncoder(nn.Module):
                 threshold=self.patcher.threshold,
             )
         else:
+            # Entropy patching mode
             scores = calculate_entropies(
                 tokens=input_ids,
                 entropy_model=self.entropy,
@@ -254,7 +257,7 @@ class PraxisEncoder(nn.Module):
                 patch_lengths, tok_scores = self.patcher.patch(
                     input_ids,
                     include_next_token=True,
-                    threshold=float(self.optimal_threshold.item()),
+                    threshold=float(self.ema_threshold.item()),
                     entropies=scores,
                 )
 
@@ -555,7 +558,7 @@ class EntropyModel(nn.Module):
     def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
         super().__init__()
 
-        self.embedding = nn.Embedding(256, channels)  # byte embedding
+        self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
 
         # Stack of dilated convolutions
         self.convs = nn.ModuleList(
@@ -575,7 +578,7 @@ class EntropyModel(nn.Module):
         self.norm = nn.LayerNorm(channels)
 
         # Project to byte probabilities
-        self.output = nn.Linear(channels, 256)
+        self.output = nn.Linear(channels, vocab_size)
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         # x: [batch, seq_len]
@@ -588,7 +591,7 @@ class EntropyModel(nn.Module):
         x = x.transpose(1, 2)  # [batch, seq_len, channels]
         x = self.norm(x)
 
-        return self.output(x)  # [batch, seq_len, 256]
+        return self.output(x)  # [batch, seq_len, vocab_size]
 
 
 if __name__ == "__main__":
