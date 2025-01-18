@@ -1,36 +1,13 @@
 import os
 from typing import Optional, Union
 
-import torch
-import torch.nn.functional as F
-from torch import nn
-
-from praxis.modules.recurrent import minGRU
-
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
 os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 
-
-class RecurrentBlock(minGRU):
-    """
-    We replace transformer blocks in the encoder/decoder with something
-    that is more memory-efficient, and faster to compute.
-    """
-
-    def __init__(self, args):
-        super().__init__(dim=args.dim, proj_out=True)
-        self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
-
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        out, _ = super().forward(self.norm(x))
-        return out + x
-
-
 import bytelatent
+import torch
+import torch.nn.functional as F
 from bytelatent import base_transformer
-
-bytelatent.base_transformer.TransformerBlock = RecurrentBlock
-
 from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
@@ -41,11 +18,18 @@ from bytelatent.model.blt import (
     cross_attn_mask,
     decoder_patch_ids_from_lengths,
     get_blt_input,
+    get_decoder_dim_token_emb,
+    get_encoder_dim_patch_emb,
+    get_encoder_dim_token_emb,
     init_embeddings,
     patch_ids_from_lengths,
 )
+from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
 from bytelatent.model.utils import downsample
 from bytelatent.transformer import LMTransformer, LMTransformerArgs
+from torch import nn
+
+from praxis.modules.recurrent import minGRU
 
 
 class PraxisByteLatentEncoder(nn.Module):
@@ -89,8 +73,8 @@ class PraxisByteLatentEncoder(nn.Module):
             local_encoder_dim=self.args.dim_local_encoder,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-        self.encoder = create_local_encoder(self.args)
-        self.decoder = create_local_decoder(self.args)
+        self.encoder = PraxisEncoder(create_local_encoder_args(self.args))
+        self.decoder = PraxisDecoder(create_local_decoder_args(self.args))
 
     def __repr__(self):
         return (
@@ -207,6 +191,37 @@ class PraxisByteLatentEncoder(nn.Module):
         return output
 
 
+class PraxisEncoder(LocalEncoder):
+    def __init__(self, args: LocalModelArgs):
+        super().__init__(args)
+        self.layers = nn.ModuleList(
+            [RecurrentBlock(args) for _ in range(args.n_layers)]
+        )
+
+
+class PraxisDecoder(LocalDecoder):
+    def __init__(self, args: LocalModelArgs):
+        super().__init__(args)
+        self.layers = nn.ModuleList(
+            [RecurrentBlock(args) for _ in range(args.n_layers)]
+        )
+
+
+class RecurrentBlock(minGRU):
+    """
+    We replace transformer blocks in the encoder/decoder with something
+    that is more memory-efficient, and faster to compute.
+    """
+
+    def __init__(self, args):
+        super().__init__(dim=args.dim, proj_out=True)
+        self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        out, _ = super().forward(self.norm(x))
+        return out + x
+
+
 def create_args(config):
     """
     Defaults from the original Facebook code.
@@ -282,6 +297,86 @@ def create_args(config):
         share_encoder_decoder_emb=False,
         dropout=config.dropout,
         entropy_model_checkpoint_dir=None,
+    )
+
+
+def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
+    return LocalModelArgs(
+        # Updated args
+        dim=args.dim_local_encoder,
+        n_layers=args.n_layers_local_encoder,
+        n_heads=args.n_heads_local_encoder,
+        dim_token_emb=get_encoder_dim_token_emb(args),
+        dim_patch_emb=get_encoder_dim_patch_emb(args),
+        cross_attn_encoder=args.cross_attn_encoder,
+        cross_attn_decoder=False,
+        cross_attn_k=args.cross_attn_k if args.cross_attn_encoder else None,
+        cross_attn_init_by_pooling=args.cross_attn_init_by_pooling,
+        # Defaults
+        head_dim=args.head_dim,
+        max_seqlen=args.max_encoder_seq_length,
+        dropout=args.dropout,
+        vocab_size=args.vocab_size + args.pm_size,
+        norm_eps=args.norm_eps,
+        patch_size=args.patch_size,
+        sliding_window=args.local_attention_window_len,
+        use_rope=args.use_rope,
+        rope_theta=args.rope_theta,
+        init_base_std=args.init_base_std,
+        init_std_factor=args.init_std_factor,
+        n_kv_heads=args.n_kv_heads,
+        attn_impl=args.attn_impl,
+        attn_bias_type="local_block_causal",
+        multiple_of=args.multiple_of,
+        ffn_dim_multiplier=args.ffn_dim_multiplier,
+        patching_mode=args.patching_mode,
+        use_local_encoder_transformer=args.use_local_encoder_transformer,
+        downsampling_by_pooling=args.downsampling_by_pooling,
+        encoder_hash_byte_group_size=args.encoder_hash_byte_group_size,
+        cross_attn_all_layers_encoder=args.cross_attn_all_layers_encoder,
+        cross_attn_all_layers_decoder=args.cross_attn_all_layers_decoder,
+        cross_attn_nheads=args.cross_attn_nheads,
+        eos_id=args.eos_id,
+    )
+
+
+def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
+    # First deep copy the original args
+    return LocalModelArgs(
+        dim=args.dim_local_decoder,
+        n_layers=args.n_layers_local_decoder,
+        n_heads=args.n_heads_local_decoder,
+        dim_token_emb=get_decoder_dim_token_emb(args),
+        dim_patch_emb=args.dim_global,
+        cross_attn_encoder=False,
+        cross_attn_decoder=args.cross_attn_decoder,
+        cross_attn_init_by_pooling=False,  # states are already defined
+        cross_attn_k=args.cross_attn_k if args.cross_attn_decoder else None,
+        # Defaults
+        head_dim=args.head_dim,
+        max_seqlen=args.max_encoder_seq_length,
+        dropout=args.dropout,
+        vocab_size=args.vocab_size + args.pm_size,
+        norm_eps=args.norm_eps,
+        patch_size=args.patch_size,
+        sliding_window=args.local_attention_window_len,
+        use_rope=args.use_rope,
+        rope_theta=args.rope_theta,
+        init_base_std=args.init_base_std,
+        init_std_factor=args.init_std_factor,
+        n_kv_heads=args.n_kv_heads,
+        attn_impl=args.attn_impl,
+        attn_bias_type="local_block_causal",
+        multiple_of=args.multiple_of,
+        ffn_dim_multiplier=args.ffn_dim_multiplier,
+        patching_mode=args.patching_mode,
+        use_local_encoder_transformer=args.use_local_encoder_transformer,
+        downsampling_by_pooling=args.downsampling_by_pooling,
+        encoder_hash_byte_group_size=args.encoder_hash_byte_group_size,
+        cross_attn_all_layers_encoder=args.cross_attn_all_layers_encoder,
+        cross_attn_all_layers_decoder=args.cross_attn_all_layers_decoder,
+        cross_attn_nheads=args.cross_attn_nheads,
+        eos_id=args.eos_id,
     )
 
 
