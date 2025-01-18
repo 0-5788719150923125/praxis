@@ -3,7 +3,6 @@ import signal
 import subprocess
 import sys
 
-os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 sys.dont_write_bytecode = True
 
 

@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Union
 
 import torch
@@ -5,6 +6,9 @@ import torch.nn.functional as F
 from torch import nn
 
 from praxis.modules.recurrent import minGRU
+
+os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
+os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 
 
 class RecurrentBlock(minGRU):
@@ -41,6 +45,7 @@ from bytelatent.model.blt import (
     patch_ids_from_lengths,
 )
 from bytelatent.model.utils import downsample
+from bytelatent.transformer import LMTransformer, LMTransformerArgs
 from torch import nn
 
 
@@ -55,6 +60,16 @@ class PraxisByteLatentEncoder(nn.Module):
         self.args = create_args(config)
         self.patcher = Patcher(
             PatcherArgs(
+                # realtime_patching=True,
+                # entropy_model=LMTransformer(
+                #     LMTransformerArgs(
+                #         dim=self.args.dim,
+                #         n_heads=1,
+                #         vocab_size=1024,
+                #         sliding_window=512,
+                #     )
+                # ),
+                # device="cpu",
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
                 threshold=self.args.patching_threshold,
@@ -204,7 +219,7 @@ def create_args(config):
         vocab_size=260,
         norm_eps=config.epsilon,
         n_heads=1,
-        # dim=hidden_size,
+        dim=hidden_size,
         # dim_token_emb=hidden_size,
         dim_token=hidden_size,  # must be set, else creates an unused module called self.token_embedding_projection
         # dim_patch_emb=hidden_size,
@@ -252,7 +267,7 @@ def create_args(config):
         # recompute_attn=False,
         # custom_bwd=False,
         # layer_ckpt="none",
-        efficient_attn="sdpa",
+        # efficient_attn="sdpa",
         # patch_only_encoder=False, # doesn't do anything
         # patch_only_decoder=False,
         # use_local_encoder_transformer=True,
@@ -261,10 +276,11 @@ def create_args(config):
         # attn_bias_type="local_block_causal",
         # alpha_depth="disabled",
         # local_attention_window_len=512,
-        sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
+        # sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
         downsampling_by_pooling="max",
         share_encoder_decoder_emb=False,
         dropout=config.dropout,
+        entropy_model_checkpoint_dir=None,
     )
 
 
