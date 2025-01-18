@@ -54,7 +54,7 @@ class PraxisEncoder(nn.Module):
             self.args.patch_size = 4
             self.args.patching_threshold = 1.335442066192627
             self.entropy = EntropyModel(
-                vocab_size=260, channels=256, n_layers=1, kernel_size=3
+                vocab_size=260, channels=config.hidden_size, n_layers=1, kernel_size=3
             )
             realtime_patching = True
             # self.entropy = LMTransformer(
@@ -249,7 +249,7 @@ class PraxisEncoder(nn.Module):
 
                 if self.debug and random.random() < self.log_rate:
                     print(
-                        f"DEBUG: patch length={patch_lengths.shape[1]}, patching threshold={current_threshold:.10f}"
+                        f"DEBUG: reduced sequence length={patch_lengths.shape[1]}, patching threshold={current_threshold:.10f}"
                     )
 
             else:
@@ -262,15 +262,6 @@ class PraxisEncoder(nn.Module):
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
-
-        aux_loss = 0
-        if self.training and self.entropy is not None:
-            # 1. Binary Cross-Entropy for boundary prediction
-            patch_boundaries = (patch_ids[..., 1:] - patch_ids[..., :-1] > 1).float()
-            aux_loss = F.binary_cross_entropy_with_logits(
-                scores[:, 1:],  # Remove first position as it's always a boundary
-                patch_boundaries,
-            )
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -304,6 +295,22 @@ class PraxisEncoder(nn.Module):
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
         )
+
+        aux_loss = 0
+        if self.training and self.entropy is not None:
+            # Normalize embeddings per position
+            embed_dist = F.normalize(embeds, p=2, dim=-1)  # [batch, seq_len, embed_dim]
+
+            # Convert scores to attention-like weights
+            score_weights = F.softmax(scores, dim=-1)  # [batch, seq_len]
+
+            # Compute loss that encourages diversity in attended positions
+            weighted_embeds = score_weights.unsqueeze(-1) * embed_dist
+            diversity_loss = -torch.sum(
+                torch.std(weighted_embeds, dim=1)  # std across sequence length
+            )
+
+            aux_loss = diversity_loss
 
         # Downsampling
         if self.args.cross_attn_encoder:
@@ -393,6 +400,69 @@ class RecurrentBlock(minGRU):
     def forward(self, x: torch.Tensor, *args, **kwargs):
         out, _ = super().forward(self.norm(x))
         return out + x
+
+
+class EntropyModel(nn.Module):
+    def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
+        super().__init__()
+
+        self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+
+        class Config:
+            dim = channels
+            norm_eps = 1e-5
+
+        self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        # x: [batch, seq_len]
+        x = self.embedding(x)  # [batch, seq_len, channels]
+
+        for block in self.blocks:
+            x = block(x)
+
+        return x
+
+
+# class EntropyModel(nn.Module):
+#     # def __init__(self, args: LMTransformerArgs):
+#     def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
+#         super().__init__()
+
+#         self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+
+#         # Stack of dilated convolutions
+#         self.convs = nn.ModuleList(
+#             [
+#                 nn.Conv1d(
+#                     channels,
+#                     channels,
+#                     kernel_size=kernel_size,
+#                     padding=(kernel_size - 1) * (2**i),
+#                     dilation=2**i,
+#                 )
+#                 for i in range(n_layers)
+#             ]
+#         )
+
+#         self.activation = nn.SiLU()  # Same as paper
+#         self.norm = nn.LayerNorm(channels)
+
+#         # Project to byte probabilities
+#         self.output = nn.Linear(channels, vocab_size)
+
+#     def forward(self, x: torch.Tensor, *args, **kwargs):
+#         # x: [batch, seq_len]
+#         x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+
+#         # Causal convolution stack
+#         for conv in self.convs:
+#             x = self.activation(conv(x))
+
+#         x = x.transpose(1, 2)  # [batch, seq_len, channels]
+#         x = self.norm(x)
+
+#         return self.output(x)  # [batch, seq_len, vocab_size]
 
 
 def create_args(config):
@@ -551,47 +621,6 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         cross_attn_nheads=args.cross_attn_nheads,
         eos_id=args.eos_id,
     )
-
-
-class EntropyModel(nn.Module):
-    # def __init__(self, args: LMTransformerArgs):
-    def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
-        super().__init__()
-
-        self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
-
-        # Stack of dilated convolutions
-        self.convs = nn.ModuleList(
-            [
-                nn.Conv1d(
-                    channels,
-                    channels,
-                    kernel_size=kernel_size,
-                    padding=(kernel_size - 1) * (2**i),
-                    dilation=2**i,
-                )
-                for i in range(n_layers)
-            ]
-        )
-
-        self.activation = nn.SiLU()  # Same as paper
-        self.norm = nn.LayerNorm(channels)
-
-        # Project to byte probabilities
-        self.output = nn.Linear(channels, vocab_size)
-
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        # x: [batch, seq_len]
-        x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
-
-        # Causal convolution stack
-        for conv in self.convs:
-            x = self.activation(conv(x))
-
-        x = x.transpose(1, 2)  # [batch, seq_len, channels]
-        x = self.norm(x)
-
-        return self.output(x)  # [batch, seq_len, vocab_size]
 
 
 if __name__ == "__main__":
