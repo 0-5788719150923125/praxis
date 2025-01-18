@@ -56,7 +56,7 @@ class PraxisEncoder(nn.Module):
             realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
             self.entropy = EntropyModel(
-                vocab_size=260, channels=config.hidden_size, n_layers=1, kernel_size=3
+                vocab_size=260, channels=config.hidden_size, n_layers=3, kernel_size=3
             )
 
             # Threshold optimization parameters
@@ -151,9 +151,7 @@ class PraxisEncoder(nn.Module):
         if self.entropy is None:
             # Space patching mode
             patch_lengths, tok_scores = self.patcher.patch(
-                input_ids,
-                include_next_token=True,
-                threshold=self.patcher.threshold,
+                input_ids, include_next_token=True
             )
         else:
             # Entropy patching mode
