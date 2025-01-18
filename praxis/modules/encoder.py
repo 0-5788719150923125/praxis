@@ -1,4 +1,6 @@
+import math
 import os
+import random
 from typing import Optional, Union
 
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
@@ -32,7 +34,7 @@ from torch import nn
 from praxis.modules.recurrent import minGRU
 
 
-class PraxisByteLatentEncoder(nn.Module):
+class PraxisEncoder(nn.Module):
     """
     An implementation of the Byte Latent Encoder/Decoder, from:
     https://arxiv.org/abs/2412.09871
@@ -40,31 +42,58 @@ class PraxisByteLatentEncoder(nn.Module):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__()
+        self.debug = config.debug
+        self.log_rate = 0.005
+        self.device_map = config.device_map
         self.args = create_args(config)
-        # self.args.patching_mode = "entropy"
-        # self.args.patch_size = 4
-        # self.args.patching_threshold = 1.335442066192627
-        # # self.args.downsampling_by_pooling = None
-        # # self.entropy = EntropyModel()
-        # self.entropy = LMTransformer(
-        #     LMTransformerArgs(
-        #         dim=config.hidden_size // 2,
-        #         n_heads=1,
-        #         n_layers=1,
-        #         vocab_size=1024,
-        #     )
-        # )
+
+        realtime_patching = False
+        self.entropy = None
+        self.args.patching_mode = "entropy"
+        if self.args.patching_mode == "entropy":
+            self.args.patch_size = 4
+            self.args.patching_threshold = 1.335442066192627
+            self.entropy = EntropyModel()
+            realtime_patching = True
+            # self.entropy = LMTransformer(
+            #     LMTransformerArgs(
+            #         dim=config.hidden_size // 2,
+            #         n_heads=1,
+            #         n_layers=1,
+            #         vocab_size=1024,
+            #     )
+            # )
+            # Threshold optimization parameters
+            self.target_len = 256
+            self.min_threshold = 0.1
+            self.max_threshold = 10.0
+            self.absolute_max_attempts = 50
+
+            # Register buffers for both current and EMA thresholds
+            self.register_buffer(
+                "optimal_threshold",
+                torch.tensor(self.args.patching_threshold, dtype=torch.float32),
+            )
+            self.register_buffer(
+                "ema_threshold",
+                torch.tensor(self.args.patching_threshold, dtype=torch.float32),
+            )
+
+            # Parameters for stability vs exploration
+            self.ema_alpha = 0.001  # Weight for new values (0.9 for history)
+            self.decay_rate = 0.999  # Slight decay each forward pass
+            self.random_scale = 0  # Reduced scale of random perturbations
+
         self.patcher = Patcher(
             PatcherArgs(
-                # realtime_patching=True,
-                # entropy_model=self.entropy,
-                # device="cpu",
+                realtime_patching=realtime_patching,
+                entropy_model=self.entropy,
+                device=self.device_map,
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
                 threshold=self.args.patching_threshold,
                 threshold_add=self.args.patching_threshold_add,
                 monotonicity=self.args.monotonicity,
-                # max_patch_length=256,
             )
         )
         self.embeds = init_embeddings(
@@ -73,30 +102,164 @@ class PraxisByteLatentEncoder(nn.Module):
             local_encoder_dim=self.args.dim_local_encoder,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-        self.encoder = PraxisEncoder(create_local_encoder_args(self.args))
-        self.decoder = PraxisDecoder(create_local_decoder_args(self.args))
+        self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
+        self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
 
     def __repr__(self):
         return (
-            f"PraxisByteLatentEncoder("
+            f"{self.__class__.__name__}("
+            + f"type='byte_latent', "
             + f"n_encoders={len(self.encoder.layers)}, "
             + f"n_decoders={len(self.decoder.layers)})"
         )
 
-    def encode(self, input_ids):
-        # Patching
-        # scores = calculate_entropies(
-        #     input_ids,
-        #     self.entropy,
-        #     input_ids.size(0),
-        #     "cpu",
-        # )
-        patch_lengths, tok_scores = self.patcher.patch(
-            input_ids,
-            include_next_token=True,
-            threshold=self.patcher.threshold,
-            # entropies=scores,
+    def update_threshold(self, new_threshold):
+        """Update threshold using EMA and small perturbations"""
+        # Apply decay
+        decayed_threshold = new_threshold * self.decay_rate
+
+        # Update EMA
+        current_ema = float(self.ema_threshold.item())
+        new_ema = (
+            current_ema * (1 - self.ema_alpha) + decayed_threshold * self.ema_alpha
         )
+
+        # Add tiny random perturbation to EMA
+        random_factor = 1.0 + (torch.rand(1).item() - 0.5) * self.random_scale
+        final_threshold = new_ema * random_factor
+
+        # Update buffers with bounds checking
+        final_threshold = max(
+            self.min_threshold, min(self.max_threshold, final_threshold)
+        )
+        self.optimal_threshold.fill_(float(final_threshold))
+        self.ema_threshold.fill_(float(new_ema))
+
+        return float(final_threshold)
+
+    def adjust_threshold(self, current_len, current_threshold, attempt):
+        """
+        Compute next threshold based on current length
+        """
+        if current_len <= self.target_len:
+            if current_len < 0.5 * self.target_len:
+                # Too small, careful decrease
+                return current_threshold * 0.98
+            return current_threshold  # Keep current if in good range
+
+        # We're above target, increase based on how far we are
+        ratio = current_len / self.target_len
+        adjustment = max(0.001, current_threshold * 0.05 * min(ratio, 2.0))
+        return current_threshold + adjustment
+
+    def encode(self, input_ids):
+        if self.entropy is None:
+            # Space patching mode
+            patch_lengths, tok_scores = self.patcher.patch(
+                input_ids,
+                include_next_token=True,
+                threshold=self.patcher.threshold,
+            )
+        else:
+            scores = calculate_entropies(
+                input_ids,
+                self.entropy,
+                input_ids.size(0),
+                self.device_map,
+            )
+            if self.training:
+                # Start from current EMA with small perturbation
+                current_threshold = self.update_threshold(
+                    float(self.optimal_threshold.item())
+                )
+                best_threshold = current_threshold
+                best_length = float("inf")
+
+                attempt = 0
+                consecutive_failures = 0
+
+                while attempt < self.absolute_max_attempts:
+                    attempt += 1
+                    patch_lengths, tok_scores = self.patcher.patch(
+                        input_ids,
+                        include_next_token=True,
+                        threshold=current_threshold,
+                        entropies=scores,
+                    )
+                    reduced_len = patch_lengths.shape[1]
+
+                    # print(
+                    #     f"Attempt {attempt}: length={reduced_len}, target={self.target_len}, threshold={current_threshold:.10f}"
+                    # )
+
+                    # Update best if this gives valid length
+                    if reduced_len <= self.target_len:
+                        if best_length == float("inf") or reduced_len > best_length:
+                            best_length = reduced_len
+                            best_threshold = current_threshold
+                            consecutive_failures = 0
+
+                            # Update with this good threshold
+                            current_threshold = self.update_threshold(best_threshold)
+
+                            # If we're close enough to target, we can stop
+                            if reduced_len >= 0.5 * self.target_len:
+                                break
+
+                    else:
+                        consecutive_failures += 1
+
+                    # Break if we're stuck
+                    if consecutive_failures >= 10:
+                        break
+
+                    # Get next threshold and update
+                    next_threshold = self.adjust_threshold(
+                        reduced_len, current_threshold, attempt
+                    )
+                    current_threshold = self.update_threshold(next_threshold)
+
+                # Use best threshold found
+                if best_length <= self.target_len:
+                    current_threshold = self.update_threshold(best_threshold)
+
+                # Final patch with current threshold
+                patch_lengths, tok_scores = self.patcher.patch(
+                    input_ids,
+                    include_next_token=True,
+                    threshold=current_threshold,
+                    entropies=scores,
+                )
+
+                # Emergency adjustment if still over target
+                while patch_lengths.shape[1] > self.target_len:
+                    current_threshold *= 1.1
+                    current_threshold = self.update_threshold(current_threshold)
+                    patch_lengths, tok_scores = self.patcher.patch(
+                        input_ids,
+                        include_next_token=True,
+                        threshold=current_threshold,
+                        entropies=scores,
+                    )
+
+                # print(
+                #     f"Final: length={patch_lengths.shape[1]}, threshold={current_threshold:.10f}, ema={float(self.ema_threshold.item()):.10f}"
+                # )
+
+                if self.debug and random.random() < self.log_rate:
+                    print(
+                        f"DEBUG: patch length={patch_lengths.shape[1]}, patch threshold={current_threshold:.10f}"
+                    )
+
+            else:
+                # During inference, use stored optimal threshold
+                patch_lengths, tok_scores = self.patcher.patch(
+                    input_ids,
+                    include_next_token=True,
+                    threshold=float(self.optimal_threshold.item()),
+                    entropies=scores,
+                )
+
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
 
         # Create cross attention mask if needed
@@ -191,7 +354,7 @@ class PraxisByteLatentEncoder(nn.Module):
         return output
 
 
-class PraxisEncoder(LocalEncoder):
+class RecurrentEncoder(LocalEncoder):
     def __init__(self, args: LocalModelArgs):
         super().__init__(args)
         self.layers = nn.ModuleList(
@@ -199,7 +362,7 @@ class PraxisEncoder(LocalEncoder):
         )
 
 
-class PraxisDecoder(LocalDecoder):
+class RecurrentDecoder(LocalDecoder):
     def __init__(self, args: LocalModelArgs):
         super().__init__(args)
         self.layers = nn.ModuleList(
@@ -382,7 +545,7 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
 
 class EntropyModel(nn.Module):
     # def __init__(self, args: LMTransformerArgs):
-    def __init__(self, channels=256, n_layers=1, kernel_size=3):
+    def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
         super().__init__()
 
         self.embedding = nn.Embedding(256, channels)  # byte embedding
@@ -436,7 +599,7 @@ if __name__ == "__main__":
     config = Dummy()
 
     # Initialize model
-    model = PraxisByteLatentEncoder(config)
+    model = PraxisEncoder(config)
 
     def run_test():
         try:
