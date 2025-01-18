@@ -12,7 +12,7 @@ import bytelatent
 import torch
 import torch.nn.functional as F
 from bytelatent import base_transformer
-from bytelatent.data.patcher import Patcher, PatcherArgs, entropy
+from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
@@ -446,54 +446,6 @@ class EntropyModel(nn.Module):
 #         x = self.norm(x)
 
 #         return self.output(x)  # [batch, seq_len, vocab_size]
-
-
-def calculate_entropies(
-    tokens: torch.tensor,
-    entropy_model,
-    patching_batch_size,
-    device: str | None = None,
-    enable_grad: bool = False,
-):
-    """
-    tokens: 2D tensor of shape [batch_size, seq_len]
-    Return 2D tensor of shape [batch_size, seq_len] with entropies for each token.
-
-    Splits the tokens into chunks of size max_length and calculates entropies for each chunk.
-    Entropy model can be executed on cpu or gpu, specify either 'cuda' or 'cpu' in the device argument.
-    """
-
-    grad_context = nullcontext() if enable_grad else torch.no_grad()
-
-    with grad_context:
-        entropies = []
-        logits_list = []
-        max_length = getattr(entropy_model, "max_length", 8192)
-        batch_numel = max_length * patching_batch_size
-        splits = torch.split(tokens.flatten(), batch_numel)
-        for split in splits:
-            pad_size = (max_length - (split.numel() % max_length)) % max_length
-            pad = torch.zeros(
-                pad_size, dtype=split.dtype, device=split.device, requires_grad=False
-            )
-            split = torch.cat((split, pad), dim=0)
-            split = split.reshape(-1, max_length)
-            if device is not None:
-                split = split.to(device)
-            assert torch.all(split >= 0) and torch.all(split < 260)
-            pred = entropy_model(split)
-            pred = pred.reshape(-1, pred.shape[-1])[
-                : split.numel() - pad_size, :
-            ]  # [batch_size * seq_len, vocab]
-            logits_list.append(pred)
-            pred_entropies = entropy(pred)
-            entropies.append(pred_entropies)
-
-        concat_entropies = torch.cat(entropies, dim=0)
-        concat_entropies = concat_entropies.reshape(tokens.shape)
-        concat_logits = torch.cat(logits_list, dim=0)
-        concat_logits = concat_logits.reshape(tokens.shape[0], tokens.shape[1], -1)
-    return concat_entropies, concat_logits
 
 
 def create_base_args(config):
