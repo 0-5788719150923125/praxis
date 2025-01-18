@@ -354,6 +354,21 @@ class PraxisEncoder(nn.Module):
         return output
 
 
+class RecurrentBlock(minGRU):
+    """
+    We replace transformer blocks in the encoder/decoder with something
+    that is more memory-efficient, and faster to compute.
+    """
+
+    def __init__(self, args):
+        super().__init__(dim=args.dim, proj_out=True)
+        self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        out, _ = super().forward(self.norm(x))
+        return out + x
+
+
 class RecurrentEncoder(LocalEncoder):
     def __init__(self, args: LocalModelArgs):
         super().__init__(args)
@@ -370,82 +385,66 @@ class RecurrentDecoder(LocalDecoder):
         )
 
 
-class RecurrentBlock(minGRU):
-    """
-    We replace transformer blocks in the encoder/decoder with something
-    that is more memory-efficient, and faster to compute.
-    """
-
-    def __init__(self, args):
-        super().__init__(dim=args.dim, proj_out=True)
-        self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
-
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        out, _ = super().forward(self.norm(x))
-        return out + x
-
-
 class EntropyModel(nn.Module):
     def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
 
-        class Config:
-            dim = channels
-            norm_eps = 1e-5
+        # Stack of dilated convolutions
+        self.convs = nn.ModuleList(
+            [
+                nn.Conv1d(
+                    channels,
+                    channels,
+                    kernel_size=kernel_size,
+                    padding=(kernel_size - 1) * (2**i),
+                    dilation=2**i,
+                )
+                for i in range(n_layers)
+            ]
+        )
 
-        self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
+        self.activation = nn.SiLU()  # Same as paper
+        self.norm = nn.LayerNorm(channels)
+
+        # Project to byte probabilities
+        self.output = nn.Linear(channels, vocab_size)
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         # x: [batch, seq_len]
-        x = self.embedding(x)  # [batch, seq_len, channels]
+        x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
 
-        for block in self.blocks:
-            x = block(x)
+        # Causal convolution stack
+        for conv in self.convs:
+            x = self.activation(conv(x))
 
-        return x
+        x = x.transpose(1, 2)  # [batch, seq_len, channels]
+        x = self.norm(x)
+
+        return self.output(x)  # [batch, seq_len, vocab_size]
 
 
 # class EntropyModel(nn.Module):
-#     # def __init__(self, args: LMTransformerArgs):
 #     def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
 #         super().__init__()
 
 #         self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
 
-#         # Stack of dilated convolutions
-#         self.convs = nn.ModuleList(
-#             [
-#                 nn.Conv1d(
-#                     channels,
-#                     channels,
-#                     kernel_size=kernel_size,
-#                     padding=(kernel_size - 1) * (2**i),
-#                     dilation=2**i,
-#                 )
-#                 for i in range(n_layers)
-#             ]
-#         )
+#         class Config:
+#             dim = channels
+#             norm_eps = 1e-5
 
-#         self.activation = nn.SiLU()  # Same as paper
-#         self.norm = nn.LayerNorm(channels)
-
-#         # Project to byte probabilities
-#         self.output = nn.Linear(channels, vocab_size)
+#         self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
 
 #     def forward(self, x: torch.Tensor, *args, **kwargs):
 #         # x: [batch, seq_len]
-#         x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+#         x = self.embedding(x)  # [batch, seq_len, channels]
 
-#         # Causal convolution stack
-#         for conv in self.convs:
-#             x = self.activation(conv(x))
+#         for block in self.blocks:
+#             x = block(x)
 
-#         x = x.transpose(1, 2)  # [batch, seq_len, channels]
-#         x = self.norm(x)
-
-#         return self.output(x)  # [batch, seq_len, vocab_size]
+#         return x
 
 
 def create_base_args(config):
