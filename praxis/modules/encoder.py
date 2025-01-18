@@ -31,7 +31,7 @@ from bytelatent import base_transformer
 
 bytelatent.base_transformer.TransformerBlock = RecurrentBlock
 
-from bytelatent.data.patcher import Patcher, PatcherArgs
+from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
@@ -46,7 +46,6 @@ from bytelatent.model.blt import (
 )
 from bytelatent.model.utils import downsample
 from bytelatent.transformer import LMTransformer, LMTransformerArgs
-from torch import nn
 
 
 class PraxisByteLatentEncoder(nn.Module):
@@ -58,24 +57,30 @@ class PraxisByteLatentEncoder(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.args = create_args(config)
+        # self.args.patching_mode = "entropy"
+        # self.args.patch_size = 4
+        # self.args.patching_threshold = 1.335442066192627
+        # # self.args.downsampling_by_pooling = None
+        # # self.entropy = EntropyModel()
+        # self.entropy = LMTransformer(
+        #     LMTransformerArgs(
+        #         dim=config.hidden_size // 2,
+        #         n_heads=1,
+        #         n_layers=1,
+        #         vocab_size=1024,
+        #     )
+        # )
         self.patcher = Patcher(
             PatcherArgs(
                 # realtime_patching=True,
-                # entropy_model=LMTransformer(
-                #     LMTransformerArgs(
-                #         dim=self.args.dim,
-                #         n_heads=1,
-                #         vocab_size=1024,
-                #         sliding_window=512,
-                #     )
-                # ),
+                # entropy_model=self.entropy,
                 # device="cpu",
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
                 threshold=self.args.patching_threshold,
                 threshold_add=self.args.patching_threshold_add,
                 monotonicity=self.args.monotonicity,
-                max_patch_length=self.args.max_patch_length,
+                # max_patch_length=256,
             )
         )
         self.embeds = init_embeddings(
@@ -95,19 +100,18 @@ class PraxisByteLatentEncoder(nn.Module):
         )
 
     def encode(self, input_ids):
-        # encoder_tokens, _, decoder_tokens = get_blt_input(
-        #     tokens=input_ids,
-        #     enforce_patch_size_multiple=False,
-        #     nb_boe=0,
-        #     patch_size=self.encoder.patch_size,
-        #     boe_id=self.encoder.boe_id,
-        # )
-
         # Patching
+        # scores = calculate_entropies(
+        #     input_ids,
+        #     self.entropy,
+        #     input_ids.size(0),
+        #     "cpu",
+        # )
         patch_lengths, tok_scores = self.patcher.patch(
             input_ids,
             include_next_token=True,
             threshold=self.patcher.threshold,
+            # entropies=scores,
         )
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
 
@@ -161,10 +165,7 @@ class PraxisByteLatentEncoder(nn.Module):
 
     def decode(self, h, h_encoder, input_ids, patch_lengths):
         nb_boe = 0
-        # nb_boe = 0 if self.args.patching_mode != "" else self.args.patch_size - 1
-        # N = input_ids.shape[-1]
 
-        # dec_embeds = h_encoder[:, nb_boe : nb_boe + N, :]
         decoder_patch_ids = decoder_patch_ids_from_lengths(
             patch_lengths, nb_boe, input_ids.shape[-1]
         )
@@ -219,7 +220,7 @@ def create_args(config):
         vocab_size=260,
         norm_eps=config.epsilon,
         n_heads=1,
-        dim=hidden_size,
+        # dim=hidden_size,
         # dim_token_emb=hidden_size,
         dim_token=hidden_size,  # must be set, else creates an unused module called self.token_embedding_projection
         # dim_patch_emb=hidden_size,
@@ -282,6 +283,47 @@ def create_args(config):
         dropout=config.dropout,
         entropy_model_checkpoint_dir=None,
     )
+
+
+class EntropyModel(nn.Module):
+    # def __init__(self, args: LMTransformerArgs):
+    def __init__(self, channels=256, n_layers=1, kernel_size=3):
+        super().__init__()
+
+        self.embedding = nn.Embedding(256, channels)  # byte embedding
+
+        # Stack of dilated convolutions
+        self.convs = nn.ModuleList(
+            [
+                nn.Conv1d(
+                    channels,
+                    channels,
+                    kernel_size=kernel_size,
+                    padding=(kernel_size - 1) * (2**i),
+                    dilation=2**i,
+                )
+                for i in range(n_layers)
+            ]
+        )
+
+        self.activation = nn.SiLU()  # Same as paper
+        self.norm = nn.LayerNorm(channels)
+
+        # Project to byte probabilities
+        self.output = nn.Linear(channels, 256)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        # x: [batch, seq_len]
+        x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+
+        # Causal convolution stack
+        for conv in self.convs:
+            x = self.activation(conv(x))
+
+        x = x.transpose(1, 2)  # [batch, seq_len, channels]
+        x = self.norm(x)
+
+        return self.output(x)  # [batch, seq_len, 256]
 
 
 if __name__ == "__main__":

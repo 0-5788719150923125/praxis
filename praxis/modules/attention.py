@@ -217,6 +217,9 @@ class ScaledDotProduct(nn.Module):
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}()"
+
     def compute_scores(self, q, k, v):
         scaling = 1.0 / math.sqrt(self.head_dim)
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling

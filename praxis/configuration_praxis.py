@@ -6,8 +6,8 @@ class PraxisConfig(PretrainedConfig):
 
     def __init__(
         self,
-        embed_size=720,
-        hidden_size=360,
+        embed_size=512,
+        hidden_size=256,
         num_heads=3,
         num_queries=2,
         depth=7,

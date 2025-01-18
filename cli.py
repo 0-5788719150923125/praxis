@@ -77,13 +77,13 @@ parser.add_argument(
 parser.add_argument(
     "--hidden_size",
     type=int,
-    default=360,
+    default=256,
     help="The size of the model's hidden dimensions",
 )
 parser.add_argument(
     "--embed_size",
     type=int,
-    default=720,
+    default=512,
     help="The size of the model's embedding dimension (if applicable)",
 )
 parser.add_argument(
