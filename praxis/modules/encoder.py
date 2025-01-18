@@ -51,17 +51,16 @@ class PraxisEncoder(nn.Module):
 
         realtime_patching = False
         self.entropy = None
-        self.args.patching_mode = "entropy"
+        self.args.patching_mode = "entropy" if "entropy" in config.meta else "space"
         if self.args.patching_mode == "entropy":
-            self.args.patch_size = 4
+            realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
             self.entropy = EntropyModel(
                 vocab_size=260, channels=config.hidden_size, n_layers=1, kernel_size=3
             )
-            realtime_patching = True
 
             # Threshold optimization parameters
-            self.target_len = 256
+            self.target_len = 0.125  # 1/8th of original length
             self.min_threshold = 0.1
             self.max_threshold = 10.0
             self.absolute_max_attempts = 50
@@ -134,23 +133,21 @@ class PraxisEncoder(nn.Module):
 
         return float(final_threshold)
 
-    def adjust_threshold(self, current_len, current_threshold, attempt):
-        """
-        Compute next threshold based on current length
-        """
-        if current_len <= self.target_len:
-            if current_len < 0.5 * self.target_len:
+    def adjust_threshold(self, original_len, reduced_len, current_threshold, attempt):
+        """Compute next threshold based on current length"""
+        target_len = int(original_len * self.target_len)
+        if reduced_len <= target_len:
+            if reduced_len < 0.5 * target_len:
                 # Too small, careful decrease
                 return current_threshold * 0.98
             return current_threshold  # Keep current if in good range
 
         # We're above target, increase based on how far we are
-        ratio = current_len / self.target_len
+        ratio = reduced_len / target_len
         adjustment = max(0.001, current_threshold * 0.05 * min(ratio, 2.0))
         return current_threshold + adjustment
 
     def encode(self, input_ids):
-
         if self.entropy is None:
             # Space patching mode
             patch_lengths, tok_scores = self.patcher.patch(
@@ -178,6 +175,9 @@ class PraxisEncoder(nn.Module):
                 attempt = 0
                 consecutive_failures = 0
 
+                original_len = input_ids.size(1)
+                target_len = int(original_len * self.target_len)
+
                 while attempt < self.absolute_max_attempts:
                     attempt += 1
                     patch_lengths, tok_scores = self.patcher.patch(
@@ -189,7 +189,7 @@ class PraxisEncoder(nn.Module):
                     reduced_len = patch_lengths.shape[1]
 
                     # Update best if this gives valid length
-                    if reduced_len <= self.target_len:
+                    if reduced_len <= target_len:
                         if best_length == float("inf") or reduced_len > best_length:
                             best_length = reduced_len
                             best_threshold = current_threshold
@@ -199,7 +199,7 @@ class PraxisEncoder(nn.Module):
                             current_threshold = self.update_threshold(best_threshold)
 
                             # If we're close enough to target, we can stop
-                            if reduced_len >= 0.5 * self.target_len:
+                            if reduced_len >= 0.5 * target_len:
                                 break
 
                     else:
@@ -211,12 +211,12 @@ class PraxisEncoder(nn.Module):
 
                     # Get next threshold and update
                     next_threshold = self.adjust_threshold(
-                        reduced_len, current_threshold, attempt
+                        original_len, reduced_len, current_threshold, attempt
                     )
                     current_threshold = self.update_threshold(next_threshold)
 
                 # Use best threshold found
-                if best_length <= self.target_len:
+                if best_length <= target_len:
                     current_threshold = self.update_threshold(best_threshold)
 
                 # Final patch with current threshold
@@ -228,7 +228,7 @@ class PraxisEncoder(nn.Module):
                 )
 
                 # Emergency adjustment if still over target
-                while patch_lengths.shape[1] > self.target_len:
+                while patch_lengths.shape[1] > target_len:
                     current_threshold *= 1.1
                     current_threshold = self.update_threshold(current_threshold)
                     patch_lengths, tok_scores = self.patcher.patch(
@@ -240,7 +240,7 @@ class PraxisEncoder(nn.Module):
 
                 if self.debug and random.random() < self.log_rate:
                     print(
-                        f"DEBUG: reduced sequence length={patch_lengths.shape[1]}, patching threshold={current_threshold:.10f}"
+                        f"DEBUG: original length={original_len}, reduced length={patch_lengths.shape[1]}, patching threshold={current_threshold:.10f}"
                     )
 
             else:
