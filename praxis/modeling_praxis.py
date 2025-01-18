@@ -44,7 +44,10 @@ class PraxisModel(PreTrainedModel):
         h_encoder = None
         patch_lengths = None
         if self.encoder:
-            inputs, h_encoder, patch_lengths = self.encoder.encode(input_ids)
+            inputs, h_encoder, patch_lengths, entropy_loss = self.encoder.encode(
+                input_ids
+            )
+            self.aux_losses.append(entropy_loss)
         else:
             inputs = self.embeds(input_ids)
 

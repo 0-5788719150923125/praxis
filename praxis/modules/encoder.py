@@ -153,6 +153,7 @@ class PraxisEncoder(nn.Module):
         return current_threshold + adjustment
 
     def encode(self, input_ids):
+
         if self.entropy is None:
             # Space patching mode
             patch_lengths, tok_scores = self.patcher.patch(
@@ -162,10 +163,11 @@ class PraxisEncoder(nn.Module):
             )
         else:
             scores = calculate_entropies(
-                input_ids,
-                self.entropy,
-                input_ids.size(0),
-                self.device_map,
+                tokens=input_ids,
+                entropy_model=self.entropy,
+                patching_batch_size=input_ids.size(0),
+                device=self.device_map,
+                enable_grad=True,
             )
             if self.training:
                 # Start from current EMA with small perturbation
@@ -242,13 +244,9 @@ class PraxisEncoder(nn.Module):
                         entropies=scores,
                     )
 
-                # print(
-                #     f"Final: length={patch_lengths.shape[1]}, threshold={current_threshold:.10f}, ema={float(self.ema_threshold.item()):.10f}"
-                # )
-
                 if self.debug and random.random() < self.log_rate:
                     print(
-                        f"DEBUG: patch length={patch_lengths.shape[1]}, patch threshold={current_threshold:.10f}"
+                        f"DEBUG: patch length={patch_lengths.shape[1]}, patching threshold={current_threshold:.10f}"
                     )
 
             else:
@@ -261,6 +259,15 @@ class PraxisEncoder(nn.Module):
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
+
+        aux_loss = 0
+        if self.training and self.entropy is not None:
+            # 1. Binary Cross-Entropy for boundary prediction
+            patch_boundaries = (patch_ids[..., 1:] - patch_ids[..., :-1] > 1).float()
+            aux_loss = F.binary_cross_entropy_with_logits(
+                scores[:, 1:],  # Remove first position as it's always a boundary
+                patch_boundaries,
+            )
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -308,7 +315,7 @@ class PraxisEncoder(nn.Module):
                 patch_size=self.args.patch_size,
             )
 
-        return h, h_encoder, patch_lengths
+        return h, h_encoder, patch_lengths, aux_loss
 
     def decode(self, h, h_encoder, input_ids, patch_lengths):
         nb_boe = 0
