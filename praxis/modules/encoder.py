@@ -47,7 +47,9 @@ class PraxisEncoder(nn.Module):
             realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
             self.args.monotonicity = True
-            self.entropy_model = EntropyModel(260, config.hidden_size * 2)
+            self.entropy_model = EntropyModel(
+                260, config.hidden_size * 2, config.dropout
+            )
             self.loss_scale = 0.01
 
             # Threshold optimization parameters
@@ -354,66 +356,75 @@ class RecurrentDecoder(LocalDecoder):
         )
 
 
-class EntropyModel(nn.Module):
-    def __init__(self, vocab_size=260, hidden_size=256, n_layers=1):
-        super().__init__()
-
-        self.embedding = nn.Embedding(vocab_size, hidden_size)  # byte embedding
-
-        class Config:
-            dim = hidden_size
-            norm_eps = 1e-5
-
-        self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
-
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        # x: [batch, seq_len]
-        x = self.embedding(x)  # [batch, seq_len, hidden_size]
-
-        for block in self.blocks:
-            x = block(x)
-
-        return x
-
-
 # class EntropyModel(nn.Module):
-#     def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
+#     def __init__(self, vocab_size=260, hidden_size=256, dropout=0.1, n_layers=1):
 #         super().__init__()
 
-#         self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+#         self.embedding = nn.Embedding(vocab_size, hidden_size)  # byte embedding
 
-#         # Stack of dilated convolutions
-#         self.convs = nn.ModuleList(
-#             [
-#                 nn.Conv1d(
-#                     channels,
-#                     channels,
-#                     kernel_size=kernel_size,
-#                     padding=(kernel_size - 1),
-#                     dilation=1,
-#                 )
-#                 for i in range(n_layers)
-#             ]
-#         )
+#         class Config:
+#             dim = hidden_size
+#             norm_eps = 1e-5
 
-#         self.activation = nn.SiLU()  # Same as paper
-#         self.norm = nn.LayerNorm(channels)
-
-#         # Project to byte probabilities
-#         self.output = nn.Linear(channels, vocab_size)
+#         self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
 
 #     def forward(self, x: torch.Tensor, *args, **kwargs):
 #         # x: [batch, seq_len]
-#         x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+#         x = self.embedding(x)  # [batch, seq_len, hidden_size]
 
-#         # Causal convolution stack
-#         for conv in self.convs:
-#             x = self.activation(conv(x))
+#         for block in self.blocks:
+#             x = block(x)
 
-#         x = x.transpose(1, 2)  # [batch, seq_len, channels]
-#         x = self.norm(x)
+#         return x
 
-#         return self.output(x)  # [batch, seq_len, vocab_size]
+
+class EntropyModel(nn.Module):
+    def __init__(
+        self, vocab_size=260, channels=256, dropout=0.1, n_layers=2, kernel_size=3
+    ):
+        super().__init__()
+
+        self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+
+        # Stack of dilated convolutions
+        self.convs = nn.ModuleList()
+        for i in range(n_layers):
+            dilation = 2**i
+            padding = (kernel_size - 1) * dilation  # Causal padding
+            self.convs.append(
+                nn.Sequential(
+                    nn.Conv1d(
+                        channels,
+                        channels,
+                        kernel_size=kernel_size,
+                        padding=padding,
+                        dilation=dilation,
+                    ),
+                    nn.Dropout(dropout),
+                )
+            )
+
+        self.activation = nn.SiLU()  # Same as paper
+        self.norm = nn.LayerNorm(channels)
+
+        # Project to byte probabilities
+        self.output = nn.Linear(channels, vocab_size)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        # x: [batch, seq_len]
+        x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+
+        # Causal convolution stack
+        for conv in self.convs:
+            out = self.activation(x)
+            out = conv(out)
+            out = out[..., : x.size(-1)]
+            x = out + x  # Residual connection
+
+        x = x.transpose(1, 2)  # [batch, seq_len, channels]
+        x = self.norm(x)
+
+        return self.output(x)  # [batch, seq_len, vocab_size]
 
 
 def create_base_args(config):
