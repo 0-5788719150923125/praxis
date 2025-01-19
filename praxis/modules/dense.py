@@ -13,15 +13,25 @@ class PraxisMLP(nn.Sequential):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", activation=None):
+    def __init__(
+        self,
+        config: "AutoConfig",
+        activation=None,
+        input_dim=None,
+        hidden_dim=None,
+        *args,
+        **kwargs
+    ):
         activation = activation or config.activation
+        input_dim = input_dim or config.hidden_size
+        hidden_dim = hidden_dim or input_dim * 4
         super().__init__(
             OrderedDict(
                 [
-                    ("up", nn.Linear(config.hidden_size, 4 * config.hidden_size)),
+                    ("up", nn.Linear(input_dim, hidden_dim)),
                     ("act", ACT2FN[activation]),
                     ("dropout", nn.Dropout(config.dropout)),
-                    ("down", nn.Linear(4 * config.hidden_size, config.hidden_size)),
+                    ("down", nn.Linear(hidden_dim, input_dim)),
                 ]
             )
         )

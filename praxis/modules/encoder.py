@@ -1,27 +1,19 @@
-import math
 import os
 import random
-from typing import Optional, Union
 
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
 os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 
-from contextlib import nullcontext
-
 import bytelatent
 import torch
 import torch.nn.functional as F
-from bytelatent import base_transformer
 from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
     compute_hash_embeddings,
-    create_local_decoder,
-    create_local_encoder,
     cross_attn_mask,
     decoder_patch_ids_from_lengths,
-    get_blt_input,
     get_decoder_dim_token_emb,
     get_encoder_dim_patch_emb,
     get_encoder_dim_token_emb,
@@ -30,7 +22,6 @@ from bytelatent.model.blt import (
 )
 from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
 from bytelatent.model.utils import downsample
-from bytelatent.transformer import LMTransformer, LMTransformerArgs
 from torch import nn
 
 from praxis.modules.recurrent import minGRU
@@ -50,17 +41,17 @@ class PraxisEncoder(nn.Module):
         self.args = create_base_args(config)
 
         realtime_patching = False
-        self.entropy = None
+        self.entropy_model = None
         self.args.patching_mode = "entropy" if "entropy" in config.meta else "space"
         if self.args.patching_mode == "entropy":
             realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
-            self.entropy = EntropyModel(
-                vocab_size=260, channels=config.hidden_size, n_layers=2, kernel_size=3
-            )
+            self.args.monotonicity = True
+            self.entropy_model = EntropyModel(260, config.hidden_size * 2)
+            self.loss_scale = 0.01
 
             # Threshold optimization parameters
-            self.target_len = 0.125  # 1/8th of original length
+            self.target_ratio = 0.125  # 1/8th of original length
 
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
@@ -71,12 +62,13 @@ class PraxisEncoder(nn.Module):
         self.patcher = Patcher(
             PatcherArgs(
                 realtime_patching=realtime_patching,
-                entropy_model=self.entropy,
+                entropy_model=self.entropy_model,
                 device=self.device_map,
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
                 threshold=self.args.patching_threshold,
-                threshold_add=self.args.patching_threshold_add,
+                # threshold_add=self.args.patching_threshold_add,
+                threshold_add=None,
                 monotonicity=self.args.monotonicity,
             )
         )
@@ -98,24 +90,20 @@ class PraxisEncoder(nn.Module):
         )
 
     def encode(self, input_ids):
-        if self.entropy is None:
+        aux_loss = 0
+        if self.entropy_model is None:
             # Space patching mode
-            patch_lengths, tok_scores = self.patcher.patch(
-                input_ids, include_next_token=True
-            )
+            patch_lengths, _ = self.patcher.patch(input_ids, include_next_token=True)
         else:
             # Entropy patching mode
             entropy_scores, entropy_preds = calculate_entropies(
                 tokens=input_ids,
-                entropy_model=self.entropy,
+                entropy_model=self.entropy_model,
                 patching_batch_size=input_ids.size(0),
                 device=self.device_map,
                 enable_grad=True,
             )
             if self.training:
-
-                original_len = input_ids.size(1)
-
                 # First, find a safe threshold that guarantees we're under target length
                 safe_threshold = self._find_safe_threshold(input_ids, entropy_scores)
 
@@ -141,14 +129,15 @@ class PraxisEncoder(nn.Module):
                 # Rest proceeds as before, but now we're guaranteed safe
                 best_threshold = safe_threshold
                 best_ratio = float("inf")
-                target_ratio = self.target_len
+                best_patch_lengths = None
+                target_ratio = self.target_ratio
 
                 # Try each candidate
                 for threshold in candidates:
                     patch_lengths, _ = self.patcher.patch(
                         input_ids,
                         include_next_token=True,
-                        threshold=float(threshold),  # Convert to float for patcher
+                        threshold=threshold,
                         entropies=entropy_scores,
                     )
 
@@ -157,20 +146,25 @@ class PraxisEncoder(nn.Module):
 
                     if distance < best_ratio and actual_ratio <= target_ratio:
                         best_ratio = distance
-                        best_threshold = float(threshold)
+                        best_threshold = threshold
+                        best_patch_lengths = patch_lengths
 
-                # Use best threshold
+                # Use best values
                 self.optimal_threshold.fill_(best_threshold)
-                patch_lengths, _ = self.patcher.patch(
-                    input_ids,
-                    include_next_token=True,
-                    threshold=best_threshold,
-                    entropies=entropy_scores,
+                patch_lengths = best_patch_lengths
+
+                # Compute cross entropy loss
+                aux_loss = (
+                    F.cross_entropy(
+                        entropy_preds[:, :-1].reshape(-1, entropy_preds.size(-1)),
+                        input_ids[:, 1:].reshape(-1),
+                    )
+                    * self.loss_scale
                 )
 
                 if self.debug and random.random() < self.log_rate:
                     print(
-                        f"DEBUG: original length={original_len}, reduced length={patch_lengths.shape[1]}, patching threshold={best_threshold:.10f}"
+                        f"DEBUG: original length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, patching threshold={best_threshold:.10f}"
                     )
 
             else:
@@ -216,14 +210,6 @@ class PraxisEncoder(nn.Module):
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
         )
-
-        aux_loss = 0
-        if self.training and self.entropy is not None:
-            # Compute cross entropy loss
-            aux_loss = F.cross_entropy(
-                entropy_preds[:, :-1].reshape(-1, entropy_preds.size(-1)),
-                input_ids[:, 1:].reshape(-1),
-            )
 
         # Downsampling
         if self.args.cross_attn_encoder:
@@ -369,43 +355,25 @@ class RecurrentDecoder(LocalDecoder):
 
 
 class EntropyModel(nn.Module):
-    def __init__(self, vocab_size=260, channels=256, n_layers=1, kernel_size=3):
+    def __init__(self, vocab_size=260, hidden_size=256, n_layers=1):
         super().__init__()
 
-        self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+        self.embedding = nn.Embedding(vocab_size, hidden_size)  # byte embedding
 
-        # Stack of dilated convolutions
-        self.convs = nn.ModuleList(
-            [
-                nn.Conv1d(
-                    channels,
-                    channels,
-                    kernel_size=kernel_size,
-                    padding=(kernel_size - 1),
-                    dilation=1,
-                )
-                for i in range(n_layers)
-            ]
-        )
+        class Config:
+            dim = hidden_size
+            norm_eps = 1e-5
 
-        self.activation = nn.SiLU()  # Same as paper
-        self.norm = nn.LayerNorm(channels)
-
-        # Project to byte probabilities
-        self.output = nn.Linear(channels, vocab_size)
+        self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         # x: [batch, seq_len]
-        x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+        x = self.embedding(x)  # [batch, seq_len, hidden_size]
 
-        # Causal convolution stack
-        for conv in self.convs:
-            x = self.activation(conv(x))
+        for block in self.blocks:
+            x = block(x)
 
-        x = x.transpose(1, 2)  # [batch, seq_len, channels]
-        x = self.norm(x)
-
-        return self.output(x)  # [batch, seq_len, vocab_size]
+        return x
 
 
 # class EntropyModel(nn.Module):
@@ -414,20 +382,38 @@ class EntropyModel(nn.Module):
 
 #         self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
 
-#         class Config:
-#             dim = channels
-#             norm_eps = 1e-5
+#         # Stack of dilated convolutions
+#         self.convs = nn.ModuleList(
+#             [
+#                 nn.Conv1d(
+#                     channels,
+#                     channels,
+#                     kernel_size=kernel_size,
+#                     padding=(kernel_size - 1),
+#                     dilation=1,
+#                 )
+#                 for i in range(n_layers)
+#             ]
+#         )
 
-#         self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
+#         self.activation = nn.SiLU()  # Same as paper
+#         self.norm = nn.LayerNorm(channels)
+
+#         # Project to byte probabilities
+#         self.output = nn.Linear(channels, vocab_size)
 
 #     def forward(self, x: torch.Tensor, *args, **kwargs):
 #         # x: [batch, seq_len]
-#         x = self.embedding(x)  # [batch, seq_len, channels]
+#         x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
 
-#         for block in self.blocks:
-#             x = block(x)
+#         # Causal convolution stack
+#         for conv in self.convs:
+#             x = self.activation(conv(x))
 
-#         return x
+#         x = x.transpose(1, 2)  # [batch, seq_len, channels]
+#         x = self.norm(x)
+
+#         return self.output(x)  # [batch, seq_len, vocab_size]
 
 
 def create_base_args(config):

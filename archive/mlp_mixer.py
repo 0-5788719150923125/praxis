@@ -34,42 +34,52 @@ class MLPMixerForSequences(nn.Module):
         self.channel_mix = MLPBlock(channel_dim, channel_dim * channel_dim_multiplier)
 
     def forward(self, x, attention_mask=None):
-        """
-        Args:
-            x: Input tensor of shape (batch_size, seq_length, channel_dim)
-            attention_mask: Boolean mask of shape (batch_size, seq_length)
-        """
-        # Handle padding for sequences shorter than max_length
+        # Handle padding and truncation first
         batch_size, seq_length, _ = x.shape
 
         if seq_length < self.max_seq_length:
-            # Create padding
             padding = torch.zeros(
                 (batch_size, self.max_seq_length - seq_length, self.channel_dim),
                 device=x.device,
                 dtype=x.dtype,
             )
             x = torch.cat([x, padding], dim=1)
+            current_length = self.max_seq_length
 
-            # Update attention mask if none provided
             if attention_mask is None:
                 attention_mask = torch.ones((batch_size, seq_length), device=x.device)
             padding_mask = torch.zeros(
                 (batch_size, self.max_seq_length - seq_length), device=x.device
             )
             attention_mask = torch.cat([attention_mask, padding_mask], dim=1)
-
         elif seq_length > self.max_seq_length:
-            # Truncate sequence
             x = x[:, : self.max_seq_length, :]
+            current_length = self.max_seq_length
             if attention_mask is not None:
                 attention_mask = attention_mask[:, : self.max_seq_length]
+        else:
+            current_length = seq_length
 
-        # Token mixing with mask
+        # Token mixing with causal mask
         y = self.token_norm(x)
         y = y.transpose(1, 2)  # (batch_size, channel_dim, seq_length)
+
+        # Create causal mask just for sequence dimension
+        causal_mask = torch.triu(
+            torch.ones(current_length, current_length, device=x.device), diagonal=1
+        ).bool()
+
+        # Expand mask for broadcasting: (seq_length, seq_length) -> (1, channel_dim, seq_length, seq_length)
+        causal_mask = (
+            causal_mask.unsqueeze(0).unsqueeze(0).expand(1, 1, current_length, -1)
+        )
+
+        # Apply mask to y using matrix multiplication
+        y = y.unsqueeze(-2) @ (~causal_mask).float()
+        y = y.squeeze(-2)
+
         y = self.token_mix(y)
-        y = y.transpose(1, 2)  # (batch_size, seq_length, channel_dim)
+        y = y.transpose(1, 2)
 
         # Apply mask if provided
         if attention_mask is not None:
