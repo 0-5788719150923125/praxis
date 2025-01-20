@@ -200,46 +200,58 @@ class SparseQuery(nn.Module):
 
         return batch_gates, batch_index, expert_size, index_sorted_experts
 
-    def init_aux_statistics(self):
-        """Initialize auxiliary loss statistics"""
-        self.acc_count = 0
-        self.acc_probs = 0
-        self.acc_freq = 0
-        self.acc_lsesq = 0
+    def init_aux_statistics(self, window_size=5):
+        self.window_size = window_size
+        self.acc_count_queue = []  # Also track counts per batch
+        self.acc_probs_queue = []
+        self.acc_freq_queue = []
+        self.acc_lsesq_queue = []  # New queue for lsesq
 
     def update_aux_statistics(self, probs, logits, gates):
-        """Update statistics based on current batch"""
-        self.acc_count = self.acc_count + logits.size(0)
-        self.acc_probs = self.acc_probs + probs.sum(0).sum(0)
-        self.acc_freq = self.acc_freq + (gates > 0).float().sum(0).sum(0)
+        # Calculate batch count
+        batch_count = logits.size(0)
+        self.acc_count_queue.append(batch_count)
+
+        # Calculate and append new statistics
+        new_probs = probs.sum(0).sum(0)
+        new_freq = (gates > 0).float().sum(0).sum(0)
         lsesq = torch.log(torch.exp(logits).sum(dim=-1)) ** 2
-        self.acc_lsesq = self.acc_lsesq + lsesq.sum()
+        new_lsesq = lsesq.sum()
+
+        self.acc_probs_queue.append(new_probs)
+        self.acc_freq_queue.append(new_freq)
+        self.acc_lsesq_queue.append(new_lsesq)
+
+        # Remove oldest entries if beyond window size
+        if len(self.acc_probs_queue) > self.window_size:
+            self.acc_count_queue.pop(0)
+            self.acc_probs_queue.pop(0)
+            self.acc_freq_queue.pop(0)
+            self.acc_lsesq_queue.pop(0)
 
     def get_aux_loss_and_clear(self):
-        """Calculate auxiliary loss and reset statistics"""
-        if self.acc_count == 0:
+        if not self.acc_probs_queue:
             return 0.0
+
+        # Sum up counts and values within window
+        total_count = sum(self.acc_count_queue)
+        acc_probs_sum = torch.stack(self.acc_probs_queue).sum(0)
+        acc_freq_sum = torch.stack(self.acc_freq_queue).sum(0)
+        acc_lsesq_sum = sum(self.acc_lsesq_queue)  # Sum scalar values
 
         # Compute switch loss
         switchloss = (
             self.num_heads
             * (
-                F.normalize(self.acc_probs, p=1, dim=0)
-                * F.normalize(self.acc_freq, p=1, dim=0)
+                F.normalize(acc_probs_sum, p=1, dim=0)
+                * F.normalize(acc_freq_sum, p=1, dim=0)
             ).sum()
         )
 
-        # Compute z loss
-        zloss = self.acc_lsesq / self.acc_count
+        # Compute z loss using windowed values
+        zloss = acc_lsesq_sum / total_count
 
-        # Combine losses with weighting
-        loss = switchloss + 0.1 * zloss
-
-        # Reset statistics
-        if not self.acc_aux_loss:
-            self.init_aux_statistics()
-
-        return loss
+        return switchloss + 0.1 * zloss
 
     def compute_routing_weights(self, x):
         # Get routing embeddings with dropout
