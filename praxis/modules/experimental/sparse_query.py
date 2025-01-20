@@ -62,29 +62,28 @@ class SparseQuery(nn.Module):
             torch.empty(num_heads, expert_hidden_size, head_dim)
         )
 
-        # Split into input and output experts
-        self.input_weights = nn.Parameter(torch.empty(num_heads, in_features, head_dim))
-        self.output_weights = nn.Parameter(torch.empty(num_heads, head_dim, head_dim))
-
+        # Single weight matrix instead of separate expert weights
+        self.weight = nn.Parameter(torch.empty(num_heads * head_dim, in_features))
         if bias:
-            self.input_bias = nn.Parameter(torch.empty(num_heads, head_dim))
-            self.output_bias = nn.Parameter(torch.empty(num_heads, head_dim))
+            self.bias = nn.Parameter(torch.empty(num_heads * head_dim))
         else:
-            self.register_parameter("input_bias", None)
-            self.register_parameter("output_bias", None)
+            self.register_parameter("bias", None)
 
         self.init_parameters()
         self.init_aux_statistics()
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}(type='gmm')"
+
     def init_parameters(self):
         # Initialize both expert networks
         nn.init.xavier_uniform_(self.head_centroids)
-        nn.init.xavier_uniform_(self.input_weights)
-        nn.init.xavier_uniform_(self.output_weights)
-        if self.input_bias is not None:
-            nn.init.zeros_(self.input_bias)
-        if self.output_bias is not None:
-            nn.init.zeros_(self.output_bias)
+        # # nn.init.xavier_uniform_(self.input_weights)
+        # # nn.init.xavier_uniform_(self.output_weights)
+        # if self.input_bias is not None:
+        #     nn.init.zeros_(self.input_bias)
+        # if self.output_bias is not None:
+        #     nn.init.zeros_(self.output_bias)
 
     def compute_gating(
         self,
@@ -109,12 +108,10 @@ class SparseQuery(nn.Module):
         return batch_gates, batch_index, expert_size, index_sorted_experts
 
     def forward(self, x, multiply_by_gates=True):
-        batch_size, *rest, _ = x.shape
-        x_flat = x.view(-1, self.in_features)
-        flat_size = batch_size * math.prod(rest)
+        batch_size, seq_len, _ = x.shape
 
         # [Previous routing code remains the same until expert computation]
-        probs, logits = self.compute_routing_weights(x_flat)
+        probs, logits = self.compute_routing_weights(x)
 
         # [Top-k selection and compute_gating remain the same]
         if self.training and self.sample_topk > 0:
@@ -124,17 +121,19 @@ class SparseQuery(nn.Module):
             sampled_indices = torch.multinomial(masked_probs, self.sample_topk)
             top_k_indices = torch.cat([top_km1_indices, sampled_indices], dim=1)
             top_k_probs = torch.gather(probs, 1, top_k_indices)
+            log_chance = 0.005
         else:
             top_k_probs, top_k_indices = probs.topk(self.top_k, dim=-1)
+            log_chance = 0.01
 
-        if self.debug and random.random() < 0.005:
+        if self.debug and random.random() < log_chance:
             # Calculate expert selection frequency
             expert_counts = torch.zeros(self.num_heads, device=top_k_indices.device)
             for i in range(self.num_heads):
                 expert_counts[i] = (top_k_indices == i).sum().item()
 
             # Normalize by total possible selections
-            total_selections = batch_size * rest[0] * self.top_k
+            total_selections = batch_size * seq_len * self.top_k
             expert_frequencies = expert_counts / total_selections
 
             frequencies = []
@@ -145,71 +144,43 @@ class SparseQuery(nn.Module):
                 f"DEBUG: name={self.identifier}, mode={'training' if self.training else 'inference'}, frequencies={', '.join(frequencies)}"
             )
 
+        # Compute gating - reshape for gating computation
+        flat_probs = probs.view(-1, self.num_heads)
+        flat_top_k_probs = top_k_probs.view(-1, self.top_k)
+        flat_top_k_indices = top_k_indices.view(-1, self.top_k)
+
         # Compute gating
         batch_gates, batch_index, expert_size, sorted_indices = self.compute_gating(
-            self.top_k, probs, top_k_probs, top_k_indices
+            self.top_k, flat_probs, flat_top_k_probs, flat_top_k_indices
         )
 
-        # Update stats if training
-        aux_loss = 0
+        # Compute outputs for all heads
+        full_output = F.linear(x, self.weight, self.bias)
+        full_output = full_output.view(
+            batch_size, seq_len, self.num_heads, self.head_dim
+        )
+
+        # Prepare indices for gather
+        gather_indices = top_k_indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim)
+
+        # Select outputs and apply gates
+        selected_outputs = full_output.gather(2, gather_indices)
+        if multiply_by_gates:
+            selected_outputs = selected_outputs * top_k_probs.unsqueeze(-1)
+
+        # Handle aux loss
         if self.training:
             zeros = torch.zeros_like(probs)
-            gates = zeros.scatter(1, top_k_indices, top_k_probs)
+            gates = zeros.scatter_(-1, top_k_indices, top_k_probs)
             self.update_aux_statistics(probs, logits, gates)
             aux_loss = self.get_aux_loss_and_clear()
+        else:
+            aux_loss = 0
 
-        # Route inputs to experts
-        expert_inputs = x_flat[batch_index]  # [batch * top_k, in_features]
-        selected_indices = top_k_indices.reshape(-1)[sorted_indices]
-
-        # First transformation with proper reshaping
-        expert_inputs = expert_inputs.unsqueeze(1)  # [batch * top_k, 1, in_features]
-        expert_input_weights = self.input_weights[
-            selected_indices
-        ]  # [batch * top_k, in_features, head_dim]
-        hidden = torch.bmm(expert_inputs, expert_input_weights).squeeze(
-            1
-        )  # [batch * top_k, head_dim]
-
-        if self.input_bias is not None:
-            hidden = hidden + self.input_bias[selected_indices]
-
-        # Activation
-        hidden = F.gelu(hidden)
-
-        # Second transformation
-        hidden = hidden.unsqueeze(1)  # [batch * top_k, 1, head_dim]
-        expert_output_weights = self.output_weights[
-            selected_indices
-        ]  # [batch * top_k, head_dim, head_dim]
-        outputs = torch.bmm(hidden, expert_output_weights).squeeze(
-            1
-        )  # [batch * top_k, head_dim]
-
-        if self.output_bias is not None:
-            outputs = outputs + self.output_bias[selected_indices]
-
-        # Fix combined_outputs shape to accommodate all experts
-        combined_outputs = torch.zeros(
-            flat_size,
-            self.top_k * self.head_dim,  # Changed: preserve all expert dimensions
-            device=outputs.device,
+        return (
+            selected_outputs.reshape(batch_size, seq_len, self.top_k * self.head_dim),
+            aux_loss,
         )
-
-        # Reshape outputs to preserve expert dimensions
-        outputs = outputs.view(-1, self.top_k, self.head_dim)
-
-        # Reshape batch_gates if using gating
-        if multiply_by_gates:
-            batch_gates = batch_gates.view(-1, self.top_k, 1)
-            outputs = outputs * batch_gates
-
-        # Reshape for final output
-        final_outputs = outputs.reshape(flat_size, self.top_k * self.head_dim)
-
-        # Final reshape to match expected shape
-        output_shape = [batch_size] + list(rest) + [self.out_features]
-        return final_outputs.view(output_shape), aux_loss
 
     def init_aux_statistics(self):
         """Initialize auxiliary loss statistics"""
@@ -221,8 +192,8 @@ class SparseQuery(nn.Module):
     def update_aux_statistics(self, probs, logits, gates):
         """Update statistics based on current batch"""
         self.acc_count = self.acc_count + logits.size(0)
-        self.acc_probs = self.acc_probs + probs.sum(0)
-        self.acc_freq = self.acc_freq + (gates > 0).float().sum(0)
+        self.acc_probs = self.acc_probs + probs.sum(0).sum(0)
+        self.acc_freq = self.acc_freq + (gates > 0).float().sum(0).sum(0)
         lsesq = torch.log(torch.exp(logits).sum(dim=-1)) ** 2
         self.acc_lsesq = self.acc_lsesq + lsesq.sum()
 
@@ -329,19 +300,16 @@ if __name__ == "__main__":
     )
 
     # Memory usage test
-    input_params = model.num_heads * model.in_features * model.head_dim
-    output_params = model.num_heads * model.head_dim * model.head_dim
-    full_params = input_params + output_params
-    actual_params = model.input_weights.numel() + model.output_weights.numel()
+    params_per_head = model.head_dim * model.in_features  # 64 * 512
+    full_params = model.num_heads * params_per_head  # 12 * (64 * 512)
+    actual_params = model.weight.numel()  # 768 * 512
 
-    # Verify our calculation matches actual parameter count
     assert (
         full_params == actual_params
     ), f"Parameter calculation mismatch: {full_params} != {actual_params}"
 
-    input_effective = model.top_k * model.in_features * model.head_dim
-    output_effective = model.top_k * model.head_dim * model.head_dim
-    effective_params = input_effective + output_effective
+    # For effective parameters calculation:
+    effective_params = model.top_k * params_per_head  # Only count active heads
 
     print(f"Parameters per layer: {actual_params:,}")
     print(f"Effective parameters used per forward pass: {effective_params:,}")
