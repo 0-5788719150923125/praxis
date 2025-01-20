@@ -30,8 +30,8 @@ def model_setup(request, config):
     """
     model_class, hidden_size = request.param
     # Use the update method from our existing config
-    updated_config = config.update(hidden_size=hidden_size)
-    model = model_class(updated_config)
+    setattr(config, "hidden_size", hidden_size)
+    model = model_class(config)
     return model, hidden_size
 
 
