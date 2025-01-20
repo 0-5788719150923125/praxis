@@ -10,6 +10,7 @@ from torch import Tensor
 from praxis.functional import alpha_entmax, alpha_relu, ghostmax
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.encoding import ENCODING_REGISTRY
+from praxis.modules.experimental.sparse_query import SparseQuery
 from praxis.modules.memory import PraxisCompressiveMemory
 
 
@@ -50,9 +51,19 @@ class PraxisAttention(nn.Module):
         self.ema = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
-        self.query = nn.Linear(
-            hidden_size, self.num_query_heads * self.head_dim, bias=False
-        )
+        if "sparse_query" in config.meta:
+            top_k = 2
+            self.query = SparseQuery(
+                hidden_size,
+                self.num_query_heads,
+                self.head_dim * 2 * self.num_queries,
+                top_k=top_k,
+                dropout=config.dropout,
+            )
+        else:
+            self.query = nn.Linear(
+                hidden_size, self.num_query_heads * self.head_dim, bias=False
+            )
         self.key = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
         self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
 
@@ -87,17 +98,19 @@ class PraxisAttention(nn.Module):
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
+        aux_loss = 0
 
         if self.ema:
             # Compute an exponential moving average-based gating mechanism
             inputs = self.ema(inputs)
 
         # Initialize QKV projections
-        q = (
-            self.query(inputs)
-            .view(batch_size, seq_len, self.num_query_heads * self.factor, -1)
-            .transpose(1, 2)
-        )
+        q = self.query(inputs)
+        if isinstance(q, tuple):
+            q, aux_loss = q
+        q = q.view(
+            batch_size, seq_len, self.num_query_heads * self.factor, -1
+        ).transpose(1, 2)
         k = (
             self.key(inputs)
             .view(batch_size, seq_len, self.num_heads * self.factor, -1)
@@ -148,7 +161,7 @@ class PraxisAttention(nn.Module):
             output = self.gates(inputs, output)
 
         # Final output projection
-        return self.output(output)
+        return self.output(output), aux_loss
 
     def _process_chunk(
         self,
@@ -775,7 +788,7 @@ class GatedSingleHeadAttention(nn.Module):
         scores = self.apply_causal_mask(scores)
         scores = self.apply_attention_mask(scores, attention_mask)
         weights = self.compute_weights(scores, v)
-        return self.compute_gated_output(inputs, weights)
+        return self.compute_gated_output(inputs, weights), 0
 
     def compute_scores(self, inputs):
         B, S, E = inputs.shape
@@ -880,7 +893,7 @@ class VanillaMHA(nn.MultiheadAttention):
             is_causal=True,
             attn_mask=causal_mask,
         )
-        return outputs
+        return outputs, 0
 
 
 ATTENTION_REGISTRY = {

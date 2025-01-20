@@ -45,10 +45,11 @@ class PraxisTransformer(nn.Module):
         *args,
         **kwargs,
     ):
+        aux_loss = 0
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)
         attn_input = self.attn_norm(self._format_state(residual))
-        attn_output = self.attn(attn_input, attention_mask)
+        attn_output, aux_loss = self.attn(attn_input, attention_mask)
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
 
         # =========== FeedForward Block ===========
@@ -63,7 +64,7 @@ class PraxisTransformer(nn.Module):
 
         # Merge expansions
         final_output = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
-        return self._format_state(final_output), None, 0
+        return self._format_state(final_output), None, aux_loss
 
     def _format_state(self, h: torch.Tensor):
         return h[..., 0, :] if h.dim() == 4 else h

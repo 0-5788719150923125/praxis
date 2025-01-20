@@ -22,7 +22,6 @@ class SparseQuery(nn.Module):
         hidden_size: int = 256,
         expert_hidden_size: int = None,
         bias: bool = True,
-        acc_aux_loss: bool = True,
         dropout: float = 0.1,
         sample_topk: int = 0,
     ):
@@ -32,7 +31,6 @@ class SparseQuery(nn.Module):
         self.head_dim = head_dim
         self.top_k = min(top_k, num_heads)
         self.sample_topk = min(sample_topk, self.top_k)
-        self.acc_aux_loss = acc_aux_loss
 
         # Default expert hidden size to 4x head_dim (common practice)
         if expert_hidden_size is None:
