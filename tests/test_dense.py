@@ -6,9 +6,10 @@ import torch
 
 from praxis.activations import ACT2CLS, ACT2FN
 from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly
+from praxis.modules.kan import PraxisKAN
 
 # Define test parameters
-MODEL_CLASSES = [PraxisGLU, PraxisMLP, PraxisPoly]
+MODEL_CLASSES = [PraxisGLU, PraxisMLP, PraxisPoly, PraxisKAN]
 HIDDEN_SIZES = [32, 64, 128, 256]
 
 # Create parameter combinations

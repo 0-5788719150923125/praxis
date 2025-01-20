@@ -48,7 +48,7 @@ class PraxisEncoder(nn.Module):
             self.args.patching_threshold = 1.335442066192627
             self.args.monotonicity = True
             self.entropy_model = EntropyModel(
-                260, config.hidden_size * 2, config.dropout
+                260, config.hidden_size // 2, config.dropout
             )
             self.loss_scale = 0.01
 
@@ -110,8 +110,8 @@ class PraxisEncoder(nn.Module):
                 safe_threshold = self._find_safe_threshold(input_ids, entropy_scores)
 
                 # Now sample thresholds that are guaranteed to be safe
-                n_samples = 25
-                min_candidates = 10
+                n_samples = 30
+                min_candidates = 15
                 # Sample only multipliers >= 1.0 to stay above safe_threshold
                 multipliers = 1.0 + torch.abs(
                     torch.normal(
@@ -365,7 +365,7 @@ class RecurrentDecoder(LocalDecoder):
 
 class EntropyModel(nn.Module):
     def __init__(
-        self, vocab_size=260, channels=256, dropout=0.1, n_layers=2, kernel_size=3
+        self, vocab_size=260, channels=256, dropout=0, n_layers=2, kernel_size=3
     ):
         super().__init__()
 
@@ -389,10 +389,10 @@ class EntropyModel(nn.Module):
                 )
             )
 
-        self.activation = nn.SiLU()  # Same as paper
-        self.norm = nn.LayerNorm(channels)
+        self.activation = nn.GELU()
 
         # Project to byte probabilities
+        self.norm = nn.LayerNorm(channels)
         self.output = nn.Linear(channels, vocab_size)
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
@@ -401,15 +401,13 @@ class EntropyModel(nn.Module):
 
         # Causal convolution stack
         for conv in self.convs:
-            out = self.activation(x)
-            out = conv(out)
+            out = conv(x)
             out = out[..., : x.size(-1)]
+            out = self.activation(out)
             x = out + x  # Residual connection
 
         x = x.transpose(1, 2)  # [batch, seq_len, channels]
-        x = self.norm(x)
-
-        return self.output(x)  # [batch, seq_len, vocab_size]
+        return self.output(self.norm(x))
 
 
 # class EntropyModel(nn.Module):
