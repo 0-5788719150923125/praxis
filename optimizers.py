@@ -1,6 +1,19 @@
+from pytorch_optimizer import create_optimizer
+from pytorch_optimizer.optimizer import Lookahead, OrthoGrad
+
+
 def get_optimizer_profile(name="AdamW"):
     lowercase_profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
     return {**lowercase_profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
+
+
+def get_optimizer(model, ortho=False, lookahead=False, *args, **kwargs):
+    optimizer = create_optimizer(model, *args, **kwargs)
+    if ortho:
+        optimizer = OrthoGrad(optimizer)
+    if lookahead:
+        optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
+    return optimizer
 
 
 # Most optimizer settings can be found here:

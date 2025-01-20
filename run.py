@@ -100,10 +100,10 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
-from pytorch_optimizer import CosineAnnealingWarmupRestarts, create_optimizer
+from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-from optimizers import get_optimizer_profile
+from optimizers import get_optimizer, get_optimizer_profile
 
 warnings.filterwarnings("ignore", ".*Checkpoint directory.*exists and is not empty*")
 warnings.filterwarnings(
@@ -983,7 +983,9 @@ if local_rank == 0:
 datamodule = get_datamodules(seed, dev, phi, gun, source, tokenizer, hparams, data_path)
 
 # create the optimizer
-optimizer = create_optimizer(model, **hparams["optimizer"])
+optimizer = get_optimizer(
+    model, ortho=ortho, lookahead=lookahead, **hparams["optimizer"]
+)
 
 # create the scheduler
 scheduler = scheduler_func(optimizer)

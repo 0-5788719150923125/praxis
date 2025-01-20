@@ -169,6 +169,18 @@ parser.add_argument(
     help="The optimizer profile to use",
 )
 parser.add_argument(
+    "--ortho",
+    action="store_true",
+    default=False,
+    help="Wrap the optimizer in OrthoGrad, projecting gradients to be orthogonal to parameters",
+)
+parser.add_argument(
+    "--lookahead",
+    action="store_true",
+    default=False,
+    help="Wrap the optimizer in Lookahead",
+)
+parser.add_argument(
     "--loss_func",
     type=str,
     choices=LOSS_REGISTRY.keys(),
