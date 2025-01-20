@@ -1,4 +1,6 @@
 import math
+import random
+import uuid
 
 import torch
 import torch.nn as nn
@@ -24,8 +26,11 @@ class SparseQuery(nn.Module):
         bias: bool = True,
         dropout: float = 0.1,
         sample_topk: int = 0,
+        debug: bool = False,
     ):
         super().__init__()
+        self.identifier = str(uuid.uuid4()).replace("-", "")[:3]
+        self.debug = debug
         self.in_features = in_features
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -121,6 +126,24 @@ class SparseQuery(nn.Module):
             top_k_probs = torch.gather(probs, 1, top_k_indices)
         else:
             top_k_probs, top_k_indices = probs.topk(self.top_k, dim=-1)
+
+        if self.debug and random.random() < 0.005:
+            # Calculate expert selection frequency
+            expert_counts = torch.zeros(self.num_heads, device=top_k_indices.device)
+            for i in range(self.num_heads):
+                expert_counts[i] = (top_k_indices == i).sum().item()
+
+            # Normalize by total possible selections
+            total_selections = batch_size * rest[0] * self.top_k
+            expert_frequencies = expert_counts / total_selections
+
+            frequencies = []
+            for i, freq in enumerate(expert_frequencies):
+                frequencies.append(f"{i}: {freq:.3f}")
+
+            print(
+                f"DEBUG: name={self.identifier}, mode={'training' if self.training else 'inference'}, frequencies={', '.join(frequencies)}"
+            )
 
         # Compute gating
         batch_gates, batch_index, expert_size, sorted_indices = self.compute_gating(

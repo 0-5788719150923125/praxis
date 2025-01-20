@@ -62,6 +62,7 @@ class PraxisAttention(nn.Module):
                 top_k=self.top_k,
                 dropout=config.dropout,
                 bias=False,
+                debug=config.debug,
             )
         else:
             self.query = nn.Linear(
