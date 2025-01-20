@@ -10,6 +10,7 @@ class PraxisConfig(PretrainedConfig):
         hidden_size=256,
         num_heads=3,
         num_queries=2,
+        k_heads=None,
         depth=7,
         num_experts=7,
         dropout=0,
@@ -65,6 +66,7 @@ class PraxisConfig(PretrainedConfig):
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.num_queries = num_queries
+        self.k_heads = k_heads
         self.depth = depth
         self.num_experts = num_experts
         self.attention_type = attention_type

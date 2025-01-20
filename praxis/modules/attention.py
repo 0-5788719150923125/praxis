@@ -51,10 +51,9 @@ class PraxisAttention(nn.Module):
         self.ema = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
-        self.top_k = 1000
+        self.top_k = config.k_heads if config.k_heads is not None else 1000
         self.k_queries = self.num_query_heads
-        if "sparse_query" in config.meta:
-            self.top_k = 2
+        if config.k_heads is not None:
             self.k_queries = self.num_queries * self.top_k
             self.query = SparseQuery(
                 hidden_size,
@@ -125,6 +124,7 @@ class PraxisAttention(nn.Module):
             .view(batch_size, seq_len, self.num_heads, -1)
             .transpose(1, 2)
         )
+        # print(q.shape, k.shape, v.shape)
 
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len

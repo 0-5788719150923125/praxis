@@ -104,6 +104,12 @@ parser.add_argument(
     help="The ratio of heads to queries per-head. (example: '3:2' is equal to 3 heads, with 2 queries per head)",
 )
 parser.add_argument(
+    "--k_heads",
+    type=int,
+    default=None,
+    help="A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable.",
+)
+parser.add_argument(
     "--activation",
     type=str,
     choices=ACTIVATION_REGISTRY.keys(),
