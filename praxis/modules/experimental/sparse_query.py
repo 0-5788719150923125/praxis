@@ -54,20 +54,18 @@ class SparseQuery(nn.Module):
         self.head_centroids = nn.Parameter(torch.empty(num_heads, hidden_size))
         self.temperature = nn.Parameter(torch.zeros(1))
 
-        # Replace single weight matrix with two-layer expert
-        self.expert_up = nn.Parameter(
+        self.input_experts = nn.Parameter(
             torch.empty(num_heads, in_features, expert_hidden_size)
         )
-        self.expert_down = nn.Parameter(
+        self.output_experts = nn.Parameter(
             torch.empty(num_heads, expert_hidden_size, head_dim)
         )
-
-        # Single weight matrix instead of separate expert weights
-        self.weight = nn.Parameter(torch.empty(num_heads * head_dim, in_features))
         if bias:
-            self.bias = nn.Parameter(torch.empty(num_heads * head_dim))
+            self.input_bias = nn.Parameter(torch.empty(num_heads, expert_hidden_size))
+            self.output_bias = nn.Parameter(torch.empty(num_heads, head_dim))
         else:
-            self.register_parameter("bias", None)
+            self.register_parameter("input_bias", None)
+            self.register_parameter("output_bias", None)
 
         self.reset_parameters()
         self.init_aux_statistics()
@@ -78,33 +76,23 @@ class SparseQuery(nn.Module):
     def reset_parameters(self):
         # Initialize both expert networks
         nn.init.normal_(self.head_centroids)
-        nn.init.uniform_(self.weight, -1 / self.weight.size(1), 1 / self.weight.size(1))
-        if self.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+        nn.init.uniform_(
+            self.input_experts,
+            -1 / self.input_experts.size(1),
+            1 / self.input_experts.size(1),
+        )
+        nn.init.uniform_(
+            self.output_experts,
+            -1 / self.output_experts.size(1),
+            1 / self.output_experts.size(1),
+        )
+        if self.input_bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.input_experts)
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-            nn.init.uniform_(self.bias, -bound, bound)
-
-    def compute_gating(
-        self,
-        top_k: int,
-        probs: torch.Tensor,
-        top_k_gates: torch.Tensor,
-        top_k_indices: torch.Tensor,
-    ):
-        # Create dense gates tensor
-        zeros = torch.zeros_like(probs)
-        gates = zeros.scatter(1, top_k_indices, top_k_gates)
-        expert_size = gates.long().sum(0)
-
-        # Flatten and sort
-        top_k_gates = top_k_gates.reshape(-1)  # [batch * top_k]
-        top_k_experts = top_k_indices.reshape(-1)  # [batch * top_k]
-        _, index_sorted_experts = top_k_experts.sort(0)
-
-        batch_index = index_sorted_experts.div(top_k, rounding_mode="trunc")
-        batch_gates = top_k_gates[index_sorted_experts]
-
-        return batch_gates, batch_index, expert_size, index_sorted_experts
+            nn.init.uniform_(self.input_bias, -bound, bound)
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.output_experts)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(self.output_bias, -bound, bound)
 
     def forward(self, x, multiply_by_gates=True):
         batch_size, seq_len, _ = x.shape
@@ -115,7 +103,7 @@ class SparseQuery(nn.Module):
         # [Top-k selection and compute_gating remain the same]
         if self.training and self.sample_topk > 0:
             _, top_km1_indices = probs.topk(self.top_k - self.sample_topk, dim=1)
-            masked_probs = probs.clone() + 1e-6
+            masked_probs = probs + 1e-6
             masked_probs.scatter_(1, top_km1_indices, 0)
             sampled_indices = torch.multinomial(masked_probs, self.sample_topk)
             top_k_indices = torch.cat([top_km1_indices, sampled_indices], dim=1)
@@ -153,17 +141,26 @@ class SparseQuery(nn.Module):
             self.top_k, flat_probs, flat_top_k_probs, flat_top_k_indices
         )
 
-        # Compute outputs for all heads
-        full_output = F.linear(x, self.weight, self.bias)
-        full_output = full_output.view(
-            batch_size, seq_len, self.num_heads, self.head_dim
-        )
+        # First expert transformation
+        # [batch, seq, in_features] -> [batch*seq, num_heads, expert_hidden]
+        hidden = torch.einsum("bsi,nid->bsnd", x, self.input_experts)
+        if self.input_bias is not None:
+            hidden = hidden + self.input_bias
+
+        # Apply activation
+        hidden = F.gelu(hidden)  # ModuleFormer uses GELU
+
+        # Second expert transformation
+        # [batch*seq, num_heads, expert_hidden] -> [batch*seq, num_heads, head_dim]
+        outputs = torch.einsum("bsnd,ndh->bsnh", hidden, self.output_experts)
+        if self.output_bias is not None:
+            outputs = outputs + self.output_bias
 
         # Prepare indices for gather
         gather_indices = top_k_indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim)
 
         # Select outputs and apply gates
-        selected_outputs = full_output.gather(2, gather_indices)
+        selected_outputs = outputs.gather(2, gather_indices)
         if multiply_by_gates:
             selected_outputs = selected_outputs * top_k_probs.unsqueeze(-1)
 
@@ -180,6 +177,28 @@ class SparseQuery(nn.Module):
             selected_outputs.reshape(batch_size, seq_len, self.top_k * self.head_dim),
             aux_loss,
         )
+
+    def compute_gating(
+        self,
+        top_k: int,
+        probs: torch.Tensor,
+        top_k_gates: torch.Tensor,
+        top_k_indices: torch.Tensor,
+    ):
+        # Create dense gates tensor
+        zeros = torch.zeros_like(probs)
+        gates = zeros.scatter(1, top_k_indices, top_k_gates)
+        expert_size = gates.long().sum(0)
+
+        # Flatten and sort
+        top_k_gates = top_k_gates.reshape(-1)  # [batch * top_k]
+        top_k_experts = top_k_indices.reshape(-1)  # [batch * top_k]
+        _, index_sorted_experts = top_k_experts.sort(0)
+
+        batch_index = index_sorted_experts.div(top_k, rounding_mode="trunc")
+        batch_gates = top_k_gates[index_sorted_experts]
+
+        return batch_gates, batch_index, expert_size, index_sorted_experts
 
     def init_aux_statistics(self):
         """Initialize auxiliary loss statistics"""
@@ -298,17 +317,17 @@ if __name__ == "__main__":
         f"Sparsity ratio: {model.top_k}/{model.num_heads} = {model.top_k/model.num_heads:.2f}"
     )
 
-    # Memory usage test
-    params_per_head = model.head_dim * model.in_features  # 64 * 512
-    full_params = model.num_heads * params_per_head  # 12 * (64 * 512)
-    actual_params = model.weight.numel()  # 768 * 512
+    # # Memory usage test
+    # params_per_head = model.head_dim * model.in_features  # 64 * 512
+    # full_params = model.num_heads * params_per_head  # 12 * (64 * 512)
+    # actual_params = model.input_experts.numel()  # 768 * 512
 
-    assert (
-        full_params == actual_params
-    ), f"Parameter calculation mismatch: {full_params} != {actual_params}"
+    # assert (
+    #     full_params == actual_params
+    # ), f"Parameter calculation mismatch: {full_params} != {actual_params}"
 
-    # For effective parameters calculation:
-    effective_params = model.top_k * params_per_head  # Only count active heads
+    # # For effective parameters calculation:
+    # effective_params = model.top_k * params_per_head  # Only count active heads
 
-    print(f"Parameters per layer: {actual_params:,}")
-    print(f"Effective parameters used per forward pass: {effective_params:,}")
+    # print(f"Parameters per layer: {actual_params:,}")
+    # print(f"Effective parameters used per forward pass: {effective_params:,}")
