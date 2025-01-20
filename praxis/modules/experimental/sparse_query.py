@@ -69,21 +69,20 @@ class SparseQuery(nn.Module):
         else:
             self.register_parameter("bias", None)
 
-        self.init_parameters()
+        self.reset_parameters()
         self.init_aux_statistics()
 
     def __repr__(self):
         return f"{self.__class__.__name__}(type='gmm')"
 
-    def init_parameters(self):
+    def reset_parameters(self):
         # Initialize both expert networks
-        nn.init.xavier_uniform_(self.head_centroids)
-        # # nn.init.xavier_uniform_(self.input_weights)
-        # # nn.init.xavier_uniform_(self.output_weights)
-        # if self.input_bias is not None:
-        #     nn.init.zeros_(self.input_bias)
-        # if self.output_bias is not None:
-        #     nn.init.zeros_(self.output_bias)
+        nn.init.normal_(self.head_centroids)
+        nn.init.uniform_(self.weight, -1 / self.weight.size(1), 1 / self.weight.size(1))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(self.bias, -bound, bound)
 
     def compute_gating(
         self,
