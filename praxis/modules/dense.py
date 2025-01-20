@@ -47,10 +47,16 @@ class PraxisGLU(nn.Module):
     def __init__(self, config: "AutoConfig", activation=None, *args, **kwargs):
         super().__init__()
         activation = activation or config.activation
-        self.up = nn.Linear(config.hidden_size, int((8 / 3) * config.hidden_size))
+
+        # First calculate the target size after chunking (down projection input size)
+        down_size = int((4 / 3) * config.hidden_size)
+        # Double it for up projection to ensure chunks match
+        up_size = 2 * down_size
+
+        self.up = nn.Linear(config.hidden_size, up_size)
         self.act = ACT2CLS[activation](*args, **kwargs)
         self.dropout = nn.Dropout(config.dropout)
-        self.down = nn.Linear(int((4 / 3) * config.hidden_size), config.hidden_size)
+        self.down = nn.Linear(down_size, config.hidden_size)
 
     def forward(self, x):
         a, b = self.up(x).chunk(2, dim=-1)

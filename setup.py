@@ -30,6 +30,7 @@ dev_requirements = [
     "lsprotocol",
     "matplotlib",
     "networkx",
+    "pytest",
     "pygls",
     "wandb",
 ]
