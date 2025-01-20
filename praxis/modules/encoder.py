@@ -463,9 +463,9 @@ def create_base_args(config):
         # patching_mode="bpe",
         # patching_mode="entropy",
         encoder_hash_byte_group_nb_functions=1,
-        encoder_hash_byte_group_size=[4],  # [3,4,5,6,7,8]
+        encoder_hash_byte_group_size=[3, 4, 5, 6, 7, 8],
         # encoder_hash_byte_group_vocab=config.vocab_size,
-        encoder_hash_byte_group_vocab=config.vocab_size * 8,
+        encoder_hash_byte_group_vocab=config.vocab_size * 6,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,

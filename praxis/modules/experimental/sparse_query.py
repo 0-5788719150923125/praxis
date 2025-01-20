@@ -127,10 +127,12 @@ class SparseQuery(nn.Module):
         )
 
         # Update stats if training
+        aux_loss = 0
         if self.training:
             zeros = torch.zeros_like(probs)
             gates = zeros.scatter(1, top_k_indices, top_k_probs)
             self.update_aux_statistics(probs, logits, gates)
+            aux_loss = self.get_aux_loss_and_clear()
 
         # Route inputs to experts
         expert_inputs = x_flat[batch_index]  # [batch * top_k, in_features]
@@ -183,7 +185,7 @@ class SparseQuery(nn.Module):
 
         # Final reshape to match expected shape
         output_shape = [batch_size] + list(rest) + [self.out_features]
-        return final_outputs.view(output_shape)
+        return final_outputs.view(output_shape), aux_loss
 
     def init_aux_statistics(self):
         """Initialize auxiliary loss statistics"""

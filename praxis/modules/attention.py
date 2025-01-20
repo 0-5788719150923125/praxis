@@ -51,19 +51,24 @@ class PraxisAttention(nn.Module):
         self.ema = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
+        self.top_k = 1000
+        self.k_queries = self.num_query_heads
         if "sparse_query" in config.meta:
-            top_k = 2
+            self.top_k = 2
+            self.k_queries = self.num_queries * self.top_k
             self.query = SparseQuery(
                 hidden_size,
                 self.num_query_heads,
-                self.head_dim * 2 * self.num_queries,
-                top_k=top_k,
+                self.head_dim * self.num_queries,
+                top_k=self.top_k,
                 dropout=config.dropout,
+                bias=False,
             )
         else:
             self.query = nn.Linear(
-                hidden_size, self.num_query_heads * self.head_dim, bias=False
+                hidden_size, self.k_queries * self.head_dim, bias=False
             )
+        self.num_heads = min(self.num_heads, self.k_queries, self.top_k)
         self.key = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
         self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
 
@@ -92,9 +97,7 @@ class PraxisAttention(nn.Module):
         self.gates = UniversalAttentionGate(config) if config.gated else False
 
         # Standard output projection
-        self.output = nn.Linear(
-            self.num_query_heads * self.head_dim, hidden_size, bias=False
-        )
+        self.output = nn.Linear(self.k_queries * self.head_dim, hidden_size, bias=False)
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
@@ -108,9 +111,10 @@ class PraxisAttention(nn.Module):
         q = self.query(inputs)
         if isinstance(q, tuple):
             q, aux_loss = q
-        q = q.view(
-            batch_size, seq_len, self.num_query_heads * self.factor, -1
-        ).transpose(1, 2)
+
+        q = q.view(batch_size, seq_len, self.k_queries * self.factor, -1).transpose(
+            1, 2
+        )
         k = (
             self.key(inputs)
             .view(batch_size, seq_len, self.num_heads * self.factor, -1)
