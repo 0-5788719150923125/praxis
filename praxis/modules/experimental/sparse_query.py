@@ -31,6 +31,7 @@ class SparseQuery(nn.Module):
         self.head_dim = head_dim
         self.top_k = min(top_k, num_heads)
         self.sample_topk = min(sample_topk, self.top_k)
+        self.acc_aux_loss = True
 
         # Default expert hidden size to 4x head_dim (common practice)
         if expert_hidden_size is None:
@@ -219,11 +220,14 @@ class SparseQuery(nn.Module):
         # Compute z loss
         zloss = self.acc_lsesq / self.acc_count
 
-        # Reset statistics
-        self.init_aux_statistics()
-
         # Combine losses with weighting
-        return switchloss + 0.1 * zloss
+        loss = switchloss + 0.1 * zloss
+
+        # Reset statistics
+        if not self.acc_aux_loss:
+            self.init_aux_statistics()
+
+        return loss
 
     def compute_routing_weights(self, x):
         # Get routing embeddings with dropout
@@ -268,7 +272,7 @@ if __name__ == "__main__":
     batch_size = 32
     seq_length = 128
     x = torch.randn(batch_size, seq_length, 512)
-    output = model(x)
+    output, aux_loss = model(x)
 
     # Verify output shape reflects true sparsity
     expected_shape = (batch_size, seq_length, model.top_k * model.head_dim)
@@ -288,8 +292,7 @@ if __name__ == "__main__":
 
     # Test auxiliary loss
     model.train()
-    _ = model(x)  # Accumulate statistics
-    aux_loss = torch.tensor(model.get_aux_loss_and_clear())
+    _, aux_loss = model(x)  # Accumulate statistics
     assert isinstance(aux_loss, torch.Tensor), "Auxiliary loss should be a tensor"
     assert aux_loss.ndim == 0, "Auxiliary loss should be a scalar"
 
