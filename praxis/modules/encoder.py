@@ -53,7 +53,7 @@ class PraxisEncoder(nn.Module):
             self.loss_scale = 0.01
 
             # Threshold optimization parameters
-            self.target_ratio = 0.125  # 1/8th of original length
+            self.target_ratio = 0.0625  # 1/16th of original length
 
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
@@ -110,12 +110,13 @@ class PraxisEncoder(nn.Module):
                 safe_threshold = self._find_safe_threshold(input_ids, entropy_scores)
 
                 # Now sample thresholds that are guaranteed to be safe
-                n_samples = 10
+                n_samples = 25
+                min_candidates = 10
                 # Sample only multipliers >= 1.0 to stay above safe_threshold
                 multipliers = 1.0 + torch.abs(
                     torch.normal(
                         mean=0.0,
-                        std=0.1,
+                        std=1.0,
                         size=(n_samples - 1,),
                         device=input_ids.device,
                     )
@@ -135,11 +136,17 @@ class PraxisEncoder(nn.Module):
                 target_ratio = self.target_ratio
 
                 # Try each candidate
-                for threshold in candidates:
+                for i, threshold in enumerate(candidates):
+
+                    # early exit
+                    if i > min_candidates and best_patch_lengths is not None:
+                        break
+
+                    # create the patches
                     patch_lengths, _ = self.patcher.patch(
                         input_ids,
                         include_next_token=True,
-                        threshold=threshold,
+                        threshold=abs(threshold),
                         entropies=entropy_scores,
                     )
 
@@ -148,7 +155,7 @@ class PraxisEncoder(nn.Module):
 
                     if distance < best_ratio and actual_ratio <= target_ratio:
                         best_ratio = distance
-                        best_threshold = threshold
+                        best_threshold = abs(threshold)
                         best_patch_lengths = patch_lengths
 
                 # Use best values
@@ -356,28 +363,6 @@ class RecurrentDecoder(LocalDecoder):
         )
 
 
-# class EntropyModel(nn.Module):
-#     def __init__(self, vocab_size=260, hidden_size=256, dropout=0.1, n_layers=1):
-#         super().__init__()
-
-#         self.embedding = nn.Embedding(vocab_size, hidden_size)  # byte embedding
-
-#         class Config:
-#             dim = hidden_size
-#             norm_eps = 1e-5
-
-#         self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
-
-#     def forward(self, x: torch.Tensor, *args, **kwargs):
-#         # x: [batch, seq_len]
-#         x = self.embedding(x)  # [batch, seq_len, hidden_size]
-
-#         for block in self.blocks:
-#             x = block(x)
-
-#         return x
-
-
 class EntropyModel(nn.Module):
     def __init__(
         self, vocab_size=260, channels=256, dropout=0.1, n_layers=2, kernel_size=3
@@ -425,6 +410,28 @@ class EntropyModel(nn.Module):
         x = self.norm(x)
 
         return self.output(x)  # [batch, seq_len, vocab_size]
+
+
+# class EntropyModel(nn.Module):
+#     def __init__(self, vocab_size=260, hidden_size=256, dropout=0.1, n_layers=1):
+#         super().__init__()
+
+#         self.embedding = nn.Embedding(vocab_size, hidden_size)  # byte embedding
+
+#         class Config:
+#             dim = hidden_size
+#             norm_eps = 1e-5
+
+#         self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
+
+#     def forward(self, x: torch.Tensor, *args, **kwargs):
+#         # x: [batch, seq_len]
+#         x = self.embedding(x)  # [batch, seq_len, hidden_size]
+
+#         for block in self.blocks:
+#             x = block(x)
+
+#         return x
 
 
 def create_base_args(config):
