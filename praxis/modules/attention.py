@@ -51,24 +51,21 @@ class PraxisAttention(nn.Module):
         self.ema = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
-        self.top_k = config.k_heads if config.k_heads is not None else 1000
-        self.k_queries = self.num_query_heads
         if config.k_heads is not None:
-            self.k_queries = self.num_queries * self.top_k
             self.query = SparseQuery(
                 hidden_size,
                 self.num_query_heads,
-                self.head_dim * self.num_queries,
-                top_k=self.top_k,
+                self.head_dim,
+                top_k=config.k_heads,
                 dropout=config.dropout,
                 bias=False,
                 debug=config.debug,
             )
         else:
             self.query = nn.Linear(
-                hidden_size, self.k_queries * self.head_dim, bias=False
+                hidden_size, self.num_query_heads * self.head_dim, bias=False
             )
-        self.num_heads = min(self.num_heads, self.k_queries, self.top_k)
+
         self.key = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
         self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
 
@@ -79,7 +76,7 @@ class PraxisAttention(nn.Module):
             self.memory = PraxisCompressiveMemory(config)
 
         # The core attention mechanism
-        use_scaling = True
+        use_scaling = False
         if self.stickbreaking:
             self.algorithm = Stickbreaking(config)
             use_scaling = False
@@ -97,7 +94,9 @@ class PraxisAttention(nn.Module):
         self.gates = UniversalAttentionGate(config) if config.gated else False
 
         # Standard output projection
-        self.output = nn.Linear(self.k_queries * self.head_dim, hidden_size, bias=False)
+        self.output = nn.Linear(
+            self.num_query_heads * self.head_dim, hidden_size, bias=False
+        )
 
     def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
@@ -112,9 +111,10 @@ class PraxisAttention(nn.Module):
         if isinstance(q, tuple):
             q, aux_loss = q
 
-        q = q.view(batch_size, seq_len, self.k_queries * self.factor, -1).transpose(
-            1, 2
-        )
+        q = q.view(
+            batch_size, seq_len, self.num_query_heads * self.factor, -1
+        ).transpose(1, 2)
+
         k = (
             self.key(inputs)
             .view(batch_size, seq_len, self.num_heads * self.factor, -1)
@@ -125,7 +125,6 @@ class PraxisAttention(nn.Module):
             .view(batch_size, seq_len, self.num_heads, -1)
             .transpose(1, 2)
         )
-        # print(q.shape, k.shape, v.shape)
 
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len

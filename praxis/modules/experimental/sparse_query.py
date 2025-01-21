@@ -30,6 +30,7 @@ class SparseQuery(nn.Module):
         super().__init__()
         self.identifier = str(uuid.uuid4()).replace("-", "")[:3]
         self.debug = debug
+        self.log_frequency = 0.001
         self.in_features = in_features
         self.num_heads = num_heads
         self.head_dim = head_dim
@@ -42,8 +43,6 @@ class SparseQuery(nn.Module):
 
         if gating_size is None:
             gating_size = hidden_size
-
-        self.hidden_size = hidden_size
 
         # Router remains the same
         self.router = nn.Sequential(
@@ -101,7 +100,7 @@ class SparseQuery(nn.Module):
         probs, logits = self.compute_routing_weights(x)
 
         # [Top-k selection and compute_gating remain the same]
-        sample_top_k = int(self.top_k * 0.5)
+        sample_top_k = int(self.top_k * 0.5)  # 50% deterministic, 50% stochastic
         if self.training and sample_top_k > 0:
             # Flatten batch and sequence dimensions
             batch_size, seq_len = probs.shape[:2]
@@ -126,14 +125,9 @@ class SparseQuery(nn.Module):
         if self.debug:
             self._print_frequencies(top_k_indices, batch_size, seq_len)
 
-        # Compute gating - reshape for gating computation
-        flat_probs = probs.view(-1, self.num_heads)
-        flat_top_k_probs = top_k_probs.view(-1, self.top_k)
-        flat_top_k_indices = top_k_indices.view(-1, self.top_k)
-
         # Compute gating
         batch_gates, batch_index, expert_size, sorted_indices = self.compute_gating(
-            self.top_k, flat_probs, flat_top_k_probs, flat_top_k_indices
+            self.top_k, probs, top_k_probs, top_k_indices
         )
 
         # First expert transformation
@@ -159,6 +153,14 @@ class SparseQuery(nn.Module):
         if multiply_by_gates:
             selected_outputs = selected_outputs * top_k_probs.unsqueeze(-1)
 
+        # Create zero tensor with full dimensions
+        full_output = torch.zeros(
+            batch_size, seq_len, self.num_heads, self.head_dim, device=x.device
+        )
+
+        # Scatter selected outputs into the full tensor
+        full_output.scatter_(2, gather_indices, selected_outputs)
+
         # Handle aux loss
         if self.training:
             zeros = torch.zeros_like(probs)
@@ -169,7 +171,7 @@ class SparseQuery(nn.Module):
             aux_loss = 0
 
         return (
-            selected_outputs.reshape(batch_size, seq_len, self.top_k * self.head_dim),
+            full_output.reshape(batch_size, seq_len, -1),
             aux_loss,
         )
 
@@ -177,21 +179,26 @@ class SparseQuery(nn.Module):
         self,
         top_k: int,
         probs: torch.Tensor,
-        top_k_gates: torch.Tensor,
+        top_k_probs: torch.Tensor,
         top_k_indices: torch.Tensor,
     ):
+        # Compute gating - reshape for gating computation
+        flat_probs = probs.view(-1, self.num_heads)
+        flat_top_k_probs = top_k_probs.view(-1, self.top_k)
+        flat_top_k_indices = top_k_indices.view(-1, self.top_k)
+
         # Create dense gates tensor
-        zeros = torch.zeros_like(probs)
-        gates = zeros.scatter(1, top_k_indices, top_k_gates)
+        zeros = torch.zeros_like(flat_probs)
+        gates = zeros.scatter(1, flat_top_k_indices, flat_top_k_probs)
         expert_size = gates.long().sum(0)
 
         # Flatten and sort
-        top_k_gates = top_k_gates.reshape(-1)  # [batch * top_k]
-        top_k_experts = top_k_indices.reshape(-1)  # [batch * top_k]
+        flat_top_k_probs = flat_top_k_probs.reshape(-1)  # [batch * top_k]
+        top_k_experts = flat_top_k_indices.reshape(-1)  # [batch * top_k]
         _, index_sorted_experts = top_k_experts.sort(0)
 
         batch_index = index_sorted_experts.div(top_k, rounding_mode="trunc")
-        batch_gates = top_k_gates[index_sorted_experts]
+        batch_gates = flat_top_k_probs[index_sorted_experts]
 
         return batch_gates, batch_index, expert_size, index_sorted_experts
 
@@ -271,7 +278,7 @@ class SparseQuery(nn.Module):
         return probs, logits
 
     def _print_frequencies(self, top_k_indices, batch_size, seq_len):
-        if random.random() < 0.005:
+        if random.random() < self.log_frequency:
             expert_counts = torch.zeros(self.num_heads, device=top_k_indices.device)
             for i in range(self.num_heads):
                 expert_counts[i] = (top_k_indices == i).sum().item()
@@ -293,7 +300,7 @@ if __name__ == "__main__":
 
     # Test initialization
     model = SparseQuery(
-        in_features=512, num_heads=12, head_dim=64, top_k=4, hidden_size=256
+        in_features=512, num_heads=12, head_dim=64, top_k=4, hidden_size=256, bias=True
     )
 
     # Test forward pass
@@ -303,7 +310,7 @@ if __name__ == "__main__":
     output, aux_loss = model(x)
 
     # Verify output shape reflects true sparsity
-    expected_shape = (batch_size, seq_length, model.top_k * model.head_dim)
+    expected_shape = (batch_size, seq_length, model.num_heads * model.head_dim)
     assert (
         output.shape == expected_shape
     ), f"Expected shape {expected_shape}, got {output.shape}"

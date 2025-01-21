@@ -40,11 +40,11 @@ class PraxisEncoder(nn.Module):
         self.device_map = config.device_map
         self.args = create_base_args(config)
 
-        realtime_patching = False
+        # realtime_patching = False
         self.entropy_model = None
         self.args.patching_mode = "entropy" if "entropy" in config.meta else "space"
         if self.args.patching_mode == "entropy":
-            realtime_patching = True
+            # realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
             self.args.monotonicity = True
             self.entropy_model = EntropyModel(
@@ -63,7 +63,7 @@ class PraxisEncoder(nn.Module):
 
         self.patcher = Patcher(
             PatcherArgs(
-                realtime_patching=realtime_patching,
+                realtime_patching=False,
                 device=self.device_map,
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
@@ -71,9 +71,9 @@ class PraxisEncoder(nn.Module):
                 # threshold_add=self.args.patching_threshold_add,
                 threshold_add=None,
                 monotonicity=self.args.monotonicity,
-            ),
-            entropy_model=self.entropy_model,
+            )
         )
+        self.patcher.entropy_model = self.entropy_model
         self.embeds = init_embeddings(
             self.args,
             EmbeddingType.HASH_TOK,
