@@ -304,6 +304,7 @@ class PraxisTrainer(LightningModule):
 
         outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs.loss
+        softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
         batch_size, num_tokens = batch.shape
         self.num_tokens += batch_size * num_tokens
@@ -319,6 +320,7 @@ class PraxisTrainer(LightningModule):
                 "learning_rate": self.scheduler.get_lr()[0],
                 "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
                 "avg_step_time": self.train_step_ema,
+                "softmax_collapse": softmax_collapse,
             },
             on_step=True,
             logger=True,
@@ -387,6 +389,18 @@ class PraxisTrainer(LightningModule):
             return new_value.total_seconds()
         alpha = 0.1
         return alpha * new_value.total_seconds() + (1 - alpha) * ema
+
+    def _compute_softmax_collapse(self, output):
+        """
+        From "Grokking at the Edge of Stability".
+        https://github.com/LucasPrietoAl/grokking-at-the-edge-of-numerical-stability/blob/0cc9e8dc62ce5ed66d29d80eebbaf14da2f71c67/logger.py#L154
+        """
+        output_off = output - output.amax(dim=1, keepdim=True)
+        exp_output = torch.exp(output_off)
+        sum_exp = torch.sum(exp_output, dim=-1, keepdim=True)
+        log_softmax = output_off.amax(dim=1, keepdim=True) - torch.log(sum_exp)
+        softmax_collapse = (sum_exp == 1).float().mean().item()
+        return softmax_collapse
 
 
 class TerminalInterface(Callback):
