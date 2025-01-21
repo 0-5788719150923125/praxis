@@ -21,10 +21,10 @@ class SparseQuery(nn.Module):
         num_heads: int,
         head_dim: int,
         top_k: int,
-        hidden_size: int = 256,
-        expert_hidden_size: int = None,
-        bias: bool = True,
-        dropout: float = 0.1,
+        hidden_size: int = None,
+        gating_size: int = None,
+        bias: bool = False,
+        dropout: float = 0,
         sample_topk: int = 0,
         debug: bool = False,
     ):
@@ -38,30 +38,33 @@ class SparseQuery(nn.Module):
         self.sample_topk = min(sample_topk, self.top_k)
         self.acc_aux_loss = True
 
-        # Default expert hidden size to 4x head_dim (common practice)
-        if expert_hidden_size is None:
-            expert_hidden_size = head_dim * 4
+        # Default expert hidden size
+        if hidden_size is None:
+            hidden_size = head_dim
 
-        self.expert_hidden_size = expert_hidden_size
+        if gating_size is None:
+            gating_size = hidden_size
+
+        self.hidden_size = hidden_size
         self.out_features = self.top_k * head_dim
 
         # Router remains the same
         self.router = nn.Sequential(
-            nn.Linear(in_features, hidden_size, bias=False), nn.Dropout(dropout)
+            nn.Linear(in_features, gating_size, bias=False), nn.Dropout(dropout)
         )
 
         # Head centroids and temperature remain the same
-        self.head_centroids = nn.Parameter(torch.empty(num_heads, hidden_size))
+        self.head_centroids = nn.Parameter(torch.empty(num_heads, gating_size))
         self.temperature = nn.Parameter(torch.zeros(1))
 
         self.input_experts = nn.Parameter(
-            torch.empty(num_heads, in_features, expert_hidden_size)
+            torch.empty(num_heads, in_features, hidden_size)
         )
         self.output_experts = nn.Parameter(
-            torch.empty(num_heads, expert_hidden_size, head_dim)
+            torch.empty(num_heads, hidden_size, head_dim)
         )
         if bias:
-            self.input_bias = nn.Parameter(torch.empty(num_heads, expert_hidden_size))
+            self.input_bias = nn.Parameter(torch.empty(num_heads, hidden_size))
             self.output_bias = nn.Parameter(torch.empty(num_heads, head_dim))
         else:
             self.register_parameter("input_bias", None)
@@ -125,10 +128,10 @@ class SparseQuery(nn.Module):
 
             frequencies = []
             for i, freq in enumerate(expert_frequencies):
-                frequencies.append(f"{i}: {freq:.3f}")
+                frequencies.append(f"{i}: {freq:.2f}")
 
             print(
-                f"DEBUG: name={self.identifier}, mode={'training' if self.training else 'inference'}, frequencies={', '.join(frequencies)}"
+                f"DEBUG: id={self.identifier}, mode={'train' if self.training else 'infer'}, frequencies=({', '.join(frequencies)})"
             )
 
         # Compute gating - reshape for gating computation
