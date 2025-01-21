@@ -44,7 +44,6 @@ class SparseQuery(nn.Module):
             gating_size = hidden_size
 
         self.hidden_size = hidden_size
-        self.out_features = self.top_k * head_dim
 
         # Router remains the same
         self.router = nn.Sequential(
@@ -333,18 +332,3 @@ if __name__ == "__main__":
     print(
         f"Sparsity ratio: {model.top_k}/{model.num_heads} = {model.top_k/model.num_heads:.2f}"
     )
-
-    # # Memory usage test
-    # params_per_head = model.head_dim * model.in_features  # 64 * 512
-    # full_params = model.num_heads * params_per_head  # 12 * (64 * 512)
-    # actual_params = model.input_experts.numel()  # 768 * 512
-
-    # assert (
-    #     full_params == actual_params
-    # ), f"Parameter calculation mismatch: {full_params} != {actual_params}"
-
-    # # For effective parameters calculation:
-    # effective_params = model.top_k * params_per_head  # Only count active heads
-
-    # print(f"Parameters per layer: {actual_params:,}")
-    # print(f"Effective parameters used per forward pass: {effective_params:,}")
