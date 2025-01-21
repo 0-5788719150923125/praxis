@@ -53,7 +53,7 @@ class PraxisEncoder(nn.Module):
             self.loss_scale = 0.01
 
             # Threshold optimization parameters
-            self.target_ratio = 0.0625  # 1/16th of original length
+            self.target_ratio = 0.25  # reduction of original length
 
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
@@ -278,10 +278,10 @@ class PraxisEncoder(nn.Module):
 
         return output
 
-    def _find_safe_threshold(self, input_ids, entropy_scores, target_ratio=0.125):
+    def _find_safe_threshold(self, input_ids, entropy_scores):
         # Start with current threshold
         threshold = float(self.optimal_threshold.item())
-        target_len = int(input_ids.shape[1] * target_ratio)
+        target_len = int(input_ids.shape[1] * self.target_ratio)
 
         # First, find any working threshold by doubling until we succeed
         while True:
