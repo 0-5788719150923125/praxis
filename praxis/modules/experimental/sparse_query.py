@@ -25,7 +25,6 @@ class SparseQuery(nn.Module):
         gating_size: int = None,
         bias: bool = False,
         dropout: float = 0,
-        sample_topk: int = 0,
         debug: bool = False,
     ):
         super().__init__()
@@ -35,7 +34,6 @@ class SparseQuery(nn.Module):
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.top_k = min(top_k, num_heads)
-        self.sample_topk = min(sample_topk, self.top_k)
         self.acc_aux_loss = True
 
         # Default expert hidden size
@@ -104,35 +102,30 @@ class SparseQuery(nn.Module):
         probs, logits = self.compute_routing_weights(x)
 
         # [Top-k selection and compute_gating remain the same]
-        if self.training and self.sample_topk > 0:
-            _, top_km1_indices = probs.topk(self.top_k - self.sample_topk, dim=1)
-            masked_probs = probs + 1e-6
-            masked_probs.scatter_(1, top_km1_indices, 0)
-            sampled_indices = torch.multinomial(masked_probs, self.sample_topk)
-            top_k_indices = torch.cat([top_km1_indices, sampled_indices], dim=1)
-            top_k_probs = torch.gather(probs, 1, top_k_indices)
-            log_chance = 0.005
+        sample_top_k = int(self.top_k * 0.5)
+        if self.training and sample_top_k > 0:
+            # Flatten batch and sequence dimensions
+            batch_size, seq_len = probs.shape[:2]
+            flat_probs = probs.view(-1, probs.size(-1))  # [batch*seq, num_heads]
+
+            # Do sampling on flattened probs
+            _, top_km1_indices = flat_probs.topk(self.top_k - sample_top_k, dim=1)
+            masked_probs = flat_probs + 1e-6
+            masked_probs[
+                torch.arange(flat_probs.size(0)).unsqueeze(1), top_km1_indices
+            ] = 0
+            k_indices = torch.multinomial(masked_probs, sample_top_k)
+            top_k_indices = torch.cat([top_km1_indices, k_indices], dim=-1)
+            top_k_probs = torch.gather(flat_probs, 1, top_k_indices)
+
+            # Reshape back to original dimensions
+            top_k_indices = top_k_indices.view(batch_size, seq_len, -1)
+            top_k_probs = top_k_probs.view(batch_size, seq_len, -1)
         else:
             top_k_probs, top_k_indices = probs.topk(self.top_k, dim=-1)
-            log_chance = 0.01
 
-        if self.debug and random.random() < log_chance:
-            # Calculate expert selection frequency
-            expert_counts = torch.zeros(self.num_heads, device=top_k_indices.device)
-            for i in range(self.num_heads):
-                expert_counts[i] = (top_k_indices == i).sum().item()
-
-            # Normalize by total possible selections
-            total_selections = batch_size * seq_len * self.top_k
-            expert_frequencies = expert_counts / total_selections
-
-            frequencies = []
-            for i, freq in enumerate(expert_frequencies):
-                frequencies.append(f"{i}: {freq:.2f}")
-
-            print(
-                f"DEBUG: id={self.identifier}, mode={'train' if self.training else 'infer'}, frequencies=({', '.join(frequencies)})"
-            )
+        if self.debug:
+            self._print_frequencies(top_k_indices, batch_size, seq_len)
 
         # Compute gating - reshape for gating computation
         flat_probs = probs.view(-1, self.num_heads)
@@ -264,15 +257,8 @@ class SparseQuery(nn.Module):
         z_norm = F.normalize(z, p=2, dim=-1)
         centroids_norm = F.normalize(self.head_centroids, p=2, dim=-1)
 
-        # Compute base dot product term
+        # Compute log posterior probabilities
         logits = torch.matmul(z_norm, centroids_norm.t())
-
-        # Optional: Add quadratic terms for full GMM computation
-        use_quadratic_terms = False
-        if use_quadratic_terms:
-            z_norm_sq = torch.sum(z_norm * z_norm, dim=-1, keepdim=True)
-            centroids_norm_sq = torch.sum(centroids_norm * centroids_norm, dim=-1)
-            logits = logits - 0.5 * (z_norm_sq + centroids_norm_sq[None, :])
 
         # Scale logits (using input dimension as in transformer attention)
         logits = logits / math.sqrt(z.size(-1))
@@ -284,6 +270,22 @@ class SparseQuery(nn.Module):
         probs = F.softmax(logits, dim=-1)
 
         return probs, logits
+
+    def _print_frequencies(self, top_k_indices, batch_size, seq_len):
+        if random.random() < 0.005:
+            expert_counts = torch.zeros(self.num_heads, device=top_k_indices.device)
+            for i in range(self.num_heads):
+                expert_counts[i] = (top_k_indices == i).sum().item()
+
+            total_selections = batch_size * seq_len * self.top_k
+            expert_frequencies = expert_counts / total_selections
+
+            frequencies = [
+                f"{i}: {freq:.2f}" for i, freq in enumerate(expert_frequencies)
+            ]
+            print(
+                f"DEBUG: id={self.identifier}, mode={'train' if self.training else 'infer'}, frequencies=({', '.join(frequencies)})"
+            )
 
 
 if __name__ == "__main__":
