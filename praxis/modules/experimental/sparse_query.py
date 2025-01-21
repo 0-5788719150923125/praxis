@@ -184,8 +184,8 @@ class SparseQuery(nn.Module):
     ):
         # Compute gating - reshape for gating computation
         flat_probs = probs.view(-1, self.num_heads)
-        flat_top_k_probs = top_k_probs.view(-1, self.top_k)
-        flat_top_k_indices = top_k_indices.view(-1, self.top_k)
+        flat_top_k_probs = top_k_probs.view(-1, top_k)
+        flat_top_k_indices = top_k_indices.view(-1, top_k)
 
         # Create dense gates tensor
         zeros = torch.zeros_like(flat_probs)
