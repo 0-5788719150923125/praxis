@@ -64,7 +64,6 @@ class PraxisEncoder(nn.Module):
         self.patcher = Patcher(
             PatcherArgs(
                 realtime_patching=realtime_patching,
-                entropy_model=self.entropy_model,
                 device=self.device_map,
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
@@ -72,7 +71,8 @@ class PraxisEncoder(nn.Module):
                 # threshold_add=self.args.patching_threshold_add,
                 threshold_add=None,
                 monotonicity=self.args.monotonicity,
-            )
+            ),
+            entropy_model=self.entropy_model,
         )
         self.embeds = init_embeddings(
             self.args,
