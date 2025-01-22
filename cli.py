@@ -112,8 +112,8 @@ parser.add_argument(
 parser.add_argument(
     "--kv_rank",
     type=int,
-    default=1,
-    help="Increase this value to factorize key/value projections, making them low-rank.",
+    default=None,
+    help="Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest.",
 )
 parser.add_argument(
     "--activation",

@@ -11,7 +11,7 @@ class PraxisConfig(PretrainedConfig):
         num_heads=3,
         num_queries=2,
         k_heads=None,
-        kv_rank=1,
+        kv_rank=None,
         depth=7,
         num_experts=7,
         dropout=0,

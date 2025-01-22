@@ -67,7 +67,7 @@ class PraxisAttention(nn.Module):
                 hidden_size, self.num_query_heads * self.head_dim, bias=False
             )
 
-        if self.kv_rank > 1:
+        if self.kv_rank is not None:
             self.key_value = LowRankKeyValue(config)
         else:
             self.key_value = KeyValue(config)

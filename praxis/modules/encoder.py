@@ -53,7 +53,8 @@ class PraxisEncoder(nn.Module):
             self.loss_scale = 0.01
 
             # Threshold optimization parameters
-            self.target_ratio = 0.125  # reduction of original length
+            # self.target_ratio = 0.0625  # reduction of original length
+            self.target_ratio = 0.03125
 
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
