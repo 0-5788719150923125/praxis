@@ -35,7 +35,6 @@ class SparseQuery(nn.Module):
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.top_k = min(top_k, num_heads)
-        self.acc_aux_loss = True
 
         # Default expert hidden size
         if hidden_size is None:
@@ -59,15 +58,15 @@ class SparseQuery(nn.Module):
         self.output_experts = nn.Parameter(
             torch.empty(num_heads, hidden_size, head_dim)
         )
-        if bias:
-            self.input_bias = nn.Parameter(torch.empty(num_heads, hidden_size))
-            self.output_bias = nn.Parameter(torch.empty(num_heads, head_dim))
-        else:
-            self.register_parameter("input_bias", None)
-            self.register_parameter("output_bias", None)
+        self.input_bias = (
+            nn.Parameter(torch.empty(num_heads, hidden_size)) if bias else None
+        )
+        self.output_bias = (
+            nn.Parameter(torch.empty(num_heads, head_dim)) if bias else None
+        )
 
+        self.init_aux_statistics(window_size=5)
         self.reset_parameters()
-        self.init_aux_statistics()
 
     def __repr__(self):
         return f"{self.__class__.__name__}(type='gmm')"
@@ -204,10 +203,10 @@ class SparseQuery(nn.Module):
 
     def init_aux_statistics(self, window_size=5):
         self.window_size = window_size
-        self.acc_count_queue = []  # Also track counts per batch
+        self.acc_count_queue = []
         self.acc_probs_queue = []
         self.acc_freq_queue = []
-        self.acc_lsesq_queue = []  # New queue for lsesq
+        self.acc_lsesq_queue = []
 
     def update_aux_statistics(self, probs, logits, gates):
         # Calculate batch count

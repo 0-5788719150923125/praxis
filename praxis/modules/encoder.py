@@ -403,33 +403,10 @@ class EntropyModel(nn.Module):
         for conv in self.convs:
             out = conv(x)
             out = out[..., : x.size(-1)]
-            out = self.activation(out)
-            x = out + x  # Residual connection
+            x = self.activation(out) + x
 
         x = x.transpose(1, 2)  # [batch, seq_len, channels]
         return self.output(self.norm(x))
-
-
-# class EntropyModel(nn.Module):
-#     def __init__(self, vocab_size=260, hidden_size=256, dropout=0.1, n_layers=1):
-#         super().__init__()
-
-#         self.embedding = nn.Embedding(vocab_size, hidden_size)  # byte embedding
-
-#         class Config:
-#             dim = hidden_size
-#             norm_eps = 1e-5
-
-#         self.blocks = nn.ModuleList([RecurrentBlock(Config()) for i in range(n_layers)])
-
-#     def forward(self, x: torch.Tensor, *args, **kwargs):
-#         # x: [batch, seq_len]
-#         x = self.embedding(x)  # [batch, seq_len, hidden_size]
-
-#         for block in self.blocks:
-#             x = block(x)
-
-#         return x
 
 
 def create_base_args(config):
