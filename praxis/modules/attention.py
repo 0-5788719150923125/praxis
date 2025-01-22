@@ -43,6 +43,7 @@ class PraxisAttention(nn.Module):
         self.factor = 2 if self.differential else 1
         init_head_dim = hidden_size // self.num_heads
         self.head_dim = init_head_dim + (init_head_dim % 2)
+        setattr(config, "head_size", self.head_dim)
 
         assert (
             sum([config.mega, config.gated]) <= 1
@@ -79,10 +80,8 @@ class PraxisAttention(nn.Module):
             self.memory = PraxisCompressiveMemory(config)
 
         # The core attention mechanism
-        use_scaling = True
         if self.stickbreaking:
             self.algorithm = Stickbreaking(config)
-            use_scaling = False
         elif self.differential:
             self.algorithm = Differential(config)
         elif self.linear:
@@ -91,7 +90,7 @@ class PraxisAttention(nn.Module):
             self.algorithm = ScaledDotProduct(config)
 
         # For handling length extrapolation
-        self.encoding = ENCODING_REGISTRY[config.encoding](config, use_scaling)
+        self.encoding = ENCODING_REGISTRY[config.encoding](config)
 
         # For attention gating
         self.gates = UniversalAttentionGate(config) if config.gated else False
@@ -117,14 +116,10 @@ class PraxisAttention(nn.Module):
         if isinstance(q, tuple):
             q, aux_loss = q
 
-        q = q.view(
-            batch_size, seq_len, self.num_query_heads * self.factor, -1
-        ).transpose(1, 2)
+        q = q.view(batch_size, seq_len, self.num_query_heads, -1).transpose(1, 2)
 
         k, v = self.key_value(inputs)
-        k = k.view(batch_size, seq_len, self.num_heads * self.factor, -1).transpose(
-            1, 2
-        )
+        k = k.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
 
         # Determine chunk size
@@ -230,8 +225,7 @@ class ScaledDotProduct(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.num_query_heads = self.num_heads * config.num_queries
-        init_head_dim = self.hidden_size // self.num_heads
-        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.head_dim = config.head_size
         # Force exploration of attention subnetworks
         self.dropout = nn.Dropout(config.dropout)
 
@@ -292,8 +286,7 @@ class Differential(ScaledDotProduct):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
-        init_head_dim = self.hidden_size // self.num_heads // 2
-        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.head_dim = config.head_size // 2
         self.lambda_init = 0.8  # A good default, per the paper
         self.lambda_q1 = nn.Parameter(
             torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
@@ -325,6 +318,8 @@ class Differential(ScaledDotProduct):
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
 
         attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+
+        attn_weights = attn_weights.repeat_interleave(2, dim=1)
 
         outputs = torch.matmul(self.dropout(attn_weights), v)
 
@@ -601,8 +596,7 @@ class KeyValue(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
-        init_head_dim = self.hidden_size // self.num_heads
-        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.head_dim = config.head_size
         self.key = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False
         )
@@ -627,8 +621,7 @@ class LowRankKeyValue(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
-        init_head_dim = self.hidden_size // self.num_heads
-        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.head_dim = config.head_size
         self.rank = config.kv_rank
 
         # Define linear transformations for A projections

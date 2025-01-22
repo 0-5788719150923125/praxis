@@ -13,31 +13,22 @@ class NoPE(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", scaled: bool = False):
+    def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.num_query_heads = config.num_heads * config.num_queries
-        self.multiplier = 2 if config.differential else 1
-        init_head_dim = config.hidden_size // config.num_heads // self.multiplier
-        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.head_dim = config.head_size
         # Initialize scaling factors - one per head with linspace
-        self.scaled = scaled
-        if self.scaled:
-            self.head_scales = nn.Parameter(
-                torch.linspace(1.2, 1.2, self.num_query_heads)
-            )
+        self.head_scales = nn.Parameter(torch.linspace(-1.2, 1.2, self.num_query_heads))
 
     def before_scores(self, q, k, v, offset: int = 0):
-        if self.scaled:
-            # Get base scaling factor
-            base_scale = 1.0 / math.sqrt(self.head_dim)
+        # Get base scaling factor
+        base_scale = 1.0 / math.sqrt(self.head_dim)
 
-            # Reshape scales for broadcasting
-            scaling = self.head_scales.view(1, -1, 1, 1) * base_scale
+        # Reshape scales for broadcasting
+        scaling = self.head_scales.view(1, -1, 1, 1) * base_scale
 
-            # Apply scaling to queries
-            return q * scaling, k, v
-        else:
-            return q, k, v
+        # Apply scaling to queries
+        return q * scaling, k, v
 
     def after_scores(self, scores, offset: int = 0):
         return scores
