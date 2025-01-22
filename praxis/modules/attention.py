@@ -38,6 +38,7 @@ class PraxisAttention(nn.Module):
         self.num_heads = config.num_heads
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
+        self.kv_rank = config.kv_rank
 
         self.factor = 2 if self.differential else 1
         init_head_dim = hidden_size // self.num_heads
@@ -66,8 +67,10 @@ class PraxisAttention(nn.Module):
                 hidden_size, self.num_query_heads * self.head_dim, bias=False
             )
 
-        self.key = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.value = nn.Linear(hidden_size, self.num_heads * self.head_dim, bias=False)
+        if self.kv_rank > 1:
+            self.key_value = LowRankKeyValue(config)
+        else:
+            self.key_value = KeyValue(config)
 
         self.memory = config.memory
         self.chunk_size = 0
@@ -76,14 +79,14 @@ class PraxisAttention(nn.Module):
             self.memory = PraxisCompressiveMemory(config)
 
         # The core attention mechanism
-        use_scaling = False
+        use_scaling = True
         if self.stickbreaking:
             self.algorithm = Stickbreaking(config)
             use_scaling = False
         elif self.differential:
             self.algorithm = Differential(config)
         elif self.linear:
-            self.algorithm = LinearAttention(config)
+            self.algorithm = Linear(config)
         else:
             self.algorithm = ScaledDotProduct(config)
 
@@ -115,16 +118,11 @@ class PraxisAttention(nn.Module):
             batch_size, seq_len, self.num_query_heads * self.factor, -1
         ).transpose(1, 2)
 
-        k = (
-            self.key(inputs)
-            .view(batch_size, seq_len, self.num_heads * self.factor, -1)
-            .transpose(1, 2)
+        k, v = self.key_value(inputs)
+        k = k.view(batch_size, seq_len, self.num_heads * self.factor, -1).transpose(
+            1, 2
         )
-        v = (
-            self.value(inputs)
-            .view(batch_size, seq_len, self.num_heads, -1)
-            .transpose(1, 2)
-        )
+        v = v.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
 
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
@@ -339,7 +337,7 @@ class Differential(ScaledDotProduct):
         return outputs * (1 - self.lambda_init)
 
 
-class LinearAttention(ScaledDotProduct):
+class Linear(ScaledDotProduct):
     """
     Implements Linear Attention using kernel feature maps.
     Based on 'Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention'
@@ -589,6 +587,90 @@ class Stickbreaking(ScaledDotProduct):
     #     self.value_history = new_v.detach()
 
     #     return new_k, new_v
+
+
+class KeyValue(nn.Module):
+    """
+    Regular key/value projections.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_heads
+        init_head_dim = self.hidden_size // self.num_heads
+        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.key = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.value = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+
+    def forward(self, x):
+        k = self.key(x)
+        v = self.value(x)
+        return k, v
+
+
+class LowRankKeyValue(nn.Module):
+    """
+    A form of low-rank factorization for keys/values, inspired
+    by "Tensor Product Attention Is All You Need":
+    https://arxiv.org/abs/2501.06425
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_heads
+        init_head_dim = self.hidden_size // self.num_heads
+        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.rank = config.kv_rank
+
+        # Define linear transformations for A projections
+        self.key_a = nn.Linear(self.hidden_size, self.num_heads * self.rank, bias=False)
+        self.value_a = nn.Linear(
+            self.hidden_size, self.num_heads * self.rank, bias=False
+        )
+
+        # Define B projection parameters for K, V
+        self.key_b = nn.Linear(self.hidden_size, self.rank * self.head_dim, bias=False)
+        self.value_b = nn.Linear(
+            self.hidden_size, self.rank * self.head_dim, bias=False
+        )
+
+    def forward(self, x):
+        batch_size, seq_len, _ = x.size()
+
+        # Compute intermediate variables A for K, and V
+        A_k = self.key_a(x).view(batch_size, seq_len, self.num_heads, self.rank)
+        A_v = self.value_a(x).view(batch_size, seq_len, self.num_heads, self.rank)
+
+        # Compute intermediate variables B for K, and V
+        B_k = self.key_b(x).view(batch_size, seq_len, self.rank, self.head_dim)
+        B_v = self.value_b(x).view(batch_size, seq_len, self.rank, self.head_dim)
+
+        # Reshape A_k, A_v
+        A_k = A_k.view(batch_size * seq_len, self.num_heads, self.rank)
+        A_v = A_v.view(batch_size * seq_len, self.num_heads, self.rank)
+
+        # Reshape B_k, B_v
+        B_k = B_k.view(batch_size * seq_len, self.rank, self.head_dim)
+        B_v = B_v.view(batch_size * seq_len, self.rank, self.head_dim)
+
+        k = (
+            torch.bmm(A_k, B_k)
+            .div_(self.rank)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+        )
+        v = (
+            torch.bmm(A_v, B_v)
+            .div_(self.rank)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+        )
+
+        return k, v
 
 
 class UniversalAttentionGate(nn.Module):

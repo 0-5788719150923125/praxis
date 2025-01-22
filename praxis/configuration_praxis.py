@@ -11,6 +11,7 @@ class PraxisConfig(PretrainedConfig):
         num_heads=3,
         num_queries=2,
         k_heads=None,
+        kv_rank=1,
         depth=7,
         num_experts=7,
         dropout=0,
@@ -67,6 +68,7 @@ class PraxisConfig(PretrainedConfig):
         self.num_heads = num_heads
         self.num_queries = num_queries
         self.k_heads = k_heads
+        self.kv_rank = kv_rank
         self.depth = depth
         self.num_experts = num_experts
         self.attention_type = attention_type

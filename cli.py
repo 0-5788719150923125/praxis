@@ -110,6 +110,12 @@ parser.add_argument(
     help="A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable.",
 )
 parser.add_argument(
+    "--kv_rank",
+    type=int,
+    default=1,
+    help="Increase this value to factorize key/value projections, making them low-rank.",
+)
+parser.add_argument(
     "--activation",
     type=str,
     choices=ACTIVATION_REGISTRY.keys(),

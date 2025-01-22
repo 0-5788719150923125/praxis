@@ -183,6 +183,7 @@ config = PraxisConfig(
     num_heads=int(num_heads.split(":")[0]),
     num_queries=int(num_heads.split(":")[1]),
     k_heads=k_heads,
+    kv_rank=kv_rank,
     dropout=0.1,
     vocab_size=tokenizer.vocab_size,
     sparse=True if sparse else not dense,
