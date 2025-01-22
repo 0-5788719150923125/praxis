@@ -5,7 +5,7 @@ from typing import NamedTuple
 import pytest
 import torch
 
-from praxis.modules.attention import PraxisAttention
+from praxis.modules.attention import ENCODING_REGISTRY, PraxisAttention
 
 # Define test parameters
 MODULE_CLASSES = [PraxisAttention]
@@ -24,6 +24,7 @@ class AttentionConfig(NamedTuple):
     hidden_size: int
     num_heads: int = 4
     num_queries: int = 1
+    encoding: str = "nope"
 
 
 def get_attention_configs():
@@ -31,7 +32,12 @@ def get_attention_configs():
     configs = []
     for hidden_size in HIDDEN_SIZES:
         for mode in AttentionMode:
-            configs.append(AttentionConfig(mode=mode, hidden_size=hidden_size))
+            for encoding in ENCODING_REGISTRY.keys():
+                configs.append(
+                    AttentionConfig(
+                        mode=mode, hidden_size=hidden_size, encoding=encoding
+                    )
+                )
     return configs
 
 
@@ -49,15 +55,15 @@ def module_setup(request, config):
     """
     module_class, attention_config = request.param
 
-    # Set hidden size
     setattr(config, "hidden_size", attention_config.hidden_size)
     setattr(config, "num_heads", attention_config.num_heads)
     setattr(config, "num_queries", attention_config.num_queries)
 
-    # Reset all boolean flags
     setattr(config, "linear", False)
     setattr(config, "differential", False)
     setattr(config, "stickbreaking", False)
+
+    setattr(config, "encoding", attention_config.encoding)
 
     # Set the appropriate mode
     if attention_config.mode == AttentionMode.LINEAR:
@@ -66,7 +72,6 @@ def module_setup(request, config):
         setattr(config, "differential", True)
     elif attention_config.mode == AttentionMode.STICKBREAKING:
         setattr(config, "stickbreaking", True)
-        setattr(config, "encoding", "nope")  # Required for stickbreaking
 
     module = module_class(config)
     return module, attention_config

@@ -432,10 +432,8 @@ class Stickbreaking(ScaledDotProduct):
     __version__ = "0.1.0"
 
     def __init__(self, config: "AutoConfig"):
+        setattr(config, "encoding", "nope")
         super().__init__(config)
-        assert (
-            config.encoding == "nope"
-        ), "Please use NoPE (No Positional Encoding) with Stickbreaking attention."
         self.register_buffer("key_history", None)
         self.register_buffer("value_history", None)
         self.history_size = 32
