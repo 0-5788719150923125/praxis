@@ -20,5 +20,6 @@
   ],
   "isort.check": true,
   "workbench.editor.limit.value": 5,
-  "workbench.editor.limit.enabled": true
+  "workbench.editor.limit.enabled": true,
+  "terminal.integrated.scrollback": 10000,
 }
