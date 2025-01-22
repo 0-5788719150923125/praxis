@@ -242,9 +242,7 @@ class ScaledDotProduct(nn.Module):
         if causal:
             causal_mask = (
                 torch.triu(
-                    torch.full(
-                        (seq_len, hist_len), float("-inf"), device=scores.device
-                    ),
+                    torch.full((seq_len, hist_len), -1e9, device=scores.device),
                     diagonal=1,
                 )
                 .unsqueeze(0)
@@ -256,7 +254,7 @@ class ScaledDotProduct(nn.Module):
             attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
         )
 
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e12
+        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
 
         scores = scores + attention_mask
         return scores, causal_mask, attention_mask
