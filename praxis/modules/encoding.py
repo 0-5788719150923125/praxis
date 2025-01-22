@@ -132,7 +132,7 @@ class RoPE(NoPE):
                 theta = 10000
                 self.inv_freq = 1.0 / (
                     theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
-                )
+                ).to(device)
 
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
@@ -210,7 +210,7 @@ class YaRN(RoPE):
                 theta = 10000
                 self.inv_freq = 1.0 / (
                     theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
-                )
+                ).to(device)
                 # Calculate rotations per dimension
                 positions = torch.arange(self.original_max_position)
                 dim_rotations = positions.unsqueeze(1) * self.inv_freq.unsqueeze(

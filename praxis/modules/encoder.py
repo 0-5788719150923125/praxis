@@ -42,7 +42,7 @@ class PraxisEncoder(nn.Module):
 
         # realtime_patching = False
         self.entropy_model = None
-        self.args.patching_mode = "entropy" if "entropy" in config.meta else "space"
+        self.args.patching_mode = "space" if "space" in config.meta else "entropy"
         if self.args.patching_mode == "entropy":
             # realtime_patching = True
             self.args.patching_threshold = 1.335442066192627

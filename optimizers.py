@@ -57,6 +57,7 @@ OPTIMIZER_PROFILES = {
         optimizer_name="Prodigy",
         lr=1.0,
         weight_decay=0.1,
+        betas=(0.9, 0.95),
         weight_decouple=True,
         bias_correction=True,
         safeguard_warmup=True,
