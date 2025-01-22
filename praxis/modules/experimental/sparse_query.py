@@ -301,11 +301,9 @@ class SparseQuery(nn.Module):
             total_selections = batch_size * seq_len * self.top_k
             expert_frequencies = expert_counts / total_selections
 
-            frequencies = [
-                f"{i}: {freq:.2f}" for i, freq in enumerate(expert_frequencies)
-            ]
+            frequencies = [f"{freq:.2f}" for i, freq in enumerate(expert_frequencies)]
             print(
-                f"DEBUG: id={self.identifier}, mode={'train' if self.training else 'infer'}, frequencies=({', '.join(frequencies)})"
+                f"DEBUG: id={self.identifier}, mode={'train' if self.training else 'infer'}, heads=({', '.join(frequencies)})"
             )
 
 
