@@ -101,9 +101,12 @@ class PraxisAttention(nn.Module):
             self.num_query_heads * self.head_dim, hidden_size, bias=False
         )
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor) -> Tensor:
+    def forward(self, inputs: Tensor, attention_mask: Tensor = None) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
         aux_loss = 0
+
+        if not torch.is_tensor(attention_mask):
+            attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
         if self.ema:
             # Compute an exponential moving average-based gating mechanism
