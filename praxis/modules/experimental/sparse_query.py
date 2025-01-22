@@ -268,31 +268,19 @@ class SparseQuery(nn.Module):
             # Compute log posterior probabilities
             logits = torch.matmul(z_norm, centroids_norm.t())
         elif method == "log_posterior":
-            # Handle both 2D and 3D inputs
-            if z.dim() == 2:
-                # Input is already flat
-                batch_seq_size = z.size(0)
-                z_3d = z.view(-1, 1, z.size(-1))  # Add seq dim of 1
-            else:
-                # Input is [batch, seq, dim]
-                batch_seq_size = z.size(0) * z.size(1)
-                z_3d = z
+            # Compute squared norms while preserving dimensions
+            z_norm_sq = torch.sum(z * z, dim=-1, keepdim=True)  # [batch, seq, 1]
+            centroid_norm_sq = torch.sum(
+                self.head_centroids * self.head_centroids, dim=-1
+            )  # [num_heads]
 
-            # Compute cross terms with consistent 3D shape
-            cross_terms = torch.matmul(z_3d, self.head_centroids.t())
-            z_flat = z_3d.view(batch_seq_size, -1)
+            # Cross terms with natural broadcasting
+            cross_terms = torch.matmul(
+                z, self.head_centroids.t()
+            )  # [batch, seq, num_heads]
 
-            # Complete the computation with correct shapes
-            logits = cross_terms.view(batch_seq_size, -1) - 0.5 * (
-                torch.einsum("ni,ni->n", z_flat, z_flat)[:, None]
-                + torch.einsum("ni,ni->n", self.head_centroids, self.head_centroids)[
-                    None, :
-                ]
-            )
-
-            # For 3D input, reshape back. For 2D input, keep flat
-            if z.dim() == 3:
-                logits = logits.view(z.size(0), z.size(1), -1)
+            # Let broadcasting handle the dimension matching
+            logits = cross_terms - 0.5 * (z_norm_sq + centroid_norm_sq)
 
         # Scale logits (using input dimension as in transformer attention)
         logits = logits / math.sqrt(z.size(-1))
