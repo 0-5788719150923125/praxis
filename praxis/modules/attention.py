@@ -284,23 +284,15 @@ class Differential(ScaledDotProduct):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
-        self.head_dim = config.head_size // 2
+        head_dim = config.head_size
         self.lambda_init = 0.8  # A good default, per the paper
-        self.lambda_q1 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.lambda_k1 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.lambda_q2 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
-        self.lambda_k2 = nn.Parameter(
-            torch.zeros(self.head_dim).normal_(mean=0, std=0.1)
-        )
+        self.lambda_q1 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_k1 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_q2 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_k2 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
         self.norm = nn.GroupNorm(
             num_groups=self.num_query_heads,
-            num_channels=self.num_query_heads * self.head_dim * 2,
+            num_channels=self.num_query_heads * self.head_dim,
             eps=config.epsilon,
         )
 
@@ -309,7 +301,12 @@ class Differential(ScaledDotProduct):
 
         attn_weights = ghostmax(scores, dim=-1)
 
+        # torch.Size([1, 4, 512, 512])
+        # torch.Size([1, 2, 2, 512, 512])
+
+        # print(attn_weights.shape)
         attn_weights = attn_weights.view(batch_size, -1, 2, seq_len, seq_len)
+        # print(attn_weights.shape)
 
         lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float())
         lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float())
@@ -317,7 +314,7 @@ class Differential(ScaledDotProduct):
 
         attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
 
-        attn_weights = attn_weights.repeat_interleave(2, dim=1)
+        v = v.reshape(batch_size, attn_weights.size(1), v.size(2), -1)
 
         outputs = torch.matmul(self.dropout(attn_weights), v)
 
