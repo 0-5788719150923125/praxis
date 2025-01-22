@@ -16,13 +16,12 @@ class NoPE(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.num_query_heads = config.num_heads * config.num_queries
-        self.head_dim = config.head_size
-        # Initialize scaling factors - one per head with linspace
         self.head_scales = nn.Parameter(torch.linspace(-1.2, 1.2, self.num_query_heads))
 
     def before_scores(self, q, k, v, offset: int = 0):
         # Get base scaling factor
-        base_scale = 1.0 / math.sqrt(self.head_dim)
+        head_dim = q.size(-1)
+        base_scale = 1.0 / math.sqrt(head_dim)
 
         # Reshape scales for broadcasting
         scaling = self.head_scales.view(1, -1, 1, 1) * base_scale
@@ -77,13 +76,7 @@ class RoPE(NoPE):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
-        assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
-
-        theta = 10000
-        inv_freq = 1.0 / (
-            theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim)
-        )
-        self.register_buffer("inv_freq", inv_freq)
+        self.register_buffer("inv_freq", None)
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
@@ -94,13 +87,14 @@ class RoPE(NoPE):
         device = q.device
         dtype = q.dtype
 
-        self._compute_rope_embeddings(seq_len, device, dtype, offset)
+        head_dim = q.size(-1)
+        self._compute_rope_embeddings(head_dim, seq_len, device, dtype, offset)
 
         cos = self._cached_cos[:, :, :seq_len, :]
         sin = self._cached_sin[:, :, :seq_len, :]
 
-        q_chunks = q.chunk(q.size(-1) // self.head_dim, dim=-1)
-        k_chunks = k.chunk(k.size(-1) // self.head_dim, dim=-1)
+        q_chunks = q.chunk(q.size(-1) // head_dim, dim=-1)
+        k_chunks = k.chunk(k.size(-1) // head_dim, dim=-1)
 
         q_rope_chunks = [
             self._apply_rotary_pos_emb(q_chunk, cos, sin) for q_chunk in q_chunks
@@ -121,7 +115,9 @@ class RoPE(NoPE):
     def after_scores(self, scores, offset: int = 0):
         return scores
 
-    def _compute_rope_embeddings(self, seq_len, device, dtype, offset: int = 0):
+    def _compute_rope_embeddings(
+        self, head_dim, seq_len, device, dtype, offset: int = 0
+    ):
         """Compute sin and cos embeddings with offset."""
         if (
             self._cached_seq_length is None
@@ -131,6 +127,13 @@ class RoPE(NoPE):
             or self._cached_cos.dtype != dtype
         ):
             positions = torch.arange(seq_len, device=device) + offset
+
+            if self.inv_freq is None:
+                theta = 10000
+                self.inv_freq = 1.0 / (
+                    theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
+                )
+
             pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
 
             # Compute basic sin and cos
@@ -172,7 +175,6 @@ class YaRN(RoPE):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
-        assert self.head_dim % 2 == 0, "Head dimension must be even for RoPE"
 
         # YaRN parameters
         self.original_max_position = config.context_length
@@ -187,19 +189,15 @@ class YaRN(RoPE):
         self.alpha = 1  # threshold for full scaling
         self.beta = 32  # threshold for no scaling
 
-        # Calculate rotations per dimension
-        positions = torch.arange(self.original_max_position)
-        dim_rotations = positions.unsqueeze(1) * self.inv_freq.unsqueeze(
-            0
-        )  # [seq_len, dim/2]
-        self.dim_ranges = (dim_rotations[-1] / math.pi) * 2  # rotations at max position
-
         # Cache buffers
+        self.dim_ranges = None
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def _compute_rope_embeddings(self, seq_len, device, dtype, offset: int = 0):
+    def _compute_rope_embeddings(
+        self, head_dim, seq_len, device, dtype, offset: int = 0
+    ):
         """Compute YaRN-scaled RoPE embeddings with offset."""
         if (
             self._cached_seq_length is None
@@ -208,6 +206,20 @@ class YaRN(RoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
+            if self.dim_ranges is None:
+                theta = 10000
+                self.inv_freq = 1.0 / (
+                    theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
+                )
+                # Calculate rotations per dimension
+                positions = torch.arange(self.original_max_position)
+                dim_rotations = positions.unsqueeze(1) * self.inv_freq.unsqueeze(
+                    0
+                )  # [seq_len, dim/2]
+                self.dim_ranges = (
+                    dim_rotations[-1] / math.pi
+                ) * 2  # rotations at max position
+
             # Consider total sequence length including offset for scaling
             total_seq_len = seq_len + offset
             dynamic_scale = max(1.0, total_seq_len / self.original_max_position)
@@ -216,9 +228,9 @@ class YaRN(RoPE):
             positions = torch.arange(seq_len, device=device, dtype=dtype) + offset
 
             # Calculate per-dimension scaling factors
-            dim_scales = torch.ones(self.head_dim // 2, device=device, dtype=dtype)
+            dim_scales = torch.ones(head_dim // 2, device=device, dtype=dtype)
 
-            for i in range(self.head_dim // 2):
+            for i in range(head_dim // 2):
                 rotations = self.dim_ranges[i]
                 if rotations <= self.alpha:
                     dim_scales[i] = dynamic_scale
