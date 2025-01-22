@@ -259,12 +259,40 @@ class SparseQuery(nn.Module):
         # Get routing embeddings with dropout
         z = self.router(x)
 
-        # L2 normalize embeddings and centroids
-        z_norm = F.normalize(z, p=2, dim=-1)
-        centroids_norm = F.normalize(self.head_centroids, p=2, dim=-1)
+        method = "log_posterior"
+        if method == "cosine_sim":
+            # L2 normalize embeddings and centroids
+            z_norm = F.normalize(z, p=2, dim=-1)
+            centroids_norm = F.normalize(self.head_centroids, p=2, dim=-1)
 
-        # Compute log posterior probabilities
-        logits = torch.matmul(z_norm, centroids_norm.t())
+            # Compute log posterior probabilities
+            logits = torch.matmul(z_norm, centroids_norm.t())
+        elif method == "log_posterior":
+            # Handle both 2D and 3D inputs
+            if z.dim() == 2:
+                # Input is already flat
+                batch_seq_size = z.size(0)
+                z_3d = z.view(-1, 1, z.size(-1))  # Add seq dim of 1
+            else:
+                # Input is [batch, seq, dim]
+                batch_seq_size = z.size(0) * z.size(1)
+                z_3d = z
+
+            # Compute cross terms with consistent 3D shape
+            cross_terms = torch.matmul(z_3d, self.head_centroids.t())
+            z_flat = z_3d.view(batch_seq_size, -1)
+
+            # Complete the computation with correct shapes
+            logits = cross_terms.view(batch_seq_size, -1) - 0.5 * (
+                torch.einsum("ni,ni->n", z_flat, z_flat)[:, None]
+                + torch.einsum("ni,ni->n", self.head_centroids, self.head_centroids)[
+                    None, :
+                ]
+            )
+
+            # For 3D input, reshape back. For 2D input, keep flat
+            if z.dim() == 3:
+                logits = logits.view(z.size(0), z.size(1), -1)
 
         # Scale logits (using input dimension as in transformer attention)
         logits = logits / math.sqrt(z.size(-1))
@@ -299,8 +327,14 @@ if __name__ == "__main__":
     torch.manual_seed(42)
 
     # Test initialization
+    hidden_size = 256
     model = SparseQuery(
-        in_features=512, num_heads=12, head_dim=64, top_k=4, hidden_size=256, bias=True
+        in_features=512,
+        num_heads=12,
+        head_dim=64,
+        top_k=4,
+        hidden_size=hidden_size,
+        bias=True,
     )
 
     # Test forward pass
