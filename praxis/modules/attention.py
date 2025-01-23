@@ -71,9 +71,20 @@ class PraxisAttention(nn.Module):
             )
 
         if self.kv_rank is not None:
-            self.key_value = LowRankKeyValue(config)
+            self.key_value = LowRankKeyValue(
+                hidden_size=hidden_size,
+                num_heads=self.num_heads,
+                key_head_dim=self.head_dim * self.factor,
+                value_head_dim=self.head_dim,
+                rank=self.kv_rank,
+            )
         else:
-            self.key_value = KeyValue(config)
+            self.key_value = KeyValue(
+                hidden_size=hidden_size,
+                num_heads=self.num_heads,
+                key_head_dim=self.head_dim * self.factor,
+                value_head_dim=self.head_dim,
+            )
 
         self.memory = config.memory
         self.chunk_size = 0
@@ -598,18 +609,12 @@ class KeyValue(nn.Module):
     Regular key/value projections.
     """
 
-    def __init__(self, config):
+    def __init__(
+        self, hidden_size: int, num_heads: int, key_head_dim: int, value_head_dim: int
+    ):
         super().__init__()
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_heads
-        self.head_dim = config.head_size
-        factor = 2 if config.differential else 1
-        self.key = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim * factor, bias=False
-        )
-        self.value = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
-        )
+        self.key = nn.Linear(hidden_size, num_heads * key_head_dim, bias=False)
+        self.value = nn.Linear(hidden_size, num_heads * value_head_dim, bias=False)
 
     def forward(self, x):
         k = self.key(x)
@@ -624,23 +629,28 @@ class LowRankKeyValue(nn.Module):
     https://arxiv.org/abs/2501.06425
     """
 
-    def __init__(self, config):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        key_head_dim: int,
+        value_head_dim: int,
+        rank: int = 2,
+    ):
         super().__init__()
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_heads
-        self.head_dim = config.head_size
-        self.rank = config.kv_rank
+        self.num_heads = num_heads
+        self.key_head_dim = key_head_dim
+        self.value_head_dim = value_head_dim
+        self.rank = rank
 
         # Define linear transformations for A projections
-        self.key_a = nn.Linear(self.hidden_size, self.num_heads * self.rank, bias=False)
-        self.value_a = nn.Linear(
-            self.hidden_size, self.num_heads * self.rank, bias=False
-        )
+        self.key_a = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
+        self.value_a = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
 
         # Define B projection parameters for K, V
-        self.key_b = nn.Linear(self.hidden_size, self.rank * self.head_dim, bias=False)
+        self.key_b = nn.Linear(hidden_size, self.rank * self.key_head_dim, bias=False)
         self.value_b = nn.Linear(
-            self.hidden_size, self.rank * self.head_dim, bias=False
+            hidden_size, self.rank * self.value_head_dim, bias=False
         )
 
     def forward(self, x):
@@ -651,26 +661,26 @@ class LowRankKeyValue(nn.Module):
         A_v = self.value_a(x).view(batch_size, seq_len, self.num_heads, self.rank)
 
         # Compute intermediate variables B for K, and V
-        B_k = self.key_b(x).view(batch_size, seq_len, self.rank, self.head_dim)
-        B_v = self.value_b(x).view(batch_size, seq_len, self.rank, self.head_dim)
+        B_k = self.key_b(x).view(batch_size, seq_len, self.rank, self.key_head_dim)
+        B_v = self.value_b(x).view(batch_size, seq_len, self.rank, self.value_head_dim)
 
         # Reshape A_k, A_v
         A_k = A_k.view(batch_size * seq_len, self.num_heads, self.rank)
         A_v = A_v.view(batch_size * seq_len, self.num_heads, self.rank)
 
         # Reshape B_k, B_v
-        B_k = B_k.view(batch_size * seq_len, self.rank, self.head_dim)
-        B_v = B_v.view(batch_size * seq_len, self.rank, self.head_dim)
+        B_k = B_k.view(batch_size * seq_len, self.rank, self.key_head_dim)
+        B_v = B_v.view(batch_size * seq_len, self.rank, self.value_head_dim)
 
         k = (
             torch.bmm(A_k, B_k)
             .div_(self.rank)
-            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .view(batch_size, seq_len, self.num_heads, self.key_head_dim)
         )
         v = (
             torch.bmm(A_v, B_v)
             .div_(self.rank)
-            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .view(batch_size, seq_len, self.num_heads, self.value_head_dim)
         )
 
         return k, v
