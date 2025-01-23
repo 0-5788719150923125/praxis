@@ -175,6 +175,12 @@ parser.add_argument(
     help="The optimizer profile to use",
 )
 parser.add_argument(
+    "--trac",
+    action="store_true",
+    default=False,
+    help="Wrap the optimizer in TRAC, which can mitigate the loss of plasticity over time",
+)
+parser.add_argument(
     "--ortho",
     action="store_true",
     default=False,

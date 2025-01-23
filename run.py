@@ -1002,7 +1002,7 @@ datamodule = get_datamodules(seed, dev, phi, gun, source, tokenizer, hparams, da
 
 # create the optimizer
 optimizer = get_optimizer(
-    model, ortho=ortho, lookahead=lookahead, **hparams["optimizer"]
+    model, trac=trac, ortho=ortho, lookahead=lookahead, **hparams["optimizer"]
 )
 
 # create the scheduler

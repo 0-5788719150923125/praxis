@@ -1,5 +1,5 @@
 from pytorch_optimizer import create_optimizer
-from pytorch_optimizer.optimizer import Lookahead, OrthoGrad
+from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad
 
 
 def get_optimizer_profile(name="AdamW"):
@@ -7,8 +7,10 @@ def get_optimizer_profile(name="AdamW"):
     return {**lowercase_profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
 
 
-def get_optimizer(model, ortho=False, lookahead=False, *args, **kwargs):
+def get_optimizer(model, trac=False, ortho=False, lookahead=False, *args, **kwargs):
     optimizer = create_optimizer(model, *args, **kwargs)
+    if trac:
+        optimizer = TRAC(optimizer, num_coefs=128)
     if ortho:
         optimizer = OrthoGrad(optimizer)
     if lookahead:
