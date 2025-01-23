@@ -5,7 +5,10 @@ from typing import Dict, List, NamedTuple
 import pytest
 import torch
 
+from praxis import PraxisConfig
 from praxis.modules.attention import ENCODING_REGISTRY, PraxisAttention
+
+MODULE_CLASSES = [PraxisAttention]
 
 
 class AttentionMode(Enum):
@@ -13,20 +16,6 @@ class AttentionMode(Enum):
     LINEAR = "linear"
     DIFFERENTIAL = "differential"
     STICKBREAKING = "stickbreaking"
-
-
-class AttentionConfig(NamedTuple):
-    mode: AttentionMode
-    hidden_size: int
-    num_heads: int = 4
-    num_queries: int = 1
-    k_heads: int = None
-    kv_rank: int = None
-    encoding: str = "nope"
-    memory: bool = False
-
-
-MODULE_CLASSES = [PraxisAttention]
 
 
 # Define test parameters in a more structured way
@@ -42,10 +31,10 @@ TEST_PARAMS = {
 }
 
 
-def get_attention_configs() -> List[AttentionConfig]:
+def get_attention_configs() -> List[PraxisConfig]:
     """Generate valid attention configurations using itertools.product."""
     return [
-        AttentionConfig(
+        PraxisConfig(
             mode=mode,
             hidden_size=hidden_size,
             encoding=encoding,
