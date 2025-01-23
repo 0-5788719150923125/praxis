@@ -262,6 +262,9 @@ hparams["optimizer"] = get_optimizer_profile(optimizer)
 if shuffle:
     hparams["optimizer"]["weight_decay"] = 0
 
+if optimizer == "Prodigy":
+    no_schedule = True
+
 # Configure the learning rate scheduler
 if no_schedule:
     scheduler_func = partial(

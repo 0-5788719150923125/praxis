@@ -60,7 +60,7 @@ OPTIMIZER_PROFILES = {
         betas=(0.9, 0.95),
         weight_decouple=True,
         bias_correction=True,
-        safeguard_warmup=True,
+        safeguard_warmup=False,
     ),
     "SOAP": dict(
         optimizer_name="SOAP",

@@ -432,6 +432,7 @@ class Stickbreaking(ScaledDotProduct):
     __version__ = "0.1.0"
 
     def __init__(self, config: "AutoConfig"):
+        # force no positional encoding
         setattr(config, "encoding", "nope")
         super().__init__(config)
         self.register_buffer("key_history", None)
