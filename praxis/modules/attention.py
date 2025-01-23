@@ -332,12 +332,7 @@ class Differential(ScaledDotProduct):
         # Shape: [batch_size, num_heads, seq_len, head_dim]
 
         # Prepare for GroupNorm
-        outputs = (
-            outputs.transpose(1, 2)
-            .reshape(batch_size, seq_len, -1)
-            .transpose(1, 2)
-            .contiguous()
-        )
+        outputs = outputs.reshape(batch_size, -1, seq_len).contiguous()
         # Shape: [batch_size, seq_len, num_heads * head_dim]
 
         # Apply GroupNorm

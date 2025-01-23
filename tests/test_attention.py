@@ -10,6 +10,8 @@ from praxis.modules.attention import ENCODING_REGISTRY, PraxisAttention
 # Define test parameters
 MODULE_CLASSES = [PraxisAttention]
 HIDDEN_SIZES = [32, 64, 128, 256]
+NUM_HEADS = [1, 2, 3, 4]
+NUM_QUERIES = [1, 2]
 
 
 class AttentionMode(Enum):
@@ -33,11 +35,17 @@ def get_attention_configs():
     for hidden_size in HIDDEN_SIZES:
         for mode in AttentionMode:
             for encoding in ENCODING_REGISTRY.keys():
-                configs.append(
-                    AttentionConfig(
-                        mode=mode, hidden_size=hidden_size, encoding=encoding
-                    )
-                )
+                for num_heads in NUM_HEADS:
+                    for num_queries in NUM_QUERIES:
+                        configs.append(
+                            AttentionConfig(
+                                mode=mode,
+                                hidden_size=hidden_size,
+                                encoding=encoding,
+                                num_heads=num_heads,
+                                num_queries=num_queries,
+                            )
+                        )
     return configs
 
 

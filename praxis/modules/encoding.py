@@ -26,6 +26,10 @@ class NoPE(nn.Module):
         # Reshape scales for broadcasting
         scaling = self.head_scales.view(1, -1, 1, 1) * base_scale
 
+        # For Differential Attention
+        if q.size(1) > self.head_scales.size(0):
+            scaling = scaling.repeat_interleave(2, dim=1)
+
         # Apply scaling to queries
         return q * scaling, k, v
 
