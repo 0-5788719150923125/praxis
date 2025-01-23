@@ -57,7 +57,7 @@ class PraxisAttention(nn.Module):
             self.query = SparseQuery(
                 hidden_size,
                 self.num_query_heads,
-                self.head_dim,
+                self.head_dim * self.factor,
                 top_k=config.k_heads,
                 dropout=config.dropout,
                 bias=False,

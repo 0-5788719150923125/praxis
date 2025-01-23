@@ -21,8 +21,7 @@ class PraxisCompressiveMemory(nn.Module):
         self.num_heads = config.num_heads
         self.num_queries = config.num_queries
         self.num_query_heads = self.num_heads * self.num_queries
-        self.head_dim = self.hidden_size // self.num_heads
-        self.multiplier = 2 if config.differential else 1
+        self.head_dim = config.head_size
         self.use_delta = True
         self.betas = nn.Parameter(
             torch.zeros(1, self.num_query_heads, 1, self.head_dim)
@@ -34,12 +33,12 @@ class PraxisCompressiveMemory(nn.Module):
                 torch.randn(
                     1,
                     self.num_query_heads,
-                    self.head_dim * self.multiplier,
+                    self.head_dim,
                     self.head_dim,
                 )
             )
             self.init_z = nn.Parameter(
-                torch.ones(1, self.num_query_heads, self.head_dim * self.multiplier, 1)
+                torch.ones(1, self.num_query_heads, self.head_dim, 1)
             )
         else:
             self.init_mem = None
@@ -78,6 +77,9 @@ class PraxisCompressiveMemory(nn.Module):
 
     def _blend_outputs(self, memory_output: Tensor, attention_output: Tensor) -> Tensor:
         gate = torch.sigmoid(self.betas)
+        # if attention_output.dim() == 3:
+        #     attention_output = attention_output.unsqueeze(1)
+        # print(gate.shape, memory_output.shape, attention_output.shape)
         return gate * memory_output + (1 - gate) * attention_output
 
     def _init_states(
@@ -92,7 +94,7 @@ class PraxisCompressiveMemory(nn.Module):
             memory_states = torch.zeros(
                 batch_size,
                 self.num_query_heads,
-                self.head_dim * self.multiplier,
+                self.head_dim,
                 self.head_dim,
                 device=device,
             )
@@ -100,7 +102,7 @@ class PraxisCompressiveMemory(nn.Module):
                 torch.ones(
                     batch_size,
                     self.num_query_heads,
-                    self.head_dim * self.multiplier,
+                    self.head_dim,
                     1,
                     device=device,
                 )

@@ -20,8 +20,10 @@ class AttentionConfig(NamedTuple):
     hidden_size: int
     num_heads: int = 4
     num_queries: int = 1
+    k_heads: int = None
     kv_rank: int = None
     encoding: str = "nope"
+    memory: bool = False
 
 
 MODULE_CLASSES = [PraxisAttention]
@@ -33,8 +35,10 @@ TEST_PARAMS = {
     "modes": list(AttentionMode),
     "num_heads": [1, 2, 3, 4],
     "num_queries": [1, 2],
+    "k_heads": [None, 2],
     "encodings": list(ENCODING_REGISTRY.keys()),
     "kv_rank": [None, 1, 2],
+    "memory": [False],  # True is currently failing in some instances
 }
 
 
@@ -48,14 +52,18 @@ def get_attention_configs() -> List[AttentionConfig]:
             num_heads=num_heads,
             num_queries=num_queries,
             kv_rank=kv_rank,
+            memory=memory,
+            k_heads=k_heads,
         )
-        for hidden_size, mode, encoding, num_heads, num_queries, kv_rank in itertools.product(
+        for hidden_size, mode, encoding, num_heads, num_queries, kv_rank, memory, k_heads in itertools.product(
             TEST_PARAMS["hidden_sizes"],
             TEST_PARAMS["modes"],
             TEST_PARAMS["encodings"],
             TEST_PARAMS["num_heads"],
             TEST_PARAMS["num_queries"],
             TEST_PARAMS["kv_rank"],
+            TEST_PARAMS["memory"],
+            TEST_PARAMS["k_heads"],
         )
     ]
 
@@ -80,6 +88,8 @@ def module_setup(request, config):
 
     setattr(config, "encoding", attention_config.encoding)
     setattr(config, "kv_rank", attention_config.kv_rank)
+    setattr(config, "memory", attention_config.memory)
+    setattr(config, "k_heads", attention_config.k_heads)
 
     # Set the appropriate mode
     setattr(config, "linear", False)
