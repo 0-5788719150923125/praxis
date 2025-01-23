@@ -41,7 +41,7 @@ class PraxisAttention(nn.Module):
         self.kv_rank = config.kv_rank
 
         self.factor = 2 if self.differential else 1
-        init_head_dim = hidden_size // self.num_heads
+        init_head_dim = hidden_size // self.num_heads // self.factor
         self.head_dim = init_head_dim + (init_head_dim % 2)
         setattr(config, "head_size", self.head_dim)
 
@@ -65,7 +65,9 @@ class PraxisAttention(nn.Module):
             )
         else:
             self.query = nn.Linear(
-                hidden_size, self.num_query_heads * self.head_dim, bias=False
+                hidden_size,
+                self.num_query_heads * self.head_dim * self.factor,
+                bias=False,
             )
 
         if self.kv_rank is not None:
@@ -116,10 +118,14 @@ class PraxisAttention(nn.Module):
         if isinstance(q, tuple):
             q, aux_loss = q
 
-        q = q.view(batch_size, seq_len, self.num_query_heads, -1).transpose(1, 2)
+        q = q.view(
+            batch_size, seq_len, self.num_query_heads * self.factor, -1
+        ).transpose(1, 2)
 
         k, v = self.key_value(inputs)
-        k = k.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.num_heads * self.factor, -1).transpose(
+            1, 2
+        )
         v = v.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
 
         # Determine chunk size
@@ -284,48 +290,59 @@ class Differential(ScaledDotProduct):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
+        self.lambda_init = 0.8
         head_dim = config.head_size
-        self.lambda_init = 0.8  # A good default, per the paper
+
+        # Parameters for differential attention
         self.lambda_q1 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
         self.lambda_k1 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
         self.lambda_q2 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
         self.lambda_k2 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+
+        # GroupNorm should match the total channels
         self.norm = nn.GroupNorm(
             num_groups=self.num_query_heads,
-            num_channels=self.num_query_heads * self.head_dim,
+            num_channels=self.num_query_heads * head_dim,
             eps=config.epsilon,
         )
 
     def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
-        batch_size, _, seq_len, _ = scores.shape
+        batch_size, num_heads, seq_len, _ = scores.shape
+        head_dim = self.head_dim
 
+        # Keep original attention shape, just split the heads
         attn_weights = ghostmax(scores, dim=-1)
+        # Shape: [batch_size, num_heads, seq_len, seq_len]
 
-        # torch.Size([1, 4, 512, 512])
-        # torch.Size([1, 2, 2, 512, 512])
-
-        # print(attn_weights.shape)
+        # Reshape to separate differential components
         attn_weights = attn_weights.view(batch_size, -1, 2, seq_len, seq_len)
-        # print(attn_weights.shape)
+        # Shape: [batch_size, num_heads, 2, seq_len, seq_len]
 
+        # Calculate lambda
         lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float())
         lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float())
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
 
+        # Apply differential attention
         attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
+        # Shape: [batch_size, num_heads, seq_len, seq_len]
 
-        v = v.reshape(batch_size, attn_weights.size(1), v.size(2), -1)
-
+        # Apply attention to values
         outputs = torch.matmul(self.dropout(attn_weights), v)
+        # Shape: [batch_size, num_heads, seq_len, head_dim]
 
         # Prepare for GroupNorm
-        outputs = outputs.reshape(batch_size, -1, seq_len).contiguous()
+        outputs = (
+            outputs.transpose(1, 2)
+            .reshape(batch_size, seq_len, -1)
+            .transpose(1, 2)
+            .contiguous()
+        )
+        # Shape: [batch_size, seq_len, num_heads * head_dim]
 
         # Apply GroupNorm
         outputs = self.norm(outputs)
-
-        # Reshape back
-        outputs = outputs.transpose(2, 1).contiguous()
+        # Shape: [batch_size, seq_len, num_heads * head_dim]
 
         return outputs * (1 - self.lambda_init)
 
@@ -591,8 +608,9 @@ class KeyValue(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_heads
         self.head_dim = config.head_size
+        factor = 2 if config.differential else 1
         self.key = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
+            self.hidden_size, self.num_heads * self.head_dim * factor, bias=False
         )
         self.value = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=False

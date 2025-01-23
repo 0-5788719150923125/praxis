@@ -41,7 +41,7 @@ OPTIMIZER_PROFILES = {
         weight_decouple=True,
         betas=(0.9, 0.95, 0.9999),
         alpha=5.0,
-        cautious=False,
+        cautious=True,
     ),
     "Lion": dict(
         optimizer_name="Lion",
@@ -64,10 +64,11 @@ OPTIMIZER_PROFILES = {
     ),
     "SOAP": dict(
         optimizer_name="SOAP",
-        lr=2e-4,
+        lr=0.003,
         weight_decay=0.1,
+        betas=(0.95, 0.95),
         precondition_frequency=10,
-        max_precondition_dim=1024,
+        max_precondition_dim=10000,
         normalize_gradient=False,
         correct_bias=True,
         precondition_1d=False,
