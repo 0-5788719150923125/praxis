@@ -292,7 +292,7 @@ def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str)
 
     # Add knowledge structure
     chatml += f"Cause: {replace_person_references(head, person_mapping)}\n"
-    chatml += f"Relation: {relation.replace('x', '')}\n"
+    chatml += f"Relation: {relation[1:]}\n"
     chatml += f"Effect: {replace_person_references(tail, person_mapping)}\n"
 
     # Add context from literal and narrative
