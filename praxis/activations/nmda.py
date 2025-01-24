@@ -15,8 +15,8 @@ class NMDA(nn.Module):
 
     def __init__(self, alpha: float = 1.0, beta: float = 1.0):
         super().__init__()
-        self.alpha = nn.Parameter(torch.empty(1).constant_(alpha))
-        self.beta = nn.Parameter(torch.empty(1).constant_(alpha))
+        self.alpha = nn.Parameter(torch.tensor([alpha]))
+        self.beta = nn.Parameter(torch.tensor([beta]))
 
     def forward(self, x):
         alpha = 0 if self.alpha <= 0 else self.alpha.log()
