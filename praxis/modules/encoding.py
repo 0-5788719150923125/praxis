@@ -80,7 +80,7 @@ class RoPE(NoPE):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
-        self.register_buffer("inv_freq", None)
+        self.inv_freq = None
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
