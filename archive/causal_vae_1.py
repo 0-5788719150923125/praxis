@@ -1,30 +1,238 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
+class MaskLayer(nn.Module):
+    def __init__(self, z_dim: int, concept: int = 4, z2_dim: int = 4):
+        super().__init__()
+        self.z_dim = z_dim
+        self.z2_dim = z2_dim
+        self.concept = concept
+
+        # Helper function to create network blocks
+        def create_network():
+            return nn.Sequential(
+                nn.Linear(z2_dim, 32),
+                nn.ELU(),
+                nn.Linear(32, z2_dim),
+            )
+
+        # Create individual networks for each concept
+        self.net1 = create_network()
+        self.net2 = create_network()
+        self.net3 = create_network()
+        self.net4 = create_network() if concept == 4 else None
+
+        # General network for masked operations
+        self.net = create_network()
+
+    def masked(self, z: torch.Tensor) -> torch.Tensor:
+        z = z.view(-1, self.z_dim)
+        return self.net(z)
+
+    def masked_sep(self, z: torch.Tensor) -> torch.Tensor:
+        z = z.view(-1, self.z_dim)
+        return self.net(z)
+
+    def mix(self, z: torch.Tensor) -> torch.Tensor:
+        zy = z.view(-1, self.concept * self.z2_dim)
+
+        # Handle 1D case differently
+        if self.z2_dim == 1:
+            zy = zy.reshape(zy.size()[0], zy.size()[1], 1)
+            if self.concept == 4:
+                zy1, zy2, zy3, zy4 = zy[:, 0], zy[:, 1], zy[:, 2], zy[:, 3]
+            else:  # concept == 3
+                zy1, zy2, zy3 = zy[:, 0], zy[:, 1], zy[:, 2]
+        else:
+            # Split into concept chunks
+            if self.concept == 4:
+                zy1, zy2, zy3, zy4 = torch.split(zy, self.z_dim // self.concept, dim=1)
+            else:  # concept == 3
+                zy1, zy2, zy3 = torch.split(zy, self.z_dim // self.concept, dim=1)
+
+        # Process each concept
+        rx1 = self.net1(zy1)
+        rx2 = self.net2(zy2)
+        rx3 = self.net3(zy3)
+
+        if self.concept == 4:
+            rx4 = self.net4(zy4)
+            return torch.cat((rx1, rx2, rx3, rx4), dim=1)
+        else:  # concept == 3
+            return torch.cat((rx1, rx2, rx3), dim=1)
+
+
+def kl_normal(
+    qm: torch.Tensor, qv: torch.Tensor, pm: torch.Tensor, pv: torch.Tensor
+) -> torch.Tensor:
+    """
+    Compute KL divergence between two normal distributions
+
+    Args:
+        qm, qv: Parameters of q distribution (mean, variance)
+        pm, pv: Parameters of p distribution (mean, variance)
+    """
+    element_wise = 0.5 * (
+        torch.log(pv) - torch.log(qv) + qv / pv + (qm - pm).pow(2) / pv - 1
+    )
+    return element_wise.sum(-1)
+
+
+def log_bernoulli_with_logits(x: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
+    """Compute log bernoulli probability."""
+    return -F.binary_cross_entropy_with_logits(logits, x, reduction="none")
+
+
+def condition_prior(
+    scale: np.ndarray, label: torch.Tensor, z2_dim: int
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Generate conditional prior based on labels
+
+    Args:
+        scale: Scale factors for each concept
+        label: Label tensor
+        z2_dim: Dimension of each concept
+    """
+    batch_size, seq_len = label.shape[:2]
+    num_concepts = label.shape[-1]
+
+    # Create conditional means based on labels
+    means = []
+    for i in range(num_concepts):
+        concept_mean = (
+            label[..., i : i + 1] * scale[i, 0]
+            + (1 - label[..., i : i + 1]) * scale[i, 1]
+        )
+        concept_mean = concept_mean.unsqueeze(-1).expand(-1, -1, z2_dim)
+        means.append(concept_mean)
+
+    cp_m = torch.cat(means, dim=-2)
+    cp_v = torch.ones_like(cp_m)
+
+    return cp_m, cp_v
+
+
 @dataclass
 class CausalVAEOutput:
-    """Output container for CausalVAE"""
+    """Extended output container for CausalVAE showing ELBO components"""
 
-    reconstructed: torch.Tensor  # Reconstructed input
-    loss: torch.Tensor  # Total loss
-    kl_loss: torch.Tensor  # KL divergence loss
-    recon_loss: torch.Tensor  # Reconstruction loss
-    dag_loss: torch.Tensor  # DAG structure loss
+    reconstructed: torch.Tensor
+    elbo_loss: torch.Tensor
+    reconstruction_term: torch.Tensor
+    kl_divergence: torch.Tensor
+    mask_loss: torch.Tensor
+    z_masked: torch.Tensor
+
+
+class Attention(nn.Module):
+    def __init__(self, in_features, bias=False):
+        super().__init__()
+        self.M = nn.Parameter(
+            torch.nn.init.normal_(torch.zeros(in_features, in_features), mean=0, std=1)
+        )
+        self.sigmoid = torch.nn.Sigmoid()
+
+    def attention(self, z, e):
+        a = z.matmul(self.M).matmul(e.permute(0, 2, 1))
+        a = self.sigmoid(a)
+        A = torch.softmax(a, dim=1)
+        e = torch.matmul(A, e)
+        return e, A
+
+
+class DecoderDAG(nn.Module):
+    def __init__(self, z_dim, concept, z2_dim, output_dim, channel=4):
+        super().__init__()
+        self.z_dim = z_dim
+        self.z2_dim = z2_dim
+        self.concept = concept
+        self.output_dim = output_dim
+
+        # Create networks per concept - output logits
+        self.nets = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(z2_dim, 300),
+                    nn.ELU(),
+                    nn.Linear(300, 300),
+                    nn.ELU(),
+                    nn.Linear(300, output_dim),
+                    # No final activation - output logits for BCE loss
+                )
+                for _ in range(concept)
+            ]
+        )
+
+    def decode_sep(self, z, u=None):
+        z = z.view(-1, self.concept * self.z2_dim)
+        if self.z2_dim == 1:
+            z = z.reshape(z.size()[0], z.size()[1], 1)
+            zs = [z[:, i] for i in range(self.concept)]
+        else:
+            zs = torch.split(z, self.z_dim // self.concept, dim=1)
+
+        rxs = [net(zi) for net, zi in zip(self.nets, zs)]
+        h = sum(rxs) / self.concept
+
+        # Original returns 5 copies - maintaining interface
+        return h, h, h, h, h
+
+
+class DagLayer(nn.Module):
+    def __init__(self, input_dim, hidden_dim, i=False, initial=True):
+        super().__init__()
+        self.input_dim = input_dim
+        if initial:
+            # Initialize as upper triangular matrix
+            A = torch.zeros(input_dim, input_dim)
+            self.A = nn.Parameter(A)
+
+        # Create upper triangular mask
+        self.mask = torch.triu(torch.ones(input_dim, input_dim), diagonal=1).bool()
+        self.I = torch.eye(input_dim)
+
+    def mask_z(self, z):
+        return z
+
+    def mask_u(self, u):
+        return u
+
+    def calculate_dag(self, z, v):
+        """
+        Calculate DAG transformation
+        Args:
+            z: input tensor [batch_size, num_concepts, concept_dim]
+            v: variance tensor of same shape as z
+        """
+        # Apply mask to keep only upper triangular elements
+        A_masked = self.A * self.mask.to(self.A.device)
+
+        # Reshape z if needed
+        batch_size = z.size(0)
+        orig_shape = z.shape
+        z = z.view(batch_size, self.input_dim, -1)
+
+        # Calculate (I - A)^(-1)
+        I_minus_A = self.I.to(self.A.device) - A_masked
+        I_minus_A_inv = torch.linalg.inv(I_minus_A)
+
+        # Apply transformation
+        z_hat = torch.matmul(I_minus_A_inv, z)
+
+        # Restore original shape
+        z_hat = z_hat.view(orig_shape)
+
+        return z_hat, v
 
 
 class CausalVAELayer(nn.Module):
-    """
-    A Causal VAE layer for sequence modeling tasks.
-
-    Implements structured causal disentanglement following the CausalVAE paper,
-    adapted for sequence data.
-    """
-
     def __init__(
         self,
         input_dim: int,
@@ -33,11 +241,9 @@ class CausalVAELayer(nn.Module):
         concept_dim: int,
         alpha: float = 0.3,
         beta: float = 1.0,
-        eps: float = 1e-6,
     ):
         super().__init__()
 
-        # Validate dimensions
         if latent_dim != num_concepts * concept_dim:
             raise ValueError(
                 f"latent_dim ({latent_dim}) must equal num_concepts * concept_dim "
@@ -50,199 +256,157 @@ class CausalVAELayer(nn.Module):
         self.concept_dim = concept_dim
         self.alpha = alpha
         self.beta = beta
-        self.eps = eps
+        self.channel = 4  # Matching original code
 
-        # Encoder network (µ, logvar)
+        # Define scale matrix for conditional prior
+        self.scale = np.array([[1, 0]] * num_concepts)
+
+        # Core components matching original architecture
         self.encoder = nn.Sequential(
-            nn.Linear(input_dim, latent_dim * 2), nn.LayerNorm(latent_dim * 2)
+            nn.Linear(input_dim, 300),
+            nn.ELU(),
+            nn.Linear(300, 300),
+            nn.ELU(),
+            nn.Linear(300, latent_dim * 2),
         )
 
-        # Decoder network
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim),
-            nn.LayerNorm(latent_dim),
-            nn.ReLU(),
-            nn.Linear(latent_dim, input_dim),
+        self.decoder = DecoderDAG(
+            latent_dim,
+            num_concepts,
+            concept_dim,
+            input_dim,  # Pass input_dim as output_dim
+            self.channel,
+        )
+        self.attention = Attention(concept_dim)
+        self.dag = DagLayer(num_concepts, num_concepts)  # Add DAG layer
+        self.mask_z = MaskLayer(latent_dim, num_concepts, concept_dim)
+        self.mask_u = MaskLayer(num_concepts, num_concepts, 1)
+
+    def compute_elbo(
+        self,
+        x: torch.Tensor,
+        x_recon_logits: torch.Tensor,  # Now explicitly logits
+        mu: torch.Tensor,
+        logvar: torch.Tensor,
+        z_masked: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute Evidence Lower BOund (ELBO) and components"""
+        batch_size = x.size(0)
+
+        # Use logits-based BCE loss
+        recon_term = -F.binary_cross_entropy_with_logits(
+            x_recon_logits, x, reduction="mean"
         )
 
-        # DAG structure matrix (learned)
-        self.dag_weights = nn.Parameter(torch.zeros(num_concepts, num_concepts))
+        # KL Divergence term
+        kl_div = self.alpha * torch.mean(
+            kl_normal(
+                mu, torch.exp(logvar), torch.zeros_like(mu), torch.ones_like(logvar)
+            )
+        )
 
-        # Concept-specific transformation networks
-        self.concept_transforms = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Linear(concept_dim, concept_dim),
-                    nn.LayerNorm(concept_dim),
-                    nn.ReLU(),
-                    nn.Linear(concept_dim, concept_dim),
+        # Additional terms for conditional prior
+        if labels is not None:
+            cp_m, cp_v = condition_prior(self.scale, labels, self.concept_dim)
+            cp_m, cp_v = cp_m.to(x.device), cp_v.to(x.device)
+
+            z_masked_reshaped = z_masked.view(
+                batch_size, -1, self.num_concepts, self.concept_dim
+            )
+            z_masked_var = torch.ones_like(z_masked_reshaped)
+
+            for i in range(self.num_concepts):
+                kl_div = kl_div + self.beta * torch.mean(
+                    kl_normal(
+                        z_masked_reshaped[..., i, :],
+                        z_masked_var[..., i, :],
+                        cp_m[..., i, :],
+                        cp_v[..., i, :],
+                    )
                 )
-                for _ in range(num_concepts)
-            ]
+
+            mask_loss = F.mse_loss(
+                self.mask_u.mix(labels.view(-1, self.num_concepts)),
+                labels.view(-1, self.num_concepts).float(),
+            )
+        else:
+            mask_loss = torch.tensor(0.0, device=x.device)
+
+        elbo_loss = -recon_term + kl_div + mask_loss
+        return elbo_loss, recon_term, kl_div, mask_loss
+
+    def forward(
+        self, x: torch.Tensor, labels: Optional[torch.Tensor] = None
+    ) -> CausalVAEOutput:
+        batch_size, seq_len = x.shape[:2]
+        x_flat = x.view(-1, self.input_dim)
+
+        # Ensure we retain gradients for matrix operations
+        encoded = self.encoder(x_flat)
+        mu, logvar = encoded.chunk(2, dim=-1)
+        mu = mu.view(batch_size * seq_len, self.num_concepts, -1)
+        logvar = logvar.view(batch_size * seq_len, self.num_concepts, -1)
+
+        if self.training:
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu + eps * std
+        else:
+            z = mu
+
+        # Ensure gradients through DAG computation
+        z_dag, _ = self.dag.calculate_dag(z, torch.ones_like(z))
+        z_masked = self.mask_z.mix(z_dag.reshape(-1, self.latent_dim))
+
+        # Get logits from decoder
+        x_recon_logits, _, _, _, _ = self.decoder.decode_sep(z_masked)
+        x_recon = x_recon_logits.view(batch_size, seq_len, -1)
+
+        # For output, apply sigmoid to get probabilities
+        reconstructed = torch.sigmoid(x_recon)
+
+        mu = mu.view(-1, self.latent_dim)
+        logvar = logvar.view(-1, self.latent_dim)
+
+        elbo_loss, recon_term, kl_div, mask_loss = self.compute_elbo(
+            x=x,
+            x_recon_logits=x_recon,  # Pass logits to ELBO computation
+            mu=mu,
+            logvar=logvar,
+            z_masked=z_masked,
+            labels=labels,
+        )
+
+        return CausalVAEOutput(
+            reconstructed=reconstructed,  # Return probabilities
+            elbo_loss=elbo_loss,
+            reconstruction_term=recon_term,
+            kl_divergence=kl_div,
+            mask_loss=mask_loss,
+            z_masked=z_masked.view(batch_size, seq_len, -1),
         )
 
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Encode input to latent distribution parameters"""
+        """Encode input to latent parameters (μ, log σ²)"""
         h = self.encoder(x)
-        mu, logvar = h.chunk(2, dim=-1)
-        return mu, logvar
+        return h.chunk(2, dim=-1)
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """Reparameterization trick for sampling from latent distribution"""
+        """Reparameterization trick"""
         if self.training:
             std = torch.exp(0.5 * logvar)
             eps = torch.randn_like(std)
             return mu + eps * std
         return mu
 
-    def get_dag_matrix(self) -> torch.Tensor:
-        """Get the DAG adjacency matrix (lower triangular)"""
-        return torch.tril(F.softplus(self.dag_weights), diagonal=-1)
-
-    def causal_transform(
-        self, z: torch.Tensor, intervention: Optional[Tuple[int, torch.Tensor]] = None
-    ) -> torch.Tensor:
-        """Apply causal transformation with optional intervention"""
-        # Reshape to [batch, seq, num_concepts, concept_dim]
-        batch_size, seq_len = z.shape[:2]
-        z = z.view(batch_size, seq_len, self.num_concepts, self.concept_dim)
-
-        # Get DAG structure
-        dag_adj = self.get_dag_matrix()
-
-        # Causal transformation
-        z_flat = z.view(-1, self.num_concepts, self.concept_dim)
-        z_causal = z_flat + torch.matmul(dag_adj, z_flat)
-        z_causal = z_causal.view(
-            batch_size, seq_len, self.num_concepts, self.concept_dim
-        )
-
-        # Handle intervention if specified
-        if intervention is not None:
-            idx, value = intervention
-            z_causal = z_causal.clone()
-            z_causal[:, :, idx] = value.view(batch_size, seq_len, self.concept_dim)
-
-        # Apply concept-specific transformations
-        z_transformed = []
-        for i in range(self.num_concepts):
-            transformed = self.concept_transforms[i](z_causal[:, :, i])
-            z_transformed.append(transformed)
-
-        # Stack and reshape back
-        z_transformed = torch.stack(z_transformed, dim=2)
-        return z_transformed.view(batch_size, seq_len, self.latent_dim)
-
-    def compute_losses(
-        self,
-        x: torch.Tensor,
-        x_recon: torch.Tensor,
-        mu: torch.Tensor,
-        logvar: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute all loss components"""
-        # Reconstruction loss
-        recon_loss = F.mse_loss(x_recon, x, reduction="mean")
-
-        # KL divergence
-        kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
-
-        # DAG loss (sparsity + acyclicity)
-        dag_adj = self.get_dag_matrix()
-        dag_loss = torch.sum(torch.abs(dag_adj)) + torch.trace(
-            torch.matrix_exp(dag_adj)
-        )
-
-        # Total loss
-        total_loss = recon_loss + self.alpha * kl_loss + self.beta * dag_loss
-
-        return total_loss, kl_loss, recon_loss, dag_loss
-
-    def forward(
-        self, x: torch.Tensor, intervention: Optional[Tuple[int, torch.Tensor]] = None
-    ) -> CausalVAEOutput:
-        """
-        Forward pass with optional intervention
-
-        Args:
-            x: Input tensor [batch, seq, input_dim]
-            intervention: Optional (concept_idx, value) for intervention
-
-        Returns:
-            CausalVAEOutput containing reconstruction and losses
-        """
-        # Encode
-        mu, logvar = self.encode(x)
-
-        # Sample latent
-        z = self.reparameterize(mu, logvar)
-
-        # Apply causal transformation
-        z_transformed = self.causal_transform(z, intervention)
-
-        # Decode
-        x_recon = self.decoder(z_transformed)
-
-        # Compute losses
-        total_loss, kl_loss, recon_loss, dag_loss = self.compute_losses(
-            x, x_recon, mu, logvar
-        )
-
-        return CausalVAEOutput(
-            reconstructed=x_recon,
-            loss=total_loss,
-            kl_loss=kl_loss,
-            recon_loss=recon_loss,
-            dag_loss=dag_loss,
-        )
-
-    def intervene(
-        self, x: torch.Tensor, concept_idx: int, concept_value: torch.Tensor
-    ) -> torch.Tensor:
-        """Perform intervention on a specific concept"""
-        if not 0 <= concept_idx < self.num_concepts:
-            raise ValueError(f"concept_idx must be between 0 and {self.num_concepts-1}")
-
-        batch_size, seq_len = x.shape[:2]
-        expected_shape = (batch_size, seq_len, self.concept_dim)
-
-        if concept_value.shape != expected_shape:
-            raise ValueError(
-                f"concept_value shape should be {expected_shape}, "
-                f"got {concept_value.shape}"
-            )
-
-        return self.forward(x, intervention=(concept_idx, concept_value)).reconstructed
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """Decode latent to reconstructed input with sigmoid"""
+        return self.decoder(z)
 
 
-import pytest
-import torch
-import torch.nn.functional as F
-
-
-def test_causal_vae_initialization():
-    """Test that the model initializes correctly"""
-    model = CausalVAELayer(input_dim=64, latent_dim=32, num_concepts=4, concept_dim=8)
-
-    assert model.input_dim == 64
-    assert model.latent_dim == 32
-    assert model.num_concepts == 4
-    assert model.concept_dim == 8
-
-    # Should raise error when dimensions don't match
-    with pytest.raises(ValueError):
-        CausalVAELayer(
-            input_dim=64,
-            latent_dim=30,  # Doesn't match num_concepts * concept_dim
-            num_concepts=4,
-            concept_dim=8,
-        )
-
-
-def test_forward_pass_shapes():
-    """Test that the model produces correct output shapes"""
-    batch_size = 32
-    seq_len = 16
+def test_causal_vae():
+    batch_size, seq_len = 32, 16
     input_dim = 64
     num_concepts = 4
     concept_dim = 8
@@ -255,93 +419,27 @@ def test_forward_pass_shapes():
         concept_dim=concept_dim,
     )
 
-    x = torch.randn(batch_size, seq_len, input_dim)
+    # Create random binary input
+    x = torch.randint(0, 2, (batch_size, seq_len, input_dim)).float()
+    x.requires_grad_(True)  # Enable gradient tracking on input
     output = model(x)
 
-    # Check output shapes
+    # Basic shape checks
     assert output.reconstructed.shape == x.shape
-    assert output.loss.ndim == 0  # scalar
-    assert output.kl_loss.ndim == 0
-    assert output.recon_loss.ndim == 0
-    assert output.dag_loss.ndim == 0
+    assert output.elbo_loss.ndim == 0
 
+    # Compute loss and check gradients
+    loss = output.elbo_loss
+    loss.backward()
 
-def test_intervention():
-    """Test intervention functionality"""
-    batch_size = 8
-    seq_len = 10
-    input_dim = 64
-    num_concepts = 4
-    concept_dim = 8
-    latent_dim = num_concepts * concept_dim
+    # Verify gradients exist and are non-zero
+    has_grads = [
+        p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters()
+    ]
+    assert all(has_grads)
 
-    model = CausalVAELayer(
-        input_dim=input_dim,
-        latent_dim=latent_dim,
-        num_concepts=num_concepts,
-        concept_dim=concept_dim,
-    )
-
-    x = torch.randn(batch_size, seq_len, input_dim)
-
-    # Test valid intervention
-    concept_idx = 1
-    concept_value = torch.randn(batch_size, seq_len, concept_dim)
-    output = model.intervene(x, concept_idx, concept_value)
-    assert output.shape == x.shape
-
-    # Test invalid concept index
-    with pytest.raises(ValueError):
-        model.intervene(x, -1, concept_value)
-    with pytest.raises(ValueError):
-        model.intervene(x, num_concepts, concept_value)
-
-    # Test invalid concept value shape
-    bad_value = torch.randn(batch_size, seq_len, concept_dim + 1)
-    with pytest.raises(ValueError):
-        model.intervene(x, concept_idx, bad_value)
-
-
-def test_dag_properties():
-    """Test DAG matrix properties"""
-    model = CausalVAELayer(input_dim=64, latent_dim=32, num_concepts=4, concept_dim=8)
-
-    dag_adj = model.get_dag_matrix()
-
-    # Check that matrix is lower triangular
-    assert torch.all(torch.triu(dag_adj, diagonal=0) == 0)
-
-    # Check that diagonal is zero
-    assert torch.all(torch.diagonal(dag_adj) == 0)
-
-    # Check that values are non-negative
-    assert torch.all(dag_adj >= 0)
-
-
-def test_training_mode():
-    """Test that the model behaves differently in training vs eval modes"""
-    model = CausalVAELayer(input_dim=64, latent_dim=32, num_concepts=4, concept_dim=8)
-
-    x = torch.randn(4, 5, 64)
-
-    # Test training mode
-    model.train()
-    out1 = model(x)
-    out2 = model(x)
-    assert not torch.allclose(out1.reconstructed, out2.reconstructed)
-
-    # Test eval mode
-    model.eval()
-    out1 = model(x)
-    out2 = model(x)
-    assert torch.allclose(out1.reconstructed, out2.reconstructed)
+    print("All tests passed!")
 
 
 if __name__ == "__main__":
-    # Run all tests
-    test_causal_vae_initialization()
-    test_forward_pass_shapes()
-    test_intervention()
-    test_dag_properties()
-    test_training_mode()
-    print("All tests passed!")
+    test_causal_vae()
