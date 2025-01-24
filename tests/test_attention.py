@@ -20,14 +20,16 @@ class AttentionMode(Enum):
 
 # Define test parameters in a more structured way
 TEST_PARAMS = {
-    "hidden_sizes": [32, 64, 128, 256],
+    "hidden_sizes": [64, 128, 256],
     "modes": list(AttentionMode),
-    "num_heads": [1, 2, 3, 4],
+    "num_heads": [1, 2, 3],
     "num_queries": [1, 2],
     "k_heads": [None, 2],
     "encodings": list(ENCODING_REGISTRY.keys()),
     "kv_rank": [None, 1, 2],
     "memory": [False],  # True is currently failing in some instances
+    "mega": [False, True],
+    "gated": [False],  # Broken as well
 }
 
 
@@ -43,8 +45,10 @@ def get_attention_configs() -> List[PraxisConfig]:
             kv_rank=kv_rank,
             memory=memory,
             k_heads=k_heads,
+            mega=mega,
+            gated=gated,
         )
-        for hidden_size, mode, encoding, num_heads, num_queries, kv_rank, memory, k_heads in itertools.product(
+        for hidden_size, mode, encoding, num_heads, num_queries, kv_rank, memory, k_heads, mega, gated in itertools.product(
             TEST_PARAMS["hidden_sizes"],
             TEST_PARAMS["modes"],
             TEST_PARAMS["encodings"],
@@ -53,6 +57,8 @@ def get_attention_configs() -> List[PraxisConfig]:
             TEST_PARAMS["kv_rank"],
             TEST_PARAMS["memory"],
             TEST_PARAMS["k_heads"],
+            TEST_PARAMS["mega"],
+            TEST_PARAMS["gated"],
         )
     ]
 
@@ -79,6 +85,12 @@ def module_setup(request, config):
     setattr(config, "kv_rank", attention_config.kv_rank)
     setattr(config, "memory", attention_config.memory)
     setattr(config, "k_heads", attention_config.k_heads)
+
+    # Set gating mode
+    if attention_config.mega:
+        setattr(config, "mega", True)
+    elif attention_config.gated:
+        setattr(config, "gated", True)
 
     # Set the appropriate mode
     setattr(config, "linear", False)

@@ -699,8 +699,8 @@ class MultiDirectoryDataset(PraxisSampler):
 
         print(f"Working directory: {self.cwd}")
         print(f"Scanning directories: {self.directories}")
-        print(f"File extensions filter: {self.allowed_extensions}")
-        print(f"Excluding directories: {self.excluded_dirs}")
+        # print(f"File extensions filter: {self.allowed_extensions}")
+        # print(f"Excluding directories: {self.excluded_dirs}")
 
         self.file_list = self._get_file_list()
         print(f"Found {len(self.file_list)} files")
