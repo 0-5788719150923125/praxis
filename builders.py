@@ -58,7 +58,15 @@ HUGGINGFACE_DATASETS = {
     ),
     "soda": dict(
         path="allenai/soda",
-        keys=["speakers", "narrative", "dialogue"],
+        keys=[
+            "speakers",
+            "narrative",
+            "literal",
+            "dialogue",
+            "head",
+            "relation",
+            "tail",
+        ],
         format=DataFormat.SODA,
         weight=0.005,
     ),
@@ -252,7 +260,14 @@ def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str)
 
     speakers = document[keys[0]]
     narrative = document[keys[1]]
-    dialogue = document[keys[2]]
+    literal = document[keys[2]]
+    dialogue = document[keys[3]]
+    head = document[keys[4]]
+    relation = document[keys[5]]
+    tail = document[keys[6]]
+
+    # Create person mapping first
+    person_mapping = create_person_mapping(document)
 
     # Get speaker roles
     unique_speakers = list(dict.fromkeys(speakers))  # preserve order, remove duplicates
@@ -272,12 +287,17 @@ def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str)
     chatml = f"{bos_token}system\n"
 
     # Add role mappings to system context
-    chatml += ""
     for speaker, role in speaker_roles.items():
         chatml += f"{role}: {speaker}\n"
 
+    # Add knowledge structure
+    chatml += f"Cause: {replace_person_references(head, person_mapping)}\n"
+    chatml += f"Relation: {relation.replace('x', '')}\n"
+    chatml += f"Effect: {replace_person_references(tail, person_mapping)}\n"
+
     # Add context from literal and narrative
-    chatml += f"{narrative}\n"
+    chatml += f"Context: {narrative}\n"
+    chatml += f"Thought: ({literal})\n"  # <|thinking|>
     chatml += f"{eos_token}\n"
 
     # Add conversation turns
@@ -288,6 +308,31 @@ def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str)
         chatml += f"{eos_token}\n"
 
     return chatml
+
+
+def create_person_mapping(example: Dict) -> Dict[str, str]:
+    """Creates a mapping from PersonX/Y/Z to actual names."""
+    mapping = {}
+    # Only add non-empty mappings
+    if example["PersonX"]:
+        mapping["PersonX"] = example["PersonX"]
+    if example["PersonY"]:
+        mapping["PersonY"] = example["PersonY"]
+    if example["PersonZ"]:
+        mapping["PersonZ"] = example["PersonZ"]
+    return mapping
+
+
+def replace_person_references(text: str, mapping: Dict[str, str]) -> str:
+    """Replaces PersonX/Y/Z references with actual names."""
+    if not text:
+        return text
+
+    result = text
+    for person, name in mapping.items():
+        if name:  # Only replace if we have a name
+            result = result.replace(person, name)
+    return result
 
 
 FORMAT_HANDLERS = {
