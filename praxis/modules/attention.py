@@ -79,7 +79,7 @@ class PraxisAttention(nn.Module):
                 rank=self.kv_rank,
             )
         else:
-            self.key_value = KeyValue(
+            self.key_value = LinearKeyValue(
                 hidden_size=hidden_size,
                 num_heads=self.num_heads,
                 key_head_dim=self.head_dim * self.factor,
@@ -604,7 +604,7 @@ class Stickbreaking(ScaledDotProduct):
     #     return new_k, new_v
 
 
-class KeyValue(nn.Module):
+class LinearKeyValue(nn.Module):
     """
     Regular key/value projections.
     """
@@ -615,6 +615,15 @@ class KeyValue(nn.Module):
         super().__init__()
         self.key = nn.Linear(hidden_size, num_heads * key_head_dim, bias=False)
         self.value = nn.Linear(hidden_size, num_heads * value_head_dim, bias=False)
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}("
+            + f"in_features={self.key.weight.size(0)}, "
+            + f"out_keys={self.key.weight.size(1)}, "
+            + f"out_values={self.value.weight.size(0)}"
+            + ")"
+        )
 
     def forward(self, x):
         k = self.key(x)
@@ -651,6 +660,14 @@ class LowRankKeyValue(nn.Module):
         self.key_b = nn.Linear(hidden_size, self.rank * self.key_head_dim, bias=False)
         self.value_b = nn.Linear(
             hidden_size, self.rank * self.value_head_dim, bias=False
+        )
+
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}("
+            + f"in_features={self.key_a.weight.size(1)}, "
+            + f"rank={self.rank}"
+            + ")"
         )
 
     def forward(self, x):
