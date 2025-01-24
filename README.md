@@ -8,7 +8,12 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 ## what we're building
 
-The Praxis architecture is a fluid, peer-to-peer, always online, continuously-learning and decentralized place to practice [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into core infrastructure of our ecosystem, the goal is to build a multi-modal language model that is small and simple, easy to parallelize, fault-tolerant, and performant at a scale of hundreds/thousands of self-hosted peers. We will achieve this via a sparse mixture of experts, user-curated multipath routing, symbolic decision-making and weighted self-modeling of network components.
+The Praxis architecture is an ever-evolving, peer-to-peer, always online, continuously-learning and decentralized place to practice [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into core infrastructure of our ecosystem, the goal is to build a multi-modal language model that is small and simple, easy to parallelize, fault-tolerant, and performant at a scale of hundreds/thousands of self-hosted peers. We will achieve this via a sparse mixture of experts, user-curated multipath routing, symbolic decision-making and weighted self-modeling of network components.
+
+## join us
+
+- [Discord](https://discord.gg/8ZmHP8CqUX)
+- [The Source](https://src.eco)
 
 ## features
 
@@ -26,11 +31,6 @@ The Praxis architecture is a fluid, peer-to-peer, always online, continuously-le
 - We support [Hyper-Connections](https://arxiv.org/abs/2409.19606), which are an alternative to residual connections.
 - There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
 
-## join us
-
-- [Discord](https://discord.gg/8ZmHP8CqUX)
-- [The Source](https://src.eco)
-
 ## install
 
 Setup a virtual environment:
@@ -39,18 +39,17 @@ Setup a virtual environment:
 source venv.sh
 ```
 
-Alternatively, you may use the VSCode command bar (`Ctrl + Shift + P`), and choose: `Python: Create Environment...`
+Or, you may use the VSCode command (`Ctrl + Shift + P`), and choose: `Python: Create Environment...`
 
 Then, install dependencies:
 
 ```sh
-# Install training dependencies
 pip install -e .[all]
 ```
 
 ## contribute to the swarm
 
-To donate your compute:
+To run with default settings:
 
 ```sh
 python run.py
@@ -64,13 +63,11 @@ python run.py --help
 
 ## recommendations
 
-We recommend you use a `batch_size` of at least 16, if possible:
+We recommend you use a `batch_size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, and 16.
 
 ```sh
 python run.py --batch_size 16
 ```
-
-The reason for this is that we have implemented an oversampling mechanism, which can expose your model to longer sequences during training (improving generalization and maximum supported sequence length). This oversampling mechanism periodically doubles the sequence length, and scales quadratically at batch sizes of 1, 4, and 16.
 
 ## do inference
 
