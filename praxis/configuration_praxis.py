@@ -8,7 +8,7 @@ class PraxisConfig(PretrainedConfig):
         self,
         embed_size=512,
         hidden_size=256,
-        num_heads=3,
+        num_heads=2,
         num_queries=2,
         head_size=None,
         k_heads=None,
@@ -59,10 +59,6 @@ class PraxisConfig(PretrainedConfig):
             eos_token_id=eos_token_id,
             **kwargs,
         )
-
-        if block == "mru" and hidden_size == 360:
-            hidden_size = 384
-            num_heads = 6
 
         self.embed_size = embed_size
         self.hidden_size = hidden_size

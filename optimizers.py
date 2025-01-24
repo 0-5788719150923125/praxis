@@ -2,9 +2,14 @@ from pytorch_optimizer import create_optimizer
 from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad
 
 
-def get_optimizer_profile(name="AdamW"):
-    lowercase_profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
-    return {**lowercase_profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
+def get_optimizer_profile(name="AdamW", shuffle=False, no_schedule=False):
+    profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
+    profile = {**profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
+    profile["weight_decay"] = 0 if shuffle else profile.get("weight_decay", None)
+    no_schedule = profile.get("no_schedule", no_schedule)
+    if "no_schedule" in profile:
+        del profile["no_schedule"]
+    return profile, no_schedule
 
 
 def get_optimizer(model, trac=False, ortho=False, lookahead=False, *args, **kwargs):
@@ -43,6 +48,14 @@ OPTIMIZER_PROFILES = {
         alpha=5.0,
         cautious=True,
     ),
+    "DAdaptLion": dict(
+        optimizer_name="DAdaptLion",
+        lr=1.0,
+        weight_decay=0.1,
+        betas=(0.9, 0.95),
+        weight_decouple=True,
+        no_schedule=True,
+    ),
     "Grams": dict(
         optimizer_name="Grams",
         lr=0.001,
@@ -66,6 +79,7 @@ OPTIMIZER_PROFILES = {
         betas=(0.9, 0.95),
         bias_correction=True,
         safeguard_warmup=False,
+        no_schedule=True,
     ),
     "SOAP": dict(
         optimizer_name="SOAP",

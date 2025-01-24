@@ -258,12 +258,9 @@ train_params = dict(
 )
 
 # Optimizer configuration
-hparams["optimizer"] = get_optimizer_profile(optimizer)
-if shuffle:
-    hparams["optimizer"]["weight_decay"] = 0
-
-if optimizer == "Prodigy":
-    no_schedule = True
+hparams["optimizer"], no_schedule = get_optimizer_profile(
+    optimizer, shuffle, no_schedule
+)
 
 # Configure the learning rate scheduler
 if no_schedule:
@@ -938,6 +935,9 @@ total_params = sum(p.numel() for p in model.parameters())
 reduced = str(int(total_params / 10**6)) + "M"
 hparams["num_params"] = reduced
 print(f"parameters: {reduced}")
+
+# Train info
+print(f"optimizer: {hparams['optimizer']['optimizer_name']}")
 
 # File cleanup
 if reset:
