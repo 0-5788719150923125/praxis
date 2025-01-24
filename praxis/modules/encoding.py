@@ -97,22 +97,8 @@ class RoPE(NoPE):
         cos = self._cached_cos[:, :, :seq_len, :]
         sin = self._cached_sin[:, :, :seq_len, :]
 
-        q_chunks = q.chunk(q.size(-1) // head_dim, dim=-1)
-        k_chunks = k.chunk(k.size(-1) // head_dim, dim=-1)
-
-        q_rope_chunks = [
-            self._apply_rotary_pos_emb(q_chunk, cos, sin) for q_chunk in q_chunks
-        ]
-        k_rope_chunks = [
-            self._apply_rotary_pos_emb(k_chunk, cos, sin) for k_chunk in k_chunks
-        ]
-
-        q_rope = (
-            torch.cat(q_rope_chunks, dim=-1) if len(q_chunks) > 1 else q_rope_chunks[0]
-        )
-        k_rope = (
-            torch.cat(k_rope_chunks, dim=-1) if len(k_chunks) > 1 else k_rope_chunks[0]
-        )
+        q_rope = self._apply_rotary_pos_emb(q, cos, sin)
+        k_rope = self._apply_rotary_pos_emb(k, cos, sin)
 
         return q_rope, k_rope, v
 
@@ -156,17 +142,33 @@ class RoPE(NoPE):
             self._cached_seq_length = seq_len
 
     def _apply_rotary_pos_emb(self, x, cos, sin):
-        # Split input into pairs
+        """Apply rotary position embeddings with proper handling of odd dimensions."""
+        # Split input into pairs (larger chunk first for odd dimensions)
         x1, x2 = x.chunk(2, dim=-1)
-        # Apply rotation using the correct signs
-        # [cos·x1 - sin·x2, sin·x1 + cos·x2]
-        return torch.cat(
-            [
-                x1 * cos[:, :, :, 0::2] - x2 * sin[:, :, :, 0::2],
-                x1 * sin[:, :, :, 1::2] + x2 * cos[:, :, :, 1::2],
-            ],
-            dim=-1,
-        )
+        d1, d2 = x1.size(-1), x2.size(-1)
+
+        cos_0 = cos[:, :, :, 0::2]
+        sin_0 = sin[:, :, :, 0::2]
+        cos_1 = cos[:, :, :, 1::2]
+        sin_1 = sin[:, :, :, 1::2]
+
+        # For odd dimensions
+        if d1 > d2:
+            x2 = torch.nn.functional.pad(x2, (0, 1))
+            if cos_1.size(-1) < d1:
+                # Calculate exact padding needed
+                pad_size = d1 - cos_1.size(-1)
+                cos_1 = torch.nn.functional.pad(cos_1, (0, pad_size), value=0.0)
+                sin_1 = torch.nn.functional.pad(sin_1, (0, pad_size), value=0.0)
+
+        # Apply rotations with matching dimensions
+        out1 = x1 * cos_0 - x2 * sin_0
+        out2_temp = x1 * sin_1 + x2 * cos_1
+
+        # Truncate back to original size for odd dimensions
+        out2 = out2_temp[..., :d2]
+
+        return torch.cat([out1, out2], dim=-1)
 
 
 class YaRN(RoPE):
@@ -202,7 +204,7 @@ class YaRN(RoPE):
     def _compute_rope_embeddings(
         self, head_dim, seq_len, device, dtype, offset: int = 0
     ):
-        """Compute YaRN-scaled RoPE embeddings with offset."""
+        """Compute YaRN-scaled RoPE embeddings with offset and odd dimension support."""
         if (
             self._cached_seq_length is None
             or seq_len > self._cached_seq_length
@@ -210,19 +212,21 @@ class YaRN(RoPE):
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         ):
+            # Calculate dimensions for even/odd handling
+            freq_dim = (head_dim + 1) // 2  # Ceiling division for odd dimensions
+            scales_dim = head_dim // 2  # Floor division for scaling
+
             if self.dim_ranges is None:
                 theta = 10000
+                # Create frequencies with ceiling division
                 self.inv_freq = 1.0 / (
-                    theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
+                    theta ** (torch.arange(0, freq_dim).float() / head_dim)
                 ).to(device)
+
                 # Calculate rotations per dimension
                 positions = torch.arange(self.original_max_position)
-                dim_rotations = positions.unsqueeze(1) * self.inv_freq.unsqueeze(
-                    0
-                )  # [seq_len, dim/2]
-                self.dim_ranges = (
-                    dim_rotations[-1] / math.pi
-                ) * 2  # rotations at max position
+                dim_rotations = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
+                self.dim_ranges = (dim_rotations[-1] / math.pi) * 2
 
             # Consider total sequence length including offset for scaling
             total_seq_len = seq_len + offset
@@ -231,10 +235,10 @@ class YaRN(RoPE):
             # Generate position indices with offset
             positions = torch.arange(seq_len, device=device, dtype=dtype) + offset
 
-            # Calculate per-dimension scaling factors
-            dim_scales = torch.ones(head_dim // 2, device=device, dtype=dtype)
+            # Calculate per-dimension scaling factors (using floor division)
+            dim_scales = torch.ones(scales_dim, device=device, dtype=dtype)
 
-            for i in range(head_dim // 2):
+            for i in range(scales_dim):
                 rotations = self.dim_ranges[i]
                 if rotations <= self.alpha:
                     dim_scales[i] = dynamic_scale
@@ -245,12 +249,29 @@ class YaRN(RoPE):
                         self.beta - rotations
                     ) / (self.beta - self.alpha)
 
+            # Pad dim_scales to match inv_freq if needed
+            if freq_dim > scales_dim:
+                dim_scales = torch.nn.functional.pad(
+                    dim_scales, (0, freq_dim - scales_dim), mode="constant", value=1.0
+                )
+
+            # Apply scaling
             scaled_inv_freq = self.inv_freq * dim_scales
             pos_emb = positions.unsqueeze(1) * scaled_inv_freq.unsqueeze(0)
             pos_emb = pos_emb * self.scale
 
-            cos = torch.cos(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
-            sin = torch.sin(pos_emb).repeat(1, 1, 1, 2).view(1, 1, seq_len, -1)
+            # Handle odd dimensions in the final reshape
+            cos = torch.cos(pos_emb)
+            sin = torch.sin(pos_emb)
+
+            # Repeat and reshape, handling odd dimensions
+            cos = cos.repeat(1, 2).view(1, 1, seq_len, -1)
+            sin = sin.repeat(1, 2).view(1, 1, seq_len, -1)
+
+            # Trim if needed for odd dimensions
+            if head_dim % 2 == 1:
+                cos = cos[:, :, :, :head_dim]
+                sin = sin[:, :, :, :head_dim]
 
             self._cached_cos = cos.to(dtype)
             self._cached_sin = sin.to(dtype)

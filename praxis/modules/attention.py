@@ -42,7 +42,7 @@ class PraxisAttention(nn.Module):
 
         self.factor = 2 if self.differential else 1
         init_head_dim = hidden_size // self.num_heads // self.factor
-        self.head_dim = init_head_dim + (init_head_dim % 2)
+        self.head_dim = init_head_dim
         setattr(config, "head_size", self.head_dim)
 
         assert (
