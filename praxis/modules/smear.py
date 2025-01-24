@@ -49,11 +49,11 @@ class PraxisSMEAR(nn.Module):
         # Use the first expert as the base module structure
         base_module = self.experts[0]
         # Apply the merged parameters using functional_call
-        outputs = torch.func.functional_call(
+        outputs, new_state = torch.func.functional_call(
             base_module, merged_state_dict, (inputs, *args), kwargs
         )
 
-        return outputs, None, 0
+        return outputs, new_state, 0
 
     def _collect_parameter_names(self, module, prefix=""):
         """

@@ -2,7 +2,7 @@ from praxis.blocks.conv import PraxisConv
 from praxis.blocks.min import PraxisGRU
 from praxis.blocks.mru import PraxisMRU
 from praxis.blocks.nano import PraxisNano
-from praxis.blocks.smear import PraxisSMEAR
+from praxis.blocks.recurrent import PraxisRecurrent
 from praxis.blocks.transformer import PraxisTransformer
 
 BLOCK_REGISTRY = {
@@ -10,6 +10,6 @@ BLOCK_REGISTRY = {
     # "mru": PraxisMRU,
     "min": PraxisGRU,
     "nano": PraxisNano,
-    # "recurrent": PraxisSMEAR,
+    "recurrent": PraxisRecurrent,
     "transformer": PraxisTransformer,
 }
