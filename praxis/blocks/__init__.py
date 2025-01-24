@@ -7,9 +7,9 @@ from praxis.blocks.transformer import PraxisTransformer
 
 BLOCK_REGISTRY = {
     "conv": PraxisConv,
-    "mru": PraxisMRU,
+    # "mru": PraxisMRU,
     "min": PraxisGRU,
     "nano": PraxisNano,
-    "recurrent": PraxisSMEAR,
+    # "recurrent": PraxisSMEAR,
     "transformer": PraxisTransformer,
 }
