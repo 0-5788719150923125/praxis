@@ -6,14 +6,20 @@ import torch.nn.functional as F
 
 
 class ResidualConnection(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
     def connect_width(self, h: torch.Tensor):
         return h, None
 
     def connect_depth(self, mix_h: torch.Tensor, h_o: torch.Tensor, beta: torch.Tensor):
         return mix_h + h_o
 
+    def format_state(self, h: torch.Tensor):
+        return h[..., 0, :] if h.dim() == 4 else h
 
-class HyperConnection(nn.Module):
+
+class HyperConnection(ResidualConnection):
     """
     This module implements static hyper-connections, which are a replacement
     to residual connections.
