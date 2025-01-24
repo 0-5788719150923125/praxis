@@ -343,7 +343,7 @@ parser.add_argument(
 parser.add_argument(
     "--source",
     action="store_true",
-    default=False,
+    default=True,
     help="Train on the model's own source code",
 )
 parser.add_argument(

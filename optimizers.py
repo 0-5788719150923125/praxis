@@ -48,14 +48,6 @@ OPTIMIZER_PROFILES = {
         alpha=5.0,
         cautious=True,
     ),
-    "DAdaptLion": dict(
-        optimizer_name="DAdaptLion",
-        lr=1.0,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
-        weight_decouple=True,
-        no_schedule=True,
-    ),
     "Grams": dict(
         optimizer_name="Grams",
         lr=0.001,
@@ -77,6 +69,8 @@ OPTIMIZER_PROFILES = {
         lr=1.0,
         weight_decay=0.1,
         betas=(0.9, 0.95),
+        # growth_rate=0.1,
+        d_coef=0.1,
         bias_correction=True,
         safeguard_warmup=False,
         no_schedule=True,
