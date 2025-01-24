@@ -18,6 +18,7 @@ class DataFormat(Enum):
     PERSONACHAT = "persona_chat"
     CUSTOM = "custom"
     SMOLTALK = "smoltalk"
+    SODA = "soda"
     WIKI = "wiki"
 
 
@@ -54,6 +55,12 @@ HUGGINGFACE_DATASETS = {
         keys=["messages"],
         format=DataFormat.SMOLTALK,
         weight=0.001,
+    ),
+    "soda": dict(
+        path="allenai/soda",
+        keys=["speakers", "narrative", "dialogue"],
+        format=DataFormat.SODA,
+        weight=0.005,
     ),
     "github-code": dict(
         path="codeparrot/github-code",
@@ -117,7 +124,7 @@ HUGGINGFACE_DATASETS = {
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=0.1,
+        weight=0.25,
     ),
 }
 
@@ -240,12 +247,56 @@ def format_wiki(document: Dict, keys: List[str], bos_token: str, eos_token: str)
     return f"{bos_token}{title}\n{body}{eos_token}\n"
 
 
+def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str) -> str:
+    """Formats a single example into ChatML format."""
+
+    speakers = document[keys[0]]
+    narrative = document[keys[1]]
+    dialogue = document[keys[2]]
+
+    # Get speaker roles
+    unique_speakers = list(dict.fromkeys(speakers))  # preserve order, remove duplicates
+    speaker_roles = {}
+
+    # Always map first two speakers to user/assistant
+    if len(unique_speakers) >= 1:
+        speaker_roles[unique_speakers[0]] = "user"
+    if len(unique_speakers) >= 2:
+        speaker_roles[unique_speakers[1]] = "assistant"
+
+    # Map any additional speakers to "other"
+    for speaker in unique_speakers[2:]:
+        speaker_roles[speaker] = "other"
+
+    # Start with system message
+    chatml = f"{bos_token}system\n"
+
+    # Add role mappings to system context
+    chatml += ""
+    for speaker, role in speaker_roles.items():
+        chatml += f"{role}: {speaker}\n"
+
+    # Add context from literal and narrative
+    chatml += f"{narrative}\n"
+    chatml += f"{eos_token}\n"
+
+    # Add conversation turns
+    for speaker, message in zip(speakers, dialogue):
+        role = speaker_roles[speaker]
+        chatml += f"{bos_token}{role}\n"
+        chatml += f"{message}\n"
+        chatml += f"{eos_token}\n"
+
+    return chatml
+
+
 FORMAT_HANDLERS = {
     DataFormat.SIMPLE: format_simple,
     DataFormat.INSTRUCTION: format_instruction,
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.PERSONACHAT: format_personachat,
     DataFormat.SMOLTALK: format_smoltalk,
+    DataFormat.SODA: format_soda,
     DataFormat.WIKI: format_wiki,
 }
 
@@ -365,6 +416,7 @@ def get_dataset_configs(dev: bool, phi: bool):
         config["primary"].append(HUGGINGFACE_DATASETS.get("natural-instructions"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("persona-chat"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("soda"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
         config["primary"].append(HUGGINGFACE_DATASETS.get("wikipedia"))
