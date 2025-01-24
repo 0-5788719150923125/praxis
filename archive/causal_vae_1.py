@@ -14,7 +14,6 @@ class MaskLayer(nn.Module):
         self.z2_dim = z2_dim
         self.concept = concept
 
-        # Helper function to create network blocks
         def create_network():
             return nn.Sequential(
                 nn.Linear(z2_dim, 32),
@@ -28,35 +27,21 @@ class MaskLayer(nn.Module):
         self.net3 = create_network()
         self.net4 = create_network() if concept == 4 else None
 
-        # General network for masked operations
-        self.net = create_network()
-
-    def masked(self, z: torch.Tensor) -> torch.Tensor:
-        z = z.view(-1, self.z_dim)
-        return self.net(z)
-
-    def masked_sep(self, z: torch.Tensor) -> torch.Tensor:
-        z = z.view(-1, self.z_dim)
-        return self.net(z)
-
     def mix(self, z: torch.Tensor) -> torch.Tensor:
         zy = z.view(-1, self.concept * self.z2_dim)
 
-        # Handle 1D case differently
         if self.z2_dim == 1:
             zy = zy.reshape(zy.size()[0], zy.size()[1], 1)
             if self.concept == 4:
                 zy1, zy2, zy3, zy4 = zy[:, 0], zy[:, 1], zy[:, 2], zy[:, 3]
-            else:  # concept == 3
+            else:
                 zy1, zy2, zy3 = zy[:, 0], zy[:, 1], zy[:, 2]
         else:
-            # Split into concept chunks
             if self.concept == 4:
                 zy1, zy2, zy3, zy4 = torch.split(zy, self.z_dim // self.concept, dim=1)
-            else:  # concept == 3
+            else:
                 zy1, zy2, zy3 = torch.split(zy, self.z_dim // self.concept, dim=1)
 
-        # Process each concept
         rx1 = self.net1(zy1)
         rx2 = self.net2(zy2)
         rx3 = self.net3(zy3)
@@ -64,7 +49,7 @@ class MaskLayer(nn.Module):
         if self.concept == 4:
             rx4 = self.net4(zy4)
             return torch.cat((rx1, rx2, rx3, rx4), dim=1)
-        else:  # concept == 3
+        else:
             return torch.cat((rx1, rx2, rx3), dim=1)
 
 
@@ -97,23 +82,34 @@ def condition_prior(
 
     Args:
         scale: Scale factors for each concept
-        label: Label tensor
+        label: Label tensor [batch_size, seq_len, num_concepts]
         z2_dim: Dimension of each concept
     """
     batch_size, seq_len = label.shape[:2]
     num_concepts = label.shape[-1]
 
+    # Reshape label to combine batch and sequence dims
+    label_flat = label.view(-1, num_concepts)
+
     # Create conditional means based on labels
     means = []
     for i in range(num_concepts):
+        # Calculate concept mean without extra dimensions
         concept_mean = (
-            label[..., i : i + 1] * scale[i, 0]
-            + (1 - label[..., i : i + 1]) * scale[i, 1]
+            label_flat[:, i : i + 1] * scale[i, 0]
+            + (1 - label_flat[:, i : i + 1]) * scale[i, 1]
         )
-        concept_mean = concept_mean.unsqueeze(-1).expand(-1, -1, z2_dim)
+        # Expand to concept dimension
+        concept_mean = concept_mean.unsqueeze(-1).expand(-1, 1, z2_dim)
         means.append(concept_mean)
 
-    cp_m = torch.cat(means, dim=-2)
+    # Concatenate along concept dimension
+    cp_m = torch.cat(means, dim=1)
+
+    # Reshape back to include sequence dimension
+    cp_m = cp_m.view(batch_size, seq_len, num_concepts, z2_dim)
+
+    # Create matching variance tensor
     cp_v = torch.ones_like(cp_m)
 
     return cp_m, cp_v
@@ -292,7 +288,7 @@ class CausalVAELayer(nn.Module):
         labels: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute Evidence Lower BOund (ELBO) and components"""
-        batch_size = x.size(0)
+        batch_size, seq_len = x.size(0), x.size(1)
 
         # Use logits-based BCE loss
         recon_term = -F.binary_cross_entropy_with_logits(
@@ -311,8 +307,9 @@ class CausalVAELayer(nn.Module):
             cp_m, cp_v = condition_prior(self.scale, labels, self.concept_dim)
             cp_m, cp_v = cp_m.to(x.device), cp_v.to(x.device)
 
+            # Reshape z_masked to match conditional prior
             z_masked_reshaped = z_masked.view(
-                batch_size, -1, self.num_concepts, self.concept_dim
+                batch_size, seq_len, self.num_concepts, self.concept_dim
             )
             z_masked_var = torch.ones_like(z_masked_reshaped)
 
@@ -342,7 +339,7 @@ class CausalVAELayer(nn.Module):
         batch_size, seq_len = x.shape[:2]
         x_flat = x.view(-1, self.input_dim)
 
-        # Ensure we retain gradients for matrix operations
+        # Encode and shape
         encoded = self.encoder(x_flat)
         mu, logvar = encoded.chunk(2, dim=-1)
         mu = mu.view(batch_size * seq_len, self.num_concepts, -1)
@@ -355,23 +352,29 @@ class CausalVAELayer(nn.Module):
         else:
             z = mu
 
-        # Ensure gradients through DAG computation
+        # Apply DAG transformation
         z_dag, _ = self.dag.calculate_dag(z, torch.ones_like(z))
-        z_masked = self.mask_z.mix(z_dag.reshape(-1, self.latent_dim))
 
-        # Get logits from decoder
+        # Apply attention before mask
+        z_attended, _ = self.attention.attention(z_dag, z_dag)
+
+        # Apply mask (using only mix operation)
+        z_masked = self.mask_z.mix(z_attended.reshape(-1, self.latent_dim))
+
+        # Decode
         x_recon_logits, _, _, _, _ = self.decoder.decode_sep(z_masked)
         x_recon = x_recon_logits.view(batch_size, seq_len, -1)
 
-        # For output, apply sigmoid to get probabilities
+        # Get probabilities
         reconstructed = torch.sigmoid(x_recon)
 
+        # Reshape for ELBO
         mu = mu.view(-1, self.latent_dim)
         logvar = logvar.view(-1, self.latent_dim)
 
         elbo_loss, recon_term, kl_div, mask_loss = self.compute_elbo(
             x=x,
-            x_recon_logits=x_recon,  # Pass logits to ELBO computation
+            x_recon_logits=x_recon,
             mu=mu,
             logvar=logvar,
             z_masked=z_masked,
@@ -379,7 +382,7 @@ class CausalVAELayer(nn.Module):
         )
 
         return CausalVAEOutput(
-            reconstructed=reconstructed,  # Return probabilities
+            reconstructed=reconstructed,
             elbo_loss=elbo_loss,
             reconstruction_term=recon_term,
             kl_divergence=kl_div,
@@ -419,25 +422,31 @@ def test_causal_vae():
         concept_dim=concept_dim,
     )
 
-    # Create random binary input
+    # Create random binary input AND labels
     x = torch.randint(0, 2, (batch_size, seq_len, input_dim)).float()
-    x.requires_grad_(True)  # Enable gradient tracking on input
-    output = model(x)
+    labels = torch.randint(0, 2, (batch_size, seq_len, num_concepts)).float()
+
+    # Run with labels
+    output = model(x, labels)
 
     # Basic shape checks
     assert output.reconstructed.shape == x.shape
-    assert output.elbo_loss.ndim == 0
+    assert output.reconstructed.min() >= 0 and output.reconstructed.max() <= 1
+    assert output.elbo_loss.ndim == 0  # Scalar loss
 
-    # Compute loss and check gradients
-    loss = output.elbo_loss
-    loss.backward()
+    # Compute gradients
+    output.elbo_loss.backward()
 
-    # Verify gradients exist and are non-zero
-    has_grads = [
-        p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters()
-    ]
-    assert all(has_grads)
+    # Check gradients only for tensor parameters
+    has_grads = []
+    for name, param in model.named_parameters():
+        if isinstance(param, torch.Tensor):
+            has_grad = param.grad is not None and param.grad.abs().sum() > 0
+            has_grads.append(has_grad)
+            if not has_grad:
+                print(f"No gradient for parameter: {name}")
 
+    assert all(has_grads), "Some tensor parameters missing gradients"
     print("All tests passed!")
 
 
