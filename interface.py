@@ -504,28 +504,6 @@ class TerminalDashboard:
             wrapped_lines.extend(wrapped)
         return wrapped_lines
 
-    # def _wrap_text(self, text, width):
-    #     """Wrap text to fit within a given width, preserving all newlines."""
-    #     # First, replace consecutive newlines with a special marker
-    #     preserved_text = text.replace("\n\n", "\n<DOUBLE_NEWLINE>\n")
-
-    #     wrapped_lines = []
-    #     for line in preserved_text.splitlines():
-    #         if line == "<DOUBLE_NEWLINE>":
-    #             wrapped_lines.append("")  # Add empty line
-    #             continue
-    #         if not line:  # Single empty line
-    #             wrapped_lines.append("")
-    #             continue
-    #         # Wrap non-empty lines normally
-    #         wrapped = textwrap.wrap(
-    #             line, width=width, break_long_words=True, replace_whitespace=False
-    #         )
-    #         wrapped_lines.extend(
-    #             wrapped if wrapped else [""]
-    #         )  # Ensure empty lines are preserved
-    #     return wrapped_lines
-
     def _draw_chart(self, data, width, height):
         if len(data) > 1:
             # Ensure we only plot the most recent data points that fit in the width
