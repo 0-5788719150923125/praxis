@@ -239,12 +239,12 @@ class PraxisEncoder(nn.Module):
 
     def decode(self, h, h_encoder, input_ids, patch_lengths):
         nb_boe = 0
-
         decoder_patch_ids = decoder_patch_ids_from_lengths(
             patch_lengths, nb_boe, input_ids.shape[-1]
         )
 
         # Upsampling
+        cross_mask = None
         if self.args.cross_attn_decoder:
             h = (
                 h
@@ -262,14 +262,8 @@ class PraxisEncoder(nn.Module):
             )
         else:
             h = torch.gather(
-                h,
-                1,
-                decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1]),
+                h, 1, decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1])
             )
-            cross_mask = None
-            assert (
-                h.shape[1] == input_ids.shape[1]
-            ), "Sequence length mismatch after gathering"
 
         output, _ = self.decoder(
             tokens=input_ids,
