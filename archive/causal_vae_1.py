@@ -135,7 +135,7 @@ class Attention(nn.Module):
         )
         self.sigmoid = torch.nn.Sigmoid()
 
-    def attention(self, z, e):
+    def forward(self, z, e):
         a = z.matmul(self.M).matmul(e.permute(0, 2, 1))
         a = self.sigmoid(a)
         A = torch.softmax(a, dim=1)
@@ -160,7 +160,6 @@ class DecoderDAG(nn.Module):
                     nn.Linear(300, 300),
                     nn.ELU(),
                     nn.Linear(300, output_dim),
-                    # No final activation - output logits for BCE loss
                 )
                 for _ in range(concept)
             ]
@@ -176,9 +175,7 @@ class DecoderDAG(nn.Module):
 
         rxs = [net(zi) for net, zi in zip(self.nets, zs)]
         h = sum(rxs) / self.concept
-
-        # Original returns 5 copies - maintaining interface
-        return h, h, h, h, h
+        return h
 
 
 class DagLayer(nn.Module):
@@ -193,12 +190,6 @@ class DagLayer(nn.Module):
         # Create upper triangular mask
         self.mask = torch.triu(torch.ones(input_dim, input_dim), diagonal=1).bool()
         self.I = torch.eye(input_dim)
-
-    def mask_z(self, z):
-        return z
-
-    def mask_u(self, u):
-        return u
 
     def calculate_dag(self, z, v):
         """
@@ -278,6 +269,72 @@ class CausalVAELayer(nn.Module):
         self.mask_z = MaskLayer(latent_dim, num_concepts, concept_dim)
         self.mask_u = MaskLayer(num_concepts, num_concepts, 1)
 
+    def forward(
+        self, x: torch.Tensor, labels: Optional[torch.Tensor] = None
+    ) -> CausalVAEOutput:
+        batch_size, seq_len = x.shape[:2]
+        x_flat = x.view(-1, self.input_dim)
+
+        # Encode and shape
+        encoded = self.encoder(x_flat)
+        mu, logvar = encoded.chunk(2, dim=-1)
+        mu = mu.view(batch_size * seq_len, self.num_concepts, -1)
+        logvar = logvar.view(batch_size * seq_len, self.num_concepts, -1)
+
+        if self.training:
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu + eps * std
+        else:
+            z = mu
+
+        # Apply DAG transformation
+        z_dag, _ = self.dag.calculate_dag(z, torch.ones_like(z))
+
+        # Apply attention before mask
+        z_attended, _ = self.attention(z_dag, z_dag)
+
+        # Apply mask (using only mix operation)
+        z_masked = self.mask_z.mix(z_attended.reshape(-1, self.latent_dim))
+
+        # Decode
+        x_recon_logits = self.decoder.decode_sep(z_masked)
+        x_recon = x_recon_logits.view(batch_size, seq_len, -1)
+
+        # Get probabilities
+        reconstructed = torch.sigmoid(x_recon)
+
+        # Reshape for ELBO
+        mu = mu.view(-1, self.latent_dim)
+        logvar = logvar.view(-1, self.latent_dim)
+
+        elbo_loss, recon_term, kl_div, mask_loss = self.compute_elbo(
+            x=x,
+            x_recon_logits=x_recon,
+            mu=mu,
+            logvar=logvar,
+            z_masked=z_masked,
+            labels=labels,
+        )
+
+        return CausalVAEOutput(
+            reconstructed=reconstructed,
+            elbo_loss=elbo_loss,
+            reconstruction_term=recon_term,
+            kl_divergence=kl_div,
+            mask_loss=mask_loss,
+            z_masked=z_masked.view(batch_size, seq_len, -1),
+        )
+
+    def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Encode input to latent parameters (μ, log σ²)"""
+        h = self.encoder(x)
+        return h.chunk(2, dim=-1)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """Decode latent to reconstructed input with sigmoid"""
+        return self.decoder(z)
+
     def compute_elbo(
         self,
         x: torch.Tensor,
@@ -333,68 +390,6 @@ class CausalVAELayer(nn.Module):
         elbo_loss = -recon_term + kl_div + mask_loss
         return elbo_loss, recon_term, kl_div, mask_loss
 
-    def forward(
-        self, x: torch.Tensor, labels: Optional[torch.Tensor] = None
-    ) -> CausalVAEOutput:
-        batch_size, seq_len = x.shape[:2]
-        x_flat = x.view(-1, self.input_dim)
-
-        # Encode and shape
-        encoded = self.encoder(x_flat)
-        mu, logvar = encoded.chunk(2, dim=-1)
-        mu = mu.view(batch_size * seq_len, self.num_concepts, -1)
-        logvar = logvar.view(batch_size * seq_len, self.num_concepts, -1)
-
-        if self.training:
-            std = torch.exp(0.5 * logvar)
-            eps = torch.randn_like(std)
-            z = mu + eps * std
-        else:
-            z = mu
-
-        # Apply DAG transformation
-        z_dag, _ = self.dag.calculate_dag(z, torch.ones_like(z))
-
-        # Apply attention before mask
-        z_attended, _ = self.attention.attention(z_dag, z_dag)
-
-        # Apply mask (using only mix operation)
-        z_masked = self.mask_z.mix(z_attended.reshape(-1, self.latent_dim))
-
-        # Decode
-        x_recon_logits, _, _, _, _ = self.decoder.decode_sep(z_masked)
-        x_recon = x_recon_logits.view(batch_size, seq_len, -1)
-
-        # Get probabilities
-        reconstructed = torch.sigmoid(x_recon)
-
-        # Reshape for ELBO
-        mu = mu.view(-1, self.latent_dim)
-        logvar = logvar.view(-1, self.latent_dim)
-
-        elbo_loss, recon_term, kl_div, mask_loss = self.compute_elbo(
-            x=x,
-            x_recon_logits=x_recon,
-            mu=mu,
-            logvar=logvar,
-            z_masked=z_masked,
-            labels=labels,
-        )
-
-        return CausalVAEOutput(
-            reconstructed=reconstructed,
-            elbo_loss=elbo_loss,
-            reconstruction_term=recon_term,
-            kl_divergence=kl_div,
-            mask_loss=mask_loss,
-            z_masked=z_masked.view(batch_size, seq_len, -1),
-        )
-
-    def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Encode input to latent parameters (μ, log σ²)"""
-        h = self.encoder(x)
-        return h.chunk(2, dim=-1)
-
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """Reparameterization trick"""
         if self.training:
@@ -402,10 +397,6 @@ class CausalVAELayer(nn.Module):
             eps = torch.randn_like(std)
             return mu + eps * std
         return mu
-
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """Decode latent to reconstructed input with sigmoid"""
-        return self.decoder(z)
 
 
 def test_causal_vae():
