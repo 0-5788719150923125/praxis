@@ -30,9 +30,10 @@ OPTIMIZER_PROFILES = {
         optimizer_name="AdamG",
         lr=1.0,
         weight_decay=0.1,
-        p=0.5,
+        p=0.2,
         q=0.24,
         betas=(0.95, 0.999, 0.95),
+        no_schedule=True,
     ),
     "AdamW": dict(
         optimizer_name="AdamW",

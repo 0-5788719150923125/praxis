@@ -926,6 +926,18 @@ checkpoint_callback = TimeBasedCheckpoint(
 model = AutoModelForCausalLM.from_config(config)
 print("model:", model)
 
+model = model.to(device)
+
+# Create dummy batch for initialization
+batch_size = 2
+seq_length = 64
+dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
+
+# Run dummy batch through model to initialize lazy parameters
+# We do this because of the lazy parameter initialization in the Snake activation
+with torch.no_grad():
+    model(dummy_input)
+
 # Print the total parameter count
 total_params = sum(p.numel() for p in model.parameters())
 reduced = str(int(total_params / 10**6)) + "M"
