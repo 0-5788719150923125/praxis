@@ -386,7 +386,7 @@ class EntropyModel(nn.Module):
                 )
             )
 
-        self.activation = nn.GELU()
+        self.activation = nn.SiLU()
 
         # Project to byte probabilities
         self.norm = nn.LayerNorm(channels)
