@@ -8,7 +8,7 @@ class PraxisConfig(PretrainedConfig):
         self,
         embed_size=512,
         hidden_size=256,
-        num_heads=2,
+        num_heads=4,
         num_queries=2,
         head_size=None,
         k_heads=None,

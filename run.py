@@ -551,10 +551,6 @@ class TerminalInterface(Callback):
             dict(
                 max_new_tokens=max_new_tokens,
                 temperature=0.7,
-                # min_p=0.02,
-                # eta_cutoff=0.002,
-                # penalty_alpha=0.6,
-                # top_k=4,
                 repetition_penalty=1.1,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,

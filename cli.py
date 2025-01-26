@@ -100,8 +100,8 @@ parser.add_argument(
             )
         )
     ),
-    default="2:2",
-    help="The ratio of heads to queries per-head. (example: '3:2' is equal to 3 heads, with 2 queries per head)",
+    default="4:2",
+    help="The ratio of heads to queries per-head. (example: '4:2' is equal to 3 heads, with 2 queries per head)",
 )
 parser.add_argument(
     "--k_heads",
