@@ -41,8 +41,7 @@ class PraxisAttention(nn.Module):
         self.kv_rank = config.kv_rank
 
         self.factor = 2 if self.differential else 1
-        init_head_dim = hidden_size // self.num_heads // self.factor
-        self.head_dim = init_head_dim
+        self.head_dim = hidden_size // self.num_heads // self.factor
         setattr(config, "head_size", self.head_dim)
 
         assert (

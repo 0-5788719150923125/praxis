@@ -355,6 +355,13 @@ class RecurrentEncoder(LocalEncoder):
             [RecurrentBlock(args) for _ in range(args.n_layers)]
         )
 
+    def forward(self, tokens, embeds=None, *args, **kwargs):
+        h = self.apply_embedding(tokens, embeds)
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        for i, layer in enumerate(self.layers):
+            h = layer(h)
+        return (h, None), None
+
 
 class RecurrentDecoder(LocalDecoder):
     def __init__(self, args: LocalModelArgs):
@@ -362,6 +369,24 @@ class RecurrentDecoder(LocalDecoder):
         self.layers = nn.ModuleList(
             [RecurrentBlock(args) for _ in range(args.n_layers)]
         )
+
+    def forward(self, tokens, embeds, patch_embeds=None, *args, **kwargs):
+        bs, seqlen = tokens.shape
+        assert embeds is not None, "Embeddings must be provided"
+
+        h = embeds
+
+        if patch_embeds is not None:
+            h = h + patch_embeds
+
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        for i, layer in enumerate(self.layers):
+            h = layer(h)
+
+        h_preds = self.norm(h)
+        h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
+        h_preds = self.output(h_preds)
+        return h_preds, None
 
 
 class EntropyModel(nn.Module):
