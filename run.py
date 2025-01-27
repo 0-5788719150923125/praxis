@@ -258,9 +258,7 @@ train_params = dict(
 )
 
 # Optimizer configuration
-hparams["optimizer"], no_schedule = get_optimizer_profile(
-    optimizer, shuffle, no_schedule
-)
+optimizer_config, no_schedule = get_optimizer_profile(optimizer, shuffle, no_schedule)
 
 # Configure the learning rate scheduler
 if no_schedule:
@@ -271,8 +269,8 @@ else:
     scheduler_func = partial(
         CosineAnnealingWarmupRestarts,
         first_cycle_steps=4096 * 16,
-        max_lr=hparams["optimizer"]["lr"],
-        min_lr=hparams["optimizer"]["lr"] * 1e-2,
+        max_lr=optimizer_config["lr"],
+        min_lr=optimizer_config["lr"] * 1e-2,
         gamma=1.0,
         warmup_steps=512,
     )
@@ -885,6 +883,10 @@ class TimeBasedCheckpoint(ModelCheckpoint):
         # Disable saving checkpoints at the end of every epoch
         pass
 
+    def on_validation_end(self, trainer, pl_module):
+        # Disable saving checkpoints at the end of every epoch
+        pass
+
 
 class AccumulationSchedule(GradientAccumulationScheduler):
     """
@@ -945,7 +947,7 @@ hparams["num_params"] = reduced
 print(f"parameters: {reduced}")
 
 # Train info
-print(f"optimizer: {hparams['optimizer']['optimizer_name']}")
+print(f"optimizer: {optimizer_config['optimizer_name']}")
 
 # File cleanup
 if reset:
@@ -1010,7 +1012,7 @@ datamodule = get_datamodules(seed, dev, phi, gun, source, tokenizer, hparams, da
 
 # create the optimizer
 optimizer = get_optimizer(
-    model, trac=trac, ortho=ortho, lookahead=lookahead, **hparams["optimizer"]
+    model, trac=trac, ortho=ortho, lookahead=lookahead, **optimizer_config
 )
 
 # create the scheduler
