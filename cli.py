@@ -87,6 +87,12 @@ parser.add_argument(
     help="The size of the model's embedding dimension (if applicable)",
 )
 parser.add_argument(
+    "--dropout",
+    type=int,
+    default=0.1,
+    help="The percentage of neurons to drop-out during training",
+)
+parser.add_argument(
     "--num_heads",
     type=lambda x: (
         x
