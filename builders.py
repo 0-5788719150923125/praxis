@@ -507,43 +507,6 @@ def get_dataset_configs(dev: bool, pile: bool, phi: bool):
     return config
 
 
-class PraxisSampler:
-    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
-        self.tokenizer = tokenizer
-        self.block_size = block_size
-        self.sequence_cache = []  # Store raw text sequences
-        self.token_cache = []  # Store tokenized batches
-        self.weight = 1.0
-
-    @property
-    def can_sample(self):
-        return True
-
-    def fill_sequence_cache(self):
-        """Each dataset implementation should override this"""
-        raise NotImplementedError
-
-    def get_sequences(self, count: int = 1) -> List[str]:
-        """Get raw sequences from this dataset"""
-        while len(self.sequence_cache) < count:
-            self.fill_sequence_cache()
-        return [self.sequence_cache.pop(0) for _ in range(count)]
-
-    def get_batch(
-        self, oversample: bool = False, supersample: bool = False
-    ) -> torch.Tensor:
-        if supersample and oversample:
-            raise ValueError("Cannot both oversample and supersample simultaneously.")
-
-        seq_factor = 4 if supersample else (2 if oversample else 1)
-
-        while len(self.token_cache) < seq_factor:
-            self.fill_token_cache()
-
-        batch = torch.cat([self.token_cache.pop(0) for _ in range(seq_factor)], dim=0)
-        return batch
-
-
 class InterleaveDataManager:
     def __init__(
         self, samplers, weights, tokenizer, block_size, text_cache_size=100_000
@@ -634,6 +597,43 @@ class InterleaveDataManager:
         self.token_cache.extend(
             [batch for batch in tokens if len(batch) == self.block_size]
         )
+
+
+class PraxisSampler:
+    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
+        self.tokenizer = tokenizer
+        self.block_size = block_size
+        self.sequence_cache = []  # Store raw text sequences
+        self.token_cache = []  # Store tokenized batches
+        self.weight = 1.0
+
+    @property
+    def can_sample(self):
+        return True
+
+    def fill_sequence_cache(self):
+        """Each dataset implementation should override this"""
+        raise NotImplementedError
+
+    def get_sequences(self, count: int = 1) -> List[str]:
+        """Get raw sequences from this dataset"""
+        while len(self.sequence_cache) < count:
+            self.fill_sequence_cache()
+        return [self.sequence_cache.pop(0) for _ in range(count)]
+
+    def get_batch(
+        self, oversample: bool = False, supersample: bool = False
+    ) -> torch.Tensor:
+        if supersample and oversample:
+            raise ValueError("Cannot both oversample and supersample simultaneously.")
+
+        seq_factor = 4 if supersample else (2 if oversample else 1)
+
+        while len(self.token_cache) < seq_factor:
+            self.fill_token_cache()
+
+        batch = torch.cat([self.token_cache.pop(0) for _ in range(seq_factor)], dim=0)
+        return batch
 
 
 class HuggingfaceDataset(PraxisSampler):
