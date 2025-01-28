@@ -399,7 +399,7 @@ def get_datamodules(
                 *args,
             )
         )
-    if source:
+    if source and not pile:
         train_data.append(
             get_dataset(
                 "self",
@@ -479,7 +479,6 @@ def get_dataset_configs(dev: bool, pile: bool, phi: bool):
     config = {"primary": [], "validation": []}
     if pile:
         config["primary"].append(HUGGINGFACE_DATASETS.get("minipile-train"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))
         config["validation"].append(HUGGINGFACE_DATASETS.get("minipile-validation"))
     else:
         config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))

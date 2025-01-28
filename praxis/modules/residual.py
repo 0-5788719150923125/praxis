@@ -27,20 +27,20 @@ class HyperConnection(ResidualConnection):
     """
 
     def __init__(
-        self, dim: int, rate: int = 2, layer_id: int = None, dynamic: bool = True
+        self, dim: int, rate: int = 2, current_depth: int = None, dynamic: bool = True
     ):
         super().__init__()
-        if layer_id is None:
-            layer_id = random.randint(0, rate - 1)
+        if current_depth is None:
+            current_depth = random.randint(0, rate - 1)
 
-        self.layer_id = layer_id
+        self.current_depth = current_depth
         self.rate = rate
         self.dynamic = dynamic
 
         # alpha/beta for static
         self.static_beta = nn.Parameter(torch.ones(rate))  # shape [rate]
         init_alpha0 = torch.zeros(rate, 1)
-        init_alpha0[self.layer_id % rate, 0] = 1.0
+        init_alpha0[self.current_depth % rate, 0] = 1.0
         eye_alpha = torch.eye(rate)
         # shape => (rate, rate+1)
         self.static_alpha = nn.Parameter(torch.cat([init_alpha0, eye_alpha], dim=1))
