@@ -992,10 +992,10 @@ symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
 true_link = find_latest_checkpoint(cache_dir)
 if not reset and not dev:
     if os.path.exists(symlink):
-        print(f"resuming from: {symlink}")
+        print(f"resuming from sybolic path: {symlink}")
         ckpt_path = symlink
     elif os.path.exists(true_link):
-        print(f"resuming from: {true_link}")
+        print(f"resuming from true path: {true_link}")
         ckpt_path = true_link
 
 if wandb:
@@ -1025,6 +1025,7 @@ if wandb:
             for filename in os.listdir(latest_run_path):
                 match = pattern.match(filename)
                 if match:
+                    print("resuming wandb from symbolic path")
                     return match.group(1)
 
         # If latest-run doesn't exist, find the most recent run directory
@@ -1054,7 +1055,7 @@ if wandb:
                         latest_run_id = run_id
                 except ValueError:
                     continue
-
+        print("resuming wandb from full path")
         return latest_run_id
 
     wandb_opts = dict(project="praxis", save_dir=cache_dir)
