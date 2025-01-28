@@ -580,6 +580,7 @@ class InterleaveDataManager:
 
 class PraxisSampler:
     def __init__(self, tokenizer: PreTrainedTokenizer):
+        self.weight = 1.0
         self.tokenizer = tokenizer
         self.sequence_cache = []  # Store raw text sequences
 
@@ -597,7 +598,6 @@ class PraxisSampler:
 class HuggingfaceDataset(PraxisSampler):
     def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
         super().__init__(tokenizer)
-        self.weight = 1.0
         self.keys = config.get("keys", ["text"])
         self.format = config.get("format", DataFormat.SIMPLE)
         if isinstance(self.format, str):
