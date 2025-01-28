@@ -87,7 +87,6 @@ class PraxisScatter(nn.Module):
     def get_modified_weights(
         self, x: torch.Tensor, prev_depth: int, curr_depth: int
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Helper function to create modified weights and biases for current layer."""
         # Handle input dimensions
         if len(x.shape) == 2:
             x = x.unsqueeze(1)  # [batch, 1, input_dim]
@@ -95,39 +94,39 @@ class PraxisScatter(nn.Module):
 
         # Process through gate network
         gate_idx = curr_depth - 1
-        scores = self.gates[gate_idx](x)  # [batch*seq, hidden_dim]
+        scores = self.gates[gate_idx](x)  # [batch, seq, hidden_dim]
 
-        # Sum across sequence dimension
-        scores = scores.sum(dim=1)  # [batch, hidden_dim]
+        # Flatten and get top-k * seq_len indices
+        flat_scores = scores.reshape(batch_size, -1)
+        k = min(self.top_k * seq_len, seq_len * self.hidden_dim)
+        _, flat_indices = torch.topk(flat_scores, k=k, dim=-1)
 
-        # Get top-k indices for each batch
-        _, top_indices = torch.topk(
-            scores, k=min(self.top_k, self.hidden_dim), dim=-1
-        )  # [batch, top_k]
+        # Convert to 2D indices
+        hidden_indices = flat_indices % self.hidden_dim
 
         # Get layers
         prev_layer = self.up[prev_depth]
         curr_layer = self.up[curr_depth]
 
         # Create per-batch weights
-        mod_weights = curr_layer.weight.repeat(
-            batch_size, 1, 1
-        )  # [batch, hidden_dim, input_dim]
+        mod_weights = curr_layer.weight.repeat(batch_size, 1, 1)
 
-        # Create batch indices
-        batch_indices = torch.arange(batch_size, device=x.device)[:, None].expand(
-            -1, self.top_k
+        # Create batch indices for scattering
+        batch_indices = (
+            torch.arange(batch_size, device=x.device).unsqueeze(1).expand(-1, k)
         )
 
         # Update weights using selected indices
-        mod_weights[batch_indices, top_indices] = prev_layer.weight[top_indices]
+        mod_weights[batch_indices, hidden_indices] = prev_layer.weight[hidden_indices]
 
-        # Handle biases similarly
+        # Handle biases
         mod_bias = None
         if hasattr(curr_layer, "bias") and curr_layer.bias is not None:
             if hasattr(prev_layer, "bias") and prev_layer.bias is not None:
-                mod_bias = curr_layer.bias.repeat(batch_size, 1)  # [batch, hidden_dim]
-                mod_bias[batch_indices, top_indices] = prev_layer.bias[top_indices]
+                mod_bias = curr_layer.bias.repeat(batch_size, 1)
+                mod_bias[batch_indices, hidden_indices] = prev_layer.bias[
+                    hidden_indices
+                ]
 
         return mod_weights, mod_bias
 
