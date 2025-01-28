@@ -1064,7 +1064,7 @@ if wandb:
             wandb_opts["id"] = run_id
             wandb_opts["resume"] = "must"
 
-        wandb_logger = CustomWandbLogger(**wandb_opts)
+    wandb_logger = CustomWandbLogger(**wandb_opts)
 
     # log gradients and model topology
     wandb_logger.watch(model, log="all", log_freq=100, log_graph=False)
