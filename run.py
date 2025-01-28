@@ -957,11 +957,46 @@ if reset:
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
         os.remove(checkpoint)
 
+
+def find_latest_checkpoint(cache_dir):
+    # Construct the checkpoint directory path
+    ckpt_dir = os.path.join(cache_dir, "praxis")
+
+    # Get all checkpoint files
+    ckpt_files = [f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
+
+    if not ckpt_files:
+        return None
+
+    # Extract batch numbers using regex
+    # This will find numbers after "batch=" and before ".ckpt"
+    batch_numbers = []
+    for filename in ckpt_files:
+        match = re.search(r"batch=(\d+)\.0\.ckpt", filename)
+        if match:
+            batch_numbers.append((int(match.group(1)), filename))
+
+    if not batch_numbers:
+        return None
+
+    # Find the file with the largest batch number
+    latest_batch = max(batch_numbers, key=lambda x: x[0])
+    latest_checkpoint = os.path.join(ckpt_dir, latest_batch[1])
+
+    print(f"Found latest checkpoint: {latest_checkpoint}")
+    return latest_checkpoint
+
+
 ckpt_path = None
 symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
-if os.path.exists(symlink) and not dev:
-    print(f"resuming from: {symlink}")
-    ckpt_path = symlink
+true_link = find_latest_checkpoint(cache_dir)
+if not dev:
+    if os.path.exists(symlink):
+        print(f"resuming from: {symlink}")
+        ckpt_path = symlink
+    elif os.path.exists(true_link):
+        print(f"resuming from: {true_link}")
+        ckpt_path = true_link
 
 if wandb:
     import wandb
