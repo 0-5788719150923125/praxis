@@ -1015,19 +1015,56 @@ if wandb:
 
     wandb.login()
 
+    def find_latest_wandb_run(cache_dir):
+        """Find the latest wandb run directory and extract its ID."""
+
+        # First try the standard latest-run path
+        latest_run_path = os.path.join(cache_dir, "wandb", "latest-run")
+        if os.path.exists(latest_run_path):
+            pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
+            for filename in os.listdir(latest_run_path):
+                match = pattern.match(filename)
+                if match:
+                    return match.group(1)
+
+        # If latest-run doesn't exist, find the most recent run directory
+        wandb_dir = os.path.join(cache_dir, "wandb")
+        if not os.path.exists(wandb_dir):
+            return None
+
+        # Pattern for run directories: run-YYYYMMDD_HHMMSS-<random_id>
+        run_pattern = re.compile(r"run-(\d{8}_\d{6})-([a-z0-9]+)")
+
+        latest_timestamp = None
+        latest_run_id = None
+
+        for dirname in os.listdir(wandb_dir):
+            match = run_pattern.match(dirname)
+            if match:
+                timestamp_str = match.group(1)  # YYYYMMDD_HHMMSS
+                run_id = match.group(2)  # random ID
+
+                # Convert timestamp string to datetime object
+                try:
+                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+
+                    # Update if this is the most recent run
+                    if latest_timestamp is None or timestamp > latest_timestamp:
+                        latest_timestamp = timestamp
+                        latest_run_id = run_id
+                except ValueError:
+                    continue
+
+        return latest_run_id
+
     wandb_opts = dict(project="praxis", save_dir=cache_dir)
     if ckpt_path is not None:
-        pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
-        for filename in os.listdir(os.path.join(cache_dir, "wandb", "latest-run")):
-            match = pattern.match(filename)
-            if match:
-                # Capture the run ID from saved file name
-                wandb_opts["id"] = match.group(1)
-                break
+        run_id = find_latest_wandb_run(cache_dir)
+        if run_id is not None:
+            wandb_opts["id"] = run_id
+            wandb_opts["resume"] = "must"
 
-        wandb_opts["resume"] = "must"
-
-    wandb_logger = CustomWandbLogger(**wandb_opts)
+        wandb_logger = CustomWandbLogger(**wandb_opts)
 
     # log gradients and model topology
     wandb_logger.watch(model, log="all", log_freq=100, log_graph=False)
