@@ -24,6 +24,20 @@ class DataFormat(Enum):
 
 
 HUGGINGFACE_DATASETS = {
+    "minipile-train": dict(
+        path="JeanKaddour/minipile",
+        split="train",
+        keys="text",
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
+    "minipile-validation": dict(
+        path="JeanKaddour/minipile",
+        split="validation",
+        keys="text",
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
     "textbooks": dict(
         path="open-phi/textbooks",
         keys=["markdown"],
@@ -350,6 +364,7 @@ FORMAT_HANDLERS = {
 def get_datamodules(
     seed: int,
     dev: bool,
+    pile: bool,
     phi: bool,
     gun: bool,
     source: bool,
@@ -367,7 +382,7 @@ def get_datamodules(
         time.sleep(5)
 
     train_data = []
-    config = get_dataset_configs(dev, phi)
+    config = get_dataset_configs(dev, pile, phi)
     for c in config["primary"]:
         train_data.append(
             get_dataset("huggingface", tokenizer, hparams["block_size"], seed, c, *args)
@@ -460,26 +475,31 @@ def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
         return dataset
 
 
-def get_dataset_configs(dev: bool, phi: bool):
+def get_dataset_configs(dev: bool, pile: bool, phi: bool):
     config = {"primary": [], "validation": []}
-    config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))
-    config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb"))
-    if phi:
-        config["primary"].append(HUGGINGFACE_DATASETS.get("textbooks"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("smollm-corpus"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("natural-instructions"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("persona-chat"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("soda"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("wikipedia"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("legal"))
-    if dev:
-        # Overwrite with simpler dataset
-        config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]
+    if pile:
+        config["primary"].append(HUGGINGFACE_DATASETS.get("minipile-train"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))
+        config["validation"].append(HUGGINGFACE_DATASETS.get("minipile-validation"))
     else:
-        config["validation"].append(HUGGINGFACE_DATASETS.get("redpajama"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))
+        config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb"))
+        if phi:
+            config["primary"].append(HUGGINGFACE_DATASETS.get("textbooks"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("smollm-corpus"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("natural-instructions"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("persona-chat"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("soda"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("wikipedia"))
+            config["primary"].append(HUGGINGFACE_DATASETS.get("legal"))
+        if dev:
+            # Overwrite with simpler dataset
+            config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]
+        else:
+            config["validation"].append(HUGGINGFACE_DATASETS.get("redpajama"))
     print("training on:")
     [
         print(f"dataset: {entry['path']}, weight: {entry['weight']}")
@@ -527,13 +547,13 @@ class PraxisSampler:
 
 class InterleaveDataManager:
     def __init__(
-        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000
+        self, samplers, weights, tokenizer, block_size, base_cache_size=50_000
     ):
         self.samplers = samplers
         self.weights = weights
         self.tokenizer = tokenizer
         self.block_size = block_size
-        self.text_cache_size = text_cache_size
+        self.text_cache_size = base_cache_size * len(samplers)
         self.token_stream = torch.tensor(
             [], dtype=torch.long
         )  # Single continuous stream
@@ -634,18 +654,18 @@ class HuggingfaceDataset(PraxisSampler):
         )
         dataset_args = dict(
             path=config.get("path", "HuggingFaceFW/fineweb"),
-            split="train",
-            streaming=True,
+            split=config.get("split", "train"),
+            streaming=config.get("streaming", True),
             cache_dir=os.path.join(config.get("cache_dir", "data"), "datasets"),
             trust_remote_code=True,
         )
         if "name" in config:
             dataset_args["name"] = config["name"]
         self.dataset = load_dataset(**dataset_args)
-        self.buffer_size = 1_000
-        self.shuffled_dataset = self.dataset.shuffle(
-            seed=seed, buffer_size=self.buffer_size
-        )
+        shuffle_args = {"seed": seed}
+        if dataset_args["streaming"]:
+            shuffle_args["buffer_size"] = 1000
+        self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
         self.dataset_iterator = iter(self.shuffled_dataset)
 
     def fill_sequence_cache(self):

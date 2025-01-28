@@ -1080,7 +1080,9 @@ if local_rank == 0:
 
 
 # Load datasets
-datamodule = get_datamodules(seed, dev, phi, gun, source, tokenizer, hparams, data_path)
+datamodule = get_datamodules(
+    seed, dev, pile, phi, gun, source, tokenizer, hparams, data_path
+)
 
 # create the optimizer
 optimizer = get_optimizer(

@@ -335,6 +335,12 @@ parser.add_argument(
     help="Provide a list of Hivemind bootstrap peers",
 )
 parser.add_argument(
+    "--pile",
+    action="store_true",
+    default=False,
+    help="Train exclusively on the minipile challenge dataset",
+)
+parser.add_argument(
     "--phi",
     action="store_true",
     default=False,
