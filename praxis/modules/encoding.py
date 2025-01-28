@@ -72,11 +72,11 @@ class ALiBi(NoPE):
 
 class RoPE(NoPE):
     """
-    Implementation of Rotary Position Embeddings (RoPE).
-    https://arxiv.org/abs/2104.09864
+    An upgraded implementation of Rotary Position Embeddings (RoPE).
+    Maintains backward compatibility and supports odd head dimensions.
     """
 
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
@@ -85,20 +85,17 @@ class RoPE(NoPE):
         self._cached_sin = None
         self._cached_seq_length = None
 
-    # before_scores and after_scores remain the same
     def before_scores(self, q, k, v, offset: int = 0):
         seq_len = q.size(2)
         device = q.device
         dtype = q.dtype
-
         head_dim = q.size(-1)
+
         self._compute_rope_embeddings(head_dim, seq_len, device, dtype, offset)
 
-        cos = self._cached_cos[:, :, :seq_len, :]
-        sin = self._cached_sin[:, :, :seq_len, :]
-
-        q_rope = self._apply_rotary_pos_emb(q, cos, sin)
-        k_rope = self._apply_rotary_pos_emb(k, cos, sin)
+        # Apply rotations with proper broadcasting
+        q_rope = self._apply_rotary_pos_emb(q, self._cached_cos, self._cached_sin)
+        k_rope = self._apply_rotary_pos_emb(k, self._cached_cos, self._cached_sin)
 
         return q_rope, k_rope, v
 
@@ -109,66 +106,75 @@ class RoPE(NoPE):
         self, head_dim, seq_len, device, dtype, offset: int = 0
     ):
         """Compute sin and cos embeddings with offset."""
-        if (
-            self._cached_seq_length is None
-            or seq_len > self._cached_seq_length
-            or self._cached_cos is None
-            or self._cached_cos.device != device
-            or self._cached_cos.dtype != dtype
-        ):
+        if self._needs_recompute(seq_len, device, dtype):
+            # Lazy initialize frequency tensor
+            if self.inv_freq is None:
+                theta = 10000.0
+                self.inv_freq = 1.0 / (
+                    theta
+                    ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim)
+                )
+
+            # Create position indices with offset
             positions = torch.arange(seq_len, device=device) + offset
 
-            if self.inv_freq is None:
-                theta = 10000
-                self.inv_freq = 1.0 / (
-                    theta ** (torch.arange(0, head_dim, 2).float() / head_dim)
-                ).to(device)
+            # Compute outer product of positions and frequencies
+            freqs = torch.einsum("i,j->ij", positions, self.inv_freq)
 
-            pos_emb = positions.unsqueeze(1) * self.inv_freq.unsqueeze(0)
+            # Create rotation matrices
+            cos = torch.cos(freqs)
+            sin = torch.sin(freqs)
 
-            # Compute basic sin and cos
-            cos = torch.cos(pos_emb)
-            sin = torch.sin(pos_emb)
-
-            # Stack properly to match Meta's implementation
-            # For each position and frequency, create alternating pairs
+            # Stack properly to match alternating pairs
             cos = torch.stack([cos, cos], dim=-1).view(1, 1, seq_len, -1)
-            sin = torch.stack([-sin, sin], dim=-1).view(
-                1, 1, seq_len, -1
-            )  # Note the negative sign
+            sin = torch.stack([-sin, sin], dim=-1).view(1, 1, seq_len, -1)
 
+            # Update cache
             self._cached_cos = cos.to(dtype)
             self._cached_sin = sin.to(dtype)
             self._cached_seq_length = seq_len
 
     def _apply_rotary_pos_emb(self, x, cos, sin):
         """Apply rotary position embeddings with proper handling of odd dimensions."""
-        # Split input into pairs (larger chunk first for odd dimensions)
+        seq_len = x.size(2)
+        head_dim = x.size(-1)
+
+        # Ensure proper broadcasting
+        cos = cos[:, :, :seq_len, :]
+        sin = sin[:, :, :seq_len, :]
+
+        # Split input into pairs (handles odd dimensions)
         x1, x2 = x.chunk(2, dim=-1)
         d1, d2 = x1.size(-1), x2.size(-1)
 
-        cos_0 = cos[:, :, :, 0::2]
-        sin_0 = sin[:, :, :, 0::2]
-        cos_1 = cos[:, :, :, 1::2]
-        sin_1 = sin[:, :, :, 1::2]
-
-        # For odd dimensions
+        # Pad x2 if head_dim is odd
         if d1 > d2:
-            x2 = torch.nn.functional.pad(x2, (0, 1))
-            if cos_1.size(-1) < d1:
-                # Calculate exact padding needed
-                pad_size = d1 - cos_1.size(-1)
-                cos_1 = torch.nn.functional.pad(cos_1, (0, pad_size), value=0.0)
-                sin_1 = torch.nn.functional.pad(sin_1, (0, pad_size), value=0.0)
+            x2 = F.pad(x2, (0, 1))  # Pad last dimension with zero
 
-        # Apply rotations with matching dimensions
-        out1 = x1 * cos_0 - x2 * sin_0
-        out2_temp = x1 * sin_1 + x2 * cos_1
+            # Pad cos and sin to match the padded x2
+            pad_size = d1 - cos.size(-1)
+            if pad_size > 0:
+                cos = F.pad(cos, (0, pad_size), value=0.0)
+                sin = F.pad(sin, (0, pad_size), value=0.0)
 
-        # Truncate back to original size for odd dimensions
-        out2 = out2_temp[..., :d2]
+        # Apply rotations using d1 consistently
+        out1 = x1 * cos[..., :d1] - x2 * sin[..., :d1]
+        out2 = x1 * sin[..., :d1] + x2 * cos[..., :d1]
+
+        # Truncate out2 if head_dim is odd
+        if d1 > d2:
+            out2 = out2[..., :d2]
 
         return torch.cat([out1, out2], dim=-1)
+
+    def _needs_recompute(self, seq_len, device, dtype):
+        """Helper to check if we need to recompute embeddings."""
+        return (
+            self._cached_seq_length is None
+            or seq_len > self._cached_seq_length
+            or self._cached_cos.device != device
+            or self._cached_cos.dtype != dtype
+        )
 
 
 ENCODING_REGISTRY = {"alibi": ALiBi, "nope": NoPE, "rope": RoPE}
