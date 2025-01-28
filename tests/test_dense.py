@@ -40,7 +40,7 @@ def test_forward_pass(module_setup):
     batch_size = 32
     seq_len = 16
     x = torch.randn(batch_size, seq_len, hidden_size)
-    output = module(x, current_depth=1)
+    output = module(x)
     assert output.shape == (batch_size, seq_len, hidden_size)
 
 
