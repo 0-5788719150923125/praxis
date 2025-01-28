@@ -427,7 +427,6 @@ def create_base_args(config):
         dim_local_encoder=hidden_size,
         dim_local_decoder=hidden_size,
         # tie_local_encoder_decoder_logits=False,
-        data_loader_patching=False,
         # max_seqlen=config.context_length,
         max_encoder_seq_length=config.context_length,
         # max_length=hidden_size,
