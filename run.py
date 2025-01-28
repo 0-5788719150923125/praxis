@@ -263,7 +263,7 @@ optimizer_config, no_schedule = get_optimizer_profile(optimizer, shuffle, no_sch
 # Configure the learning rate scheduler
 if no_schedule:
     scheduler_func = partial(
-        torch.optim.lr_scheduler.ConstantLR, factor=1.0, total_iters=0
+        torch.optim.lr_scheduler.LambdaLR, lr_lambda=lambda lr: 1.0
     )
 else:
     scheduler_func = partial(
@@ -286,9 +286,9 @@ class PraxisTrainer(LightningModule):
         self.model, self.optimizer, self.scheduler = (model, optimizer, scheduler)
         self.automatic_optimization = True
         self.num_tokens = 0
-        self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
         self.last_train_step_time = None
         self.train_step_ema = None
+        self.save_hyperparameters(ignore=["model", "optimizer", "scheduler"])
 
     def forward(self, inputs):
         return self.model(**inputs)
@@ -338,25 +338,17 @@ class PraxisTrainer(LightningModule):
         loss = outputs.loss
         stats["val_loss"] = loss
 
-        batch_size, seq_length = batch.shape
         if byte_latent:
-            # Calculate number of bytes
-            num_bytes = batch_size * seq_length
-            # Convert mean loss back to sum loss
-            sum_loss = loss * num_bytes
-            # Calculate bits per byte using sum loss
-            bits_per_byte = sum_loss / (torch.log(torch.tensor(2.0)) * num_bytes)
-            stats["val_bits_per_byte"] = bits_per_byte
+            stats["val_bits_per_byte"] = self._compute_bits_per_byte(batch, loss)
         else:
-            perplexity = torch.exp(loss)
-            stats["val_perplexity"] = perplexity
+            stats["val_perplexity"] = self._compute_perplexity(loss)
 
         self.log_dict(
             stats,
             on_step=False,
             on_epoch=True,
             logger=True,
-            batch_size=batch_size,
+            batch_size=batch.size(0),
             prog_bar=True,
         )
 
@@ -388,6 +380,22 @@ class PraxisTrainer(LightningModule):
             return new_value.total_seconds()
         alpha = 0.1
         return alpha * new_value.total_seconds() + (1 - alpha) * ema
+
+    def _compute_perplexity(self, loss):
+        return torch.exp(loss)
+
+    def _compute_bits_per_byte(self, batch, loss):
+        """
+        From "Byte Latent Transformer: Patches Scale Better Than Tokens":
+        https://arxiv.org/abs/2412.09871
+        """
+        batch_size, seq_length = batch.shape
+        # Calculate number of bytes
+        num_bytes = batch_size * seq_length
+        # Convert mean loss back to sum loss
+        sum_loss = loss * num_bytes
+        # Calculate bits per byte using sum loss
+        return sum_loss / (torch.log(torch.tensor(2.0)) * num_bytes)
 
     def _compute_softmax_collapse(self, output):
         """
@@ -427,8 +435,7 @@ class TerminalInterface(Callback):
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = block_size * 2
         if self.dashboard:
-            max_data_points = 1000
-            self.dashboard = TerminalDashboard(seed, max_data_points)
+            self.dashboard = TerminalDashboard(seed)
             try:
                 self.dashboard.start()
                 self.dashboard.update_seed(seed)
@@ -935,8 +942,7 @@ batch_size = 2
 seq_length = 64
 dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
 
-# Run dummy batch through model to initialize lazy parameters
-# We do this because of the lazy parameter initialization in the Snake activation
+# Run dummy batch through model to initialize lazy parameters in the Snake activation
 with torch.no_grad():
     model(dummy_input)
 
@@ -988,9 +994,9 @@ def find_latest_checkpoint(cache_dir):
 
 
 ckpt_path = None
-symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
-true_link = find_latest_checkpoint(cache_dir)
 if not reset and not dev:
+    symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
+    true_link = find_latest_checkpoint(cache_dir)
     if os.path.exists(symlink):
         print(f"resuming from sybolic path: {symlink}")
         ckpt_path = symlink

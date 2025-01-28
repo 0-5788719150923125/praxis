@@ -56,7 +56,7 @@ class LogCapture:
 
 
 class TerminalDashboard:
-    def __init__(self, seed, max_data_points=50, max_log_lines=100):
+    def __init__(self, seed, max_data_points=1000, max_log_lines=100):
         self.seed = seed
         self.term = blessed.Terminal()
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")

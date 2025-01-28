@@ -679,6 +679,7 @@ class MultiDirectoryDataset(PraxisSampler):
         self.directories = [
             os.path.normpath(os.path.join(self.cwd, d)) for d in directories
         ]
+        self.directories.remove("/")
         self.allowed_extensions = [ext.lower() for ext in allowed_extensions]
 
         # Default exclusions for common development directories
