@@ -150,7 +150,8 @@ seed_everything(seed, workers=True)
 vocab_size = 8192
 block_size = 64
 block_size = block_size * 4 if byte_latent else block_size
-max_terminal_output_length = block_size * 4
+
+terminal_output_length = block_size * 16
 use_dashboard = False if no_dashboard else True
 
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -429,7 +430,7 @@ class TerminalInterface(Callback):
         lm.model.get_addr()
         # we limit to 50% of the context length seen during training, to keep memory
         # usage consistent; very long sequences have a negative impact on training speed.
-        self.max_length = max_terminal_output_length
+        self.max_length = terminal_output_length
         if self.dashboard:
             self.dashboard = TerminalDashboard(seed)
             try:
