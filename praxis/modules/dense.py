@@ -39,7 +39,7 @@ class PraxisMLP(nn.Sequential):
 
 class PraxisGLU(nn.Module):
     """
-    A standard MLP, augmented with a Gated Linear Units.
+    A standard MLP, augmented with Gated Linear Units.
     """
 
     __version__ = "0.1.0"

@@ -42,27 +42,13 @@ class PraxisStack(nn.Module):
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remotes = self.manager.active_remote_experts
-        if config.block_type == "recurrent":
-            blocks = [
-                EXPERT_REGISTRY["recurrent"](config) for _ in range(self.num_experts)
-            ]
-            for i in range(self.num_experts):
-                mixture = BLOCK_REGISTRY["recurrent"](config, blocks)
-                expert = PraxisExpert(config, block=mixture)
-                self.locals.append(expert)
-        else:
-            for i in range(self.num_experts):
-                if self.manager:
-                    block = self.manager.register_expert(config)
-                else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
-                expert = PraxisExpert(config, block=block)
-                self.locals.append(expert)
-        self.norm = (
-            nn.LayerNorm(config.hidden_size, bias=True)
-            if config.block_type == "mru"
-            else False
-        )
+        for i in range(self.num_experts):
+            if self.manager:
+                block = self.manager.register_expert(config)
+            else:
+                block = BLOCK_REGISTRY[config.block_type](config)
+            expert = PraxisExpert(config, block=block)
+            self.locals.append(expert)
         if self.manager:
             self.manager.serve_experts()
 
