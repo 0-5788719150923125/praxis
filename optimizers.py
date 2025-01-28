@@ -56,6 +56,13 @@ OPTIMIZER_PROFILES = {
         alpha=5.0,
         cautious=True,
     ),
+    "FOCUS": dict(
+        optimizer_name="FOCUS",
+        lr=0.001,
+        weight_decay=0.1,
+        gamma=0.2,
+        betas=(0.9, 0.95),
+    ),
     "Grams": dict(
         optimizer_name="Grams",
         lr=0.001,

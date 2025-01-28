@@ -19,7 +19,7 @@ host_requirements = [
     "flask",
     "lightning",
     "lm_eval",
-    "pytorch_optimizer",
+    "pytorch_optimizer @ git+https://github.com/kozistr/pytorch_optimizer",
     "werkzeug",
 ]
 
