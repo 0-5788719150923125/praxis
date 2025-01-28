@@ -146,13 +146,6 @@ sys.excepthook = exception_to_file
 # Set seeds for reproducibility
 seed_everything(seed, workers=True)
 
-# An important warning
-if gun and seed and not dev:
-    print(
-        "WARNING: GUN chats are never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
-    )
-    time.sleep(5)
-
 # Global configuration
 vocab_size = 8192
 block_size = 2048 if byte_latent else 512

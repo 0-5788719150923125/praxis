@@ -1,5 +1,6 @@
 import os
 import random
+import time
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
@@ -357,6 +358,14 @@ def get_datamodules(
     data_path,
     *args,
 ):
+
+    # An important warning
+    if gun and seed and not dev:
+        print(
+            "WARNING: GUN chats are never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
+        )
+        time.sleep(5)
+
     train_data = []
     config = get_dataset_configs(dev, phi)
     for c in config["primary"]:
