@@ -42,13 +42,24 @@ class PraxisStack(nn.Module):
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remotes = self.manager.active_remote_experts
-        for i in range(self.num_experts):
-            if self.manager:
-                block = self.manager.register_expert(config)
-            else:
-                block = BLOCK_REGISTRY[config.block_type](config)
+        if "tied" in config.meta:
+            block = BLOCK_REGISTRY[config.block_type](config)
             expert = PraxisExpert(config, block=block)
-            self.locals.append(expert)
+            for i in range(self.num_experts):
+                self.locals.append(expert)
+        else:
+            for i in range(self.num_experts):
+                if self.manager:
+                    block = self.manager.register_expert(config)
+                else:
+                    block = BLOCK_REGISTRY[config.block_type](config)
+                expert = PraxisExpert(config, block=block)
+                self.locals.append(expert)
+        self.norm = (
+            nn.LayerNorm(config.hidden_size, bias=True)
+            if config.block_type == "mru"
+            else False
+        )
         if self.manager:
             self.manager.serve_experts()
 
