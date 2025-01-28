@@ -990,7 +990,7 @@ def find_latest_checkpoint(cache_dir):
 ckpt_path = None
 symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
 true_link = find_latest_checkpoint(cache_dir)
-if reset and not dev:
+if not reset and not dev:
     if os.path.exists(symlink):
         print(f"resuming from: {symlink}")
         ckpt_path = symlink
