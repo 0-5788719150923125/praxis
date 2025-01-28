@@ -27,7 +27,8 @@ class PraxisScatter(nn.Module):
         self.activation = activation or config.activation
         self.input_dim = input_dim or config.hidden_size
         self.hidden_dim = hidden_dim or self.input_dim * 4
-        self.top_k = top_k or self.input_dim // 4
+        # Change top_k calculation to use hidden_dim
+        self.top_k = top_k or self.hidden_dim // 4  # Now relative to hidden_dim
 
         # Create multiple input and output projections
         self.up = nn.ModuleList(
@@ -53,54 +54,6 @@ class PraxisScatter(nn.Module):
                 for _ in range(self.depth - 1)  # One less than depth
             ]
         )
-
-    def get_modified_weights(
-        self, x: torch.Tensor, prev_depth: int, curr_depth: int
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Helper function to create modified weights and biases for current layer."""
-        # Ensure input is 3D [batch, seq, features]
-        if len(x.shape) == 2:
-            x = x.unsqueeze(1)
-        batch_size = x.shape[0]
-
-        # Get appropriate gate network for this depth
-        gate_idx = curr_depth - 1
-
-        # Process with gate network - maintaining 3D structure
-        scores = self.gates[gate_idx](x)  # [batch, seq, hidden_dim]
-
-        # Get importance scores by summing across sequence dimension
-        # This preserves information from all positions
-        scores = scores.sum(dim=1)  # [batch, hidden_dim]
-
-        # Get top-k indices for each batch
-        _, top_indices = torch.topk(scores, k=self.top_k, dim=-1)  # [batch, top_k]
-
-        # Get layers
-        prev_layer = self.up[prev_depth]
-        curr_layer = self.up[curr_depth]
-
-        # Create per-batch weights
-        mod_weights = curr_layer.weight.repeat(
-            batch_size, 1, 1
-        )  # [batch, hidden_dim, input_dim]
-
-        # Create batch indices
-        batch_indices = torch.arange(batch_size, device=x.device)[:, None].expand(
-            -1, self.top_k
-        )
-
-        # Update weights using selected indices
-        mod_weights[batch_indices, top_indices] = prev_layer.weight[top_indices]
-
-        # Handle biases similarly
-        mod_bias = None
-        if hasattr(curr_layer, "bias") and curr_layer.bias is not None:
-            if hasattr(prev_layer, "bias") and prev_layer.bias is not None:
-                mod_bias = curr_layer.bias.repeat(batch_size, 1)  # [batch, hidden_dim]
-                mod_bias[batch_indices, top_indices] = prev_layer.bias[top_indices]
-
-        return mod_weights, mod_bias
 
     def forward(
         self, inputs: torch.Tensor, current_depth: int, *args, **kwargs
@@ -131,6 +84,61 @@ class PraxisScatter(nn.Module):
         h = self.dropout(h)
         return self.down[current_depth](h)
 
+    def get_modified_weights(
+        self, x: torch.Tensor, prev_depth: int, curr_depth: int
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Helper function to create modified weights and biases for current layer."""
+        # Handle input dimensions
+        if len(x.shape) == 2:
+            x = x.unsqueeze(1)  # [batch, 1, input_dim]
+        batch_size, seq_len, _ = x.shape
+
+        # Reshape for gate network
+        x_reshaped = x.reshape(-1, self.input_dim)  # [batch*seq, input_dim]
+
+        # Process through gate network
+        gate_idx = curr_depth - 1
+        scores = self.gates[gate_idx](x_reshaped)  # [batch*seq, hidden_dim]
+
+        # Reshape back to include sequence dimension
+        scores = scores.view(
+            batch_size, seq_len, self.hidden_dim
+        )  # [batch, seq, hidden_dim]
+
+        # Sum across sequence dimension
+        scores = scores.sum(dim=1)  # [batch, hidden_dim]
+
+        # Get top-k indices for each batch
+        _, top_indices = torch.topk(
+            scores, k=min(self.top_k, self.hidden_dim), dim=-1
+        )  # [batch, top_k]
+
+        # Get layers
+        prev_layer = self.up[prev_depth]
+        curr_layer = self.up[curr_depth]
+
+        # Create per-batch weights
+        mod_weights = curr_layer.weight.repeat(
+            batch_size, 1, 1
+        )  # [batch, hidden_dim, input_dim]
+
+        # Create batch indices
+        batch_indices = torch.arange(batch_size, device=x.device)[:, None].expand(
+            -1, self.top_k
+        )
+
+        # Update weights using selected indices
+        mod_weights[batch_indices, top_indices] = prev_layer.weight[top_indices]
+
+        # Handle biases similarly
+        mod_bias = None
+        if hasattr(curr_layer, "bias") and curr_layer.bias is not None:
+            if hasattr(prev_layer, "bias") and prev_layer.bias is not None:
+                mod_bias = curr_layer.bias.repeat(batch_size, 1)  # [batch, hidden_dim]
+                mod_bias[batch_indices, top_indices] = prev_layer.bias[top_indices]
+
+        return mod_weights, mod_bias
+
 
 if __name__ == "__main__":
     # Test the implementation
@@ -142,7 +150,7 @@ if __name__ == "__main__":
     config = DummyConfig()
 
     # Create model
-    model = PraxisScatter(config=config, depth=3, top_k=128)
+    model = PraxisScatter(config=config, depth=3)
 
     # Test forward pass at different depths
     batch_size = 4

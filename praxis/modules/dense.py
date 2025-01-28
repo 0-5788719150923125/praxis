@@ -226,20 +226,30 @@ class PraxisScatter(nn.Module):
         self, x: torch.Tensor, prev_depth: int, curr_depth: int
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Helper function to create modified weights and biases for current layer."""
-        batch_size = x.shape[0]
+        # Handle input dimensions
+        if len(x.shape) == 2:
+            x = x.unsqueeze(1)  # [batch, 1, input_dim]
+        batch_size, seq_len, _ = x.shape
 
-        # Get appropriate gate network for this depth
+        # Reshape for gate network
+        x_reshaped = x.reshape(-1, self.input_dim)  # [batch*seq, input_dim]
+
+        # Process through gate network
         gate_idx = curr_depth - 1
+        scores = self.gates[gate_idx](x_reshaped)  # [batch*seq, hidden_dim]
 
-        # Process with gate network - maintaining 3D structure
-        scores = self.gates[gate_idx](x)  # [batch, seq, hidden_dim]
+        # Reshape back to include sequence dimension
+        scores = scores.view(
+            batch_size, seq_len, self.hidden_dim
+        )  # [batch, seq, hidden_dim]
 
-        # Get importance scores by summing across sequence dimension
-        # This preserves information from all positions
+        # Sum across sequence dimension
         scores = scores.sum(dim=1)  # [batch, hidden_dim]
 
         # Get top-k indices for each batch
-        _, top_indices = torch.topk(scores, k=self.top_k, dim=-1)  # [batch, top_k]
+        _, top_indices = torch.topk(
+            scores, k=min(self.top_k, self.hidden_dim), dim=-1
+        )  # [batch, top_k]
 
         # Get layers
         prev_layer = self.up[prev_depth]
