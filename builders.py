@@ -4,7 +4,6 @@ import time
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
 import torch
 from datasets import load_dataset
 from lightning.pytorch.core.datamodule import LightningDataModule
