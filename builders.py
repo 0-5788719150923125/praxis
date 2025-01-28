@@ -427,6 +427,7 @@ def get_datamodules(
         hparams["block_size"],
         hparams["oversample_chance"],
         hparams["supersample_chance"],
+        hparams["hypersample_chance"],
     )
 
     return train_dataloader
@@ -517,22 +518,25 @@ class InterleaveDataManager:
         )  # Single continuous stream
 
     def get_batch(
-        self, batch_size: int, oversample: bool = False, supersample: bool = False
+        self,
+        batch_size: int,
+        oversample: bool = False,
+        supersample: bool = False,
+        hypersample: bool = False,
     ) -> List[torch.Tensor]:
         sequence_length = self.block_size
         current_batch_size = batch_size
 
         # Check if batch size supports the requested sampling mode
-        if supersample and batch_size >= 16:
+        if hypersample and batch_size >= 64:
+            current_batch_size = batch_size // 64
+            sequence_length = self.block_size * 8
+        elif supersample and batch_size >= 16:
             current_batch_size = batch_size // 16
             sequence_length = self.block_size * 4
         elif oversample and batch_size >= 4:
             current_batch_size = batch_size // 4
             sequence_length = self.block_size * 2
-        else:
-            # If batch size isn't sufficient, fall back to normal sampling
-            oversample = False
-            supersample = False
 
         # Calculate how many total tokens we need
         tokens_needed = current_batch_size * sequence_length
@@ -851,6 +855,7 @@ class WeightedIterableDataset(IterableDataset):
         batch_size: int,
         oversample_chance: float = 0,
         supersample_chance: float = 0,
+        hypersample_chance: float = 0,
     ):
         self.data_manager = InterleaveDataManager(
             datasets, weights, tokenizer, block_size
@@ -858,14 +863,16 @@ class WeightedIterableDataset(IterableDataset):
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
         self.supersample_chance = supersample_chance
+        self.hypersample_chance = hypersample_chance
 
     def __iter__(self):
         while True:
             oversample = random.random() < self.oversample_chance
             supersample = random.random() < self.supersample_chance
+            hypersample = random.random() < self.hypersample_chance
 
             batch = self.data_manager.get_batch(
-                self.batch_size, oversample, supersample
+                self.batch_size, oversample, supersample, hypersample
             )
             yield torch.stack(batch)
 
@@ -880,6 +887,7 @@ class PraxisDataModule(LightningDataModule):
         block_size: int = 512,
         oversample_chance: float = 0,
         supersample_chance: float = 0,
+        hypersample_chance: float = 0,
     ):
         super().__init__()
         self.train_datasets = self.create_datasets(
@@ -889,6 +897,7 @@ class PraxisDataModule(LightningDataModule):
             batch_size,
             oversample_chance,
             supersample_chance,
+            hypersample_chance,
         )
         self.val_datasets = False
         if len(val_datasets) > 0:
@@ -904,6 +913,7 @@ class PraxisDataModule(LightningDataModule):
         batch_size,
         oversample_chance=0,
         supersample_chance=0,
+        hypersample_chance=0,
     ):
         # Get weights and normalize them while preserving relative magnitudes
         raw_weights = [dataset.weight for dataset in datasets]
@@ -916,6 +926,7 @@ class PraxisDataModule(LightningDataModule):
             batch_size,
             oversample_chance,
             supersample_chance,
+            hypersample_chance,
         )
 
     def train_dataloader(self):
