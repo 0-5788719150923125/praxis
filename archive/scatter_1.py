@@ -30,7 +30,7 @@ class PraxisScatter(nn.Module):
         self.down = nn.Linear(self.hidden_dim, self.input_dim)
 
         # Additional weights to pull from
-        self.tertiary_weights = nn.Linear(self.input_dim, self.hidden_dim)
+        self.mod = nn.Linear(self.input_dim, self.hidden_dim)
 
         # Gate network
         self.gate = nn.Sequential(
@@ -92,17 +92,13 @@ class PraxisScatter(nn.Module):
         )
 
         # Update weights using selected indices
-        mod_weights[batch_indices, hidden_indices] = self.tertiary_weights.weight[
-            hidden_indices
-        ]
+        mod_weights[batch_indices, hidden_indices] = self.mod.weight[hidden_indices]
 
         # Handle biases
         mod_bias = None
-        if self.up.bias is not None and self.tertiary_weights.bias is not None:
+        if self.up.bias is not None and self.mod.bias is not None:
             mod_bias = self.up.bias.repeat(batch_size, 1)
-            mod_bias[batch_indices, hidden_indices] = self.tertiary_weights.bias[
-                hidden_indices
-            ]
+            mod_bias[batch_indices, hidden_indices] = self.mod.bias[hidden_indices]
 
         return mod_weights, mod_bias
 
