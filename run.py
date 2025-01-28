@@ -251,7 +251,7 @@ train_params = dict(
     detect_anomaly=True if dev else False,
     val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
     num_sanity_val_steps=0,
-    limit_val_batches=1024,
+    limit_val_batches=1024 // hparams["batch_size"],
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
