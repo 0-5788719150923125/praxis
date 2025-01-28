@@ -55,6 +55,9 @@ class HyperConnection(ResidualConnection):
             self.beta_scale = nn.Parameter(torch.tensor([0.01]))
             self.norm = nn.RMSNorm(dim, eps=1e-5)
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}()"
+
     def connect_width(self, h: torch.Tensor):
         B, L, D = h.shape
         alpha, beta = self._compute_alpha_beta(h)  # alpha => (B,L,rate, rate+1)

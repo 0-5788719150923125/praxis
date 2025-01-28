@@ -27,14 +27,14 @@ HUGGINGFACE_DATASETS = {
     "minipile-train": dict(
         path="JeanKaddour/minipile",
         split="train",
-        keys="text",
+        keys=["text"],
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
     "minipile-validation": dict(
         path="JeanKaddour/minipile",
         split="validation",
-        keys="text",
+        keys=["text"],
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
@@ -384,42 +384,40 @@ def get_datamodules(
     train_data = []
     config = get_dataset_configs(dev, pile, phi)
     for c in config["primary"]:
-        train_data.append(
-            get_dataset("huggingface", tokenizer, hparams["block_size"], seed, c, *args)
-        )
+        # load configs for huggingface datasets
+        train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
 
-    if data_path:
-        train_data.append(
-            get_dataset(
-                "directory",
-                tokenizer,
-                hparams["block_size"],
-                seed,
-                data_path=data_path,
-                *args,
+    if not pile:
+        if source:
+            # load configs for training on praxis source code
+            train_data.append(
+                get_dataset(
+                    "self",
+                    tokenizer,
+                    seed,
+                    *args,
+                )
             )
-        )
-    if source and not pile:
-        train_data.append(
-            get_dataset(
-                "self",
-                tokenizer,
-                hparams["block_size"],
-                seed,
-                *args,
+        # load configs for local file datasets
+        if data_path:
+            train_data.append(
+                get_dataset(
+                    "directory",
+                    tokenizer,
+                    seed,
+                    data_path=data_path,
+                    *args,
+                )
             )
-        )
-
-    if gun:
-        train_data.append(get_dataset("gun", tokenizer, hparams["block_size"], seed))
+        if gun:
+            # load configs for training on live chat data from https://src.eco
+            train_data.append(get_dataset("gun", tokenizer, seed))
 
     validation_data = []
     if len(config["validation"]) > 0:
         for c in config["validation"]:
             validation_data.append(
-                get_dataset(
-                    "huggingface", tokenizer, hparams["block_size"], seed, c, *args
-                )
+                get_dataset("huggingface", tokenizer, seed, c, *args)
             )
 
     train_dataloader = PraxisDataModule(
@@ -435,22 +433,19 @@ def get_datamodules(
     return train_dataloader
 
 
-def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
+def get_dataset(format, tokenizer, seed, *args, **kwargs):
     if format == "huggingface":
-        dataset = HuggingfaceDataset(tokenizer, block_size, seed, *args)
+        dataset = HuggingfaceDataset(tokenizer, seed, *args)
         # First arg is config dict for huggingface
         dataset.weight = args[0].get("weight", 1.0)
         return dataset
     elif format == "directory":
-        dataset = MultiDirectoryDataset(
-            tokenizer, block_size, directories=kwargs.get("data_path")
-        )
+        dataset = MultiDirectoryDataset(tokenizer, directories=kwargs.get("data_path"))
         dataset.weight = 0.1
         return dataset
     elif format == "self":
         dataset = MultiDirectoryDataset(
             tokenizer,
-            block_size,
             directories="./",
             allowed_extensions=[
                 ".py",
@@ -470,7 +465,7 @@ def get_dataset(format, tokenizer, block_size, seed, *args, **kwargs):
         dataset.weight = 0.001
         return dataset
     elif format == "gun":
-        dataset = GunChatDataset(tokenizer, block_size)
+        dataset = GunChatDataset(tokenizer)
         dataset.weight = 0.001
         return dataset
 
@@ -520,18 +515,6 @@ class InterleaveDataManager:
             [], dtype=torch.long
         )  # Single continuous stream
 
-    def extend_token_stream(self):
-        """Add more tokens to our stream when needed"""
-        interleaved = self.create_interleaved_sequence()
-        tokens = self.tokenizer(
-            text=interleaved,
-            padding=False,  # No padding needed since we're building a stream
-            return_tensors="pt",
-        )["input_ids"].squeeze(
-            0
-        )  # Get flat token sequence
-        self.token_stream = torch.cat([self.token_stream, tokens])
-
     def get_batch(
         self, batch_size: int, oversample: bool = False, supersample: bool = False
     ) -> List[torch.Tensor]:
@@ -555,7 +538,7 @@ class InterleaveDataManager:
 
         # Make sure we have enough tokens
         while len(self.token_stream) < tokens_needed:
-            self.extend_token_stream()
+            self._extend_token_stream()
 
         # Extract batch
         batch = []
@@ -569,7 +552,7 @@ class InterleaveDataManager:
 
         return batch
 
-    def create_interleaved_sequence(self) -> str:
+    def _create_interleaved_sequence(self) -> str:
         """Create a single interleaved sequence from multiple samplers"""
         sequence = ""
         while len(sequence) < self.text_cache_size:
@@ -580,36 +563,23 @@ class InterleaveDataManager:
             sequence += new_sequences[0]
         return sequence
 
-    def fill_token_cache(self):
-        """Fill token cache with interleaved sequences"""
-        interleaved = self.create_interleaved_sequence()
-
+    def _extend_token_stream(self):
+        """Add more tokens to our stream when needed"""
+        interleaved = self._create_interleaved_sequence()
         tokens = self.tokenizer(
             text=interleaved,
-            max_length=self.block_size,
-            stride=0,
-            padding=True,
-            truncation=True,
-            return_overflowing_tokens=True,
+            padding=False,  # No padding needed since we're building a stream
             return_tensors="pt",
-        )["input_ids"]
-
-        self.token_cache.extend(
-            [batch for batch in tokens if len(batch) == self.block_size]
-        )
+        )["input_ids"].squeeze(
+            0
+        )  # Get flat token sequence
+        self.token_stream = torch.cat([self.token_stream, tokens])
 
 
 class PraxisSampler:
-    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
+    def __init__(self, tokenizer: PreTrainedTokenizer):
         self.tokenizer = tokenizer
-        self.block_size = block_size
         self.sequence_cache = []  # Store raw text sequences
-        self.token_cache = []  # Store tokenized batches
-        self.weight = 1.0
-
-    @property
-    def can_sample(self):
-        return True
 
     def fill_sequence_cache(self):
         """Each dataset implementation should override this"""
@@ -621,26 +591,10 @@ class PraxisSampler:
             self.fill_sequence_cache()
         return [self.sequence_cache.pop(0) for _ in range(count)]
 
-    def get_batch(
-        self, oversample: bool = False, supersample: bool = False
-    ) -> torch.Tensor:
-        if supersample and oversample:
-            raise ValueError("Cannot both oversample and supersample simultaneously.")
-
-        seq_factor = 4 if supersample else (2 if oversample else 1)
-
-        while len(self.token_cache) < seq_factor:
-            self.fill_token_cache()
-
-        batch = torch.cat([self.token_cache.pop(0) for _ in range(seq_factor)], dim=0)
-        return batch
-
 
 class HuggingfaceDataset(PraxisSampler):
-    def __init__(
-        self, tokenizer: PreTrainedTokenizer, block_size: int, seed: int, config: Dict
-    ):
-        super().__init__(tokenizer, block_size)
+    def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
+        super().__init__(tokenizer)
         self.keys = config.get("keys", ["text"])
         self.format = config.get("format", DataFormat.SIMPLE)
         if isinstance(self.format, str):
@@ -696,12 +650,11 @@ class MultiDirectoryDataset(PraxisSampler):
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
-        block_size: int,
         directories: List[str],
         allowed_extensions: Optional[List[str]] = [],
         excluded_dirs: Optional[List[str]] = None,
     ):
-        super().__init__(tokenizer, block_size)
+        super().__init__(tokenizer)
         # Normalize and resolve all directory paths relative to current working directory
         self.cwd = os.getcwd()
         self.directories = [
@@ -832,8 +785,8 @@ class MultiDirectoryDataset(PraxisSampler):
 
 
 class GunChatDataset(PraxisSampler):
-    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
-        super().__init__(tokenizer, block_size)
+    def __init__(self, tokenizer: PreTrainedTokenizer):
+        super().__init__(tokenizer)
         from adapters import GunAdapter as Gun
 
         self.gun = Gun()
