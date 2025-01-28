@@ -547,13 +547,13 @@ class PraxisSampler:
 
 class InterleaveDataManager:
     def __init__(
-        self, samplers, weights, tokenizer, block_size, base_cache_size=50_000
+        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000
     ):
         self.samplers = samplers
         self.weights = weights
         self.tokenizer = tokenizer
         self.block_size = block_size
-        self.text_cache_size = base_cache_size * len(samplers)
+        self.text_cache_size = text_cache_size
         self.token_stream = torch.tensor(
             [], dtype=torch.long
         )  # Single continuous stream
