@@ -448,18 +448,20 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
             tokenizer,
             directories="./",
             allowed_extensions=[
-                ".py",
-                ".js",
-                ".mjs",
-                ".gd",
-                ".tscn",
                 ".cfg",
+                ".css",
+                ".gd",
                 ".godot",
                 ".html",
-                ".css",
-                ".txt",
+                ".ini",
+                ".js",
                 ".md",
+                ".mjs",
+                ".py",
                 ".sh",
+                ".ts",
+                ".tscn",
+                ".txt",
             ],
         )
         dataset.weight = 0.001
@@ -595,6 +597,7 @@ class PraxisSampler:
 class HuggingfaceDataset(PraxisSampler):
     def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
         super().__init__(tokenizer)
+        self.weight = 1.0
         self.keys = config.get("keys", ["text"])
         self.format = config.get("format", DataFormat.SIMPLE)
         if isinstance(self.format, str):
