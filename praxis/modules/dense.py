@@ -231,17 +231,9 @@ class PraxisScatter(nn.Module):
             x = x.unsqueeze(1)  # [batch, 1, input_dim]
         batch_size, seq_len, _ = x.shape
 
-        # Reshape for gate network
-        x_reshaped = x.reshape(-1, self.input_dim)  # [batch*seq, input_dim]
-
         # Process through gate network
         gate_idx = curr_depth - 1
-        scores = self.gates[gate_idx](x_reshaped)  # [batch*seq, hidden_dim]
-
-        # Reshape back to include sequence dimension
-        scores = scores.view(
-            batch_size, seq_len, self.hidden_dim
-        )  # [batch, seq, hidden_dim]
+        scores = self.gates[gate_idx](x)  # [batch*seq, hidden_dim]
 
         # Sum across sequence dimension
         scores = scores.sum(dim=1)  # [batch, hidden_dim]
