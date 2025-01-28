@@ -47,15 +47,16 @@ class PraxisNano(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        current_state: Tensor,
-        attention_mask: Tensor,
-        router_weights: Optional[Tensor] = None,
+        inputs: torch.Tensor,
+        attention_mask: torch.Tensor,
+        current_state: torch.Tensor,
+        router_weights: Optional[torch.Tensor] = None,
+        current_depth: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
-    ):
+    ) -> torch.Tensor:
         # x shape: (B, T, E)
-        chunk_norm = self.fft_norm(x)
+        chunk_norm = self.fft_norm(inputs)
         # Transpose (B, T, E) -> (B, E, T)
         chunk_fft = chunk_norm.transpose(1, 2)
         # Pass through FFT layers
@@ -63,7 +64,7 @@ class PraxisNano(nn.Module):
         # Transpose back to (B, T, E)
         chunk_fft = chunk_fft.transpose(1, 2)
         # Residual connection
-        residual = chunk_fft + x
+        residual = chunk_fft + inputs
         # LayerNorm
         chunk_ffw = self.ffw_norm(residual)
         # Feedforward

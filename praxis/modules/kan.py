@@ -44,11 +44,11 @@ class PraxisKAN(nn.Module):
             self.base_activation = base_activation
             self.base_linear = nn.Linear(input_dim, output_dim)
 
-    def forward(self, x):
-        spline_basis = self.rbf(x)
+    def forward(self, inputs, *args, **kwargs):
+        spline_basis = self.rbf(inputs)
         ret = self.spline_linear(spline_basis.view(*spline_basis.shape[:-2], -1))
         if self.use_base_update:
-            base = self.base_linear(self.base_activation(x))
+            base = self.base_linear(self.base_activation(inputs))
             ret = ret + base
         return ret
 

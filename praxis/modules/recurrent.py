@@ -110,8 +110,6 @@ class PraxisRecurrent(nn.Module):
     def forward(
         self,
         x: Tensor,
-        attention_mask: Tensor = None,
-        router_weights: Optional[Tensor] = None,
         *args,
         **kwargs,
     ) -> Tensor:

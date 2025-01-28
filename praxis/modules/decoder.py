@@ -41,7 +41,7 @@ class PraxisDecoder(nn.Module):
                     expert = experts[next_expert_idx]
 
                 new_states, aux_loss = self._create_forward(
-                    expert, hidden_states, current_state, attention_mask, i
+                    expert, hidden_states, attention_mask, current_state, i
                 )
                 aux_losses.append(aux_loss)
 
@@ -77,11 +77,11 @@ class PraxisDecoder(nn.Module):
         self,
         expert: nn.Module,
         hidden_states: Tensor,
-        current_state: Tensor,
         attention_mask: Tensor,
+        current_state: Tensor,
         current_depth: int,
     ):
-        def custom_forward(hidden_states, current_state, attention_mask, current_depth):
+        def custom_forward(hidden_states, attention_mask, current_state, current_depth):
             if self.stack.behavior:
                 # Add positional context to both hidden states and attention mask
                 hidden_states, attention_mask = self.stack.behavior.add_context(
@@ -90,8 +90,8 @@ class PraxisDecoder(nn.Module):
                 # Forward pass
                 states, state_update, aux_loss = expert(
                     hidden_states,
-                    current_state[current_depth],
                     attention_mask,
+                    current_state[current_depth],
                     current_depth,
                 )
                 # Remove context from both hidden states and attention mask
@@ -101,8 +101,8 @@ class PraxisDecoder(nn.Module):
             else:
                 states, state_update, aux_loss = expert(
                     hidden_states,
-                    current_state[current_depth],
                     attention_mask,
+                    current_state[current_depth],
                     current_depth,
                 )
 
@@ -115,14 +115,14 @@ class PraxisDecoder(nn.Module):
             return torch.utils.checkpoint.checkpoint(
                 custom_forward,
                 hidden_states,
-                current_state,
                 attention_mask,
+                current_state,
                 current_depth,
                 use_reentrant=False,
             )
         else:
             return custom_forward(
-                hidden_states, current_state, attention_mask, current_depth
+                hidden_states, attention_mask, current_state, current_depth
             )
 
     def _define_checkpoints(self, strategy="speed", num_layers=0):

@@ -23,9 +23,18 @@ class PraxisGRU(nn.Module):
         self.recurrent = minGRU(config.hidden_size, expansion_factor=1.0, proj_out=None)
         self.ffn = PraxisMLP(config)
 
-    def forward(self, x: Tensor, *args, **kwargs):
-        out, _ = self.recurrent(self.norm(x))
-        return self.ffn(stretch(out, target_min=-1.0)) + x, None, 0
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        attention_mask: torch.Tensor,
+        current_state: torch.Tensor,
+        router_weights: Optional[torch.Tensor] = None,
+        current_depth: Optional[torch.Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
+        out, _ = self.recurrent(self.norm(inputs))
+        return self.ffn(stretch(out, target_min=-1.0)) + inputs, None, 0
 
 
 def stretch(

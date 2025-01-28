@@ -50,6 +50,8 @@ def get_expert_config(expert: str or dict):
 class PraxisExpert(nn.Module):
     """
     This class is a wrapper around the orchestration of both local and remote experts.
+    TODO: There is some unreliable routing in this class. We need to fix the local/remote parity, while
+    also addressing the depth and state handling.
     """
 
     __version__ = "0.1.0"
@@ -72,17 +74,16 @@ class PraxisExpert(nn.Module):
     def forward(
         self,
         inputs: Tensor,
-        current_state: Tensor,
         attention_mask: Tensor,
+        current_state: Tensor,
         current_depth: int,
     ):
-        d = current_depth
         use_router = self.sparse and current_depth % 2 != 0
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask, use_router)
         else:
             return self._local_forward(
-                inputs, current_state, attention_mask, use_router
+                inputs, current_state, attention_mask, use_router, current_depth
             )
 
     def _local_forward(
@@ -91,16 +92,17 @@ class PraxisExpert(nn.Module):
         current_state: Tensor,
         attention_mask: Tensor,
         use_router: bool,
+        current_depth: int,
     ):
         aux_losses = []
         if use_router:
             hidden_states, state_update, aux_loss = self.router(
-                self.block, inputs, current_state, attention_mask
+                self.block, inputs, attention_mask, current_state
             )
             aux_losses.append(aux_loss)
         else:
             hidden_states, state_update, aux_loss = self.block(
-                inputs, current_state, attention_mask
+                inputs, attention_mask, current_state, current_depth
             )
         return hidden_states, state_update, sum(aux_losses)
 

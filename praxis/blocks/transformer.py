@@ -39,12 +39,15 @@ class PraxisTransformer(nn.Module):
     def forward(
         self,
         inputs: torch.Tensor,
-        current_state: torch.Tensor,
         attention_mask: torch.Tensor,
+        current_state: torch.Tensor,
+        current_depth: int,
         router_weights: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
-    ):
+    ) -> torch.Tensor:
+        if current_depth is not None:
+            print(current_depth)
         aux_loss = 0
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)
@@ -57,7 +60,7 @@ class PraxisTransformer(nn.Module):
             self.ffn_res.format_state(attn_merged)
         )
         ffn_input = self.ffn_norm(self.ffn_res.format_state(residual))
-        ffn_output = self.ffn(ffn_input)
+        ffn_output = self.ffn(ffn_input, current_depth)
 
         if torch.is_tensor(router_weights):
             # this is a super hack because hivemind

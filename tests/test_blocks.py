@@ -60,7 +60,7 @@ def test_forward_pass(module_setup):
 
     # Run forward pass
     output, prev_state, aux_loss = module(
-        x, current_state=None, attention_mask=None, router_weights=None
+        x, attention_mask=None, router_weights=None, current_state=None, current_depth=1
     )
 
     # Verify output shape

@@ -88,16 +88,18 @@ class PraxisMRU(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        current_state: Tensor = None,
-        attention_mask: Optional[Tensor] = None,
+        inputs: torch.Tensor,
+        attention_mask: torch.Tensor,
+        current_state: torch.Tensor,
+        router_weights: Optional[torch.Tensor] = None,
+        current_depth: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
-    ) -> Tensor:
+    ) -> torch.Tensor:
 
-        mru_out, new_state = self._parallel_mru(self.mru_norm(x), current_state)
+        mru_out, new_state = self._parallel_mru(self.mru_norm(inputs), current_state)
 
-        x = x + mru_out
+        x = inputs + mru_out
         x = x + self.ffn(self.ffn_norm(x))
 
         return x, new_state, 0

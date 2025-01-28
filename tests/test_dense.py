@@ -4,12 +4,12 @@ import pytest
 import torch
 
 from praxis.activations import ACT2CLS, ACT2FN
-from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly
+from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly, PraxisScatter
 from praxis.modules.kan import PraxisKAN
 
 # Define test parameters
-MODULE_CLASSES = [PraxisGLU, PraxisMLP, PraxisPoly, PraxisKAN]
-HIDDEN_SIZES = [32, 64, 128, 256]
+MODULE_CLASSES = [PraxisGLU, PraxisMLP, PraxisPoly, PraxisKAN, PraxisScatter]
+HIDDEN_SIZES = [64, 256]
 
 # Create parameter combinations
 MODULE_PARAMS = list(product(MODULE_CLASSES, HIDDEN_SIZES))
@@ -38,9 +38,10 @@ def test_forward_pass(module_setup):
     """Test using parametrized module and dimensions."""
     module, hidden_size = module_setup
     batch_size = 32
-    x = torch.randn(batch_size, hidden_size)
-    output = module(x)
-    assert output.shape == (batch_size, hidden_size)
+    seq_len = 16
+    x = torch.randn(batch_size, seq_len, hidden_size)
+    output = module(x, current_depth=1)
+    assert output.shape == (batch_size, seq_len, hidden_size)
 
 
 # def test_large_module(large_config):

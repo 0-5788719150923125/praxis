@@ -26,8 +26,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         self,
         layer: nn.Module,
         inputs: Tensor,
-        current_state: Tensor,
         attention_mask: Tensor,
+        current_state: Tensor,
     ):
 
         b, s, d = inputs.shape

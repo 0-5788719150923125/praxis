@@ -39,16 +39,17 @@ class PraxisConv(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        current_state: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        router_weights: Optional[Tensor] = None,
+        inputs: torch.Tensor,
+        attention_mask: torch.Tensor,
+        current_state: torch.Tensor,
+        router_weights: Optional[torch.Tensor] = None,
+        current_depth: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         # Local processing
-        residual = x
-        x_norm = self.conv_norm(x)  # Shape: (B, T, E)
+        residual = inputs
+        x_norm = self.conv_norm(inputs)  # Shape: (B, T, E)
         x_transposed = x_norm.transpose(1, 2)  # Shape: (B, E, T)
         x_conv = self.conv(x_transposed)  # Shape: (B, projection, T)
 

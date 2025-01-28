@@ -1,3 +1,6 @@
+from typing import Optional
+
+import torch
 import torch.nn as nn
 
 from praxis.modules.recurrent import minGRU
@@ -24,6 +27,15 @@ class PraxisRecurrent(nn.Module):
             ),
         )
 
-    def forward(self, inputs, current_state, *args, **kwargs):
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        attention_mask: torch.Tensor,
+        current_state: torch.Tensor,
+        router_weights: Optional[torch.Tensor] = None,
+        current_depth: Optional[torch.Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
         outputs, new_state, aux_loss = self.experts(self.norm(inputs), current_state)
         return outputs + inputs, new_state, aux_loss
