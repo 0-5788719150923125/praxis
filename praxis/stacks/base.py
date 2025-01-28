@@ -42,7 +42,7 @@ class PraxisStack(nn.Module):
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remotes = self.manager.active_remote_experts
-        if "tied" in config.meta:
+        if "tied" in config.meta or config.expert in ["scatter"]:
             block = BLOCK_REGISTRY[config.block_type](config)
             expert = PraxisExpert(config, block=block)
             for i in range(self.num_experts):

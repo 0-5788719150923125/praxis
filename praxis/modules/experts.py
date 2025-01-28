@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly
+from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly, PraxisScatter
 from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
@@ -17,6 +17,7 @@ EXPERT_REGISTRY = {
     "peer": PraxisPEER,
     "poly": PraxisPoly,
     "recurrent": PraxisRecurrent,
+    "scatter": PraxisScatter,
 }
 
 EXPERT_CONFIGS = {
@@ -32,6 +33,7 @@ EXPERT_CONFIGS = {
     },
     "poly": {},
     "recurrent": {},
+    "scatter": {},
 }
 
 

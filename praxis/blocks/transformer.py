@@ -46,8 +46,7 @@ class PraxisTransformer(nn.Module):
         *args,
         **kwargs,
     ) -> torch.Tensor:
-        if current_depth is not None:
-            print(current_depth)
+
         aux_loss = 0
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)

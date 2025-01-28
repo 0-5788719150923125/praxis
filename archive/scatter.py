@@ -15,27 +15,27 @@ class PraxisScatter(nn.Module):
         activation=None,
         input_dim=None,
         hidden_dim=None,
-        depth: int = 2,
-        top_k: int = 256,
+        top_k: int = None,
+        depth: int = None,
         *args,
         **kwargs,
     ):
         super().__init__()
-        self.depth = depth
+        self.depth = depth or config.depth
 
         # Initialize dimensions
         self.activation = activation or config.activation
         self.input_dim = input_dim or config.hidden_size
         self.hidden_dim = hidden_dim or self.input_dim * 4
-        self.top_k = min(top_k, self.hidden_dim)
+        self.top_k = top_k or self.input_dim // 4
 
         # Create multiple input and output projections
-        self.input_projections = nn.ModuleList(
-            [nn.Linear(self.input_dim, self.hidden_dim) for _ in range(depth)]
+        self.up = nn.ModuleList(
+            [nn.Linear(self.input_dim, self.hidden_dim) for _ in range(self.depth)]
         )
 
-        self.output_projections = nn.ModuleList(
-            [nn.Linear(self.hidden_dim, self.input_dim) for _ in range(depth)]
+        self.down = nn.ModuleList(
+            [nn.Linear(self.hidden_dim, self.input_dim) for _ in range(self.depth)]
         )
 
         # Activation and dropout
@@ -43,14 +43,14 @@ class PraxisScatter(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
         # Create gate networks - one for each layer except the first
-        self.gate_networks = nn.ModuleList(
+        self.gates = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.Linear(self.input_dim, self.hidden_dim),
                     nn.ReLU(),
                     nn.Linear(self.hidden_dim, self.hidden_dim),
                 )
-                for _ in range(depth - 1)  # One less than depth
+                for _ in range(self.depth - 1)  # One less than depth
             ]
         )
 
@@ -58,55 +58,78 @@ class PraxisScatter(nn.Module):
         self, x: torch.Tensor, prev_depth: int, curr_depth: int
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Helper function to create modified weights and biases for current layer."""
-        # Use the appropriate gate network for this depth
-        gate_idx = curr_depth - 1  # Adjust index since we have one less gate
-        scores = self.gate_networks[gate_idx](x)  # [batch_size, hidden_dim]
+        # Ensure input is 3D [batch, seq, features]
+        if len(x.shape) == 2:
+            x = x.unsqueeze(1)
+        batch_size = x.shape[0]
 
-        # Get top-k indices from the hidden dimension
-        _, top_indices = torch.topk(scores, k=self.top_k, dim=1)  # [batch_size, top_k]
-        top_indices = top_indices[0]  # Use first batch's indices [top_k]
+        # Get appropriate gate network for this depth
+        gate_idx = curr_depth - 1
 
-        # Get weights
-        prev_layer = self.input_projections[prev_depth]
-        curr_layer = self.input_projections[curr_depth]
+        # Process with gate network - maintaining 3D structure
+        scores = self.gates[gate_idx](x)  # [batch, seq, hidden_dim]
 
-        # Modify weights
-        mod_weights = curr_layer.weight.clone()
-        mod_weights[top_indices] = prev_layer.weight[top_indices]
+        # Get importance scores by summing across sequence dimension
+        # This preserves information from all positions
+        scores = scores.sum(dim=1)  # [batch, hidden_dim]
 
-        # Handle biases if they exist
+        # Get top-k indices for each batch
+        _, top_indices = torch.topk(scores, k=self.top_k, dim=-1)  # [batch, top_k]
+
+        # Get layers
+        prev_layer = self.up[prev_depth]
+        curr_layer = self.up[curr_depth]
+
+        # Create per-batch weights
+        mod_weights = curr_layer.weight.repeat(
+            batch_size, 1, 1
+        )  # [batch, hidden_dim, input_dim]
+
+        # Create batch indices
+        batch_indices = torch.arange(batch_size, device=x.device)[:, None].expand(
+            -1, self.top_k
+        )
+
+        # Update weights using selected indices
+        mod_weights[batch_indices, top_indices] = prev_layer.weight[top_indices]
+
+        # Handle biases similarly
         mod_bias = None
         if hasattr(curr_layer, "bias") and curr_layer.bias is not None:
             if hasattr(prev_layer, "bias") and prev_layer.bias is not None:
-                mod_bias = curr_layer.bias.clone()
-                mod_bias[top_indices] = prev_layer.bias[top_indices]
+                mod_bias = curr_layer.bias.repeat(batch_size, 1)  # [batch, hidden_dim]
+                mod_bias[batch_indices, top_indices] = prev_layer.bias[top_indices]
 
         return mod_weights, mod_bias
 
-    def forward(self, x: torch.Tensor, current_depth: int) -> torch.Tensor:
-        """Forward pass with weight and bias sharing through hidden dimension selection."""
+    def forward(
+        self, inputs: torch.Tensor, current_depth: int, *args, **kwargs
+    ) -> torch.Tensor:
+        """Forward pass with per-batch weight modification."""
+        # Ensure input is 3D [batch, seq, features]
+        if len(inputs.shape) == 2:
+            inputs = inputs.unsqueeze(1)
+
         if not 0 <= current_depth < self.depth:
             raise ValueError(f"current_depth must be between 0 and {self.depth-1}")
 
-        # First layer uses original weights and biases
         if current_depth == 0:
-            h = self.input_projections[0](x)
+            h = self.up[0](inputs)
         else:
-            # Get modified weights and biases for current layer
             mod_weights, mod_bias = self.get_modified_weights(
-                x, current_depth - 1, current_depth
+                inputs, current_depth - 1, current_depth
             )
 
-            # Manual linear transformation with modified weights
-            h = torch.matmul(x, mod_weights.t())
+            # Maintain 3D structure throughout
+            # [batch, seq, in_dim] @ [batch, in_dim, hidden_dim] -> [batch, seq, hidden_dim]
+            h = torch.matmul(inputs, mod_weights.transpose(1, 2))
 
-            # Add bias if it exists
             if mod_bias is not None:
-                h = h + mod_bias
+                h = h + mod_bias.unsqueeze(1)  # Add bias to each sequence position
 
         h = self.act(h)
         h = self.dropout(h)
-        return self.output_projections[current_depth](h)
+        return self.down[current_depth](h)
 
 
 if __name__ == "__main__":
@@ -130,8 +153,8 @@ if __name__ == "__main__":
         print(f"\nDepth {depth}:")
 
         if depth > 0:
-            prev_layer = model.input_projections[depth - 1]
-            curr_layer = model.input_projections[depth]
+            prev_layer = model.up[depth - 1]
+            curr_layer = model.up[depth]
 
             # Store original weights and compute initial statistics
             orig_weights = curr_layer.weight.clone()
