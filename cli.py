@@ -63,6 +63,12 @@ parser.add_argument(
     help="The actual batch size to use, including accumulation steps",
 )
 parser.add_argument(
+    "--block_size",
+    type=int,
+    default=128,
+    help="The base sequence length to train with",
+)
+parser.add_argument(
     "--depth",
     type=int,
     default=7,

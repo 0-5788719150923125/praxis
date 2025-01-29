@@ -148,7 +148,6 @@ seed_everything(seed, workers=True)
 
 # Global configuration
 vocab_size = 8192
-block_size = 64
 block_size = block_size * 4 if byte_latent else block_size
 
 terminal_output_length = block_size * 16
