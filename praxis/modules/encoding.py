@@ -106,13 +106,17 @@ class RoPE(NoPE):
         self, head_dim, seq_len, device, dtype, offset: int = 0
     ):
         """Compute sin and cos embeddings with offset."""
-        if self._needs_recompute(seq_len, device, dtype):
+        if self._needs_recompute(seq_len, device, dtype, offset):
             # Lazy initialize frequency tensor
             if self.inv_freq is None:
                 theta = 10000.0
                 self.inv_freq = 1.0 / (
                     theta
-                    ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim)
+                    ** (
+                        2
+                        * torch.arange(0, head_dim // 2, device=device).float()
+                        / head_dim
+                    )
                 )
 
             # Create position indices with offset
@@ -167,11 +171,10 @@ class RoPE(NoPE):
 
         return torch.cat([out1, out2], dim=-1)
 
-    def _needs_recompute(self, seq_len, device, dtype):
-        """Helper to check if we need to recompute embeddings."""
-        return (
+    def _needs_recompute(self, seq_len, device, dtype, offset):
+        return (  # Add offset to cache checks
             self._cached_seq_length is None
-            or seq_len > self._cached_seq_length
+            or seq_len + offset > self._cached_seq_length
             or self._cached_cos.device != device
             or self._cached_cos.dtype != dtype
         )
