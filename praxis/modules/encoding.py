@@ -76,7 +76,7 @@ class RoPE(NoPE):
     Maintains backward compatibility and supports odd head dimensions.
     """
 
-    __version__ = "0.3.0"
+    __version__ = "0.2.0"
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
@@ -141,32 +141,28 @@ class RoPE(NoPE):
     def _apply_rotary_pos_emb(self, x, cos, sin):
         """Apply rotary position embeddings with proper handling of odd dimensions."""
         seq_len = x.size(2)
-        head_dim = x.size(-1)
 
-        # Split input into even and odd indices
-        x_even = x[..., ::2]  # (B, H, S, D1)
-        x_odd = x[..., 1::2]  # (B, H, S, D2)
-        D1 = x_even.size(-1)
-        D2 = x_odd.size(-1)
+        # Ensure proper broadcasting
+        cos = cos[:, :, :seq_len, :]
+        sin = sin[:, :, :seq_len, :]
 
-        # Ensure cos and sin are sliced to the number of pairs (D2)
-        cos = cos[..., :D2]
-        sin = sin[..., :D2]
+        # Split input into pairs (handles odd dimensions)
+        x1, x2 = x.chunk(2, dim=-1)
+        d1, d2 = x1.size(-1), x2.size(-1)
 
-        # Apply rotations to each pair
-        x_even_rot = x_even[..., :D2] * cos - x_odd * sin
-        x_odd_rot = x_even[..., :D2] * sin + x_odd * cos
+        # Pad x2 if head_dim is odd
+        if d1 > d2:
+            x2 = F.pad(x2, (0, 1))  # Pad last dimension with zero
 
-        # Interleave the rotated even and odd indices
-        x_rot = torch.stack([x_even_rot, x_odd_rot], dim=-1)
-        x_rot = x_rot.view(*x_rot.shape[:-2], -1)  # Flatten the last two dimensions
+        # Apply rotations using d1 consistently
+        out1 = x1 * cos[..., :d1] - x2 * sin[..., :d1]
+        out2 = x1 * sin[..., :d1] + x2 * cos[..., :d1]
 
-        # Append the unpaired even element if head_dim is odd
-        if D1 > D2:
-            x_rest = x_even[..., D2:]
-            x_rot = torch.cat([x_rot, x_rest], dim=-1)
+        # Truncate out2 if head_dim is odd
+        if d1 > d2:
+            out2 = out2[..., :d2]
 
-        return x_rot
+        return torch.cat([out1, out2], dim=-1)
 
     def _needs_recompute(self, seq_len, device, dtype, offset):
         return (
