@@ -48,26 +48,31 @@ class ALiBi(NoPE):
 
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
-        # Pre-compute the ALiBi slopes
-        slopes = 2 ** (-8 * torch.arange(1, config.num_heads + 1) / config.num_heads)
-        self.register_buffer("slopes", slopes)
-        self.register_buffer(
-            "positions", torch.arange(config.context_length, dtype=torch.float32)
-        )
+
+    def compute_slopes(self, num_heads: int, device: torch.device) -> torch.Tensor:
+        """Compute ALiBi slopes based on number of attention heads."""
+        return 2 ** (-8 * torch.arange(1, num_heads + 1, device=device) / num_heads)
 
     def before_scores(self, q, k, v, offset: int = 0):
         return q, k, v
 
-    def compute_after(self, scores, offset: int = 0):
-        batch_size, num_heads, seq_len, _ = scores[0].shape
-        # Use offset positions
-        positions = self.positions[:seq_len].unsqueeze(0).expand(batch_size, seq_len)
+    def after_scores(self, scores, offset: int = 0):
+        batch_size, num_heads, seq_len, _ = scores.shape
+        device = scores.device
+
+        # Compute positions dynamically
+        positions = torch.arange(seq_len, dtype=torch.float32, device=device)
+        positions = positions.unsqueeze(0).expand(batch_size, seq_len)
+
         # Add offset to positions
         positions = positions + offset
         pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
-        biases = self.slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
-        scores = [score - biases for score in scores]
-        return scores
+
+        # Compute slopes dynamically based on actual number of heads
+        slopes = self.compute_slopes(num_heads, device)
+        biases = slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
+
+        return scores - biases
 
 
 class RoPE(NoPE):

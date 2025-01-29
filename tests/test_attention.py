@@ -13,7 +13,7 @@ MODULE_CLASSES = [PraxisAttention]
 
 class AttentionMode(Enum):
     BASE = "base"
-    LINEAR = "linear"
+    # LINEAR = "linear"
     DIFFERENTIAL = "differential"
     STICKBREAKING = "stickbreaking"
 
@@ -96,10 +96,11 @@ def module_setup(request, config):
     setattr(config, "linear", False)
     setattr(config, "differential", False)
     setattr(config, "stickbreaking", False)
-    if attention_config.mode == AttentionMode.LINEAR:
-        setattr(config, "linear", True)
-    elif attention_config.mode == AttentionMode.DIFFERENTIAL:
+
+    if attention_config.mode == AttentionMode.DIFFERENTIAL:
         setattr(config, "differential", True)
+    # elif attention_config.mode == AttentionMode.LINEAR:
+    #     setattr(config, "linear", True)
     elif attention_config.mode == AttentionMode.STICKBREAKING:
         setattr(config, "stickbreaking", True)
 
@@ -121,14 +122,3 @@ def test_forward_pass(module_setup):
 
     # Verify output shape
     assert output.shape == (batch_size, seq_len, attention_config.hidden_size)
-
-    # Add mode-specific assertions if needed
-    if attention_config.mode == AttentionMode.LINEAR:
-        # Add assertions specific to linear mode
-        pass
-    elif attention_config.mode == AttentionMode.DIFFERENTIAL:
-        # Add assertions specific to differential mode
-        pass
-    elif attention_config.mode == AttentionMode.STICKBREAKING:
-        # Add assertions specific to stickbreaking mode
-        pass
