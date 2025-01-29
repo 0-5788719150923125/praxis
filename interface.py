@@ -46,8 +46,25 @@ class LogCapture:
     def __init__(self, dashboard):
         self.dashboard = dashboard
         self.log_buffer = io.StringIO()
+        self.error_buffer = []
+        self.in_traceback = False
 
     def write(self, data):
+        if "Traceback (most recent call last):" in data:
+            self.in_traceback = True
+            self.error_buffer = [data]
+            return
+
+        if self.in_traceback:
+            self.error_buffer.append(data)
+            if data.strip() and not data.startswith(" "):
+                self.in_traceback = False
+                full_error = "".join(self.error_buffer)
+                # Store error in dashboard for later
+                self.dashboard.error_message = full_error
+                self.dashboard.stop(error=True)
+                return
+
         self.log_buffer.write(data)
         self.dashboard.add_log(data)
 
@@ -106,6 +123,8 @@ class TerminalDashboard:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         # Register the cleanup function
+        self.error_exit = False
+        self.error_message = None
         atexit.register(self._cleanup)
 
     def show_warning(self, message, category, filename, lineno, file=None, line=None):
@@ -120,7 +139,8 @@ class TerminalDashboard:
 
     def _cleanup(self):
         self.stop()
-        self._reset_terminal()
+        # if not self.error_exit:
+        #     self._reset_terminal()
 
     def _reset_terminal(self):
         print(
@@ -141,7 +161,9 @@ class TerminalDashboard:
             with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
                 yield
         finally:
-            self._reset_terminal()
+            pass
+            # if not self.error_exit:  # Only reset if not error exit
+            #     self._reset_terminal()
 
     def start(self):
         self.running = True
@@ -149,8 +171,9 @@ class TerminalDashboard:
         sys.stderr = self.log_capture
         Thread(target=self._run_dashboard).start()
 
-    def stop(self):
+    def stop(self, error=False):
         self.running = False
+        self.error_exit = error
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
 
@@ -524,17 +547,22 @@ class TerminalDashboard:
         return [" " * width for _ in range(height)]
 
     def _run_dashboard(self):
-        with self.managed_terminal():
-            while self.running:
-                try:
-                    new_frame = self._create_frame()
-                    if not self._check_border_alignment(new_frame):
-                        self.previous_frame = None  # Force a redraw
-                    self._update_screen(new_frame)
-                    time.sleep(0.1)
-                except Exception as e:
-                    self.add_log(f"Dashboard error: {str(e)}")
-                    time.sleep(1)  # Add a delay to prevent rapid error logging
+        try:
+            with self.managed_terminal():
+                while self.running:
+                    try:
+                        new_frame = self._create_frame()
+                        if not self._check_border_alignment(new_frame):
+                            self.previous_frame = None
+                        self._update_screen(new_frame)
+                        time.sleep(0.1)
+                    except Exception as e:
+                        self.add_log(f"Dashboard error: {str(e)}")
+                        time.sleep(1)
+        finally:
+            # After exiting fullscreen mode, print any stored error
+            if self.error_message:
+                print(self.error_message, file=self.original_stderr)
 
 
 # Test text with various newline patterns
