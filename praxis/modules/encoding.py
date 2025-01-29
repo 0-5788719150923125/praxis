@@ -141,7 +141,6 @@ class RoPE(NoPE):
     def _apply_rotary_pos_emb(self, x, cos, sin):
         """Apply rotary position embeddings with proper handling of odd dimensions."""
         seq_len = x.size(2)
-        head_dim = x.size(-1)
 
         # Ensure proper broadcasting
         cos = cos[:, :, :seq_len, :]
@@ -155,12 +154,6 @@ class RoPE(NoPE):
         if d1 > d2:
             x2 = F.pad(x2, (0, 1))  # Pad last dimension with zero
 
-            # Pad cos and sin to match the padded x2
-            pad_size = d1 - cos.size(-1)
-            if pad_size > 0:
-                cos = F.pad(cos, (0, pad_size), value=0.0)
-                sin = F.pad(sin, (0, pad_size), value=0.0)
-
         # Apply rotations using d1 consistently
         out1 = x1 * cos[..., :d1] - x2 * sin[..., :d1]
         out2 = x1 * sin[..., :d1] + x2 * cos[..., :d1]
@@ -172,7 +165,7 @@ class RoPE(NoPE):
         return torch.cat([out1, out2], dim=-1)
 
     def _needs_recompute(self, seq_len, device, dtype, offset):
-        return (  # Add offset to cache checks
+        return (
             self._cached_seq_length is None
             or seq_len + offset > self._cached_seq_length
             or self._cached_cos.device != device
