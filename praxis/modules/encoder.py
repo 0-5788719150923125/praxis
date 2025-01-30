@@ -102,7 +102,9 @@ class PraxisEncoder(nn.Module):
                 local_encoder_dim=self.args.dim_local_encoder,
                 encoder_hash_byte_group_size=None,
             )
-            self.ngram_processor = RealtimeNgramProcessor(self.ngram_sizes, min_freq=2)
+            self.ngram_processor = RealtimeNgramProcessor(
+                self.ngram_sizes, min_freq=2, reset_every=100, debug=self.debug
+            )
 
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
@@ -248,6 +250,9 @@ class PraxisEncoder(nn.Module):
             if self.debug and random.random() < self.log_rate:
                 truncate_len = min(input_ids.size(1), 12)
                 print(f"DEBUG: n-gram IDs: {ngram_ids.tolist()[0][0][:truncate_len]}")
+
+            # if self.debug and random.random() < 0.01:
+            #     self.ngram_processor.print_frequency_distribution(num_samples=10)
 
             assert len(ngram_ids) == len(
                 self.ngram_embeds

@@ -1,3 +1,4 @@
+import random
 import threading
 import time
 from collections import Counter
@@ -10,7 +11,11 @@ from torch import nn
 
 class RealtimeNgramProcessor(nn.Module):
     def __init__(
-        self, ngram_to_size: Dict[int, int], min_freq: int = 1, reset_every: int = 100
+        self,
+        ngram_to_size: Dict[int, int],
+        min_freq: int = 1,
+        reset_every: int = 100,
+        debug: bool = False,
     ):
         """
         Initialize processor with vocabulary size limits per ngram length
@@ -21,6 +26,8 @@ class RealtimeNgramProcessor(nn.Module):
             reset_every: Flush ngram counts to make room for new discoveries
         """
         super().__init__()
+        self.debug = debug
+        self.print_frequency = 0.1
         self.device = torch.device("cpu")
         self.ngram_to_size = ngram_to_size
         self.min_freq = min_freq
@@ -83,6 +90,15 @@ class RealtimeNgramProcessor(nn.Module):
         # for n in self.ngram_sizes:
         #     print(f"N-gram {n}: {timing_stats[f'ngram_{n}']:.2f}ms")
 
+    def _scale_frequencies(self, counter: Counter, scale_factor: float) -> Counter:
+        """Scale frequencies in counter by factor while maintaining min_freq floor"""
+        return Counter(
+            {
+                ngram: max(int(count * scale_factor), self.min_freq)
+                for ngram, count in counter.items()
+            }
+        )
+
     def _truncate_counter(self, n: int):
         counter = self.ngram_counters[n]
         max_size = self.ngram_to_size[n] * 2
@@ -95,14 +111,40 @@ class RealtimeNgramProcessor(nn.Module):
         self.batch_count += 1
         if self.batch_count % self.reset_every == 0:
             with self._lock:
+                # Save existing vocabulary
                 old_vocabs = {
                     n: set(self.ngram_to_idx_tables[n].keys()) for n in self.ngram_sizes
                 }
-                self.ngram_counters = {n: Counter() for n in self.ngram_sizes}
+
+                # Scale down each counter
                 for n in self.ngram_sizes:
-                    self.ngram_counters[n].update(
-                        {ngram: self.min_freq for ngram in old_vocabs[n]}
+                    counter = self.ngram_counters[n]
+                    if not counter:
+                        continue
+
+                    # Find maximum frequency
+                    max_freq = max(counter.values())
+                    if max_freq <= self.min_freq:
+                        continue
+
+                    # Calculate scale factor to bring max_freq down to target
+                    target_max = max(
+                        self.min_freq * 10, 100
+                    )  # Arbitrary but reasonable target
+                    scale_factor = target_max / max_freq
+
+                    # Scale frequencies while preserving min_freq floor
+                    self.ngram_counters[n] = self._scale_frequencies(
+                        counter, scale_factor
                     )
+
+                    # Ensure vocabulary items are present with at least min_freq
+                    for ngram in old_vocabs[n]:
+                        if ngram not in self.ngram_counters[n]:
+                            self.ngram_counters[n][ngram] = self.min_freq
+
+            if self.debug and random.random() < self.print_frequency:
+                self.print_frequency_distribution(num_samples=5)
 
     def _rebuild_vocabulary(self, n: int):
         counter = self.ngram_counters[n]
@@ -168,6 +210,83 @@ class RealtimeNgramProcessor(nn.Module):
     def _to_torch(self, data: np.ndarray) -> torch.Tensor:
         return torch.from_numpy(data).to(self.device)
 
+    def get_frequency_stats(self) -> Dict[int, List[Tuple[Tuple[int, ...], int]]]:
+        """
+        Returns frequency statistics for each n-gram size.
+
+        Returns:
+            Dict mapping n-gram size to list of (n-gram, frequency) pairs,
+            sorted by frequency in descending order
+        """
+        stats = {}
+        with self._lock:  # Thread-safe access
+            for n in self.ngram_sizes:
+                # Get all n-grams and their frequencies, sorted by frequency
+                ngram_freqs = self.ngram_counters[n].most_common()
+                stats[n] = ngram_freqs
+        return stats
+
+    def print_frequency_distribution(self, num_samples: int = 10):
+        """
+        Prints a sample of frequency distributions for each n-gram size.
+
+        Args:
+            num_samples: Number of samples to print from start and end of distribution
+        """
+        stats = self.get_frequency_stats()
+
+        for n in self.ngram_sizes:
+            freqs = stats[n]
+            if not freqs:
+                continue
+
+            print(f"\nN-gram size {n}:")
+            print(f"Total unique n-grams: {len(freqs)}")
+
+            # Print highest frequencies
+            print(f"\nTop {num_samples} frequencies:")
+            for ngram, freq in freqs[:num_samples]:
+                # Convert numpy values to plain integers
+                clean_ngram = tuple(int(x) for x in ngram)
+                print(f"N-gram: {clean_ngram}, Frequency: {freq}")
+
+            # Print lowest frequencies (if enough samples exist)
+            if len(freqs) > num_samples * 2:
+                print(f"\nBottom {num_samples} frequencies:")
+                for ngram, freq in freqs[-num_samples:]:
+                    # Convert numpy values to plain integers
+                    clean_ngram = tuple(int(x) for x in ngram)
+                    print(f"N-gram: {clean_ngram}, Frequency: {freq}")
+
+    def get_frequency_distribution_stats(self) -> Dict[int, Dict[str, float]]:
+        """
+        Returns statistical measures of the frequency distribution for each n-gram size.
+
+        Returns:
+            Dict mapping n-gram size to statistics including:
+            - max_freq: Maximum frequency
+            - min_freq: Minimum frequency
+            - median_freq: Median frequency
+            - mean_freq: Mean frequency
+            - std_freq: Standard deviation of frequencies
+        """
+        stats = {}
+        with self._lock:
+            for n in self.ngram_sizes:
+                freqs = list(self.ngram_counters[n].values())
+                if not freqs:
+                    continue
+
+                freqs_array = np.array(freqs)
+                stats[n] = {
+                    "max_freq": float(np.max(freqs_array)),
+                    "min_freq": float(np.min(freqs_array)),
+                    "median_freq": float(np.median(freqs_array)),
+                    "mean_freq": float(np.mean(freqs_array)),
+                    "std_freq": float(np.std(freqs_array)),
+                }
+        return stats
+
 
 if __name__ == "__main__":
     # Initialize with same vocabulary size constraints
@@ -191,3 +310,4 @@ if __name__ == "__main__":
     print(ngram_ids)
     print(f"Input device: {input_data.device}")
     print(f"Output device: {ngram_ids.device}")
+    processor.print_frequency_distribution(num_samples=3)
