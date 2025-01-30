@@ -1,3 +1,4 @@
+import math
 import os
 import random
 
@@ -42,7 +43,8 @@ class PraxisEncoder(nn.Module):
 
         self.entropy_model = None
         self.args.patching_mode = "space" if "space" in config.meta else "entropy"
-        self.args.patching_threshold = 3.1439168453216553
+        # self.args.patching_threshold = 3.1439168453216553
+        self.args.patching_threshold = math.pi
         self.args.patch_size = 6
         if self.args.patching_mode == "entropy":
             self.args.patching_threshold = 1.335442066192627
