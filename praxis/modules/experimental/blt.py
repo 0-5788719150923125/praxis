@@ -5,9 +5,10 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
+from torch import nn
 
 
-class RealtimeNgramProcessor:
+class RealtimeNgramProcessor(nn.Module):
     def __init__(self, ngram_to_size: Dict[int, int], min_freq: int = 1):
         """
         Initialize processor with vocabulary size limits per ngram length
@@ -16,6 +17,8 @@ class RealtimeNgramProcessor:
             ngram_to_size: Dict mapping ngram length to max vocab size
             min_freq: Minimum frequency required to include ngram in vocab
         """
+        super().__init__()
+        self.device = torch.device("cpu")
         self.ngram_to_size = ngram_to_size
         self.min_freq = min_freq
         self.ngram_sizes = sorted(ngram_to_size.keys())
@@ -37,17 +40,24 @@ class RealtimeNgramProcessor:
         # Lock for thread safety during updates
         self._lock = threading.Lock()
 
-    def _update_frequencies(self, data: np.ndarray):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass with device handling"""
+        self.device = x.device
+        ngram_tensors = self.encode_token_ngrams(x)
+        return self.stack_ngrams(ngram_tensors)
+
+    def _update_frequencies(self, data: Union[np.ndarray, torch.Tensor]):
         """Update ngram frequencies from new batch"""
-
-        data_np = self._to_numpy(data)
-
-        batch_size, seq_len = data.shape
+        data_np = self._to_numpy(data)  # Convert to numpy first
+        batch_size, seq_len = data_np.shape  # Use data_np for shape
 
         for n in self.ngram_sizes:
-            # Create sliding windows
+            # Create sliding windows using data_np
             padded = np.pad(
-                data, ((0, 0), (n - 1, 0)), mode="constant", constant_values=0
+                data_np,  # Use data_np here
+                ((0, 0), (n - 1, 0)),
+                mode="constant",
+                constant_values=0,
             )
             windows = np.lib.stride_tricks.as_strided(
                 padded,
@@ -129,14 +139,14 @@ class RealtimeNgramProcessor:
         return torch.stack(ngram_tensors, dim=0)
 
     def _to_numpy(self, data: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
-        """Convert input data to numpy if needed"""
+        """Convert input data to numpy, handling GPU tensors"""
         if isinstance(data, torch.Tensor):
             return data.detach().cpu().numpy()
         return data
 
     def _to_torch(self, data: np.ndarray) -> torch.Tensor:
-        """Convert numpy array to torch tensor"""
-        return torch.from_numpy(data)
+        """Convert numpy array to torch tensor on correct device"""
+        return torch.from_numpy(data).to(self.device)
 
 
 if __name__ == "__main__":
@@ -151,15 +161,13 @@ if __name__ == "__main__":
         8: 50000,
     }
 
-    # Can use either numpy or torch input
-    input_data = torch.tensor([[65, 66, 67, 68], [69, 70, 71, 72]])
-    # Or: input_data = np.array([[65, 66, 67, 68], [69, 70, 71, 72]])
+    # Test both CPU and GPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    input_data = torch.tensor([[65, 66, 67, 68], [69, 70, 71, 72]]).to(device)
 
     processor = RealtimeNgramProcessor(ngram_to_size)
     processor.update_from_batch(input_data)
-
-    # Get tensor outputs
-    ngram_tensors = processor.encode_token_ngrams(input_data)
-    # Stack into single tensor
-    ngram_ids = processor.stack_ngrams(ngram_tensors)
+    ngram_ids = processor(input_data)
     print(ngram_ids)
+    print(f"Input device: {input_data.device}")
+    print(f"Output device: {ngram_ids.device}")

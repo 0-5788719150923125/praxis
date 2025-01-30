@@ -35,7 +35,12 @@ class PraxisEncoder(nn.Module):
     """
     An implementation of the Byte Latent Encoder/Decoder, from:
     https://arxiv.org/abs/2412.09871
+
+    TODO: This code is an absolute mess. Both this repo and BLT are in active development, so
+    it has been difficult to standardize. This could be a lot cleaner.
     """
+
+    __version__ = "0.1.0"
 
     def __init__(self, config: "AutoConfig"):
         super().__init__()
@@ -94,7 +99,7 @@ class PraxisEncoder(nn.Module):
             #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
             # )
             self.args.encoder_ngram_to_size_str = (
-                f"2:38396,3:{config.vocab_size},4:{config.vocab_size}"
+                f"3:{config.vocab_size},4:{config.vocab_size},5:{config.vocab_size}"
             )
             self.ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
             self.ngram_embeds = init_embeddings(
@@ -104,7 +109,7 @@ class PraxisEncoder(nn.Module):
                 encoder_hash_byte_group_size=None,
             )
             self.ngram_processor = RealtimeNgramProcessor(self.ngram_sizes, min_freq=1)
-            self.token_embeds = torch.nn.Embedding(260, self.args.dim)
+            # self.token_embeds = torch.nn.Embedding(260, self.args.dim)
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
 
@@ -244,9 +249,11 @@ class PraxisEncoder(nn.Module):
             self.ngram_processor.update_from_batch(input_ids)
 
             # Get ngram IDs for current batch
-            ngram_ids = self.ngram_processor.encode_token_ngrams(input_ids)
-            # ngram_ids = torch.stack(ngram_ids, axis=0)
-            ngram_ids = self.ngram_processor.stack_ngrams(ngram_ids)
+            ngram_ids = self.ngram_processor(input_ids)
+
+            assert len(ngram_ids) == len(
+                self.ngram_embeds
+            ), f"ngram_ids.shape[0]={ngram_ids.shape[0]} versus len(encoder_ngram_embedding)={len(self.ngram_embeds)}, ngram_ids.shape={ngram_ids.shape}"
 
             for i in range(ngram_ids.shape[0]):
                 ngram_embedding = self.ngram_embeds[i]
@@ -255,7 +262,6 @@ class PraxisEncoder(nn.Module):
                     local_encoder_embeds.shape == ngram_embeds.shape
                 ), f"Shape mismatch: {local_encoder_embeds.shape} vs {ngram_embeds.shape}, ngram_ids.shape={ngram_ids.shape}"
                 local_encoder_embeds = local_encoder_embeds + ngram_embeds
-                print(local_encoder_embeds)
 
         # Local encoder with cross attention
         (h_encoder, h_cross), _ = self.encoder(
