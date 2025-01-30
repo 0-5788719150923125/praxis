@@ -1,6 +1,5 @@
 import threading
 from collections import Counter
-from heapq import heappop, heappush
 from typing import Dict, List, Tuple, Union
 
 import numpy as np
@@ -9,19 +8,23 @@ from torch import nn
 
 
 class RealtimeNgramProcessor(nn.Module):
-    def __init__(self, ngram_to_size: Dict[int, int], min_freq: int = 1):
+    def __init__(
+        self, ngram_to_size: Dict[int, int], min_freq: int = 1, reset_every: int = 100
+    ):
         """
         Initialize processor with vocabulary size limits per ngram length
 
         Args:
             ngram_to_size: Dict mapping ngram length to max vocab size
             min_freq: Minimum frequency required to include ngram in vocab
+            reset_every: Flush ngram counts to make room for new discoveries
         """
         super().__init__()
         self.device = torch.device("cpu")
         self.ngram_to_size = ngram_to_size
         self.min_freq = min_freq
         self.ngram_sizes = sorted(ngram_to_size.keys())
+        self.reset_every = reset_every  # Number of batches between resets
         assert min(self.ngram_sizes) >= 2, "Minimum ngram size must be 2"
 
         # Frequency tracking
@@ -37,24 +40,53 @@ class RealtimeNgramProcessor(nn.Module):
         # Track vocab sizes
         self.vocab_sizes: Dict[int, int] = {n: 0 for n in self.ngram_sizes}
 
-        # Lock for thread safety during updates
+        # Batch counter for resets
+        self.batch_count = 0
+
+        # Lock for thread safety
         self._lock = threading.Lock()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass with device handling"""
-        self.device = x.device
-        ngram_tensors = self.encode_token_ngrams(x)
-        return self.stack_ngrams(ngram_tensors)
+    def _truncate_counter(self, n: int):
+        """Truncate counter to keep only top-k most frequent items"""
+        counter = self.ngram_counters[n]
+        max_size = self.ngram_to_size[n] * 2  # Keep 2x vocab size for buffer
+
+        if len(counter) > max_size:
+            most_common = counter.most_common(max_size)
+            self.ngram_counters[n] = Counter(dict(most_common))
+
+    def _maybe_reset_counters(self):
+        """Periodically reset counters while preserving vocabulary information"""
+        self.batch_count += 1
+        if self.batch_count % self.reset_every == 0:
+            with self._lock:
+                # Store current vocabs
+                old_vocabs = {
+                    n: set(self.ngram_to_idx_tables[n].keys()) for n in self.ngram_sizes
+                }
+
+                # Reset counters
+                self.ngram_counters = {n: Counter() for n in self.ngram_sizes}
+
+                # Initialize new counters with small counts for existing vocab
+                # This helps maintain stability while allowing competition
+                for n in self.ngram_sizes:
+                    self.ngram_counters[n].update(
+                        {ngram: self.min_freq for ngram in old_vocabs[n]}
+                    )
 
     def _update_frequencies(self, data: Union[np.ndarray, torch.Tensor]):
         """Update ngram frequencies from new batch"""
-        data_np = self._to_numpy(data)  # Convert to numpy first
-        batch_size, seq_len = data_np.shape  # Use data_np for shape
+        data_np = self._to_numpy(data)
+        batch_size, seq_len = data_np.shape
+
+        # Check if we should reset counters
+        self._maybe_reset_counters()
 
         for n in self.ngram_sizes:
-            # Create sliding windows using data_np
+            # Create sliding windows
             padded = np.pad(
-                data_np,  # Use data_np here
+                data_np,
                 ((0, 0), (n - 1, 0)),
                 mode="constant",
                 constant_values=0,
@@ -72,6 +104,7 @@ class RealtimeNgramProcessor(nn.Module):
 
             with self._lock:
                 self.ngram_counters[n].update(batch_counts)
+                self._truncate_counter(n)
 
     def _rebuild_vocabulary(self, n: int):
         """Rebuild vocabulary for n-grams based on current frequencies"""
@@ -93,20 +126,22 @@ class RealtimeNgramProcessor(nn.Module):
 
         with self._lock:
             self.ngram_to_idx_tables[n] = new_table
-            self.vocab_sizes[n] = len(new_table) + 4  # Include offset
+            self.vocab_sizes[n] = len(new_table) + 4
 
+    # Rest of the methods remain unchanged...
     def update_from_batch(self, data: np.ndarray):
-        """Update statistics from new batch and rebuild vocabs if needed"""
         self._update_frequencies(data)
-
-        # Rebuild vocabularies
         for n in self.ngram_sizes:
             self._rebuild_vocabulary(n)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.device = x.device
+        ngram_tensors = self.encode_token_ngrams(x)
+        return self.stack_ngrams(ngram_tensors)
 
     def _compute_ngram_ids(
         self, data: Union[np.ndarray, torch.Tensor], n: int
     ) -> torch.Tensor:
-        """Compute ngram IDs and return torch tensor"""
         data_np = self._to_numpy(data)
         batch_size, seq_len = data_np.shape
         padded = np.pad(
@@ -131,21 +166,17 @@ class RealtimeNgramProcessor(nn.Module):
     def encode_token_ngrams(
         self, data: Union[np.ndarray, torch.Tensor]
     ) -> List[torch.Tensor]:
-        """Encode and return list of torch tensors"""
         return [self._compute_ngram_ids(data, n) for n in self.ngram_sizes]
 
     def stack_ngrams(self, ngram_tensors: List[torch.Tensor]) -> torch.Tensor:
-        """Stack ngram tensors along first dimension"""
         return torch.stack(ngram_tensors, dim=0)
 
     def _to_numpy(self, data: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
-        """Convert input data to numpy, handling GPU tensors"""
         if isinstance(data, torch.Tensor):
             return data.detach().cpu().numpy()
         return data
 
     def _to_torch(self, data: np.ndarray) -> torch.Tensor:
-        """Convert numpy array to torch tensor on correct device"""
         return torch.from_numpy(data).to(self.device)
 
 

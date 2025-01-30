@@ -98,8 +98,9 @@ class PraxisEncoder(nn.Module):
             # self.args.encoder_ngram_to_size_str = (
             #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
             # )
+            num_ngrams = config.vocab_size // 2
             self.args.encoder_ngram_to_size_str = (
-                f"3:{config.vocab_size},4:{config.vocab_size},5:{config.vocab_size}"
+                f"3:{num_ngrams},4:{num_ngrams},5:{num_ngrams}"
             )
             self.ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
             self.ngram_embeds = init_embeddings(
