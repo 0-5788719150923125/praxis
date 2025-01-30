@@ -496,9 +496,10 @@ def create_base_args(config):
         # encoder_ngram_to_size_str = (
         #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
         # ),
-        encoder_ngram_to_size_str=(
-            f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
-        ),
+        # encoder_ngram_to_size_str=(
+        #     f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
+        # ),
+        encoder_ngram_to_size_str=(f"2:{config.vocab_size}"),
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
