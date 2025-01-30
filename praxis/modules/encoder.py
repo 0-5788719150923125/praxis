@@ -246,8 +246,8 @@ class PraxisEncoder(nn.Module):
             # Get ngram IDs for current batch
             ngram_ids = self.ngram_processor(input_ids)
             if self.debug and random.random() < self.log_rate:
-                truncate_len = int(input_ids.size(1) * 0.1)
-                print("DEBUG: n-gram IDs:", ngram_ids.tolist()[0][0][:truncate_len])
+                truncate_len = min(input_ids.size(1), 12)
+                print(f"DEBUG: n-gram IDs: {ngram_ids.tolist()[0][0][:truncate_len]}")
 
             assert len(ngram_ids) == len(
                 self.ngram_embeds

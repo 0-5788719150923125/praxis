@@ -1,4 +1,5 @@
 import threading
+import time
 from collections import Counter
 from typing import Dict, List, Tuple, Union
 
@@ -24,66 +25,27 @@ class RealtimeNgramProcessor(nn.Module):
         self.ngram_to_size = ngram_to_size
         self.min_freq = min_freq
         self.ngram_sizes = sorted(ngram_to_size.keys())
-        self.reset_every = reset_every  # Number of batches between resets
+        self.reset_every = reset_every
         assert min(self.ngram_sizes) >= 2, "Minimum ngram size must be 2"
 
         # Frequency tracking
-        self.ngram_counters: Dict[int, Counter] = {
-            n: Counter() for n in self.ngram_sizes
-        }
+        self.ngram_counters = {n: Counter() for n in self.ngram_sizes}
 
         # Vocabulary mappings
-        self.ngram_to_idx_tables: Dict[int, Dict[Tuple, int]] = {
-            n: {} for n in self.ngram_sizes
-        }
-
-        # Track vocab sizes
-        self.vocab_sizes: Dict[int, int] = {n: 0 for n in self.ngram_sizes}
-
-        # Batch counter for resets
+        self.ngram_to_idx_tables = {n: {} for n in self.ngram_sizes}
+        self.vocab_sizes = {n: 0 for n in self.ngram_sizes}
         self.batch_count = 0
-
-        # Lock for thread safety
         self._lock = threading.Lock()
 
-    def _truncate_counter(self, n: int):
-        """Truncate counter to keep only top-k most frequent items"""
-        counter = self.ngram_counters[n]
-        max_size = self.ngram_to_size[n] * 2  # Keep 2x vocab size for buffer
-
-        if len(counter) > max_size:
-            most_common = counter.most_common(max_size)
-            self.ngram_counters[n] = Counter(dict(most_common))
-
-    def _maybe_reset_counters(self):
-        """Periodically reset counters while preserving vocabulary information"""
-        self.batch_count += 1
-        if self.batch_count % self.reset_every == 0:
-            with self._lock:
-                # Store current vocabs
-                old_vocabs = {
-                    n: set(self.ngram_to_idx_tables[n].keys()) for n in self.ngram_sizes
-                }
-
-                # Reset counters
-                self.ngram_counters = {n: Counter() for n in self.ngram_sizes}
-
-                # Initialize new counters with small counts for existing vocab
-                # This helps maintain stability while allowing competition
-                for n in self.ngram_sizes:
-                    self.ngram_counters[n].update(
-                        {ngram: self.min_freq for ngram in old_vocabs[n]}
-                    )
-
     def _update_frequencies(self, data: Union[np.ndarray, torch.Tensor]):
-        """Update ngram frequencies preserving original ordering"""
+        timing_stats = {}
+        total_start = time.perf_counter()
+
         data_np = self._to_numpy(data)
         batch_size, seq_len = data_np.shape
 
-        # Check if we should reset counters
         self._maybe_reset_counters()
 
-        # Pre-allocate a buffer for all n-grams to avoid repeated padding
         max_n = max(self.ngram_sizes)
         padded = np.pad(
             data_np,
@@ -93,49 +55,70 @@ class RealtimeNgramProcessor(nn.Module):
         )
 
         for n in self.ngram_sizes:
-            # Create view into padded array for current n-gram size
-            offset = max_n - n
+            t0 = time.perf_counter()
+
+            # Create windows efficiently
             windows = np.lib.stride_tricks.as_strided(
-                padded[:, offset:],
+                padded[:, max_n - n :],
                 shape=(batch_size, seq_len, n),
                 strides=padded.strides[:2] + (padded.strides[1],),
             )
 
-            # Process windows maintaining original order
-            # Use contiguous array for better performance
-            flat_windows = np.ascontiguousarray(windows.reshape(-1, n))
-
-            # Update frequencies preserving order of discovery
-            batch_counts = Counter(tuple(window) for window in flat_windows)
+            # Fast counting using Counter directly
+            batch_counts = Counter(tuple(window) for window in windows.reshape(-1, n))
 
             with self._lock:
                 self.ngram_counters[n].update(batch_counts)
                 self._truncate_counter(n)
 
+            t1 = time.perf_counter()
+            timing_stats[f"ngram_{n}"] = (t1 - t0) * 1000
+
+        total_time = (time.perf_counter() - total_start) * 1000
+        timing_stats["total_time"] = total_time
+
+        # Optional: print timing stats
+        # print(f"\nTiming Statistics (ms):")
+        # print(f"Total Time: {timing_stats['total_time']:.2f}ms")
+        # for n in self.ngram_sizes:
+        #     print(f"N-gram {n}: {timing_stats[f'ngram_{n}']:.2f}ms")
+
+    def _truncate_counter(self, n: int):
+        counter = self.ngram_counters[n]
+        max_size = self.ngram_to_size[n] * 2
+
+        if len(counter) > max_size:
+            most_common = counter.most_common(max_size)
+            self.ngram_counters[n] = Counter(dict(most_common))
+
+    def _maybe_reset_counters(self):
+        self.batch_count += 1
+        if self.batch_count % self.reset_every == 0:
+            with self._lock:
+                old_vocabs = {
+                    n: set(self.ngram_to_idx_tables[n].keys()) for n in self.ngram_sizes
+                }
+                self.ngram_counters = {n: Counter() for n in self.ngram_sizes}
+                for n in self.ngram_sizes:
+                    self.ngram_counters[n].update(
+                        {ngram: self.min_freq for ngram in old_vocabs[n]}
+                    )
+
     def _rebuild_vocabulary(self, n: int):
-        """Rebuild vocabulary for n-grams based on current frequencies"""
         counter = self.ngram_counters[n]
         max_size = self.ngram_to_size[n]
-
-        # Get most common ngrams meeting minimum frequency
         most_common = [
             (ngram, count)
             for ngram, count in counter.most_common()
             if count >= self.min_freq
         ][:max_size]
-
-        # Build new mapping
-        new_table = {
-            ngram: idx + 4  # Keep original offset
-            for idx, (ngram, _) in enumerate(most_common)
-        }
-
+        new_table = {ngram: idx + 4 for idx, (ngram, _) in enumerate(most_common)}
         with self._lock:
             self.ngram_to_idx_tables[n] = new_table
             self.vocab_sizes[n] = len(new_table) + 4
 
-    # Rest of the methods remain unchanged...
     def update_from_batch(self, data: np.ndarray):
+        """Update statistics and rebuild vocabularies"""
         self._update_frequencies(data)
         for n in self.ngram_sizes:
             self._rebuild_vocabulary(n)
