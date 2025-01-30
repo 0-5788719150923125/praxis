@@ -163,11 +163,11 @@ if __name__ == "__main__":
 
     # Test both CPU and GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_data = torch.tensor([[65, 66, 67, 68], [69, 70, 71, 72]]).to(device)
+    input_data = torch.tensor(torch.randn(4, 64)).to(device)
 
     processor = RealtimeNgramProcessor(ngram_to_size)
     processor.update_from_batch(input_data)
-    ngram_ids = processor(input_data)
+    ngram_ids = processor(input_data[0].unsqueeze(0))
     print(ngram_ids)
     print(f"Input device: {input_data.device}")
     print(f"Output device: {ngram_ids.device}")
