@@ -246,8 +246,9 @@ class PraxisEncoder(nn.Module):
         local_encoder_embeds = hash_embeds
 
         if self.ngram_embeds is not None:
-            # Update statistics
-            self.ngram_processor.update_from_batch(input_ids)
+            if self.training:
+                # Update statistics
+                self.ngram_processor.update_from_batch(input_ids)
 
             # Get ngram IDs for current batch
             ngram_ids = self.ngram_processor(input_ids)
