@@ -76,31 +76,37 @@ class RealtimeNgramProcessor(nn.Module):
                     )
 
     def _update_frequencies(self, data: Union[np.ndarray, torch.Tensor]):
-        """Update ngram frequencies from new batch"""
+        """Update ngram frequencies preserving original ordering"""
         data_np = self._to_numpy(data)
         batch_size, seq_len = data_np.shape
 
         # Check if we should reset counters
         self._maybe_reset_counters()
 
+        # Pre-allocate a buffer for all n-grams to avoid repeated padding
+        max_n = max(self.ngram_sizes)
+        padded = np.pad(
+            data_np,
+            ((0, 0), (max_n - 1, 0)),
+            mode="constant",
+            constant_values=0,
+        )
+
         for n in self.ngram_sizes:
-            # Create sliding windows
-            padded = np.pad(
-                data_np,
-                ((0, 0), (n - 1, 0)),
-                mode="constant",
-                constant_values=0,
-            )
+            # Create view into padded array for current n-gram size
+            offset = max_n - n
             windows = np.lib.stride_tricks.as_strided(
-                padded,
+                padded[:, offset:],
                 shape=(batch_size, seq_len, n),
                 strides=padded.strides[:2] + (padded.strides[1],),
             )
 
-            # Update frequencies
-            batch_counts = Counter(
-                tuple(window) for batch in windows for window in batch
-            )
+            # Process windows maintaining original order
+            # Use contiguous array for better performance
+            flat_windows = np.ascontiguousarray(windows.reshape(-1, n))
+
+            # Update frequencies preserving order of discovery
+            batch_counts = Counter(tuple(window) for window in flat_windows)
 
             with self._lock:
                 self.ngram_counters[n].update(batch_counts)

@@ -245,6 +245,9 @@ class PraxisEncoder(nn.Module):
 
             # Get ngram IDs for current batch
             ngram_ids = self.ngram_processor(input_ids)
+            if self.debug and random.random() < self.log_rate:
+                truncate_len = int(input_ids.size(1) * 0.1)
+                print("DEBUG: n-gram IDs:", ngram_ids.tolist()[0][0][:truncate_len])
 
             assert len(ngram_ids) == len(
                 self.ngram_embeds
@@ -494,7 +497,7 @@ def create_base_args(config):
         #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
         # ),
         encoder_ngram_to_size_str=(
-            f"3:{config.vocab_size},4:{config.vocab_size},5:{config.vocab_size}"
+            f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
         ),
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
