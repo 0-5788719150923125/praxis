@@ -36,6 +36,7 @@ HUGGINGFACE_DATASETS = {
         keys=["text"],
         format=DataFormat.SIMPLE,
         weight=1.0,
+        streaming=False,
     ),
     "textbooks": dict(
         path="open-phi/textbooks",

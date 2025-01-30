@@ -79,6 +79,18 @@ OPTIMIZER_PROFILES = {
         adanorm=True,
         cautious=True,
     ),
+    "MARS": dict(
+        optimizer_name="MARS",
+        mars_type="lion",
+        lr=0.000333,
+        gamma=0.025,
+        optimize_1d=True,
+        betas=(0.95, 0.99),
+        betas_1d=(0.9, 0.95),
+        weight_decay=0.1,
+        weight_decay_1d=0.1,
+        cautious=True,
+    ),
     "Prodigy": dict(
         optimizer_name="Prodigy",
         lr=1.0,

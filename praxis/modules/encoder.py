@@ -40,12 +40,13 @@ class PraxisEncoder(nn.Module):
         self.device_map = config.device_map
         self.args = create_base_args(config)
 
-        # realtime_patching = False
         self.entropy_model = None
         self.args.patching_mode = "space" if "space" in config.meta else "entropy"
+        self.args.patching_threshold = 3.1439168453216553
+        self.args.patch_size = 6
         if self.args.patching_mode == "entropy":
-            # realtime_patching = True
             self.args.patching_threshold = 1.335442066192627
+            self.args.patch_size = 4  # although it's not used
             self.args.monotonicity = True
             self.entropy_model = EntropyModel(
                 260, config.hidden_size // 2, config.dropout
@@ -94,6 +95,7 @@ class PraxisEncoder(nn.Module):
 
     def encode(self, input_ids):
         aux_loss = 0
+        best_threshold = None
         if self.entropy_model is None:
             # Space patching mode
             patch_lengths, _ = self.patcher.patch(input_ids, include_next_token=True)
@@ -172,11 +174,6 @@ class PraxisEncoder(nn.Module):
                     * self.loss_scale
                 )
 
-                if self.debug and random.random() < self.log_rate:
-                    print(
-                        f"DEBUG: original length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, patching threshold={best_threshold:.10f}"
-                    )
-
             else:
                 # During inference, use stored optimal threshold
                 patch_lengths, _ = self.patcher.patch(
@@ -184,6 +181,12 @@ class PraxisEncoder(nn.Module):
                     include_next_token=True,
                     threshold=float(self.optimal_threshold.item()),
                     entropies=entropy_scores,
+                )
+
+        if self.training:
+            if self.debug and random.random() < self.log_rate:
+                print(
+                    f"DEBUG: original length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, patching threshold={best_threshold or self.args.patching_threshold:.10f}"
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
@@ -432,17 +435,16 @@ def create_base_args(config):
         # max_length=hidden_size,
         # pad_to_max_length=True,
         # encoder_lm_loss=False,
-        patching_threshold=3.1439168453216553,  # not used with "space" patch_mode
+        # patching_threshold=3.1439168453216553,  # not used with "space" patch_mode
         # patching_threshold=1.335442066192627, # use this for "entropy" patch_mode
-        patch_size=6,  # use this for "space" patch_mode
+        # patch_size=6,  # use this for "space" patch_mode
         # patch_size=4.5, # use this for "entropy" patch_mode
         # tokenization_mode="bytes",
-        patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
+        # patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
         # patching_mode="bpe",
         # patching_mode="entropy",
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-        # encoder_hash_byte_group_vocab=config.vocab_size,
         encoder_hash_byte_group_vocab=config.vocab_size * 8,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
