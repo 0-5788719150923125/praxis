@@ -77,8 +77,8 @@ class ALiBi(NoPE):
 
 class RoPE(NoPE):
     """
-    An upgraded implementation of Rotary Position Embeddings (RoPE).
-    Maintains backward compatibility and supports odd head dimensions.
+    An implementation of Rotary Position Embeddings (RoPE).
+    Supports Grouped Query Attention and odd head dimensions.
     """
 
     __version__ = "0.2.0"

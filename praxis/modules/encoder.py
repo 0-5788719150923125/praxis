@@ -8,6 +8,7 @@ os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 import bytelatent
 import torch
 import torch.nn.functional as F
+from bytelatent.data.ngram_processor import NgramProcessor
 from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
@@ -19,12 +20,14 @@ from bytelatent.model.blt import (
     get_encoder_dim_patch_emb,
     get_encoder_dim_token_emb,
     init_embeddings,
+    parse_ngram_to_size,
     patch_ids_from_lengths,
 )
 from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
 from bytelatent.model.utils import downsample
 from torch import nn
 
+from praxis.modules.experimental.blt import RealtimeNgramProcessor
 from praxis.modules.recurrent import minGRU
 
 
@@ -78,12 +81,30 @@ class PraxisEncoder(nn.Module):
             )
         )
         self.patcher.entropy_model = self.entropy_model
-        self.embeds = init_embeddings(
+        self.hash_embeds = init_embeddings(
             self.args,
             EmbeddingType.HASH_TOK,
             local_encoder_dim=self.args.dim_local_encoder,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
+        use_ngrams = "ngram" in config.meta
+        self.ngram_embeds = None
+        if use_ngrams:
+            # self.args.encoder_ngram_to_size_str = (
+            #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
+            # )
+            self.args.encoder_ngram_to_size_str = (
+                f"2:38396,3:{config.vocab_size},4:{config.vocab_size}"
+            )
+            self.ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
+            self.ngram_embeds = init_embeddings(
+                self.args,
+                EmbeddingType.NGRAM,
+                local_encoder_dim=self.args.dim_local_encoder,
+                encoder_hash_byte_group_size=None,
+            )
+            self.ngram_processor = RealtimeNgramProcessor(self.ngram_sizes, min_freq=1)
+            self.token_embeds = torch.nn.Embedding(260, self.args.dim)
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
 
@@ -207,19 +228,39 @@ class PraxisEncoder(nn.Module):
             )
 
         # Compute embeddings
-        embeds = compute_hash_embeddings(
+        hash_embeds = compute_hash_embeddings(
             local_encoder_tokens=input_ids,
             local_encoder=self.encoder,
-            encoder_hash_tok_embedding=self.embeds,
+            encoder_hash_tok_embedding=self.hash_embeds,
             encoder_hash_byte_group_nb_functions=self.args.encoder_hash_byte_group_nb_functions,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
             encoder_hash_byte_group_vocab=self.args.encoder_hash_byte_group_vocab,
         )
 
+        local_encoder_embeds = hash_embeds
+
+        if self.ngram_embeds is not None:
+            # Update statistics
+            self.ngram_processor.update_from_batch(input_ids)
+
+            # Get ngram IDs for current batch
+            ngram_ids = self.ngram_processor.encode_token_ngrams(input_ids)
+            # ngram_ids = torch.stack(ngram_ids, axis=0)
+            ngram_ids = self.ngram_processor.stack_ngrams(ngram_ids)
+
+            for i in range(ngram_ids.shape[0]):
+                ngram_embedding = self.ngram_embeds[i]
+                ngram_embeds = ngram_embedding(ngram_ids[i])
+                assert (
+                    local_encoder_embeds.shape == ngram_embeds.shape
+                ), f"Shape mismatch: {local_encoder_embeds.shape} vs {ngram_embeds.shape}, ngram_ids.shape={ngram_ids.shape}"
+                local_encoder_embeds = local_encoder_embeds + ngram_embeds
+                print(local_encoder_embeds)
+
         # Local encoder with cross attention
         (h_encoder, h_cross), _ = self.encoder(
             tokens=input_ids,
-            embeds=embeds,
+            embeds=local_encoder_embeds,
             patch_embeds=None,
             cross_mask=cross_attn_mask_enc,
             num_patches=patch_lengths.shape[1],
