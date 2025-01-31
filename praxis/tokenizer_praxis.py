@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from bytelatent.tokenizers.blt_tokenizer import BltTokenizer
@@ -19,7 +19,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         "bpe_token": ("<|bpe|>", 4),
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         for token_name, (token_value, _) in self.SPECIAL_TOKENS.items():
             if token_name not in kwargs:
                 kwargs[token_name] = token_value
@@ -168,7 +168,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         )
 
 
-def run_comprehensive_tests():
+def run_comprehensive_tests() -> None:
     """Comprehensive test suite for ByteLevelTokenizer with enhanced special token testing."""
     print("Running comprehensive tokenizer tests...\n")
 
