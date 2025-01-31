@@ -58,13 +58,14 @@ class PraxisEncoder(nn.Module):
             self.args.patching_threshold = 1.335442066192627
             self.args.patch_size = 4  # although it's not used
             self.args.monotonicity = True
+            vocab_size = 261  # 256 bytes + 5 special tokens
             self.entropy_model = EntropyModel(
-                261, config.hidden_size // 2, config.dropout
+                vocab_size, config.hidden_size // 2, config.dropout
             )
             self.loss_scale = 0.01
 
             # Threshold optimization parameters
-            self.target_ratio = 0.0625  # reduction of original length
+            self.target_ratio = 0.125  # reduction of original length
             # self.target_ratio = 0.03125
 
             # Register buffers for both current and EMA thresholds
@@ -92,19 +93,16 @@ class PraxisEncoder(nn.Module):
             local_encoder_dim=self.args.dim_local_encoder,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-        use_ngrams = "ngram" in config.meta
         self.ngram_embeds = None
-        if use_ngrams:
-            self.ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
+        if "ngram" in config.meta:
+            ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
             self.ngram_embeds = init_embeddings(
                 self.args,
                 EmbeddingType.NGRAM,
                 local_encoder_dim=self.args.dim_local_encoder,
                 encoder_hash_byte_group_size=None,
             )
-            self.ngram_processor = RealtimeNgramProcessor(
-                self.ngram_sizes, min_freq=2, debug=self.debug
-            )
+            self.ngram_processor = RealtimeNgramProcessor(ngram_sizes)
 
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
@@ -241,9 +239,9 @@ class PraxisEncoder(nn.Module):
         local_encoder_embeds = hash_embeds
 
         if self.ngram_embeds is not None:
-            if self.training:
-                # Update statistics
-                self.ngram_processor.update_from_batch(input_ids)
+            # if self.training:
+            #     # Update statistics
+            #     self.ngram_processor.update_from_batch(input_ids)
 
             # Get ngram IDs for current batch
             ngram_ids = self.ngram_processor(input_ids)

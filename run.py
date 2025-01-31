@@ -136,7 +136,7 @@ seed_everything(seed, workers=True)
 vocab_size = 8192
 block_size = block_size * 4 if byte_latent else block_size
 
-terminal_output_length = block_size * 2
+terminal_output_length = block_size * 3
 use_dashboard = False if no_dashboard else True
 
 local_rank = int(os.environ.get("LOCAL_RANK", 0))

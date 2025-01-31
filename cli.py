@@ -183,7 +183,7 @@ parser.add_argument(
     "--optimizer",
     type=str,
     choices=OPTIMIZER_PROFILES.keys(),
-    default="AdamW",
+    default="Lion",
     help="The optimizer profile to use",
 )
 parser.add_argument(
