@@ -210,7 +210,6 @@ hparams = dict(
     oversample_chance=0.1,  # double the block_size
     supersample_chance=0.01,  # quadruple the block_size
     hypersample_chance=0.001,  # octuple the block_size
-    training_data=dict(primary=[], validation=[]),
     **config.to_dict(),
 )
 
@@ -917,16 +916,21 @@ checkpoint_callback = TimeBasedCheckpoint(
 model = AutoModelForCausalLM.from_config(config)
 print("model:", model)
 
-model = model.to(device)
 
-# Create dummy batch for initialization
-batch_size = 2
-seq_length = 64
-dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
+def initialize_lazy_modules(model, device):
+    model = model.to(device)
 
-# Run dummy batch through model to initialize lazy parameters in the Snake activation
-with torch.no_grad():
-    model(dummy_input)
+    # Create dummy batch for initialization
+    batch_size = 2
+    seq_length = 64
+    dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
+
+    # Run dummy batch through model to initialize lazy parameters
+    with torch.no_grad():
+        model(dummy_input)
+
+
+initialize_lazy_modules(model, device)
 
 # Print the total parameter count
 total_params = sum(p.numel() for p in model.parameters())
