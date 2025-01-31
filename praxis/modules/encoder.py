@@ -59,7 +59,7 @@ class PraxisEncoder(nn.Module):
             self.args.patch_size = 4  # although it's not used
             self.args.monotonicity = True
             self.entropy_model = EntropyModel(
-                260, config.hidden_size // 2, config.dropout
+                261, config.hidden_size // 2, config.dropout
             )
             self.loss_scale = 0.01
 
@@ -417,7 +417,7 @@ class RecurrentDecoder(LocalDecoder):
 
 class EntropyModel(nn.Module):
     def __init__(
-        self, vocab_size=260, channels=256, dropout=0, n_layers=2, kernel_size=3
+        self, vocab_size=256, channels=256, dropout=0, n_layers=2, kernel_size=3
     ):
         super().__init__()
 
@@ -469,7 +469,7 @@ def create_base_args(config):
 
     hidden_size = config.hidden_size
     return ByteLatentTransformerArgs(
-        vocab_size=260,
+        vocab_size=261,
         norm_eps=config.epsilon,
         n_heads=1,
         # dim=hidden_size,
@@ -628,7 +628,7 @@ if __name__ == "__main__":
 
     # Initialize test configuration
     class Dummy:
-        vocab_size = 260
+        vocab_size = 261
         hidden_size = 360
         # embed_size = 512
         context_length = 2048
