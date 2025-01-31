@@ -291,8 +291,11 @@ if __name__ == "__main__":
         8: 50000,
     }
 
-    device = torch.device("cpu")
     processor = RealtimeNgramProcessor(ngram_to_size)
+
+    input_data = torch.tensor(torch.randn(4, 64))
+    ngram_ids = processor(input_data[0].unsqueeze(0))
+    print(ngram_ids)
 
     # Run benchmarks
     results = benchmark_forward(processor)
