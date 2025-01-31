@@ -1,4 +1,4 @@
-from math import sqrt
+from math import ceil, floor, sqrt
 
 import torch
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ def default(v, d):
     return v if exists(v) else d
 
 
-class PKAttention(Module):
+class ProductKeyAttention(Module):
     """
     Basically stolen from here:
     https://github.com/lucidrains/PEER-pytorch/blob/main/PEER_pytorch/PK.py
@@ -22,64 +22,64 @@ class PKAttention(Module):
 
     def __init__(
         self,
-        dim,
-        *,
-        causal=True,
-        heads=8,
-        num_key_values=1_000_000,
-        key_value_pk_topk=16,
-        dim_key=None,
+        config: "AutoConfig" = None,
+        dim: int = None,
+        causal: bool = None,
+        heads: int = None,
+        num_key_values: int = None,
+        key_value_pk_topk: int = 8,
         product_keys=2,
-        pre_rmsnorm=False,
-        dropout=0.0,
+        dropout: float = None,
     ):
         super().__init__()
-        self.causal = causal
-        self.heads = heads
-        self.num_key_values = num_key_values
-        self.dim = dim
-
-        self.norm = nn.LayerNorm(dim) if pre_rmsnorm else nn.Identity()
+        self.causal = causal or config.causal
+        self.heads = heads or config.num_heads
+        self.dim = dim or config.hidden_size
+        self.num_key_values = num_key_values or divide_and_round_to_square(self.dim, 4)
+        dropout = dropout or getattr(config, "dropout", 0)
 
         # queries projection
-        self.to_queries = nn.Linear(dim, dim * heads, bias=False)
+        self.to_queries = nn.Linear(self.dim, self.dim * self.heads, bias=False)
 
         # keys and values selected using product-key
-        self.keys = nn.EmbeddingBag(num_key_values * heads, dim, mode="sum")
-        self.values = nn.EmbeddingBag(num_key_values * heads, dim, mode="sum")
+        self.keys = nn.EmbeddingBag(
+            self.num_key_values * self.heads, self.dim, mode="sum"
+        )
+        self.values = nn.EmbeddingBag(
+            self.num_key_values * self.heads, self.dim, mode="sum"
+        )
 
         assert sqrt(
-            num_key_values
+            self.num_key_values
         ).is_integer(), "`num_key_values` needs to be a square"
-        assert (dim % 2) == 0, "feature dimension should be divisible by 2"
+        assert (self.dim % 2) == 0, "feature dimension should be divisible by 2"
 
         self.to_kv_pk_indices = PK(
-            dim=dim,
-            num_keys=int(sqrt(num_key_values)),
+            dim=self.dim,
+            num_keys=int(sqrt(self.num_key_values)),
             final_topk=key_value_pk_topk,
             product_keys=product_keys,
+            heads=self.heads,
         )
 
         self.dropout = nn.Dropout(dropout)
 
         # output projection
-        self.to_out = nn.Linear(dim * heads, dim, bias=False)
+        self.to_out = nn.Linear(self.dim * self.heads, self.dim, bias=False)
 
-    def forward(self, x, mask=None):
-        batch_size, seq_len, _ = x.shape
-        device = x.device
-
-        x = self.norm(x)
+    def forward(self, inputs, attention_mask=None):
+        batch_size, seq_len, _ = inputs.shape
+        device = inputs.device
 
         # queries
-        q = self.to_queries(x)
+        q = self.to_queries(inputs)
         q = q.view(batch_size, seq_len, self.heads, -1)
         q = q.permute(0, 2, 1, 3)
 
         q = q * (q.shape[-1] ** -0.5)
 
         # keys and values
-        kv_scores, indices = self.to_kv_pk_indices(x, softmax_scores=True)
+        kv_scores, indices = self.to_kv_pk_indices(inputs, softmax_scores=True)
 
         # add head offsets to indices
         offsets = torch.arange(self.heads, device=device) * self.num_key_values
@@ -105,14 +105,14 @@ class PKAttention(Module):
         sim = torch.matmul(q, k.transpose(-2, -1))
 
         if self.causal:
-            assert not exists(mask)
+            # assert not exists(attention_mask)
             i, j = sim.shape[-2:]
             causal_mask = torch.ones((i, j), device=device, dtype=torch.bool).triu(
                 j - i + 1
             )
             sim = sim.masked_fill(causal_mask, -torch.finfo(sim.dtype).max)
-        elif exists(mask):
-            mask = mask.unsqueeze(1)
+        elif exists(attention_mask):
+            mask = attention_mask.unsqueeze(1)
             sim = sim.masked_fill(~mask.unsqueeze(2), -torch.finfo(sim.dtype).max)
 
         attn = F.softmax(sim, dim=-1)
@@ -125,7 +125,8 @@ class PKAttention(Module):
         out = out.permute(0, 2, 1, 3).contiguous()
         out = out.view(batch_size, seq_len, -1)
 
-        return self.to_out(out)
+        aux_loss = 0
+        return self.to_out(out), aux_loss
 
 
 class PK(Module):
@@ -163,6 +164,7 @@ class PK(Module):
 
         self.topk = product_key_topk
         self.final_topk = final_topk
+        # the maximum index, or the total space being indexed into
         self.max_index = int(num_keys**product_keys)
 
     def forward(self, x, softmax_scores=False):
@@ -211,12 +213,63 @@ class PK(Module):
         return final_scores, final_indices
 
 
+def is_perfect_square(n):
+    """Check if a number is a perfect square."""
+    if n < 0:
+        return False
+    root = int(sqrt(n))
+    return root * root == n
+
+
+def find_nearest_square(n):
+    """Find the nearest perfect square to a given number."""
+    if n < 0:
+        raise ValueError("Input must be non-negative")
+
+    # If it's already a perfect square, return it
+    if is_perfect_square(n):
+        return n
+
+    # Find the floor and ceiling square numbers
+    floor_root = floor(sqrt(n))
+    ceil_root = ceil(sqrt(n))
+    floor_square = floor_root * floor_root
+    ceil_square = ceil_root * ceil_root
+
+    # Return the closer one
+    if abs(n - floor_square) <= abs(n - ceil_square):
+        return floor_square
+    else:
+        return ceil_square
+
+
+def divide_and_round_to_square(number, divisor):
+    """
+    Divide a number by a divisor and round to the nearest perfect square.
+
+    Args:
+        number: The number to divide
+        divisor: The number to divide by
+
+    Returns:
+        The nearest perfect square to the division result
+    """
+    if divisor == 0:
+        raise ValueError("Cannot divide by zero")
+
+    # Perform the division
+    divided = number / divisor
+
+    # Find the nearest perfect square
+    return int(find_nearest_square(divided))
+
+
 if __name__ == "__main__":
-    peer_attn = PKAttention(
-        dim=256, causal=True, heads=8, num_key_values=int(1e4), pre_rmsnorm=True
+    peer_attn = ProductKeyAttention(
+        dim=256, causal=True, heads=4, num_key_values=int(1e4)
     )
 
     x = torch.randn(2, 512, 256)
-    out = peer_attn(x) + x
+    out, _ = peer_attn(x)
     assert x.shape == out.shape
     print("success!")

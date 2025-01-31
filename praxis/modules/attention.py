@@ -10,6 +10,7 @@ from torch import Tensor
 from praxis.functional import alpha_entmax, alpha_relu, ghostmax
 from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.encoding import ENCODING_REGISTRY
+from praxis.modules.experimental.pk_attention import ProductKeyAttention
 from praxis.modules.experimental.sparse_query import SparseQuery
 from praxis.modules.memory import PraxisCompressiveMemory
 
@@ -892,4 +893,5 @@ class VanillaMHA(nn.MultiheadAttention):
 ATTENTION_REGISTRY = {
     "standard": PraxisAttention,
     "vanilla": VanillaMHA,
+    "pk": ProductKeyAttention,
 }
