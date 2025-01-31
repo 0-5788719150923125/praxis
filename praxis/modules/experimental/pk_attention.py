@@ -35,7 +35,9 @@ class ProductKeyAttention(Module):
         self.causal = causal or config.causal
         self.heads = heads or config.num_heads
         self.dim = dim or config.hidden_size
-        self.num_key_values = num_key_values or divide_and_round_to_square(self.dim, 4)
+        self.num_key_values = num_key_values or divide_and_round_to_square(
+            self.dim * 4, 4
+        )
         dropout = dropout or getattr(config, "dropout", 0)
 
         # queries projection
@@ -60,6 +62,7 @@ class ProductKeyAttention(Module):
             final_topk=key_value_pk_topk,
             product_keys=product_keys,
             heads=self.heads,
+            dim_key=self.dim // 16,
         )
 
         self.dropout = nn.Dropout(dropout)
