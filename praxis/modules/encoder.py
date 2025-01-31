@@ -103,7 +103,7 @@ class PraxisEncoder(nn.Module):
                 encoder_hash_byte_group_size=None,
             )
             self.ngram_processor = RealtimeNgramProcessor(
-                self.ngram_sizes, min_freq=2, reset_every=100, debug=self.debug
+                self.ngram_sizes, min_freq=2, debug=self.debug
             )
 
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
@@ -468,8 +468,6 @@ def create_base_args(config):
     """
 
     hidden_size = config.hidden_size
-    # embed_size = config.embed_size
-
     return ByteLatentTransformerArgs(
         vocab_size=260,
         norm_eps=config.epsilon,
@@ -497,14 +495,14 @@ def create_base_args(config):
         # patching_mode="entropy",
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
-        encoder_hash_byte_group_vocab=config.vocab_size * 8,
+        encoder_hash_byte_group_vocab=config.vocab_size,
         # encoder_ngram_to_size_str = (
         #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
         # ),
         # encoder_ngram_to_size_str=(
         #     f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
         # ),
-        encoder_ngram_to_size_str=(f"2:{config.vocab_size}"),
+        encoder_ngram_to_size_str=(f"2:{config.vocab_size // 2}"),
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,

@@ -139,7 +139,6 @@ class PK(Module):
         product_keys=2,
         product_key_topk=None,
         final_topk=16,
-        num_experts_per_head=16,
     ):
         super().__init__()
         assert (dim % 2) == 0
