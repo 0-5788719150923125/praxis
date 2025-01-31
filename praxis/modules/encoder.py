@@ -251,9 +251,6 @@ class PraxisEncoder(nn.Module):
                 truncate_len = min(input_ids.size(1), 12)
                 print(f"DEBUG: n-gram IDs: {ngram_ids.tolist()[0][0][:truncate_len]}")
 
-            # if self.debug and random.random() < 0.01:
-            #     self.ngram_processor.print_frequency_distribution(num_samples=10)
-
             assert len(ngram_ids) == len(
                 self.ngram_embeds
             ), f"ngram_ids.shape[0]={ngram_ids.shape[0]} versus len(encoder_ngram_embedding)={len(self.ngram_embeds)}, ngram_ids.shape={ngram_ids.shape}"
@@ -495,7 +492,7 @@ def create_base_args(config):
         # patching_mode="entropy",
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
-        encoder_hash_byte_group_vocab=config.vocab_size,
+        encoder_hash_byte_group_vocab=config.vocab_size // 2,
         # encoder_ngram_to_size_str = (
         #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
         # ),
@@ -620,67 +617,3 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         cross_attn_nheads=args.cross_attn_nheads,
         eos_id=args.eos_id,
     )
-
-
-if __name__ == "__main__":
-    import torch
-    from transformers import AutoConfig
-
-    # Initialize test configuration
-    class Dummy:
-        vocab_size = 261
-        hidden_size = 360
-        # embed_size = 512
-        context_length = 2048
-        epsilon = 1e-5
-
-    config = Dummy()
-
-    # Initialize model
-    model = PraxisEncoder(config)
-
-    def run_test():
-        try:
-            # Create sample input
-            batch_size = 2
-            seq_len = 128  # Should be less than max_seq_len (512)
-            input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len))
-            print(f"Input shape: {input_ids.shape}")
-
-            # Step 1: Encode
-            h, h_encoder, decoder_tokens, patch_lengths = model.encode(
-                input_ids=input_ids
-            )
-            print(f"Encoder output (h) shape: {h.shape}")
-
-            # Step 2: Decode
-            decoder_output = model.decode(
-                h=h,
-                h_encoder=h_encoder,
-                input_ids=decoder_tokens,
-                patch_lengths=patch_lengths,
-            )
-            print(f"Decoder output shape: {decoder_output.shape}")
-
-            # Basic shape assertions
-            assert len(decoder_output.shape) == 3, "Expected 3D output from decoder"
-            assert (
-                decoder_output.shape[0] == batch_size
-            ), "Batch size mismatch in output"
-
-            print("\nTest completed successfully!")
-            return True
-
-        except Exception as e:
-            print(f"\nTest failed with error: {str(e)}")
-            print(f"Error type: {type(e)}")
-            import traceback
-
-            print(traceback.format_exc())
-            return False
-
-    # Run the test
-    print("Starting ByteLatent test...")
-    run_test()
-    print(model)
-    print("Done!")

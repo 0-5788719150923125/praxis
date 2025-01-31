@@ -129,20 +129,6 @@ AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 globals().update(vars(get_cli_args()))
 log_command()
 
-
-# Ensure errors are written to a log file
-def exception_to_file(exc_type, exc_value, exc_traceback):
-    # Write to file
-    error_path = os.path.join(cache_dir, "error.log")
-    with open(error_path, "w") as error_file:
-        error_file.write("".join(traceback.format_tb(exc_traceback)))
-    # Call the default exception handler
-    sys.__excepthook__(exc_type, exc_value, exc_traceback)
-    print(f"Error logged to: {error_path}")
-
-
-sys.excepthook = exception_to_file
-
 # Set seeds for reproducibility
 seed_everything(seed, workers=True)
 
@@ -150,7 +136,7 @@ seed_everything(seed, workers=True)
 vocab_size = 8192
 block_size = block_size * 4 if byte_latent else block_size
 
-terminal_output_length = block_size * 4
+terminal_output_length = block_size * 2
 use_dashboard = False if no_dashboard else True
 
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
