@@ -89,7 +89,7 @@ parser.add_argument(
 parser.add_argument(
     "--embed_size",
     type=int,
-    default=512,
+    default=192,
     help="The size of the model's embedding dimension (if applicable)",
 )
 parser.add_argument(

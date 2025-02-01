@@ -48,6 +48,7 @@ class PraxisEncoder(nn.Module):
         self.log_rate = 0.005
         self.device_map = config.device_map
         self.args = create_base_args(config)
+        self.args.dim_token_emb = config.embed_size
 
         self.entropy_model = None
         self.args.patching_mode = "space" if "space" in config.meta else "entropy"
@@ -521,6 +522,7 @@ def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
 
 def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
     return LocalModelArgs(
+        # Updated args
         dim=args.dim_token_emb,
         n_layers=args.n_layers_local_decoder,
         n_heads=args.n_heads_local_decoder,
