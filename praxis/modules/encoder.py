@@ -26,6 +26,15 @@ from bytelatent.model.blt import (
 )
 from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
 from bytelatent.model.utils import downsample
+from bytelatent.tokenizers.constants import (
+    BOE_ID,
+    BOS_ID,
+    BPE_ID,
+    BYTE_UNITS,
+    EOS_ID,
+    OFFSET,
+    PAD_ID,
+)
 from torch import nn
 
 from praxis.modules.recurrent import minGRU
@@ -58,7 +67,7 @@ class PraxisEncoder(nn.Module):
             self.args.patching_threshold = 1.335442066192627
             self.args.patch_size = 4  # although it's not used
             self.args.monotonicity = True
-            vocab_size = 261  # 256 bytes + 5 special tokens
+            vocab_size = BYTE_UNITS + OFFSET  # 256 bytes + 5 special tokens
             self.entropy_model = EntropyModel(
                 vocab_size, config.hidden_size // 2, config.dropout
             )
@@ -516,7 +525,7 @@ def create_base_args(config):
 
     hidden_size = config.hidden_size
     return ByteLatentTransformerArgs(
-        vocab_size=261,
+        vocab_size=BYTE_UNITS + OFFSET,
         norm_eps=config.epsilon,
         n_heads=1,
         # dim=hidden_size,

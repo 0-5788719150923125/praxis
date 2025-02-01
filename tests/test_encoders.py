@@ -43,7 +43,7 @@ def test_forward_pass(module_setup):
     # Create sample input
     batch_size = 32
     seq_len = 16  # Should be less than max_seq_len (512)
-    vocab_size = 261
+    vocab_size = 260
     input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
     # Step 1: Encode

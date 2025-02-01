@@ -2,6 +2,15 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from bytelatent.tokenizers.blt_tokenizer import BltTokenizer
+from bytelatent.tokenizers.constants import (
+    BOE_ID,
+    BOS_ID,
+    BPE_ID,
+    BYTE_UNITS,
+    EOS_ID,
+    OFFSET,
+    PAD_ID,
+)
 from transformers import PreTrainedTokenizer
 
 
@@ -12,11 +21,11 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
     """
 
     SPECIAL_TOKENS = {
-        "boe_token": ("<|boe|>", 0),
-        "pad_token": ("<|endoftext|>", 1),
-        "bos_token": ("<|im_start|>", 2),
-        "eos_token": ("<|im_end|>", 3),
-        "bpe_token": ("<|bpe|>", 4),
+        "boe_token": ("<|boe|>", BOE_ID),
+        "pad_token": ("<|endoftext|>", PAD_ID),
+        "bos_token": ("<|im_start|>", BOS_ID),
+        "eos_token": ("<|im_end|>", EOS_ID),
+        "bpe_token": ("<|bpe|>", BPE_ID),
     }
 
     def __init__(self, **kwargs: Any) -> None:
