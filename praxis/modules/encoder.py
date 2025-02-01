@@ -13,7 +13,6 @@ from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
-    byte_group_hash_function,
     compute_hash_embeddings,
     cross_attn_mask,
     decoder_patch_ids_from_lengths,
@@ -26,15 +25,7 @@ from bytelatent.model.blt import (
 )
 from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
 from bytelatent.model.utils import downsample
-from bytelatent.tokenizers.constants import (
-    BOE_ID,
-    BOS_ID,
-    BPE_ID,
-    BYTE_UNITS,
-    EOS_ID,
-    OFFSET,
-    PAD_ID,
-)
+from bytelatent.tokenizers.constants import BYTE_UNITS, EOS_ID, OFFSET
 from torch import nn
 
 from praxis.modules.recurrent import minGRU
@@ -90,7 +81,6 @@ class PraxisEncoder(nn.Module):
                 patch_size=self.args.patch_size,
                 patching_mode=self.args.patching_mode,
                 threshold=self.args.patching_threshold,
-                # threshold_add=self.args.patching_threshold_add,
                 threshold_add=None,
                 monotonicity=self.args.monotonicity,
             )
@@ -102,15 +92,6 @@ class PraxisEncoder(nn.Module):
             local_encoder_dim=self.args.dim_local_encoder,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-        self.ngram_embeds = None
-        if "ngram" in config.meta:
-            self.ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
-            self.ngram_embeds = init_embeddings(
-                self.args,
-                EmbeddingType.NGRAM,
-                local_encoder_dim=self.args.dim_local_encoder,
-                encoder_hash_byte_group_size=None,
-            )
 
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
@@ -244,17 +225,10 @@ class PraxisEncoder(nn.Module):
             encoder_hash_byte_group_vocab=self.args.encoder_hash_byte_group_vocab,
         )
 
-        local_encoder_embeds = hash_embeds
-
-        if self.ngram_embeds is not None:
-            local_encoder_embeds = compute_ngram_embeddings(
-                input_ids, local_encoder_embeds, self.ngram_embeds, self.ngram_sizes
-            )
-
         # Local encoder with cross attention
         (h_encoder, h_cross), _ = self.encoder(
             tokens=input_ids,
-            embeds=local_encoder_embeds,
+            embeds=hash_embeds,
             patch_embeds=None,
             cross_mask=cross_attn_mask_enc,
             num_patches=patch_lengths.shape[1],
@@ -367,48 +341,6 @@ class PraxisEncoder(nn.Module):
                 break
 
         return safe_threshold
-
-
-def compute_ngram_embeddings(
-    local_encoder_tokens: torch.Tensor,
-    local_encoder_embeds: torch.Tensor,
-    encoder_ngram_tok_embedding: nn.ModuleList,
-    ngram_sizes: dict,
-) -> torch.Tensor:
-    """
-    Compute embeddings using n-gram hash token embeddings.
-
-    Args:
-        local_encoder_tokens: Input tokens tensor of shape (batch_size, seq_len)
-        local_encoder_embeds: Input tensor containing token embeddings.
-        encoder_ngram_tok_embedding: ModuleList of n-gram token embeddings
-        ngram_sizes: Dictionary mapping n-gram size to vocabulary size
-
-    Returns:
-        torch.Tensor: Combined embeddings
-    """
-    if encoder_ngram_tok_embedding is None:
-        return None
-
-    # Process each n-gram size
-    for i, (ngram_size, vocab_size) in enumerate(sorted(ngram_sizes.items())):
-        # Compute hash ids for this n-gram size
-        hash_ids = byte_group_hash_function(
-            local_encoder_tokens,
-            group_size=ngram_size,
-            hash_func_nb=i,
-            max_hash=vocab_size,
-        )
-
-        if random.random() < 0.005:
-            truncate_len = min(local_encoder_tokens.size(1), 12)
-            print(f"DEBUG: n-gram IDs: {hash_ids.tolist()[0][:truncate_len]}")
-
-        # Get embeddings for these hash ids
-        hash_tok_embedding = encoder_ngram_tok_embedding[i]
-        local_encoder_embeds = local_encoder_embeds + hash_tok_embedding(hash_ids)
-
-    return local_encoder_embeds
 
 
 class RecurrentBlock(minGRU):
@@ -551,16 +483,16 @@ def create_base_args(config):
         # patching_mode="entropy",
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
-        encoder_hash_byte_group_vocab=config.vocab_size // 2,
+        encoder_hash_byte_group_vocab=config.vocab_size,
         # encoder_ngram_to_size_str = (
         #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
         # ),
         # encoder_ngram_to_size_str=(
         #     f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
         # ),
-        encoder_ngram_to_size_str=(
-            f"2:{config.vocab_size // 2},3:{config.vocab_size // 2},4:{config.vocab_size // 2}"
-        ),
+        # encoder_ngram_to_size_str=(
+        #     f"2:{config.vocab_size // 2},3:{config.vocab_size // 2},4:{config.vocab_size // 2}"
+        # ),
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
@@ -636,7 +568,7 @@ def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         cross_attn_all_layers_encoder=args.cross_attn_all_layers_encoder,
         cross_attn_all_layers_decoder=args.cross_attn_all_layers_decoder,
         cross_attn_nheads=args.cross_attn_nheads,
-        eos_id=args.eos_id,
+        eos_id=EOS_ID,
     )
 
 
@@ -676,5 +608,5 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         cross_attn_all_layers_encoder=args.cross_attn_all_layers_encoder,
         cross_attn_all_layers_decoder=args.cross_attn_all_layers_decoder,
         cross_attn_nheads=args.cross_attn_nheads,
-        eos_id=args.eos_id,
+        eos_id=EOS_ID,
     )
