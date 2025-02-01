@@ -51,22 +51,17 @@ class PraxisEncoder(nn.Module):
 
         self.entropy_model = None
         self.args.patching_mode = "space" if "space" in config.meta else "entropy"
-        # self.args.patching_threshold = 3.1439168453216553
         self.args.patching_threshold = math.pi
         self.args.patch_size = 6
         if self.args.patching_mode == "entropy":
-            self.args.patching_threshold = 1.335442066192627
-            self.args.patch_size = 4  # although it's not used
             self.args.monotonicity = True
             vocab_size = BYTE_UNITS + OFFSET  # 256 bytes + 5 special tokens
             self.entropy_model = EntropyModel(
                 vocab_size, config.hidden_size // 2, config.dropout
             )
-            self.loss_scale = 0.01
-
             # Threshold optimization parameters
+            self.loss_scale = 0.01
             self.target_ratio = 0.125  # reduction of original length
-
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
                 "optimal_threshold",
