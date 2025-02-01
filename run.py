@@ -109,6 +109,7 @@ warnings.filterwarnings("ignore", ".*Checkpoint directory.*exists and is not emp
 warnings.filterwarnings(
     "ignore", ".*JAX is multithreaded, so this will likely lead to a deadlock*"
 )
+warnings.filterwarnings("ignore", ".*Total length of `list` across ranks is zero.*")
 
 from api import APIServer
 from builders import get_datamodules
@@ -204,7 +205,7 @@ config = PraxisConfig(
 
 # Misc hyperparameters
 hparams = dict(
-    batch_size=batch_size if batch_size else 1,
+    batch_size=batch_size,
     target_batch_size=target_batch_size,
     block_size=block_size,
     oversample_chance=0.1,  # double the block_size
@@ -249,7 +250,7 @@ if no_schedule:
 else:
     scheduler_func = partial(
         CosineAnnealingWarmupRestarts,
-        first_cycle_steps=4096 * 16,
+        first_cycle_steps=4096 * 64,
         max_lr=optimizer_config["lr"],
         min_lr=optimizer_config["lr"] * 1e-2,
         gamma=1.0,

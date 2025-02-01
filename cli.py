@@ -53,7 +53,7 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=None,
+    default=1,
     help="Batch size to use for training",
 )
 parser.add_argument(
