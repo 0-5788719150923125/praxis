@@ -105,11 +105,13 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokeni
 
 from optimizers import get_optimizer, get_optimizer_profile
 
-warnings.filterwarnings("ignore", ".*Checkpoint directory.*exists and is not empty*")
-warnings.filterwarnings(
-    "ignore", ".*JAX is multithreaded, so this will likely lead to a deadlock*"
-)
-warnings.filterwarnings("ignore", ".*Total length of `list` across ranks is zero.*")
+ignored_warnings = [
+    ".*Checkpoint directory.*exists and is not empty*",
+    ".*JAX is multithreaded, so this will likely lead to a deadlock*",
+    ".*Total length of `list` across ranks is zero.*",
+]
+for pattern in ignored_warnings:
+    warnings.filterwarnings("ignore", pattern)
 
 from api import APIServer
 from builders import get_datamodules
