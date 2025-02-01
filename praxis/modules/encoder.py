@@ -66,7 +66,6 @@ class PraxisEncoder(nn.Module):
 
             # Threshold optimization parameters
             self.target_ratio = 0.125  # reduction of original length
-            # self.target_ratio = 0.03125
 
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
@@ -89,20 +88,28 @@ class PraxisEncoder(nn.Module):
         self.hash_embeds = init_embeddings(
             self.args,
             EmbeddingType.HASH_TOK,
-            local_encoder_dim=self.args.dim_local_encoder,
+            local_encoder_dim=self.args.dim_token_emb,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-
+        if (
+            self.args.dim_token_emb is not None
+            and self.args.dim_token_emb != self.args.dim
+        ):
+            self.token_proj = nn.Linear(
+                self.args.dim_token_emb,
+                config.hidden_size,
+                bias=False,
+            )
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
 
-    def __repr__(self):
-        return (
-            f"{self.__class__.__name__}("
-            + f"type='byte_latent', "
-            + f"n_encoders={len(self.encoder.layers)}, "
-            + f"n_decoders={len(self.decoder.layers)})"
-        )
+    # def __repr__(self):
+    #     return (
+    #         f"{self.__class__.__name__}("
+    #         + f"type='byte_latent', "
+    #         + f"n_encoders={len(self.encoder.layers)}, "
+    #         + f"n_decoders={len(self.decoder.layers)})"
+    #     )
 
     def encode(self, input_ids):
         aux_loss = 0
@@ -249,6 +256,9 @@ class PraxisEncoder(nn.Module):
                 patch_size=self.args.patch_size,
             )
 
+        if self.token_proj is not None:
+            h = self.token_proj(h)
+
         return h, h_encoder, patch_lengths, aux_loss
 
     def decode(self, h, h_encoder, input_ids, patch_lengths):
@@ -349,9 +359,9 @@ class RecurrentBlock(minGRU):
     that is more memory-efficient, and faster to compute.
     """
 
-    def __init__(self, args):
-        super().__init__(dim=args.dim, proj_out=True)
-        self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
+    def __init__(self, dim, dim_out=None, norm_eps=1e-5):
+        super().__init__(dim=dim, dim_out=dim_out, proj_out=True)
+        self.norm = nn.RMSNorm(dim, eps=norm_eps)
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         out, _ = super().forward(self.norm(x))
@@ -362,7 +372,7 @@ class RecurrentEncoder(LocalEncoder):
     def __init__(self, args: LocalModelArgs):
         super().__init__(args)
         self.layers = nn.ModuleList(
-            [RecurrentBlock(args) for _ in range(args.n_layers)]
+            [RecurrentBlock(dim=args.dim) for _ in range(args.n_layers)]
         )
 
 
@@ -370,7 +380,7 @@ class RecurrentDecoder(LocalDecoder):
     def __init__(self, args: LocalModelArgs):
         super().__init__(args)
         self.layers = nn.ModuleList(
-            [RecurrentBlock(args) for _ in range(args.n_layers)]
+            [RecurrentBlock(dim=args.dim_token_emb) for _ in range(args.n_layers)]
         )
 
 
@@ -380,14 +390,9 @@ class EntropyModel(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, dim)  # byte embedding
 
-        class Config:
-            def __init__(self, dim):
-                self.dim = dim
-                self.norm_eps = 1e-5
-
         self.blocks = nn.ModuleList()
         for i in range(n_layers):
-            self.blocks.append(RecurrentBlock(Config(dim)))
+            self.blocks.append(RecurrentBlock(dim=dim, norm_eps=1e-5))
 
         # Project to byte probabilities
         self.norm = nn.LayerNorm(dim)
@@ -461,8 +466,8 @@ def create_base_args(config):
         norm_eps=config.epsilon,
         n_heads=1,
         # dim=hidden_size,
-        # dim_token_emb=hidden_size,
-        dim_token=hidden_size,  # must be set, else creates an unused module called self.token_embedding_projection
+        dim_token_emb=hidden_size // 2,
+        # dim_token=hidden_size,  # must be set, else creates an unused module called self.token_embedding_projection
         # dim_patch_emb=hidden_size,
         dim_global=hidden_size,
         dim_local_encoder=hidden_size,
@@ -497,8 +502,8 @@ def create_base_args(config):
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
-        cross_attn_k=4,  # is a multiplier for token and patch embedding
-        cross_attn_nheads=2,  # num heads used in cross attn
+        cross_attn_k=1,  # is a multiplier for token and patch embedding
+        cross_attn_nheads=1,  # num heads used in cross attn
         n_layers_local_encoder=1,
         n_layers_local_decoder=1,
         n_heads_local_encoder=1,
@@ -535,10 +540,11 @@ def create_base_args(config):
 def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
     return LocalModelArgs(
         # Updated args
-        dim=args.dim_local_encoder,
+        dim=args.dim_token_emb,
         n_layers=args.n_layers_local_encoder,
         n_heads=args.n_heads_local_encoder,
-        dim_token_emb=get_encoder_dim_token_emb(args),
+        # dim_token_emb=get_encoder_dim_token_emb(args),
+        dim_token_emb=args.dim,
         dim_patch_emb=get_encoder_dim_patch_emb(args),
         cross_attn_encoder=args.cross_attn_encoder,
         cross_attn_decoder=False,
@@ -575,11 +581,11 @@ def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
 def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
     # First deep copy the original args
     return LocalModelArgs(
-        dim=args.dim_local_decoder,
+        dim=args.dim_token_emb,
         n_layers=args.n_layers_local_decoder,
         n_heads=args.n_heads_local_decoder,
-        dim_token_emb=get_decoder_dim_token_emb(args),
-        dim_patch_emb=args.dim_global,
+        dim_token_emb=args.dim_token_emb,
+        dim_patch_emb=args.dim // 2,
         cross_attn_encoder=False,
         cross_attn_decoder=args.cross_attn_decoder,
         cross_attn_init_by_pooling=False,  # states are already defined

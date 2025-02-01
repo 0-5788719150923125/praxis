@@ -14,15 +14,16 @@ class minGRU(nn.Module):
     https://github.com/lucidrains/minGRU-pytorch/blob/main/minGRU_pytorch/minGRU.py
     """
 
-    def __init__(self, dim, expansion_factor=1.0, proj_out=None):
+    def __init__(self, dim, expansion_factor=1.0, dim_out=None, proj_out=None):
         super().__init__()
 
+        dim_out = dim_out or dim
         dim_inner = int(dim * expansion_factor)
         proj_out = proj_out if proj_out is not None else expansion_factor != 1.0
 
         self.to_hidden_and_gate = nn.Linear(dim, dim_inner * 2, bias=False)
         self.to_out = (
-            nn.Linear(dim_inner, dim, bias=False) if proj_out else nn.Identity()
+            nn.Linear(dim_inner, dim_out, bias=False) if proj_out else nn.Identity()
         )
 
     def forward(self, x, prev_hidden=None):
