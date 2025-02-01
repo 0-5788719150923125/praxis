@@ -13,6 +13,7 @@ from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
     ByteLatentTransformerArgs,
     EmbeddingType,
+    byte_group_hash_function,
     compute_hash_embeddings,
     cross_attn_mask,
     decoder_patch_ids_from_lengths,
@@ -27,7 +28,6 @@ from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModel
 from bytelatent.model.utils import downsample
 from torch import nn
 
-from praxis.modules.experimental.blt import RealtimeNgramProcessor
 from praxis.modules.recurrent import minGRU
 
 
@@ -95,14 +95,13 @@ class PraxisEncoder(nn.Module):
         )
         self.ngram_embeds = None
         if "ngram" in config.meta:
-            ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
+            self.ngram_sizes = parse_ngram_to_size(self.args.encoder_ngram_to_size_str)
             self.ngram_embeds = init_embeddings(
                 self.args,
                 EmbeddingType.NGRAM,
                 local_encoder_dim=self.args.dim_local_encoder,
                 encoder_hash_byte_group_size=None,
             )
-            self.ngram_processor = RealtimeNgramProcessor(ngram_sizes)
 
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
@@ -239,27 +238,9 @@ class PraxisEncoder(nn.Module):
         local_encoder_embeds = hash_embeds
 
         if self.ngram_embeds is not None:
-            # if self.training:
-            #     # Update statistics
-            #     self.ngram_processor.update_from_batch(input_ids)
-
-            # Get ngram IDs for current batch
-            ngram_ids = self.ngram_processor(input_ids)
-            if self.debug and random.random() < self.log_rate:
-                truncate_len = min(input_ids.size(1), 12)
-                print(f"DEBUG: n-gram IDs: {ngram_ids.tolist()[0][0][:truncate_len]}")
-
-            assert len(ngram_ids) == len(
-                self.ngram_embeds
-            ), f"ngram_ids.shape[0]={ngram_ids.shape[0]} versus len(encoder_ngram_embedding)={len(self.ngram_embeds)}, ngram_ids.shape={ngram_ids.shape}"
-
-            for i in range(ngram_ids.shape[0]):
-                ngram_embedding = self.ngram_embeds[i]
-                ngram_embeds = ngram_embedding(ngram_ids[i])
-                assert (
-                    local_encoder_embeds.shape == ngram_embeds.shape
-                ), f"Shape mismatch: {local_encoder_embeds.shape} vs {ngram_embeds.shape}, ngram_ids.shape={ngram_ids.shape}"
-                local_encoder_embeds = local_encoder_embeds + ngram_embeds
+            local_encoder_embeds = compute_ngram_embeddings(
+                input_ids, local_encoder_embeds, self.ngram_embeds, self.ngram_sizes
+            )
 
         # Local encoder with cross attention
         (h_encoder, h_cross), _ = self.encoder(
@@ -377,6 +358,48 @@ class PraxisEncoder(nn.Module):
                 break
 
         return safe_threshold
+
+
+def compute_ngram_embeddings(
+    local_encoder_tokens: torch.Tensor,
+    local_encoder_embeds: torch.Tensor,
+    encoder_ngram_tok_embedding: nn.ModuleList,
+    ngram_sizes: dict,
+) -> torch.Tensor:
+    """
+    Compute embeddings using n-gram hash token embeddings.
+
+    Args:
+        local_encoder_tokens: Input tokens tensor of shape (batch_size, seq_len)
+        local_encoder_embeds: Input tensor containing token embeddings.
+        encoder_ngram_tok_embedding: ModuleList of n-gram token embeddings
+        ngram_sizes: Dictionary mapping n-gram size to vocabulary size
+
+    Returns:
+        torch.Tensor: Combined embeddings
+    """
+    if encoder_ngram_tok_embedding is None:
+        return None
+
+    # Process each n-gram size
+    for i, (ngram_size, vocab_size) in enumerate(sorted(ngram_sizes.items())):
+        # Compute hash ids for this n-gram size
+        hash_ids = byte_group_hash_function(
+            local_encoder_tokens,
+            group_size=ngram_size,
+            hash_func_nb=i,
+            max_hash=vocab_size,
+        )
+
+        if random.random() < 0.005:
+            truncate_len = min(local_encoder_tokens.size(1), 12)
+            print(f"DEBUG: n-gram IDs: {hash_ids.tolist()[0][:truncate_len]}")
+
+        # Get embeddings for these hash ids
+        hash_tok_embedding = encoder_ngram_tok_embedding[i]
+        local_encoder_embeds = local_encoder_embeds + hash_tok_embedding(hash_ids)
+
+    return local_encoder_embeds
 
 
 class RecurrentBlock(minGRU):
@@ -526,7 +549,9 @@ def create_base_args(config):
         # encoder_ngram_to_size_str=(
         #     f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
         # ),
-        encoder_ngram_to_size_str=(f"2:{config.vocab_size // 2}"),
+        encoder_ngram_to_size_str=(
+            f"2:{config.vocab_size // 2},3:{config.vocab_size // 2},4:{config.vocab_size // 2}"
+        ),
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
