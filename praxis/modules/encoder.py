@@ -103,13 +103,13 @@ class PraxisEncoder(nn.Module):
         self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
         self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
 
-    # def __repr__(self):
-    #     return (
-    #         f"{self.__class__.__name__}("
-    #         + f"type='byte_latent', "
-    #         + f"n_encoders={len(self.encoder.layers)}, "
-    #         + f"n_decoders={len(self.decoder.layers)})"
-    #     )
+    def __repr__(self):
+        return (
+            f"{self.__class__.__name__}("
+            + f"type='byte_latent', "
+            + f"n_encoders={len(self.encoder.layers)}, "
+            + f"n_decoders={len(self.decoder.layers)})"
+        )
 
     def encode(self, input_ids):
         aux_loss = 0
@@ -462,42 +462,20 @@ def create_base_args(config):
 
     hidden_size = config.hidden_size
     return ByteLatentTransformerArgs(
+        # stuff to care about
         vocab_size=BYTE_UNITS + OFFSET,
         norm_eps=config.epsilon,
         n_heads=1,
-        # dim=hidden_size,
-        dim_token_emb=hidden_size // 2,
-        # dim_token=hidden_size,  # must be set, else creates an unused module called self.token_embedding_projection
-        # dim_patch_emb=hidden_size,
+        dim=hidden_size,
+        dim_token_emb=hidden_size // 4,
         dim_global=hidden_size,
-        dim_local_encoder=hidden_size,
-        dim_local_decoder=hidden_size,
-        # tie_local_encoder_decoder_logits=False,
-        # max_seqlen=config.context_length,
-        max_encoder_seq_length=config.context_length,
-        # max_length=hidden_size,
-        # pad_to_max_length=True,
-        # encoder_lm_loss=False,
-        # patching_threshold=3.1439168453216553,  # not used with "space" patch_mode
-        # patching_threshold=1.335442066192627, # use this for "entropy" patch_mode
-        # patch_size=6,  # use this for "space" patch_mode
-        # patch_size=4.5, # use this for "entropy" patch_mode
-        # tokenization_mode="bytes",
-        # patching_mode="space",  # space patching [is] a very close competitor to dynamic entropy based patching.
-        # patching_mode="bpe",
-        # patching_mode="entropy",
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
-        encoder_hash_byte_group_vocab=config.vocab_size,
-        # encoder_ngram_to_size_str = (
-        #     "2:38396,3:50000,4:50000,5:50000,6:50000,7:50000,8:50000"
-        # ),
-        # encoder_ngram_to_size_str=(
-        #     f"2:{config.vocab_size},3:{config.vocab_size},4:{config.vocab_size}"
-        # ),
-        # encoder_ngram_to_size_str=(
-        #     f"2:{config.vocab_size // 2},3:{config.vocab_size // 2},4:{config.vocab_size // 2}"
-        # ),
+        encoder_hash_byte_group_vocab=config.vocab_size * 2,
+        # stuff to probably ignore
+        dim_local_encoder=hidden_size,
+        dim_local_decoder=hidden_size,
+        max_encoder_seq_length=config.context_length,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
@@ -512,24 +490,7 @@ def create_base_args(config):
         cross_attn_all_layers_decoder=False,
         cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
         cross_attn_init_by_pooling=True,
-        # log_patch_lengths=True,
-        # non_linearity="swiglu", # not implemented
         use_rope=True,
-        # recompute_fc1_out=False, # I don't think these do anything
-        # recompute_fc3_out=False,
-        # recompute_attn=False,
-        # custom_bwd=False,
-        # layer_ckpt="none",
-        # efficient_attn="sdpa",
-        # patch_only_encoder=False, # doesn't do anything
-        # patch_only_decoder=False,
-        # use_local_encoder_transformer=True,
-        # init_use_gaussian=True,
-        # init_use_depth="current",
-        # attn_bias_type="local_block_causal",
-        # alpha_depth="disabled",
-        # local_attention_window_len=512,
-        # sliding_window=256,  # basically required, else encoder dim is equal to max_seq_len
         downsampling_by_pooling="max",
         share_encoder_decoder_emb=False,
         dropout=config.dropout,
@@ -543,76 +504,45 @@ def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         dim=args.dim_token_emb,
         n_layers=args.n_layers_local_encoder,
         n_heads=args.n_heads_local_encoder,
-        # dim_token_emb=get_encoder_dim_token_emb(args),
-        dim_token_emb=args.dim,
+        dim_token_emb=get_encoder_dim_token_emb(args),
         dim_patch_emb=get_encoder_dim_patch_emb(args),
         cross_attn_encoder=args.cross_attn_encoder,
         cross_attn_decoder=False,
         cross_attn_k=args.cross_attn_k if args.cross_attn_encoder else None,
         cross_attn_init_by_pooling=args.cross_attn_init_by_pooling,
         # Defaults
-        head_dim=args.head_dim,
-        max_seqlen=args.max_encoder_seq_length,
         dropout=args.dropout,
         vocab_size=args.vocab_size + args.pm_size,
-        norm_eps=args.norm_eps,
         patch_size=args.patch_size,
         sliding_window=args.local_attention_window_len,
         use_rope=args.use_rope,
-        rope_theta=args.rope_theta,
-        init_base_std=args.init_base_std,
-        init_std_factor=args.init_std_factor,
-        n_kv_heads=args.n_kv_heads,
-        attn_impl=args.attn_impl,
-        attn_bias_type="local_block_causal",
-        multiple_of=args.multiple_of,
-        ffn_dim_multiplier=args.ffn_dim_multiplier,
         patching_mode=args.patching_mode,
         use_local_encoder_transformer=args.use_local_encoder_transformer,
         downsampling_by_pooling=args.downsampling_by_pooling,
         encoder_hash_byte_group_size=args.encoder_hash_byte_group_size,
-        cross_attn_all_layers_encoder=args.cross_attn_all_layers_encoder,
-        cross_attn_all_layers_decoder=args.cross_attn_all_layers_decoder,
         cross_attn_nheads=args.cross_attn_nheads,
-        eos_id=EOS_ID,
     )
 
 
 def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
-    # First deep copy the original args
     return LocalModelArgs(
         dim=args.dim_token_emb,
         n_layers=args.n_layers_local_decoder,
         n_heads=args.n_heads_local_decoder,
         dim_token_emb=args.dim_token_emb,
-        dim_patch_emb=args.dim // 2,
+        dim_patch_emb=args.dim,
         cross_attn_encoder=False,
         cross_attn_decoder=args.cross_attn_decoder,
-        cross_attn_init_by_pooling=False,  # states are already defined
+        cross_attn_init_by_pooling=False,
         cross_attn_k=args.cross_attn_k if args.cross_attn_decoder else None,
         # Defaults
-        head_dim=args.head_dim,
-        max_seqlen=args.max_encoder_seq_length,
         dropout=args.dropout,
         vocab_size=args.vocab_size + args.pm_size,
-        norm_eps=args.norm_eps,
         patch_size=args.patch_size,
         sliding_window=args.local_attention_window_len,
         use_rope=args.use_rope,
-        rope_theta=args.rope_theta,
-        init_base_std=args.init_base_std,
-        init_std_factor=args.init_std_factor,
-        n_kv_heads=args.n_kv_heads,
-        attn_impl=args.attn_impl,
-        attn_bias_type="local_block_causal",
-        multiple_of=args.multiple_of,
-        ffn_dim_multiplier=args.ffn_dim_multiplier,
         patching_mode=args.patching_mode,
         use_local_encoder_transformer=args.use_local_encoder_transformer,
         downsampling_by_pooling=args.downsampling_by_pooling,
-        encoder_hash_byte_group_size=args.encoder_hash_byte_group_size,
-        cross_attn_all_layers_encoder=args.cross_attn_all_layers_encoder,
-        cross_attn_all_layers_decoder=args.cross_attn_all_layers_decoder,
         cross_attn_nheads=args.cross_attn_nheads,
-        eos_id=EOS_ID,
     )
