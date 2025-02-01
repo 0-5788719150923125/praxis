@@ -113,7 +113,12 @@ class PraxisAttention(nn.Module):
             self.num_query_heads * self.head_dim, hidden_size, bias=False
         )
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor = None) -> Tensor:
+    def forward(
+        self,
+        inputs: Tensor,
+        attention_mask: Tensor = None,
+        past_key_values: Tensor = None,
+    ) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
         aux_loss = 0
 
@@ -178,7 +183,8 @@ class PraxisAttention(nn.Module):
             output = self.gates(inputs, output)
 
         # Final output projection
-        return self.output(output), aux_loss
+        layer_kv = None
+        return self.output(output), layer_kv, aux_loss
 
     def _process_chunk(
         self,
@@ -871,7 +877,9 @@ class VanillaMHA(nn.MultiheadAttention):
             batch_first=True,
         )
 
-    def forward(self, inputs: Tensor, attention_mask: Tensor):
+    def forward(
+        self, inputs: Tensor, attention_mask: Tensor, past_key_values: Tensor = None
+    ):
         # scores shape: [B, S, E]
         seq_len = inputs.size(1)
         # Create causal mask
@@ -887,7 +895,8 @@ class VanillaMHA(nn.MultiheadAttention):
             is_causal=True,
             attn_mask=causal_mask,
         )
-        return outputs, 0
+        layer_kv = None
+        return outputs, layer_kv, 0
 
 
 ATTENTION_REGISTRY = {

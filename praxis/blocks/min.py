@@ -27,14 +27,15 @@ class PraxisGRU(nn.Module):
         self,
         inputs: torch.Tensor,
         attention_mask: torch.Tensor,
-        current_state: torch.Tensor,
+        past_key_values: torch.Tensor = None,
+        current_state: torch.Tensor = None,
         router_weights: Optional[torch.Tensor] = None,
         current_depth: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
         out, _ = self.recurrent(self.norm(inputs))
-        return self.ffn(stretch(out, target_min=-1.0)) + inputs, None, 0
+        return self.ffn(stretch(out, target_min=-1.0)) + inputs, None, None, 0
 
 
 def stretch(

@@ -60,14 +60,14 @@ class PraxisModel(PreTrainedModel):
             else current_state
         )
 
-        last_hidden_state, current_state, aux_loss = self.decoder(
+        last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
             inputs, current_state, attention_mask
         )
         self.aux_losses.append(aux_loss)
 
         return PraxisModelOutput(
             last_hidden_state=last_hidden_state,
-            past_key_values=None,
+            past_key_values=new_key_values,
             hidden_states=None,
             attentions=None,
             current_state=current_state,

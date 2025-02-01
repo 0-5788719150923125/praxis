@@ -77,6 +77,7 @@ class PraxisExpert(nn.Module):
         self,
         inputs: Tensor,
         attention_mask: Tensor,
+        past_key_values: Tensor,
         current_state: Tensor,
         current_depth: int,
     ):
@@ -85,7 +86,12 @@ class PraxisExpert(nn.Module):
             return self._remote_forward(inputs, attention_mask, use_router)
         else:
             return self._local_forward(
-                inputs, current_state, attention_mask, use_router, current_depth
+                inputs,
+                current_state,
+                attention_mask,
+                past_key_values,
+                use_router,
+                current_depth,
             )
 
     def _local_forward(
@@ -93,20 +99,21 @@ class PraxisExpert(nn.Module):
         inputs: Tensor,
         current_state: Tensor,
         attention_mask: Tensor,
+        past_key_values: Tensor,
         use_router: bool,
         current_depth: int,
     ):
         aux_losses = []
         if use_router:
-            hidden_states, state_update, aux_loss = self.router(
-                self.block, inputs, attention_mask, current_state
+            hidden_states, layer_kv, state_update, aux_loss = self.router(
+                self.block, inputs, attention_mask, past_key_values, current_state
             )
             aux_losses.append(aux_loss)
         else:
-            hidden_states, state_update, aux_loss = self.block(
-                inputs, attention_mask, current_state, current_depth
+            hidden_states, layer_kv, state_update, aux_loss = self.block(
+                inputs, attention_mask, past_key_values, current_state, current_depth
             )
-        return hidden_states, state_update, sum(aux_losses)
+        return hidden_states, layer_kv, state_update, sum(aux_losses)
 
     def _remote_forward(self, inputs, attention_mask, use_router: bool):
         # because we would otherwise break gradient flow

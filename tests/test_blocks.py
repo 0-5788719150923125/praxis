@@ -59,7 +59,7 @@ def test_forward_pass(module_setup):
     x = torch.randn(batch_size, seq_len, block_config.hidden_size)
 
     # Run forward pass
-    output, prev_state, aux_loss = module(
+    output, layer_kv, prev_state, aux_loss = module(
         x, attention_mask=None, router_weights=None, current_state=None, current_depth=0
     )
 

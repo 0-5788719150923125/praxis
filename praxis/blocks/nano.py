@@ -49,7 +49,8 @@ class PraxisNano(nn.Module):
         self,
         inputs: torch.Tensor,
         attention_mask: torch.Tensor,
-        current_state: torch.Tensor,
+        past_key_values: torch.Tensor = None,
+        current_state: torch.Tensor = None,
         router_weights: Optional[torch.Tensor] = None,
         current_depth: Optional[torch.Tensor] = None,
         *args,
@@ -70,7 +71,7 @@ class PraxisNano(nn.Module):
         # Feedforward
         chunk_ffw = self.ffw(chunk_ffw)
         # Residual connection
-        return chunk_ffw + residual, None, 0
+        return chunk_ffw + residual, None, None, 0
 
 
 class ElasticLinear(nn.Module):

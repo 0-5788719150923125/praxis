@@ -31,11 +31,12 @@ class PraxisRecurrent(nn.Module):
         self,
         inputs: torch.Tensor,
         attention_mask: torch.Tensor,
-        current_state: torch.Tensor,
+        past_key_values: torch.Tensor = None,
+        current_state: torch.Tensor = None,
         router_weights: Optional[torch.Tensor] = None,
         current_depth: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:
         outputs, new_state, aux_loss = self.experts(self.norm(inputs), current_state)
-        return outputs + inputs, new_state, aux_loss
+        return outputs + inputs, None, new_state, aux_loss

@@ -27,6 +27,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         layer: nn.Module,
         inputs: Tensor,
         attention_mask: Tensor,
+        past_key_values: Tensor,
         current_state: Tensor,
     ):
 
@@ -74,8 +75,12 @@ class PraxisMixtureOfDepths(nn.Linear):
         )
 
         # pass the selected tokens through a transformer block
-        layer_outputs, state_update, aux_loss = layer(
-            filtered_inputs, current_state, filtered_attention_mask, token_weights
+        layer_outputs, layer_kv, state_update, aux_loss = layer(
+            filtered_inputs,
+            filtered_attention_mask,
+            past_key_values,
+            current_state,
+            token_weights,
         )
 
         # reintegrate the processed tokens with our residual stream
@@ -86,7 +91,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             src=layer_outputs,
         )
 
-        return outputs, state_update, aux_loss + router_loss
+        return outputs, layer_kv, state_update, aux_loss + router_loss
 
     def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
         router_targets = torch.zeros_like(router_logits)

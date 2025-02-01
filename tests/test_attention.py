@@ -118,7 +118,7 @@ def test_forward_pass(module_setup):
     x = torch.randn(batch_size, seq_len, attention_config.hidden_size)
 
     # Run forward pass
-    output, aux_loss = module(x)
+    output, layer_kv, aux_loss = module(x)
 
     # Verify output shape
     assert output.shape == (batch_size, seq_len, attention_config.hidden_size)
