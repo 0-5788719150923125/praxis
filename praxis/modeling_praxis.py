@@ -99,6 +99,26 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             "attention_mask": attention_mask,
         }
 
+    # def prepare_inputs_for_generation(
+    #     self, input_ids, past_key_values=None, current_state=None, **kwargs
+    # ):
+    #     # First generation step
+    #     if past_key_values is None:
+    #         return {
+    #             "input_ids": input_ids,
+    #             "attention_mask": kwargs.get("attention_mask", None),
+    #             "past_key_values": None,
+    #             "current_state": None,
+    #         }
+
+    #     # Subsequent steps
+    #     return {
+    #         "input_ids": input_ids[:, -1:],
+    #         "attention_mask": kwargs.get("attention_mask", None),
+    #         "past_key_values": past_key_values,
+    #         "current_state": current_state,
+    #     }
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
