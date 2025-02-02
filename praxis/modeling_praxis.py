@@ -54,12 +54,6 @@ class PraxisModel(PreTrainedModel):
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
-        current_state = (
-            [None for _ in range(self.config.depth)]
-            if current_state is None
-            else current_state
-        )
-
         last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
             inputs, current_state, attention_mask
         )
@@ -164,8 +158,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         self.aux_losses = []
 
-        self._save_state(outputs.current_state)
-
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -173,22 +165,6 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-    def _save_state(self, state):
-        self.current_state = state
-
-    def get_initial_state(self) -> list[torch.Tensor]:
-        if len(self.current_state) > 0:
-            return [
-                (
-                    self.current_state[i]
-                    if torch.is_tensor(self.current_state[i])
-                    else self.current_state[i]
-                )
-                for i in range(self.config.depth)
-            ]
-        else:
-            return [None for _ in range(self.config.depth)]
 
 
 @dataclass

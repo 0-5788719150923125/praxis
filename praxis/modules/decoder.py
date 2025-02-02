@@ -38,6 +38,7 @@ class PraxisDecoder(nn.Module):
 
         hidden_states = inputs
         new_key_values = []
+        new_states = []
         aux_losses = []
 
         next_expert_idx = None
@@ -47,27 +48,27 @@ class PraxisDecoder(nn.Module):
                 if next_expert_idx is not None:
                     expert = experts[next_expert_idx]
 
-                layer_past = (
-                    past_key_values[idx] if past_key_values is not None else None
-                )
-                new_states, layer_kv, aux_loss = self._create_forward(
-                    expert, hidden_states, attention_mask, layer_past, current_state, i
+                layer_past = past_key_values[i] if past_key_values is not None else None
+                layer_state = current_state[i] if current_state is not None else None
+                hidden_update, layer_kv, layer_state, aux_loss = self._create_forward(
+                    expert, hidden_states, attention_mask, layer_past, layer_state, i
                 )
                 new_key_values.append(layer_kv)
+                new_states.append(layer_state)
                 aux_losses.append(aux_loss)
 
                 if hasattr(self.stack.behavior, "get_next_expert"):
                     # Predict the optimal next-expert index
                     aux_loss, next_expert_idx = self.stack.behavior.get_next_expert(
-                        new_states, i, original_order, experts, expert
+                        hidden_update, i, original_order, experts, expert
                     )
                     aux_losses.append(aux_loss)
 
                 if hasattr(self.stack, "post_compute"):
-                    new_states = self.stack.post_compute(new_states, i)
+                    hidden_update = self.stack.post_compute(hidden_update, i)
 
                 # Commit to self
-                hidden_states = new_states
+                hidden_states = hidden_update
 
             except (P2PDaemonError, P2PHandlerError) as e:
                 # Prune dead peers
@@ -106,7 +107,7 @@ class PraxisDecoder(nn.Module):
                     hidden_states,
                     attention_mask,
                     past_key_values,
-                    current_state[current_depth],
+                    current_state,
                     current_depth,
                 )
                 # Remove context from both hidden states and attention mask
@@ -118,14 +119,11 @@ class PraxisDecoder(nn.Module):
                     hidden_states,
                     attention_mask,
                     past_key_values,
-                    current_state[current_depth],
+                    current_state,
                     current_depth,
                 )
 
-            if state_update is not None:
-                current_state[current_depth] = state_update
-
-            return states, layer_kv, aux_loss
+            return states, layer_kv, state_update, aux_loss
 
         if self.training and self._should_checkpoint(current_depth):
             return torch.utils.checkpoint.checkpoint(
