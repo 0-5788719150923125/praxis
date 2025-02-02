@@ -415,7 +415,7 @@ class TerminalInterface(Callback):
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
         lm.model.get_addr()
-        # we limit to 50% of the context length seen during training, to keep memory
+        # we limit the context length seen during training, to keep memory
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = terminal_output_length
         if self.dashboard:
