@@ -538,7 +538,7 @@ class TerminalDashboard:
                 or self.game_of_life.width != (width - 2) // 2
                 or self.game_of_life.height != height
             ):
-                self.game_of_life = GameOfLife((width - 2) // 2, height)
+                self.game_of_life = ForestFireAutomata((width - 2) // 2, height)
 
             # Update the game state
             self.game_of_life.get_next_generation()
@@ -584,77 +584,56 @@ class TerminalDashboard:
                 print(self.error_message, file=self.original_stderr)
 
 
-class GameOfLife:
+import random
+
+import numpy as np
+
+
+class ForestFireAutomata:
     def __init__(self, width, height):
+        """Initialize the forest fire simulation."""
         self.width = width
         self.height = height
-        self.grid = np.random.choice([0, 1], size=(height, width), p=[0.85, 0.15])
-        self.previous_populations = []
-        self.stagnation_threshold = 30  # Number of generations before intervention
-        self.mutation_rate = 0.1  # 10% of cells will be randomized during intervention
-        self.update_chance = 0.25
+        self.p_growth = 0.01
+        self.p_lightning = 0.001
+
+        # States: 0 = empty, 1 = tree, 2 = burning
+        self.grid = np.zeros((height, width))
+        self.grid = np.random.choice([0, 1], size=(height, width), p=[0.8, 0.2])
 
     def get_next_generation(self):
-        if random.random() < self.update_chance:
-            return self.grid
-        new_grid = np.zeros((self.height, self.width))
+        new_grid = np.copy(self.grid)
+
         for i in range(self.height):
             for j in range(self.width):
-                # Count neighbors (including wrapping)
-                neighbors = sum(
-                    [
-                        self.grid[(i - 1) % self.height, (j - 1) % self.width],
-                        self.grid[(i - 1) % self.height, j],
-                        self.grid[(i - 1) % self.height, (j + 1) % self.width],
-                        self.grid[i, (j - 1) % self.width],
-                        self.grid[i, (j + 1) % self.width],
-                        self.grid[(i + 1) % self.height, (j - 1) % self.width],
-                        self.grid[(i + 1) % self.height, j],
-                        self.grid[(i + 1) % self.height, (j + 1) % self.width],
+                if self.grid[i, j] == 0:  # Empty
+                    if np.random.random() < self.p_growth:
+                        new_grid[i, j] = 1
+
+                elif self.grid[i, j] == 1:  # Tree
+                    neighbors = self.grid[
+                        max(0, i - 1) : min(i + 2, self.height),
+                        max(0, j - 1) : min(j + 2, self.width),
                     ]
-                )
+                    if 2 in neighbors:
+                        new_grid[i, j] = 2
+                    elif np.random.random() < self.p_lightning:
+                        new_grid[i, j] = 2
 
-                # Apply Conway's rules
-                if self.grid[i, j] == 1:
-                    if neighbors < 2 or neighbors > 3:
-                        new_grid[i, j] = 0
-                    else:
-                        new_grid[i, j] = 1
-                else:
-                    if neighbors == 3:
-                        new_grid[i, j] = 1
-                    else:
-                        new_grid[i, j] = 0
-
-        # Track population
-        current_population = np.sum(new_grid)
-        self.previous_populations.append(current_population)
-
-        # Keep only recent history
-        if len(self.previous_populations) > self.stagnation_threshold:
-            self.previous_populations.pop(0)
-
-        # Check for stagnation
-        if len(self.previous_populations) == self.stagnation_threshold:
-            if len(set(self.previous_populations)) == 1:  # All values are the same
-                # Add random mutations
-                mutation_mask = np.random.choice(
-                    [True, False],
-                    size=new_grid.shape,
-                    p=[self.mutation_rate, 1 - self.mutation_rate],
-                )
-                new_grid[mutation_mask] = np.random.choice(
-                    [0, 1], size=np.sum(mutation_mask)
-                )
-                self.previous_populations = []  # Reset history after intervention
+                elif self.grid[i, j] == 2:  # Burning
+                    new_grid[i, j] = 0
 
         self.grid = new_grid
         return self.grid
 
     def to_ascii(self):
-        # Convert the grid to ASCII characters, using two characters per cell
-        # for a more square appearance
-        return ["".join(["██" if cell else "  " for cell in row]) for row in self.grid]
+        """Convert the grid to ASCII art."""
+        return [
+            "".join(
+                ["██" if cell == 1 else "░░" if cell == 2 else "  " for cell in row]
+            )
+            for row in self.grid
+        ]
 
 
 # Test text with various newline patterns
