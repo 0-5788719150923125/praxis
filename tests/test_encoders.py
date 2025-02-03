@@ -47,7 +47,9 @@ def test_forward_pass(module_setup):
     input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
     # Step 1: Encode
-    h, h_encoder, patch_lengths, entropy_loss = module.encode(input_ids=input_ids)
+    h, h_encoder, patch_lengths, block_ids, entropy_loss = module.encode(
+        input_ids=input_ids
+    )
 
     # Step 2: Decode
     decoder_output = module.decode(
