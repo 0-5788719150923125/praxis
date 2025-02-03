@@ -163,6 +163,8 @@ class PraxisAttention(nn.Module):
             chunk_block_ids = (
                 None if block_ids is None else block_ids[:, start_idx:end_idx]
             )
+            if chunk_block_ids.dim() == 3:
+                chunk_block_ids = chunk_block_ids.squeeze(-1)
 
             # Process chunk with position offset
             chunk_output = self._process_chunk(
@@ -172,7 +174,7 @@ class PraxisAttention(nn.Module):
                 chunk_mask,
                 current_chunk_size,
                 start_idx,
-                chunk_block_ids,
+                block_ids,
             )
 
             outputs.append(chunk_output)
