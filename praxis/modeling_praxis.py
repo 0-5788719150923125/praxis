@@ -52,9 +52,6 @@ class PraxisModel(PreTrainedModel):
             block_ids = self._create_block_ids(input_ids)
             inputs = self.embeds(input_ids)
 
-        if not torch.is_tensor(attention_mask):
-            attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
-
         last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
             inputs, current_state, attention_mask, past_key_values, block_ids
         )

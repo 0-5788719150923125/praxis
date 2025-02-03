@@ -70,11 +70,13 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         # slice an attention mask that matches the top-k selections
         squeezed_indices = token_indices.squeeze(-1)
-        filtered_attention_mask = torch.gather(
-            input=attention_mask,
-            dim=1,
-            index=squeezed_indices,
-        )
+        filtered_attention_mask = None
+        if attention_mask is not None:
+            filtered_attention_mask = torch.gather(
+                input=attention_mask,
+                dim=1,
+                index=squeezed_indices,
+            )
 
         filtered_block_ids = torch.gather(
             input=block_ids,

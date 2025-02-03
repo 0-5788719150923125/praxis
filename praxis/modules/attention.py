@@ -122,8 +122,6 @@ class PraxisAttention(nn.Module):
     ) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
         aux_loss = 0
-        if not torch.is_tensor(attention_mask):
-            attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
         if self.ema:
             # Compute an exponential moving average-based gating mechanism
@@ -159,7 +157,9 @@ class PraxisAttention(nn.Module):
             chunk_q = q[:, :, start_idx:end_idx]
             chunk_k = k[:, :, start_idx:end_idx]
             chunk_v = v[:, :, start_idx:end_idx]
-            chunk_mask = attention_mask[:, start_idx:end_idx]
+            chunk_mask = (
+                None if attention_mask is None else attention_mask[:, start_idx:end_idx]
+            )
             chunk_block_ids = (
                 None if block_ids is None else block_ids[:, start_idx:end_idx]
             )
@@ -273,6 +273,7 @@ class ScaledDotProduct(nn.Module):
     def apply_masking(
         self, scores, attention_mask, block_ids, seq_len, hist_len, causal
     ):
+        causal_mask = None
         if causal:
             if block_ids is None:
                 # Regular causal mask when no sequence blocking needed
@@ -296,19 +297,19 @@ class ScaledDotProduct(nn.Module):
                 )
 
                 mask = (same_block & causal).unsqueeze(1).float()
-                mask = (1.0 - mask) * -1e9
-                scores = scores + mask
+                causal_mask = (1.0 - mask) * -1e9
+                scores = scores + causal_mask
+        elif attention_mask is not None:
+            # Handle padding mask
+            attention_mask = F.pad(
+                attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
+            )
+            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            scores = scores + attention_mask
 
-        # Handle padding mask
-        attention_mask = F.pad(
-            attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
-        )
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-        scores = scores + attention_mask
+        return scores, causal_mask, attention_mask
 
-        return scores, None, attention_mask
-
-    def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
+    def compute_weights(self, q, k, v, scores, *args, **kwargs):
         if "entmax" in self.meta:
             weights = alpha_entmax(scores, dim=-1)
         elif "relu" in self.meta:
