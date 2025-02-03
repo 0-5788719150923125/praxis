@@ -29,6 +29,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         attention_mask: Tensor,
         past_key_values: Tensor,
         current_state: Tensor,
+        current_depth: Tensor,
+        sequence_ids: Tensor,
     ):
 
         b, s, d = inputs.shape
@@ -81,6 +83,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             past_key_values,
             current_state,
             token_weights,
+            sequence_ids,
         )
 
         # reintegrate the processed tokens with our residual stream

@@ -252,11 +252,11 @@ if no_schedule:
 else:
     scheduler_func = partial(
         CosineAnnealingWarmupRestarts,
-        first_cycle_steps=4096 * 64,
+        first_cycle_steps=1024 * 1024,
         max_lr=optimizer_config["lr"],
         min_lr=optimizer_config["lr"] * 1e-2,
         gamma=1.0,
-        warmup_steps=512,
+        warmup_steps=1024,
     )
 
 

@@ -118,10 +118,10 @@ class PraxisAttention(nn.Module):
         inputs: Tensor,
         attention_mask: Tensor = None,
         past_key_values: Tensor = None,
+        sequence_ids: Tensor = None,
     ) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
         aux_loss = 0
-
         if not torch.is_tensor(attention_mask):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
@@ -160,6 +160,9 @@ class PraxisAttention(nn.Module):
             chunk_k = k[:, :, start_idx:end_idx]
             chunk_v = v[:, :, start_idx:end_idx]
             chunk_mask = attention_mask[:, start_idx:end_idx]
+            chunk_sequence_ids = (
+                None if sequence_ids is None else sequence_ids[:, start_idx:end_idx]
+            )
 
             # Process chunk with position offset
             chunk_output = self._process_chunk(
@@ -169,6 +172,7 @@ class PraxisAttention(nn.Module):
                 chunk_mask,
                 current_chunk_size,
                 start_idx,
+                chunk_sequence_ids,
             )
 
             outputs.append(chunk_output)
@@ -194,6 +198,7 @@ class PraxisAttention(nn.Module):
         attention_mask: Tensor,
         chunk_size: int,
         offset: int = 0,
+        sequence_ids: Tensor = None,
     ) -> Tensor:
         batch_size = q.size(0)
 
@@ -214,7 +219,7 @@ class PraxisAttention(nn.Module):
 
         # Apply masking
         scores, causal_mask, chunk_attention_mask = self.algorithm.apply_masking(
-            scores, attention_mask, chunk_size, hist_len, self.causal
+            scores, attention_mask, sequence_ids, chunk_size, hist_len, self.causal
         )
 
         # Get attention output
@@ -260,27 +265,61 @@ class ScaledDotProduct(nn.Module):
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
         return q, k, v, scores
 
-    def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
-        causal_mask = None
+    def apply_masking(
+        self, scores, attention_mask, sequence_ids, seq_len, hist_len, causal
+    ):
         if causal:
-            causal_mask = (
-                torch.triu(
-                    torch.full((seq_len, hist_len), -1e9, device=scores.device),
-                    diagonal=1,
+            if sequence_ids is None:
+                # Regular causal mask when no sequence blocking needed
+                causal_mask = (
+                    torch.triu(
+                        torch.full((seq_len, hist_len), -1e9, device=scores.device),
+                        diagonal=1,
+                    )
+                    .unsqueeze(0)
+                    .unsqueeze(0)
                 )
-                .unsqueeze(0)
-                .unsqueeze(0)
-            )
-            scores = scores + causal_mask
+                scores = scores + causal_mask
+            else:
+                # During inference, extend sequence_ids if needed
+                if sequence_ids.size(1) < seq_len:
+                    # Get the last sequence ID
+                    last_id = sequence_ids[:, -1:]
+                    # Add it to match seq_len
+                    padding = last_id.expand(-1, seq_len - sequence_ids.size(1))
+                    sequence_ids = torch.cat([sequence_ids, padding], dim=1)
+                # Create mask where sequences can attend to themselves
+                seq_id_q = sequence_ids.unsqueeze(-1)  # [batch, seq, 1]
+                seq_id_k = sequence_ids[:, :hist_len].unsqueeze(
+                    1
+                )  # [batch, 1, hist_len]
+                same_seq = seq_id_q == seq_id_k  # True where same sequence
+                valid_tokens = (seq_id_q != -1) & (
+                    seq_id_k != -1
+                )  # False for special tokens
 
+                # Get positions for causal mask within sequences
+                pos = torch.arange(seq_len, device=scores.device)
+                causal = pos.unsqueeze(-1) >= torch.arange(
+                    hist_len, device=scores.device
+                )
+
+                # Combine: must be (same sequence AND valid tokens AND causal)
+                mask = (
+                    (same_seq & valid_tokens & causal).unsqueeze(1).float()
+                )  # Add head dim
+                mask = (1.0 - mask) * -1e9
+
+                scores = scores + mask
+
+        # Padding mask handling remains the same
         attention_mask = F.pad(
             attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
         )
-
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-
         scores = scores + attention_mask
-        return scores, causal_mask, attention_mask
+
+        return scores, None, attention_mask
 
     def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
         if "entmax" in self.meta:
@@ -878,7 +917,12 @@ class VanillaMHA(nn.MultiheadAttention):
         )
 
     def forward(
-        self, inputs: Tensor, attention_mask: Tensor, past_key_values: Tensor = None
+        self,
+        inputs: Tensor,
+        attention_mask: Tensor,
+        past_key_values: Tensor = None,
+        *args,
+        **kwargs,
     ):
         # scores shape: [B, S, E]
         seq_len = inputs.size(1)

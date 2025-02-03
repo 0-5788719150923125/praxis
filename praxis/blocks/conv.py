@@ -43,8 +43,9 @@ class PraxisConv(nn.Module):
         attention_mask: torch.Tensor,
         past_key_values: torch.Tensor = None,
         current_state: torch.Tensor = None,
-        router_weights: Optional[torch.Tensor] = None,
         current_depth: Optional[torch.Tensor] = None,
+        sequence_ids: torch.Tensor = None,
+        router_weights: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
     ) -> torch.Tensor:

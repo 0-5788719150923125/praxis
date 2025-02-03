@@ -41,6 +41,9 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
+        sequence_ids = self._create_sequence_ids(input_ids)
+        # if self.training:
+        #     print(sequence_ids.tolist())
         h_encoder = None
         patch_lengths = None
         if self.encoder:
@@ -55,7 +58,7 @@ class PraxisModel(PreTrainedModel):
             attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
         last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
-            inputs, current_state, attention_mask
+            inputs, current_state, attention_mask, past_key_values, sequence_ids
         )
         self.aux_losses.append(aux_loss)
 
@@ -68,6 +71,31 @@ class PraxisModel(PreTrainedModel):
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
         )
+
+    def _create_sequence_ids(self, input_ids: torch.LongTensor) -> torch.LongTensor:
+        batch_size, seq_length = input_ids.shape
+
+        # Step 1: Create special token mask (already vectorized)
+        special_tokens_mask = (
+            (input_ids == self.config.bos_token_id)
+            | (input_ids == self.config.eos_token_id)
+            | (input_ids == self.config.pad_token_id)
+        )
+
+        # Step 2: Find sequence boundaries
+        # When special_tokens_mask changes from True to False, it's a new sequence
+        # Shift special_tokens_mask and compare
+        shifted_mask = F.pad(special_tokens_mask[:, :-1], (1, 0), value=True)
+        sequence_boundaries = special_tokens_mask != shifted_mask
+
+        # Step 3: Cumulative sum to assign sequence numbers
+        # Each boundary starts a new sequence
+        sequence_numbers = sequence_boundaries.cumsum(dim=1)
+
+        # Step 4: Mask out special tokens with -1
+        sequence_ids = sequence_numbers.masked_fill(special_tokens_mask, -1)
+
+        return sequence_ids
 
     def get_addr(self):
         if self.decoder.manager:
