@@ -569,10 +569,11 @@ class EntropyModel(nn.Module):
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         # x: [batch, seq_len]
+        input_ids = x
         x = self.embedding(x)  # [batch, channels, seq_len]
 
         for block in self.blocks:
-            x = block(x)
+            x = block(x, input_ids=input_ids)
 
         return self.output(self.norm(x))
 
