@@ -41,16 +41,15 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        block_ids = None if self.encoder else self._create_block_ids(input_ids)
-
         h_encoder = None
         patch_lengths = None
         if self.encoder:
-            inputs, h_encoder, patch_lengths, entropy_loss = self.encoder.encode(
-                input_ids
+            inputs, h_encoder, patch_lengths, block_ids, entropy_loss = (
+                self.encoder.encode(input_ids)
             )
             self.aux_losses.append(entropy_loss)
         else:
+            block_ids = self._create_block_ids(input_ids)
             inputs = self.embeds(input_ids)
 
         if not torch.is_tensor(attention_mask):
