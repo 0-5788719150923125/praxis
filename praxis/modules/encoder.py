@@ -204,6 +204,8 @@ class PraxisEncoder(nn.Module):
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
+        # if self.training:
+        #     print(patch_ids.shape)
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None

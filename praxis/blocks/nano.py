@@ -52,7 +52,7 @@ class PraxisNano(nn.Module):
         past_key_values: torch.Tensor = None,
         current_state: torch.Tensor = None,
         current_depth: Optional[torch.Tensor] = None,
-        sequence_ids: torch.Tensor = None,
+        block_ids: torch.Tensor = None,
         router_weights: Optional[torch.Tensor] = None,
         *args,
         **kwargs,

@@ -30,7 +30,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         past_key_values: Tensor,
         current_state: Tensor,
         current_depth: Tensor,
-        sequence_ids: Tensor,
+        block_ids: Tensor,
     ):
 
         b, s, d = inputs.shape
@@ -76,14 +76,20 @@ class PraxisMixtureOfDepths(nn.Linear):
             index=squeezed_indices,
         )
 
+        filtered_block_ids = torch.gather(
+            input=block_ids,
+            dim=1,
+            index=squeezed_indices,
+        )  # [batch, k]
+
         # pass the selected tokens through a transformer block
         layer_outputs, layer_kv, state_update, aux_loss = layer(
             filtered_inputs,
             filtered_attention_mask,
             past_key_values,
             current_state,
+            filtered_block_ids,
             token_weights,
-            sequence_ids,
         )
 
         # reintegrate the processed tokens with our residual stream

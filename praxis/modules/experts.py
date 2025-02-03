@@ -80,7 +80,7 @@ class PraxisExpert(nn.Module):
         past_key_values: Tensor,
         current_state: Tensor,
         current_depth: int,
-        sequence_ids,
+        block_ids,
     ):
         use_router = self.sparse and current_depth % 2 != 0
         if self.is_remote:
@@ -93,7 +93,7 @@ class PraxisExpert(nn.Module):
                 past_key_values,
                 use_router,
                 current_depth,
-                sequence_ids,
+                block_ids,
             )
 
     def _local_forward(
@@ -104,7 +104,7 @@ class PraxisExpert(nn.Module):
         past_key_values: Tensor,
         use_router: bool,
         current_depth: int,
-        sequence_ids=None,
+        block_ids=None,
     ):
         aux_losses = []
         if use_router:
@@ -115,7 +115,7 @@ class PraxisExpert(nn.Module):
                 past_key_values,
                 current_state,
                 current_depth,
-                sequence_ids,
+                block_ids,
             )
             aux_losses.append(aux_loss)
         else:
@@ -125,7 +125,7 @@ class PraxisExpert(nn.Module):
                 past_key_values,
                 current_state,
                 current_depth,
-                sequence_ids,
+                block_ids,
             )
         return hidden_states, layer_kv, state_update, sum(aux_losses)
 

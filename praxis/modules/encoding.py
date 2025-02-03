@@ -18,7 +18,7 @@ class NoPE(nn.Module):
         self.num_query_heads = config.num_heads * config.num_queries
         self.head_scales = nn.Parameter(torch.linspace(-1.2, 1.2, self.num_query_heads))
 
-    def before_scores(self, q, k, v, offset: int = 0, sequence_ids=None):
+    def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
         # Get base scaling factor
         head_dim = q.size(-1)
         base_scale = 1.0 / math.sqrt(head_dim)
@@ -33,7 +33,7 @@ class NoPE(nn.Module):
         # Apply scaling to queries
         return q * scaling, k, v
 
-    def after_scores(self, scores, offset: int = 0, sequence_ids=None):
+    def after_scores(self, scores, offset: int = 0, block_ids=None):
         return scores
 
 
@@ -53,24 +53,22 @@ class ALiBi(NoPE):
         """Compute ALiBi slopes based on number of attention heads."""
         return 2 ** (-8 * torch.arange(1, num_heads + 1, device=device) / num_heads)
 
-    def before_scores(self, q, k, v, offset: int = 0, sequence_ids=None):
+    def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
         return q, k, v
 
-    def after_scores(self, scores, offset: int = 0, sequence_ids=None):
+    def after_scores(self, scores, offset: int = 0, block_ids=None):
         batch_size, num_heads, seq_len, _ = scores.shape
         device = scores.device
 
-        if sequence_ids is not None:
+        if block_ids is not None:
             # Use vectorized position computation
-            positions = self._compute_relative_positions_vectorized(
-                sequence_ids, device
-            )
+            positions = self._compute_relative_positions_vectorized(block_ids, device)
             positions = positions.float()
 
             # Create attention mask for cross-sequence interactions
-            seq_mask = sequence_ids.unsqueeze(-1) == sequence_ids.unsqueeze(-2)
-            special_mask = (sequence_ids != -1).unsqueeze(-1) & (
-                sequence_ids != -1
+            seq_mask = block_ids.unsqueeze(-1) == block_ids.unsqueeze(-2)
+            special_mask = (block_ids != -1).unsqueeze(-1) & (
+                block_ids != -1
             ).unsqueeze(-2)
             valid_mask = seq_mask & special_mask
 
@@ -90,13 +88,11 @@ class ALiBi(NoPE):
 
         return scores - biases
 
-    def _compute_relative_positions_vectorized(self, sequence_ids, device):
+    def _compute_relative_positions_vectorized(self, block_ids, device):
         # Same implementation as in RoPE
-        mask = sequence_ids != -1
+        mask = block_ids != -1
         positions = torch.cumsum(mask, dim=-1)
-        boundaries = F.pad(
-            sequence_ids[:, 1:] != sequence_ids[:, :-1], (1, 0), value=True
-        )
+        boundaries = F.pad(block_ids[:, 1:] != block_ids[:, :-1], (1, 0), value=True)
         reset_mask = torch.cumsum(boundaries, dim=-1)
         segment_positions = (
             positions
@@ -123,14 +119,14 @@ class RoPE(NoPE):
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def before_scores(self, q, k, v, offset: int = 0, sequence_ids=None):
+    def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
         seq_len = q.size(2)
         device = q.device
         dtype = q.dtype
         head_dim = q.size(-1)
 
         self._compute_rope_embeddings(
-            head_dim, seq_len, device, dtype, offset, sequence_ids
+            head_dim, seq_len, device, dtype, offset, block_ids
         )
 
         # Apply rotations with proper broadcasting
@@ -139,11 +135,11 @@ class RoPE(NoPE):
 
         return q_rope, k_rope, v
 
-    def after_scores(self, scores, offset: int = 0, sequence_ids=None):
+    def after_scores(self, scores, offset: int = 0, block_ids=None):
         return scores
 
     def _compute_rope_embeddings(
-        self, head_dim, seq_len, device, dtype, offset: int = 0, sequence_ids=None
+        self, head_dim, seq_len, device, dtype, offset: int = 0, block_ids=None
     ):
         if self.inv_freq is None:
             self.inv_freq = 1.0 / (
@@ -153,9 +149,9 @@ class RoPE(NoPE):
                 )
             )
 
-        if sequence_ids is not None:
+        if block_ids is not None:
             positions = self._compute_relative_positions_vectorized(
-                sequence_ids, device
+                block_ids, device
             )  # Shape: [batch_size, seq_len]
         else:
             positions = (torch.arange(seq_len, device=device) + offset).unsqueeze(0)
@@ -175,16 +171,16 @@ class RoPE(NoPE):
         self._cached_sin = sin.to(dtype)
         self._cached_seq_length = seq_len
 
-    def _compute_relative_positions_vectorized(self, sequence_ids, device):
+    def _compute_relative_positions_vectorized(self, block_ids, device):
         # Create mask for valid tokens
-        mask = sequence_ids != -1
+        mask = block_ids != -1
 
         # Create position indices
         positions = torch.cumsum(mask, dim=-1)
 
         # Create segment boundaries
         boundaries = torch.nn.functional.pad(
-            sequence_ids[:, 1:] != sequence_ids[:, :-1], (1, 0), value=True
+            block_ids[:, 1:] != block_ids[:, :-1], (1, 0), value=True
         )
 
         # Reset cumsum at boundaries

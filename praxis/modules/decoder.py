@@ -30,7 +30,7 @@ class PraxisDecoder(nn.Module):
         current_state: Tensor,
         attention_mask: Tensor,
         past_key_values=None,
-        sequence_ids=None,
+        block_ids=None,
     ):
 
         experts = list(self.stack.locals) + list(self.stack.remotes)
@@ -59,7 +59,7 @@ class PraxisDecoder(nn.Module):
                     layer_past,
                     layer_state,
                     i,
-                    sequence_ids,
+                    block_ids,
                 )
                 new_key_values.append(layer_kv)
                 new_states.append(layer_state)
@@ -101,7 +101,7 @@ class PraxisDecoder(nn.Module):
         past_key_values: Tensor,
         current_state: Tensor,
         current_depth: int,
-        sequence_ids: Tensor,
+        block_ids: Tensor,
     ):
         def custom_forward(
             hidden_states,
@@ -109,7 +109,7 @@ class PraxisDecoder(nn.Module):
             past_key_values,
             current_state,
             current_depth,
-            sequence_ids,
+            block_ids,
         ):
             if self.stack.behavior:
                 # Add positional context to both hidden states and attention mask
@@ -123,7 +123,7 @@ class PraxisDecoder(nn.Module):
                     past_key_values,
                     current_state,
                     current_depth,
-                    sequence_ids,
+                    block_ids,
                 )
                 # Remove context from both hidden states and attention mask
                 states, attention_mask = self.stack.behavior.remove_context(
@@ -136,7 +136,7 @@ class PraxisDecoder(nn.Module):
                     past_key_values,
                     current_state,
                     current_depth,
-                    sequence_ids,
+                    block_ids,
                 )
 
             return states, layer_kv, state_update, aux_loss
@@ -149,7 +149,7 @@ class PraxisDecoder(nn.Module):
                 past_key_values,
                 current_state,
                 current_depth,
-                sequence_ids,
+                block_ids,
                 use_reentrant=False,
             )
         else:
@@ -159,7 +159,7 @@ class PraxisDecoder(nn.Module):
                 past_key_values,
                 current_state,
                 current_depth,
-                sequence_ids,
+                block_ids,
             )
 
     def _define_checkpoints(self, strategy="speed", num_layers=0):
