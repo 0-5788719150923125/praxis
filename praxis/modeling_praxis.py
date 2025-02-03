@@ -41,9 +41,8 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        sequence_ids = self._create_sequence_ids(input_ids)
-        # if self.training:
-        #     print(sequence_ids.tolist())
+        sequence_ids = None if self.encoder else self._create_sequence_ids(input_ids)
+
         h_encoder = None
         patch_lengths = None
         if self.encoder:
