@@ -73,11 +73,7 @@ class PraxisModel(PreTrainedModel):
 
     def _create_block_ids(self, input_ids: torch.LongTensor) -> torch.LongTensor:
         # Create special token mask
-        special_tokens_mask = (
-            (input_ids == self.config.bos_token_id)
-            | (input_ids == self.config.eos_token_id)
-            | (input_ids == self.config.pad_token_id)
-        )
+        special_tokens_mask = input_ids == self.config.pad_token_id
 
         # Each special token OR token after special token starts new block
         block_boundaries = torch.cat(

@@ -156,9 +156,7 @@ def format_simple(
     document: Dict, keys: List[str], bos_token: str, eos_token: str
 ) -> str:
     """Just concatenate content with spaces"""
-    return (
-        bos_token + " ".join(document.get(key, "") for key in keys) + eos_token + "\n"
-    )
+    return document.get(keys[0], "") + "\n"
 
 
 def format_instruction(
@@ -566,7 +564,7 @@ class InterleaveDataManager:
             sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
-            sequence += new_sequences[0]
+            sequence += new_sequences[0] + self.tokenizer.pad_token + "\n"
         return sequence
 
     def _extend_token_stream(self):
