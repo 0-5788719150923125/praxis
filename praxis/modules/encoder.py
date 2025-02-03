@@ -387,23 +387,27 @@ class PraxisEncoder(nn.Module):
 def patch_entropies_for_special_tokens(
     input_ids: torch.LongTensor,
     entropy_scores: torch.Tensor,
-    special_token: int = 0,
+    special_tokens: list[int] = [0],
     high_entropy_value: float = 1e9,
 ) -> torch.Tensor:
     """
-    Modifies entropy scores to force patch boundaries at special tokens.
+    Forces patch boundaries at special tokens by setting their entropy scores high.
 
     Args:
-        input_ids: Input tensor of shape [batch_size, seq_len]
-        entropy_scores: Entropy scores of shape [batch_size, seq_len]
-        special_token: The special_token value (default: 0)
-        high_entropy_value: Value to set for special token positions (default: 1e9)
+        input_ids: Token IDs [batch_size, seq_len]
+        entropy_scores: Original entropy values [batch_size, seq_len]
+        special_tokens: List of special token IDs to mark boundaries
+        high_entropy_value: Value to assign at special token positions
     """
-    # Create special token mask: True where special token exists
-    token_mask = input_ids == special_token
+    # Convert special_tokens to tensor for isin operation
+    special_tokens_tensor = torch.tensor(
+        special_tokens, device=input_ids.device, dtype=input_ids.dtype
+    )
 
-    # Where token_mask is True, use high_entropy_value
-    # Where token_mask is False, keep original entropy_scores
+    # Create special token mask using isin
+    token_mask = torch.isin(input_ids, special_tokens_tensor)
+
+    # Apply high entropy value where special tokens exist
     modified_entropy_scores = torch.where(
         token_mask,
         torch.tensor(
@@ -421,12 +425,25 @@ def create_patch_block_ids(
     input_ids: torch.LongTensor,
     patch_lengths: torch.LongTensor,
     patch_ids: torch.LongTensor,
+    special_tokens: list[int] = [0],
 ) -> torch.LongTensor:
+    """
+    Creates block IDs for patches, with boundaries at patches containing special tokens.
+
+    Args:
+        input_ids: Token IDs [batch_size, seq_len]
+        patch_lengths: Length of each patch [batch_size, num_patches]
+        patch_ids: Mapping of tokens to patches [batch_size, seq_len]
+        special_tokens: List of special token IDs to mark boundaries
+    """
     batch_size, seq_len = input_ids.shape
     _, num_patches = patch_lengths.shape
 
-    # Create special token mask (float for scatter_add)
-    special_token_mask = (input_ids == 0).float()
+    # Create special token mask using isin
+    special_tokens_tensor = torch.tensor(
+        special_tokens, device=input_ids.device, dtype=input_ids.dtype
+    )
+    special_token_mask = torch.isin(input_ids, special_tokens_tensor).float()
 
     # Initialize tensor for accumulating special tokens per patch
     patch_special_counts = torch.zeros(
