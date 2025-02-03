@@ -69,7 +69,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         """Override encode to properly handle add_special_tokens flag."""
 
         # Check if special tokens already exist
-        has_special = self._special_tokens_present(text)
+        # has_special = self._special_tokens_present(text)
 
         # Basic tokenization
         tokens = self._tokenize(text, **kwargs)
@@ -77,9 +77,9 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         token_ids = self.convert_tokens_to_ids(tokens)
 
         # Return with special tokens if requested AND not already present
-        if add_special_tokens and not has_special:
-            result = [self.bos_token_id] + token_ids + [self.eos_token_id]
-            return result
+        # if add_special_tokens and not has_special:
+        #     result = [self.bos_token_id] + token_ids + [self.eos_token_id]
+        #     return result
 
         return token_ids
 
