@@ -63,7 +63,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         self,
         text: str,
         text_pair: Optional[str] = None,
-        add_special_tokens: bool = True,
+        add_special_tokens: bool = False,
         **kwargs,
     ) -> List[int]:
         """Override encode to properly handle add_special_tokens flag."""

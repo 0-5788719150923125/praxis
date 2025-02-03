@@ -285,7 +285,6 @@ class ScaledDotProduct(nn.Module):
                     .unsqueeze(0)
                     .unsqueeze(0)
                 )
-                scores = scores + causal_mask
             else:
                 # Create block diagonal causal mask
                 same_block = block_ids.unsqueeze(-1) == block_ids[
@@ -298,7 +297,7 @@ class ScaledDotProduct(nn.Module):
 
                 mask = (same_block & causal).unsqueeze(1).float()
                 causal_mask = (1.0 - mask) * -1e9
-                scores = scores + causal_mask
+            scores = scores + causal_mask
         elif attention_mask is not None:
             # Handle padding mask
             attention_mask = F.pad(

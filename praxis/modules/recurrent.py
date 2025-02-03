@@ -32,7 +32,13 @@ class minGRU(nn.Module):
         hidden, gate = self.to_hidden_and_gate(x).chunk(2, dim=-1)
 
         # Create pad mask (True where tokens are padding)
-        pad_mask = input_ids == 0  # Assuming pad token is 0
+        if input_ids is not None:
+            pad_mask = input_ids == 0  # Assuming pad token is 0
+        else:
+            # Create default mask of all False (no padding)
+            pad_mask = torch.zeros(
+                (batch_size, seq_len), dtype=torch.bool, device=x.device
+            )
 
         if seq_len == 1:
             # Sequential mode

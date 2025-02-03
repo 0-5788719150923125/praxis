@@ -15,6 +15,7 @@ from praxis.losses import LOSS_REGISTRY
 from praxis.modules import EMBEDDING_REGISTRY
 from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.encoder import PraxisEncoder
+from praxis.utils import create_block_ids
 
 
 class PraxisModel(PreTrainedModel):
@@ -49,7 +50,7 @@ class PraxisModel(PreTrainedModel):
             )
             self.aux_losses.append(entropy_loss)
         else:
-            block_ids = self._create_block_ids(input_ids)
+            block_ids = create_block_ids(input_ids, self.config.pad_token_id)
             inputs = self.embeds(input_ids)
 
         last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
@@ -66,26 +67,6 @@ class PraxisModel(PreTrainedModel):
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
         )
-
-    def _create_block_ids(self, input_ids: torch.LongTensor) -> torch.LongTensor:
-        # Create special token mask
-        special_tokens_mask = input_ids == self.config.pad_token_id
-
-        # Each special token OR token after special token starts new block
-        block_boundaries = torch.cat(
-            [
-                torch.ones(
-                    (input_ids.size(0), 1), device=input_ids.device, dtype=torch.bool
-                ),
-                special_tokens_mask[:, :-1] | special_tokens_mask[:, 1:],
-            ],
-            dim=1,
-        )
-
-        # Cumsum for block numbering
-        block_ids = block_boundaries.cumsum(dim=1)
-
-        return block_ids
 
     def get_addr(self):
         if self.decoder.manager:
