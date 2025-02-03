@@ -268,6 +268,7 @@ class ScaledDotProduct(nn.Module):
     def apply_masking(
         self, scores, attention_mask, sequence_ids, seq_len, hist_len, causal
     ):
+        causal_mask = None
         if causal:
             if sequence_ids is None:
                 # Regular causal mask when no sequence blocking needed
@@ -311,6 +312,7 @@ class ScaledDotProduct(nn.Module):
                 mask = (1.0 - mask) * -1e9
 
                 scores = scores + mask
+                causal_mask = mask
 
         # Padding mask handling remains the same
         attention_mask = F.pad(
@@ -319,7 +321,7 @@ class ScaledDotProduct(nn.Module):
         attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
         scores = scores + attention_mask
 
-        return scores, None, attention_mask
+        return scores, causal_mask, attention_mask
 
     def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
         if "entmax" in self.meta:
