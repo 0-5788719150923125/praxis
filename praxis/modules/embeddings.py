@@ -8,16 +8,23 @@ from torch import Tensor
 
 class PraxisEmbeddings(nn.Sequential):
     """
-    A simple embeddings module with dropout.
+    An embeddings module with optional projection layer and dropout.
+    If embed_size differs from hidden_size, a linear projection layer is added
+    to map the embeddings to the required hidden dimension.
     """
 
     def __init__(self, config: "AutoConfig"):
-        layers = OrderedDict(
-            [
-                ("tokens", nn.Embedding(config.vocab_size, config.hidden_size)),
-                ("dropout", nn.Dropout(config.dropout)),
-            ]
-        )
+        layers = OrderedDict()
+
+        # Token embeddings using embed_size
+        layers["tokens"] = nn.Embedding(config.vocab_size, config.embed_size)
+
+        # Add projection layer if dimensions differ
+        if config.embed_size != config.hidden_size:
+            layers["projection"] = nn.Linear(config.embed_size, config.hidden_size)
+
+        layers["dropout"] = nn.Dropout(config.dropout)
+
         super().__init__(layers)
 
 
