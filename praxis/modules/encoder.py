@@ -87,10 +87,7 @@ class PraxisEncoder(nn.Module):
             local_encoder_dim=self.args.dim_token_emb,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-        if (
-            self.args.dim_token_emb is not None
-            and self.args.dim_token_emb != self.args.dim
-        ):
+        if self.args.dim_token_emb != self.args.dim:
             self.token_proj = nn.Linear(
                 self.args.dim_token_emb,
                 config.hidden_size,
@@ -487,8 +484,8 @@ class RecurrentBlock(minGRU):
         super().__init__(dim=dim, dim_out=dim_out, proj_out=True)
         self.norm = nn.RMSNorm(dim, eps=norm_eps)
 
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        out, _ = super().forward(self.norm(x))
+    def forward(self, x: torch.Tensor, input_ids: torch.Tensor = None, *args, **kwargs):
+        out, _ = super().forward(self.norm(x), input_ids=input_ids)
         return out + x
 
 
@@ -499,6 +496,20 @@ class RecurrentEncoder(LocalEncoder):
             [RecurrentBlock(dim=args.dim) for _ in range(args.n_layers)]
         )
 
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ):
+        h = self.apply_embedding(tokens, embeds)
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        for i, layer in enumerate(self.layers):
+            h = layer(h, input_ids=tokens)
+
+        return (h, None), None
+
 
 class RecurrentDecoder(LocalDecoder):
     def __init__(self, args: LocalModelArgs):
@@ -506,6 +517,40 @@ class RecurrentDecoder(LocalDecoder):
         self.layers = nn.ModuleList(
             [RecurrentBlock(dim=args.dim_token_emb) for _ in range(args.n_layers)]
         )
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ):
+        bs, seqlen = tokens.shape
+        assert embeds is not None, "Embeddings must be provided"
+
+        h = embeds
+
+        if self.patch_embedding_projection is not None:
+            assert patch_embeds is not None, "Patch embeddings must be passed."
+            patch_embeds = self.patch_embedding_projection(patch_embeds)
+            if self.cross_attn_k is not None:
+                patch_embeds = patch_embeds.reshape(
+                    bs, patch_embeds.shape[1] * self.cross_attn_k, self.dim
+                )
+
+        if patch_embeds is not None and not self.cross_attn_decoder:
+            h = h + patch_embeds
+
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        for i, layer in enumerate(self.layers):
+            h = layer(h, input_ids=tokens)
+
+        h_preds = self.norm(h)
+        h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
+        h_preds = self.output(h_preds)
+        h_preds = h_preds.float()
+        return h_preds, None
 
 
 class EntropyModel(nn.Module):
