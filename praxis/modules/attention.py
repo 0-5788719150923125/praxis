@@ -208,14 +208,18 @@ class PraxisAttention(nn.Module):
             v = v.repeat_interleave(self.num_queries, dim=1)
 
         # Apply positional encoding with offset
-        q, k, v = self.encoding.before_scores(q, k, v, offset=offset)
+        q, k, v = self.encoding.before_scores(
+            q, k, v, offset=offset, sequence_ids=sequence_ids
+        )
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
         hist_len = k.size(2)
 
         # Apply positional encoding to scores
-        scores = self.encoding.after_scores(scores, offset=offset)
+        scores = self.encoding.after_scores(
+            scores, offset=offset, sequence_ids=sequence_ids
+        )
 
         # Apply masking
         scores, causal_mask, chunk_attention_mask = self.algorithm.apply_masking(
