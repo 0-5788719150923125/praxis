@@ -584,11 +584,6 @@ class TerminalDashboard:
                 print(self.error_message, file=self.original_stderr)
 
 
-import random
-
-import numpy as np
-
-
 class ForestFireAutomata:
     def __init__(self, width, height):
         """Initialize the forest fire simulation."""

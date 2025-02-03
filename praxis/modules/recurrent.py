@@ -57,7 +57,8 @@ class minGRU(nn.Module):
                 log_values = torch.cat((prev_hidden.log(), log_values), dim=1)
                 log_coeffs = F.pad(log_coeffs, (0, 0, 1, 0))
                 # Extend pad_mask for prev_hidden
-                pad_mask = F.pad(pad_mask, (1, 0), value=False)
+                if pad_mask.any():
+                    pad_mask = F.pad(pad_mask, (1, 0), value=False)
 
             # Use modified scan that respects boundaries
             out = heinsen_associative_scan_log_with_reset(
@@ -88,8 +89,9 @@ def heinsen_associative_scan_log_with_reset(log_coeffs, log_values, pad_mask):
 
     # Instead of using masked_fill with 0, use a very negative number for log space
     # This effectively makes the coefficient near zero after exp
+    penalty = -100
     log_coeffs_masked = torch.where(
-        reset_mask, torch.full_like(log_coeffs, -20.0), log_coeffs
+        reset_mask, torch.full_like(log_coeffs, penalty), log_coeffs
     )
 
     # Compute cumulative sum in log space
@@ -97,7 +99,7 @@ def heinsen_associative_scan_log_with_reset(log_coeffs, log_values, pad_mask):
 
     # For the values, we'll use the same masking technique
     log_values_masked = torch.where(
-        reset_mask, torch.full_like(log_values, -20.0), log_values
+        reset_mask, torch.full_like(log_values, penalty), log_values
     )
 
     # Compute the scan
