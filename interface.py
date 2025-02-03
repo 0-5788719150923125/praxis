@@ -18,6 +18,7 @@ from threading import Lock, Thread
 
 import asciichartpy
 import blessed
+import numpy as np
 import wcwidth
 
 
@@ -104,6 +105,7 @@ class TerminalDashboard:
         self.memory_churn = None
         self.accuracy = None
         self.num_tokens = 0
+        self.game_of_life = None
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -528,8 +530,26 @@ class TerminalDashboard:
         return wrapped_lines
 
     def _draw_chart(self, data, width, height):
+        # If this is the sign_losses chart (left side)
+        if data is self.sign_losses:
+            # Account for each cell being 2 characters wide, use complete height
+            if (
+                self.game_of_life is None
+                or self.game_of_life.width != (width - 2) // 2
+                or self.game_of_life.height != height
+            ):
+                self.game_of_life = GameOfLife((width - 2) // 2, height)
+
+            # Update the game state
+            self.game_of_life.get_next_generation()
+
+            # Convert to ASCII and pad to full width
+            lines = self.game_of_life.to_ascii()
+            # Minimal single-space padding for alignment
+            return [" " + line + " " for line in lines]
+
+        # For other charts, use the original implementation
         if len(data) > 1:
-            # Ensure we only plot the most recent data points that fit in the width
             plot_data = list(data)[-width:]
             chart = asciichartpy.plot(
                 plot_data,
@@ -542,7 +562,6 @@ class TerminalDashboard:
                 },
             )
             lines = chart.split("\n")
-            # Ensure each line is exactly the right width
             return [line.ljust(width)[:width] for line in lines]
         return [" " * width for _ in range(height)]
 
@@ -563,6 +582,79 @@ class TerminalDashboard:
             # After exiting fullscreen mode, print any stored error
             if self.error_message:
                 print(self.error_message, file=self.original_stderr)
+
+
+class GameOfLife:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.grid = np.random.choice([0, 1], size=(height, width), p=[0.85, 0.15])
+        self.previous_populations = []
+        self.stagnation_threshold = 30  # Number of generations before intervention
+        self.mutation_rate = 0.1  # 10% of cells will be randomized during intervention
+        self.update_chance = 0.25
+
+    def get_next_generation(self):
+        if random.random() < self.update_chance:
+            return self.grid
+        new_grid = np.zeros((self.height, self.width))
+        for i in range(self.height):
+            for j in range(self.width):
+                # Count neighbors (including wrapping)
+                neighbors = sum(
+                    [
+                        self.grid[(i - 1) % self.height, (j - 1) % self.width],
+                        self.grid[(i - 1) % self.height, j],
+                        self.grid[(i - 1) % self.height, (j + 1) % self.width],
+                        self.grid[i, (j - 1) % self.width],
+                        self.grid[i, (j + 1) % self.width],
+                        self.grid[(i + 1) % self.height, (j - 1) % self.width],
+                        self.grid[(i + 1) % self.height, j],
+                        self.grid[(i + 1) % self.height, (j + 1) % self.width],
+                    ]
+                )
+
+                # Apply Conway's rules
+                if self.grid[i, j] == 1:
+                    if neighbors < 2 or neighbors > 3:
+                        new_grid[i, j] = 0
+                    else:
+                        new_grid[i, j] = 1
+                else:
+                    if neighbors == 3:
+                        new_grid[i, j] = 1
+                    else:
+                        new_grid[i, j] = 0
+
+        # Track population
+        current_population = np.sum(new_grid)
+        self.previous_populations.append(current_population)
+
+        # Keep only recent history
+        if len(self.previous_populations) > self.stagnation_threshold:
+            self.previous_populations.pop(0)
+
+        # Check for stagnation
+        if len(self.previous_populations) == self.stagnation_threshold:
+            if len(set(self.previous_populations)) == 1:  # All values are the same
+                # Add random mutations
+                mutation_mask = np.random.choice(
+                    [True, False],
+                    size=new_grid.shape,
+                    p=[self.mutation_rate, 1 - self.mutation_rate],
+                )
+                new_grid[mutation_mask] = np.random.choice(
+                    [0, 1], size=np.sum(mutation_mask)
+                )
+                self.previous_populations = []  # Reset history after intervention
+
+        self.grid = new_grid
+        return self.grid
+
+    def to_ascii(self):
+        # Convert the grid to ASCII characters, using two characters per cell
+        # for a more square appearance
+        return ["".join(["██" if cell else "  " for cell in row]) for row in self.grid]
 
 
 # Test text with various newline patterns
