@@ -80,7 +80,7 @@ class TerminalDashboard:
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         self.max_data_points = max_data_points
         self.train_losses = deque(maxlen=max_data_points)
-        self.sign_losses = deque(maxlen=max_data_points)
+        self.sign = 1
         self.val_loss = None
         self.status_text = "_initializing"
         self.log_buffer = deque(maxlen=max_log_lines)
@@ -221,10 +221,6 @@ class TerminalDashboard:
     def update_memory(self, churn):
         with self.lock:
             self.memory_churn = churn
-
-    def update_sign(self, sign_loss):
-        with self.lock:
-            self.sign_losses.append(sign_loss) if sign_loss is not None else None
 
     def update_step(self, step):
         with self.lock:
@@ -416,9 +412,7 @@ class TerminalDashboard:
             train_chart = self._draw_chart(
                 self.train_losses, right_width, (height // 2) - 1
             )
-            val_chart = self._draw_chart(
-                self.sign_losses, half_width, (height // 2) - 1
-            )
+            sim_chart = self._draw_simulation(half_width, (height // 2) - 1)
 
         # Wrap the entire status text
         status_lines = self._wrap_text(self.status_text, half_width)
@@ -469,8 +463,9 @@ class TerminalDashboard:
                 left_content = "═" * half_width
                 right_content = "═" * right_width
             elif i == (height // 2):
-                val_loss = self.sign_losses[-1] if self.sign_losses else 0
-                left_content = f" SIGN: {val_loss:.4f}"
+                if random.random() < 0.1:
+                    self.sign = -1 * self.sign
+                left_content = f" SIGN: {self.sign:+.1f}"
                 left_content = left_content.ljust(half_width)[:half_width]
                 right_content = " LOG".ljust(right_width)[:right_width]
             elif i == (height // 2) + 1:
@@ -478,8 +473,8 @@ class TerminalDashboard:
                 right_content = "─" * right_width
             elif i > (height // 2) + 1:
                 chart_index = i - (height // 2) - 2
-                if chart_index < len(val_chart):
-                    left_content = val_chart[chart_index]
+                if chart_index < len(sim_chart):
+                    left_content = sim_chart[chart_index]
                 log_index = i - (height // 2) - 2
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
@@ -530,24 +525,6 @@ class TerminalDashboard:
         return wrapped_lines
 
     def _draw_chart(self, data, width, height):
-        # If this is the sign_losses chart (left side)
-        if data is self.sign_losses:
-            # Account for each cell being 2 characters wide, use complete height
-            if (
-                self.game_of_life is None
-                or self.game_of_life.width != (width - 2) // 2
-                or self.game_of_life.height != height
-            ):
-                self.game_of_life = ForestFireAutomata((width - 2) // 2, height)
-
-            # Update the game state
-            self.game_of_life.get_next_generation()
-
-            # Convert to ASCII and pad to full width
-            lines = self.game_of_life.to_ascii()
-            # Minimal single-space padding for alignment
-            return [" " + line + " " for line in lines]
-
         # For other charts, use the original implementation
         if len(data) > 1:
             plot_data = list(data)[-width:]
@@ -564,6 +541,23 @@ class TerminalDashboard:
             lines = chart.split("\n")
             return [line.ljust(width)[:width] for line in lines]
         return [" " * width for _ in range(height)]
+
+    def _draw_simulation(self, width, height):
+        # Account for each cell being 2 characters wide, use complete height
+        if (
+            self.game_of_life is None
+            or self.game_of_life.width != (width - 2) // 2
+            or self.game_of_life.height != height
+        ):
+            self.game_of_life = ForestFireAutomata((width - 2) // 2, height)
+
+        # Update the game state
+        self.game_of_life.get_next_generation()
+
+        # Convert to ASCII and pad to full width
+        lines = self.game_of_life.to_ascii()
+        # Minimal single-space padding for alignment
+        return [" " + line + " " for line in lines]
 
     def _run_dashboard(self):
         try:
@@ -746,7 +740,6 @@ if __name__ == "__main__":
 
             # Update other dashboard elements
             dashboard.update_loss(train_loss)
-            dashboard.update_sign(val_loss)
             dashboard.update_batch(i)
             dashboard.update_step(i)
             dashboard.update_rate(0.5)
