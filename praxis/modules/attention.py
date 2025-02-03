@@ -118,12 +118,10 @@ class PraxisAttention(nn.Module):
         inputs: Tensor,
         attention_mask: Tensor = None,
         past_key_values: Tensor = None,
+        block_ids: Tensor = None,
     ) -> Tensor:
         batch_size, seq_len, _ = inputs.shape
         aux_loss = 0
-
-        if not torch.is_tensor(attention_mask):
-            attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
 
         if self.ema:
             # Compute an exponential moving average-based gating mechanism
@@ -159,7 +157,15 @@ class PraxisAttention(nn.Module):
             chunk_q = q[:, :, start_idx:end_idx]
             chunk_k = k[:, :, start_idx:end_idx]
             chunk_v = v[:, :, start_idx:end_idx]
-            chunk_mask = attention_mask[:, start_idx:end_idx]
+            chunk_mask = (
+                None if attention_mask is None else attention_mask[:, start_idx:end_idx]
+            )
+            chunk_block_ids = (
+                None if block_ids is None else block_ids[:, start_idx:end_idx]
+            )
+            if chunk_block_ids is not None:
+                if chunk_block_ids.dim() == 3:
+                    chunk_block_ids = chunk_block_ids.squeeze(-1)
 
             # Process chunk with position offset
             chunk_output = self._process_chunk(
@@ -169,6 +175,7 @@ class PraxisAttention(nn.Module):
                 chunk_mask,
                 current_chunk_size,
                 start_idx,
+                chunk_block_ids,
             )
 
             outputs.append(chunk_output)
@@ -194,6 +201,7 @@ class PraxisAttention(nn.Module):
         attention_mask: Tensor,
         chunk_size: int,
         offset: int = 0,
+        block_ids: Tensor = None,
     ) -> Tensor:
         batch_size = q.size(0)
 
@@ -203,18 +211,20 @@ class PraxisAttention(nn.Module):
             v = v.repeat_interleave(self.num_queries, dim=1)
 
         # Apply positional encoding with offset
-        q, k, v = self.encoding.before_scores(q, k, v, offset=offset)
+        q, k, v = self.encoding.before_scores(
+            q, k, v, offset=offset, block_ids=block_ids
+        )
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
         hist_len = k.size(2)
 
         # Apply positional encoding to scores
-        scores = self.encoding.after_scores(scores, offset=offset)
+        scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
 
         # Apply masking
         scores, causal_mask, chunk_attention_mask = self.algorithm.apply_masking(
-            scores, attention_mask, chunk_size, hist_len, self.causal
+            scores, attention_mask, block_ids, chunk_size, hist_len, self.causal
         )
 
         # Get attention output
@@ -260,29 +270,45 @@ class ScaledDotProduct(nn.Module):
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
         return q, k, v, scores
 
-    def apply_masking(self, scores, attention_mask, seq_len, hist_len, causal):
+    def apply_masking(
+        self, scores, attention_mask, block_ids, seq_len, hist_len, causal
+    ):
         causal_mask = None
         if causal:
-            causal_mask = (
-                torch.triu(
-                    torch.full((seq_len, hist_len), -1e9, device=scores.device),
-                    diagonal=1,
+            if block_ids is None:
+                # Regular causal mask when no sequence blocking needed
+                causal_mask = (
+                    torch.triu(
+                        torch.full((seq_len, hist_len), -1e9, device=scores.device),
+                        diagonal=1,
+                    )
+                    .unsqueeze(0)
+                    .unsqueeze(0)
                 )
-                .unsqueeze(0)
-                .unsqueeze(0)
-            )
+            else:
+                # Create block diagonal causal mask
+                same_block = block_ids.unsqueeze(-1) == block_ids[
+                    ..., :hist_len
+                ].unsqueeze(-2)
+                pos = torch.arange(seq_len, device=scores.device)
+                causal = pos.unsqueeze(-1) >= torch.arange(
+                    hist_len, device=scores.device
+                )
+
+                mask = (same_block & causal).unsqueeze(1).float()
+                causal_mask = (1.0 - mask) * -1e9
             scores = scores + causal_mask
+        elif attention_mask is not None:
+            # Handle padding mask
+            attention_mask = F.pad(
+                attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
+            )
+            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            scores = scores + attention_mask
 
-        attention_mask = F.pad(
-            attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
-        )
-
-        attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-
-        scores = scores + attention_mask
         return scores, causal_mask, attention_mask
 
-    def compute_weights(self, q, k, v, scores, causal_mask=None, attention_mask=None):
+    def compute_weights(self, q, k, v, scores, *args, **kwargs):
         if "entmax" in self.meta:
             weights = alpha_entmax(scores, dim=-1)
         elif "relu" in self.meta:
@@ -878,7 +904,12 @@ class VanillaMHA(nn.MultiheadAttention):
         )
 
     def forward(
-        self, inputs: Tensor, attention_mask: Tensor, past_key_values: Tensor = None
+        self,
+        inputs: Tensor,
+        attention_mask: Tensor,
+        past_key_values: Tensor = None,
+        *args,
+        **kwargs,
     ):
         # scores shape: [B, S, E]
         seq_len = inputs.size(1)

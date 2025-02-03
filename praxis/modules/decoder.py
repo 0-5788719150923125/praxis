@@ -30,7 +30,9 @@ class PraxisDecoder(nn.Module):
         current_state: Tensor,
         attention_mask: Tensor,
         past_key_values=None,
+        block_ids=None,
     ):
+
         experts = list(self.stack.locals) + list(self.stack.remotes)
         original_order = experts.copy()
         if hasattr(self.stack.behavior, "shuffle_experts"):
@@ -51,7 +53,13 @@ class PraxisDecoder(nn.Module):
                 layer_past = past_key_values[i] if past_key_values is not None else None
                 layer_state = current_state[i] if current_state is not None else None
                 hidden_update, layer_kv, layer_state, aux_loss = self._create_forward(
-                    expert, hidden_states, attention_mask, layer_past, layer_state, i
+                    expert,
+                    hidden_states,
+                    attention_mask,
+                    layer_past,
+                    layer_state,
+                    i,
+                    block_ids,
                 )
                 new_key_values.append(layer_kv)
                 new_states.append(layer_state)
@@ -93,9 +101,15 @@ class PraxisDecoder(nn.Module):
         past_key_values: Tensor,
         current_state: Tensor,
         current_depth: int,
+        block_ids: Tensor,
     ):
         def custom_forward(
-            hidden_states, attention_mask, past_key_values, current_state, current_depth
+            hidden_states,
+            attention_mask,
+            past_key_values,
+            current_state,
+            current_depth,
+            block_ids,
         ):
             if self.stack.behavior:
                 # Add positional context to both hidden states and attention mask
@@ -109,6 +123,7 @@ class PraxisDecoder(nn.Module):
                     past_key_values,
                     current_state,
                     current_depth,
+                    block_ids,
                 )
                 # Remove context from both hidden states and attention mask
                 states, attention_mask = self.stack.behavior.remove_context(
@@ -121,6 +136,7 @@ class PraxisDecoder(nn.Module):
                     past_key_values,
                     current_state,
                     current_depth,
+                    block_ids,
                 )
 
             return states, layer_kv, state_update, aux_loss
@@ -133,6 +149,7 @@ class PraxisDecoder(nn.Module):
                 past_key_values,
                 current_state,
                 current_depth,
+                block_ids,
                 use_reentrant=False,
             )
         else:
@@ -142,6 +159,7 @@ class PraxisDecoder(nn.Module):
                 past_key_values,
                 current_state,
                 current_depth,
+                block_ids,
             )
 
     def _define_checkpoints(self, strategy="speed", num_layers=0):

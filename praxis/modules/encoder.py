@@ -87,10 +87,7 @@ class PraxisEncoder(nn.Module):
             local_encoder_dim=self.args.dim_token_emb,
             encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
         )
-        if (
-            self.args.dim_token_emb is not None
-            and self.args.dim_token_emb != self.args.dim
-        ):
+        if self.args.dim_token_emb != self.args.dim:
             self.token_proj = nn.Linear(
                 self.args.dim_token_emb,
                 config.hidden_size,
@@ -122,10 +119,14 @@ class PraxisEncoder(nn.Module):
                 device=self.device_map,
                 enable_grad=True,
             )
+            modified_entropy_scores = patch_entropies_for_special_tokens(
+                input_ids, entropy_scores
+            )
             if self.training:
                 # First, find a safe threshold that guarantees we're under target length
-                safe_threshold = self._find_safe_threshold(input_ids, entropy_scores)
-
+                safe_threshold = self._find_safe_threshold(
+                    input_ids, modified_entropy_scores
+                )
                 # Now sample thresholds that are guaranteed to be safe
                 n_samples = 30
                 min_candidates = 15
@@ -162,9 +163,9 @@ class PraxisEncoder(nn.Module):
                     # create the patches
                     patch_lengths, _ = self.patcher.patch(
                         input_ids,
-                        include_next_token=True,
+                        include_next_token=False,
                         threshold=abs(threshold),
-                        entropies=entropy_scores,
+                        entropies=modified_entropy_scores,
                     )
 
                     actual_ratio = patch_lengths.shape[1] / input_ids.shape[1]
@@ -194,8 +195,33 @@ class PraxisEncoder(nn.Module):
                     input_ids,
                     include_next_token=True,
                     threshold=float(self.optimal_threshold.item()),
-                    entropies=entropy_scores,
+                    entropies=modified_entropy_scores,
                 )
+
+        # if self.training and random.random() < 0.005:
+        #     patch_lengths_before, _ = self.patcher.patch(
+        #         input_ids,
+        #         include_next_token=True,
+        #         threshold=float(self.optimal_threshold.item()),
+        #         entropies=entropy_scores,
+        #     )
+        #     from collections import Counter
+
+        #     def compare_sorted(list1, list2):
+        #         return sorted(list1) == sorted(list2)
+
+        #     print(
+        #         "identical patches:",
+        #         compare_sorted(
+        #             patch_lengths_before.tolist()[0], patch_lengths.tolist()[0]
+        #         ),
+        #     )
+        #     print(
+        #         "identical scores:",
+        #         compare_sorted(
+        #             entropy_scores.tolist()[0], modified_entropy_scores.tolist()[0]
+        #         ),
+        #     )
 
         if self.training:
             if self.debug and random.random() < self.log_rate:
@@ -204,6 +230,8 @@ class PraxisEncoder(nn.Module):
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
+        # if self.training:
+        #     print(patch_ids.shape)
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -252,10 +280,14 @@ class PraxisEncoder(nn.Module):
                 patch_size=self.args.patch_size,
             )
 
+        block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
+        # if self.training and random.random() < 0.1:
+        #     print(patch_block_ids.tolist()[0])
+
         if self.token_proj is not None:
             h = self.token_proj(h)
 
-        return h, h_encoder, patch_lengths, aux_loss
+        return h, h_encoder, patch_lengths, block_ids, aux_loss
 
     def decode(self, h, h_encoder, input_ids, patch_lengths):
         nb_boe = 0
@@ -304,7 +336,7 @@ class PraxisEncoder(nn.Module):
         while True:
             patch_lengths, _ = self.patcher.patch(
                 input_ids,
-                include_next_token=True,
+                include_next_token=False,
                 threshold=threshold,
                 entropies=entropy_scores,
             )
@@ -329,7 +361,7 @@ class PraxisEncoder(nn.Module):
             mid = (left + right) / 2
             patch_lengths, _ = self.patcher.patch(
                 input_ids,
-                include_next_token=True,
+                include_next_token=False,
                 threshold=mid,
                 entropies=entropy_scores,
             )
@@ -349,6 +381,99 @@ class PraxisEncoder(nn.Module):
         return safe_threshold
 
 
+def patch_entropies_for_special_tokens(
+    input_ids: torch.LongTensor,
+    entropy_scores: torch.Tensor,
+    special_tokens: list[int] = [0],
+    high_entropy_value: float = 1e9,
+) -> torch.Tensor:
+    """
+    Forces patch boundaries at special tokens by setting their entropy scores high.
+
+    Args:
+        input_ids: Token IDs [batch_size, seq_len]
+        entropy_scores: Original entropy values [batch_size, seq_len]
+        special_tokens: List of special token IDs to mark boundaries
+        high_entropy_value: Value to assign at special token positions
+    """
+    # Convert special_tokens to tensor for isin operation
+    special_tokens_tensor = torch.tensor(
+        special_tokens, device=input_ids.device, dtype=input_ids.dtype
+    )
+
+    # Create special token mask using isin
+    token_mask = torch.isin(input_ids, special_tokens_tensor)
+
+    # Apply high entropy value where special tokens exist
+    modified_entropy_scores = torch.where(
+        token_mask,
+        torch.tensor(
+            high_entropy_value,
+            device=entropy_scores.device,
+            dtype=entropy_scores.dtype,
+        ),
+        entropy_scores,
+    )
+
+    return modified_entropy_scores
+
+
+def create_patch_block_ids(
+    input_ids: torch.LongTensor,
+    patch_lengths: torch.LongTensor,
+    patch_ids: torch.LongTensor,
+    special_tokens: list[int] = [0],
+) -> torch.LongTensor:
+    """
+    Creates block IDs for patches, with boundaries at patches containing special tokens.
+
+    Args:
+        input_ids: Token IDs [batch_size, seq_len]
+        patch_lengths: Length of each patch [batch_size, num_patches]
+        patch_ids: Mapping of tokens to patches [batch_size, seq_len]
+        special_tokens: List of special token IDs to mark boundaries
+    """
+    batch_size, seq_len = input_ids.shape
+    _, num_patches = patch_lengths.shape
+
+    # Create special token mask using isin
+    special_tokens_tensor = torch.tensor(
+        special_tokens, device=input_ids.device, dtype=input_ids.dtype
+    )
+    special_token_mask = torch.isin(input_ids, special_tokens_tensor).float()
+
+    # Initialize tensor for accumulating special tokens per patch
+    patch_special_counts = torch.zeros(
+        (batch_size, num_patches), device=input_ids.device, dtype=torch.float
+    )
+
+    # Add up special tokens for each patch
+    patch_special_counts.scatter_add_(
+        1,  # scatter along patch dimension
+        patch_ids,  # mapping from tokens to patches
+        special_token_mask,  # which tokens are special
+    )
+
+    # Convert counts to boolean - any non-zero count means patch has special token
+    patch_has_special = patch_special_counts > 0
+
+    # Create boundaries
+    patch_boundaries = torch.cat(
+        [
+            torch.ones(
+                (batch_size, 1), device=patch_has_special.device, dtype=torch.bool
+            ),
+            patch_has_special[:, :-1] | patch_has_special[:, 1:],
+        ],
+        dim=1,
+    )
+
+    # Generate block ids
+    patch_block_ids = patch_boundaries.cumsum(dim=1)
+
+    return patch_block_ids
+
+
 class RecurrentBlock(minGRU):
     """
     We replace transformer blocks in the encoder/decoder with something
@@ -359,8 +484,8 @@ class RecurrentBlock(minGRU):
         super().__init__(dim=dim, dim_out=dim_out, proj_out=True)
         self.norm = nn.RMSNorm(dim, eps=norm_eps)
 
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        out, _ = super().forward(self.norm(x))
+    def forward(self, x: torch.Tensor, input_ids: torch.Tensor = None, *args, **kwargs):
+        out, _ = super().forward(self.norm(x), input_ids=input_ids)
         return out + x
 
 
@@ -371,6 +496,20 @@ class RecurrentEncoder(LocalEncoder):
             [RecurrentBlock(dim=args.dim) for _ in range(args.n_layers)]
         )
 
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ):
+        h = self.apply_embedding(tokens, embeds)
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        for i, layer in enumerate(self.layers):
+            h = layer(h, input_ids=tokens)
+
+        return (h, None), None
+
 
 class RecurrentDecoder(LocalDecoder):
     def __init__(self, args: LocalModelArgs):
@@ -378,6 +517,40 @@ class RecurrentDecoder(LocalDecoder):
         self.layers = nn.ModuleList(
             [RecurrentBlock(dim=args.dim_token_emb) for _ in range(args.n_layers)]
         )
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ):
+        bs, seqlen = tokens.shape
+        assert embeds is not None, "Embeddings must be provided"
+
+        h = embeds
+
+        if self.patch_embedding_projection is not None:
+            assert patch_embeds is not None, "Patch embeddings must be passed."
+            patch_embeds = self.patch_embedding_projection(patch_embeds)
+            if self.cross_attn_k is not None:
+                patch_embeds = patch_embeds.reshape(
+                    bs, patch_embeds.shape[1] * self.cross_attn_k, self.dim
+                )
+
+        if patch_embeds is not None and not self.cross_attn_decoder:
+            h = h + patch_embeds
+
+        h = F.dropout(h, p=self.dropout, training=self.training)
+        for i, layer in enumerate(self.layers):
+            h = layer(h, input_ids=tokens)
+
+        h_preds = self.norm(h)
+        h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
+        h_preds = self.output(h_preds)
+        h_preds = h_preds.float()
+        return h_preds, None
 
 
 class EntropyModel(nn.Module):
@@ -396,10 +569,11 @@ class EntropyModel(nn.Module):
 
     def forward(self, x: torch.Tensor, *args, **kwargs):
         # x: [batch, seq_len]
+        input_ids = x
         x = self.embedding(x)  # [batch, channels, seq_len]
 
         for block in self.blocks:
-            x = block(x)
+            x = block(x, input_ids=input_ids)
 
         return self.output(self.norm(x))
 

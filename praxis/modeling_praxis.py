@@ -15,6 +15,7 @@ from praxis.losses import LOSS_REGISTRY
 from praxis.modules import EMBEDDING_REGISTRY
 from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.encoder import PraxisEncoder
+from praxis.utils import create_block_ids
 
 
 class PraxisModel(PreTrainedModel):
@@ -44,18 +45,16 @@ class PraxisModel(PreTrainedModel):
         h_encoder = None
         patch_lengths = None
         if self.encoder:
-            inputs, h_encoder, patch_lengths, entropy_loss = self.encoder.encode(
-                input_ids
+            inputs, h_encoder, patch_lengths, block_ids, entropy_loss = (
+                self.encoder.encode(input_ids)
             )
             self.aux_losses.append(entropy_loss)
         else:
+            block_ids = create_block_ids(input_ids, self.config.pad_token_id)
             inputs = self.embeds(input_ids)
 
-        if not torch.is_tensor(attention_mask):
-            attention_mask = torch.ones(inputs.shape[:2], device=inputs.device)
-
         last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
-            inputs, current_state, attention_mask
+            inputs, current_state, attention_mask, past_key_values, block_ids
         )
         self.aux_losses.append(aux_loss)
 

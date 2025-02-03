@@ -252,11 +252,11 @@ if no_schedule:
 else:
     scheduler_func = partial(
         CosineAnnealingWarmupRestarts,
-        first_cycle_steps=4096 * 64,
+        first_cycle_steps=1024 * 1024,
         max_lr=optimizer_config["lr"],
         min_lr=optimizer_config["lr"] * 1e-2,
         gamma=1.0,
-        warmup_steps=512,
+        warmup_steps=1024,
     )
 
 
@@ -405,7 +405,7 @@ class TerminalInterface(Callback):
         self.ema_loss = 0
         self.start_time = datetime.now()
         self.last_time = datetime.now()
-        self.initial_text = tokenizer.bos_token
+        self.initial_text = tokenizer.pad_token
         self.text = self.initial_text
         self.interval = 3
         self.url = url
@@ -511,15 +511,6 @@ class TerminalInterface(Callback):
                 self.dashboard.update_memory(data["memory_churn"])
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
-            if random.random() < 0.25:
-                self.dashboard.update_sign(
-                    self._sign_wave(
-                        amplitude=1.0,
-                        frequency=0.00333,
-                        phase_shift=0.23,
-                        step=batch_idx,
-                    )
-                )
 
     def on_save_checkpoint(self, trainer, lm, checkpoint):
         super().on_save_checkpoint(trainer, lm, checkpoint)
@@ -580,12 +571,6 @@ class TerminalInterface(Callback):
             return self._generate_text(lm)
 
         self.last_time = datetime.now()
-
-    def _sign_wave(self, amplitude=1, frequency=1, phase_shift=0, step=1):
-        distribution = random.gauss(0.25, 0.2)
-        return distribution + (
-            amplitude * math.sin(2 * math.pi * frequency * step + phase_shift)
-        )
 
     def _biased_randint(self, low, high):
         # Take average of multiple random numbers to create center bias

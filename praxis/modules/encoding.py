@@ -18,7 +18,7 @@ class NoPE(nn.Module):
         self.num_query_heads = config.num_heads * config.num_queries
         self.head_scales = nn.Parameter(torch.linspace(-1.2, 1.2, self.num_query_heads))
 
-    def before_scores(self, q, k, v, offset: int = 0):
+    def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
         # Get base scaling factor
         head_dim = q.size(-1)
         base_scale = 1.0 / math.sqrt(head_dim)
@@ -33,7 +33,7 @@ class NoPE(nn.Module):
         # Apply scaling to queries
         return q * scaling, k, v
 
-    def after_scores(self, scores, offset: int = 0):
+    def after_scores(self, scores, offset: int = 0, block_ids=None):
         return scores
 
 
@@ -53,26 +53,54 @@ class ALiBi(NoPE):
         """Compute ALiBi slopes based on number of attention heads."""
         return 2 ** (-8 * torch.arange(1, num_heads + 1, device=device) / num_heads)
 
-    def before_scores(self, q, k, v, offset: int = 0):
+    def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
         return q, k, v
 
-    def after_scores(self, scores, offset: int = 0):
+    def after_scores(self, scores, offset: int = 0, block_ids=None):
         batch_size, num_heads, seq_len, _ = scores.shape
         device = scores.device
 
-        # Compute positions dynamically
-        positions = torch.arange(seq_len, dtype=torch.float32, device=device)
-        positions = positions.unsqueeze(0).expand(batch_size, seq_len)
+        if block_ids is not None:
+            # Use vectorized position computation
+            positions = self._compute_relative_positions_vectorized(block_ids, device)
+            positions = positions.float()
 
-        # Add offset to positions
-        positions = positions + offset
-        pos_diff = positions.unsqueeze(2) - positions.unsqueeze(1)
+            # Create attention mask for cross-sequence interactions
+            seq_mask = block_ids.unsqueeze(-1) == block_ids.unsqueeze(-2)
+            special_mask = (block_ids != -1).unsqueeze(-1) & (
+                block_ids != -1
+            ).unsqueeze(-2)
+            valid_mask = seq_mask & special_mask
 
-        # Compute slopes dynamically based on actual number of heads
+            # Compute masked position differences
+            pos_diff = positions.unsqueeze(-1) - positions.unsqueeze(-2)
+            pos_diff = pos_diff * valid_mask  # Zero out cross-sequence differences
+        else:
+            # Original continuous position handling
+            positions = torch.arange(seq_len, dtype=torch.float32, device=device)
+            positions = positions.unsqueeze(0).expand(batch_size, seq_len)
+            positions = positions + offset
+            pos_diff = positions.unsqueeze(-1) - positions.unsqueeze(-2)
+
+        # Apply ALiBi slopes
         slopes = self.compute_slopes(num_heads, device)
         biases = slopes.view(1, num_heads, 1, 1) * pos_diff.unsqueeze(1)
 
         return scores - biases
+
+    def _compute_relative_positions_vectorized(self, block_ids, device):
+        # Same implementation as in RoPE
+        mask = block_ids != -1
+        positions = torch.cumsum(mask, dim=-1)
+        boundaries = F.pad(block_ids[:, 1:] != block_ids[:, :-1], (1, 0), value=True)
+        reset_mask = torch.cumsum(boundaries, dim=-1)
+        segment_positions = (
+            positions
+            - positions.masked_fill(~mask, 0)
+            .masked_fill(~boundaries, 0)
+            .cummax(dim=-1)[0]
+        )
+        return segment_positions * mask
 
 
 class RoPE(NoPE):
@@ -86,17 +114,20 @@ class RoPE(NoPE):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__(config)
         self.inv_freq = None
+        self.theta = 10000.0
         self._cached_cos = None
         self._cached_sin = None
         self._cached_seq_length = None
 
-    def before_scores(self, q, k, v, offset: int = 0):
+    def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
         seq_len = q.size(2)
         device = q.device
         dtype = q.dtype
         head_dim = q.size(-1)
 
-        self._compute_rope_embeddings(head_dim, seq_len, device, dtype, offset)
+        self._compute_rope_embeddings(
+            head_dim, seq_len, device, dtype, offset, block_ids
+        )
 
         # Apply rotations with proper broadcasting
         q_rope = self._apply_rotary_pos_emb(q, self._cached_cos, self._cached_sin)
@@ -104,44 +135,65 @@ class RoPE(NoPE):
 
         return q_rope, k_rope, v
 
-    def after_scores(self, scores, offset: int = 0):
+    def after_scores(self, scores, offset: int = 0, block_ids=None):
         return scores
 
     def _compute_rope_embeddings(
-        self, head_dim, seq_len, device, dtype, offset: int = 0
+        self, head_dim, seq_len, device, dtype, offset: int = 0, block_ids=None
     ):
-        """Compute sin and cos embeddings with offset."""
-        if self._needs_recompute(seq_len, device, dtype, offset):
-            # Lazy initialize frequency tensor
-            if self.inv_freq is None:
-                theta = 10000.0
-                self.inv_freq = 1.0 / (
-                    theta
-                    ** (
-                        2
-                        * torch.arange(0, head_dim // 2, device=device).float()
-                        / head_dim
-                    )
+        if self.inv_freq is None:
+            self.inv_freq = 1.0 / (
+                self.theta
+                ** (
+                    2 * torch.arange(0, head_dim // 2, device=device).float() / head_dim
                 )
+            )
 
-            # Create position indices with offset
-            positions = torch.arange(seq_len, device=device) + offset
+        if block_ids is not None:
+            positions = self._compute_relative_positions_vectorized(
+                block_ids, device
+            )  # Shape: [batch_size, seq_len]
+        else:
+            positions = (torch.arange(seq_len, device=device) + offset).unsqueeze(0)
 
-            # Compute outer product of positions and frequencies
-            freqs = torch.einsum("i,j->ij", positions, self.inv_freq)
+        # Use batch dimension in einsum
+        freqs = torch.einsum("bi,j->bij", positions, self.inv_freq)
 
-            # Create rotation matrices
-            cos = torch.cos(freqs)
-            sin = torch.sin(freqs)
+        # Reshape for proper broadcasting
+        cos = torch.cos(freqs)  # [batch_size, seq_len, head_dim//2]
+        sin = torch.sin(freqs)  # [batch_size, seq_len, head_dim//2]
 
-            # Stack properly to match alternating pairs
-            cos = torch.stack([cos, cos], dim=-1).view(1, 1, seq_len, -1)
-            sin = torch.stack([-sin, sin], dim=-1).view(1, 1, seq_len, -1)
+        # Stack and reshape to match original dimensions
+        cos = torch.stack([cos, cos], dim=-1).view(cos.size(0), 1, cos.size(1), -1)
+        sin = torch.stack([-sin, sin], dim=-1).view(sin.size(0), 1, sin.size(1), -1)
 
-            # Update cache
-            self._cached_cos = cos.to(dtype)
-            self._cached_sin = sin.to(dtype)
-            self._cached_seq_length = seq_len
+        self._cached_cos = cos.to(dtype)
+        self._cached_sin = sin.to(dtype)
+        self._cached_seq_length = seq_len
+
+    def _compute_relative_positions_vectorized(self, block_ids, device):
+        # Create mask for valid tokens
+        mask = block_ids != -1
+
+        # Create position indices
+        positions = torch.cumsum(mask, dim=-1)
+
+        # Create segment boundaries
+        boundaries = torch.nn.functional.pad(
+            block_ids[:, 1:] != block_ids[:, :-1], (1, 0), value=True
+        )
+
+        # Reset cumsum at boundaries
+        reset_mask = torch.cumsum(boundaries, dim=-1)
+        segment_positions = (
+            positions
+            - positions.masked_fill(~mask, 0)
+            .masked_fill(~boundaries, 0)
+            .cummax(dim=-1)[0]
+        )
+
+        # Zero out special token positions
+        return segment_positions * mask
 
     def _apply_rotary_pos_emb(self, x, cos, sin):
         """Apply rotary position embeddings with proper handling of odd dimensions."""
@@ -168,14 +220,6 @@ class RoPE(NoPE):
             out2 = out2[..., :d2]
 
         return torch.cat([out1, out2], dim=-1)
-
-    def _needs_recompute(self, seq_len, device, dtype, offset):
-        return (
-            self._cached_seq_length is None
-            or seq_len + offset > self._cached_seq_length
-            or self._cached_cos.device != device
-            or self._cached_cos.dtype != dtype
-        )
 
 
 ENCODING_REGISTRY = {"alibi": ALiBi, "nope": NoPE, "rope": RoPE}

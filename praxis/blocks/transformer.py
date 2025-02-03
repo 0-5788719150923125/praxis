@@ -43,6 +43,7 @@ class PraxisTransformer(nn.Module):
         past_key_values: torch.Tensor = None,
         current_state: torch.Tensor = None,
         current_depth: int = 0,
+        block_ids: torch.Tensor = None,
         router_weights: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
@@ -53,7 +54,7 @@ class PraxisTransformer(nn.Module):
         residual, beta = self.attn_res.connect_width(inputs)
         attn_input = self.attn_norm(self.attn_res.format_state(residual))
         attn_output, layer_kv, aux_loss = self.attn(
-            attn_input, past_key_values, attention_mask
+            attn_input, past_key_values, attention_mask, block_ids
         )
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
 

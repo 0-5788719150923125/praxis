@@ -70,7 +70,9 @@ class ProductKeyAttention(Module):
         # output projection
         self.to_out = nn.Linear(self.dim * self.heads, self.dim, bias=False)
 
-    def forward(self, inputs, attention_mask=None, past_key_values=None):
+    def forward(
+        self, inputs, attention_mask=None, past_key_values=None, *args, **kwargs
+    ):
         batch_size, seq_len, _ = inputs.shape
         device = inputs.device
 

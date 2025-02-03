@@ -114,10 +114,12 @@ class PraxisGraph(nn.Module):
         extended_states = torch.cat([context, hidden_states], dim=1)
 
         # Extend attention mask
-        context_mask = attention_mask.new_ones(
-            attention_mask.shape[0], self.num_context_tokens
-        )
-        extended_mask = torch.cat([context_mask, attention_mask], dim=1)
+        extended_mask = None
+        if attention_mask is not None:
+            context_mask = attention_mask.new_ones(
+                attention_mask.shape[0], self.num_context_tokens
+            )
+            extended_mask = torch.cat([context_mask, attention_mask], dim=1)
 
         return extended_states, extended_mask
 
@@ -130,7 +132,10 @@ class PraxisGraph(nn.Module):
 
         # Only remove the exact number of context tokens we added
         trimmed_states = hidden_states[:, self.num_context_tokens :, :]
-        trimmed_mask = attention_mask[:, self.num_context_tokens :]
+
+        trimmed_mask = None
+        if attention_mask is not None:
+            trimmed_mask = attention_mask[:, self.num_context_tokens :]
 
         return trimmed_states, trimmed_mask
 

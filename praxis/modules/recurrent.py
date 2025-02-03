@@ -26,21 +26,34 @@ class minGRU(nn.Module):
             nn.Linear(dim_inner, dim_out, bias=False) if proj_out else nn.Identity()
         )
 
-    def forward(self, x, prev_hidden=None):
+    def forward(self, x, prev_hidden=None, input_ids=None):
         seq_len = x.shape[1]
+        batch_size = x.shape[0]
         hidden, gate = self.to_hidden_and_gate(x).chunk(2, dim=-1)
 
+        # Create pad mask (True where tokens are padding)
+        if input_ids is not None:
+            pad_mask = input_ids == 0  # Assuming pad token is 0
+        else:
+            # Create default mask of all False (no padding)
+            pad_mask = torch.zeros(
+                (batch_size, seq_len), dtype=torch.bool, device=x.device
+            )
+
         if seq_len == 1:
-            # handle sequential
+            # Sequential mode
             hidden = g(hidden)
             gate = gate.sigmoid()
+            # Reset prev_hidden where we had a pad token
+            if prev_hidden is not None and pad_mask.any():
+                prev_hidden = prev_hidden.masked_fill(pad_mask.unsqueeze(-1), 0)
             out = (
                 torch.lerp(prev_hidden, hidden, gate)
                 if prev_hidden is not None
                 else (hidden * gate)
             )
         else:
-            # parallel
+            # Parallel mode
             log_coeffs = -F.softplus(gate)
             log_z = -F.softplus(-gate)
             log_tilde_h = log_g(hidden)
@@ -49,11 +62,22 @@ class minGRU(nn.Module):
             if prev_hidden is not None:
                 log_values = torch.cat((prev_hidden.log(), log_values), dim=1)
                 log_coeffs = F.pad(log_coeffs, (0, 0, 1, 0))
+                # Extend pad_mask for prev_hidden
+                if pad_mask.any():
+                    pad_mask = F.pad(pad_mask, (1, 0), value=False)
 
-            out = heinsen_associative_scan_log(log_coeffs, log_values)
+            # Use modified scan that respects boundaries
+            out = heinsen_associative_scan_log_with_reset(
+                log_coeffs, log_values, pad_mask
+            )
             out = out[:, -seq_len:]
 
         next_prev_hidden = out[:, -1:]
+        # Ensure next_prev_hidden is zero if we ended on a pad token
+        if pad_mask is not None:
+            next_prev_hidden = next_prev_hidden.masked_fill(
+                pad_mask[:, -1:].unsqueeze(-1), 0
+            )
 
         out = self.to_out(out)
 
@@ -61,10 +85,33 @@ class minGRU(nn.Module):
 
 
 # https://github.com/glassroom/heinsen_sequence
-def heinsen_associative_scan_log(log_coeffs, log_values):
-    a_star = log_coeffs.cumsum(dim=1)
-    log_h0_plus_b_star = (log_values - a_star).logcumsumexp(dim=1)
+def heinsen_associative_scan_log_with_reset(log_coeffs, log_values, pad_mask):
+    # Instead of masking with -inf, we'll modify the coefficients
+    batch_size, seq_len, hidden_dim = log_coeffs.shape
+
+    # Create reset boundaries
+    reset_mask = F.pad(pad_mask[:, :-1], (1, 0), value=False)
+    reset_mask = reset_mask.unsqueeze(-1)
+
+    # Instead of using masked_fill with 0, use a very negative number for log space
+    # This effectively makes the coefficient near zero after exp
+    penalty = -100
+    log_coeffs_masked = torch.where(
+        reset_mask, torch.full_like(log_coeffs, penalty), log_coeffs
+    )
+
+    # Compute cumulative sum in log space
+    a_star = log_coeffs_masked.cumsum(dim=1)
+
+    # For the values, we'll use the same masking technique
+    log_values_masked = torch.where(
+        reset_mask, torch.full_like(log_values, penalty), log_values
+    )
+
+    # Compute the scan
+    log_h0_plus_b_star = (log_values_masked - a_star).logcumsumexp(dim=1)
     log_h = a_star + log_h0_plus_b_star
+
     return log_h.exp()
 
 

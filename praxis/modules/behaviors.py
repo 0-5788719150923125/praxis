@@ -59,10 +59,12 @@ class LayerShuffle(nn.Module):
         context = context.expand(hidden_states.shape[0], -1, -1)
 
         # Prepare attention mask for context tokens
-        context_mask = attention_mask.new_ones(
-            attention_mask.shape[0], self.num_context_tokens
-        )
-        extended_attention_mask = torch.cat([context_mask, attention_mask], dim=1)
+        extended_attention_mask = None
+        if attention_mask is not None:
+            context_mask = attention_mask.new_ones(
+                attention_mask.shape[0], self.num_context_tokens
+            )
+            extended_attention_mask = torch.cat([context_mask, attention_mask], dim=1)
 
         # Add context to hidden states
         extended_hidden_states = torch.cat([context, hidden_states], dim=1)
@@ -78,7 +80,10 @@ class LayerShuffle(nn.Module):
 
         # Remove context tokens from both hidden states and attention mask
         trimmed_states = hidden_states[:, self.num_context_tokens :, :]
-        trimmed_mask = attention_mask[:, self.num_context_tokens :]
+
+        trimmed_mask = None
+        if attention_mask is not None:
+            trimmed_mask = attention_mask[:, self.num_context_tokens :]
         return trimmed_states, trimmed_mask
 
     def shuffle_experts(self, experts: list, allow_resampling: bool = False) -> list:

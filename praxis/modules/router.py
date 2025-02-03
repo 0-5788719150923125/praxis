@@ -29,6 +29,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         attention_mask: Tensor,
         past_key_values: Tensor,
         current_state: Tensor,
+        current_depth: Tensor,
+        block_ids: Tensor,
     ):
 
         b, s, d = inputs.shape
@@ -56,7 +58,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         # when inputs have a length of 1, the router will sometimes select no tokens at all
         if token_weights.size(1) == 0:
-            return inputs, current_state, router_loss
+            return inputs, past_key_values, current_state, router_loss
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)
@@ -68,11 +70,19 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         # slice an attention mask that matches the top-k selections
         squeezed_indices = token_indices.squeeze(-1)
-        filtered_attention_mask = torch.gather(
-            input=attention_mask,
+        filtered_attention_mask = None
+        if attention_mask is not None:
+            filtered_attention_mask = torch.gather(
+                input=attention_mask,
+                dim=1,
+                index=squeezed_indices,
+            )
+
+        filtered_block_ids = torch.gather(
+            input=block_ids,
             dim=1,
             index=squeezed_indices,
-        )
+        )  # [batch, k]
 
         # pass the selected tokens through a transformer block
         layer_outputs, layer_kv, state_update, aux_loss = layer(
@@ -80,6 +90,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             filtered_attention_mask,
             past_key_values,
             current_state,
+            filtered_block_ids,
             token_weights,
         )
 
