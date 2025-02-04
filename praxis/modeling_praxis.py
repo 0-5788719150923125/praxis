@@ -86,31 +86,38 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.criterion = LOSS_REGISTRY[config.loss_func]()
 
-    def prepare_inputs_for_generation(self, input_ids, attention_mask, **kwargs):
+    def prepare_inputs_for_generation(
+        self,
+        input_ids,
+        attention_mask=None,
+        past_key_values=None,
+        current_state=None,
+        use_cache=False,
+        **kwargs
+    ):
+        if not use_cache:
+            return {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+            }
+        # First generation step
+        if past_key_values is None:
+            return {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "past_key_values": None,
+                "current_state": None,
+            }
+
+        # Subsequent steps
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
+            "input_ids": input_ids[:, -1:],
+            "attention_mask": (
+                attention_mask[:, -1:] if attention_mask is not None else None
+            ),
+            "past_key_values": past_key_values,
+            "current_state": current_state,
         }
-
-    # def prepare_inputs_for_generation(
-    #     self, input_ids, past_key_values=None, current_state=None, **kwargs
-    # ):
-    #     # First generation step
-    #     if past_key_values is None:
-    #         return {
-    #             "input_ids": input_ids,
-    #             "attention_mask": kwargs.get("attention_mask", None),
-    #             "past_key_values": None,
-    #             "current_state": None,
-    #         }
-
-    #     # Subsequent steps
-    #     return {
-    #         "input_ids": input_ids[:, -1:],
-    #         "attention_mask": kwargs.get("attention_mask", None),
-    #         "past_key_values": past_key_values,
-    #         "current_state": current_state,
-    #     }
 
     def forward(
         self,
