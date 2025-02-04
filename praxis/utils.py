@@ -13,16 +13,28 @@ def create_block_ids(
             special_tokens, device=input_ids.device, dtype=input_ids.dtype
         )
 
-    # Create special token mask (handling multiple tokens)
-    special_tokens_mask = torch.isin(input_ids, special_tokens)
+    # Create padding token mask
+    padding_mask = torch.isin(input_ids, special_tokens)
 
-    # Each special token OR token after special token starts new block
+    # Create boundaries only when transitioning FROM non-padding TO padding
+    # Get previous token's padding status (shift padding mask right)
+    prev_padding = torch.cat(
+        [
+            torch.zeros(
+                (input_ids.size(0), 1), device=input_ids.device, dtype=torch.bool
+            ),
+            padding_mask[:, :-1],
+        ],
+        dim=1,
+    )
+
+    # Create block boundaries at first token and after non-padding to padding transitions
     block_boundaries = torch.cat(
         [
             torch.ones(
                 (input_ids.size(0), 1), device=input_ids.device, dtype=torch.bool
             ),
-            special_tokens_mask[:, :-1] | special_tokens_mask[:, 1:],
+            (~prev_padding[:, :-1]) & padding_mask[:, :-1],
         ],
         dim=1,
     )

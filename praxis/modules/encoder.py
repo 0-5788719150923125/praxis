@@ -282,7 +282,8 @@ class PraxisEncoder(nn.Module):
 
         block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
         # if self.training and random.random() < 0.1:
-        #     print(patch_block_ids.tolist()[0])
+        #     print("first:", input_ids.tolist()[0])
+        #     print("second:", block_ids.tolist()[0])
 
         if self.token_proj is not None:
             h = self.token_proj(h)
@@ -425,7 +426,8 @@ def create_patch_block_ids(
     special_tokens: list[int] = [0],
 ) -> torch.LongTensor:
     """
-    Creates block IDs for patches, with boundaries at patches containing special tokens.
+    Creates block IDs for patches, with boundaries after patches containing special tokens.
+    Special token patches are part of the previous block.
 
     Args:
         input_ids: Token IDs [batch_size, seq_len]
@@ -457,13 +459,15 @@ def create_patch_block_ids(
     # Convert counts to boolean - any non-zero count means patch has special token
     patch_has_special = patch_special_counts > 0
 
-    # Create boundaries
+    # Create boundaries only AFTER patches with special tokens
     patch_boundaries = torch.cat(
         [
             torch.ones(
                 (batch_size, 1), device=patch_has_special.device, dtype=torch.bool
-            ),
-            patch_has_special[:, :-1] | patch_has_special[:, 1:],
+            ),  # First patch always starts a block
+            patch_has_special[
+                :, :-1
+            ],  # Only create boundary after special token patches
         ],
         dim=1,
     )
