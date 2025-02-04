@@ -53,7 +53,7 @@ class PraxisModel(PreTrainedModel):
             block_ids = create_block_ids(input_ids, self.config.pad_token_id)
             inputs = self.embeds(input_ids)
 
-        last_hidden_state, new_key_values, current_state, aux_loss = self.decoder(
+        last_hidden_state, new_key_values, new_state, aux_loss = self.decoder(
             inputs, current_state, attention_mask, past_key_values, block_ids
         )
         self.aux_losses.append(aux_loss)
@@ -63,7 +63,7 @@ class PraxisModel(PreTrainedModel):
             past_key_values=new_key_values,
             hidden_states=None,
             attentions=None,
-            current_state=current_state,
+            current_state=new_state,
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
         )
@@ -139,17 +139,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return_dict=return_dict,
         )
 
-        hidden_states = outputs.last_hidden_state
-
         if self.encoder:
             logits = self.encoder.decode(
-                hidden_states,
+                outputs.last_hidden_state,
                 outputs.h_encoder,
                 input_ids,
                 outputs.patch_lengths,
             )
         else:
-            logits = self.head(hidden_states)
+            logits = self.head(outputs.last_hidden_state)
 
         loss = 0
         if labels is not None:
