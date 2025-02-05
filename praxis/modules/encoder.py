@@ -24,7 +24,7 @@ from bytelatent.model.blt import (
     patch_ids_from_lengths,
 )
 from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
-from bytelatent.model.utils import downsample
+from bytelatent.model.utils import concat_downsample, patch_reduce
 from bytelatent.tokenizers.constants import BYTE_UNITS, EOS_ID, OFFSET
 from torch import nn
 
@@ -81,12 +81,15 @@ class PraxisEncoder(nn.Module):
             )
         )
         self.patcher.entropy_model = self.entropy_model
-        self.hash_embeds = init_embeddings(
-            self.args,
-            EmbeddingType.HASH_TOK,
-            local_encoder_dim=self.args.dim_token_emb,
-            encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
-        )
+        if "no_hash" in config.meta:
+            self.hash_embeds = None
+        else:
+            self.hash_embeds = init_embeddings(
+                self.args,
+                EmbeddingType.HASH_TOK,
+                local_encoder_dim=self.args.dim_token_emb,
+                encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
+            )
         if self.args.dim_token_emb != self.args.dim:
             self.token_proj = nn.Linear(
                 self.args.dim_token_emb,
@@ -358,6 +361,90 @@ class PraxisEncoder(nn.Module):
                 break
 
         return safe_threshold
+
+
+def downsample(
+    h,
+    num_patches,
+    patch_lengths=None,
+    patch_ids=None,
+    downsampling_by_pooling=None,
+    patch_size=4,
+):
+    """
+    Downsampling:
+        a. concatenating embeddings in the patch
+            Note: with dynamic patching, patch the last patch_size tokens.
+        b. pooling embeddings in the patch
+    """
+    # input: h.shape = [batch_size, seq_len, dim]
+    # input: pool h.shape = [batch_size, seq_len / patch_size, dim]
+    # if we don't use the cros_attn, we pool so that we convert bytes rep to patch rep
+    if downsampling_by_pooling is not None and len(downsampling_by_pooling) > 0:
+        # By pooling
+        max_num_patches = num_patches
+        assert patch_ids is not None
+        h = pooling_downsample(h, max_num_patches, downsampling_by_pooling, patch_ids)
+    else:
+        # TODO: remove this condition
+        # By concatenating (fixed lengths patching)
+        assert patch_lengths is not None
+        h = concat_downsample(h, patch_lengths, patch_size)
+    return h
+
+
+def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, topk=2):
+    cat = []
+    if "avg" in pooling_mode:
+        cat.append(patch_reduce(h, max_num_patches, "mean", patch_ids))
+    if "min" in pooling_mode:
+        cat.append(patch_reduce(h, max_num_patches, "amin", patch_ids))
+    if "max" in pooling_mode:
+        cat.append(patch_reduce(h, max_num_patches, "amax", patch_ids))
+    if "topk_mean" in pooling_mode:
+        assert topk is not None, "Must specify k for topk_mean pooling"
+        cat.append(topk_mean_pooling(h, max_num_patches, patch_ids, topk))
+    assert len(cat) > 0
+    h = torch.cat(cat, dim=-1)
+    return h
+
+
+def topk_mean_pooling(h, max_num_patches, patch_ids, k):
+    """
+    The function groups input embeddings (h) into patches using patch_ids, selects
+    the top k elements per patch (ignoring padded values), and returns their mean.
+    It effectively summarizes each patch by averaging its most significant k embeddings.
+    """
+    bs, seq_len, emb_dim = h.shape
+    patch_ids_exp = patch_ids.unsqueeze(-1).expand(-1, -1, emb_dim)
+
+    # Step 1: Create a tensor that separates values by patches
+    # Shape: [batch_size, max_num_patches, seq_len, emb_dim]
+    patch_separated = torch.full(
+        (bs, max_num_patches, seq_len, emb_dim),
+        -1e9,
+        device=h.device,
+        dtype=h.dtype,
+    )
+
+    # Create indices for scattering
+    batch_idx = torch.arange(bs).view(-1, 1, 1).expand(-1, seq_len, emb_dim)
+    patch_idx = patch_ids.unsqueeze(-1).expand(-1, -1, emb_dim)
+    seq_idx = torch.arange(seq_len).view(1, -1, 1).expand(bs, -1, emb_dim)
+    dim_idx = torch.arange(emb_dim).view(1, 1, -1).expand(bs, seq_len, -1)
+
+    # Scatter values into their patch positions
+    patch_separated[batch_idx, patch_idx, seq_idx, dim_idx] = h
+
+    # Step 2: Apply top-k along sequence dimension (dim=2)
+    # Shape: [batch_size, max_num_patches, k, emb_dim]
+    topk_vals, _ = torch.topk(patch_separated, k=min(k, seq_len), dim=2)
+
+    # Step 3: Compute mean, masking out -inf values
+    valid_mask = topk_vals > -1e9
+    result = (topk_vals * valid_mask).sum(dim=2) / valid_mask.sum(dim=2).clamp(min=1)
+
+    return result
 
 
 def patch_entropies_for_special_tokens(
@@ -649,18 +736,27 @@ def create_base_args(config):
 
     hidden_size = config.hidden_size
     embed_size = config.embed_size
+    downsampling_method = "max"
+    if "min" in config.meta:
+        downsampling_method = "min"
+    elif "mean" in config.meta:
+        downsampling_method = "mean"
+    elif "topk" in config.meta:
+        downsampling_method = "topk_mean"
     return ByteLatentTransformerArgs(
         # stuff to care about
         vocab_size=BYTE_UNITS + OFFSET,
         norm_eps=config.epsilon,
-        n_heads=1,
         dim=hidden_size,
         dim_token_emb=embed_size,
         dim_global=hidden_size,
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
         encoder_hash_byte_group_vocab=config.vocab_size,
+        n_layers_local_encoder=1,
+        n_layers_local_decoder=1,
         # stuff to probably ignore
+        n_heads=1,
         dim_local_encoder=hidden_size,
         dim_local_decoder=hidden_size,
         max_encoder_seq_length=config.context_length,
@@ -670,8 +766,6 @@ def create_base_args(config):
         cross_attn_window_decoder=512,
         cross_attn_k=1,  # is a multiplier for token and patch embedding
         cross_attn_nheads=1,  # num heads used in cross attn
-        n_layers_local_encoder=1,
-        n_layers_local_decoder=1,
         n_heads_local_encoder=1,
         n_heads_local_decoder=1,
         cross_attn_all_layers_encoder=False,
@@ -679,7 +773,7 @@ def create_base_args(config):
         cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
         cross_attn_init_by_pooling=True,
         use_rope=True,
-        downsampling_by_pooling="max",
+        downsampling_by_pooling=downsampling_method,
         share_encoder_decoder_emb=False,
         dropout=config.dropout,
         entropy_model_checkpoint_dir=None,

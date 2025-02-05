@@ -3,7 +3,11 @@ from itertools import product
 import pytest
 import torch
 
-from praxis.modules.encoder import PraxisEncoder, create_patch_block_ids
+from praxis.modules.encoder import (
+    PraxisEncoder,
+    create_patch_block_ids,
+    topk_mean_pooling,
+)
 
 # Define test parameters
 MODULE_CLASSES = [PraxisEncoder]
@@ -126,3 +130,147 @@ def test_create_patch_block_ids():
     assert torch.all(
         block_ids_all_special == expected_all_special
     ), f"All special tokens case mismatch.\nGot:      {block_ids_all_special}\nExpected: {expected_all_special}"
+
+
+def test_topk_mean_pooling():
+    """Test topk_mean_pooling with more realistic data."""
+    # More realistic dimensions
+    batch_size = 2
+    seq_len = 12
+    emb_dim = 8
+    max_num_patches = 4
+    k = 3
+
+    # Create input with varied embeddings
+    h = torch.randn(batch_size, seq_len, emb_dim) * 5  # Random values, scaled up
+
+    # Create patches of varying sizes
+    patch_ids = torch.tensor(
+        [
+            [0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 3],  # Sizes: 3,4,2,3
+            [0, 0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3],  # Sizes: 2,4,3,3
+        ],
+        dtype=torch.long,
+    )
+
+    # Call function
+    result = topk_mean_pooling(h, max_num_patches, patch_ids, k)
+
+    # Manually calculate expected results
+    expected = torch.zeros(batch_size, max_num_patches, emb_dim)
+
+    # Verify for each batch and patch
+    for b in range(batch_size):
+        for p in range(max_num_patches):
+            # Get values for this patch
+            patch_mask = patch_ids[b] == p
+            patch_vals = h[b][patch_mask]
+
+            # Calculate expected top-k mean
+            if len(patch_vals) > 0:
+                k_actual = min(k, len(patch_vals))
+                topk_vals, _ = torch.topk(patch_vals, k_actual, dim=0)
+                expected[b, p] = topk_vals.mean(dim=0)
+
+    # Verify results
+    assert torch.allclose(result, expected, rtol=1e-5), (
+        f"Mismatch in topk_mean_pooling results.\n"
+        f"Got:\n{result}\n"
+        f"Expected:\n{expected}"
+    )
+
+    # Add edge case tests
+    # Test with k=1 (max pooling equivalent)
+    result_k1 = topk_mean_pooling(h, max_num_patches, k=1, patch_ids=patch_ids)
+    # Test with k=seq_len (mean pooling equivalent)
+    result_kmax = topk_mean_pooling(h, max_num_patches, k=seq_len, patch_ids=patch_ids)
+
+    # Verify shapes
+    assert result.shape == (batch_size, max_num_patches, emb_dim)
+    assert result_k1.shape == (batch_size, max_num_patches, emb_dim)
+    assert result_kmax.shape == (batch_size, max_num_patches, emb_dim)
+
+
+# def test_topk_mean_pooling():
+#     """Test the correctness of topk_mean_pooling function."""
+#     # Setup a simple test case
+#     batch_size = 2
+#     seq_len = 6
+#     emb_dim = 2
+#     max_num_patches = 3
+#     k = 2
+
+#     # Create input tensor with known values
+#     h = torch.tensor(
+#         [
+#             # Batch 1
+#             [
+#                 [1.0, 1.0],  # Patch 0
+#                 [2.0, 2.0],  # Patch 0
+#                 [3.0, 3.0],  # Patch 1
+#                 [4.0, 4.0],  # Patch 1
+#                 [5.0, 5.0],  # Patch 2
+#                 [6.0, 6.0],
+#             ],  # Patch 2
+#             # Batch 2
+#             [
+#                 [2.0, 2.0],  # Patch 0
+#                 [4.0, 4.0],  # Patch 0
+#                 [6.0, 6.0],  # Patch 1
+#                 [8.0, 8.0],  # Patch 1
+#                 [10.0, 10.0],  # Patch 2
+#                 [12.0, 12.0],
+#             ],  # Patch 2
+#         ],
+#         dtype=torch.float32,
+#     )
+
+#     # Define patch assignments
+#     patch_ids = torch.tensor(
+#         [
+#             [0, 0, 1, 1, 2, 2],  # Batch 1
+#             [0, 0, 1, 1, 2, 2],  # Batch 2
+#         ],
+#         dtype=torch.long,
+#     )
+
+#     # Call the function
+#     result = topk_mean_pooling(h, max_num_patches, k, patch_ids)
+
+#     # Expected results (mean of top-k values in each patch):
+#     # Batch 1:
+#     # - Patch 0: mean of [1.0, 2.0] = [1.5, 1.5]
+#     # - Patch 1: mean of [3.0, 4.0] = [3.5, 3.5]
+#     # - Patch 2: mean of [5.0, 6.0] = [5.5, 5.5]
+#     # Batch 2:
+#     # - Patch 0: mean of [2.0, 4.0] = [3.0, 3.0]
+#     # - Patch 1: mean of [6.0, 8.0] = [7.0, 7.0]
+#     # - Patch 2: mean of [10.0, 12.0] = [11.0, 11.0]
+#     expected = torch.tensor(
+#         [[[1.5, 1.5], [3.5, 3.5], [5.5, 5.5]], [[3.0, 3.0], [7.0, 7.0], [11.0, 11.0]]],
+#         dtype=torch.float32,
+#     )
+
+#     # Verify results
+#     assert torch.allclose(result, expected, rtol=1e-5), (
+#         f"Mismatch in topk_mean_pooling results.\n"
+#         f"Got:\n{result}\n"
+#         f"Expected:\n{expected}"
+#     )
+
+#     # Add variable patch size test
+#     patch_ids_var = torch.tensor(
+#         [
+#             [0, 0, 0, 1, 1, 2],  # Batch 1: patches of size 3,2,1
+#             [0, 1, 1, 1, 2, 2],  # Batch 2: patches of size 1,3,2
+#         ],
+#         dtype=torch.long,
+#     )
+
+#     result_var = topk_mean_pooling(h, max_num_patches, k, patch_ids_var)
+
+#     # Verify shape
+#     assert result_var.shape == (batch_size, max_num_patches, emb_dim), (
+#         f"Incorrect output shape for variable patch sizes. "
+#         f"Got {result_var.shape}, expected {(batch_size, max_num_patches, emb_dim)}"
+#     )

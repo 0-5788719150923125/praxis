@@ -137,7 +137,7 @@ seed_everything(seed, workers=True)
 
 # Global configuration
 block_size = block_size * 16 if byte_latent else block_size
-terminal_output_length = block_size if byte_latent else block_size * 4
+terminal_output_length = block_size // 2 if byte_latent else block_size * 4
 use_dashboard = False if no_dashboard else True
 
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
