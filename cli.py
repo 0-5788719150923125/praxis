@@ -69,6 +69,13 @@ parser.add_argument(
     help="The base sequence length to train with",
 )
 parser.add_argument(
+    "--vocab_size",
+    type=int,
+    choices=[1024, 2048, 4096, 8192, 16384, 32768],
+    default=8192,
+    help="The relative vocab size to use, depending on architecture",
+)
+parser.add_argument(
     "--depth",
     type=int,
     default=7,

@@ -22,8 +22,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
 
     SPECIAL_TOKENS = {
         "boe_token": ("<|boe|>", BOE_ID),
-        # "pad_token": ("<|endoftext|>", PAD_ID),
-        "pad_token": ("<|endoftext|>", 0),
+        "pad_token": ("<|endoftext|>", BOE_ID),  # since PAD_ID is -1
         "bos_token": ("<|im_start|>", BOS_ID),
         "eos_token": ("<|im_end|>", EOS_ID),
         "bpe_token": ("<|bpe|>", BPE_ID),

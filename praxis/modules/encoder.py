@@ -62,7 +62,7 @@ class PraxisEncoder(nn.Module):
             )
             # Threshold optimization parameters
             self.loss_scale = 0.01
-            self.target_ratio = 0.125  # reduction of original length
+            self.target_ratio = 0.0625  # reduction of original length
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
                 "optimal_threshold",
@@ -198,40 +198,16 @@ class PraxisEncoder(nn.Module):
                     entropies=modified_entropy_scores,
                 )
 
-        # if self.training and random.random() < 0.005:
-        #     patch_lengths_before, _ = self.patcher.patch(
-        #         input_ids,
-        #         include_next_token=True,
-        #         threshold=float(self.optimal_threshold.item()),
-        #         entropies=entropy_scores,
-        #     )
-        #     from collections import Counter
-
-        #     def compare_sorted(list1, list2):
-        #         return sorted(list1) == sorted(list2)
-
-        #     print(
-        #         "identical patches:",
-        #         compare_sorted(
-        #             patch_lengths_before.tolist()[0], patch_lengths.tolist()[0]
-        #         ),
-        #     )
-        #     print(
-        #         "identical scores:",
-        #         compare_sorted(
-        #             entropy_scores.tolist()[0], modified_entropy_scores.tolist()[0]
-        #         ),
-        #     )
-
         if self.training:
             if self.debug and random.random() < self.log_rate:
+                avg_patch_size = patch_lengths.float().mean().item()
                 print(
-                    f"DEBUG: original length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, patching threshold={best_threshold or self.args.patching_threshold:.10f}"
+                    f"DEBUG: length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, "
+                    f"avg patch size={avg_patch_size:.2f}, "
+                    f"patching threshold={best_threshold or self.args.patching_threshold:.4f}"
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
-        # if self.training:
-        #     print(patch_ids.shape)
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -281,9 +257,6 @@ class PraxisEncoder(nn.Module):
             )
 
         block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
-        # if self.training and random.random() < 0.1:
-        #     print("first:", input_ids.tolist()[0])
-        #     print("second:", block_ids.tolist()[0])
 
         if self.token_proj is not None:
             h = self.token_proj(h)

@@ -136,10 +136,8 @@ log_command()
 seed_everything(seed, workers=True)
 
 # Global configuration
-vocab_size = 8192
-block_size = block_size * 4 if byte_latent else block_size
-
-terminal_output_length = block_size * 3
+block_size = block_size * 16 if byte_latent else block_size
+terminal_output_length = block_size if byte_latent else block_size * 4
 use_dashboard = False if no_dashboard else True
 
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -973,7 +971,7 @@ if not reset and not dev:
     symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
     true_link = find_latest_checkpoint(cache_dir)
     if os.path.exists(symlink):
-        print(f"resuming from sybolic path: {symlink}")
+        print(f"resuming from symbolic path: {symlink}")
         ckpt_path = symlink
     elif os.path.exists(true_link):
         print(f"resuming from true path: {true_link}")
