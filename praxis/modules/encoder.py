@@ -411,40 +411,125 @@ def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, k=2):
 
 def topk_mean_pooling(h, max_num_patches, patch_ids, k):
     """
-    The function groups input embeddings (h) into patches using patch_ids, selects
-    the top k elements per patch (ignoring padded values), and returns their mean.
-    It effectively summarizes each patch by averaging its most significant k embeddings.
+    Performs topk_mean pooling by iteratively applying a max reduction k times.
+    At each iteration, the maximum values (per patch and per embedding dimension)
+    are extracted, then those positions are masked out so they are not used again.
+    For patches with fewer than k tokens, only the available tokens are averaged.
+
+    Args:
+        h (torch.Tensor): Input tensor of shape [bs, seq_len, emb_dim].
+        max_num_patches (int): Total number of patches.
+        patch_ids (torch.Tensor): Tensor of patch IDs (shape [bs, seq_len]),
+                                  with integer values in 0..max_num_patches-1.
+        k (int): Number of top elements to average.
+
+    Returns:
+        torch.Tensor: A tensor of shape [bs, max_num_patches, emb_dim] containing the pooled values.
     """
     bs, seq_len, emb_dim = h.shape
-    patch_ids_exp = patch_ids.unsqueeze(-1).expand(-1, -1, emb_dim)
+    device = h.device
 
-    # Step 1: Create a tensor that separates values by patches
-    # Shape: [batch_size, max_num_patches, seq_len, emb_dim]
-    patch_separated = torch.full(
-        (bs, max_num_patches, seq_len, emb_dim),
-        -1e9,
-        device=h.device,
-        dtype=h.dtype,
-    )
+    # Compute how many tokens fall into each patch.
+    # one_hot: [bs, seq_len, max_num_patches], then sum along seq_len → [bs, max_num_patches]
+    one_hot = F.one_hot(patch_ids, num_classes=max_num_patches).to(h.dtype)
+    counts = one_hot.sum(dim=1)  # shape: [bs, max_num_patches]
 
-    # Create indices for scattering
-    batch_idx = torch.arange(bs).view(-1, 1, 1).expand(-1, seq_len, emb_dim)
-    patch_idx = patch_ids.unsqueeze(-1).expand(-1, -1, emb_dim)
-    seq_idx = torch.arange(seq_len).view(1, -1, 1).expand(bs, -1, emb_dim)
-    dim_idx = torch.arange(emb_dim).view(1, 1, -1).expand(bs, seq_len, -1)
+    # Expand patch_ids so it can be used as an index for scatter_reduce.
+    # We want to operate on h which is [bs, seq_len, emb_dim], so expand patch_ids to that shape.
+    patch_ids_exp = patch_ids.unsqueeze(-1).expand(bs, seq_len, emb_dim)
+    # Work on a clone of h so that we can mask out used tokens.
+    h_work = h.clone()
 
-    # Scatter values into their patch positions
-    patch_separated[batch_idx, patch_idx, seq_idx, dim_idx] = h
+    # We'll use NEG_INF as the value to mark masked-out tokens.
+    NEG_INF = -1e9
 
-    # Step 2: Apply top-k along sequence dimension (dim=2)
-    # Shape: [batch_size, max_num_patches, k, emb_dim]
-    topk_vals, _ = torch.topk(patch_separated, k=min(k, seq_len), dim=2)
+    # We'll collect the k max values for each patch.
+    collected = []
+    for i in range(k):
+        # Perform a scatter_reduce (max) to compute the current max for each patch and embedding.
+        # We create a temporary tensor (current_max) of shape [bs, max_num_patches, emb_dim],
+        # and scatter_reduce from h_work along the sequence dimension (dim=1) based on patch_ids_exp.
+        current_max = torch.zeros(
+            bs, max_num_patches, emb_dim, device=device, dtype=h.dtype
+        )
+        current_max = current_max.scatter_reduce(
+            dim=1,
+            index=patch_ids_exp,
+            src=h_work,
+            reduce="amax",
+            include_self=False,
+        )
+        collected.append(current_max)
 
-    # Step 3: Compute mean, masking out -inf values
-    valid_mask = topk_vals > -1e9
-    result = (topk_vals * valid_mask).sum(dim=2) / valid_mask.sum(dim=2).clamp(min=1)
+        # To mask out the positions that produced the current max, we broadcast current_max back
+        # to token-level via gather. (For each token, pick the max of its corresponding patch.)
+        current_max_expanded = current_max.gather(1, patch_ids_exp)
+        # Create a mask for positions that equal the current max.
+        mask = h_work == current_max_expanded
+        # Mask out these positions in h_work so they won't be selected in subsequent iterations.
+        h_work = h_work.masked_fill(mask, NEG_INF)
 
-    return result
+    # Stack the k rounds: shape [k, bs, max_num_patches, emb_dim]
+    topk_vals = torch.stack(collected, dim=0)
+    # Rearrange to shape [bs, max_num_patches, k, emb_dim]
+    topk_vals = topk_vals.permute(1, 2, 0, 3)
+
+    # For each patch we now need to average only over the valid iterations.
+    # Create a mask indicating valid iterations for each patch.
+    # For each patch (per batch), the number of valid iterations is min(k, count).
+    # Build an iteration index vector of shape [1, 1, k] to compare against counts.
+    iter_range = torch.arange(k, device=device).view(1, 1, k)  # shape: [1, 1, k]
+    # Expand counts to shape [bs, max_num_patches, 1]
+    counts_exp = counts.unsqueeze(-1)
+    valid_mask = iter_range < counts_exp  # shape: [bs, max_num_patches, k]
+    # Convert mask to float so we can multiply.
+    valid_mask = valid_mask.to(h.dtype)
+
+    # Sum the valid top-k values and divide by the number of valid iterations.
+    sum_valid = (topk_vals * valid_mask.unsqueeze(-1)).sum(
+        dim=2
+    )  # shape: [bs, max_num_patches, emb_dim]
+    num_valid = valid_mask.sum(dim=2).clamp(min=1)  # shape: [bs, max_num_patches]
+    pooled = sum_valid / num_valid.unsqueeze(-1)
+    return pooled
+
+
+# def topk_mean_pooling(h, max_num_patches, patch_ids, k):
+#     """
+#     The function groups input embeddings (h) into patches using patch_ids, selects
+#     the top k elements per patch (ignoring padded values), and returns their mean.
+#     It effectively summarizes each patch by averaging its most significant k embeddings.
+#     """
+#     bs, seq_len, emb_dim = h.shape
+#     patch_ids_exp = patch_ids.unsqueeze(-1).expand(-1, -1, emb_dim)
+
+#     # Step 1: Create a tensor that separates values by patches
+#     # Shape: [batch_size, max_num_patches, seq_len, emb_dim]
+#     patch_separated = torch.full(
+#         (bs, max_num_patches, seq_len, emb_dim),
+#         -1e9,
+#         device=h.device,
+#         dtype=h.dtype,
+#     )
+
+#     # Create indices for scattering
+#     batch_idx = torch.arange(bs).view(-1, 1, 1).expand(-1, seq_len, emb_dim)
+#     patch_idx = patch_ids.unsqueeze(-1).expand(-1, -1, emb_dim)
+#     seq_idx = torch.arange(seq_len).view(1, -1, 1).expand(bs, -1, emb_dim)
+#     dim_idx = torch.arange(emb_dim).view(1, 1, -1).expand(bs, seq_len, -1)
+
+#     # Scatter values into their patch positions
+#     patch_separated[batch_idx, patch_idx, seq_idx, dim_idx] = h
+
+#     # Step 2: Apply top-k along sequence dimension (dim=2)
+#     # Shape: [batch_size, max_num_patches, k, emb_dim]
+#     topk_vals, _ = torch.topk(patch_separated, k=min(k, seq_len), dim=2)
+
+#     # Step 3: Compute mean, masking out -inf values
+#     valid_mask = topk_vals > -1e9
+#     result = (topk_vals * valid_mask).sum(dim=2) / valid_mask.sum(dim=2).clamp(min=1)
+
+#     return result
 
 
 def patch_entropies_for_special_tokens(
