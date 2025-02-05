@@ -16,7 +16,7 @@ from transformers import PreTrainedTokenizerFast
 
 num_examples = 5_000_000
 
-vocab_size = 1024 * 64
+vocab_size = 1024 * 8
 dropout = 0.1
 
 save_path = "data/praxis"
