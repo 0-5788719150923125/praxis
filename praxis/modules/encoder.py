@@ -56,13 +56,13 @@ class PraxisEncoder(nn.Module):
         self.args.patch_size = 6
         if self.args.patching_mode == "entropy":
             self.args.monotonicity = True
-            vocab_size = BYTE_UNITS + OFFSET  # 256 bytes + 5 special tokens
+            vocab_size = BYTE_UNITS + OFFSET  # 256 bytes + 4 special tokens
             self.entropy_model = EntropyModel(
-                vocab_size, config.hidden_size // 2, config.dropout
+                vocab_size, config.hidden_size, config.dropout, n_layers=1
             )
             # Threshold optimization parameters
             self.loss_scale = 0.01
-            self.target_ratio = 0.0625  # reduction of original length
+            self.target_ratio = 0.125  # reduction of original length
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
                 "optimal_threshold",
@@ -181,9 +181,14 @@ class PraxisEncoder(nn.Module):
                 patch_lengths = best_patch_lengths
 
                 # Compute cross entropy loss
+                modified_entropy_preds = mask_entropy_preds_at_special_tokens(
+                    input_ids, entropy_preds
+                )
                 aux_loss = (
                     F.cross_entropy(
-                        entropy_preds[:, :-1].reshape(-1, entropy_preds.size(-1)),
+                        modified_entropy_preds[:, :-1].reshape(
+                            -1, modified_entropy_preds.size(-1)
+                        ),
                         input_ids[:, 1:].reshape(-1),
                     )
                     * self.loss_scale
@@ -390,6 +395,41 @@ def patch_entropies_for_special_tokens(
     )
 
     return modified_entropy_scores
+
+
+def mask_entropy_preds_at_special_tokens(
+    input_ids: torch.LongTensor,
+    entropy_preds: torch.Tensor,
+    special_tokens: list[int] = [0],
+) -> torch.Tensor:
+    """
+    Masks entropy predictions at special token positions by setting them to zero.
+    This prevents the model from learning to predict across sequence boundaries.
+
+    Args:
+        input_ids: Token IDs [batch_size, seq_len]
+        entropy_preds: Original entropy predictions [batch_size, seq_len, vocab_size]
+        special_tokens: List of special token IDs to mask
+    """
+    # Convert special_tokens to tensor for isin operation
+    special_tokens_tensor = torch.tensor(
+        special_tokens, device=input_ids.device, dtype=input_ids.dtype
+    )
+
+    # Create special token mask using isin
+    token_mask = torch.isin(input_ids, special_tokens_tensor)
+
+    # Expand mask to match entropy_preds shape (add vocab dimension)
+    token_mask = token_mask.unsqueeze(-1).expand(-1, -1, entropy_preds.size(-1))
+
+    # Apply zero where special tokens exist
+    masked_entropy_preds = torch.where(
+        token_mask,
+        torch.zeros_like(entropy_preds),
+        entropy_preds,
+    )
+
+    return masked_entropy_preds
 
 
 def create_patch_block_ids(
@@ -608,17 +648,18 @@ def create_base_args(config):
     """
 
     hidden_size = config.hidden_size
+    embed_size = config.embed_size
     return ByteLatentTransformerArgs(
         # stuff to care about
         vocab_size=BYTE_UNITS + OFFSET,
         norm_eps=config.epsilon,
         n_heads=1,
         dim=hidden_size,
-        dim_token_emb=hidden_size // 4,
+        dim_token_emb=embed_size,
         dim_global=hidden_size,
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
-        encoder_hash_byte_group_vocab=config.vocab_size * 2,
+        encoder_hash_byte_group_vocab=config.vocab_size,
         # stuff to probably ignore
         dim_local_encoder=hidden_size,
         dim_local_decoder=hidden_size,

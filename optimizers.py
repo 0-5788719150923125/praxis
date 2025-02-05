@@ -31,16 +31,6 @@ def get_optimizer(model, trac=False, ortho=False, lookahead=False, *args, **kwar
 # Most optimizer settings can be found here:
 # https://pytorch-optimizers.readthedocs.io/en/latest/optimizer
 OPTIMIZER_PROFILES = {
-    "AdamG": dict(
-        optimizer_name="AdamG",
-        lr=1.0,
-        weight_decay=0.1,
-        weight_decouple=True,
-        p=0.2,
-        q=0.24,
-        betas=(0.95, 0.999, 0.95),
-        no_schedule=True,
-    ),
     "AdamW": dict(
         optimizer_name="AdamW",
         lr=1e-3,
@@ -55,19 +45,6 @@ OPTIMIZER_PROFILES = {
         betas=(0.9, 0.95, 0.9999),
         alpha=5.0,
         cautious=True,
-    ),
-    "FOCUS": dict(
-        optimizer_name="FOCUS",
-        lr=0.001,
-        weight_decay=0.1,
-        gamma=0.2,
-        betas=(0.9, 0.95),
-    ),
-    "Grams": dict(
-        optimizer_name="Grams",
-        lr=0.001,
-        betas=(0.9, 0.95),
-        weight_decay=0.1,
     ),
     "Lion": dict(
         optimizer_name="Lion",
