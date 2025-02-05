@@ -393,7 +393,7 @@ def downsample(
     return h
 
 
-def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, topk=2):
+def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, k=2):
     cat = []
     if "avg" in pooling_mode:
         cat.append(patch_reduce(h, max_num_patches, "mean", patch_ids))
@@ -402,8 +402,8 @@ def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, topk=2):
     if "max" in pooling_mode:
         cat.append(patch_reduce(h, max_num_patches, "amax", patch_ids))
     if "topk_mean" in pooling_mode:
-        assert topk is not None, "Must specify k for topk_mean pooling"
-        cat.append(topk_mean_pooling(h, max_num_patches, patch_ids, topk))
+        assert k is not None, "Must specify k for topk_mean pooling"
+        cat.append(topk_mean_pooling(h, max_num_patches, patch_ids, k))
     assert len(cat) > 0
     h = torch.cat(cat, dim=-1)
     return h

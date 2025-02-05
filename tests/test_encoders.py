@@ -6,7 +6,7 @@ import torch
 from praxis.modules.encoder import (
     PraxisEncoder,
     create_patch_block_ids,
-    topk_mean_pooling,
+    pooling_downsample,
 )
 
 # Define test parameters
@@ -154,7 +154,7 @@ def test_topk_mean_pooling():
     )
 
     # Call function
-    result = topk_mean_pooling(h, max_num_patches, patch_ids, k)
+    result = pooling_downsample(h, max_num_patches, "topk_mean", patch_ids, k)
 
     # Manually calculate expected results
     expected = torch.zeros(batch_size, max_num_patches, emb_dim)
@@ -181,14 +181,45 @@ def test_topk_mean_pooling():
 
     # Add edge case tests
     # Test with k=1 (max pooling equivalent)
-    result_k1 = topk_mean_pooling(h, max_num_patches, k=1, patch_ids=patch_ids)
+    result_k1 = pooling_downsample(h, max_num_patches, "max", k=1, patch_ids=patch_ids)
     # Test with k=seq_len (mean pooling equivalent)
-    result_kmax = topk_mean_pooling(h, max_num_patches, k=seq_len, patch_ids=patch_ids)
+    result_kmax = pooling_downsample(
+        h, max_num_patches, "topk_mean", k=seq_len, patch_ids=patch_ids
+    )
 
     # Verify shapes
     assert result.shape == (batch_size, max_num_patches, emb_dim)
     assert result_k1.shape == (batch_size, max_num_patches, emb_dim)
     assert result_kmax.shape == (batch_size, max_num_patches, emb_dim)
+
+    # Verify difference
+    # Get results for all pooling modes
+    result_max = pooling_downsample(h, max_num_patches, "max", patch_ids=patch_ids)
+    result_min = pooling_downsample(h, max_num_patches, "min", patch_ids=patch_ids)
+    result_mean = pooling_downsample(h, max_num_patches, "avg", patch_ids=patch_ids)
+    result_topk = pooling_downsample(
+        h, max_num_patches, "topk_mean", k=k, patch_ids=patch_ids
+    )
+
+    # Verify all results are different
+    assert not torch.allclose(
+        result_max, result_topk
+    ), "topk_mean should differ from max pooling"
+    assert not torch.allclose(
+        result_min, result_topk
+    ), "topk_mean should differ from min pooling"
+    assert not torch.allclose(
+        result_mean, result_topk
+    ), "topk_mean should differ from mean pooling"
+
+    # Additional verification that results make sense
+    # topk_mean should be between max and min
+    assert torch.all(
+        result_topk <= result_max
+    ), "topk_mean should not exceed maximum values"
+    assert torch.all(
+        result_topk >= result_min
+    ), "topk_mean should not be less than minimum values"
 
 
 # def test_topk_mean_pooling():
