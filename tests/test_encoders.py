@@ -154,7 +154,7 @@ def test_topk_mean_pooling():
     )
 
     # Call function
-    result = pooling_downsample(h, max_num_patches, "topk_mean", patch_ids, k)
+    result = pooling_downsample(h, max_num_patches, f"topk:{k}", patch_ids)
 
     # Manually calculate expected results
     expected = torch.zeros(batch_size, max_num_patches, emb_dim)
@@ -181,10 +181,10 @@ def test_topk_mean_pooling():
 
     # Add edge case tests
     # Test with k=1 (max pooling equivalent)
-    result_k1 = pooling_downsample(h, max_num_patches, "max", k=1, patch_ids=patch_ids)
+    result_k1 = pooling_downsample(h, max_num_patches, "max", patch_ids=patch_ids)
     # Test with k=seq_len (mean pooling equivalent)
     result_kmax = pooling_downsample(
-        h, max_num_patches, "topk_mean", k=seq_len, patch_ids=patch_ids
+        h, max_num_patches, f"topk:{k}", patch_ids=patch_ids
     )
 
     # Verify shapes
@@ -198,7 +198,7 @@ def test_topk_mean_pooling():
     result_min = pooling_downsample(h, max_num_patches, "min", patch_ids=patch_ids)
     result_mean = pooling_downsample(h, max_num_patches, "avg", patch_ids=patch_ids)
     result_topk = pooling_downsample(
-        h, max_num_patches, "topk_mean", k=k, patch_ids=patch_ids
+        h, max_num_patches, f"topk:{k}", patch_ids=patch_ids
     )
 
     # Verify all results are different

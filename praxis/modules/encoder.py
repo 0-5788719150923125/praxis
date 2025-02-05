@@ -393,7 +393,7 @@ def downsample(
     return h
 
 
-def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, k=2):
+def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids):
     cat = []
     if "avg" in pooling_mode:
         cat.append(patch_reduce(h, max_num_patches, "mean", patch_ids))
@@ -401,8 +401,8 @@ def pooling_downsample(h, max_num_patches, pooling_mode, patch_ids, k=2):
         cat.append(patch_reduce(h, max_num_patches, "amin", patch_ids))
     if "max" in pooling_mode:
         cat.append(patch_reduce(h, max_num_patches, "amax", patch_ids))
-    if "topk_mean" in pooling_mode:
-        assert k is not None, "Must specify k for topk_mean pooling"
+    if pooling_mode.startswith("topk:"):
+        k = int(pooling_mode.split(":")[1])
         cat.append(topk_mean_pooling(h, max_num_patches, patch_ids, k))
     assert len(cat) > 0
     h = torch.cat(cat, dim=-1)
@@ -826,8 +826,8 @@ def create_base_args(config):
         downsampling_method = "min"
     elif "mean" in config.meta:
         downsampling_method = "mean"
-    elif "topk" in config.meta:
-        downsampling_method = "topk_mean"
+    elif any(flag.startswith("topk:") for flag in config.meta):
+        downsampling_method = next(x for x in config.meta if x.startswith("topk:"))
     return ByteLatentTransformerArgs(
         # stuff to care about
         vocab_size=BYTE_UNITS + OFFSET,
