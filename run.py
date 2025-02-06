@@ -762,7 +762,7 @@ class Generator:
                         generated_tokens,
                         **combined,
                         tokenizer=self.tokenizer,
-                        use_cache=False,
+                        use_cache=use_cache,
                         # token_healing=True,
                     )
                 except Exception as e:

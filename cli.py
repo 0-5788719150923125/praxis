@@ -378,6 +378,12 @@ parser.add_argument(
     help="Suppress text generation in the terminal",
 )
 parser.add_argument(
+    "--use_cache",
+    action="store_true",
+    default=False,
+    help="Use KV caching (not fully implemented yet)",
+)
+parser.add_argument(
     "--dev",
     action="store_true",
     default=False,

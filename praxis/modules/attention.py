@@ -142,6 +142,15 @@ class PraxisAttention(nn.Module):
         )
         v = v.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
 
+        # Handle KV caching
+        if past_key_values is not None:
+            # Unpack cached keys and values
+            past_k, past_v = past_key_values
+
+            # Concatenate current K,V with cached K,V
+            k = torch.cat([past_k, k], dim=2)
+            v = torch.cat([past_v, v], dim=2)
+
         # Determine chunk size
         chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
         num_chunks = (seq_len + chunk_size - 1) // chunk_size
@@ -163,9 +172,8 @@ class PraxisAttention(nn.Module):
             chunk_block_ids = (
                 None if block_ids is None else block_ids[:, start_idx:end_idx]
             )
-            if chunk_block_ids is not None:
-                if chunk_block_ids.dim() == 3:
-                    chunk_block_ids = chunk_block_ids.squeeze(-1)
+            if chunk_block_ids is not None and chunk_block_ids.dim() == 3:
+                chunk_block_ids = chunk_block_ids.squeeze(-1)
 
             # Process chunk with position offset
             chunk_output = self._process_chunk(
@@ -189,9 +197,10 @@ class PraxisAttention(nn.Module):
         if self.gates:
             output = self.gates(inputs, output)
 
+        # Prepare the updated KV cache for next step
+        current_kv = None if self.training else (k, v)
         # Final output projection
-        layer_kv = None
-        return self.output(output), layer_kv, aux_loss
+        return self.output(output), current_kv, aux_loss
 
     def _process_chunk(
         self,
