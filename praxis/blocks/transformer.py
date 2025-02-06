@@ -53,7 +53,7 @@ class PraxisTransformer(nn.Module):
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)
         attn_input = self.attn_norm(self.attn_res.format_state(residual))
-        attn_output, layer_kv, aux_loss = self.attn(
+        attn_output, past_key_values, aux_loss = self.attn(
             attn_input, attention_mask, past_key_values, block_ids, current_depth
         )
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
@@ -72,7 +72,7 @@ class PraxisTransformer(nn.Module):
 
         # Merge expansions
         final_output = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
-        return self.ffn_res.format_state(final_output), layer_kv, None, aux_loss
+        return self.ffn_res.format_state(final_output), past_key_values, None, aux_loss
 
     def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
         if tensor.dtype == torch.int64:

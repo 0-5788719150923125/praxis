@@ -705,6 +705,10 @@ class Generator:
         self.model.eval()
         try:
             yield
+        except Exception as e:
+            import traceback
+
+            print(traceback.format_exc())
         finally:
             self.model.train(training)
 
@@ -767,8 +771,8 @@ class Generator:
                     self.past_key_values.crop(truncate_to)
             del combined["truncate_to"]
         if persist_cache:
-            if self.past_key_values is None:
-                self.past_key_values = DynamicCache()
+            # if self.past_key_values is None:
+            #     self.past_key_values = DynamicCache()
             combined["past_key_values"] = self.past_key_values
         if "persist_cache" in combined:
             del combined["persist_cache"]
@@ -780,21 +784,23 @@ class Generator:
 
         with self._eval_mode():
             while attempts < max_attempts:
-                try:
-                    outputs = self.model.generate(
-                        generated_tokens,
-                        **combined,
-                        tokenizer=self.tokenizer,
-                        use_cache=use_cache,
-                        return_dict_in_generate=True,
-                        # token_healing=True,
-                    )
-                except Exception as e:
-                    print(e)
-                    return request.prompt
+                # try:
+                outputs = self.model.generate(
+                    generated_tokens,
+                    **combined,
+                    tokenizer=self.tokenizer,
+                    use_cache=use_cache,
+                    return_dict_in_generate=True,
+                    # token_healing=True,
+                )
+                # except Exception as e:
+                #     print(e)
+                #     return request.prompt
 
                 # Update generated_tokens with the new token
                 generated_tokens = outputs.sequences
+                if "past_key_values" in outputs:
+                    self.past_key_values = outputs.past_key_values
 
                 # Decode the tokens generated so far
                 decoded_new = self.tokenizer.decode(
