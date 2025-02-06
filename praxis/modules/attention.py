@@ -131,16 +131,17 @@ class PraxisAttention(nn.Module):
 
         # Initialize QKV projections
         q, aux_loss = self.query(inputs)
-
-        q = q.view(
-            batch_size, seq_len, self.num_query_heads * self.factor, -1
-        ).transpose(1, 2)
-
         k, v = self.key_value(inputs)
-        k = k.view(batch_size, seq_len, self.num_heads * self.factor, -1).transpose(
-            1, 2
-        )
-        v = v.view(batch_size, seq_len, self.num_heads, -1).transpose(1, 2)
+
+        # Define the views
+        q_view = (batch_size, seq_len, self.num_query_heads * self.factor, -1)
+        k_view = (batch_size, seq_len, self.num_heads * self.factor, -1)
+        v_view = (batch_size, seq_len, self.num_heads, -1)
+
+        # Create the view and transpose
+        q = q.view(q_view).transpose(1, 2)  # [b, h, s, d]
+        k = k.view(k_view).transpose(1, 2)  # [b, h, s, d]
+        v = v.view(v_view).transpose(1, 2)  # [b, h, s, d]
 
         # Handle KV caching
         if isinstance(past_key_values, DynamicCache):
