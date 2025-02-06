@@ -770,6 +770,7 @@ class Generator:
             if self.past_key_values is None:
                 self.past_key_values = DynamicCache()
             combined["past_key_values"] = self.past_key_values
+        if "persist_cache" in combined:
             del combined["persist_cache"]
 
         generated_tokens = input_ids
