@@ -65,7 +65,7 @@ class PraxisAttention(nn.Module):
                 debug=config.debug,
             )
         else:
-            self.query = nn.Linear(
+            self.query = LinearQuery(
                 hidden_size,
                 self.num_query_heads * self.head_dim * self.factor,
                 bias=False,
@@ -130,9 +130,7 @@ class PraxisAttention(nn.Module):
             inputs = self.ema(inputs)
 
         # Initialize QKV projections
-        q = self.query(inputs)
-        if isinstance(q, tuple):
-            q, aux_loss = q
+        q, aux_loss = self.query(inputs)
 
         q = q.view(
             batch_size, seq_len, self.num_query_heads * self.factor, -1
@@ -638,6 +636,16 @@ class Stickbreaking(ScaledDotProduct):
     #     self.value_history = new_v.detach()
 
     #     return new_k, new_v
+
+
+class LinearQuery(nn.Linear):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x: Tensor):
+        y = super().forward(x)
+        aux_loss = 0
+        return y, aux_loss
 
 
 class LinearKeyValue(nn.Module):

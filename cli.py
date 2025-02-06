@@ -65,7 +65,7 @@ parser.add_argument(
 parser.add_argument(
     "--block_size",
     type=int,
-    default=256,
+    default=512,
     help="The base sequence length to train with",
 )
 parser.add_argument(
