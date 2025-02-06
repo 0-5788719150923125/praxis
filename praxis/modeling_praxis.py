@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import GenerationMixin, PreTrainedModel
+from transformers import DynamicCache, GenerationMixin, PreTrainedModel
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -100,12 +100,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
             }
+
         # First generation step
-        if past_key_values is None:
+        if not isinstance(past_key_values, DynamicCache):
             return {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
-                "past_key_values": None,
+                "past_key_values": DynamicCache(),
                 "current_state": None,
             }
 

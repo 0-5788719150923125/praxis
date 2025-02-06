@@ -54,7 +54,7 @@ class PraxisTransformer(nn.Module):
         residual, beta = self.attn_res.connect_width(inputs)
         attn_input = self.attn_norm(self.attn_res.format_state(residual))
         attn_output, layer_kv, aux_loss = self.attn(
-            attn_input, attention_mask, past_key_values, block_ids
+            attn_input, attention_mask, past_key_values, block_ids, current_depth
         )
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
 

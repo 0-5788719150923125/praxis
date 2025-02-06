@@ -39,7 +39,6 @@ class PraxisDecoder(nn.Module):
             experts = self.stack.behavior.shuffle_experts(experts)
 
         hidden_states = inputs
-        new_key_values = []
         new_states = []
         aux_losses = []
 
@@ -50,18 +49,18 @@ class PraxisDecoder(nn.Module):
                 if next_expert_idx is not None:
                     expert = experts[next_expert_idx]
 
-                layer_past = past_key_values[i] if past_key_values is not None else None
                 layer_state = current_state[i] if current_state is not None else None
-                hidden_update, layer_kv, layer_state, aux_loss = self._create_forward(
-                    expert,
-                    hidden_states,
-                    attention_mask,
-                    layer_past,
-                    layer_state,
-                    i,
-                    block_ids,
+                hidden_update, past_key_values, layer_state, aux_loss = (
+                    self._create_forward(
+                        expert,
+                        hidden_states,
+                        attention_mask,
+                        past_key_values,
+                        layer_state,
+                        i,
+                        block_ids,
+                    )
                 )
-                new_key_values.append(layer_kv)
                 new_states.append(layer_state)
                 aux_losses.append(aux_loss)
 
@@ -91,7 +90,7 @@ class PraxisDecoder(nn.Module):
         if hasattr(self.stack.behavior, "reset_route"):
             self.stack.behavior.reset_route()
 
-        return hidden_states, new_key_values, current_state, sum(aux_losses)
+        return hidden_states, past_key_values, current_state, sum(aux_losses)
 
     def _create_forward(
         self,
