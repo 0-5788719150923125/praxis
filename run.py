@@ -101,7 +101,13 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DynamicCache,
+)
 
 from optimizers import get_optimizer, get_optimizer_profile
 
@@ -532,6 +538,7 @@ class TerminalInterface(Callback):
                 repetition_penalty=1.1,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
+                persist_cache=use_cache,
             ),
         )
         while True:
@@ -690,6 +697,7 @@ class Generator:
         self.tokenizer = tokenizer
         self.request_queue = Queue()
         self.results = {}
+        self.past_key_values = None
 
     @contextlib.contextmanager
     def _eval_mode(self):
@@ -738,6 +746,9 @@ class Generator:
             # token_healing=True,
         )
         combined = {**defaults, **request.kwargs}
+
+        # These values are largely an extension of the Huggingface `generate()` method, and
+        # not supported by that API directly.
         if "prompt" in combined:
             del combined["prompt"]
         skip_special_tokens = True
@@ -745,10 +756,21 @@ class Generator:
             if combined["skip_special_tokens"] == False:
                 skip_special_tokens = False
             del combined["skip_special_tokens"]
+        persist_cache = False
+        if "persist_cache" in combined and use_cache:
+            persist_cache = True
         if "truncate_to" in combined:
-            if input_ids.size(1) > combined["truncate_to"]:
-                input_ids = input_ids[:, -combined["truncate_to"] :]
+            truncate_to = combined["truncate_to"]
+            if input_ids.size(1) > truncate_to:
+                input_ids = input_ids[:, -truncate_to:]
+                if persist_cache and self.past_key_values is not None:
+                    self.past_key_values.crop(truncate_to)
             del combined["truncate_to"]
+        if persist_cache:
+            if self.past_key_values is None:
+                self.past_key_values = DynamicCache()
+            combined["past_key_values"] = self.past_key_values
+            del combined["persist_cache"]
 
         generated_tokens = input_ids
 
@@ -763,6 +785,7 @@ class Generator:
                         **combined,
                         tokenizer=self.tokenizer,
                         use_cache=use_cache,
+                        return_dict_in_generate=True,
                         # token_healing=True,
                     )
                 except Exception as e:
@@ -770,7 +793,7 @@ class Generator:
                     return request.prompt
 
                 # Update generated_tokens with the new token
-                generated_tokens = outputs
+                generated_tokens = outputs.sequences
 
                 # Decode the tokens generated so far
                 decoded_new = self.tokenizer.decode(

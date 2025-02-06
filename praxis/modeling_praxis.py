@@ -20,6 +20,7 @@ from praxis.utils import create_block_ids
 
 class PraxisModel(PreTrainedModel):
     config_class = PraxisConfig
+    _supports_cache_class = True
 
     def __init__(self, config: PraxisConfig):
         super().__init__(config)
