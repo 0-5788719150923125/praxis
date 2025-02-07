@@ -120,18 +120,34 @@ class RoPE(NoPE):
         self._cached_seq_length = None
 
     def before_scores(self, q, k, v, offset: int = 0, block_ids=None):
-        seq_len = q.size(2)
+        q_seq_len = q.size(2)
+        k_seq_len = k.size(2)
         device = q.device
         dtype = q.dtype
         head_dim = q.size(-1)
 
+        # Compute embeddings using the longer sequence length
+        max_seq_len = max(q_seq_len, k_seq_len)
         self._compute_rope_embeddings(
-            head_dim, seq_len, device, dtype, offset, block_ids
+            head_dim, max_seq_len, device, dtype, offset, block_ids
         )
 
-        # Apply rotations with proper broadcasting
-        q_rope = self._apply_rotary_pos_emb(q, self._cached_cos, self._cached_sin)
-        k_rope = self._apply_rotary_pos_emb(k, self._cached_cos, self._cached_sin)
+        # When using caching during inference
+        if q_seq_len == 1 and k_seq_len > 1:
+            # For queries: take the last position
+            q_cos = self._cached_cos[:, :, -1:, :]
+            q_sin = self._cached_sin[:, :, -1:, :]
+        else:
+            # During training: normal behavior
+            q_cos = self._cached_cos[:, :, :q_seq_len, :]
+            q_sin = self._cached_sin[:, :, :q_seq_len, :]
+
+        k_cos = self._cached_cos[:, :, :k_seq_len, :]
+        k_sin = self._cached_sin[:, :, :k_seq_len, :]
+
+        # Apply rotations with different positional encodings
+        q_rope = self._apply_rotary_pos_emb(q, q_cos, q_sin)
+        k_rope = self._apply_rotary_pos_emb(k, k_cos, k_sin)
 
         return q_rope, k_rope, v
 

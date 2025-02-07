@@ -146,30 +146,43 @@ class PraxisAttention(nn.Module):
         # Handle KV caching
         if isinstance(past_key_values, DynamicCache):
             k, v = past_key_values.update(k, v, current_depth)
+            full_seq_len = k.size(2)  # Get actual sequence length after cache
+        else:
+            full_seq_len = seq_len
 
-        # Determine chunk size
-        chunk_size = self.chunk_size if self.chunk_size > 0 else seq_len
-        num_chunks = (seq_len + chunk_size - 1) // chunk_size
+        # Determine chunk sizes based on whether we're using cache
+        chunk_size = self.chunk_size if self.chunk_size > 0 else full_seq_len
+        num_chunks = (full_seq_len + chunk_size - 1) // chunk_size
 
         outputs = []
 
         for i in range(num_chunks):
             start_idx = i * chunk_size
-            end_idx = min(start_idx + chunk_size, seq_len)
-            current_chunk_size = end_idx - start_idx
+            end_idx = min(start_idx + chunk_size, full_seq_len)
 
-            # Extract current chunk
-            chunk_q = q[:, :, start_idx:end_idx]
+            # During inference with cache:
+            # - Q is always length 1, so we take all of it
+            # - K,V need proper chunking for cached sequence
+            if isinstance(past_key_values, DynamicCache):
+                chunk_q = q  # Take all of q (length 1)
+            else:
+                # Training/no-cache behavior remains the same
+                chunk_q = q[:, :, start_idx:end_idx]
+
             chunk_k = k[:, :, start_idx:end_idx]
             chunk_v = v[:, :, start_idx:end_idx]
+
             chunk_mask = (
                 None if attention_mask is None else attention_mask[:, start_idx:end_idx]
             )
-            chunk_block_ids = (
-                None if block_ids is None else block_ids[:, start_idx:end_idx]
-            )
-            if chunk_block_ids is not None and chunk_block_ids.dim() == 3:
-                chunk_block_ids = chunk_block_ids.squeeze(-1)
+            chunk_block_ids = None
+            if block_ids is not None:
+                if isinstance(past_key_values, DynamicCache):
+                    chunk_block_ids = block_ids  # Keep full block_ids
+                else:
+                    chunk_block_ids = block_ids[:, start_idx:end_idx]
+                if chunk_block_ids.dim() == 3:
+                    chunk_block_ids = chunk_block_ids.squeeze(-1)
 
             # Process chunk with position offset
             chunk_output = self._process_chunk(
@@ -177,7 +190,11 @@ class PraxisAttention(nn.Module):
                 chunk_k,
                 chunk_v,
                 chunk_mask,
-                current_chunk_size,
+                (
+                    end_idx - start_idx
+                    if not isinstance(past_key_values, DynamicCache)
+                    else 1
+                ),
                 start_idx,
                 chunk_block_ids,
             )
@@ -300,14 +317,19 @@ class ScaledDotProduct(nn.Module):
 
                 mask = (same_block & causal).unsqueeze(1).float()
                 causal_mask = (1.0 - mask) * -1e9
-            scores = scores + causal_mask
+
+            # When not using caching
+            if scores.size(2) > 1:
+                scores = scores + causal_mask
         elif attention_mask is not None:
             # Handle padding mask
             attention_mask = F.pad(
                 attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
             )
             attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            scores = scores + attention_mask
+            # When not using caching
+            if scores.size(2) > 1:
+                scores = scores + attention_mask
 
         return scores, causal_mask, attention_mask
 
