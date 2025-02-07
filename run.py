@@ -530,6 +530,11 @@ class TerminalInterface(Callback):
             return
 
         max_new_tokens = 1 if not byte_latent else self._biased_randint(1, 7)
+
+        # Chance to generate extra tokens
+        while random.random() < 0.1:
+            max_new_tokens += 1 if not byte_latent else self._biased_randint(1, 7)
+
         request_id = generator.request_generation(
             self.text,
             dict(
@@ -571,10 +576,6 @@ class TerminalInterface(Callback):
             self.dashboard.update_status(self.text)
         else:
             self.print(self.text)
-
-        # allow for multiple tokens
-        if random.random() < 0.1:
-            return self._generate_text(lm)
 
         self.last_time = datetime.now()
 

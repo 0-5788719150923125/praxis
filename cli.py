@@ -381,7 +381,7 @@ parser.add_argument(
     "--use_cache",
     action="store_true",
     default=False,
-    help="Use KV caching (not fully implemented yet)",
+    help="Use KV caching during inference, at the cost of text consistency in the dashboard (but not in the API)",
 )
 parser.add_argument(
     "--dev",
