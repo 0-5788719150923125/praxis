@@ -60,7 +60,7 @@ class ALiBi(NoPE):
         batch_size, num_heads, seq_len, _ = scores.shape
         device = scores.device
 
-        if block_ids is not None:
+        if block_ids is not None and block_ids.size(1) != 1:
             # Use vectorized position computation
             positions = self._compute_relative_positions_vectorized(block_ids, device)
             positions = positions.float()

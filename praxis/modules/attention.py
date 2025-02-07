@@ -294,6 +294,9 @@ class ScaledDotProduct(nn.Module):
         self, scores, attention_mask, block_ids, seq_len, hist_len, causal
     ):
         causal_mask = None
+        # When using caching
+        if scores.size(2) == 1:
+            return scores, causal_mask, attention_mask
         if causal:
             if block_ids is None:
                 # Regular causal mask when no sequence blocking needed
@@ -318,18 +321,15 @@ class ScaledDotProduct(nn.Module):
                 mask = (same_block & causal).unsqueeze(1).float()
                 causal_mask = (1.0 - mask) * -1e9
 
-            # When not using caching
-            if scores.size(2) > 1:
-                scores = scores + causal_mask
+            scores = scores + causal_mask
         elif attention_mask is not None:
             # Handle padding mask
             attention_mask = F.pad(
                 attention_mask, (hist_len - attention_mask.size(-1), 0), value=1
             )
             attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            # When not using caching
-            if scores.size(2) > 1:
-                scores = scores + attention_mask
+
+            scores = scores + attention_mask
 
         return scores, causal_mask, attention_mask
 
