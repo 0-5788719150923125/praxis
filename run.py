@@ -564,6 +564,7 @@ class TerminalInterface(Callback):
             or self._is_all_whitespace()
         ):
             self.text = self.initial_text
+            generator.reset_key_values()
             if self.dashboard:
                 self.dashboard.update_status("<|err|>")
         elif self.dashboard:
@@ -711,6 +712,9 @@ class Generator:
             print(traceback.format_exc())
         finally:
             self.model.train(training)
+
+    def reset_key_values(self):
+        self.past_key_values = None
 
     def request_generation(self, prompt: str, kwargs={}) -> str:
         """

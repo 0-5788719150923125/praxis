@@ -161,8 +161,6 @@ class PraxisAttention(nn.Module):
             end_idx = min(start_idx + chunk_size, full_seq_len)
 
             # During inference with cache:
-            # - Q is always length 1, so we take all of it
-            # - K,V need proper chunking for cached sequence
             if isinstance(past_key_values, DynamicCache):
                 chunk_q = q  # Take all of q (length 1)
             else:
@@ -184,17 +182,19 @@ class PraxisAttention(nn.Module):
                 if chunk_block_ids.dim() == 3:
                     chunk_block_ids = chunk_block_ids.squeeze(-1)
 
+            current_chunk_size = (
+                end_idx - start_idx
+                if not isinstance(past_key_values, DynamicCache)
+                else 1
+            )
+
             # Process chunk with position offset
             chunk_output = self._process_chunk(
                 chunk_q,
                 chunk_k,
                 chunk_v,
                 chunk_mask,
-                (
-                    end_idx - start_idx
-                    if not isinstance(past_key_values, DynamicCache)
-                    else 1
-                ),
+                current_chunk_size,
                 start_idx,
                 chunk_block_ids,
             )
