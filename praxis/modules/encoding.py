@@ -165,7 +165,7 @@ class RoPE(NoPE):
                 )
             )
 
-        if block_ids is not None:
+        if block_ids is not None and block_ids.size(1) != 1:
             positions = self._compute_relative_positions_vectorized(
                 block_ids, device
             )  # Shape: [batch_size, seq_len]

@@ -150,6 +150,11 @@ class PraxisAttention(nn.Module):
         else:
             full_seq_len = seq_len
 
+        # Handle GQA (Grouped Query Attention)
+        if self.num_queries > 1:
+            k = k.repeat_interleave(self.num_queries, dim=1)
+            v = v.repeat_interleave(self.num_queries, dim=1)
+
         # Determine chunk sizes based on whether we're using cache
         chunk_size = self.chunk_size if self.chunk_size > 0 else full_seq_len
         num_chunks = (full_seq_len + chunk_size - 1) // chunk_size
@@ -224,11 +229,6 @@ class PraxisAttention(nn.Module):
         block_ids: Tensor = None,
     ) -> Tensor:
         batch_size = q.size(0)
-
-        # Handle GQA (Grouped Query Attention)
-        if self.num_queries > 1:
-            k = k.repeat_interleave(self.num_queries, dim=1)
-            v = v.repeat_interleave(self.num_queries, dim=1)
 
         # Apply positional encoding with offset
         q, k, v = self.encoding.before_scores(
