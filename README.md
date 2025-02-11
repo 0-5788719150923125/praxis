@@ -44,7 +44,7 @@ Or, you may use the VSCode command (`Ctrl + Shift + P`), and choose: `Python: Cr
 Then, install dependencies:
 
 ```sh
-pip install -e .[all]
+pip install -e .
 ```
 
 ## contribute to the swarm

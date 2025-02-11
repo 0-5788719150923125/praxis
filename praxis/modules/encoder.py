@@ -96,8 +96,12 @@ class PraxisEncoder(nn.Module):
                 config.hidden_size,
                 bias=False,
             )
-        self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
-        self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
+        if "original" in config.meta:
+            self.encoder = LocalEncoder(create_local_encoder_args(self.args))
+            self.decoder = LocalDecoder(create_local_decoder_args(self.args))
+        else:
+            self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
+            self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
 
     def __repr__(self):
         return (
@@ -248,7 +252,7 @@ class PraxisEncoder(nn.Module):
             cross_mask=cross_attn_mask_enc,
             num_patches=patch_lengths.shape[1],
             patch_ids=patch_ids,
-            mask=False,
+            mask=None,
         )
 
         # Downsampling
@@ -304,7 +308,7 @@ class PraxisEncoder(nn.Module):
             patch_embeds=h,
             embeds=h_encoder,
             cross_mask=cross_mask,
-            mask=False,
+            mask=None,
         )
 
         return output
@@ -789,18 +793,14 @@ def create_base_args(config):
         n_layers_local_encoder=1,
         n_layers_local_decoder=1,
         # stuff to probably ignore
-        n_heads=1,
         dim_local_encoder=hidden_size,
         dim_local_decoder=hidden_size,
-        max_encoder_seq_length=config.context_length,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
         cross_attn_window_decoder=512,
         cross_attn_k=1,  # is a multiplier for token and patch embedding
         cross_attn_nheads=1,  # num heads used in cross attn
-        n_heads_local_encoder=1,
-        n_heads_local_decoder=1,
         cross_attn_all_layers_encoder=False,
         cross_attn_all_layers_decoder=False,
         cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
@@ -810,6 +810,13 @@ def create_base_args(config):
         share_encoder_decoder_emb=False,
         dropout=config.dropout,
         entropy_model_checkpoint_dir=None,
+        attn_impl="xformers",
+        local_attention_window_len=512,  # sliding window
+        n_heads=4,
+        n_heads_local_encoder=4,
+        n_heads_local_decoder=4,
+        max_seqlen=config.context_length,
+        # max_encoder_seq_length=8192,
     )
 
 
@@ -836,6 +843,8 @@ def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         downsampling_by_pooling=args.downsampling_by_pooling,
         encoder_hash_byte_group_size=args.encoder_hash_byte_group_size,
         cross_attn_nheads=args.cross_attn_nheads,
+        max_seqlen=args.max_seqlen,
+        attn_impl=args.attn_impl,
     )
 
 
@@ -861,4 +870,6 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         use_local_encoder_transformer=args.use_local_encoder_transformer,
         downsampling_by_pooling=args.downsampling_by_pooling,
         cross_attn_nheads=args.cross_attn_nheads,
+        max_seqlen=args.max_seqlen,
+        attn_impl=args.attn_impl,
     )
