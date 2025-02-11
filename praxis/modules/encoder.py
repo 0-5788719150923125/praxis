@@ -816,6 +816,7 @@ def create_base_args(config):
         n_heads_local_encoder=4,
         n_heads_local_decoder=4,
         max_seqlen=config.context_length,
+        eos_id=0,  # currently we split packed sequences with the pad_token ID
         # max_encoder_seq_length=8192,
     )
 
@@ -845,6 +846,7 @@ def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         cross_attn_nheads=args.cross_attn_nheads,
         max_seqlen=args.max_seqlen,
         attn_impl=args.attn_impl,
+        eos_id=args.eos_id,
     )
 
 
@@ -872,4 +874,5 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         cross_attn_nheads=args.cross_attn_nheads,
         max_seqlen=args.max_seqlen,
         attn_impl=args.attn_impl,
+        eos_id=args.eos_id,
     )
