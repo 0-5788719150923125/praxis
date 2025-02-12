@@ -59,9 +59,13 @@ class PraxisEncoder(nn.Module):
             self.args.monotonicity = True
             if "original" in config.meta:
                 self.entropy_model = LMTransformer(create_entropy_model_args(self.args))
+            elif "conv" in config.meta:
+                self.entropy_model = ConvEntropyModel(
+                    self.args.vocab_size, config.hidden_size, config.dropout, n_layers=2
+                )
             else:
-                self.entropy_model = EntropyModel(
-                    self.args.vocab_size, config.hidden_size, config.dropout, n_layers=3
+                self.entropy_model = RecurrentEntropyModel(
+                    self.args.vocab_size, config.hidden_size, config.dropout, n_layers=1
                 )
             # Threshold optimization parameters
             self.loss_scale = 0.01
@@ -102,6 +106,11 @@ class PraxisEncoder(nn.Module):
         if "original" in config.meta:
             self.encoder = LocalEncoder(create_local_encoder_args(self.args))
             self.decoder = LocalDecoder(create_local_decoder_args(self.args))
+        elif "conv" in config.meta:
+            self.args.n_layers_local_encoder = 3
+            self.args.n_layers_local_decoder = 3
+            self.encoder = ConvEncoder(create_local_encoder_args(self.args))
+            self.decoder = ConvDecoder(create_local_decoder_args(self.args))
         else:
             self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
             self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
@@ -697,32 +706,159 @@ class RecurrentDecoder(LocalDecoder):
         return h_preds, None
 
 
-# class EntropyModel(nn.Module):
-#     def __init__(self, vocab_size=256, dim=256, dropout=0, n_layers=1):
-#         super().__init__()
+class RecurrentEntropyModel(nn.Module):
+    def __init__(self, vocab_size=256, dim=256, dropout=0, n_layers=1):
+        super().__init__()
 
-#         self.embedding = nn.Embedding(vocab_size, dim)  # byte embedding
+        self.embedding = nn.Embedding(vocab_size, dim)  # byte embedding
 
-#         self.blocks = nn.ModuleList()
-#         for i in range(n_layers):
-#             self.blocks.append(RecurrentBlock(dim=dim, norm_eps=1e-5))
+        self.blocks = nn.ModuleList()
+        for i in range(n_layers):
+            self.blocks.append(RecurrentBlock(dim=dim, norm_eps=1e-5))
 
-#         # Project to byte probabilities
-#         self.norm = nn.LayerNorm(dim)
-#         self.output = nn.Linear(dim, vocab_size)
+        # Project to byte probabilities
+        self.norm = nn.LayerNorm(dim)
+        self.output = nn.Linear(dim, vocab_size)
 
-#     def forward(self, x: torch.Tensor, *args, **kwargs):
-#         # x: [batch, seq_len]
-#         input_ids = x
-#         x = self.embedding(x)  # [batch, channels, seq_len]
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        # x: [batch, seq_len]
+        input_ids = x
+        x = self.embedding(x)  # [batch, channels, seq_len]
 
-#         for block in self.blocks:
-#             x = block(x, input_ids=input_ids)
+        for block in self.blocks:
+            x = block(x, input_ids=input_ids)
 
-#         return self.output(self.norm(x))
+        return self.output(self.norm(x))
 
 
-class EntropyModel(nn.Module):
+class ConvBlock(nn.Module):
+    """
+    Convolutional block with same interface as RecurrentBlock.
+    Uses dilated causal convolution with residual connection.
+    """
+
+    def __init__(self, dim, norm_eps=1e-5, dilation=0, padding=0, kernel_size=3):
+        super().__init__()
+        self.norm = nn.RMSNorm(dim, eps=norm_eps)
+
+        # Causal padding to match sequence length
+        self.padding = padding
+
+        self.conv = nn.Conv1d(
+            dim, dim, kernel_size=kernel_size, dilation=dilation, padding=padding
+        )
+
+        self.activation = nn.ReLU()
+
+    def forward(self, x: torch.Tensor, input_ids: torch.Tensor = None, *args, **kwargs):
+        # x: [batch, seq_len, dim]
+        normed = self.norm(x)
+
+        # Reshape for convolution
+        conv_in = normed.transpose(1, 2)  # [batch, dim, seq_len]
+
+        # Apply convolution
+        conv_out = self.conv(conv_in)
+
+        # Remove extra padding to maintain causality
+        conv_out = conv_out[..., : -self.padding]
+
+        # Reshape back
+        out = conv_out.transpose(1, 2)  # [batch, seq_len, dim]
+
+        return self.activation(out) + x
+
+
+class ConvEncoder(LocalEncoder):
+    def __init__(self, args: LocalModelArgs):
+        super().__init__(args)
+        self.layers = nn.ModuleList()
+        for i in range(args.n_layers):
+            kernel_size = 3
+            dilation = 2**i
+            padding = (kernel_size - 1) * dilation  # Causal padding
+            self.layers.append(
+                ConvBlock(
+                    args.dim,
+                    args.norm_eps,
+                    dilation,
+                    padding,
+                    kernel_size,
+                ),
+            )
+        self.dropout = nn.Dropout(args.dropout)
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ):
+        h = self.apply_embedding(tokens, embeds)
+
+        for layer in self.layers:
+            h = self.dropout(h)
+            h = layer(h, input_ids=tokens)
+
+        return (h, None), None
+
+
+class ConvDecoder(LocalDecoder):
+    def __init__(self, args: LocalModelArgs):
+        super().__init__(args)
+        self.layers = nn.ModuleList()
+        for i in range(args.n_layers):
+            kernel_size = 3
+            dilation = 2**i
+            padding = (kernel_size - 1) * dilation  # Causal padding
+            self.layers.append(
+                ConvBlock(
+                    args.dim,
+                    args.norm_eps,
+                    dilation,
+                    padding,
+                    kernel_size,
+                ),
+            )
+            self.dropout = nn.Dropout(args.dropout)
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor = None,
+        *args,
+        **kwargs,
+    ):
+        bs, seqlen = tokens.shape
+        assert embeds is not None, "Embeddings must be provided"
+
+        h = embeds
+
+        if self.patch_embedding_projection is not None:
+            assert patch_embeds is not None, "Patch embeddings must be passed."
+            patch_embeds = self.patch_embedding_projection(patch_embeds)
+            if self.cross_attn_k is not None:
+                patch_embeds = patch_embeds.reshape(
+                    bs, patch_embeds.shape[1] * self.cross_attn_k, self.dim
+                )
+
+        if patch_embeds is not None and not self.cross_attn_decoder:
+            h = h + patch_embeds
+
+        for layer in self.layers:
+            h = self.dropout(h)
+            h = layer(h, input_ids=tokens)
+
+        h_preds = self.norm(h)
+        h_preds = self.dropout(h_preds)
+        h_preds = self.output(h_preds)
+        h_preds = h_preds.float()
+        return h_preds, None
+
+
+class ConvEntropyModel(nn.Module):
     def __init__(
         self, vocab_size=256, channels=256, dropout=0, n_layers=1, kernel_size=3
     ):
@@ -774,8 +910,6 @@ def create_base_args(config):
     https://github.com/facebookresearch/blt/blob/main/bytelatent/test_blt.py
     """
 
-    hidden_size = config.hidden_size
-    embed_size = config.embed_size
     downsampling_method = "max"
     if "min" in config.meta:
         downsampling_method = "min"
@@ -783,21 +917,22 @@ def create_base_args(config):
         downsampling_method = "mean"
     elif any(flag.startswith("topk:") for flag in config.meta):
         downsampling_method = next(x for x in config.meta if x.startswith("topk:"))
+
     return ByteLatentTransformerArgs(
         # stuff to care about
         vocab_size=BYTE_UNITS + OFFSET,  # 256 bytes + 4 special tokens
         norm_eps=config.epsilon,
-        dim=hidden_size,
-        dim_token_emb=embed_size,
-        dim_global=hidden_size,
+        dim=config.hidden_size,
+        dim_token_emb=config.embed_size,
+        dim_global=config.hidden_size,
         encoder_hash_byte_group_nb_functions=1,
         encoder_hash_byte_group_size=[3, 4, 5],
         encoder_hash_byte_group_vocab=config.vocab_size,
         n_layers_local_encoder=1,
         n_layers_local_decoder=1,
         # stuff to probably ignore
-        dim_local_encoder=hidden_size,
-        dim_local_decoder=hidden_size,
+        dim_local_encoder=config.hidden_size,
+        dim_local_decoder=config.hidden_size,
         cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
         cross_attn_decoder=False,
         cross_attn_window_encoder=512,
