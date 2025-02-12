@@ -26,6 +26,7 @@ from bytelatent.model.blt import (
 from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
 from bytelatent.model.utils import concat_downsample, patch_reduce
 from bytelatent.tokenizers.constants import BYTE_UNITS, EOS_ID, OFFSET
+from bytelatent.transformer import LMTransformer, LMTransformerArgs
 from torch import nn
 
 from praxis.modules.recurrent import minGRU
@@ -56,10 +57,12 @@ class PraxisEncoder(nn.Module):
         self.args.patch_size = 6
         if self.args.patching_mode == "entropy":
             self.args.monotonicity = True
-            vocab_size = BYTE_UNITS + OFFSET  # 256 bytes + 4 special tokens
-            self.entropy_model = EntropyModel(
-                vocab_size, config.hidden_size, config.dropout, n_layers=1
-            )
+            if "original" in config.meta:
+                self.entropy_model = LMTransformer(create_entropy_model_args(self.args))
+            else:
+                self.entropy_model = EntropyModel(
+                    self.args.vocab_size, config.hidden_size, config.dropout, n_layers=3
+                )
             # Threshold optimization parameters
             self.loss_scale = 0.01
             self.target_ratio = 0.125  # reduction of original length
@@ -694,75 +697,75 @@ class RecurrentDecoder(LocalDecoder):
         return h_preds, None
 
 
-class EntropyModel(nn.Module):
-    def __init__(self, vocab_size=256, dim=256, dropout=0, n_layers=1):
-        super().__init__()
-
-        self.embedding = nn.Embedding(vocab_size, dim)  # byte embedding
-
-        self.blocks = nn.ModuleList()
-        for i in range(n_layers):
-            self.blocks.append(RecurrentBlock(dim=dim, norm_eps=1e-5))
-
-        # Project to byte probabilities
-        self.norm = nn.LayerNorm(dim)
-        self.output = nn.Linear(dim, vocab_size)
-
-    def forward(self, x: torch.Tensor, *args, **kwargs):
-        # x: [batch, seq_len]
-        input_ids = x
-        x = self.embedding(x)  # [batch, channels, seq_len]
-
-        for block in self.blocks:
-            x = block(x, input_ids=input_ids)
-
-        return self.output(self.norm(x))
-
-
 # class EntropyModel(nn.Module):
-#     def __init__(
-#         self, vocab_size=256, channels=256, dropout=0, n_layers=2, kernel_size=3
-#     ):
+#     def __init__(self, vocab_size=256, dim=256, dropout=0, n_layers=1):
 #         super().__init__()
 
-#         self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+#         self.embedding = nn.Embedding(vocab_size, dim)  # byte embedding
 
-#         # Stack of dilated convolutions
-#         self.convs = nn.ModuleList()
+#         self.blocks = nn.ModuleList()
 #         for i in range(n_layers):
-#             dilation = 2**i
-#             padding = (kernel_size - 1) * dilation  # Causal padding
-#             self.convs.append(
-#                 nn.Sequential(
-#                     nn.Conv1d(
-#                         channels,
-#                         channels,
-#                         kernel_size=kernel_size,
-#                         padding=padding,
-#                         dilation=dilation,
-#                     ),
-#                     nn.Dropout(dropout),
-#                 )
-#             )
-
-#         self.activation = nn.SiLU()
+#             self.blocks.append(RecurrentBlock(dim=dim, norm_eps=1e-5))
 
 #         # Project to byte probabilities
-#         self.norm = nn.LayerNorm(channels)
-#         self.output = nn.Linear(channels, vocab_size)
+#         self.norm = nn.LayerNorm(dim)
+#         self.output = nn.Linear(dim, vocab_size)
 
 #     def forward(self, x: torch.Tensor, *args, **kwargs):
 #         # x: [batch, seq_len]
-#         x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+#         input_ids = x
+#         x = self.embedding(x)  # [batch, channels, seq_len]
 
-#         # Causal convolution stack
-#         for conv in self.convs:
-#             out = conv(x)
-#             out = out[..., : x.size(-1)]
-#             x = self.activation(out) + x
+#         for block in self.blocks:
+#             x = block(x, input_ids=input_ids)
 
-#         x = x.transpose(1, 2)  # [batch, seq_len, channels]
 #         return self.output(self.norm(x))
+
+
+class EntropyModel(nn.Module):
+    def __init__(
+        self, vocab_size=256, channels=256, dropout=0, n_layers=1, kernel_size=3
+    ):
+        super().__init__()
+
+        self.embedding = nn.Embedding(vocab_size, channels)  # byte embedding
+
+        # Stack of dilated convolutions
+        self.convs = nn.ModuleList()
+        for i in range(n_layers):
+            dilation = 2**i
+            padding = (kernel_size - 1) * dilation  # Causal padding
+            self.convs.append(
+                nn.Sequential(
+                    nn.Conv1d(
+                        channels,
+                        channels,
+                        kernel_size=kernel_size,
+                        padding=padding,
+                        dilation=dilation,
+                    ),
+                    nn.Dropout(dropout),
+                )
+            )
+
+        self.activation = nn.ReLU()
+
+        # Project to byte probabilities
+        self.norm = nn.LayerNorm(channels)
+        self.output = nn.Linear(channels, vocab_size)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs):
+        # x: [batch, seq_len]
+        x = self.embedding(x).transpose(1, 2)  # [batch, channels, seq_len]
+
+        # Causal convolution stack
+        for conv in self.convs:
+            out = conv(x)
+            out = out[..., : x.size(-1)]
+            x = self.activation(out) + x
+
+        x = x.transpose(1, 2)  # [batch, seq_len, channels]
+        return self.output(self.norm(x))
 
 
 def create_base_args(config):
@@ -782,7 +785,7 @@ def create_base_args(config):
         downsampling_method = next(x for x in config.meta if x.startswith("topk:"))
     return ByteLatentTransformerArgs(
         # stuff to care about
-        vocab_size=BYTE_UNITS + OFFSET,
+        vocab_size=BYTE_UNITS + OFFSET,  # 256 bytes + 4 special tokens
         norm_eps=config.epsilon,
         dim=hidden_size,
         dim_token_emb=embed_size,
@@ -872,6 +875,21 @@ def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs
         use_local_encoder_transformer=args.use_local_encoder_transformer,
         downsampling_by_pooling=args.downsampling_by_pooling,
         cross_attn_nheads=args.cross_attn_nheads,
+        max_seqlen=args.max_seqlen,
+        attn_impl=args.attn_impl,
+        eos_id=args.eos_id,
+    )
+
+
+def create_entropy_model_args(args: ByteLatentTransformerArgs) -> LMTransformerArgs:
+    return LMTransformerArgs(
+        # Updated args
+        dim=args.dim,
+        n_layers=args.n_layers_local_decoder,
+        n_heads=args.n_heads_local_decoder,
+        # Defaults
+        vocab_size=args.vocab_size + args.pm_size,
+        sliding_window=args.local_attention_window_len,
         max_seqlen=args.max_seqlen,
         attn_impl=args.attn_impl,
         eos_id=args.eos_id,
