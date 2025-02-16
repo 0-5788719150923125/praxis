@@ -543,7 +543,6 @@ class TerminalInterface(Callback):
                 repetition_penalty=1.1,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
-                persist_cache=use_cache,
             ),
         )
         while True:
@@ -569,7 +568,6 @@ class TerminalInterface(Callback):
             or self._is_all_whitespace()
         ):
             self.text = self.initial_text
-            generator.reset_key_values()
             if self.dashboard:
                 self.dashboard.update_status("<|err|>")
         elif self.dashboard:
@@ -699,7 +697,6 @@ class Generator:
         self.tokenizer = tokenizer
         self.request_queue = Queue()
         self.results = {}
-        self.past_key_values = None
 
     @contextlib.contextmanager
     def _eval_mode(self):
@@ -713,9 +710,6 @@ class Generator:
             print(traceback.format_exc())
         finally:
             self.model.train(training)
-
-    def reset_key_values(self):
-        self.past_key_values = None
 
     def request_generation(self, prompt: str, kwargs={}) -> str:
         """
@@ -765,22 +759,11 @@ class Generator:
             if combined["skip_special_tokens"] == False:
                 skip_special_tokens = False
             del combined["skip_special_tokens"]
-        persist_cache = False
-        if "persist_cache" in combined and use_cache:
-            persist_cache = True
         if "truncate_to" in combined:
             truncate_to = combined["truncate_to"]
             if input_ids.size(1) > truncate_to:
                 input_ids = input_ids[:, -truncate_to:]
-                if persist_cache and self.past_key_values is not None:
-                    self.past_key_values.crop(truncate_to)
             del combined["truncate_to"]
-        if persist_cache:
-            # if self.past_key_values is None:
-            #     self.past_key_values = DynamicCache()
-            combined["past_key_values"] = self.past_key_values
-        if "persist_cache" in combined:
-            del combined["persist_cache"]
 
         generated_tokens = input_ids
 
@@ -804,8 +787,6 @@ class Generator:
 
                 # Update generated_tokens with the new token
                 generated_tokens = outputs.sequences
-                if "past_key_values" in outputs:
-                    self.past_key_values = outputs.past_key_values
 
                 # Decode the tokens generated so far
                 decoded_new = self.tokenizer.decode(
