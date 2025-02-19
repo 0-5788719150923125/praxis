@@ -190,6 +190,7 @@ config = PraxisConfig(
     evolve=evolve,
     byte_latent=byte_latent,
     hyper=hyper,
+    scaling=scaling,
     activation=activation,
     hivemind=hivemind,
     initial_peers=initial_peers,

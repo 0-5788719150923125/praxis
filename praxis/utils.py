@@ -1,6 +1,24 @@
+import math
 from typing import List, Tuple, Union
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def norm_scaling(normalized_x, depth):
+    """
+    Apply depth-based scaling to already-normalized inputs to address the Curse of Depth.
+    https://arxiv.org/abs/2502.05795
+    """
+    # Ensure depth is at least 1
+    depth = max(1, depth)
+
+    # Apply depth-based scaling: divide by sqrt(depth)
+    depth_scaling_factor = 1.0 / math.sqrt(depth)
+    scaled_x = normalized_x * depth_scaling_factor
+
+    return scaled_x
 
 
 def create_block_ids(

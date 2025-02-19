@@ -9,6 +9,7 @@ from torch import Tensor
 from praxis.modules.attention import ATTENTION_REGISTRY
 from praxis.modules.experts import EXPERT_REGISTRY, get_expert_config
 from praxis.modules.residual import HyperConnection, ResidualConnection
+from praxis.utils import norm_scaling
 
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 
@@ -35,6 +36,7 @@ class PraxisTransformer(nn.Module):
         )
         self.ffn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.ffn = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
+        self.use_scaler = config.scaling
 
     def forward(
         self,
@@ -53,6 +55,8 @@ class PraxisTransformer(nn.Module):
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)
         attn_input = self.attn_norm(self.attn_res.format_state(residual))
+        if self.use_scaler:
+            attn_input = norm_scaling(attn_input, current_depth)
         attn_output, past_key_values, aux_loss = self.attn(
             attn_input, attention_mask, past_key_values, block_ids, current_depth
         )
@@ -63,6 +67,8 @@ class PraxisTransformer(nn.Module):
             self.ffn_res.format_state(attn_merged)
         )
         ffn_input = self.ffn_norm(self.ffn_res.format_state(residual))
+        if self.use_scaler:
+            ffn_input = norm_scaling(ffn_input, current_depth)
         ffn_output = self.ffn(ffn_input, current_depth)
 
         if torch.is_tensor(router_weights):
