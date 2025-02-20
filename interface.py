@@ -465,7 +465,7 @@ class TerminalDashboard:
             elif i == (height // 2):
                 if random.random() < 0.1:
                     self.sign = -1 * self.sign
-                left_content = f" SIGN: {self.sign:+.1f}"
+                left_content = f" ATTENTION: {self.sign:+.1f}"
                 left_content = left_content.ljust(half_width)[:half_width]
                 right_content = " LOG".ljust(right_width)[:right_width]
             elif i == (height // 2) + 1:
