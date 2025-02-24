@@ -1011,20 +1011,10 @@ if wandb:
 
     wandb.login()
 
-    def find_latest_wandb_run(cache_dir):
-        """Find the latest wandb run directory and extract its ID."""
-
-        # First try the standard latest-run path
-        latest_run_path = os.path.join(cache_dir, "wandb", "latest-run")
-        if os.path.exists(latest_run_path):
-            pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
-            for filename in os.listdir(latest_run_path):
-                match = pattern.match(filename)
-                if match:
-                    print("resuming wandb from symbolic path")
-                    return match.group(1)
-
-        # If latest-run doesn't exist, find the most recent run directory
+    def find_latest_wandb_run(cache_dir, cleanup_old_runs=True):
+        """
+        Find the latest wandb run directory, extract its ID, and clean up older run directories.
+        """
         wandb_dir = os.path.join(cache_dir, "wandb")
         if not os.path.exists(wandb_dir):
             return None
@@ -1032,10 +1022,17 @@ if wandb:
         # Pattern for run directories: run-YYYYMMDD_HHMMSS-<random_id>
         run_pattern = re.compile(r"run-(\d{8}_\d{6})-([a-z0-9]+)")
 
+        # Step 1: Find all run directories and identify the most recent one
+        all_run_dirs = []
         latest_timestamp = None
         latest_run_id = None
+        latest_dir_path = None
 
         for dirname in os.listdir(wandb_dir):
+            dir_path = os.path.join(wandb_dir, dirname)
+            if not os.path.isdir(dir_path):
+                continue
+
             match = run_pattern.match(dirname)
             if match:
                 timestamp_str = match.group(1)  # YYYYMMDD_HHMMSS
@@ -1045,18 +1042,53 @@ if wandb:
                 try:
                     timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
 
+                    # Store information about this run directory
+                    all_run_dirs.append((dir_path, timestamp, run_id))
+
                     # Update if this is the most recent run
                     if latest_timestamp is None or timestamp > latest_timestamp:
                         latest_timestamp = timestamp
                         latest_run_id = run_id
+                        latest_dir_path = dir_path
                 except ValueError:
                     continue
-        print("resuming wandb from full path")
-        return latest_run_id
 
+        # Step 2: Clean up older run directories if requested and if we have more than one directory
+        if cleanup_old_runs and len(all_run_dirs) > 1 and latest_dir_path is not None:
+            print(
+                f"Cleaning up old wandb run directories. Keeping only: {os.path.basename(latest_dir_path)}"
+            )
+            for dir_path, _, _ in all_run_dirs:
+                if dir_path != latest_dir_path:
+                    try:
+                        print(f"Removing old wandb run: {os.path.basename(dir_path)}")
+                        shutil.rmtree(dir_path)
+                    except Exception as e:
+                        print(f"Error removing directory {dir_path}: {e}")
+
+        # Step 3: Now try to find the run ID using both methods
+        # First check the symbolic link method
+        latest_run_path = os.path.join(wandb_dir, "latest-run")
+        if os.path.exists(latest_run_path):
+            pattern = re.compile(r"run-([a-z0-9]+)\.wandb")
+            for filename in os.listdir(latest_run_path):
+                match = pattern.match(filename)
+                if match:
+                    print("resuming wandb from symbolic path")
+                    return match.group(1)
+
+        # If symbolic link method didn't work, use the latest run ID we found earlier
+        if latest_run_id:
+            print("resuming wandb from full path")
+            return latest_run_id
+
+        # If we didn't find any valid run IDs
+        return None
+
+    # Example usage:
     wandb_opts = dict(project="praxis", save_dir=cache_dir)
     if ckpt_path is not None:
-        run_id = find_latest_wandb_run(cache_dir)
+        run_id = find_latest_wandb_run(cache_dir, cleanup_old_runs=True)
         if run_id is not None:
             wandb_opts["id"] = run_id
             wandb_opts["resume"] = "must"

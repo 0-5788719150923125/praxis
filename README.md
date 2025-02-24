@@ -63,7 +63,7 @@ python run.py --help
 
 ## recommendations
 
-We recommend you use a `batch_size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, and 16.
+We recommend you use a `batch_size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, 16, 64, etc.
 
 ```sh
 python run.py --batch_size 16
