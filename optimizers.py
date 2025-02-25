@@ -80,6 +80,16 @@ OPTIMIZER_PROFILES = {
         safeguard_warmup=False,
         no_schedule=True,
     ),
+    "ScheduleFreeAdamW": dict(
+        optimizer_name="ScheduleFreeAdamW",
+        lr=1e-3,
+        weight_decay=0.1,
+        betas=(0.9, 0.95),
+        r=0.0,
+        weight_lr_power=2.0,
+        warmup_steps=1024,
+        no_schedule=True,
+    ),
     "SOAP": dict(
         optimizer_name="SOAP",
         lr=0.00333,

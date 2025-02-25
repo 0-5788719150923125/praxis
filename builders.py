@@ -610,8 +610,9 @@ class HuggingfaceDataset(PraxisSampler):
             if self.format == DataFormat.CUSTOM
             else FORMAT_HANDLERS[self.format]
         )
+        self.dataset_path = config.get("path", "HuggingFaceFW/fineweb")
         dataset_args = dict(
-            path=config.get("path", "HuggingFaceFW/fineweb"),
+            path=self.dataset_path,
             split=config.get("split", "train"),
             streaming=config.get("streaming", True),
             cache_dir=os.path.join(config.get("cache_dir", "data"), "datasets"),
@@ -625,6 +626,7 @@ class HuggingfaceDataset(PraxisSampler):
             shuffle_args["buffer_size"] = 1000
         self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
         self.dataset_iterator = iter(self.shuffled_dataset)
+        self.counts = 0
 
     def fill_sequence_cache(self):
         try:
@@ -632,6 +634,10 @@ class HuggingfaceDataset(PraxisSampler):
             formatted = self._format_document(document)
             self.sequence_cache.append(formatted)
         except StopIteration:
+            self.counts += 1
+            print(
+                f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Starting over. ({self.counts}x)"
+            )
             self.dataset_iterator = iter(self.shuffled_dataset)
             self.fill_sequence_cache()
 
