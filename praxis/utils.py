@@ -7,22 +7,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def generate_decay_values(depth: int, reverse: bool = False) -> list:
+def generate_decay_values(depth: int, reverse: bool = True) -> list:
     """
-    Generate a list of exponentially decaying values from 1.0 to near 0.0
+    Generate a list of S-shaped decaying values from 1.0 to near 0.0
 
     Args:
         depth (int): Number of values to generate
         reverse (bool): If True, reverse the order of values
 
     Returns:
-        list: List of float values showing exponential decay
+        list: List of float values showing S-shaped decay
     """
-    # Generate evenly spaced x values
-    x = np.linspace(0, 5, depth)  # Using 5 as our max x value for good decay
+    # Generate evenly spaced x values (adjusted range for S-shape)
+    x = np.linspace(-6, 6, depth)  # Using broader range for sigmoid
 
-    # Calculate decay values (e^-x)
-    values = np.exp(-x)
+    # Calculate S-shaped values using sigmoid function
+    # 1) Calculate basic sigmoid: 1 / (1 + e^x)
+    # 2) Flip it to get decay: 1 - sigmoid
+    values = 1 - (1 / (1 + np.exp(x)))
 
     # Convert to list and optionally reverse
     result = values.tolist()
