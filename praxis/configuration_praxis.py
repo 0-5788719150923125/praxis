@@ -43,7 +43,7 @@ class PraxisConfig(PretrainedConfig):
         scaling=False,
         hivemind=False,
         initial_peers=[],
-        strategy="speed",
+        checkpoint_every=0,
         loss_func="cross_entropy",
         device_map="cpu",
         pad_token_id=0,
@@ -98,7 +98,7 @@ class PraxisConfig(PretrainedConfig):
         self.scaling = scaling
         self.hivemind = hivemind
         self.initial_peers = initial_peers
-        self.strategy = strategy
+        self.checkpoint_every = checkpoint_every
         self.loss_func = loss_func
         self.device_map = device_map
         self.seed = seed

@@ -22,7 +22,7 @@ class PraxisDecoder(nn.Module):
         self.debug = config.debug
         self.stack = PraxisStack(config)
         self.manager = self.stack.manager
-        self._define_checkpoints(config.strategy, self.stack.depth)
+        self.checkpoint_every = config.checkpoint_every
 
     def forward(
         self,
@@ -140,7 +140,12 @@ class PraxisDecoder(nn.Module):
 
             return states, layer_kv, state_update, aux_loss
 
-        if self.training and self._should_checkpoint(current_depth):
+        should_checkpoint = (
+            current_depth != 0
+            and self.checkpoint_every is not None
+            and current_depth % self.checkpoint_every
+        )
+        if self.training and should_checkpoint:
             return torch.utils.checkpoint.checkpoint(
                 custom_forward,
                 hidden_states,
@@ -160,18 +165,6 @@ class PraxisDecoder(nn.Module):
                 current_depth,
                 block_ids,
             )
-
-    def _define_checkpoints(self, strategy="speed", num_layers=0):
-        self.checkpoint_indices = []  # speed / no gradient checkpointing
-        if strategy == "aggressive":
-            # every layer
-            self.checkpoint_indices = [i for i in range(num_layers)]
-        elif strategy == "balanced":
-            # every fourth layer
-            self.checkpoint_indices = [i for i in range(num_layers) if i % 4 == 0]
-
-    def _should_checkpoint(self, layer_idx):
-        return True if layer_idx in self.checkpoint_indices else False
 
     def get_metrics(self):
         """Return current prediction accuracies"""

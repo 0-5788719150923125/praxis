@@ -149,11 +149,10 @@ parser.add_argument(
     help="The base attention implementation to use",
 )
 parser.add_argument(
-    "--strategy",
-    type=str,
-    choices=["aggressive", "balanced", "speed"],
-    default="speed",
-    help="Gradient checkpointing strategy",
+    "--checkpoint_every",
+    type=int,
+    default=None,
+    help="Apply gradient checkpointing every X layers",
 )
 parser.add_argument(
     "--data_path",
