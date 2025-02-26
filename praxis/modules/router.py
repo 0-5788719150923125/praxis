@@ -14,10 +14,10 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: "AutoConfig", capacity: float = None):
         super().__init__(in_features=config.hidden_size, out_features=1)
         self.config = config
-        self.capacity = config.capacity
+        self.capacity = capacity or config.capacity
         assert (
             self.capacity > 0 and self.capacity < 1.0
         ), "'capacity' must be set to a value between 0 and 1."
@@ -90,6 +90,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             filtered_attention_mask,
             past_key_values,
             current_state,
+            current_depth,
             filtered_block_ids,
             token_weights,
         )
