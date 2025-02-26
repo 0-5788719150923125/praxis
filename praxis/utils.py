@@ -1,9 +1,35 @@
 import math
 from typing import List, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def generate_decay_values(depth: int, reverse: bool = False) -> list:
+    """
+    Generate a list of exponentially decaying values from 1.0 to near 0.0
+
+    Args:
+        depth (int): Number of values to generate
+        reverse (bool): If True, reverse the order of values
+
+    Returns:
+        list: List of float values showing exponential decay
+    """
+    # Generate evenly spaced x values
+    x = np.linspace(0, 5, depth)  # Using 5 as our max x value for good decay
+
+    # Calculate decay values (e^-x)
+    values = np.exp(-x)
+
+    # Convert to list and optionally reverse
+    result = values.tolist()
+    if reverse:
+        result.reverse()
+
+    return result
 
 
 def norm_scaling(normalized_x, depth):

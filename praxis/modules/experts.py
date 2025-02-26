@@ -9,6 +9,7 @@ from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
 from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.utils import generate_decay_values
 
 EXPERT_REGISTRY = {
     "glu": PraxisGLU,
@@ -70,6 +71,7 @@ class PraxisExpert(nn.Module):
         self.is_remote = is_remote
         self.router = router
         if config.sparse and not self.router:
+            self.capacities = generate_decay_values(config.depth)
             self.router = PraxisMixtureOfDepths(config)
         self.block = block
 
@@ -82,7 +84,8 @@ class PraxisExpert(nn.Module):
         current_depth: int,
         block_ids,
     ):
-        use_router = self.sparse and current_depth % 2 != 0
+        # use_router = self.sparse and current_depth % 2 != 0
+        use_router = self.sparse
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask, use_router)
         else:
@@ -116,6 +119,7 @@ class PraxisExpert(nn.Module):
                 current_state,
                 current_depth,
                 block_ids,
+                self.capacities[current_depth],
             )
             aux_losses.append(aux_loss)
         else:

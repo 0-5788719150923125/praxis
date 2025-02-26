@@ -14,13 +14,10 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", capacity: float = None):
+    def __init__(self, config: "AutoConfig"):
         super().__init__(in_features=config.hidden_size, out_features=1)
         self.config = config
-        self.capacity = capacity or config.capacity
-        assert (
-            self.capacity > 0 and self.capacity < 1.0
-        ), "'capacity' must be set to a value between 0 and 1."
+        self.capacity = config.capacity
 
     def forward(
         self,
@@ -31,10 +28,16 @@ class PraxisMixtureOfDepths(nn.Linear):
         current_state: Tensor,
         current_depth: Tensor,
         block_ids: Tensor,
+        capacity: int = None,
     ):
 
+        capacity = capacity or self.capacity
+        assert (
+            capacity > 0 and not capacity > 1.0
+        ), "'capacity' must be set to a value between 0 and 1."
+
         b, s, d = inputs.shape
-        k = int(s * self.capacity)
+        k = int(s * capacity)
 
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
