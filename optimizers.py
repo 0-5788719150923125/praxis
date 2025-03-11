@@ -3,21 +3,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from pytorch_optimizer import create_optimizer
-from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad
+from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
 from torch.optim import Optimizer
 
 
-def get_optimizer_profile(name="AdamW", shuffle=False, no_schedule=False):
+def get_optimizer_profile(
+    name="AdamW", shuffle=False, no_schedule=False, schedule_free=False
+):
     profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
     profile = {**profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
     profile["weight_decay"] = 0 if shuffle else profile.get("weight_decay", None)
     no_schedule = profile.get("no_schedule", no_schedule)
     if "no_schedule" in profile:
         del profile["no_schedule"]
+    if schedule_free:
+        no_schedule = True
     return profile, no_schedule
 
 
-def get_optimizer(model, trac=False, ortho=False, lookahead=False, *args, **kwargs):
+def get_optimizer(
+    model,
+    trac=False,
+    ortho=False,
+    lookahead=False,
+    schedule_free=False,
+    *args,
+    **kwargs,
+):
     optimizer = create_optimizer(model, *args, **kwargs)
     if trac:
         optimizer = TRAC(optimizer, num_coefs=128)
@@ -25,6 +37,11 @@ def get_optimizer(model, trac=False, ortho=False, lookahead=False, *args, **kwar
         optimizer = OrthoGrad(optimizer)
     if lookahead:
         optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
+    if schedule_free:
+        optimizer = ScheduleFreeWrapper(
+            optimizer, momentum=0.9, weight_decay=0.1, r=0.0, weight_lr_power=2.0
+        )
+        optimizer.train()
     return optimizer
 
 
@@ -78,16 +95,6 @@ OPTIMIZER_PROFILES = {
         d_coef=0.1,
         bias_correction=True,
         safeguard_warmup=False,
-        no_schedule=True,
-    ),
-    "ScheduleFreeAdamW": dict(
-        optimizer_name="ScheduleFreeAdamW",
-        lr=1e-3,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
-        r=0.0,
-        weight_lr_power=2.0,
-        warmup_steps=1024,
         no_schedule=True,
     ),
     "SOAP": dict(

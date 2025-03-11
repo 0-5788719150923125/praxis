@@ -180,6 +180,12 @@ parser.add_argument(
     help="Disable the learning rate scheduler",
 )
 parser.add_argument(
+    "--schedule_free",
+    action="store_true",
+    default=False,
+    help="Use the Schedule-Free optimizer wrapper",
+)
+parser.add_argument(
     "--wandb",
     action="store_true",
     default=False,

@@ -247,7 +247,9 @@ train_params = dict(
 )
 
 # Optimizer configuration
-optimizer_config, no_schedule = get_optimizer_profile(optimizer, shuffle, no_schedule)
+optimizer_config, no_schedule = get_optimizer_profile(
+    optimizer, shuffle, no_schedule, schedule_free
+)
 
 # Configure the learning rate scheduler
 if no_schedule:
@@ -1115,7 +1117,12 @@ datamodule = get_datamodules(
 
 # create the optimizer
 optimizer = get_optimizer(
-    model, trac=trac, ortho=ortho, lookahead=lookahead, **optimizer_config
+    model,
+    trac=trac,
+    ortho=ortho,
+    lookahead=lookahead,
+    schedule_free=schedule_free,
+    **optimizer_config,
 )
 
 # create the scheduler
