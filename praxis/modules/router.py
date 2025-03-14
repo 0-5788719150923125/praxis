@@ -46,6 +46,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         b, s, d = inputs.shape
         k = int(s * capacity)
 
+        # if capacity is 0 or near 0, then no tokens will be selected and we should skip this layer
         if k == 0:
             return inputs, past_key_values, current_state, router_loss
 
