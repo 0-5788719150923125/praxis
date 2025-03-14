@@ -19,9 +19,11 @@ class PraxisMixtureOfDepths(nn.Linear):
     def __init__(self, config: "AutoConfig"):
         super().__init__(in_features=config.hidden_size, out_features=1)
         if config.mod == "decayed":
-            self.capacities = generate_decay_values(config.depth)
-        elif config.mod == "reversed":
-            self.capacities = generate_decay_values(config.depth, reverse=False)
+            self.capacities = generate_decay_values(
+                config.depth, reverse=True, center=0.75
+            )
+        elif config.mod == "ramped":
+            self.capacities = generate_decay_values(config.depth, center=0.75)
         else:
             self.capacities = generate_alternating_values(
                 size=config.depth, interval=1, capacity=config.capacity
@@ -41,11 +43,11 @@ class PraxisMixtureOfDepths(nn.Linear):
         router_loss = 0
         capacity = self.capacities[current_depth]
 
-        if capacity == 0:
-            return inputs, past_key_values, current_state, router_loss
-
         b, s, d = inputs.shape
         k = int(s * capacity)
+
+        if k == 0:
+            return inputs, past_key_values, current_state, router_loss
 
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
