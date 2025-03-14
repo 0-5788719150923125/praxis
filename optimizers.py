@@ -7,18 +7,14 @@ from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFree
 from torch.optim import Optimizer
 
 
-def get_optimizer_profile(
-    name="AdamW", shuffle=False, no_schedule=False, schedule_free=False
-):
+def get_optimizer_profile(name="AdamW", shuffle=False, disable_schedule=False):
     profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
     profile = {**profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
-    profile["weight_decay"] = 0 if shuffle else profile.get("weight_decay", None)
-    no_schedule = profile.get("no_schedule", no_schedule)
-    if "no_schedule" in profile:
-        del profile["no_schedule"]
-    if schedule_free:
-        no_schedule = True
-    return profile, no_schedule
+    profile["weight_decay"] = 0 if shuffle else profile.get("weight_decay", 0)
+    disable_schedule = profile.get("disable_schedule", disable_schedule)
+    if "disable_schedule" in profile:
+        del profile["disable_schedule"]
+    return profile, disable_schedule
 
 
 def get_optimizer(
@@ -38,9 +34,7 @@ def get_optimizer(
     if lookahead:
         optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
     if schedule_free:
-        optimizer = ScheduleFreeWrapper(
-            optimizer, momentum=0.9, weight_decay=0.1, r=0.0, weight_lr_power=2.0
-        )
+        optimizer = ScheduleFreeWrapper(optimizer, momentum=0.9, weight_decay=0.1)
         optimizer.train()
     return optimizer
 
@@ -95,7 +89,7 @@ OPTIMIZER_PROFILES = {
         d_coef=0.1,
         bias_correction=True,
         safeguard_warmup=False,
-        no_schedule=True,
+        disable_schedule=True,
     ),
     "SOAP": dict(
         optimizer_name="SOAP",

@@ -247,12 +247,12 @@ train_params = dict(
 )
 
 # Optimizer configuration
-optimizer_config, no_schedule = get_optimizer_profile(
-    optimizer, shuffle, no_schedule, schedule_free
+optimizer_config, disable_schedule = get_optimizer_profile(
+    optimizer, shuffle, any([no_schedule, schedule_free])
 )
 
 # Configure the learning rate scheduler
-if no_schedule:
+if disable_schedule:
     scheduler_func = partial(
         torch.optim.lr_scheduler.LambdaLR, lr_lambda=lambda lr: 1.0
     )
