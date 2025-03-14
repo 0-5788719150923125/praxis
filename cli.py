@@ -245,16 +245,11 @@ parser.add_argument(
     help="The positional encoding to use for sequence length extrapolation",
 )
 parser.add_argument(
-    "--dense",
-    action="store_true",
-    default=True,
-    help="Run as a dense model",
-)
-parser.add_argument(
-    "--sparse",
-    action="store_true",
-    default=False,
-    help="Run as a sparse model",
+    "--mod",
+    type=str,
+    choices=["standard", "decayed", "reversed"],
+    default=None,
+    help="Use Mixture of Depths routing",
 )
 parser.add_argument(
     "--shuffle",

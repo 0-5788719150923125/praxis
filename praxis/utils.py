@@ -7,6 +7,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def generate_alternating_values(size, interval=1, capacity=0.125):
+    result = [0] * size
+    value = capacity
+
+    for i in range(0, size, interval):
+        for j in range(i, min(i + interval, size)):
+            result[j] = value
+        value = capacity - value  # Toggle between 0 and 1
+
+    return result
+
+
 def generate_decay_values(depth: int, reverse: bool = True) -> list:
     """
     Generate a list of S-shaped decaying values from 1.0 to near 0.0

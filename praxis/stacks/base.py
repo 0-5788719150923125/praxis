@@ -28,7 +28,6 @@ class PraxisStack(nn.Module):
         assert (
             self.num_experts >= self.depth
         ), "`num_experts` should be at least as large as `depth`."
-        self.sparse = config.sparse
         if config.graph:
             self.behavior = PraxisGraph(config)
         elif config.router:
