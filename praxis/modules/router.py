@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.utils import generate_decay_values
+
 
 class PraxisMixtureOfDepths(nn.Linear):
     """
@@ -14,13 +16,18 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", capacity: float = None):
+    def __init__(self, config: "AutoConfig"):
         super().__init__(in_features=config.hidden_size, out_features=1)
-        self.config = config
-        self.capacity = capacity or config.capacity
-        assert (
-            self.capacity > 0 and self.capacity < 1.0
-        ), "'capacity' must be set to a value between 0 and 1."
+        if config.mod == "decayed":
+            self.capacities = generate_decay_values(
+                config.depth, reverse=True, center=0.75
+            )
+        elif config.mod == "ramped":
+            self.capacities = generate_decay_values(config.depth, center=0.75)
+        else:
+            self.capacities = generate_alternating_values(
+                size=config.depth, interval=1, capacity=config.capacity
+            )
 
     def forward(
         self,
@@ -33,8 +40,15 @@ class PraxisMixtureOfDepths(nn.Linear):
         block_ids: Tensor,
     ):
 
+        router_loss = 0
+        capacity = self.capacities[current_depth]
+
         b, s, d = inputs.shape
-        k = int(s * self.capacity)
+        k = int(s * capacity)
+
+        # if capacity is 0 or near 0, then no tokens will be selected and we should skip this layer
+        if k == 0:
+            return inputs, past_key_values, current_state, router_loss
 
         # emit scalar weights for each token
         router_logits = F.linear(inputs, self.weight, self.bias)  # -> batch, seq_len, 1
@@ -53,12 +67,12 @@ class PraxisMixtureOfDepths(nn.Linear):
         # Re-order the weights to match the sorted indices
         token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
 
-        # compute aux loss, in order to enforce causality in the top-k operation
-        router_loss = self.aux_loss(router_logits, token_indices)
-
         # when inputs have a length of 1, the router will sometimes select no tokens at all
         if token_weights.size(1) == 0:
             return inputs, past_key_values, current_state, router_loss
+
+        # compute aux loss, in order to enforce causality in the top-k operation
+        router_loss = self.aux_loss(router_logits, token_indices)
 
         # expand router predictions to match input dimensions
         indices_expanded = token_indices.expand(-1, -1, d)

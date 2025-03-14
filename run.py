@@ -174,7 +174,7 @@ config = PraxisConfig(
     kv_rank=kv_rank,
     dropout=dropout,
     vocab_size=vocab_size,
-    sparse=True if sparse else not dense,
+    mod=mod,
     shuffle=shuffle,
     autopilot=autopilot,
     graph=graph,
@@ -247,10 +247,12 @@ train_params = dict(
 )
 
 # Optimizer configuration
-optimizer_config, no_schedule = get_optimizer_profile(optimizer, shuffle, no_schedule)
+optimizer_config, disable_schedule = get_optimizer_profile(
+    optimizer, shuffle, any([no_schedule, schedule_free])
+)
 
 # Configure the learning rate scheduler
-if no_schedule:
+if disable_schedule:
     scheduler_func = partial(
         torch.optim.lr_scheduler.LambdaLR, lr_lambda=lambda lr: 1.0
     )
@@ -1115,7 +1117,12 @@ datamodule = get_datamodules(
 
 # create the optimizer
 optimizer = get_optimizer(
-    model, trac=trac, ortho=ortho, lookahead=lookahead, **optimizer_config
+    model,
+    trac=trac,
+    ortho=ortho,
+    lookahead=lookahead,
+    schedule_free=schedule_free,
+    **optimizer_config,
 )
 
 # create the scheduler

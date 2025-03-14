@@ -66,12 +66,11 @@ class PraxisExpert(nn.Module):
         is_remote=False,
     ):
         super().__init__()
-        self.sparse = config.sparse
         self.is_remote = is_remote
-        self.router = router
-        if config.sparse and not self.router:
-            self.router = PraxisMixtureOfDepths(config)
         self.block = block
+        self.router = router
+        if config.mod is not None and not self.router:
+            self.router = PraxisMixtureOfDepths(config)
 
     def forward(
         self,
@@ -82,16 +81,14 @@ class PraxisExpert(nn.Module):
         current_depth: int,
         block_ids,
     ):
-        use_router = self.sparse and current_depth % 2 != 0
         if self.is_remote:
-            return self._remote_forward(inputs, attention_mask, use_router)
+            return self._remote_forward(inputs, attention_mask)
         else:
             return self._local_forward(
                 inputs,
                 current_state,
                 attention_mask,
                 past_key_values,
-                use_router,
                 current_depth,
                 block_ids,
             )
@@ -102,12 +99,11 @@ class PraxisExpert(nn.Module):
         current_state: Tensor,
         attention_mask: Tensor,
         past_key_values: Tensor,
-        use_router: bool,
         current_depth: int,
         block_ids=None,
     ):
         aux_losses = []
-        if use_router:
+        if self.router:
             hidden_states, layer_kv, state_update, aux_loss = self.router(
                 self.block,
                 inputs,
@@ -129,13 +125,13 @@ class PraxisExpert(nn.Module):
             )
         return hidden_states, layer_kv, state_update, sum(aux_losses)
 
-    def _remote_forward(self, inputs, attention_mask, use_router: bool):
+    def _remote_forward(self, inputs, attention_mask):
         # because we would otherwise break gradient flow
         residual = inputs
         aux_losses = []
         inputs = inputs.to("cpu")
         attention_mask = attention_mask.to("cpu")
-        if use_router:
+        if self.router:
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:

@@ -24,7 +24,7 @@ class PraxisConfig(PretrainedConfig):
         block="transformer",
         expert="glu",
         encoding="rope",
-        sparse=False,
+        mod=None,
         shuffle=False,
         autopilot=False,
         graph=False,
@@ -83,7 +83,7 @@ class PraxisConfig(PretrainedConfig):
         self.block_type = block
         self.expert = expert
         self.encoding = encoding
-        self.sparse = sparse
+        self.mod = mod
         self.shuffle = shuffle
         self.autopilot = autopilot
         self.graph = graph

@@ -180,6 +180,12 @@ parser.add_argument(
     help="Disable the learning rate scheduler",
 )
 parser.add_argument(
+    "--schedule_free",
+    action="store_true",
+    default=False,
+    help="Use the Schedule-Free optimizer wrapper",
+)
+parser.add_argument(
     "--wandb",
     action="store_true",
     default=False,
@@ -239,16 +245,11 @@ parser.add_argument(
     help="The positional encoding to use for sequence length extrapolation",
 )
 parser.add_argument(
-    "--dense",
-    action="store_true",
-    default=True,
-    help="Run as a dense model",
-)
-parser.add_argument(
-    "--sparse",
-    action="store_true",
-    default=False,
-    help="Run as a sparse model",
+    "--mod",
+    type=str,
+    choices=["standard", "decayed", "ramped"],
+    default=None,
+    help="Use Mixture of Depths routing",
 )
 parser.add_argument(
     "--shuffle",
