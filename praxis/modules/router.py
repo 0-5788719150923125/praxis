@@ -20,10 +20,12 @@ class PraxisMixtureOfDepths(nn.Linear):
         super().__init__(in_features=config.hidden_size, out_features=1)
         if config.mod == "decayed":
             self.capacities = generate_decay_values(
-                config.depth, reverse=True, center=0.75
+                config.depth, reverse=True, center=0.5, lower_bound=config.capacity
             )
         elif config.mod == "ramped":
-            self.capacities = generate_decay_values(config.depth, center=0.75)
+            self.capacities = generate_decay_values(
+                config.depth, center=0.5, lower_bound=config.capacity
+            )
         else:
             self.capacities = generate_alternating_values(
                 size=config.depth, interval=1, capacity=config.capacity

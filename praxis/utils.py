@@ -20,16 +20,22 @@ def generate_alternating_values(size, interval=1, capacity=0.125):
 
 
 def generate_decay_values(
-    depth: int, reverse: bool = False, center: float = 0.5
+    depth: int,
+    reverse: bool = False,
+    center: float = 0.5,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
 ) -> list:
     """
-    Generate a list of S-shaped decaying values from 1.0 to near 0.0 with adjustable center point
+    Generate a list of S-shaped decaying values with adjustable center point and bounds
 
     Args:
         depth (int): Number of values to generate
         reverse (bool): If True, reverse the order of values
         center (float): Position of the center point (0.5 is middle, <0.5 shifts left, >0.5 shifts right)
                         Value should be between 0 and 1
+        lower_bound (float): Minimum value for the decay (default: 0.0)
+        upper_bound (float): Maximum value for the decay (default: 1.0)
 
     Returns:
         list: List of float values showing S-shaped decay
@@ -46,8 +52,11 @@ def generate_decay_values(
     # Apply the shift to x values
     x = x + shift
 
-    # Calculate S-shaped values using sigmoid function
-    values = 1 - (1 / (1 + np.exp(x)))
+    # Calculate S-shaped values using sigmoid function (0 to 1 range)
+    base_values = 1 - (1 / (1 + np.exp(x)))
+
+    # Scale values to the desired range [lower_bound, upper_bound]
+    values = lower_bound + (upper_bound - lower_bound) * base_values
 
     # Convert to list and optionally reverse
     result = values.tolist()
