@@ -5,7 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.utils import generate_decay_values
+from praxis.utils import (
+    generate_alternating_values,
+    generate_decay_values,
+    generate_u_shape_values,
+)
 
 
 class PraxisMixtureOfDepths(nn.Linear):
@@ -25,6 +29,14 @@ class PraxisMixtureOfDepths(nn.Linear):
         elif config.mod == "ramped":
             self.capacities = generate_decay_values(
                 config.depth, center=0.5, lower_bound=config.capacity
+            )
+        elif config.mod == "u":
+            self.capacities = generate_u_shape_values(
+                config.depth,
+                decay_point=0.333,
+                ramp_point=0.666,
+                lower_bound=config.capacity,
+                steepness=2.0,
             )
         else:
             self.capacities = generate_alternating_values(

@@ -66,6 +66,61 @@ def generate_decay_values(
     return result
 
 
+def generate_u_shape_values(
+    depth: int,
+    decay_point: float = 0.3,
+    ramp_point: float = 0.7,
+    lower_bound: float = 0.0,
+    upper_bound: float = 1.0,
+    steepness: float = 5.0,
+) -> list:
+    """
+    Generate a list of U-shaped values that start at upper_bound, decay to lower_bound,
+    and then ramp back up to upper_bound.
+
+    Args:
+        depth (int): Number of values to generate
+        decay_point (float): Position where the initial decay occurs (0.0-1.0)
+        ramp_point (float): Position where the final ramp-up occurs (0.0-1.0)
+        lower_bound (float): Minimum value in the U-shape (default: 0.0)
+        upper_bound (float): Maximum value in the U-shape (default: 1.0)
+        steepness (float): Controls how steep the decay and ramp are (default: 5.0)
+
+    Returns:
+        list: List of float values showing U-shaped pattern
+    """
+    # Create normalized positions from 0 to 1
+    positions = np.linspace(0, 1, depth)
+    values = np.zeros(depth)
+
+    # We'll use a modified sigmoid approach that ensures values start and end at 1.0
+    for i, pos in enumerate(positions):
+        # For decay: Use a modified function that equals 1.0 at position 0
+        # Adjusted decay function that starts at 1.0 when pos = 0
+        if pos < decay_point:
+            # Normalize position to 0-1 range within the decay region
+            norm_pos = pos / decay_point if decay_point > 0 else 0
+            # Use a function that starts at 1 and approaches 0
+            decay_factor = (1 - norm_pos) ** steepness
+        else:
+            decay_factor = 0
+
+        # For ramp: Use a modified function that equals 1.0 at position 1
+        if pos > ramp_point:
+            # Normalize position to 0-1 range within the ramp region
+            norm_pos = (pos - ramp_point) / (1 - ramp_point) if ramp_point < 1 else 0
+            # Use a function that ends at 1
+            ramp_factor = norm_pos**steepness
+        else:
+            ramp_factor = 0
+
+        # Combine factors and scale to bounds
+        combined_factor = max(decay_factor, ramp_factor)
+        values[i] = lower_bound + (upper_bound - lower_bound) * combined_factor
+
+    return values.tolist()
+
+
 def norm_scaling(normalized_x, depth):
     """
     Apply depth-based scaling to already-normalized inputs to address the Curse of Depth.
