@@ -60,7 +60,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         b, s, d = inputs.shape
         k = int(s * capacity)
 
-        # if capacity is 0 or near 0, then no tokens will be selected and we should skip this layer
+        # if capacity is < 1, then no tokens will be selected and we should skip this layer
         if k == 0:
             return inputs, past_key_values, current_state, router_loss
 
@@ -80,10 +80,6 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         # Re-order the weights to match the sorted indices
         token_weights = torch.gather(token_weights, dim=1, index=sort_indices)
-
-        # when inputs have a length of 1, the router will sometimes select no tokens at all
-        if token_weights.size(1) == 0:
-            return inputs, past_key_values, current_state, router_loss
 
         # compute aux loss, in order to enforce causality in the top-k operation
         router_loss = self.aux_loss(router_logits, token_indices)
