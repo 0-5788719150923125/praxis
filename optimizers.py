@@ -1,10 +1,5 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 from pytorch_optimizer import create_optimizer
 from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
-from torch.optim import Optimizer
 
 
 def get_optimizer_profile(name="AdamW", shuffle=False, disable_schedule=False):
@@ -34,7 +29,10 @@ def get_optimizer(
     if lookahead:
         optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
     if schedule_free:
-        optimizer = ScheduleFreeWrapper(optimizer, momentum=0.9, weight_decay=0.1)
+        optimizer = ScheduleFreeWrapper(
+            optimizer, momentum=0.98, r=0.5, weight_decay=0.1
+        )
+    if hasattr(optimizer, "train"):
         optimizer.train()
     return optimizer
 
@@ -48,15 +46,6 @@ OPTIMIZER_PROFILES = {
         weight_decay=0.1,
         betas=(0.9, 0.95),
     ),
-    "AdEMAMix": dict(
-        optimizer_name="AdEMAMix",
-        lr=0.001,
-        weight_decay=0.1,
-        weight_decouple=True,
-        betas=(0.9, 0.95, 0.9999),
-        alpha=5.0,
-        cautious=True,
-    ),
     "Lion": dict(
         optimizer_name="Lion",
         lr=0.000333,
@@ -69,7 +58,7 @@ OPTIMIZER_PROFILES = {
     ),
     "MARS": dict(
         optimizer_name="MARS",
-        mars_type="lion",
+        mars_type="soap",
         lr=0.000333,
         gamma=0.025,
         optimize_1d=True,
@@ -90,19 +79,6 @@ OPTIMIZER_PROFILES = {
         bias_correction=True,
         safeguard_warmup=False,
         disable_schedule=True,
-    ),
-    "SOAP": dict(
-        optimizer_name="SOAP",
-        lr=0.00333,
-        weight_decay=0.1,
-        betas=(0.95, 0.99),
-        shampoo_beta=0.98,
-        precondition_frequency=10,
-        max_precondition_dim=10000,
-        normalize_gradient=False,
-        correct_bias=True,
-        precondition_1d=True,
-        merge_dims=False,
     ),
 }
 
