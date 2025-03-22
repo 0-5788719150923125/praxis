@@ -101,6 +101,7 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts
+from torcheval.metrics.functional import perplexity
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -292,7 +293,8 @@ class PraxisTrainer(LightningModule):
 
         current_time = datetime.now()
 
-        outputs = self.model(input_ids=batch, labels=batch)
+        labels = batch[..., 1:]
+        outputs = self.model(input_ids=batch, labels=labels)
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
@@ -322,7 +324,8 @@ class PraxisTrainer(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        outputs = self.model(input_ids=batch, labels=batch)
+        labels = batch[..., 1:]
+        outputs = self.model(input_ids=batch, labels=labels)
 
         stats = {}
 
@@ -332,7 +335,7 @@ class PraxisTrainer(LightningModule):
         if byte_latent:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(batch, loss)
         else:
-            stats["val_perplexity"] = self._compute_perplexity(loss)
+            stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :], labels)
 
         self.log_dict(
             stats,
@@ -371,9 +374,6 @@ class PraxisTrainer(LightningModule):
             return new_value.total_seconds()
         alpha = 0.1
         return alpha * new_value.total_seconds() + (1 - alpha) * ema
-
-    def _compute_perplexity(self, loss):
-        return torch.exp(loss)
 
     def _compute_bits_per_byte(self, batch, loss):
         """

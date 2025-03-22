@@ -94,7 +94,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         past_key_values=None,
         current_state=None,
         use_cache=False,
-        **kwargs
+        **kwargs,
     ):
         if not use_cache:
             return {
@@ -154,7 +154,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         loss = 0
         if labels is not None:
             shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+            shift_labels = labels.contiguous()
             loss = self.criterion(
                 shift_logits.view(-1, shift_logits.shape[-1]),
                 shift_labels.view(-1),

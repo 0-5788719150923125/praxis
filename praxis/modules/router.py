@@ -58,7 +58,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         capacity = self.capacities[current_depth]
 
         b, s, d = inputs.shape
-        k = int(s * capacity)
+        k = max(int(s * capacity), 1)
 
         # if capacity is < 1, then no tokens will be selected and we should skip this layer
         if k == 0:

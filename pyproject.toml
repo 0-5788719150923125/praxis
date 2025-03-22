@@ -31,6 +31,7 @@ dependencies = [
     "pytorch_optimizer @ git+https://github.com/kozistr/pytorch_optimizer",
     "setuptools",
     "torch",
+    "torcheval",
     "transformers",
     "wandb",
     "werkzeug",
