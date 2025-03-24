@@ -29,9 +29,7 @@ def get_optimizer(
     if lookahead:
         optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
     if schedule_free:
-        optimizer = ScheduleFreeWrapper(
-            optimizer, momentum=0.98, r=0.5, weight_decay=0.1
-        )
+        optimizer = ScheduleFreeWrapper(optimizer, momentum=0.9, r=0, weight_decay=0.1)
     if hasattr(optimizer, "train"):
         optimizer.train()
     return optimizer
