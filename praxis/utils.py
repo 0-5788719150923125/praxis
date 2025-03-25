@@ -9,12 +9,10 @@ import torch.nn.functional as F
 
 def generate_alternating_values(size, interval=1, capacity=0.125):
     result = [0] * size
-    value = capacity
 
-    for i in range(0, size, interval):
+    for i in range(1, size, interval + 1):
         for j in range(i, min(i + interval, size)):
-            result[j] = value
-        value = capacity - value  # Toggle between 0 and 1
+            result[j] = capacity
 
     return result
 

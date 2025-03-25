@@ -38,10 +38,15 @@ class PraxisMixtureOfDepths(nn.Linear):
                 lower_bound=config.capacity,
                 steepness=2.0,
             )
+        elif config.mod == "skip_2":
+            self.capacities = generate_alternating_values(
+                size=config.depth, interval=2, capacity=config.capacity
+            )
         else:
             self.capacities = generate_alternating_values(
                 size=config.depth, interval=1, capacity=config.capacity
             )
+        print(self.capacities)
 
     def forward(
         self,
@@ -58,7 +63,7 @@ class PraxisMixtureOfDepths(nn.Linear):
         capacity = self.capacities[current_depth]
 
         b, s, d = inputs.shape
-        k = max(int(s * capacity), 1)
+        k = int(s * capacity)
 
         # if capacity is < 1, then no tokens will be selected and we should skip this layer
         if k == 0:
