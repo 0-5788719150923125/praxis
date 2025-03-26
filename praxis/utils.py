@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 
 def generate_alternating_values(size, interval=1, capacity=0.125):
-    result = [0] * size
+    result = [1.0] * size
 
     for i in range(1, size, interval + 1):
         for j in range(i, min(i + interval, size)):

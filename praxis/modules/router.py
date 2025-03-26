@@ -33,8 +33,8 @@ class PraxisMixtureOfDepths(nn.Linear):
         elif config.mod == "u":
             self.capacities = generate_u_shape_values(
                 config.depth,
-                decay_point=0.333,
-                ramp_point=0.666,
+                decay_point=0.2,
+                ramp_point=0.8,
                 lower_bound=config.capacity,
                 steepness=2.0,
             )
@@ -65,7 +65,19 @@ class PraxisMixtureOfDepths(nn.Linear):
         b, s, d = inputs.shape
         k = int(s * capacity)
 
-        # if capacity is < 1, then no tokens will be selected and we should skip this layer
+        # if capacity is 1, then we should process all tokens normally
+        if capacity == 1:
+            layer_outputs, layer_kv, state_update, aux_loss = layer(
+                inputs,
+                attention_mask,
+                past_key_values,
+                current_state,
+                current_depth,
+                block_ids,
+            )
+            return layer_outputs, layer_kv, state_update, aux_loss
+
+        # if k is 0, then no tokens will be selected and we should skip this layer
         if k == 0:
             return inputs, past_key_values, current_state, router_loss
 
