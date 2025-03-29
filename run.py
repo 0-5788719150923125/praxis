@@ -102,13 +102,7 @@ from lightning.pytorch.trainer import Trainer
 from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
-from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    DynamicCache,
-)
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 from optimizers import get_optimizer, get_optimizer_profile
 
@@ -546,6 +540,7 @@ class TerminalInterface(Callback):
                 repetition_penalty=1.1,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
+                use_cache=False,
             ),
         )
         while True:
@@ -749,6 +744,7 @@ class Generator:
             do_sample=True,
             renormalize_logits=True,
             remove_invalid_values=True,
+            use_cache=use_cache,
             # token_healing=True,
         )
         combined = {**defaults, **request.kwargs}
@@ -775,18 +771,12 @@ class Generator:
 
         with self._eval_mode():
             while attempts < max_attempts:
-                # try:
                 outputs = self.model.generate(
                     generated_tokens,
                     **combined,
                     tokenizer=self.tokenizer,
-                    use_cache=use_cache,
                     return_dict_in_generate=True,
-                    # token_healing=True,
                 )
-                # except Exception as e:
-                #     print(e)
-                #     return request.prompt
 
                 # Update generated_tokens with the new token
                 generated_tokens = outputs.sequences
