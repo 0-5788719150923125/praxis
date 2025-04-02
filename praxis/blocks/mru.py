@@ -89,6 +89,8 @@ class PraxisMRU(nn.Module):
     def forward(
         self,
         inputs: torch.Tensor,
+        attention_mask: torch.Tensor,
+        past_key_values: torch.Tensor = None,
         current_state: torch.Tensor = None,
         *args,
         **kwargs,
