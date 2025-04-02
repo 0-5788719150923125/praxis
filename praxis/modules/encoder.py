@@ -52,7 +52,7 @@ class PraxisEncoder(nn.Module):
         self.args.dim_token_emb = config.embed_size
 
         self.entropy_model = None
-        self.args.patching_mode = "space" if "space" in config.meta else "entropy"
+        self.args.patching_mode = "entropy" if "entropy" in config.meta else "space"
         self.args.patching_threshold = math.pi
         self.args.patch_size = 6
         if self.args.patching_mode == "entropy":

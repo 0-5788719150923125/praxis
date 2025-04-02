@@ -248,8 +248,15 @@ optimizer_config, disable_schedule = get_optimizer_profile(
 
 # Configure the learning rate scheduler
 if disable_schedule:
+
+    def lr_lambda_with_warmup(current_step, warmup_steps=1024):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return 1.0
+
     scheduler_func = partial(
-        torch.optim.lr_scheduler.LambdaLR, lr_lambda=lambda lr: 1.0
+        torch.optim.lr_scheduler.LambdaLR,
+        lr_lambda=lambda step: lr_lambda_with_warmup(step),
     )
 else:
     scheduler_func = partial(
