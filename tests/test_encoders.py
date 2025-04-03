@@ -6,6 +6,7 @@ import torch
 from praxis.modules.encoder import (
     PraxisEncoder,
     create_patch_block_ids,
+    mask_entropy_preds_at_special_tokens,
     pooling_downsample,
 )
 
@@ -130,6 +131,143 @@ def test_create_patch_block_ids():
     assert torch.all(
         block_ids_all_special == expected_all_special
     ), f"All special tokens case mismatch.\nGot:      {block_ids_all_special}\nExpected: {expected_all_special}"
+
+
+def test_mask_entropy_preds_at_special_tokens():
+
+    # Test 1: Basic test with small tensors
+    print("=== Test 1: Basic Test ===")
+    # Create a small batch of input_ids with some special tokens (0)
+    input_ids = torch.tensor(
+        [
+            [1, 2, 0, 4],  # First sequence has a special token at position 2
+            [5, 0, 7, 8],  # Second sequence has a special token at position 1
+        ]
+    )
+
+    # Create entropy_preds with a small vocab size (3)
+    # For simplicity, fill with increasing values starting from 1 to avoid zeros
+    vocab_size = 3
+    seq_len = input_ids.shape[1]
+    batch_size = input_ids.shape[0]
+
+    # Create entropy_preds as a flattened tensor [batch_size, seq_len * vocab_size]
+    entropy_preds = torch.arange(
+        1, batch_size * seq_len * vocab_size + 1, dtype=torch.float32
+    )
+    entropy_preds = entropy_preds.reshape(batch_size, seq_len * vocab_size)
+
+    print(f"Input IDs shape: {input_ids.shape}")
+    print(f"Input IDs:\n{input_ids}")
+
+    print(f"Original entropy_preds shape: {entropy_preds.shape}")
+    print(f"Original entropy_preds (flattened):\n{entropy_preds}")
+
+    # Reshape to show the logical 3D structure
+    print("Original entropy_preds (reshaped to 3D for visualization):")
+    print(entropy_preds.reshape(batch_size, seq_len, vocab_size))
+
+    # Make a copy of the original for comparison
+    original_3d = entropy_preds.clone().reshape(batch_size, seq_len, vocab_size)
+
+    # Apply masking
+    masked_preds = mask_entropy_preds_at_special_tokens(input_ids, entropy_preds)
+
+    print(f"Masked entropy_preds shape: {masked_preds.shape}")
+    print("Masked entropy_preds (reshaped to 3D for visualization):")
+    print(masked_preds.reshape(batch_size, seq_len, vocab_size))
+
+    # Verify that predictions at special token positions are zeroed out
+    # Reshape for easier verification
+    masked_3d = masked_preds.reshape(batch_size, seq_len, vocab_size)
+
+    # Check first batch, position 2 (should be zeros)
+    assert torch.all(
+        masked_3d[0, 2, :] == 0
+    ), "Special token position not correctly masked in batch 0"
+
+    # Check second batch, position 1 (should be zeros)
+    assert torch.all(
+        masked_3d[1, 1, :] == 0
+    ), "Special token position not correctly masked in batch 1"
+
+    # Check that non-special token positions are unchanged from original
+    assert torch.all(
+        masked_3d[0, 0, :] == original_3d[0, 0, :]
+    ), "Non-special token position incorrectly modified in batch 0"
+    assert torch.all(
+        masked_3d[0, 1, :] == original_3d[0, 1, :]
+    ), "Non-special token position incorrectly modified in batch 0"
+    assert torch.all(
+        masked_3d[0, 3, :] == original_3d[0, 3, :]
+    ), "Non-special token position incorrectly modified in batch 0"
+
+    print("All assertions passed for Test 1!")
+
+    # Test 2: More realistic dimensions
+    print("\n=== Test 2: Realistic Dimensions ===")
+    # Create input_ids with more realistic dimensions
+    batch_size = 2
+    seq_len = 64
+    vocab_size = 260  # Similar to your actual case
+
+    # Create random input_ids with some special tokens (0)
+    input_ids = torch.randint(1, 10, (batch_size, seq_len))
+    # Randomly place special tokens
+    special_positions = torch.randint(
+        0, seq_len, (batch_size, 5)
+    )  # 5 special tokens per batch
+
+    for batch_idx in range(batch_size):
+        for pos in special_positions[batch_idx]:
+            input_ids[batch_idx, pos] = 0  # Set special token
+
+    # Create random entropy_preds
+    entropy_preds = torch.rand(batch_size, seq_len * vocab_size)
+
+    # Make a copy of the original for comparison
+    original_3d = entropy_preds.clone().reshape(batch_size, seq_len, vocab_size)
+
+    print(f"Input IDs shape: {input_ids.shape}")
+    print(f"Special token positions in batch 0: {torch.where(input_ids[0] == 0)[0]}")
+    print(f"Special token positions in batch 1: {torch.where(input_ids[1] == 0)[0]}")
+
+    print(f"Original entropy_preds shape: {entropy_preds.shape}")
+
+    # Apply masking
+    masked_preds = mask_entropy_preds_at_special_tokens(input_ids, entropy_preds)
+
+    print(f"Masked entropy_preds shape: {masked_preds.shape}")
+
+    # Reshape for verification
+    masked_3d = masked_preds.reshape(batch_size, seq_len, vocab_size)
+
+    # Verify masking for special tokens in batch 0
+    for pos in torch.where(input_ids[0] == 0)[0]:
+        assert torch.all(
+            masked_3d[0, pos, :] == 0
+        ), f"Special token at position {pos} not masked in batch 0"
+
+    # Verify masking for special tokens in batch 1
+    for pos in torch.where(input_ids[1] == 0)[0]:
+        assert torch.all(
+            masked_3d[1, pos, :] == 0
+        ), f"Special token at position {pos} not masked in batch 1"
+
+    # Verify that non-special token positions are unchanged
+    for batch_idx in range(batch_size):
+        for pos in range(seq_len):
+            if input_ids[batch_idx, pos] != 0:  # If not a special token
+                assert torch.all(
+                    masked_3d[batch_idx, pos, :] == original_3d[batch_idx, pos, :]
+                ), f"Non-special token at position {pos} incorrectly modified in batch {batch_idx}"
+
+    # Test that the masked entropy_preds has the same shape as the original
+    assert (
+        masked_preds.shape == entropy_preds.shape
+    ), "Shape mismatch between original and masked predictions"
+
+    print("All assertions passed for Test 2!")
 
 
 def test_topk_mean_pooling():

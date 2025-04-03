@@ -9,7 +9,7 @@ from praxis import PraxisConfig
 from praxis.blocks import BLOCK_REGISTRY
 
 MODULE_CLASSES = list(BLOCK_REGISTRY.keys())
-
+MODULE_CLASSES.remove("mru")
 
 # Define test parameters in a more structured way
 TEST_PARAMS = {

@@ -68,7 +68,7 @@ class PraxisEncoder(nn.Module):
                     self.args.vocab_size, config.hidden_size, config.dropout, n_layers=1
                 )
             # Threshold optimization parameters
-            self.loss_scale = 0.01
+            self.loss_scale = 1.0
             self.target_ratio = 0.125  # reduction of original length
             # Register buffers for both current and EMA thresholds
             self.register_buffer(
@@ -203,13 +203,26 @@ class PraxisEncoder(nn.Module):
                 modified_entropy_preds = mask_entropy_preds_at_special_tokens(
                     input_ids, entropy_preds
                 )
+
+                # Calculate vocab_size
+                batch_size, seq_len = input_ids.shape
+                _, total_size = modified_entropy_preds.shape
+                vocab_size = total_size // seq_len
+
+                # Reshape entropy_preds to [batch_size, seq_len, vocab_size] for easier handling
+                reshaped_preds = modified_entropy_preds.view(
+                    batch_size, seq_len, vocab_size
+                )
+
+                # Reshape to [batch_size * (seq_len-1), vocab_size]
+                flattened_preds = reshaped_preds[:, :-1].reshape(-1, vocab_size)
+
+                # Flatten the target tokens (positions 1 to seq_len-1)
+                flattened_targets = input_ids[:, 1:].reshape(-1)
+
+                # Calculate the loss
                 aux_loss = (
-                    F.cross_entropy(
-                        modified_entropy_preds[:, :-1].reshape(
-                            -1, modified_entropy_preds.size(-1)
-                        ),
-                        input_ids[:, 1:].reshape(-1),
-                    )
+                    F.cross_entropy(flattened_preds, flattened_targets)
                     * self.loss_scale
                 )
 
@@ -544,27 +557,44 @@ def mask_entropy_preds_at_special_tokens(
 
     Args:
         input_ids: Token IDs [batch_size, seq_len]
-        entropy_preds: Original entropy predictions [batch_size, seq_len, vocab_size]
+        entropy_preds: Original entropy predictions [batch_size, seq_len * vocab_size]
         special_tokens: List of special token IDs to mask
     """
-    # Convert special_tokens to tensor for isin operation
+    # Get shapes
+    batch_size, seq_len = input_ids.shape
+
+    # Calculate vocab_size
+    _, total_size = entropy_preds.shape
+    vocab_size = total_size // seq_len
+
+    # Create special token positions mask
     special_tokens_tensor = torch.tensor(
         special_tokens, device=input_ids.device, dtype=input_ids.dtype
     )
+    special_token_mask = torch.isin(input_ids, special_tokens_tensor)
 
-    # Create special token mask using isin
-    token_mask = torch.isin(input_ids, special_tokens_tensor)
+    # Create a mask for all vocab positions corresponding to special tokens
+    # Initialize with zeros (will be set to 1 where special tokens are)
+    full_mask = torch.zeros_like(entropy_preds, dtype=torch.bool)
 
-    # Expand mask to match entropy_preds shape (add vocab dimension)
-    token_mask = token_mask.unsqueeze(-1).expand(-1, -1, entropy_preds.size(-1))
+    # For each position in the sequence that contains a special token,
+    # we need to zero out all corresponding vocab entries
+    for batch_idx in range(batch_size):
+        for seq_idx in range(seq_len):
+            if special_token_mask[batch_idx, seq_idx]:
+                # Calculate the starting and ending indices for this position in the flattened tensor
+                start_idx = seq_idx * vocab_size
+                end_idx = start_idx + vocab_size
 
-    # Apply zero where special tokens exist
+                # Set the mask to True for all vocab entries at this position
+                full_mask[batch_idx, start_idx:end_idx] = True
+
+    # Apply the mask - set to zero where special tokens exist
     masked_entropy_preds = torch.where(
-        token_mask,
-        torch.zeros_like(entropy_preds),
-        entropy_preds,
+        full_mask, torch.zeros_like(entropy_preds), entropy_preds
     )
 
+    # Return the masked tensor
     return masked_entropy_preds
 
 
