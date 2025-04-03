@@ -8,6 +8,7 @@ os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 import bytelatent
 import torch
 import torch.nn.functional as F
+import torch.nn.utils.rnn as rnn_utils
 from bytelatent.data.ngram_processor import NgramProcessor
 from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
 from bytelatent.model.blt import (
@@ -657,19 +658,74 @@ def create_patch_block_ids(
     return patch_block_ids
 
 
-class RecurrentBlock(minGRU):
+def packed_rnn_block(rnn: nn.Module, x, input_ids, eos_token_id=0):
     """
-    We replace transformer blocks in the encoder/decoder with something
-    that is more memory-efficient, and faster to compute.
-    """
+    Efficiently use packed sequences within transformer architecture
 
+    Args:
+        rnn: nn.RNN module
+        x: [batch_size, seq_len, features] - Feature tensor from transformer
+        input_ids: [batch_size, seq_len] - Token IDs to identify EOS positions
+        eos_token_id: ID of EOS token to split on
+
+    Returns:
+        [batch_size, seq_len, hidden_size] tensor with same shape as input
+    """
+    batch_size, seq_len = input_ids.size()
+    device = x.device
+
+    # Find lengths based on EOS tokens
+    lengths = torch.full((batch_size,), seq_len, device=device)
+
+    # Find first EOS in each sequence
+    for i in range(batch_size):
+        eos_positions = (input_ids[i] == eos_token_id).nonzero(as_tuple=True)[0]
+        if len(eos_positions) > 0:
+            # +1 to include the EOS token in the sequence
+            lengths[i] = min(eos_positions[0].item() + 1, seq_len)
+
+    # Create packed sequence
+    packed_x = nn.utils.rnn.pack_padded_sequence(
+        x, lengths.cpu(), batch_first=True, enforce_sorted=False
+    )
+
+    # Process with RNN
+    packed_output, _ = rnn(packed_x)
+
+    # Unpack back to regular tensor
+    output, _ = rnn_utils.pad_packed_sequence(
+        packed_output, batch_first=True, total_length=seq_len
+    )
+
+    return output
+
+
+class RecurrentBlock(nn.Module):
     def __init__(self, dim, dim_out=None, norm_eps=1e-5):
-        super().__init__(dim=dim, dim_out=dim_out, proj_out=True)
+        super().__init__()
         self.norm = nn.RMSNorm(dim, eps=norm_eps)
+        self.gru = nn.GRU(input_size=dim, hidden_size=dim, batch_first=True)
 
     def forward(self, x: torch.Tensor, input_ids: torch.Tensor = None, *args, **kwargs):
-        out, _ = super().forward(self.norm(x), input_ids=input_ids)
+        out = packed_rnn_block(
+            self.gru, self.norm(x), input_ids=input_ids, eos_token_id=0
+        )
         return out + x
+
+
+# class RecurrentBlock(minGRU):
+#     """
+#     We replace transformer blocks in the encoder/decoder with something
+#     that is more memory-efficient, and faster to compute.
+#     """
+
+#     def __init__(self, dim, dim_out=None, norm_eps=1e-5):
+#         super().__init__(dim=dim, dim_out=dim_out, proj_out=True)
+#         self.norm = nn.RMSNorm(dim, eps=norm_eps)
+
+#     def forward(self, x: torch.Tensor, input_ids: torch.Tensor = None, *args, **kwargs):
+#         out, _ = super().forward(self.norm(x), input_ids=input_ids)
+#         return out + x
 
 
 class RecurrentEncoder(LocalEncoder):

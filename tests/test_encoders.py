@@ -2,11 +2,13 @@ from itertools import product
 
 import pytest
 import torch
+from torch import nn
 
 from praxis.modules.encoder import (
     PraxisEncoder,
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
+    packed_rnn_block,
     pooling_downsample,
 )
 
@@ -268,6 +270,49 @@ def test_mask_entropy_preds_at_special_tokens():
     ), "Shape mismatch between original and masked predictions"
 
     print("All assertions passed for Test 2!")
+
+
+def test_packed_rnn():
+    # Create test data
+    batch_size, seq_len, feature_dim = 2, 5, 3
+    hidden_dim = 4
+
+    # Sample features and input IDs
+    x = torch.randn(batch_size, seq_len, feature_dim)
+    input_ids = torch.ones(batch_size, seq_len, dtype=torch.long)
+
+    # Set EOS tokens at different positions
+    input_ids[0, 2] = 0  # First sequence: EOS at position 2
+    # Second sequence: no EOS (should use full length)
+
+    # Create RNN module
+    rnn = nn.LSTM(feature_dim, hidden_dim, batch_first=True)
+
+    # Run packed RNN
+    output = packed_rnn_block(rnn, x, input_ids, eos_token_id=0)
+
+    # Basic sanity checks
+    assert output.shape == (
+        batch_size,
+        seq_len,
+        hidden_dim,
+    ), f"Expected shape {(batch_size, seq_len, hidden_dim)}, got {output.shape}"
+
+    # Verify post-EOS values are zero for the first sequence
+    post_eos_mean = output[0, 3:].abs().mean().item()
+    print(f"Post-EOS activation (should be near 0): {post_eos_mean}")
+    assert (
+        post_eos_mean < 1e-5
+    ), f"Expected near-zero activations after EOS, got {post_eos_mean}"
+
+    # Verify second sequence has non-zero values throughout
+    seq2_mean = output[1].abs().mean().item()
+    print(f"Second sequence activation (should be > 0): {seq2_mean}")
+    assert (
+        seq2_mean > 1e-5
+    ), f"Expected non-zero activations for second sequence, got {seq2_mean}"
+
+    print("All tests passed!")
 
 
 def test_topk_mean_pooling():
