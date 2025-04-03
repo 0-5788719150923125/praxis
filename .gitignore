@@ -12,6 +12,7 @@
 __pycache__
 .parcel-cache
 build
+CLAUDE.md
 data
 dist
 node_modules
