@@ -598,6 +598,8 @@ class PraxisSampler:
 
 
 class HuggingfaceDataset(PraxisSampler):
+    counts = {}
+
     def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
         super().__init__(tokenizer)
         self.keys = config.get("keys", ["text"])
@@ -626,7 +628,10 @@ class HuggingfaceDataset(PraxisSampler):
             shuffle_args["buffer_size"] = 1000
         self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
         self.dataset_iterator = iter(self.shuffled_dataset)
-        self.counts = 0
+
+        # Initialize the count for this dataset path if not exists
+        if self.dataset_path not in HuggingfaceDataset.counts:
+            HuggingfaceDataset.counts[self.dataset_path] = 0
 
     def fill_sequence_cache(self):
         try:
@@ -634,12 +639,11 @@ class HuggingfaceDataset(PraxisSampler):
             formatted = self._format_document(document)
             self.sequence_cache.append(formatted)
         except StopIteration:
-            self.counts += 1
+            HuggingfaceDataset.counts[self.dataset_path] += 1
             print(
-                f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Starting over. ({self.counts}x)"
+                f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Starting over. ({HuggingfaceDataset.counts[self.dataset_path]}x)"
             )
             self.dataset_iterator = iter(self.shuffled_dataset)
-            self.fill_sequence_cache()
 
     def _format_document(self, document):
         return self.format_handler(
