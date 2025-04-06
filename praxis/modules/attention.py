@@ -106,6 +106,9 @@ class PraxisAttention(nn.Module):
         # For handling length extrapolation
         self.encoding = ENCODING_REGISTRY[config.encoding](config)
 
+        # For Multi-Token Attention
+        self.mta = MultiTokenAttention(config) if config.mta else False
+
         # For attention gating
         self.gates = UniversalAttentionGate(config) if config.gated else False
 
@@ -239,6 +242,9 @@ class PraxisAttention(nn.Module):
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
         hist_len = k.size(2)
 
+        if self.mta:
+            scores = self.mta.key_query_convolution(scores, mask_future=True)
+
         # Apply positional encoding to scores
         scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
 
@@ -251,6 +257,11 @@ class PraxisAttention(nn.Module):
         attention_output = self.algorithm.compute_weights(
             q, k, v, scores, causal_mask, chunk_attention_mask
         )
+
+        # Apply head mixing to the attention weights (post-softmax)
+        if self.mta:
+            attention_output = self.mta.head_mixing_convolution(attention_output)
+            attention_output = self.mta.group_norm(attention_output)
 
         if self.memory:
             # Blend with memories
@@ -768,6 +779,139 @@ class LowRankKeyValue(nn.Module):
         )
 
         return k, v
+
+
+class MultiTokenAttention(nn.Module):
+    """
+    Implements Multi-Token Attention (MTA) with key-query convolution
+    and head mixing convolution.
+    https://arxiv.org/abs/2504.00927v1
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.num_query_heads = config.num_heads * config.num_queries
+
+        # Key-Query configuration
+        self.query_kernel_size = 3
+        self.key_kernel_size = 5
+
+        # Head mixing configuration
+        self.head_kernel_size = 2
+
+        # Create a single grouped convolution for key-query convolution
+        self.kq_conv = nn.Conv2d(
+            in_channels=self.num_query_heads,
+            out_channels=self.num_query_heads,
+            kernel_size=(self.query_kernel_size, self.key_kernel_size),
+            padding="same",
+            groups=self.num_query_heads,  # Each head gets its own filters
+        )
+
+        # Ensure we have divisible groups
+        assert (
+            self.num_query_heads % self.head_kernel_size == 0
+        ), f"Number of heads ({self.num_query_heads}) must be divisible by head kernel size ({self.head_kernel_size})"
+
+        self.num_head_groups = self.num_query_heads // self.head_kernel_size
+
+        # For each group, create a weight matrix that mixes the heads
+        self.head_mix_weights = nn.Parameter(
+            torch.zeros(
+                self.num_head_groups, self.head_kernel_size, self.head_kernel_size
+            )
+        )
+
+        self.norm = nn.GroupNorm(
+            num_groups=self.num_query_heads,
+            num_channels=self.num_query_heads * config.head_size,
+            eps=config.epsilon,
+        )
+
+        # Initialize identity weights
+        with torch.no_grad():
+            for g in range(self.num_head_groups):
+                for i in range(self.head_kernel_size):
+                    self.head_mix_weights[g, i, i] = 1.0
+
+        # Initialize as identity kernels
+        self._init_identity_kernels()
+
+    def _init_identity_kernels(self):
+        """Initialize the kernels as identity (1 at center position)"""
+        with torch.no_grad():
+            # Initialize key-query convolution
+            self.kq_conv.weight.zero_()
+            center_q = self.query_kernel_size // 2
+            center_k = self.key_kernel_size // 2
+
+            # Set the center weight to 1.0 for each head's kernel
+            for i in range(self.num_query_heads):
+                self.kq_conv.weight[i, 0, center_q, center_k] = 1.0
+
+    def key_query_convolution(self, scores, mask_future=True):
+        """
+        Apply key-query convolution to attention scores
+        """
+        batch_size, num_heads, seq_len, key_len = scores.shape
+
+        # Create the attention mask for future tokens
+        if mask_future:
+            mask = (
+                torch.triu(
+                    torch.ones(seq_len, key_len, device=scores.device), diagonal=1
+                )
+                .bool()
+                .unsqueeze(0)
+                .unsqueeze(0)
+            )
+
+            # First masking with 0 before convolution
+            masked_scores = scores.masked_fill(mask, 0)
+        else:
+            masked_scores = scores
+
+        # Apply key-query convolution directly - no reshaping needed
+        conv_scores = self.kq_conv(masked_scores)
+
+        # If we need to mask future tokens after convolution
+        if mask_future:
+            conv_scores = conv_scores.masked_fill(mask, -1e9)
+
+        return conv_scores
+
+    def head_mixing_convolution(self, attention_weights):
+        """
+        Apply head mixing convolution to attention weights (post-softmax)
+        using fully vectorized operations
+        """
+
+        batch_size, num_heads, seq_len, key_len = attention_weights.shape
+
+        # Reshape to separate head groups: [batch_size, num_groups, head_kernel_size, seq_len, key_len]
+        reshaped = attention_weights.view(
+            batch_size, self.num_head_groups, self.head_kernel_size, seq_len, key_len
+        )
+
+        # Vectorized mixing using einsum:
+        # - 'b' is batch dimension
+        # - 'g' is group dimension
+        # - 'i,j' are the source and target head indices within a group
+        # - 's,k' are sequence and key dimensions
+        # - 'w[g,i,j]' applies mixing weights for group g from source head j to target head i
+        mixed_weights = torch.einsum(
+            "bgisk,gij->bgjsk", reshaped, self.head_mix_weights
+        )
+
+        # Reshape back to original shape
+        return mixed_weights.reshape(batch_size, num_heads, seq_len, key_len)
+
+    def group_norm(self, weights):
+        batch_size, num_heads, seq_len, _ = weights.shape
+        # Prepare for GroupNorm
+        outputs = weights.reshape(batch_size, -1, seq_len).contiguous()
+        # Apply GroupNorm
+        return self.norm(outputs)
 
 
 class UniversalAttentionGate(nn.Module):

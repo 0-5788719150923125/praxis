@@ -306,6 +306,12 @@ parser.add_argument(
     help="Use a long-term episodic memory module",
 )
 parser.add_argument(
+    "--mta",
+    action="store_true",
+    default=False,
+    help="Use Multi-Token Attention (MTA)",
+)
+parser.add_argument(
     "--mega",
     action="store_true",
     default=False,

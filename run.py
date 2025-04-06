@@ -180,6 +180,7 @@ config = PraxisConfig(
     stickbreaking=stickbreaking,
     compression=compression,
     memory=memory,
+    mta=mta,
     mega=mega,
     gated=gated,
     evolve=evolve,

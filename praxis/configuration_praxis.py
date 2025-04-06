@@ -35,6 +35,7 @@ class PraxisConfig(PretrainedConfig):
         stickbreaking=False,
         compression=False,
         memory=False,
+        mta=False,
         mega=False,
         gated=False,
         evolve=False,
@@ -90,6 +91,7 @@ class PraxisConfig(PretrainedConfig):
         self.router = router
         self.compression = compression
         self.memory = memory
+        self.mta = mta
         self.mega = mega
         self.gated = gated
         self.evolve = evolve
