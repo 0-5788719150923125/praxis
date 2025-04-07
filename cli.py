@@ -247,7 +247,7 @@ parser.add_argument(
 parser.add_argument(
     "--mod",
     type=str,
-    choices=["standard", "decayed", "ramped", "u", "skip_2"],
+    choices=["standard", "decayed", "ramped", "u", "skip_2", "skip_3"],
     default=None,
     help="Use Mixture of Depths routing",
 )

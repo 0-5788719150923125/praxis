@@ -802,8 +802,8 @@ class MultiTokenAttention(nn.Module):
         self.num_query_heads = config.num_heads * config.num_queries
 
         # Key-Query configuration
-        self.query_kernel_size = 3
-        self.key_kernel_size = 5
+        self.query_kernel_size = 6
+        self.key_kernel_size = 11
 
         # Head mixing configuration
         self.head_kernel_size = 2
@@ -855,13 +855,42 @@ class MultiTokenAttention(nn.Module):
             for i in range(self.num_query_heads):
                 self.kq_conv.weight[i, 0, center_q, center_k] = 1.0
 
+    # def key_query_convolution(self, scores):
+    #     """
+    #     Apply key-query convolution to attention scores
+    #     """
+    #     batch_size, num_heads, seq_len, key_len = scores.shape
+    #     # Apply key-query convolution directly - no reshaping needed
+    #     return self.kq_conv(scores)
     def key_query_convolution(self, scores):
         """
-        Apply key-query convolution to attention scores
+        Apply key-query convolution to attention scores with proper double masking
+        as described in the paper's equation (4)
         """
         batch_size, num_heads, seq_len, key_len = scores.shape
-        # Apply key-query convolution directly - no reshaping needed
-        return self.kq_conv(scores)
+
+        # Create causal masks
+        # First mask (with 0s) - to be applied before convolution
+        mask_before = torch.triu(
+            torch.ones(seq_len, key_len, device=scores.device), diagonal=1
+        )
+        mask_before = (
+            mask_before.unsqueeze(0).unsqueeze(0).expand(batch_size, num_heads, -1, -1)
+        )
+
+        # Mask future tokens with 0 before convolution
+        masked_scores = scores.masked_fill(mask_before.bool(), 0.0)
+
+        # Apply convolution
+        conv_scores = self.kq_conv(masked_scores)
+
+        # Second mask (with -inf) - to be applied after convolution
+        mask_after = mask_before.clone()
+
+        # Mask future tokens with -inf after convolution
+        final_scores = conv_scores.masked_fill(mask_after.bool(), -1e9)
+
+        return final_scores
 
     def head_mixing_convolution(self, attention_weights):
         """

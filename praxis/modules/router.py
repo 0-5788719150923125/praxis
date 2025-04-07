@@ -38,6 +38,10 @@ class PraxisMixtureOfDepths(nn.Linear):
                 lower_bound=config.capacity,
                 steepness=2.0,
             )
+        elif config.mod == "skip_3":
+            self.capacities = generate_alternating_values(
+                size=config.depth, interval=2, capacity=config.capacity
+            )
         elif config.mod == "skip_2":
             self.capacities = generate_alternating_values(
                 size=config.depth, interval=2, capacity=config.capacity

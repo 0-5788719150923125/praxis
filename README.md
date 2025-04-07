@@ -183,6 +183,9 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - Explore contrastive learning, to mitigate text repetition, by showing the model good and bad examples during training, create embeddings compute similarities, and calculate contrastive loss.
 - [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663) (a possible alternative to Infini-Attention, which is closer to the Human-Like Episodic Memory project)
 - [Guidance](https://github.com/guidance-ai/guidance)
+- [NoProp: Training Neural Networks without Back-propagation or Forward-propagation](https://arxiv.org/abs/2503.24322)
+- [The Belief State Transformer](https://arxiv.org/abs/2410.23506)
+- [Inner Thinking Transformer: Leveraging Dynamic Depth Scaling to Foster Adaptive Internal Thinking](https://arxiv.org/abs/2502.13842)
 
 ## won't do
 
