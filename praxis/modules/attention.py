@@ -243,7 +243,7 @@ class PraxisAttention(nn.Module):
         hist_len = k.size(2)
 
         if self.mta:
-            scores = self.mta.key_query_convolution(scores, mask_future=True)
+            scores = self.mta.key_query_convolution(scores)
 
         # Apply positional encoding to scores
         scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
@@ -254,13 +254,17 @@ class PraxisAttention(nn.Module):
         )
 
         # Get attention output
-        attention_output = self.algorithm.compute_weights(
+        weights, v = self.algorithm.compute_weights(
             q, k, v, scores, causal_mask, chunk_attention_mask
         )
 
         # Apply head mixing to the attention weights (post-softmax)
         if self.mta:
-            attention_output = self.mta.head_mixing_convolution(attention_output)
+            weights = self.mta.head_mixing_convolution(weights)
+
+        attention_output = self.algorithm.compute_outputs(weights, v)
+
+        if self.mta:
             attention_output = self.mta.group_norm(attention_output)
 
         if self.memory:
@@ -353,9 +357,9 @@ class ScaledDotProduct(nn.Module):
             weights = F.softmax(scores, dim=-1)
         else:
             weights = ghostmax(scores, dim=-1)
-        return self._compute_outputs(weights, v)
+        return weights, v
 
-    def _compute_outputs(self, weights, v):
+    def compute_outputs(self, weights, v):
         return self.dropout(weights) @ v
 
 
@@ -406,8 +410,13 @@ class Differential(ScaledDotProduct):
         attn_weights = attn_weights[:, :, 0] - lambda_full * attn_weights[:, :, 1]
         # Shape: [batch_size, num_heads, seq_len, seq_len]
 
+        return attn_weights, v
+
+    def compute_outputs(self, weights, v):
+        batch_size, num_heads, seq_len, _ = weights.shape
+
         # Apply attention to values
-        outputs = torch.matmul(self.dropout(attn_weights), v)
+        outputs = torch.matmul(self.dropout(weights), v)
         # Shape: [batch_size, num_heads, seq_len, head_dim]
 
         # Prepare for GroupNorm
@@ -567,7 +576,7 @@ class Stickbreaking(ScaledDotProduct):
         # Final attention weights
         weights = z * re_cum_log_beta.exp()
 
-        return self._compute_outputs(weights, v)
+        return weights, v
 
     def _sample_kv_history(
         self, k_hist: Tensor, v_hist: Tensor
@@ -822,11 +831,8 @@ class MultiTokenAttention(nn.Module):
             )
         )
 
-        self.norm = nn.GroupNorm(
-            num_groups=self.num_query_heads,
-            num_channels=self.num_query_heads * config.head_size,
-            eps=config.epsilon,
-        )
+        # In __init__:
+        self.norm = nn.LayerNorm(config.head_size, eps=config.epsilon)
 
         # Initialize identity weights
         with torch.no_grad():
@@ -849,36 +855,13 @@ class MultiTokenAttention(nn.Module):
             for i in range(self.num_query_heads):
                 self.kq_conv.weight[i, 0, center_q, center_k] = 1.0
 
-    def key_query_convolution(self, scores, mask_future=True):
+    def key_query_convolution(self, scores):
         """
         Apply key-query convolution to attention scores
         """
         batch_size, num_heads, seq_len, key_len = scores.shape
-
-        # Create the attention mask for future tokens
-        if mask_future:
-            mask = (
-                torch.triu(
-                    torch.ones(seq_len, key_len, device=scores.device), diagonal=1
-                )
-                .bool()
-                .unsqueeze(0)
-                .unsqueeze(0)
-            )
-
-            # First masking with 0 before convolution
-            masked_scores = scores.masked_fill(mask, 0)
-        else:
-            masked_scores = scores
-
         # Apply key-query convolution directly - no reshaping needed
-        conv_scores = self.kq_conv(masked_scores)
-
-        # If we need to mask future tokens after convolution
-        if mask_future:
-            conv_scores = conv_scores.masked_fill(mask, -1e9)
-
-        return conv_scores
+        return self.kq_conv(scores)
 
     def head_mixing_convolution(self, attention_weights):
         """
@@ -906,12 +889,23 @@ class MultiTokenAttention(nn.Module):
         # Reshape back to original shape
         return mixed_weights.reshape(batch_size, num_heads, seq_len, key_len)
 
-    def group_norm(self, weights):
-        batch_size, num_heads, seq_len, _ = weights.shape
-        # Prepare for GroupNorm
-        outputs = weights.reshape(batch_size, -1, seq_len).contiguous()
-        # Apply GroupNorm
-        return self.norm(outputs)
+    def group_norm(self, attention_output):
+        """
+        Apply normalization with much less reshaping
+        """
+        batch_size, num_heads, seq_len, head_dim = attention_output.shape
+
+        # We'll normalize each head vector independently
+        # Reshape to [B*H*S, D] to apply LayerNorm efficiently
+        reshaped = attention_output.reshape(-1, head_dim)
+
+        # Apply norm to each head vector
+        normalized = self.norm(reshaped)
+
+        # Reshape back to original shape
+        normalized = normalized.view(batch_size, num_heads, seq_len, head_dim)
+
+        return normalized
 
 
 class UniversalAttentionGate(nn.Module):
