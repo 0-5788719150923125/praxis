@@ -253,7 +253,7 @@ class PraxisAttention(nn.Module):
             scores, attention_mask, block_ids, chunk_size, hist_len, self.causal
         )
 
-        # Get attention output
+        # Compute the attention weights
         weights, v = self.algorithm.compute_weights(
             q, k, v, scores, causal_mask, chunk_attention_mask
         )
@@ -262,6 +262,7 @@ class PraxisAttention(nn.Module):
         if self.mta:
             weights = self.mta.head_mixing_convolution(weights)
 
+        # Get attention output
         attention_output = self.algorithm.compute_outputs(weights, v)
 
         if self.mta:

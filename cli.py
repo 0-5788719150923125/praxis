@@ -13,6 +13,7 @@ from praxis import (
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
     LOSS_REGISTRY,
+    MOD_LAYOUT,
 )
 
 
@@ -247,7 +248,7 @@ parser.add_argument(
 parser.add_argument(
     "--mod",
     type=str,
-    choices=["standard", "decayed", "ramped", "u", "skip_2", "skip_3"],
+    choices=MOD_LAYOUT.keys(),
     default=None,
     help="Use Mixture of Depths routing",
 )

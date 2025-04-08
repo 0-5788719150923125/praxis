@@ -11,6 +11,31 @@ from praxis.utils import (
     generate_u_shape_values,
 )
 
+MOD_LAYOUT = {
+    "decayed": lambda config: generate_decay_values(
+        config.depth, reverse=True, center=0.5, lower_bound=config.capacity
+    ),
+    "ramped": lambda config: generate_decay_values(
+        config.depth, center=0.5, lower_bound=config.capacity
+    ),
+    "u": lambda config: generate_u_shape_values(
+        config.depth,
+        decay_point=0.2,
+        ramp_point=0.8,
+        lower_bound=config.capacity,
+        steepness=2.0,
+    ),
+    "skip_3": lambda config: generate_alternating_values(
+        size=config.depth, interval=2, capacity=config.capacity
+    ),
+    "skip_2": lambda config: generate_alternating_values(
+        size=config.depth, interval=2, capacity=config.capacity
+    ),
+    "standard": lambda config: generate_alternating_values(
+        size=config.depth, interval=1, capacity=config.capacity
+    ),
+}
+
 
 class PraxisMixtureOfDepths(nn.Linear):
     """
@@ -22,34 +47,7 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(in_features=config.hidden_size, out_features=1)
-        if config.mod == "decayed":
-            self.capacities = generate_decay_values(
-                config.depth, reverse=True, center=0.5, lower_bound=config.capacity
-            )
-        elif config.mod == "ramped":
-            self.capacities = generate_decay_values(
-                config.depth, center=0.5, lower_bound=config.capacity
-            )
-        elif config.mod == "u":
-            self.capacities = generate_u_shape_values(
-                config.depth,
-                decay_point=0.2,
-                ramp_point=0.8,
-                lower_bound=config.capacity,
-                steepness=2.0,
-            )
-        elif config.mod == "skip_3":
-            self.capacities = generate_alternating_values(
-                size=config.depth, interval=2, capacity=config.capacity
-            )
-        elif config.mod == "skip_2":
-            self.capacities = generate_alternating_values(
-                size=config.depth, interval=2, capacity=config.capacity
-            )
-        else:
-            self.capacities = generate_alternating_values(
-                size=config.depth, interval=1, capacity=config.capacity
-            )
+        self.capacities = MOD_LAYOUT.get(config.mod, "standard")(config)
         print(self.capacities)
 
     def forward(
