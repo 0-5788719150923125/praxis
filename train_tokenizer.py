@@ -107,7 +107,12 @@ iterator = chunks_from_iterator(
     dataset, key=key, chunk_size=chunk_size, num_chunks=num_examples
 )
 
-tokenizer = Tokenizer(models.Unigram())
+if tokenizer_type == "bpe":
+    tokenizer = Tokenizer(
+        models.BPE(dropout=dropout, cache_capacity=4096 * 8, byte_fallback=True)
+    )
+elif tokenizer_type == "unigram":
+    tokenizer = Tokenizer(models.Unigram())
 
 tokenizer.normalizer = normalizers.Sequence(
     [
@@ -135,14 +140,7 @@ if tokenizer_type == "bpe":
     tokenizer.decoder = decoders.ByteLevel()
     tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
 elif tokenizer_type == "unigram":
-    tokenizer.add_special_tokens(
-        [
-            pad_token,
-            bos_token,
-            eos_token,
-            # unk_token
-        ]
-    )
+    tokenizer.add_special_tokens([pad_token, bos_token, eos_token, unk_token])
     trainer = trainers.UnigramTrainer(
         vocab_size=vocab_size,
         show_progress=True,
@@ -154,17 +152,26 @@ elif tokenizer_type == "unigram":
             pad_token,
             bos_token,
             eos_token,
-            # unk_token,
+            unk_token,
         ],
     )
-    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
-    # replacement = "▁"
+    # tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    # Use a compatible decoder - for Unigram, you can use:
+    # tokenizer.decoder = decoders.Metaspace(replacement="▁", prepend_scheme="always")
+
+    # Add a post-processor that correctly handles unknown tokens
+    # tokenizer.post_processor = processors.TemplateProcessing(
+    #     single="$A",
+    #     special_tokens=[(unk_token, tokenizer.token_to_id(unk_token))],
+    # )
+    # tokenizer.decoder = decoders.WordPiece()
+    replacement = "▁"
     # tokenizer.pre_tokenizer = pre_tokenizers.Metaspace(
     #     replacement=replacement, prepend_scheme="always"
     # )
-    # tokenizer.decoder = decoders.Metaspace(
-    #     replacement=replacement, prepend_scheme="always"
-    # )
+    tokenizer.decoder = decoders.Metaspace(
+        replacement=replacement, prepend_scheme="always"
+    )
     # tokenizer.enable_truncation(chunk_size)
 
 tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)
