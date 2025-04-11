@@ -77,6 +77,7 @@ dataset = load_dataset(
 def chunks_from_iterator(
     dataset, key="text", chunk_size=1024, num_chunks=1_000_000, min_length=32
 ):
+    examples_yielded = 0
     chunks_yielded = 0
     for item in dataset:
         text = item[key]
@@ -93,17 +94,13 @@ def chunks_from_iterator(
             if len(chunk) < min_length:
                 continue
 
-            # # Skip chunks with unusual character patterns that might cause problems
-            # if len(chunk) > 0 and (
-            #     chunk.count("\n") > len(chunk) * 0.5  # Too many newlines
-            #     or len(set(chunk)) < 3  # Too few unique characters
-            # ):
-            #     continue
-
             yield chunk
             chunks_yielded += 1
             if chunks_yielded >= num_chunks:
+                print(f"Processed {examples_yielded} documents.")
                 return
+
+        examples_yielded += 1
 
 
 iterator = chunks_from_iterator(
@@ -160,13 +157,15 @@ elif tokenizer_type == "unigram":
             # unk_token,
         ],
     )
-    replacement = "▁"
-    tokenizer.pre_tokenizer = pre_tokenizers.Metaspace(
-        replacement=replacement, prepend_scheme="always"
-    )
-    tokenizer.decoder = decoders.Metaspace(
-        replacement=replacement, prepend_scheme="always"
-    )
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    # replacement = "▁"
+    # tokenizer.pre_tokenizer = pre_tokenizers.Metaspace(
+    #     replacement=replacement, prepend_scheme="always"
+    # )
+    # tokenizer.decoder = decoders.Metaspace(
+    #     replacement=replacement, prepend_scheme="always"
+    # )
+    # tokenizer.enable_truncation(chunk_size)
 
 tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)
 
