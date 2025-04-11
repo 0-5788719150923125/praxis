@@ -1219,19 +1219,6 @@ if not use_dashboard:
                 )
             else:
                 print(message)
-                # # Terminal version - keep original ANSI approach
-                # if not message.endswith("\n"):
-                #     message += "\n"
-                # new_lines = message.count("\n")
-                # clear_sequence = (
-                #     "\033[F\033[K" * self._last_print_lines
-                #     if self._last_print_lines > 0
-                #     else ""
-                # )
-                # active_progress_bar.write(
-                #     clear_sequence + message.rstrip("\n"), end="\n"
-                # )
-                # self._last_print_lines = new_lines
 
     progress_bar = PrintingProgressBar(process_position=0, leave=True)
 

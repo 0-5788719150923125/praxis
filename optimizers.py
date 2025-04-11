@@ -21,6 +21,9 @@ def get_optimizer(
     *args,
     **kwargs,
 ):
+    if schedule_free:
+        # from the authors: "For AdamW, learning rates in the range 1x-10x larger than with schedule-based approaches seem to work."
+        kwargs["lr"] *= 2.0
     optimizer = create_optimizer(model, *args, **kwargs)
     if trac:
         optimizer = TRAC(optimizer, num_coefs=128)
