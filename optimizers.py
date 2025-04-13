@@ -21,9 +21,11 @@ def get_optimizer(
     *args,
     **kwargs,
 ):
+    weight_decay = kwargs.get("weight_decay", 0.0)
     if schedule_free:
-        # from the authors: "For AdamW, learning rates in the range 1x-10x larger than with schedule-based approaches seem to work."
+        # author recommendations:
         kwargs["lr"] *= 2.0
+        kwargs["weight_decay"] = 0.0
     optimizer = create_optimizer(model, *args, **kwargs)
     if trac:
         optimizer = TRAC(optimizer, num_coefs=128)
@@ -32,7 +34,9 @@ def get_optimizer(
     if lookahead:
         optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
     if schedule_free:
-        optimizer = ScheduleFreeWrapper(optimizer, momentum=0.9, r=0, weight_decay=0.1)
+        optimizer = ScheduleFreeWrapper(
+            optimizer, momentum=0.9, r=0, weight_decay=weight_decay
+        )
     if hasattr(optimizer, "train"):
         optimizer.train()
     return optimizer
