@@ -53,7 +53,6 @@ special_tokens = {
     "eos_token": "<|im_end|>",
 }
 
-key = "text"
 dataset = load_dataset(
     "HuggingFaceFW/fineweb",
     name="sample-350BT",
@@ -66,6 +65,7 @@ dataset = load_dataset(
     buffer_size=10_000,
 )
 
+key = "text"
 iterator = islice((item[key] for item in dataset), num_examples)
 
 trainer_args = dict(
@@ -81,7 +81,7 @@ if tokenizer_type == "bpe":
 elif tokenizer_type == "unigram":
     tokenizer = Tokenizer(models.Unigram(byte_fallback=True))
     trainer = trainers.UnigramTrainer(
-        shrinking_factor=0.75, max_piece_length=16, n_sub_iterations=2, **trainer_args
+        shrinking_factor=0.75, max_piece_length=16, n_sub_iterations=8, **trainer_args
     )
 
 tokenizer.add_special_tokens(list(special_tokens.values()))
