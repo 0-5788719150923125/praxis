@@ -206,9 +206,6 @@ config = PraxisConfig(
     meta=meta,
 )
 
-if tokenizer.unk_token_id is not None:
-    config.unk_token_id = tokenizer.unk_token_id
-
 # Misc hyperparameters
 hparams = dict(
     batch_size=batch_size,
