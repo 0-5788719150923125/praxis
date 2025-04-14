@@ -1,11 +1,9 @@
 import argparse
 import os
 from itertools import islice
-from typing import List, Union
 
 from datasets import load_dataset
 from tokenizers import (
-    Regex,
     Tokenizer,
     decoders,
     models,
@@ -68,7 +66,6 @@ dataset = load_dataset(
     buffer_size=10_000,
 )
 
-key = "text"
 iterator = islice((item[key] for item in dataset), num_examples)
 
 trainer_args = dict(
