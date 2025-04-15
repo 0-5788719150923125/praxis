@@ -186,11 +186,14 @@ class TerminalDashboard:
     def set_mode(self, mode="train"):
         with self.lock:
             self.mode = mode
-            self.previous_frame = None  # force a redraw
+            self.force_redraw()
 
     def set_start_time(self, time):
         with self.lock:
             self.start_time = time
+
+    def force_redraw(self):
+        self.previous_frame = None
 
     def update_status(self, status):
         with self.lock:
