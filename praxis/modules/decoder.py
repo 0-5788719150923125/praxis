@@ -110,32 +110,24 @@ class PraxisDecoder(nn.Module):
             current_depth,
             block_ids,
         ):
+            # Add positional context to both hidden states and attention mask
             if self.stack.behavior:
-                # Add positional context to both hidden states and attention mask
                 hidden_states, attention_mask = self.stack.behavior.add_context(
                     hidden_states, attention_mask, current_depth
                 )
-                # Forward pass
-                states, layer_kv, state_update, aux_loss = expert(
-                    hidden_states,
-                    attention_mask,
-                    past_key_values,
-                    current_state,
-                    current_depth,
-                    block_ids,
-                )
-                # Remove context from both hidden states and attention mask
+            # Forward pass
+            states, layer_kv, state_update, aux_loss = expert(
+                hidden_states,
+                attention_mask,
+                past_key_values,
+                current_state,
+                current_depth,
+                block_ids,
+            )
+            # Remove context from both hidden states and attention mask
+            if self.stack.behavior:
                 states, attention_mask = self.stack.behavior.remove_context(
                     states, attention_mask
-                )
-            else:
-                states, layer_kv, state_update, aux_loss = expert(
-                    hidden_states,
-                    attention_mask,
-                    past_key_values,
-                    current_state,
-                    current_depth,
-                    block_ids,
                 )
 
             return states, layer_kv, state_update, aux_loss

@@ -20,8 +20,8 @@ MOD_LAYOUT = {
     ),
     "u": lambda config: generate_u_shape_values(
         config.depth,
-        decay_point=0.2,
-        ramp_point=0.8,
+        decay_point=0.1,
+        ramp_point=0.9,
         lower_bound=config.capacity,
         steepness=2.0,
     ),
