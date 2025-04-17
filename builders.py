@@ -42,34 +42,34 @@ HUGGINGFACE_DATASETS = {
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
-        weight=0.001,
+        weight=1.0,
     ),
     "smollm-corpus": dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
         format=DataFormat.INSTRUCTION,
-        weight=0.001,
+        weight=1.0,
     ),
     "natural-instructions": dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
-        weight=0.001,
+        weight=1.0,
     ),
     "persona-chat": dict(
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
         format=DataFormat.PERSONACHAT,
-        weight=0.001,
+        weight=1.0,
     ),
     "smoltalk": dict(
         path="HuggingFaceTB/smoltalk",
         name="all",
         keys=["messages"],
         format=DataFormat.SMOLTALK,
-        weight=0.001,
+        weight=1.0,
     ),
     "soda": dict(
         path="allenai/soda",
@@ -83,35 +83,35 @@ HUGGINGFACE_DATASETS = {
             "tail",
         ],
         format=DataFormat.SODA,
-        weight=0.005,
+        weight=1.0,
     ),
     "github-code": dict(
         path="codeparrot/github-code",
         name="all-all",
         keys=["code"],
         format=DataFormat.SIMPLE,
-        weight=0.001,
+        weight=1.0,
     ),
     "tinystories": dict(
         path="roneneldan/TinyStories",
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=0.001,
+        weight=1.0,
     ),
     "legal": dict(
         path="pile-of-law/pile-of-law",
         name="all",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=0.001,
+        weight=1.0,
     ),
     "wikipedia": dict(
         path="wikimedia/wikipedia",
         name="20231101.en",
         keys=["title", "text"],
         format=DataFormat.WIKI,
-        weight=0.001,
+        weight=1.0,
     ),
     "redpajama": dict(
         path="togethercomputer/RedPajama-Data-V2",
@@ -147,9 +147,40 @@ HUGGINGFACE_DATASETS = {
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=0.25,
+        weight=1.0,
     ),
 }
+
+DATASET_COLLECTIONS = dict(
+    pile={
+        "minipile-train": 1.0,
+    },
+    validation={
+        "minipile-validation": 1.0,
+    },
+    base={
+        "fineweb-edu-350bt": 1.0,
+        "fineweb": 0.5,
+    },
+    phi={
+        "textbooks": 0.001,
+        "smoltalk": 0.005,
+        "soda": 0.005,
+        "natural-instructions": 0.01,
+        # "smollm-corpus": 0.005,
+        # "persona-chat": 0.002,
+        # "wikipedia": 0.001,
+        # "github-code": 0.01,
+        # "tinystories": 0.05,
+        # "legal": 0.001,
+    },
+    dev={
+        "textbooks": 1.0,
+    },
+    redpajama={
+        "redpajama": 1.0,
+    },
+)
 
 
 def format_simple(
@@ -463,38 +494,38 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
                 ".txt",
             ],
         )
-        dataset.weight = 0.001
+        dataset.weight = 0.01
         return dataset
     elif format == "gun":
         dataset = GunChatDataset(tokenizer)
-        dataset.weight = 0.001
+        dataset.weight = 0.01
         return dataset
+
+
+def add_collection(config, collection_name, target_key):
+    """Add datasets from a collection to the config with their weights"""
+    if collection_name in DATASET_COLLECTIONS:
+        for dataset_name, weight in DATASET_COLLECTIONS[collection_name].items():
+            dataset_config = HUGGINGFACE_DATASETS.get(dataset_name).copy()
+            dataset_config["weight"] = weight
+            config[target_key].append(dataset_config)
+    return config
 
 
 def get_dataset_configs(dev: bool, pile: bool, phi: bool):
     config = {"primary": [], "validation": []}
     if pile:
-        config["primary"].append(HUGGINGFACE_DATASETS.get("minipile-train"))
-        config["validation"].append(HUGGINGFACE_DATASETS.get("minipile-validation"))
+        config = add_collection(config, "pile", "primary")
+        config = add_collection(config, "validation", "validation")
     else:
-        config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb-edu-10bt"))
-        config["primary"].append(HUGGINGFACE_DATASETS.get("fineweb"))
+        config = add_collection(config, "base", "primary")
         if phi:
-            config["primary"].append(HUGGINGFACE_DATASETS.get("textbooks"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("smollm-corpus"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("natural-instructions"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("persona-chat"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("smoltalk"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("soda"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("github-code"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("tinystories"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("wikipedia"))
-            config["primary"].append(HUGGINGFACE_DATASETS.get("legal"))
+            config = add_collection(config, "phi", "primary")
         if dev:
-            # Overwrite with simpler dataset
-            config["primary"] = [HUGGINGFACE_DATASETS.get("textbooks")]
+            config["primary"] = []
+            config = add_collection(config, "dev", "primary")
         else:
-            config["validation"].append(HUGGINGFACE_DATASETS.get("redpajama"))
+            config = add_collection(config, "redpajama", "validation")
     print("training on:")
     [
         print(f"dataset: {entry['path']}, weight: {entry['weight']}")
