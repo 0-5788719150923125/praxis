@@ -44,7 +44,7 @@ HUGGINGFACE_DATASETS = {
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
-    "smollm-corpus": dict(
+    "cosmopedia-v2": dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
@@ -165,9 +165,9 @@ DATASET_COLLECTIONS = dict(
     phi={
         "textbooks": 0.001,
         "smoltalk": 0.005,
-        "soda": 0.005,
-        "natural-instructions": 0.01,
-        # "smollm-corpus": 0.005,
+        "soda": 0.01,
+        "natural-instructions": 0.008,
+        "cosmopedia-v2": 0.002,
         # "persona-chat": 0.002,
         # "wikipedia": 0.001,
         # "github-code": 0.01,
