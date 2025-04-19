@@ -13,7 +13,7 @@ class CutCrossEntropyLoss(nn.Module):
         *args,
         **kwargs,
     ):
-        loss = linear_cross_entropy(
+        return linear_cross_entropy(
             embeddings,
             classifier.weight,
             labels,
@@ -22,4 +22,3 @@ class CutCrossEntropyLoss(nn.Module):
             shift=1,
             reduction="mean",
         )
-        return loss
