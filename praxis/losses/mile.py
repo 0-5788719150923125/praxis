@@ -28,12 +28,12 @@ class MiLeLoss(nn.Module):
 
     def forward(
         self,
+        logits: torch.Tensor,
         embeddings: torch.Tensor,
         classifier: torch.Tensor,
         labels: torch.Tensor,
         input_ids: torch.Tensor,
     ):
-        logits = classifier(embeddings)
         shift_logits = logits[..., :-1, :]
         shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
         shift_labels = labels[..., 1:].view(-1)

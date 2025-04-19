@@ -11,7 +11,7 @@ from praxis.losses.stablemax import StableMaxCrossEntropyLoss
 LOSS_REGISTRY = {
     "cross_entropy": partial(CrossEntropyLoss, penalty_weight=0),
     "dedup": partial(CrossEntropyLoss, penalty_weight=0.1),
-    "focal": FocalLoss,
+    "focal": partial(FocalLoss, alpha=1.0, gamma=2.0),
     "mile": MiLeLoss,
     "stablemax": StableMaxCrossEntropyLoss,
     "cut_cross_entropy": CutCrossEntropyLoss,

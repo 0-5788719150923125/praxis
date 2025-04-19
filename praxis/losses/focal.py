@@ -4,36 +4,49 @@ import torch.nn.functional as F
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=1.0, reduction="mean"):
+    """
+    Original code found here:
+    https://github.com/itakurah/Focal-loss-PyTorch/blob/main/focal_loss.py
+    """
+
+    def __init__(self, alpha=1.0, gamma=2.0, reduction="mean"):
         super().__init__()
-        # self.alpha = alpha
-        self.base_gamma = gamma
+        self.alpha = alpha
+        self.gamma = gamma
         self.reduction = reduction
 
     def forward(
         self,
+        logits: torch.Tensor,
         embeddings: torch.Tensor,
         classifier: torch.Tensor,
         labels: torch.Tensor,
         input_ids: torch.Tensor,
     ):
-        logits = classifier(embeddings)
+        """Focal loss for multi-class classification."""
         shift_logits = logits[..., :-1, :]
-        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
-        shift_labels = labels[..., 1:].view(-1)
-        ce_loss = F.cross_entropy(
-            shift_logits, shift_labels, reduction="none", ignore_index=-100
-        )
-        pt = torch.exp(-ce_loss)
-        # Detach can help the model stay stable during the training process.
-        pt = pt.detach()
-        gamma = self.base_gamma
-        alpha = 1 / ((1 - pt) ** gamma).mean()
-        # Alpha is a normalization factor that allows the training loss to be comparable to the cross-entropy loss.
-        loss = alpha * (1 - pt) ** gamma * ce_loss
+        shift_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
+        shift_labels = labels[..., 1:].reshape(-1)
+
+        # Convert logits to probabilities with softmax
+        probs = F.softmax(shift_logits, dim=1)
+
+        # One-hot encode the targets
+        targets_one_hot = F.one_hot(shift_labels, num_classes=logits.size(-1)).float()
+
+        # Compute cross-entropy for each class
+        ce_loss = -targets_one_hot * torch.log(probs)
+
+        # Compute focal weight
+        p_t = torch.sum(probs * targets_one_hot, dim=1)  # p_t for each sample
+        focal_weight = (1 - p_t) ** self.gamma
+
+        # Apply focal loss weight
+        loss = self.alpha * focal_weight.unsqueeze(1) * ce_loss
+
+        # Apply reductions
         if self.reduction == "mean":
             return loss.mean()
         elif self.reduction == "sum":
             return loss.sum()
-        else:
-            return loss
+        return loss

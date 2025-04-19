@@ -10,12 +10,12 @@ class CrossEntropyLoss(nn.Module):
 
     def forward(
         self,
+        logits: torch.Tensor,
         embeddings: torch.Tensor,
         classifier: torch.Tensor,
         labels: torch.Tensor,
         input_ids: torch.Tensor,
     ):
-        logits = classifier(embeddings)
         shift_logits = logits[..., :-1, :]
         shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
         shift_labels = labels[..., 1:].view(-1)
@@ -26,7 +26,7 @@ class CrossEntropyLoss(nn.Module):
             return ce_loss.mean()
         token_output = torch.argmax(shift_logits, dim=1)
         duplicated_masks = (
-            torch.eq(input_ids, token_output.unsqueeze(-1)).any(dim=-1).float()
+            torch.eq(input_ids.view(-1), token_output.unsqueeze(-1)).any(dim=-1).float()
         )
         loss = ce_loss * (1 + duplicated_masks * self.penalty_weight)
         return loss.mean()

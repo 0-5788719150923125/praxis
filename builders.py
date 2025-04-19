@@ -163,8 +163,8 @@ DATASET_COLLECTIONS = dict(
         "fineweb": 0.5,
     },
     phi={
-        "textbooks": 0.001,
-        "soda": 0.01,
+        "textbooks": 0.002,
+        "soda": 0.1,
         # "smoltalk": 0.005,
         # "natural-instructions": 0.008,
         # "cosmopedia-v2": 0.002,
