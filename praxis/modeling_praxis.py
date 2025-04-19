@@ -143,14 +143,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels.contiguous()
             loss = self.criterion(
-                shift_logits.view(-1, shift_logits.shape[-1]),
-                shift_labels.view(-1),
+                outputs.last_hidden_state,
+                self.head,
+                labels,
                 input_ids.view(-1),
             )
-            loss = loss + sum(self.aux_losses)
+            loss += sum(self.aux_losses)
 
         self.aux_losses = []
 

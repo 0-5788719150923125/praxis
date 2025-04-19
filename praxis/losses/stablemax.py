@@ -13,13 +13,20 @@ class StableMaxCrossEntropyLoss(nn.Module):
         super().__init__()
 
     def forward(
-        self, logits: torch.Tensor, labels: torch.Tensor, input_ids: torch.Tensor
+        self,
+        embeddings: torch.Tensor,
+        classifier: torch.Tensor,
+        labels: torch.Tensor,
+        input_ids: torch.Tensor,
     ):
-        labels = labels.to(torch.int64)
-        logprobs = log_stablemax(logits.to(torch.float64), dim=-1)
-        prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1).to(
-            torch.float64
-        )
+        logits = classifier(embeddings)
+        shift_logits = logits[..., :-1, :]
+        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
+        shift_labels = labels[..., 1:].view(-1).to(torch.int64)
+        logprobs = log_stablemax(shift_logits.to(torch.float64), dim=-1)
+        prediction_logprobs = torch.gather(
+            logprobs, index=shift_labels[:, None], dim=-1
+        ).to(torch.float64)
         loss = -torch.mean(prediction_logprobs)
         return loss
 

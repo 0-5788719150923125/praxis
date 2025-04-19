@@ -164,10 +164,10 @@ DATASET_COLLECTIONS = dict(
     },
     phi={
         "textbooks": 0.001,
-        "smoltalk": 0.005,
         "soda": 0.01,
-        "natural-instructions": 0.008,
-        "cosmopedia-v2": 0.002,
+        # "smoltalk": 0.005,
+        # "natural-instructions": 0.008,
+        # "cosmopedia-v2": 0.002,
         # "persona-chat": 0.002,
         # "wikipedia": 0.001,
         # "github-code": 0.01,
@@ -649,7 +649,7 @@ class HuggingfaceDataset(PraxisSampler):
             split=config.get("split", "train"),
             streaming=config.get("streaming", True),
             cache_dir=os.path.join(config.get("cache_dir", "data"), "datasets"),
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
         if "name" in config:
             dataset_args["name"] = config["name"]

@@ -295,8 +295,8 @@ class PraxisTrainer(LightningModule):
 
         current_time = datetime.now()
 
-        labels = batch[..., 1:]
-        outputs = self.model(input_ids=batch, labels=labels)
+        labels = batch
+        outputs = self.model(input_ids=batch, labels=batch)
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
@@ -326,7 +326,7 @@ class PraxisTrainer(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        labels = batch[..., 1:]
+        labels = batch
         outputs = self.model(input_ids=batch, labels=labels)
 
         stats = {}
@@ -337,7 +337,9 @@ class PraxisTrainer(LightningModule):
         if byte_latent:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(batch, loss)
         else:
-            stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :], labels)
+            stats["val_perplexity"] = perplexity(
+                outputs.logits[..., :-1, :], labels[..., 1:]
+            )
 
         self.log_dict(
             stats,
