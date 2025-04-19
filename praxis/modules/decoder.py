@@ -27,8 +27,8 @@ class PraxisDecoder(nn.Module):
     def forward(
         self,
         inputs: Tensor,
-        current_state: Tensor,
-        attention_mask: Tensor,
+        current_state: Tensor = None,
+        attention_mask: Tensor = None,
         past_key_values=None,
         block_ids=None,
     ):
@@ -135,6 +135,7 @@ class PraxisDecoder(nn.Module):
         should_checkpoint = (
             current_depth != 0
             and self.checkpoint_every is not None
+            and self.checkpoint_every != 0
             and current_depth % self.checkpoint_every
         )
         if self.training and should_checkpoint:

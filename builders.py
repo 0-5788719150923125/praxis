@@ -164,10 +164,10 @@ DATASET_COLLECTIONS = dict(
     },
     phi={
         "textbooks": 0.002,
-        "soda": 0.1,
+        "soda": 0.02,
+        "cosmopedia-v2": 0.005,
         # "smoltalk": 0.005,
         # "natural-instructions": 0.008,
-        # "cosmopedia-v2": 0.002,
         # "persona-chat": 0.002,
         # "wikipedia": 0.001,
         # "github-code": 0.01,
@@ -335,13 +335,13 @@ def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str)
         chatml += f"{role}: {speaker}\n"
 
     # Add knowledge structure
-    chatml += f"Cause: {replace_person_references(head, person_mapping)}\n"
-    chatml += f"Relation: {relation[1:]}\n"
-    chatml += f"Effect: {replace_person_references(tail, person_mapping)}\n"
+    chatml += f"cause: {replace_person_references(head, person_mapping)}\n"
+    chatml += f"relation: {relation[1:]}\n"
+    chatml += f"effect: {replace_person_references(tail, person_mapping)}\n"
 
     # Add context from literal and narrative
-    chatml += f"Context: {narrative}\n"
-    chatml += f"Thought: ({literal})\n"  # <|thinking|>
+    chatml += f"context: {narrative}\n"
+    chatml += f"thought: ({literal})\n"  # <|thinking|>
     chatml += f"{eos_token}\n"
 
     # Add conversation turns
@@ -466,7 +466,6 @@ def get_datamodules(
 def get_dataset(format, tokenizer, seed, *args, **kwargs):
     if format == "huggingface":
         dataset = HuggingfaceDataset(tokenizer, seed, *args)
-        # First arg is config dict for huggingface
         dataset.weight = args[0].get("weight", 1.0)
         return dataset
     elif format == "directory":
@@ -648,7 +647,6 @@ class HuggingfaceDataset(PraxisSampler):
             path=self.dataset_path,
             split=config.get("split", "train"),
             streaming=config.get("streaming", True),
-            cache_dir=os.path.join(config.get("cache_dir", "data"), "datasets"),
             trust_remote_code=False,
         )
         if "name" in config:

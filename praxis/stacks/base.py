@@ -10,7 +10,6 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.modules.behaviors import LayerShuffle, MixtureRouter, PraxisGraph
 from praxis.modules.evolution import GenomicBottleneck
 from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
-from praxis.modules.router import PraxisMixtureOfDepths
 from praxis.orchestration.hivemind import PraxisManagement
 
 
