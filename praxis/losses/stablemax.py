@@ -20,8 +20,8 @@ class StableMaxCrossEntropyLoss(nn.Module):
         **kwargs,
     ):
         shift_logits = logits[..., :-1, :]
-        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
-        shift_labels = labels[..., 1:].view(-1).to(torch.int64)
+        shift_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
+        shift_labels = labels[..., 1:].reshape(-1).to(torch.int64)
         logprobs = log_stablemax(shift_logits.to(torch.float64), dim=-1)
         prediction_logprobs = torch.gather(
             logprobs, index=shift_labels[:, None], dim=-1
