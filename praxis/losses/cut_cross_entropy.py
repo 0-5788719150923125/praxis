@@ -7,11 +7,11 @@ from cut_cross_entropy import linear_cross_entropy
 class CutCrossEntropyLoss(nn.Module):
     def forward(
         self,
-        logits: torch.Tensor,
         embeddings: torch.Tensor,
         classifier: torch.Tensor,
         labels: torch.Tensor,
-        input_ids: torch.Tensor,
+        *args,
+        **kwargs,
     ):
         loss = linear_cross_entropy(
             embeddings,
