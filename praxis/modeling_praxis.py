@@ -11,7 +11,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
-from praxis.losses import LOSS_REGISTRY
+from praxis.losses import get_loss_function
 from praxis.modules import EMBEDDING_REGISTRY
 from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.encoder import PraxisEncoder
@@ -85,7 +85,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         super().__init__(config)
         if not config.byte_latent:
             self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self.criterion = LOSS_REGISTRY[config.loss_func]()
+        self.criterion = get_loss_function(config.loss_func, config.vocab_size)
 
     def prepare_inputs_for_generation(
         self,
