@@ -61,7 +61,7 @@ class PraxisStack(nn.Module):
         if self.manager:
             self.manager.serve_experts()
 
-    def post_compute(self, states, current_depth):
+    def post_layer(self, states, current_depth):
         processed_states = states
         if self.genome and current_depth == 4:
             processed_states = self.genome(processed_states)

@@ -71,8 +71,8 @@ class PraxisDecoder(nn.Module):
                     )
                     aux_losses.append(aux_loss)
 
-                if hasattr(self.stack, "post_compute"):
-                    hidden_update = self.stack.post_compute(hidden_update, i)
+                if hasattr(self.stack, "post_layer"):
+                    hidden_update = self.stack.post_layer(hidden_update, i)
 
                 # Commit to self
                 hidden_states = hidden_update
