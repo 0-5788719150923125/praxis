@@ -149,13 +149,16 @@ if byte_latent:
 
     tokenizer = ByteLevelTokenizer()
 else:
-    try:
-        tokenizer_path = os.path.join(cache_dir, "praxis")
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, cache_dir=cache_dir)
-    except Exception as e:
-        tokenizer = AutoTokenizer.from_pretrained(
-            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
-        )
+    possible_paths = [
+        os.path.join(cache_dir, "praxis"),
+        f"UNSAFE/praxis-{vocab_size}",
+    ]
+    for path in possible_paths:
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(path, cache_dir=cache_dir)
+        except Exception as e:
+            logging.warn(f"No tokenizer found at: {str(path)}")
+
 
 # Transformers config
 config = PraxisConfig(
@@ -577,7 +580,7 @@ class TerminalInterface(Callback):
         ):
             self.text = self.initial_text
             if self.dashboard:
-                self.dashboard.update_status("<|err|>")
+                self.dashboard.update_status(tokenizer.bos_token)
                 self.dashboard.force_redraw()
         elif self.dashboard:
             self.dashboard.update_status(self.text)

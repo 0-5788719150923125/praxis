@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Union
+from typing import Union
 
 import torch
 import torch.nn as nn
@@ -15,6 +15,8 @@ class FocalLoss(nn.Module):
         alpha: Union[float, torch.Tensor] = 1.0,
         gamma: float = 2.0,
         reduction: str = "mean",
+        *args,
+        **kwargs,
     ):
         super().__init__()
         self.gamma = gamma

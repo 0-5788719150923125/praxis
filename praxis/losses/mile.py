@@ -10,7 +10,7 @@ class MiLeLoss(nn.Module):
     Probably better than standard cross-entropy, but uses more VRAM, so it's not the default in Praxis today.
     """
 
-    def __init__(self, gamma=1.0, reduction="mean"):
+    def __init__(self, gamma=1.0, reduction="mean", *args, **kwargs):
         super().__init__()
         self.base_gamma = gamma
         self.reduction = reduction
@@ -33,9 +33,10 @@ class MiLeLoss(nn.Module):
         *args,
         **kwargs,
     ):
-        shift_logits = logits[..., :-1, :]
-        shift_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
-        shift_labels = labels[..., 1:].reshape(-1)
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
+        shift_labels = shift_labels.view(-1)
         ce_loss = F.cross_entropy(
             shift_logits, shift_labels, reduction="none", ignore_index=-100
         )

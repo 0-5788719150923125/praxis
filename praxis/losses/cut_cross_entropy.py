@@ -5,6 +5,9 @@ from cut_cross_entropy import linear_cross_entropy
 
 
 class CutCrossEntropyLoss(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
     def forward(
         self,
         embeddings: torch.Tensor,

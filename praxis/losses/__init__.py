@@ -19,7 +19,7 @@ def alpha_vector_factory(
 
 
 LOSS_REGISTRY = {
-    "cross_entropy": partial(CrossEntropyLoss, penalty_weight=0),
+    "cross_entropy": CrossEntropyLoss,
     "dedup": partial(CrossEntropyLoss, penalty_weight=0.1),
     "focal": partial(FocalLoss, alpha=1.0, gamma=2.0),
     "focal_alpha": partial(

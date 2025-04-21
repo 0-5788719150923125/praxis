@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class CrossEntropyLoss(nn.Module):
-    def __init__(self, penalty_weight=0):
+    def __init__(self, penalty_weight=0, *args, **kwargs):
         super().__init__()
         self.penalty_weight = penalty_weight
 
@@ -16,9 +16,10 @@ class CrossEntropyLoss(nn.Module):
         *args,
         **kwargs,
     ):
-        shift_logits = logits[..., :-1, :]
-        shift_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
-        shift_labels = labels[..., 1:].reshape(-1)
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
+        shift_labels = shift_labels.view(-1)
         ce_loss = F.cross_entropy(
             shift_logits, shift_labels, reduction="none", ignore_index=-100
         )
