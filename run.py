@@ -264,8 +264,16 @@ if disable_schedule:
         lr_lambda=lambda step: lr_lambda_with_warmup(step),
     )
 else:
+    # CosineAnnealingWarmupRestarts._last_lr = 0
+    class PatchedCosineAnnealingWarmupRestarts(CosineAnnealingWarmupRestarts):
+        def step(self, *args, **kwargs):
+            super().step(*args, **kwargs)
+            self._last_lr: List[float] = [
+                group["lr"] for group in self.optimizer.param_groups
+            ]
+
     scheduler_func = partial(
-        CosineAnnealingWarmupRestarts,
+        PatchedCosineAnnealingWarmupRestarts,
         first_cycle_steps=1024 * 256,
         max_lr=optimizer_config["lr"],
         min_lr=optimizer_config["lr"] * 1e-2,
