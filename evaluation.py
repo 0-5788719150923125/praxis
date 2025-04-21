@@ -32,40 +32,31 @@ device = "cpu"
 vocab_size = 16384
 
 
-def main():
+def evaluate_model(model=None, max_samples=None):
     evaluation_tracker = EvaluationTracker(
         output_dir=os.path.join(cache_dir, "eval"),
         save_details=True,
-        push_to_hub=False,
-        hub_results_org="UNSAFE",
+        # push_to_hub=False,
+        # hub_results_org="UNSAFE",
     )
 
     pipeline_params = PipelineParameters(
         launcher_type=ParallelismManager.ACCELERATE,
-        env_config=EnvConfig(cache_dir="tmp/"),
-        # Remove the 2 parameters below once your configuration is tested
+        env_config=EnvConfig(cache_dir=os.path.join(cache_dir, "tmp")),
         override_batch_size=1,
-        max_samples=10,
+        max_samples=max_samples,
     )
 
-    # Tokenizer initialization
-    # tokenizer = AutoTokenizer.from_pretrained(
-    #     f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir
-    # )
-
-    model_config = TransformersModelConfig(
-        pretrained=os.path.join(cache_dir, "praxis"),
-        device=device,
-        tokenizer=f"UNSAFE/praxis-{vocab_size}",
-        accelerator=None,
-        model_parallel=False,
-    )
-
-    # model_config = VLLMModelConfig(
-    #     pretrained="HuggingFaceH4/zephyr-7b-beta",
-    #     dtype="float16",
-    #     use_chat_template=True,
-    # )
+    if model is None:
+        model_config = TransformersModelConfig(
+            pretrained=os.path.join(cache_dir, "praxis"),
+            device=device,
+            tokenizer=f"UNSAFE/praxis-{vocab_size}",
+            accelerator=None,
+            model_parallel=False,
+        )
+    else:
+        model_config = None
 
     task = "helm|mmlu|5|1"
 
@@ -73,6 +64,7 @@ def main():
         tasks=task,
         pipeline_parameters=pipeline_params,
         evaluation_tracker=evaluation_tracker,
+        model=model,
         model_config=model_config,
         # custom_task_directory=None,  # if using a custom task
     )
@@ -83,7 +75,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    evaluate_model(max_samples=10)
 
 # import os
 

@@ -104,6 +104,7 @@ from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
+# from evaluation import evaluate_model
 from optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
@@ -314,7 +315,7 @@ class PraxisTrainer(LightningModule):
             {
                 "loss": loss,
                 "batch": int(batch_idx),
-                "learning_rate": self.scheduler.get_lr()[0],
+                "learning_rate": self.scheduler.get_last_lr()[0],
                 "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
                 "avg_step_time": self.train_step_ema,
                 "softmax_collapse": softmax_collapse,
@@ -1239,6 +1240,8 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
+
+# evaluate_model(model, max_samples=10)
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)
