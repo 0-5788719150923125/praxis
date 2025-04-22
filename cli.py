@@ -74,7 +74,7 @@ parser.add_argument(
     "--vocab_size",
     type=int,
     choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
-    default=8192,
+    default=16384,
     help="The absolute vocab size to use, though some architectures might scale it differently",
 )
 parser.add_argument(

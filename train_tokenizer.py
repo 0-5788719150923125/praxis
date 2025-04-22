@@ -19,7 +19,7 @@ parser.add_argument(
     "--type",
     type=str,
     choices=["bpe", "unigram"],
-    default=8192,
+    default="unigram",
     help="The type of tokenizer to train",
 )
 parser.add_argument(
@@ -32,7 +32,7 @@ parser.add_argument(
     "--vocab_size",
     type=int,
     choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
-    default=8192,
+    default=16384,
     help="The absolute vocab size to use",
 )
 
