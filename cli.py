@@ -61,7 +61,7 @@ parser.add_argument(
 parser.add_argument(
     "--target_batch_size",
     type=int,
-    default=64,
+    default=256,
     help="The actual batch size to use, including accumulation steps",
 )
 parser.add_argument(
