@@ -158,7 +158,7 @@ else:
         try:
             tokenizer = AutoTokenizer.from_pretrained(path, cache_dir=cache_dir)
         except Exception as e:
-            logging.warn(f"No tokenizer found at: {str(path)}")
+            logging.warning(f"No tokenizer found at: {str(path)}")
 
 
 # Transformers config

@@ -48,7 +48,8 @@ class PraxisMixtureOfDepths(nn.Linear):
     def __init__(self, config: "AutoConfig"):
         super().__init__(in_features=config.hidden_size, out_features=1)
         self.capacities = MOD_LAYOUT.get(config.mod, "standard")(config)
-        print(self.capacities)
+        if config.debug:
+            print(self.capacities)
 
     def forward(
         self,
