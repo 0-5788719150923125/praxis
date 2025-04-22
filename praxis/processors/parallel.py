@@ -90,8 +90,37 @@ class ParallelProcessor(nn.Module):
         stacked_updates = torch.stack(hidden_updates)
         if mode == "mean":
             return torch.mean(stacked_updates, dim=0)
+        elif mode == "variance":
+            return self._compute_variance_weighted_sum(stacked_updates)
         elif mode == "weighted":
             return self._compute_feature_weighted_sum(stacked_updates, valid_indices)
+
+    def _compute_variance_weighted_sum(self, stacked_updates):
+        # Calculate the mean across experts
+        mean_output = torch.mean(stacked_updates, dim=0)
+
+        # Calculate squared difference from mean for each expert
+        squared_diff = (stacked_updates - mean_output.unsqueeze(0)) ** 2
+
+        # Calculate variance with small epsilon for numerical stability
+        feature_variance = squared_diff.mean(dim=[1, 2]) + 1e-8
+
+        # Apply log transform with a controllable temperature parameter
+        # Higher temp = more aggressive weighting of high-variance features
+        temperature = 1.0  # Can be made a learnable parameter if desired
+        log_variance = torch.log(feature_variance) * temperature
+
+        # Apply sigmoid
+        weights = torch.sigmoid(log_variance)
+
+        # Reshape for broadcasting
+        weights = weights.view(weights.size(0), 1, 1, weights.size(1))
+
+        # Apply weights to expert outputs
+        weighted_updates = stacked_updates * weights
+
+        # Sum the weighted updates
+        return torch.sum(weighted_updates, dim=0)
 
     def _compute_feature_weighted_sum(self, stacked_updates, valid_indices):
         # Get weights for valid experts
@@ -110,3 +139,52 @@ class ParallelProcessor(nn.Module):
 
         # Sum across the experts dimension
         return torch.sum(weighted_updates, dim=0)
+
+    # def _compute_variance_weighted_sum(self, stacked_updates):
+    #     # Calculate the mean across experts
+    #     mean_output = torch.mean(stacked_updates, dim=0)
+
+    #     # Calculate the variance from mean for each expert
+    #     # Squared difference from mean for each expert's output
+    #     squared_diff = (stacked_updates - mean_output.unsqueeze(0)) ** 2
+
+    #     # Calculate variance for each feature across all expert outputs
+    #     # (across the batch and sequence dimensions)
+    #     feature_variance = squared_diff.mean(
+    #         dim=[1, 2]
+    #     )  # Shape: [num_experts, hidden_size]
+
+    #     # Higher variance means the expert is more "specialized" or "unique"
+    #     # We want to reward this uniqueness, so we use variance as weights
+    #     # Apply softmax to get normalized weights that sum to 1
+    #     weights = F.softmax(feature_variance, dim=0)
+
+    #     # Reshape for broadcasting
+    #     weights = weights.view(weights.size(0), 1, 1, weights.size(1))
+
+    #     # Apply these variance-based weights
+    #     weighted_updates = stacked_updates * weights
+
+    #     # Sum across experts dimension
+    #     return torch.sum(weighted_updates, dim=0)
+
+    # def _compute_feature_weighted_sum(self, stacked_updates, valid_indices):
+    #     # Get weights for valid experts
+    #     valid_weights = self.contributions[valid_indices]
+
+    #     # Apply sigmoid to each weight independently
+    #     weights = torch.sigmoid(valid_weights)  # Shape: [num_experts, hidden_size]
+
+    #     # Reshape for broadcasting
+    #     weights = weights.view(weights.size(0), 1, 1, weights.size(1))
+
+    #     # Apply weights to each feature dimension
+    #     weighted_updates = stacked_updates * weights
+
+    #     # Sum across the experts dimension
+    #     combined = torch.sum(weighted_updates, dim=0)
+
+    #     # Optional: Normalize by sum of weights to maintain consistent magnitude
+    #     # This prevents the output from growing too large when many experts contribute
+    #     weight_sum = weights.sum(dim=0, keepdim=True).clamp(min=1e-6)
+    #     return combined / weight_sum
