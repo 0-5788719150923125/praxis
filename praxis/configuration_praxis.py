@@ -42,7 +42,7 @@ class PraxisConfig(PretrainedConfig):
         evolve=False,
         byte_latent=False,
         hyper=False,
-        scaling=False,
+        scaled=False,
         hivemind=False,
         initial_peers=[],
         checkpoint_every=0,
@@ -99,7 +99,7 @@ class PraxisConfig(PretrainedConfig):
         self.evolve = evolve
         self.byte_latent = byte_latent
         self.hyper = hyper
-        self.scaling = scaling
+        self.scaled = scaled
         self.hivemind = hivemind
         self.initial_peers = initial_peers
         self.checkpoint_every = checkpoint_every

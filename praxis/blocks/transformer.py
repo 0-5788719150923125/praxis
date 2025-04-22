@@ -36,7 +36,7 @@ class PraxisTransformer(nn.Module):
         )
         self.ffn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.ffn = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
-        self.use_scaler = config.scaling
+        self.use_scaler = config.scaled
 
     def forward(
         self,

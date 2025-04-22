@@ -351,10 +351,10 @@ parser.add_argument(
     help="Replace residual connections with hyper-connections",
 )
 parser.add_argument(
-    "--scaling",
+    "--scaled",
     action="store_true",
     default=False,
-    help="Scale the variance normalization inversely by the square root of layer depth",
+    help="Scale the output of each layer by the inverse square root of its depth",
 )
 parser.add_argument(
     "--hivemind",

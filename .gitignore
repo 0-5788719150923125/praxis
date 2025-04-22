@@ -17,7 +17,6 @@ data
 dist
 node_modules
 tmp
-venv
 wandb
 .pytest*
 .venv
