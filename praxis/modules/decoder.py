@@ -4,10 +4,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.processors import sequential_processor
+from praxis.processors import PROCESSOR_REGISTRY
 from praxis.stacks import PraxisStack
-
-PROCESSOR_REGISTRY = dict(sequential=sequential_processor, parallel=None)
 
 
 class PraxisDecoder(nn.Module):

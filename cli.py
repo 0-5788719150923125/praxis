@@ -14,6 +14,7 @@ from praxis import (
     EXPERT_REGISTRY,
     LOSS_REGISTRY,
     MOD_LAYOUT,
+    PROCESSOR_REGISTRY,
 )
 
 
@@ -152,7 +153,7 @@ parser.add_argument(
 parser.add_argument(
     "--processor",
     type=str,
-    choices=["sequential", "parallel"],
+    choices=list(PROCESSOR_REGISTRY.keys()),
     default="sequential",
     help="How to process layers in the decoder",
 )

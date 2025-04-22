@@ -64,3 +64,13 @@ def create_forward(
             current_depth,
             block_ids,
         )
+
+
+def should_checkpoint(training: bool, current_depth: int, checkpoint_every: int):
+    return (
+        training
+        and current_depth != 0
+        and checkpoint_every is not None
+        and checkpoint_every != 0
+        and current_depth % checkpoint_every
+    )
