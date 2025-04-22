@@ -22,7 +22,9 @@ class PraxisStack(nn.Module):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__()
+        self.debug = config.debug
         self.depth = config.depth
+        self.checkpoint_every = config.checkpoint_every
         self.num_experts = config.num_experts
         assert (
             self.num_experts >= self.depth

@@ -79,7 +79,7 @@ parser.add_argument(
 parser.add_argument(
     "--depth",
     type=int,
-    default=7,
+    default=9,
     help="The max number of experts to route through",
 )
 parser.add_argument(
@@ -148,6 +148,13 @@ parser.add_argument(
     choices=ATTENTION_REGISTRY.keys(),
     default="standard",
     help="The base attention implementation to use",
+)
+parser.add_argument(
+    "--processor",
+    type=str,
+    choices=["sequential", "parallel"],
+    default="sequential",
+    help="How to process layers in the decoder",
 )
 parser.add_argument(
     "--checkpoint_every",

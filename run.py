@@ -179,6 +179,7 @@ config = PraxisConfig(
     graph=graph,
     router=router,
     attention_type=attention_type,
+    processor=processor,
     linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,
@@ -264,7 +265,7 @@ if disable_schedule:
         lr_lambda=lambda step: lr_lambda_with_warmup(step),
     )
 else:
-    # CosineAnnealingWarmupRestarts._last_lr = 0
+
     class PatchedCosineAnnealingWarmupRestarts(CosineAnnealingWarmupRestarts):
         def step(self, *args, **kwargs):
             super().step(*args, **kwargs)

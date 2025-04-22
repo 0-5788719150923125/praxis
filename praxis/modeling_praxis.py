@@ -70,8 +70,8 @@ class PraxisModel(PreTrainedModel):
         )
 
     def get_addr(self):
-        if self.decoder.manager:
-            self.decoder.manager.get_visible_maddrs()
+        if self.decoder.stack.manager:
+            self.decoder.stack.manager.get_visible_maddrs()
 
     def get_metrics(self):
         return dict(**self.decoder.get_metrics())

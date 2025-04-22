@@ -13,8 +13,8 @@ class PraxisConfig(PretrainedConfig):
         head_size=None,
         k_heads=None,
         kv_rank=None,
-        depth=7,
-        num_experts=7,
+        depth=9,
+        num_experts=9,
         dropout=0,
         epsilon=1e-5,
         capacity=0.125,
@@ -30,6 +30,7 @@ class PraxisConfig(PretrainedConfig):
         graph=False,
         router=False,
         attention_type="standard",
+        processor="sequential",
         linear=False,
         differential=False,
         stickbreaking=False,
@@ -72,6 +73,7 @@ class PraxisConfig(PretrainedConfig):
         self.depth = depth
         self.num_experts = num_experts
         self.attention_type = attention_type
+        self.processor = processor
         self.linear = linear
         self.differential = differential
         self.stickbreaking = stickbreaking
