@@ -1,4 +1,10 @@
-from praxis.processors.parallel import parallel_processor
-from praxis.processors.sequential import sequential_processor
+from functools import partial
 
-PROCESSOR_REGISTRY = dict(sequential=sequential_processor, parallel=parallel_processor)
+from praxis.processors.parallel import ParallelProcessor
+from praxis.processors.sequential import SequentialProcessor
+
+PROCESSOR_REGISTRY = dict(
+    sequential=SequentialProcessor,
+    parallel_mean=partial(ParallelProcessor, mode="mean"),
+    parallel_weighted=partial(ParallelProcessor, mode="weighted"),
+)

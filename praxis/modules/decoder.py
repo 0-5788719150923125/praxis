@@ -18,7 +18,7 @@ class PraxisDecoder(nn.Module):
     def __init__(self, config: "AutoConfig"):
         super().__init__()
         self.stack = PraxisStack(config)
-        self.processor = PROCESSOR_REGISTRY.get(config.processor)
+        self.processor = PROCESSOR_REGISTRY.get(config.processor)(config)
 
     def forward(
         self,
