@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
+
 
 def create_forward(
     expert: nn.Module,
@@ -44,26 +46,32 @@ def create_forward(
 
         return states, layer_kv, state_update, aux_loss
 
-    if should_checkpoint:
-        return torch.utils.checkpoint.checkpoint(
-            custom_forward,
-            hidden_states,
-            attention_mask,
-            past_key_values,
-            current_state,
-            current_depth,
-            block_ids,
-            use_reentrant=False,
-        )
-    else:
-        return custom_forward(
-            hidden_states,
-            attention_mask,
-            past_key_values,
-            current_state,
-            current_depth,
-            block_ids,
-        )
+    try:
+        if should_checkpoint:
+            return torch.utils.checkpoint.checkpoint(
+                custom_forward,
+                hidden_states,
+                attention_mask,
+                past_key_values,
+                current_state,
+                current_depth,
+                block_ids,
+                use_reentrant=False,
+            )
+        else:
+            return custom_forward(
+                hidden_states,
+                attention_mask,
+                past_key_values,
+                current_state,
+                current_depth,
+                block_ids,
+            )
+    except (P2PDaemonError, P2PHandlerError) as e:
+        if stack.debug:
+            print(e)
+        stack.manager.handle_failure(experts[current_depth])
+        return None
 
 
 def should_checkpoint(training: bool, current_depth: int, checkpoint_every: int):

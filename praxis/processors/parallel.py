@@ -1,11 +1,8 @@
-from concurrent.futures import ThreadPoolExecutor
-
 import torch
 import torch.nn.functional as F
 import torch.nn.parallel as parallel
 from torch import nn
 
-from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
 from praxis.processors.checkpoint import create_forward, should_checkpoint
 
 
@@ -14,7 +11,9 @@ class ParallelProcessor(nn.Module):
         super().__init__()
         self.mode = mode
         if self.mode == "weighted":
-            self.contributions = nn.Parameter(torch.ones(config.depth))
+            self.contributions = nn.Parameter(
+                torch.ones(config.depth, config.hidden_size)
+            )
 
     def forward(
         self,
@@ -35,27 +34,19 @@ class ParallelProcessor(nn.Module):
         # Create wrapper functions for each expert
         def create_expert_forward(idx):
             def expert_forward(input_tensor):
-                try:
-                    expert = experts[idx]
-                    layer_state = (
-                        current_state[idx] if current_state is not None else None
-                    )
-                    return create_forward(
-                        expert,
-                        stack,
-                        input_tensor,
-                        attention_mask,
-                        past_key_values,
-                        layer_state,
-                        idx,
-                        block_ids,
-                        should_checkpoint(training, idx, stack.checkpoint_every),
-                    )
-                except (P2PDaemonError, P2PHandlerError) as e:
-                    if stack.debug:
-                        print(e)
-                    stack.manager.handle_failure(experts[idx])
-                    return None
+                expert = experts[idx]
+                layer_state = current_state[idx] if current_state is not None else None
+                return create_forward(
+                    expert,
+                    stack,
+                    input_tensor,
+                    attention_mask,
+                    past_key_values,
+                    layer_state,
+                    idx,
+                    block_ids,
+                    should_checkpoint(training, idx, stack.checkpoint_every),
+                )
 
             return expert_forward
 
@@ -68,6 +59,8 @@ class ParallelProcessor(nn.Module):
 
         # Process results
         all_hidden_updates = []
+        valid_expert_indices = []
+
         for i, result in enumerate(results):
             if result is not None:
                 hidden_update, pkv, layer_state, aux_loss = result
@@ -80,9 +73,12 @@ class ParallelProcessor(nn.Module):
                     hidden_update = stack.post_layer(hidden_update, i)
 
                 all_hidden_updates.append(hidden_update)
+                valid_expert_indices.append(i)
 
         # Mean pooling of hidden updates to combine expert outputs
-        hidden_states = self._combine_outputs(all_hidden_updates, self.mode)
+        hidden_states = self._combine_outputs(
+            all_hidden_updates, valid_expert_indices, self.mode
+        )
 
         # Apply post-decoding if defined
         if hasattr(stack, "post_decoding"):
@@ -90,14 +86,27 @@ class ParallelProcessor(nn.Module):
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)
 
-    def _combine_outputs(self, hidden_updates, mode="mean"):
+    def _combine_outputs(self, hidden_updates, valid_indices, mode="mean"):
         stacked_updates = torch.stack(hidden_updates)
         if mode == "mean":
             return torch.mean(stacked_updates, dim=0)
         elif mode == "weighted":
-            return self._compute_weighted_sum(stacked_updates)
+            return self._compute_feature_weighted_sum(stacked_updates, valid_indices)
 
-    def _compute_weighted_sum(self, stacked_updates):
-        weights = F.softmax(self.contributions, dim=0)
-        weighted_updates = stacked_updates * weights.view(-1, 1, 1, 1)
+    def _compute_feature_weighted_sum(self, stacked_updates, valid_indices):
+        # Get weights for valid experts
+        valid_weights = self.contributions[valid_indices]
+
+        # Apply softmax along the experts dimension (0) for each feature independently
+        weights = F.softmax(valid_weights, dim=0)  # Shape: [num_experts, hidden_size]
+
+        # Reshape for broadcasting - we need to keep the expert dimension separate
+        weights = weights.view(
+            weights.size(0), 1, 1, weights.size(1)
+        )  # [num_experts, 1, 1, hidden_size]
+
+        # Apply weights to each feature dimension
+        weighted_updates = stacked_updates * weights
+
+        # Sum across the experts dimension
         return torch.sum(weighted_updates, dim=0)
