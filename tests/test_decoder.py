@@ -4,7 +4,7 @@ from typing import List
 import pytest
 import torch
 
-from praxis import PraxisConfig
+from praxis import PROCESSOR_REGISTRY, PraxisConfig
 from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.router import MOD_LAYOUT
 
@@ -17,6 +17,7 @@ TEST_PARAMS = {
     "mod": list(MOD_LAYOUT.keys()),
     "depth": [3],
     "num_experts": [3],
+    "processor": list(PROCESSOR_REGISTRY.keys()),
 }
 PARAM_KEYS = list(TEST_PARAMS.keys())
 
@@ -59,4 +60,4 @@ def test_forward_pass(module_setup):
     # Verify output shape
     assert hidden_states.shape == inputs.shape
     # Verify correct number of layers/experts
-    assert depth == len(decoder.stack.locals)
+    assert depth == len(decoder.processor.stack.locals)

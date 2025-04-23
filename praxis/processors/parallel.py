@@ -4,11 +4,13 @@ import torch.nn.parallel as parallel
 from torch import nn
 
 from praxis.processors.checkpoint import create_forward, should_checkpoint
+from praxis.stacks import PraxisStack
 
 
 class ParallelProcessor(nn.Module):
     def __init__(self, config: "AutoConfig", mode="mean"):
         super().__init__()
+        self.stack = PraxisStack(config)
         self.mode = mode
         if self.mode == "weighted":
             self.contributions = nn.Parameter(
@@ -17,18 +19,20 @@ class ParallelProcessor(nn.Module):
 
     def forward(
         self,
-        experts,
-        stack,
         inputs,
         attention_mask,
         past_key_values,
         block_ids,
         current_state,
-        original_order,
     ):
         hidden_states = inputs
         new_states = []
         aux_losses = []
+
+        experts = list(self.stack.locals) + list(self.stack.remotes)
+        original_order = experts.copy()
+        if hasattr(self.stack.behavior, "shuffle_experts"):
+            experts = self.stack.behavior.shuffle_experts(experts)
 
         # Create wrapper functions for each expert
         def create_expert_forward(idx):
@@ -37,21 +41,21 @@ class ParallelProcessor(nn.Module):
                 layer_state = current_state[idx] if current_state is not None else None
                 return create_forward(
                     expert,
-                    stack,
+                    self.stack,
                     input_tensor,
                     attention_mask,
                     past_key_values,
                     layer_state,
                     idx,
                     block_ids,
-                    should_checkpoint(self.training, idx, stack.checkpoint_every),
+                    should_checkpoint(self.training, idx, self.stack.checkpoint_every),
                 )
 
             return expert_forward
 
         # Create function list and replicate inputs
-        expert_forwards = [create_expert_forward(i) for i in range(stack.depth)]
-        inputs_list = [hidden_states] * stack.depth
+        expert_forwards = [create_expert_forward(i) for i in range(self.stack.depth)]
+        inputs_list = [hidden_states] * self.stack.depth
 
         # Execute all expert forwards in parallel
         results = parallel.parallel_apply(expert_forwards, inputs_list)
@@ -68,8 +72,8 @@ class ParallelProcessor(nn.Module):
                 aux_losses.append(aux_loss)
 
                 # Apply post_layer transformation if defined
-                if hasattr(stack, "post_layer"):
-                    hidden_update = stack.post_layer(hidden_update, i)
+                if hasattr(self.stack, "post_layer"):
+                    hidden_update = self.stack.post_layer(hidden_update, i)
 
                 all_hidden_updates.append(hidden_update)
                 valid_expert_indices.append(i)
@@ -80,8 +84,8 @@ class ParallelProcessor(nn.Module):
         )
 
         # Apply post-decoding if defined
-        if hasattr(stack, "post_decoding"):
-            hidden_states = stack.post_decoding(hidden_states)
+        if hasattr(self.stack, "post_decoding"):
+            hidden_states = self.stack.post_decoding(hidden_states)
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)
 
