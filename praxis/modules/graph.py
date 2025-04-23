@@ -33,7 +33,7 @@ class PraxisGraph(nn.Module):
         self.causal = config.causal
         self.num_layers = config.num_experts
         self.hidden_dim = config.hidden_size
-        self.num_context_tokens = 3
+        self.num_context_tokens = 0
         self.routing_scale = 0.01
         self.variance_scale = 0.01
 

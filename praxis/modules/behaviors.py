@@ -41,7 +41,7 @@ class LayerShuffle(nn.Module):
 
         # Keep learned embeddings for each position and context token
         self.embeddings = nn.Parameter(
-            torch.randn(config.depth, num_context_tokens, config.hidden_size)
+            torch.randn(config.depth, self.num_context_tokens, config.hidden_size)
         )
         # Initialize with small values for stability
         nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
@@ -129,6 +129,100 @@ class LayerShuffle(nn.Module):
                 return 0, None
 
     def reset_route(self):
+        if self.debug:
+            route = [str(r) for r in self.current_route]
+            if not self.training:
+                print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
+        self.current_route = []
+
+
+class GatedRouter(nn.Module):
+    """
+    Implements a gating mechanism for dynamic layer selection in transformer models.
+    Each layer uses a gating network to decide which layer to process next based on
+    the current hidden state.
+    """
+
+    def __init__(self, config: "AutoConfig"):
+        super().__init__()
+        self.debug = config.debug
+        self.depth = config.depth
+        self.current_route = []
+
+        # Create a gating network for each layer to decide the next layer
+        self.gates = nn.ModuleList(
+            [nn.Linear(config.hidden_size, config.depth) for _ in range(config.depth)]
+        )
+
+    def add_context(
+        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, position: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """No-op implementation to maintain API compatibility."""
+        return hidden_states, attention_mask
+
+    def remove_context(
+        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """No-op implementation to maintain API compatibility."""
+        return hidden_states, attention_mask
+
+    def shuffle_experts(self, experts: list, allow_resampling: bool = False) -> list:
+        """No-op to maintain API compatibility."""
+        return experts
+
+    def get_next_expert(
+        self,
+        hidden_states: torch.Tensor,
+        current_depth: int,
+        original_experts: List[nn.Module],
+        current_experts: List[nn.Module],
+        current_expert: nn.Module,
+    ) -> Tuple[torch.Tensor, Optional[int]]:
+        """
+        Determine the next layer to process using a gating mechanism.
+
+        Args:
+            hidden_states: Current hidden states [batch_size, seq_len, hidden_size]
+            current_depth: Current layer depth
+            original_experts: List of original experts/layers
+            current_experts: List of current experts/layers
+            current_expert: Current expert/layer
+
+        Returns:
+            Tuple of (gating_loss, next_expert_idx)
+        """
+        # Record the current layer in the route
+        original_idx = original_experts.index(current_expert)
+        self.current_route.append(original_idx)
+
+        # Check if we've reached the maximum depth
+        if current_depth + 1 >= self.depth:
+            return torch.tensor(0.0, device=hidden_states.device), None
+
+        # Pool the hidden states - using mean pooling for simplicity
+        pooled_hidden = hidden_states.mean(dim=1)  # [batch_size, hidden_size]
+
+        # Apply the gating network for the current layer
+        gate_logits = self.gates[current_depth](pooled_hidden)  # [batch_size, depth]
+
+        # Compute next layer probabilities
+        gate_probs = F.softmax(gate_logits, dim=1)
+
+        # For training stability, compute a small entropy loss
+        # This encourages exploration of different routing paths
+        if self.training:
+            entropy = -(gate_probs * torch.log(gate_probs + 1e-10)).sum(dim=1).mean()
+            gating_loss = -0.01 * entropy  # Encourage exploration with negative loss
+        else:
+            gating_loss = torch.tensor(0.0, device=hidden_states.device)
+
+        # Select the next layer (expert) to process
+        next_expert_idx = torch.argmax(gate_probs, dim=1)[0].item()
+
+        return gating_loss, next_expert_idx
+
+    def reset_route(self):
+        """Reset the tracking of the current route through layers."""
         if self.debug:
             route = [str(r) for r in self.current_route]
             if not self.training:

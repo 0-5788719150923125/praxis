@@ -279,7 +279,7 @@ parser.add_argument(
     help="Use graph-based routing through experts/layers",
 )
 parser.add_argument(
-    "--router",
+    "--routed",
     action="store_true",
     default=False,
     help="Use a simple router to select optimal experts/layers",

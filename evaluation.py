@@ -72,6 +72,7 @@ def evaluate_model(
             tokenizer=f"UNSAFE/praxis-{vocab_size}",
             model_parallel=False,
             batch_size=1,
+            max_length=4096,
         )
     elif model is not None:
         model = TransformersModel.from_model(

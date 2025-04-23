@@ -7,7 +7,12 @@ from torch import Tensor
 
 from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
-from praxis.modules.behaviors import LayerShuffle, MixtureRouter, PraxisGraph
+from praxis.modules.behaviors import (
+    GatedRouter,
+    LayerShuffle,
+    MixtureRouter,
+    PraxisGraph,
+)
 from praxis.modules.evolution import GenomicBottleneck
 from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
 from praxis.orchestration.hivemind import PraxisManagement
@@ -31,8 +36,9 @@ class PraxisStack(nn.Module):
         ), "`num_experts` should be at least as large as `depth`."
         if config.graph:
             self.behavior = PraxisGraph(config)
-        elif config.router:
-            self.behavior = MixtureRouter(config)
+        elif config.routed:
+            # self.behavior = MixtureRouter(config)
+            self.behavior = GatedRouter(config)
         else:
             self.behavior = LayerShuffle(config) if config.shuffle else False
         self.genome = GenomicBottleneck(config) if config.evolve else False
