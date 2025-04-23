@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import json
 import math
 import os
 import random
@@ -279,7 +281,7 @@ parser.add_argument(
     help="Use graph-based routing through experts/layers",
 )
 parser.add_argument(
-    "--routed",
+    "--pathfinder",
     action="store_true",
     default=False,
     help="Use a simple router to select optimal experts/layers",
@@ -442,13 +444,52 @@ def log_command():
     """
     Logs the current command line execution to history.log in the root directory.
     New commands are added to the top of the file.
-    Returns the logged command string.
+    Also computes and stores a hash of the arguments that is order-independent.
+    Returns the logged command string and its hash.
     """
-    # Construct the command and log entry
+    # Construct the command
     script_name = os.path.basename(sys.argv[0])
-    full_command = f"python {script_name} {' '.join(sys.argv[1:])}"
+    args = sys.argv[1:]
+    full_command = f"python {script_name} {' '.join(args)}"
+
+    # Create a normalized representation of arguments for hashing
+    # We'll create a dictionary of argument names and values
+    arg_dict = {}
+    i = 0
+    while i < len(args):
+        if args[i].startswith("-"):
+            # This is an argument name
+            arg_name = args[i]
+
+            # Check if next item is a value or another flag
+            if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                # This is a value
+                arg_dict[arg_name] = args[i + 1]
+                i += 2
+            else:
+                # This is a flag without value
+                arg_dict[arg_name] = True
+                i += 1
+        else:
+            # This is a positional argument
+            pos_arg_name = f"_pos_{i}"
+            arg_dict[pos_arg_name] = args[i]
+            i += 1
+
+    # Sort the dictionary by keys for consistent order
+    sorted_args = dict(sorted(arg_dict.items()))
+
+    # Create a JSON string for hashing (ensures consistent formatting)
+    args_json = json.dumps(sorted_args, sort_keys=True)
+
+    # Generate hash
+    hash_object = hashlib.sha256(args_json.encode())
+    args_hash = hash_object.hexdigest()
+
+    # Format log entry
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_entry = f"{timestamp} | {full_command}\n"
+    truncate_to = 9
+    new_entry = f'{timestamp} | {args_hash[:truncate_to]} | "{full_command}"\n'
 
     # Get the path for history.log in root directory
     log_file = "history.log"
@@ -463,4 +504,4 @@ def log_command():
     with open(log_file, "w") as f:
         f.write(new_entry + existing_content)
 
-    return full_command
+    return full_command, args_hash

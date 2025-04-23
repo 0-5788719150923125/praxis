@@ -232,11 +232,7 @@ class PraxisGraph(nn.Module):
         current_depth: int,
         original_experts: List[nn.Module],
         current_experts: List[nn.Module],
-        current_expert: nn.Module,
     ) -> Tuple[torch.Tensor, Optional[int]]:
-        # Reset used experts at the start of new sequence
-        current_idx = original_experts.index(current_expert)
-        self.current_route.append(current_idx)
 
         # Get available expert indices
         available_indices = [
@@ -292,12 +288,14 @@ class PraxisGraph(nn.Module):
             next_idx = torch.multinomial(probs, num_samples=1).item()
             routing_loss = 0
 
-        return routing_loss, next_idx
+        self.current_route.append(next_idx)
 
         # Update route
         if not self.training and self.visualizer and hidden_states.size(0) == 1:
             # Just send the immediate transition
-            self.visualizer.add_transition(current_idx, next_idx)
+            if current_depth - 1 >= 0:
+                previous_idx = self.current_route[current_depth - 1]
+                self.visualizer.add_transition(previous_idx, next_idx)
 
         return routing_loss, next_idx
 

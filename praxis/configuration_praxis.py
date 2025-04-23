@@ -28,7 +28,7 @@ class PraxisConfig(PretrainedConfig):
         shuffle=False,
         autopilot=False,
         graph=False,
-        routed=False,
+        pathfinder=False,
         attention_type="standard",
         processor="sequential",
         linear=False,
@@ -90,7 +90,7 @@ class PraxisConfig(PretrainedConfig):
         self.shuffle = shuffle
         self.autopilot = autopilot
         self.graph = graph
-        self.routed = routed
+        self.pathfinder = pathfinder
         self.compression = compression
         self.memory = memory
         self.mta = mta

@@ -12,6 +12,8 @@ TEST_PARAMS = {
     "hidden_size": [64, 128],
     "num_heads": [2],
     "shuffle": [True, False],
+    "graph": [True, False],
+    "pathfinder": [True, False],
     "mod": list(MOD_LAYOUT.keys()),
     "depth": [3],
     "num_experts": [3],

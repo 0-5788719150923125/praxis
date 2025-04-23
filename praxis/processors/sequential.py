@@ -24,14 +24,18 @@ class SequentialProcessor(nn.Module):
         new_states = []
         aux_losses = []
 
-        next_expert_idx = None
         for i in range(stack.depth):
-            expert = experts[i]
-            if next_expert_idx is not None:
-                expert = experts[next_expert_idx]
+            next_expert_idx = i
+            if hasattr(stack.behavior, "get_next_expert"):
+                aux_loss, next_expert_idx = stack.behavior.get_next_expert(
+                    hidden_states, i, original_order, experts
+                )
+                aux_losses.append(aux_loss)
+
+            expert = experts[next_expert_idx]
 
             layer_state = current_state[i] if current_state is not None else None
-            hidden_update, past_key_values, layer_state, aux_loss = create_forward(
+            hidden_states, past_key_values, layer_state, aux_loss = create_forward(
                 expert,
                 stack,
                 hidden_states,
@@ -45,18 +49,8 @@ class SequentialProcessor(nn.Module):
             new_states.append(layer_state)
             aux_losses.append(aux_loss)
 
-            if hasattr(stack.behavior, "get_next_expert"):
-                # Predict the optimal next-expert index
-                aux_loss, next_expert_idx = stack.behavior.get_next_expert(
-                    hidden_update, i, original_order, experts, expert
-                )
-                aux_losses.append(aux_loss)
-
             if hasattr(stack, "post_layer"):
-                hidden_update = stack.post_layer(hidden_update, i)
-
-            # Commit to self
-            hidden_states = hidden_update
+                hidden_states = stack.post_layer(hidden_states, i)
 
         if hasattr(stack, "post_decoding"):
             hidden_states = stack.post_decoding(hidden_states)
