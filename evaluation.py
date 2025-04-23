@@ -1,15 +1,8 @@
-import contextlib
-import io
 import logging
 import os
-
-os.environ["TQDM_DISABLE"] = "1"
-os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
+from pprint import pprint
 
 import datasets
-
-datasets.disable_progress_bars()
-datasets.disable_progress_bar()
 import lighteval
 from lighteval.models.transformers.transformers_model import TransformersModel
 
@@ -19,12 +12,22 @@ class QuietTransformersModel(TransformersModel):
     def disable_tqdm(self) -> bool:
         return True
 
+    # def _create_auto_model(self, model=None) -> transformers.PreTrainedModel:
+    #     if model:
+    #         pass
+    #     else:
+    #         return super()._create_auto_model()
+
 
 lighteval.models.transformers.transformers_model.TransformersModel = (
     QuietTransformersModel
 )
+
 from lighteval.logging.evaluation_tracker import EvaluationTracker
-from lighteval.models.transformers.transformers_model import TransformersModelConfig
+from lighteval.models.transformers.transformers_model import (
+    TransformersModel,
+    TransformersModelConfig,
+)
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
@@ -35,26 +38,22 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 
-# Global configuration
-cache_dir = "data"
-device = "cpu"
-vocab_size = 16384
+def evaluate_model(
+    model=None,
+    model_config=None,
+    max_samples=None,
+    task="helm|mmlu|5|1",
+    device="cpu",
+    vocab_size=16384,
+    verbose=True,
+):
 
-
-def evaluate_model(model=None, model_config=None, max_samples=None, verbose=True):
+    cache_dir = "data"
 
     if not verbose:
-
         logging.getLogger("lighteval").setLevel(logging.CRITICAL)
         logging.getLogger("transformers").setLevel(logging.CRITICAL)
-        logging.getLogger("datasets").setLevel(logging.CRITICAL)
-        logging.getLogger("pyarrow").setLevel(logging.CRITICAL)
-        logging.getLogger("tqdm").setLevel(logging.CRITICAL)
-        logging.getLogger("tqdm.std").setLevel(logging.CRITICAL)
-        logging.getLogger("pyarrow.parquet").setLevel(logging.CRITICAL)
-        logging.getLogger("datasets.builder").setLevel(logging.CRITICAL)
-        logging.getLogger("datasets.arrow_dataset").setLevel(logging.CRITICAL)
-        logging.getLogger("datasets.splits").setLevel(logging.CRITICAL)
+        datasets.disable_progress_bars()
 
     evaluation_tracker = EvaluationTracker(
         output_dir=os.path.join(cache_dir, "eval"),
@@ -74,8 +73,10 @@ def evaluate_model(model=None, model_config=None, max_samples=None, verbose=True
             model_parallel=False,
             batch_size=1,
         )
-
-    task = "helm|mmlu|5|1"
+    elif model is not None:
+        model = TransformersModel.from_model(
+            model, tokenizer_name=f"UNSAFE/praxis-{vocab_size}"
+        )
 
     pipeline = Pipeline(
         tasks=task,
@@ -84,17 +85,15 @@ def evaluate_model(model=None, model_config=None, max_samples=None, verbose=True
         model=model,
         model_config=model_config,
     )
-    # print(pipeline)
-    # pipeline.model.disable_tqdm = True
-    # setattr(pipeline.model, "disable_tqdm", True)
+
     pipeline.evaluate()
     pipeline.save_and_push_results()
 
     if verbose:
         pipeline.show_results()
 
-    return pipeline.get_results()["results"]["all"]["pqem"]
+    return pipeline.get_results()
 
 
 if __name__ == "__main__":
-    evaluate_model(max_samples=10, verbose=False)
+    evaluate_model(max_samples=10, verbose=True)

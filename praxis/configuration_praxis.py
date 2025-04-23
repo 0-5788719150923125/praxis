@@ -19,7 +19,7 @@ class PraxisConfig(PretrainedConfig):
         epsilon=1e-5,
         capacity=0.125,
         vocab_size=8192,
-        context_length=4096,
+        max_length=4096,
         activation="mish",
         block="transformer",
         expert="glu",
@@ -81,7 +81,7 @@ class PraxisConfig(PretrainedConfig):
         self.epsilon = epsilon
         self.capacity = capacity
         self.vocab_size = vocab_size
-        self.context_length = context_length
+        self.max_length = max_length
         self.activation = activation
         self.block_type = block
         self.expert = expert

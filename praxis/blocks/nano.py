@@ -116,7 +116,7 @@ if __name__ == "__main__":
     class AutoConfig:
         hidden_size: int = 768
         embed_size: int = 768
-        context_length: int = 8192
+        max_length: int = 8192
         vocab_size: int = 50257
         causal: bool = True
         dropout: float = 0.0

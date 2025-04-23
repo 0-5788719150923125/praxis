@@ -309,7 +309,7 @@ if __name__ == "__main__":
         hidden_size: int = 768
         embed_size: int = 768
         num_heads: int = 4
-        context_length: int = 2048
+        max_length: int = 2048
         vocab_size: int = 50257
         causal: bool = True
         dropout: float = 0.0

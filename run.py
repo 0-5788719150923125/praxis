@@ -104,7 +104,7 @@ from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-# from evaluation import evaluate_model
+from evaluation import evaluate_model
 from optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
@@ -200,7 +200,7 @@ config = PraxisConfig(
     encoding=encoding_type,
     checkpoint_every=checkpoint_every,
     loss_func=loss_func,
-    context_length=block_size * 8,
+    max_length=block_size * 8,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
@@ -1250,7 +1250,15 @@ train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
 
-# evaluate_model(model, max_samples=10)
+# output = evaluate_model(
+#     model,
+#     max_samples=10,
+#     task="helm|mmlu|5|1",
+#     device=device,
+#     vocab_size=vocab_size,
+#     verbose=False,
+# )
+# print(output)
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)

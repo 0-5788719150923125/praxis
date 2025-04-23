@@ -707,7 +707,7 @@ def test_praxis_memory():
         hidden_size=embed_dim,
         num_heads=num_heads,
         dropout=dropout,
-        context_length=512,
+        max_length=512,
         causal=True,
         differential=False,
         vocab_size=8192,

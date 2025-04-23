@@ -1039,7 +1039,7 @@ def create_base_args(config):
         n_heads=4,
         n_heads_local_encoder=4,
         n_heads_local_decoder=4,
-        max_seqlen=config.context_length,
+        max_seqlen=config.max_length,
         eos_id=0,  # currently we split packed sequences with the pad_token ID
         # max_encoder_seq_length=8192,
     )

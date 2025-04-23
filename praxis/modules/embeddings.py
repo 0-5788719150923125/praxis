@@ -38,7 +38,7 @@ class PraxisLearnedEmbeddings(nn.Sequential):
         layers = OrderedDict(
             [
                 ("wte", nn.Embedding(config.vocab_size, config.embed_size)),
-                ("wpe", nn.Embedding(config.context_length, config.embed_size)),
+                ("wpe", nn.Embedding(config.max_length, config.embed_size)),
                 ("dropout", nn.Dropout(config.dropout)),
                 ("reduction", nn.Linear(config.embed_size, config.hidden_size)),
             ]
