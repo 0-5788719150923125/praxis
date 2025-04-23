@@ -43,7 +43,6 @@ class PraxisDecoder(nn.Module):
             block_ids,
             current_state,
             original_order,
-            self.training,
         )
 
     def get_metrics(self):

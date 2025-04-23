@@ -25,7 +25,6 @@ class ParallelProcessor(nn.Module):
         block_ids,
         current_state,
         original_order,
-        training: bool = False,
     ):
         hidden_states = inputs
         new_states = []
@@ -45,7 +44,7 @@ class ParallelProcessor(nn.Module):
                     layer_state,
                     idx,
                     block_ids,
-                    should_checkpoint(training, idx, stack.checkpoint_every),
+                    should_checkpoint(self.training, idx, stack.checkpoint_every),
                 )
 
             return expert_forward

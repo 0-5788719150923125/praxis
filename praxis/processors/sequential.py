@@ -18,7 +18,6 @@ class SequentialProcessor(nn.Module):
         block_ids,
         current_state,
         original_order,
-        training: bool = False,
     ):
         hidden_states = inputs
         new_states = []
@@ -46,7 +45,7 @@ class SequentialProcessor(nn.Module):
                 layer_state,
                 i,
                 block_ids,
-                should_checkpoint(training, i, stack.checkpoint_every),
+                should_checkpoint(self.training, i, stack.checkpoint_every),
             )
             new_states.append(layer_state)
             aux_losses.append(aux_loss)
