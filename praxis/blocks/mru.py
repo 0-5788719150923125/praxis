@@ -12,7 +12,8 @@ from praxis.modules.dense import PraxisMLP
 
 class PraxisMRU(nn.Module):
     """
-    A recurrent model with efficient parallel scan. Based upon:
+    A recurrent model with efficient parallel scan.
+    Based upon Matrix Recurrent Units:
     https://github.com/mikayahlevi/mru-lm/tree/main
     """
 

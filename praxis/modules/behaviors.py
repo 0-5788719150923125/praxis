@@ -203,11 +203,15 @@ class Pathfinder(nn.Module):
         self.current_route.append(next_expert_idx)
 
         # Update visualizer
-        if not self.training and self.visualizer and hidden_states.size(0) == 1:
+        if (
+            self.visualizer
+            and not self.training
+            and hidden_states.size(0) == 1  # not validation
+            and current_depth - 1 >= 0  # not the final layer
+        ):
             # Just send the immediate transition
-            if current_depth - 1 >= 0:
-                previous_idx = self.current_route[current_depth - 1]
-                self.visualizer.add_transition(previous_idx, next_expert_idx)
+            previous_idx = self.current_route[current_depth - 1]
+            self.visualizer.add_transition(previous_idx, next_expert_idx)
 
         return gating_loss, next_expert_idx
 
