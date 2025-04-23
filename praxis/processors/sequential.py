@@ -31,6 +31,8 @@ class SequentialProcessor(nn.Module):
                     hidden_states, i, original_order, experts
                 )
                 aux_losses.append(aux_loss)
+                if next_expert_idx is None:
+                    break
 
             expert = experts[next_expert_idx]
 

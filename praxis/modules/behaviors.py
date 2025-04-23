@@ -136,14 +136,20 @@ class Pathfinder(nn.Module):
     the current hidden state.
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: "AutoConfig", allow_early_exits=False):
         super().__init__()
         self.debug = config.debug
+
+        self.depth = config.depth
+        true_depth = self.depth
+        if allow_early_exits:
+            true_depth += 1
+
         self.current_route = []
 
         # Create a gating network for each layer to decide the next layer
         self.gates = nn.ModuleList(
-            [nn.Linear(config.hidden_size, config.depth) for _ in range(config.depth)]
+            [nn.Linear(config.hidden_size, true_depth) for _ in range(true_depth)]
         )
 
         self.visualizer = (
@@ -198,6 +204,10 @@ class Pathfinder(nn.Module):
 
         # Select the next layer (expert) to process
         next_expert_idx = torch.argmax(gate_probs, dim=1)[0].item()
+
+        # Allow early exits
+        if next_expert_idx == self.depth:
+            return gating_loss, None
 
         # Record the current layer in the route
         self.current_route.append(next_expert_idx)

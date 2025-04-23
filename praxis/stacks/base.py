@@ -32,7 +32,7 @@ class PraxisStack(nn.Module):
         if config.graph:
             self.behavior = PraxisGraph(config)
         elif config.pathfinder:
-            self.behavior = Pathfinder(config)
+            self.behavior = Pathfinder(config, allow_early_exits=False)
         else:
             self.behavior = LayerShuffle(config) if config.shuffle else False
         self.genome = GenomicBottleneck(config) if config.evolve else False
