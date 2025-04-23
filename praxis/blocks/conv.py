@@ -22,7 +22,8 @@ class PraxisConv(nn.Module):
     def __init__(self, config: "AutoConfig", *args, **kwargs):
         super().__init__()
         hidden_dim = config.hidden_size
-        projection = int(hidden_dim * (1 + config.capacity))
+        capacity = 0.125
+        projection = int(hidden_dim * (1 + capacity))
 
         # Local processing
         self.conv_norm = nn.LayerNorm(hidden_dim)
@@ -30,7 +31,7 @@ class PraxisConv(nn.Module):
         self.conv = MultiHeadCausalConv1d(hidden_dim, projection, num_heads=3)
 
         # Global context processing
-        self.gc = CausalGlobalContext(projection, capacity=config.capacity)
+        self.gc = CausalGlobalContext(projection, capacity=capacity)
         self.reduce = nn.Linear(projection, hidden_dim)
 
         config.activation = "sin_cos"

@@ -13,26 +13,26 @@ from praxis.utils import (
 
 MOD_LAYOUT = {
     "decayed": lambda config: generate_decay_values(
-        config.depth, reverse=True, center=0.5, lower_bound=config.capacity
+        config.depth, reverse=True, center=0.5, lower_bound=0.125
     ),
     "ramped": lambda config: generate_decay_values(
-        config.depth, center=0.5, lower_bound=config.capacity
+        config.depth, center=0.5, lower_bound=0.125
     ),
     "u": lambda config: generate_u_shape_values(
         config.depth,
         decay_point=0.1,
         ramp_point=0.9,
-        lower_bound=config.capacity,
+        lower_bound=0.125,
         steepness=2.0,
     ),
     "skip_3": lambda config: generate_alternating_values(
-        size=config.depth, interval=2, capacity=config.capacity
+        size=config.depth, interval=2, capacity=0.125
     ),
     "skip_2": lambda config: generate_alternating_values(
-        size=config.depth, interval=2, capacity=config.capacity
+        size=config.depth, interval=2, capacity=0.125
     ),
     "standard": lambda config: generate_alternating_values(
-        size=config.depth, interval=1, capacity=config.capacity
+        size=config.depth, interval=1, capacity=0.125
     ),
 }
 
