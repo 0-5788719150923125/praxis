@@ -360,7 +360,8 @@ class RouteVisualizer:
         node_colors = {}
 
         for node in G.nodes():
-            color = plt.cm.YlOrRd(node_usage[node] / max_usage)
+            # color = plt.cm.YlOrRd(node_usage[node] / max_usage)
+            color = blue_to_red(node_usage[node] / max_usage)
             node_colors[node] = color
             self._create_feathered_node(ax, pos[node], color)
 
