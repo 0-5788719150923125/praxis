@@ -147,6 +147,16 @@ class Pathfinder(nn.Module):
             [nn.Linear(config.hidden_size, config.depth) for _ in range(config.depth)]
         )
 
+        self.visualizer = (
+            RouteVisualizer(
+                num_experts=config.num_experts,
+                max_history=10000,
+                save_rate=100 * config.depth,
+            )
+            if self.debug
+            else False
+        )
+
     def add_context(
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, position: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -170,24 +180,6 @@ class Pathfinder(nn.Module):
         original_experts: List[nn.Module],
         current_experts: List[nn.Module],
     ) -> Tuple[torch.Tensor, Optional[int]]:
-        """
-        Determine the next layer to process using a gating mechanism.
-
-        Args:
-            hidden_states: Current hidden states [batch_size, seq_len, hidden_size]
-            current_depth: Current layer depth
-            original_experts: List of original experts/layers
-            current_experts: List of current experts/layers
-            current_expert: Current expert/layer
-
-        Returns:
-            Tuple of (gating_loss, next_expert_idx)
-        """
-
-        # Check if we've reached the maximum depth
-        if current_depth >= self.depth:
-            return torch.tensor(0.0, device=hidden_states.device), current_depth
-
         # Pool the hidden states - using mean pooling for simplicity
         pooled_hidden = hidden_states.mean(dim=1)  # [batch_size, hidden_size]
 
@@ -210,6 +202,13 @@ class Pathfinder(nn.Module):
 
         # Record the current layer in the route
         self.current_route.append(next_expert_idx)
+
+        # Update visualizer
+        if not self.training and self.visualizer and hidden_states.size(0) == 1:
+            # Just send the immediate transition
+            if current_depth - 1 >= 0:
+                previous_idx = self.current_route[current_depth - 1]
+                self.visualizer.add_transition(previous_idx, next_expert_idx)
 
         return gating_loss, next_expert_idx
 

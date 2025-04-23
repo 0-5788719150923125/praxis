@@ -273,7 +273,7 @@ class RouteVisualizer:
 
     def _save_visualization(self):
         fig, ax = plt.subplots(figsize=(15, 10))
-        plt.suptitle("Expert-Routing Graph", fontsize=16, y=0.93)
+        plt.suptitle("Pathfinder Graph", fontsize=16, y=0.93)
         plt.subplots_adjust(top=0.90)
         ax.set_aspect("equal", adjustable="datalim")
         ax.set_axis_on()
