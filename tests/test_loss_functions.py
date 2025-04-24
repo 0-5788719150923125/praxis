@@ -28,10 +28,10 @@ def test_forward_pass(module_setup):
     logits = classifier(embeddings)
     labels = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len))
     loss = loss_function(
-        logits=logits,
+        logits=logits[..., :-1, :].contiguous(),
         embeddings=embeddings,
         classifier=classifier,
-        labels=labels,
+        labels=labels[..., 1:].contiguous(),
         input_ids=labels,
     )
     assert torch.is_tensor(loss)

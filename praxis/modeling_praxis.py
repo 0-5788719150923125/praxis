@@ -144,7 +144,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         loss = 0
         if labels is not None:
             loss = self.criterion(
-                logits=logits,
+                logits=logits[..., :-1, :].contiguous(),
                 embeddings=outputs.last_hidden_state,
                 classifier=self.head,
                 labels=labels,

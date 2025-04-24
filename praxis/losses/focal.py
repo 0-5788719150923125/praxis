@@ -32,10 +32,8 @@ class FocalLoss(nn.Module):
         self, logits: torch.Tensor, labels: torch.Tensor, *args, **kwargs
     ) -> torch.Tensor:
         # 1. Shift inputs for next-token prediction and reshape
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
-        shift_labels = shift_labels.view(-1).unsqueeze(1)
+        shift_logits = logits.view(-1, logits.shape[-1])
+        shift_labels = labels.view(-1).unsqueeze(1)
 
         # 2. Calculate probabilities and focal loss components
         log_probs = F.log_softmax(shift_logits, dim=1)  # Shape: (N, V)

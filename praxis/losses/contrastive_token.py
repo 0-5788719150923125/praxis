@@ -45,16 +45,14 @@ class ContrastiveTokenLoss(nn.Module):
         *args,
         **kwargs,
     ):
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        shift_logits_flat = shift_logits.view(-1, shift_logits.shape[-1])
-        shift_labels_flat = shift_labels.view(-1)
+        shift_logits_flat = logits.view(-1, logits.shape[-1])
+        shift_labels_flat = labels.view(-1)
         ce_loss = F.cross_entropy(
             shift_logits_flat, shift_labels_flat, reduction="mean", ignore_index=-100
         )
         ct_loss = contrastive_token_loss(
-            shift_logits,
-            shift_labels,
+            logits,
+            labels,
             self.ignore_index,
             self.pad_id,
             self.ct_length,

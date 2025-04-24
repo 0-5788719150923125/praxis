@@ -33,10 +33,8 @@ class MiLeLoss(nn.Module):
         *args,
         **kwargs,
     ):
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
-        shift_labels = shift_labels.view(-1)
+        shift_logits = logits.view(-1, logits.shape[-1])
+        shift_labels = labels.view(-1)
         ce_loss = F.cross_entropy(
             shift_logits, shift_labels, reduction="none", ignore_index=-100
         )
