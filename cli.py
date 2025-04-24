@@ -55,9 +55,9 @@ class CustomHelpFormatter(argparse.HelpFormatter):
             else:
                 # It takes a value (like --file <value>)
                 return f"{', '.join(action.option_strings)} <value>"
-        else:
-            # It's a positional argument
-            return f"<{action.dest}>"
+        # else:
+        #     # It's a positional argument
+        #     return f"<{action.dest}>"
 
     def _get_help_string(self, action):
         help_text = action.help or ""
@@ -148,6 +148,13 @@ persistence_group.add_argument(
 )
 # architecture
 architecture_group.add_argument(
+    "--decoder_type",
+    type=str,
+    choices=list(DECODER_REGISTRY.keys()),
+    default="sequential",
+    help="How to process layers in the decoder",
+)
+architecture_group.add_argument(
     "--block_type",
     type=str,
     choices=BLOCK_REGISTRY.keys(),
@@ -160,6 +167,13 @@ architecture_group.add_argument(
     choices=EXPERT_REGISTRY.keys(),
     default="glu",
     help="The module to use for feedforward networks",
+)
+architecture_group.add_argument(
+    "--attention_type",
+    type=str,
+    choices=ATTENTION_REGISTRY.keys(),
+    default="standard",
+    help="The base attention implementation to use",
 )
 architecture_group.add_argument(
     "--encoding_type",
@@ -260,20 +274,6 @@ hparam_group.add_argument(
     type=int,
     default=256,
     help="The actual batch size to use, including accumulation steps",
-)
-hparam_group.add_argument(
-    "--attention_type",
-    type=str,
-    choices=ATTENTION_REGISTRY.keys(),
-    default="standard",
-    help="The base attention implementation to use",
-)
-hparam_group.add_argument(
-    "--decoder_type",
-    type=str,
-    choices=list(DECODER_REGISTRY.keys()),
-    default="sequential",
-    help="How to process layers in the decoder",
 )
 hparam_group.add_argument(
     "--block_size",
