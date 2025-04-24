@@ -34,9 +34,9 @@ class BaseController(nn.Module):
     def get_next_expert(
         self,
         hidden_states: torch.Tensor,
+        sequential_experts: List[nn.Module],
+        ordered_experts: List[nn.Module],
         current_depth: int,
-        original_experts: List[nn.Module],
-        current_experts: List[nn.Module],
     ) -> Tuple[torch.Tensor, Optional[int]]:
         return 0, current_depth
 

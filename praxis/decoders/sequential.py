@@ -26,10 +26,7 @@ class SequentialDecoder(nn.Module):
 
         for i in range(self.stack.depth):
             aux_loss, next_expert_idx = self.stack.controller.get_next_expert(
-                hidden_states,
-                current_depth=i,
-                original_experts=sequential_experts,
-                current_experts=ordered_experts,
+                hidden_states, sequential_experts, ordered_experts, current_depth=i
             )
             aux_losses.append(aux_loss)
             if next_expert_idx is None:

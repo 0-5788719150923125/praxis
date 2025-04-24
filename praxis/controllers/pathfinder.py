@@ -42,28 +42,12 @@ class Pathfinder(BaseController):
             else False
         )
 
-    def add_context(
-        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, position: int
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """No-op implementation to maintain API compatibility."""
-        return hidden_states, attention_mask
-
-    def remove_context(
-        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """No-op implementation to maintain API compatibility."""
-        return hidden_states, attention_mask
-
-    def sort_experts(self, experts: list, allow_resampling: bool = False) -> list:
-        """No-op to maintain API compatibility."""
-        return experts
-
     def get_next_expert(
         self,
         hidden_states: torch.Tensor,
+        sequential_experts: List[nn.Module],
+        ordered_experts: List[nn.Module],
         current_depth: int,
-        original_experts: List[nn.Module],
-        current_experts: List[nn.Module],
     ) -> Tuple[torch.Tensor, Optional[int]]:
         # Pool the hidden states - using mean pooling for simplicity
         pooled_hidden = hidden_states.mean(dim=1)  # [batch_size, hidden_size]
