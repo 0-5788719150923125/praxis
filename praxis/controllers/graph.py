@@ -300,7 +300,7 @@ class GraphRouter(BaseController):
 
         return routing_loss, next_idx
 
-    def reset_route(self):
+    def reset_route(self, hidden_states):
         if self.debug:
             route = [str(r) for r in self.current_route]
             if not self.training:

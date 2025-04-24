@@ -40,6 +40,6 @@ class BaseController(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[int]]:
         return 0, current_depth
 
-    def reset_route(self):
+    def reset_route(self, hidden_states):
         """No-op to maintain API compatibility."""
         pass

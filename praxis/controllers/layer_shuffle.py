@@ -118,9 +118,10 @@ class LayerShuffle(BaseController):
 
         return aux_loss, next_expert_idx
 
-    def reset_route(self):
+    def reset_route(self, hidden_states):
+        """Reset the tracking of the current route through layers."""
         if self.debug:
             route = [str(r) for r in self.current_route]
-            if not self.training:
+            if not self.training and hidden_states.size(0) == 1:  # not validation
                 print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
         self.current_route = []
