@@ -51,11 +51,9 @@ class SequentialDecoder(nn.Module):
             new_states.append(layer_state)
             aux_losses.append(aux_loss)
 
-            if hasattr(self.stack, "post_layer"):
-                hidden_states = self.stack.post_layer(hidden_states, i)
+            hidden_states = self.stack.post_layer(hidden_states, i)
 
-        if hasattr(self.stack, "post_decoding"):
-            hidden_states = self.stack.post_decoding(hidden_states)
+        hidden_states = self.stack.post_decoding(hidden_states)
 
         self.stack.controller.reset_route()
 

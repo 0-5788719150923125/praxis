@@ -71,9 +71,7 @@ class ParallelDecoder(nn.Module):
                 new_states.append(layer_state)
                 aux_losses.append(aux_loss)
 
-                # Apply post_layer transformation if defined
-                if hasattr(self.stack, "post_layer"):
-                    hidden_update = self.stack.post_layer(hidden_update, i)
+                hidden_update = self.stack.post_layer(hidden_update, i)
 
                 all_hidden_updates.append(hidden_update)
                 valid_expert_indices.append(i)
@@ -84,8 +82,7 @@ class ParallelDecoder(nn.Module):
         )
 
         # Apply post-decoding if defined
-        if hasattr(self.stack, "post_decoding"):
-            hidden_states = self.stack.post_decoding(hidden_states)
+        hidden_states = self.stack.post_decoding(hidden_states)
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)
 
