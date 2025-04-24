@@ -424,13 +424,23 @@ def get_cli_args():
     return args
 
 
-def log_command():
+def log_command(exclude_from_hash=["--reset"]):
     """
     Logs the current command line execution to history.log in the root directory.
     New commands are added to the top of the file.
     Also computes and stores a hash of the arguments that is order-independent.
-    Returns the logged command string and its hash.
+
+    Args:
+        exclude_from_hash (list, optional): List of argument names to exclude from hashing.
+            Example: ['--verbose', '--log-level', '--output']
+
+    Returns:
+        tuple: (full_command, args_hash)
     """
+    # Default to empty list if None
+    if exclude_from_hash is None:
+        exclude_from_hash = []
+
     # Construct the command
     script_name = os.path.basename(sys.argv[0])
     args = sys.argv[1:]
@@ -448,16 +458,24 @@ def log_command():
             # Check if next item is a value or another flag
             if i + 1 < len(args) and not args[i + 1].startswith("-"):
                 # This is a value
-                arg_dict[arg_name] = args[i + 1]
+                # Only add to arg_dict if not in exclude list
+                if arg_name not in exclude_from_hash:
+                    arg_dict[arg_name] = args[i + 1]
                 i += 2
             else:
                 # This is a flag without value
-                arg_dict[arg_name] = True
+                # Only add to arg_dict if not in exclude list
+                if arg_name not in exclude_from_hash:
+                    arg_dict[arg_name] = True
                 i += 1
         else:
             # This is a positional argument
+            # For positional args, we need to be careful with exclusions
+            # We'll use an index that accounts for excluded positional args
             pos_arg_name = f"_pos_{i}"
-            arg_dict[pos_arg_name] = args[i]
+            # Always add positional arguments unless specifically excluded
+            if pos_arg_name not in exclude_from_hash:
+                arg_dict[pos_arg_name] = args[i]
             i += 1
 
     # Sort the dictionary by keys for consistent order
