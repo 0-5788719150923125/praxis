@@ -55,6 +55,6 @@ class SequentialDecoder(nn.Module):
 
         hidden_states = self.stack.post_decoding(hidden_states)
 
-        self.stack.controller.reset_route()
+        self.stack.controller.reset_route(hidden_states)
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)
