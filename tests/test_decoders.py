@@ -4,7 +4,7 @@ from typing import List
 import pytest
 import torch
 
-from praxis import DECODER_REGISTRY, PraxisConfig
+from praxis import BLOCK_REGISTRY, DECODER_REGISTRY, PraxisConfig
 from praxis.modules.router import MOD_LAYOUT
 
 TEST_PARAMS = {
@@ -17,6 +17,7 @@ TEST_PARAMS = {
     "depth": [3],
     "num_experts": [3],
     "decoder_type": list(DECODER_REGISTRY.keys()),
+    "block_type": list(BLOCK_REGISTRY.keys()),
 }
 PARAM_KEYS = list(TEST_PARAMS.keys())
 
