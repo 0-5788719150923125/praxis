@@ -180,7 +180,6 @@ config = PraxisConfig(
     linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,
-    compression=compression,
     memory=memory,
     mta=mta,
     mega=mega,

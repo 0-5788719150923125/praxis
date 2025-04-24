@@ -19,18 +19,18 @@ class Pathfinder(BaseController):
     def __init__(self, config: "AutoConfig", allow_early_exits=False):
         super().__init__(config)
         self.debug = config.debug
-
         self.depth = config.depth
-        true_depth = self.depth
-        if allow_early_exits:
-            true_depth += 1
-
-        self.current_route = []
 
         # Create a gating network for each layer to decide the next layer
+        extra = int(allow_early_exits)
         self.gates = nn.ModuleList(
-            [nn.Linear(config.hidden_size, true_depth) for _ in range(true_depth)]
+            [
+                nn.Linear(config.hidden_size, self.depth + extra)
+                for _ in range(self.depth + extra)
+            ]
         )
+
+        self.current_route = []
 
         self.visualizer = (
             RouteVisualizer(
@@ -96,7 +96,7 @@ class Pathfinder(BaseController):
             self.visualizer
             and not self.training
             and hidden_states.size(0) == 1  # not validation
-            and current_depth - 1 >= 0  # not the final layer
+            and current_depth > 0  # not the final layer
         ):
             # Just send the immediate transition
             previous_idx = self.current_route[current_depth - 1]

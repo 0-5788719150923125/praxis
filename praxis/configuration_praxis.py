@@ -30,7 +30,6 @@ class PraxisConfig(PretrainedConfig):
         linear=False,
         differential=False,
         stickbreaking=False,
-        compression=False,
         memory=False,
         mta=False,
         mega=False,
@@ -83,7 +82,6 @@ class PraxisConfig(PretrainedConfig):
         self.encoding = encoding
         self.mod = mod
         self.controller_type = controller_type
-        self.compression = compression
         self.memory = memory
         self.mta = mta
         self.mega = mega

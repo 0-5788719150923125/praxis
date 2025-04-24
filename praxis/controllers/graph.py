@@ -294,7 +294,7 @@ class GraphRouter(BaseController):
         # Update route
         if not self.training and self.visualizer and hidden_states.size(0) == 1:
             # Just send the immediate transition
-            if current_depth - 1 >= 0:
+            if current_depth > 0:
                 previous_idx = self.current_route[current_depth - 1]
                 self.visualizer.add_transition(previous_idx, next_idx)
 
