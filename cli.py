@@ -21,6 +21,10 @@ from praxis import (
 )
 
 
+def wrap_green(text):
+    return f"\033[92m{text}\033[00m"
+
+
 # User args, accepted via CLI
 class CustomHelpFormatter(argparse.HelpFormatter):
     def __init__(self, prog, indent_increment=2, max_help_position=30, width=None):
@@ -62,15 +66,15 @@ class CustomHelpFormatter(argparse.HelpFormatter):
         if action.type is not None and hasattr(action.type, "__name__"):
             type_name = action.type.__name__
             if type_name != "_":  # Skip the complex lambda validator
-                help_text = f"({type_name}) {help_text}"
-        elif isinstance(action, argparse._StoreAction) and action.nargs in [None, 1]:
-            # No explicit type but it's a normal argument that stores a value
-            help_text = f"(str) {help_text}"
+                help_text = f"({wrap_green(type_name)}) {help_text}"
+        # elif isinstance(action, argparse._StoreAction) and action.nargs in [None, 1]:
+        #     # No explicit type but it's a normal argument that stores a value
+        #     help_text = f"(str) {help_text}"
         elif isinstance(action, argparse._StoreTrueAction) or isinstance(
             action, argparse._StoreFalseAction
         ):
             # It's a boolean flag
-            help_text = f"(bool) {help_text}"
+            help_text = f"({wrap_green('bool')}) {help_text}"
 
         # Add choices information when available (but only in the help text)
         if action.choices is not None:
@@ -81,9 +85,9 @@ class CustomHelpFormatter(argparse.HelpFormatter):
         if action.default is not argparse.SUPPRESS:
             # Always show default, even if it's None
             default_str = str(action.default)
-            # Truncate very long default values
-            if len(default_str) > 20:
-                default_str = default_str[:17] + "..."
+            # # Truncate very long default values
+            # if len(default_str) > 20:
+            #     default_str = default_str[:17] + "..."
             help_text = f"{help_text} (default: {default_str})"
 
         return help_text
