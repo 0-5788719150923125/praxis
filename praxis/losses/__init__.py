@@ -3,6 +3,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 
+from praxis.losses.contrastive_token import ContrastiveTokenLoss
 from praxis.losses.cross_entropy import CrossEntropyLoss
 from praxis.losses.cut_cross_entropy import CutCrossEntropyLoss
 from praxis.losses.focal import FocalLoss
@@ -27,6 +28,7 @@ LOSS_REGISTRY = {
     ),
     "mile": MiLeLoss,
     "stablemax": StableMaxCrossEntropyLoss,
+    "contrastive_token": ContrastiveTokenLoss,
     "cut_cross_entropy": CutCrossEntropyLoss,
 }
 
