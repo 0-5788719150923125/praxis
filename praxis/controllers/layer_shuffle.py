@@ -83,7 +83,7 @@ class LayerShuffle(BaseController):
             trimmed_mask = attention_mask[:, self.num_context_tokens :]
         return trimmed_states, trimmed_mask
 
-    def shuffle_experts(self, experts: list, allow_resampling: bool = False) -> list:
+    def sort_experts(self, experts: list, allow_resampling: bool = False) -> list:
         depth = self.depth
         if allow_resampling:
             return random.choices(experts, k=depth)

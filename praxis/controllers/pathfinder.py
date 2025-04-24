@@ -54,7 +54,7 @@ class Pathfinder(BaseController):
         """No-op implementation to maintain API compatibility."""
         return hidden_states, attention_mask
 
-    def shuffle_experts(self, experts: list, allow_resampling: bool = False) -> list:
+    def sort_experts(self, experts: list, allow_resampling: bool = False) -> list:
         """No-op to maintain API compatibility."""
         return experts
 

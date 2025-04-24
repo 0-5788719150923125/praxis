@@ -25,7 +25,7 @@ class BaseController(nn.Module):
         """No-op implementation to maintain API compatibility."""
         return hidden_states, attention_mask
 
-    def shuffle_experts(
+    def sort_experts(
         self, experts: List[nn.Module], *args, **kwargs
     ) -> List[nn.Module]:
         """No-op to maintain API compatibility."""

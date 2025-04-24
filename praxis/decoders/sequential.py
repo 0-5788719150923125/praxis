@@ -22,13 +22,14 @@ class SequentialDecoder(nn.Module):
         aux_losses = []
 
         sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
-        ordered_experts = self.stack.controller.shuffle_experts(
-            sequential_experts.copy()
-        )
+        ordered_experts = self.stack.controller.sort_experts(sequential_experts.copy())
 
         for i in range(self.stack.depth):
             aux_loss, next_expert_idx = self.stack.controller.get_next_expert(
-                hidden_states, i, sequential_experts, ordered_experts
+                hidden_states,
+                current_depth=i,
+                original_experts=sequential_experts,
+                current_experts=ordered_experts,
             )
             aux_losses.append(aux_loss)
             if next_expert_idx is None:
