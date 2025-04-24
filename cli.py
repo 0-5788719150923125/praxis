@@ -55,9 +55,6 @@ class CustomHelpFormatter(argparse.HelpFormatter):
             else:
                 # It takes a value (like --file <value>)
                 return f"{', '.join(action.option_strings)} <value>"
-        # else:
-        #     # It's a positional argument
-        #     return f"<{action.dest}>"
 
     def _get_help_string(self, action):
         help_text = action.help or ""
@@ -65,11 +62,9 @@ class CustomHelpFormatter(argparse.HelpFormatter):
         # Add type information when available
         if action.type is not None and hasattr(action.type, "__name__"):
             type_name = action.type.__name__
-            if type_name != "_":  # Skip the complex lambda validator
-                help_text = f"({wrap_green(type_name)}) {help_text}"
-        # elif isinstance(action, argparse._StoreAction) and action.nargs in [None, 1]:
-        #     # No explicit type but it's a normal argument that stores a value
-        #     help_text = f"(str) {help_text}"
+            if str(type_name) == "<lambda>":
+                type_name = "str"
+            help_text = f"({wrap_green(type_name)}) {help_text}"
         elif isinstance(action, argparse._StoreTrueAction) or isinstance(
             action, argparse._StoreFalseAction
         ):
@@ -84,11 +79,7 @@ class CustomHelpFormatter(argparse.HelpFormatter):
         # Add default value information when available
         if action.default is not argparse.SUPPRESS:
             # Always show default, even if it's None
-            default_str = str(action.default)
-            # # Truncate very long default values
-            # if len(default_str) > 20:
-            #     default_str = default_str[:17] + "..."
-            help_text = f"{help_text} (default: {default_str})"
+            help_text = f"{help_text} (default: {str(action.default)})"
 
         return help_text
 
