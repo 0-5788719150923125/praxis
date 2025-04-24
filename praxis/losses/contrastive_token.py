@@ -42,11 +42,17 @@ class ContrastiveTokenLoss(nn.Module):
         self,
         logits: torch.Tensor,
         labels: torch.Tensor,
-        input_ids: torch.Tensor,
         *args,
         **kwargs,
     ):
-        return contrastive_token_loss(
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
+        shift_labels = shift_labels.view(-1)
+        ce_loss = F.cross_entropy(
+            shift_logits, shift_labels, reduction="mean", ignore_index=-100
+        )
+        ct_loss = contrastive_token_loss(
             logits,
             labels,
             self.ignore_index,
@@ -54,6 +60,7 @@ class ContrastiveTokenLoss(nn.Module):
             self.ct_length,
             self.preced_m_negatives,
         )
+        return ce_loss + ct_loss
 
 
 def contrastive_token_loss(
