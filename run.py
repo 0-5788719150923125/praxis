@@ -174,10 +174,7 @@ config = PraxisConfig(
     dropout=dropout,
     vocab_size=vocab_size,
     mod=mod,
-    shuffle=shuffle,
-    autopilot=autopilot,
-    graph=graph,
-    pathfinder=pathfinder,
+    controller_type=controller_type,
     attention_type=attention_type,
     decoder_type=decoder_type,
     linear=linear,
@@ -249,7 +246,7 @@ train_params = dict(
 
 # Optimizer configuration
 optimizer_config, disable_schedule = get_optimizer_profile(
-    optimizer, shuffle, any([no_schedule, schedule_free])
+    optimizer, any([no_schedule, schedule_free])
 )
 
 # Configure the learning rate scheduler

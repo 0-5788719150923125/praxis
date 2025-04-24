@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 
-class PraxisController(nn.Module):
+class Autopilot(nn.Module):
     """
     This controller implements an expert-prediction mechanism, which trains a small
     router to intelligently-navigate through layers in the network.

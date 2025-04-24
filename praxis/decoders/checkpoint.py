@@ -25,10 +25,9 @@ def create_forward(
         block_ids,
     ):
         # Add positional context to both hidden states and attention mask
-        if stack.behavior:
-            hidden_states, attention_mask = stack.behavior.add_context(
-                hidden_states, attention_mask, current_depth
-            )
+        hidden_states, attention_mask = stack.controller.add_context(
+            hidden_states, attention_mask, current_depth
+        )
         # Forward pass
         states, layer_kv, state_update, aux_loss = expert(
             hidden_states,
@@ -39,10 +38,7 @@ def create_forward(
             block_ids,
         )
         # Remove context from both hidden states and attention mask
-        if stack.behavior:
-            states, attention_mask = stack.behavior.remove_context(
-                states, attention_mask
-            )
+        states, attention_mask = stack.controller.remove_context(states, attention_mask)
 
         return states, layer_kv, state_update, aux_loss
 

@@ -2,10 +2,9 @@ from pytorch_optimizer import create_optimizer
 from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
 
 
-def get_optimizer_profile(name="AdamW", shuffle=False, disable_schedule=False):
+def get_optimizer_profile(name="AdamW", disable_schedule=False):
     profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}
     profile = {**profiles.get(name.lower()), "wd_ban_list": WD_BAN_LIST}
-    profile["weight_decay"] = 0 if shuffle else profile.get("weight_decay", 0)
     disable_schedule = profile.get("disable_schedule", disable_schedule)
     if "disable_schedule" in profile:
         del profile["disable_schedule"]

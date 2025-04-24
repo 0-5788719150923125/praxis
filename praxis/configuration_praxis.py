@@ -17,7 +17,6 @@ class PraxisConfig(PretrainedConfig):
         num_experts=9,
         dropout=0,
         epsilon=1e-5,
-        capacity=0.125,
         vocab_size=8192,
         max_length=4096,
         activation="mish",
@@ -25,10 +24,7 @@ class PraxisConfig(PretrainedConfig):
         expert="glu",
         encoding="rope",
         mod=None,
-        shuffle=False,
-        autopilot=False,
-        graph=False,
-        pathfinder=False,
+        controller_type="base",
         attention_type="standard",
         decoder_type="sequential",
         linear=False,
@@ -79,7 +75,6 @@ class PraxisConfig(PretrainedConfig):
         self.stickbreaking = stickbreaking
         self.dropout = dropout
         self.epsilon = epsilon
-        self.capacity = capacity
         self.vocab_size = vocab_size
         self.max_length = max_length
         self.activation = activation
@@ -87,10 +82,7 @@ class PraxisConfig(PretrainedConfig):
         self.expert = expert
         self.encoding = encoding
         self.mod = mod
-        self.shuffle = shuffle
-        self.autopilot = autopilot
-        self.graph = graph
-        self.pathfinder = pathfinder
+        self.controller_type = controller_type
         self.compression = compression
         self.memory = memory
         self.mta = mta

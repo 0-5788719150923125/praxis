@@ -17,18 +17,19 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
 
+from praxis.controllers.base import BaseController
 from praxis.modules.dense import PraxisGLU
 from praxis.modules.visualization import RouteVisualizer
 
 
-class PraxisGraph(nn.Module):
+class GraphRouter(BaseController):
     """
     Graph-based expert routing, inspired by Graphformer.
     https://arxiv.org/abs/2209.10655
     """
 
-    def __init__(self, config):
-        super().__init__()
+    def __init__(self, config: "AutoConfig"):
+        super().__init__(config)
         self.debug = config.debug
         self.causal = config.causal
         self.num_layers = config.num_experts

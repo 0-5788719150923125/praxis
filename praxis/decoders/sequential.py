@@ -21,22 +21,20 @@ class SequentialDecoder(nn.Module):
         new_states = []
         aux_losses = []
 
-        experts = list(self.stack.locals) + list(self.stack.remotes)
-        original_order = experts.copy()
-        if hasattr(self.stack.behavior, "shuffle_experts"):
-            experts = self.stack.behavior.shuffle_experts(experts)
+        sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
+        ordered_experts = self.stack.controller.shuffle_experts(
+            sequential_experts.copy()
+        )
 
         for i in range(self.stack.depth):
-            next_expert_idx = i
-            if hasattr(self.stack.behavior, "get_next_expert"):
-                aux_loss, next_expert_idx = self.stack.behavior.get_next_expert(
-                    hidden_states, i, original_order, experts
-                )
-                aux_losses.append(aux_loss)
-                if next_expert_idx is None:
-                    break
+            aux_loss, next_expert_idx = self.stack.controller.get_next_expert(
+                hidden_states, i, sequential_experts, ordered_experts
+            )
+            aux_losses.append(aux_loss)
+            if next_expert_idx is None:
+                break
 
-            expert = experts[next_expert_idx]
+            expert = ordered_experts[next_expert_idx]
 
             layer_state = current_state[i] if current_state is not None else None
             hidden_states, past_key_values, layer_state, aux_loss = create_forward(
@@ -59,7 +57,6 @@ class SequentialDecoder(nn.Module):
         if hasattr(self.stack, "post_decoding"):
             hidden_states = self.stack.post_decoding(hidden_states)
 
-        if hasattr(self.stack.behavior, "reset_route"):
-            self.stack.behavior.reset_route()
+        self.stack.controller.reset_route()
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)

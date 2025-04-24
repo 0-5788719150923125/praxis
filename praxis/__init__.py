@@ -1,6 +1,7 @@
 from praxis.activations import ACTIVATION_REGISTRY
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.configuration_praxis import PraxisConfig
+from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.decoders import DECODER_REGISTRY
 from praxis.losses import LOSS_REGISTRY
 from praxis.modeling_praxis import PraxisForCausalLM, PraxisModel

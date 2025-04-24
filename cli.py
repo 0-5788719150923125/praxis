@@ -12,6 +12,7 @@ from praxis import (
     ACTIVATION_REGISTRY,
     ATTENTION_REGISTRY,
     BLOCK_REGISTRY,
+    CONTROLLER_REGISTRY,
     DECODER_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
@@ -263,28 +264,11 @@ parser.add_argument(
     help="Use Mixture of Depths routing",
 )
 parser.add_argument(
-    "--shuffle",
-    action="store_true",
-    default=False,
-    help="Shuffle layers at every forward pass",
-)
-parser.add_argument(
-    "--autopilot",
-    action="store_true",
-    default=False,
-    help="Allow the model to discover and route through experts in a optimal fashion",
-)
-parser.add_argument(
-    "--graph",
-    action="store_true",
-    default=False,
-    help="Use graph-based routing through experts/layers",
-)
-parser.add_argument(
-    "--pathfinder",
-    action="store_true",
-    default=False,
-    help="Use a simple router to select optimal experts/layers",
+    "--controller_type",
+    type=str,
+    choices=CONTROLLER_REGISTRY.keys(),
+    default="base",
+    help="Various methods used to route inputs through experts in the decoder",
 )
 parser.add_argument(
     "--compression",

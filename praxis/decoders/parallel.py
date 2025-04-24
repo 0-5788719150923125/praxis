@@ -29,15 +29,15 @@ class ParallelDecoder(nn.Module):
         new_states = []
         aux_losses = []
 
-        experts = list(self.stack.locals) + list(self.stack.remotes)
-        original_order = experts.copy()
-        if hasattr(self.stack.behavior, "shuffle_experts"):
-            experts = self.stack.behavior.shuffle_experts(experts)
+        sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
+        ordered_experts = self.stack.controller.shuffle_experts(
+            sequential_experts.copy()
+        )
 
         # Create wrapper functions for each expert
         def create_expert_forward(idx):
             def expert_forward(input_tensor):
-                expert = experts[idx]
+                expert = ordered_experts[idx]
                 layer_state = current_state[idx] if current_state is not None else None
                 return create_forward(
                     expert,
