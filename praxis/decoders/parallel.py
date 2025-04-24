@@ -3,11 +3,11 @@ import torch.nn.functional as F
 import torch.nn.parallel as parallel
 from torch import nn
 
-from praxis.processors.checkpoint import create_forward, should_checkpoint
+from praxis.decoders.checkpoint import create_forward, should_checkpoint
 from praxis.stacks import PraxisStack
 
 
-class ParallelProcessor(nn.Module):
+class ParallelDecoder(nn.Module):
     def __init__(self, config: "AutoConfig", mode="mean"):
         super().__init__()
         self.stack = PraxisStack(config)
@@ -19,13 +19,13 @@ class ParallelProcessor(nn.Module):
 
     def forward(
         self,
-        inputs,
+        hidden_states,
         attention_mask,
         past_key_values,
-        block_ids,
         current_state,
+        block_ids,
     ):
-        hidden_states = inputs
+
         new_states = []
         aux_losses = []
 

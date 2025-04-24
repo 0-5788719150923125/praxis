@@ -11,9 +11,9 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import PraxisConfig
+from praxis.decoders import DECODER_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.modules import EMBEDDING_REGISTRY
-from praxis.modules.decoder import PraxisDecoder
 from praxis.modules.encoder import PraxisEncoder
 from praxis.utils import create_block_ids
 
@@ -29,7 +29,7 @@ class PraxisModel(PreTrainedModel):
             self.encoder = PraxisEncoder(config)
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
-        self.decoder = PraxisDecoder(config)
+        self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
         self.current_state = []
         self.aux_losses = []
 
@@ -55,7 +55,7 @@ class PraxisModel(PreTrainedModel):
             inputs = self.embeds(input_ids)
 
         last_hidden_state, new_key_values, new_state, aux_loss = self.decoder(
-            inputs, current_state, attention_mask, past_key_values, block_ids
+            inputs, attention_mask, past_key_values, current_state, block_ids
         )
         self.aux_losses.append(aux_loss)
 
@@ -70,11 +70,11 @@ class PraxisModel(PreTrainedModel):
         )
 
     def get_addr(self):
-        if self.decoder.processor.stack.manager:
-            self.decoder.processor.stack.manager.get_visible_maddrs()
+        if self.decoder.stack.manager:
+            self.decoder.stack.manager.get_visible_maddrs()
 
     def get_metrics(self):
-        return dict(**self.decoder.get_metrics())
+        return dict(**self.decoder.stack.get_metrics())
 
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):

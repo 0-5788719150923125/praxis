@@ -30,7 +30,7 @@ class PraxisConfig(PretrainedConfig):
         graph=False,
         pathfinder=False,
         attention_type="standard",
-        processor="sequential",
+        decoder_type="sequential",
         linear=False,
         differential=False,
         stickbreaking=False,
@@ -73,7 +73,7 @@ class PraxisConfig(PretrainedConfig):
         self.depth = depth
         self.num_experts = num_experts
         self.attention_type = attention_type
-        self.processor = processor
+        self.decoder_type = decoder_type
         self.linear = linear
         self.differential = differential
         self.stickbreaking = stickbreaking

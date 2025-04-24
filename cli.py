@@ -12,11 +12,11 @@ from praxis import (
     ACTIVATION_REGISTRY,
     ATTENTION_REGISTRY,
     BLOCK_REGISTRY,
+    DECODER_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
     LOSS_REGISTRY,
     MOD_LAYOUT,
-    PROCESSOR_REGISTRY,
 )
 
 
@@ -153,9 +153,9 @@ parser.add_argument(
     help="The base attention implementation to use",
 )
 parser.add_argument(
-    "--processor",
+    "--decoder_type",
     type=str,
-    choices=list(PROCESSOR_REGISTRY.keys()),
+    choices=list(DECODER_REGISTRY.keys()),
     default="sequential",
     help="How to process layers in the decoder",
 )
