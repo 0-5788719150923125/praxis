@@ -23,8 +23,37 @@ from praxis import (
 
 # User args, accepted via CLI
 class CustomHelpFormatter(argparse.HelpFormatter):
+    def __init__(self, prog, indent_increment=2, max_help_position=30, width=None):
+        # Use terminal width if available, otherwise use a sensible default
+        if width is None:
+            try:
+                import shutil
+
+                width = shutil.get_terminal_size().columns
+            except (ImportError, AttributeError):
+                width = 100
+
+        # Adjust max_help_position based on terminal width
+        max_help_position = min(30, width // 3)
+
+        super().__init__(prog, indent_increment, max_help_position, width)
+
     def _format_usage(self, usage, actions, groups, prefix):
         return ""  # This effectively removes the usage section
+
+    def _format_action_invocation(self, action):
+        """Customizes how arguments are displayed in the help output."""
+        if action.option_strings:
+            # It's an optional argument
+            if action.nargs == 0:
+                # It's a flag (like --verbose)
+                return ", ".join(action.option_strings)
+            else:
+                # It takes a value (like --file <value>)
+                return f"{', '.join(action.option_strings)} <value>"
+        else:
+            # It's a positional argument
+            return f"<{action.dest}>"
 
     def _get_help_string(self, action):
         help_text = action.help or ""
@@ -43,31 +72,25 @@ class CustomHelpFormatter(argparse.HelpFormatter):
             # It's a boolean flag
             help_text = f"(bool) {help_text}"
 
-        # Add choices information when available
+        # Add choices information when available (but only in the help text)
         if action.choices is not None:
             choice_str = ", ".join([str(c) for c in action.choices])
             help_text = f"{help_text} (choices: {choice_str})"
 
         # Add default value information when available
-        if action.default is not None and action.default is not argparse.SUPPRESS:
-            if isinstance(action, argparse._StoreTrueAction) or isinstance(
-                action, argparse._StoreFalseAction
-            ):
-                # Include default for boolean flags
-                default_str = str(action.default)
-                help_text = f"{help_text} (default: {default_str})"
-            elif not isinstance(action.default, bool):  # Regular args, not flags
-                default_str = str(action.default)
-                # Truncate very long default values
-                if len(default_str) > 20:
-                    default_str = default_str[:17] + "..."
-                help_text = f"{help_text} (default: {default_str})"
+        if action.default is not argparse.SUPPRESS:
+            # Always show default, even if it's None
+            default_str = str(action.default)
+            # Truncate very long default values
+            if len(default_str) > 20:
+                default_str = default_str[:17] + "..."
+            help_text = f"{help_text} (default: {default_str})"
 
         return help_text
 
 
 parser = argparse.ArgumentParser(
-    description="User-supplied arguments to this script.",
+    description="Praxis CLI",
     formatter_class=CustomHelpFormatter,
 )
 
@@ -419,17 +442,17 @@ data_group.add_argument(
 )
 # other
 other_group.add_argument(
-    "--wandb",
-    action="store_true",
-    default=False,
-    help="Log metrics to Weights and Biases (https://wandb.ai)",
-)
-other_group.add_argument(
     "--meta",
     type=str,
     action="append",
     default=[],
     help="Append keywords to a list at 'config.meta'. Used for model development. You probably don't need this.",
+)
+other_group.add_argument(
+    "--wandb",
+    action="store_true",
+    default=False,
+    help="Log metrics to Weights and Biases (https://wandb.ai)",
 )
 other_group.add_argument(
     "--no_dashboard",
