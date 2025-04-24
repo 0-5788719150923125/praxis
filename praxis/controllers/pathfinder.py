@@ -76,11 +76,10 @@ class Pathfinder(BaseController):
 
         # For training stability, compute a small entropy loss
         # This encourages exploration of different routing paths
+        gating_loss = 0
         if self.training:
             entropy = -(gate_probs * torch.log(gate_probs + 1e-10)).sum(dim=1).mean()
             gating_loss = -0.01 * entropy  # Encourage exploration with negative loss
-        else:
-            gating_loss = torch.tensor(0.0, device=hidden_states.device)
 
         # Select the next layer (expert) to process
         next_expert_idx = torch.argmax(gate_probs, dim=1)[0].item()
