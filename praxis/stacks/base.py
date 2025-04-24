@@ -15,7 +15,7 @@ from praxis.orchestration.hivemind import PraxisManagement
 
 class PraxisStack(nn.Module):
     """
-    A module that wraps the stack of layers in a decoder.
+    A module that wraps specialized operations in a decoder.
     """
 
     __version__ = "0.1.0"
