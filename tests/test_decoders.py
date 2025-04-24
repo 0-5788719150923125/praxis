@@ -4,20 +4,18 @@ from typing import List
 import pytest
 import torch
 
-from praxis import BLOCK_REGISTRY, DECODER_REGISTRY, PraxisConfig
+from praxis import BLOCK_REGISTRY, CONTROLLER_REGISTRY, DECODER_REGISTRY, PraxisConfig
 from praxis.modules.router import MOD_LAYOUT
 
 TEST_PARAMS = {
     "hidden_size": [64, 128],
     "num_heads": [2],
-    "shuffle": [True, False],
-    "graph": [True, False],
-    "pathfinder": [True, False],
     "mod": list(MOD_LAYOUT.keys()),
     "depth": [3],
     "num_experts": [3],
     "decoder_type": list(DECODER_REGISTRY.keys()),
     "block_type": list(BLOCK_REGISTRY.keys()),
+    "controller_type": list(CONTROLLER_REGISTRY.keys()),
 }
 PARAM_KEYS = list(TEST_PARAMS.keys())
 

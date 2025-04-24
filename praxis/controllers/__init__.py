@@ -1,3 +1,5 @@
+from functools import partial
+
 from praxis.controllers.base import BaseController
 
 # from praxis.controllers.autopilot import Autopilot
@@ -11,4 +13,5 @@ CONTROLLER_REGISTRY = dict(
     graph=GraphRouter,
     # autopilot=Autopilot,
     pathfinder=Pathfinder,
+    shortcutter=partial(Pathfinder, allow_early_exits=True),
 )
