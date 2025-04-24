@@ -12,6 +12,9 @@ from praxis.utils import (
 )
 
 MOD_LAYOUT = {
+    "standard": lambda config: generate_alternating_values(
+        size=config.depth, interval=1, capacity=0.125
+    ),
     "decayed": lambda config: generate_decay_values(
         config.depth, reverse=True, center=0.5, lower_bound=0.125
     ),
@@ -30,9 +33,6 @@ MOD_LAYOUT = {
     ),
     "skip_2": lambda config: generate_alternating_values(
         size=config.depth, interval=2, capacity=0.125
-    ),
-    "standard": lambda config: generate_alternating_values(
-        size=config.depth, interval=1, capacity=0.125
     ),
 }
 
