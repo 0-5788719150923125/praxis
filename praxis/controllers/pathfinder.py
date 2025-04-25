@@ -16,7 +16,7 @@ class Pathfinder(BaseController):
     """
 
     def __init__(self, config: "AutoConfig", allow_early_exits=False):
-        super().__init__(config)
+        super().__init__(config, allow_visualizer=True)
 
         # Create a gating network for each layer to decide the next layer
         extra_vectors = int(allow_early_exits)

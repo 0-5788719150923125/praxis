@@ -28,7 +28,7 @@ class GraphRouter(BaseController):
     """
 
     def __init__(self, config: "AutoConfig"):
-        super().__init__(config)
+        super().__init__(config, allow_visualizer=True)
         self.causal = config.causal
         self.num_layers = config.num_experts
         self.hidden_dim = config.hidden_size

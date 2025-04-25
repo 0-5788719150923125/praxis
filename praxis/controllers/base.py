@@ -12,7 +12,7 @@ class BaseController(nn.Module):
     A no-op controller.
     """
 
-    def __init__(self, config: "AutoConfig", use_visualizer=False, *args, **kwargs):
+    def __init__(self, config: "AutoConfig", allow_visualizer=False, *args, **kwargs):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth
@@ -22,9 +22,9 @@ class BaseController(nn.Module):
             RouteVisualizer(
                 num_experts=config.num_experts,
                 max_history=10000,
-                save_rate=100 * config.depth,
+                save_rate=10 * config.depth,
             )
-            if self.debug and use_visualizer
+            if self.debug and allow_visualizer
             else False
         )
 
