@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-ConfigType = TypeVar('ConfigType', bound='PretrainedConfig')
+ConfigType = TypeVar("ConfigType", bound="PretrainedConfig")
 
 from praxis.controllers.visualization import RouteVisualizer
 
@@ -15,7 +15,11 @@ class BaseController(nn.Module):
     """
 
     def __init__(
-        self, config: ConfigType, allow_visualizer: bool = False, *args: Any, **kwargs: Any
+        self,
+        config: ConfigType,
+        allow_visualizer: bool = False,
+        *args: Any,
+        **kwargs: Any,
     ):
         super().__init__()
         self.debug = config.debug
@@ -25,7 +29,7 @@ class BaseController(nn.Module):
             RouteVisualizer(
                 num_experts=config.num_experts,
                 max_history=10000,
-                save_rate=10 * config.depth,
+                save_rate=100 * config.depth,
             )
             if self.debug and allow_visualizer
             else False

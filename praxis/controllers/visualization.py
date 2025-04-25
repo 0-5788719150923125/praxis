@@ -458,7 +458,7 @@ class RouteVisualizer:
         max_usage = max(node_usage.values()) if node_usage else 1
         node_colors = {}
 
-        # Adjust this code in _save_visualization
+        # In the _save_visualization method, locate this section:
         for node in G.nodes():
             # Get the redness value (assuming blue_to_red colormap where higher values = more red)
             color = blue_to_red(node_usage[node] / max_usage)
@@ -472,10 +472,10 @@ class RouteVisualizer:
                 else plt.cm.colors.to_rgb(color)[0]
             )
 
-            # Scale to appropriate zorder range - edges are at zorder=0
-            # Highly red nodes (redness near 1.0) should have higher zorder than edges
-            # Highly blue nodes (redness near 0.0) should have lower zorder than edges
-            node_zorder = -100 + (redness * 200)  # Maps from -100 (blue) to +100 (red)
+            # CHANGE THIS LINE - Invert the relationship
+            # Now red nodes (redness near 1.0) will have lower zorder (behind edges)
+            # And blue nodes (redness near 0.0) will have higher zorder (in front of edges)
+            node_zorder = 100 - (redness * 200)  # Maps from +100 (blue) to -100 (red)
 
             # Draw node with calculated zorder
             self._create_feathered_node(ax, pos[node], color, zorder=node_zorder)
