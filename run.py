@@ -245,7 +245,7 @@ train_params = dict(
 
 # Optimizer configuration
 optimizer_config, disable_schedule = get_optimizer_profile(
-    optimizer, any([no_schedule, schedule_free])
+    optimizer, any([fixed_schedule, schedule_free])
 )
 
 # Configure the learning rate scheduler

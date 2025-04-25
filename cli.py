@@ -379,10 +379,10 @@ optimization_group.add_argument(
     help="Wrap the optimizer in Lookahead",
 )
 optimization_group.add_argument(
-    "--no_schedule",
+    "--fixed_schedule",
     action="store_true",
     default=False,
-    help="Disable the learning rate scheduler",
+    help="Use a fixed (constant) learning rate schedule",
 )
 optimization_group.add_argument(
     "--schedule_free",

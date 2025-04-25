@@ -26,7 +26,7 @@ class RouteVisualizer:
     Visualizes routing between experts in a mixture-of-experts model.
     Creates a network graph visualization showing transition patterns.
     """
-    
+
     def __init__(
         self,
         num_experts: int,
@@ -36,7 +36,7 @@ class RouteVisualizer:
     ) -> None:
         """
         Initialize route visualizer.
-        
+
         Args:
             num_experts: Number of experts in the model
             save_dir: Directory to save visualization images
@@ -62,7 +62,7 @@ class RouteVisualizer:
     def add_transition(self, from_expert: int, to_expert: int) -> None:
         """
         Add a new transition between experts and update visualization if needed.
-        
+
         Args:
             from_expert: Source expert index
             to_expert: Target expert index
@@ -104,7 +104,7 @@ class RouteVisualizer:
     def _get_current_counts(self) -> Tuple[Dict[Tuple[int, int], int], Dict[int, int]]:
         """
         Get current statistics - returns pre-computed counts
-        
+
         Returns:
             Tuple containing:
                 - Dictionary mapping (src, dst) to transition counts
@@ -113,21 +113,21 @@ class RouteVisualizer:
         return self.route_counts, self.recurrent_counts
 
     def _get_loop_parameters(
-        self, 
-        pos: Dict[int, Tuple[float, float]], 
-        node: int, 
-        count: int, 
-        total_edge_weight: int
+        self,
+        pos: Dict[int, Tuple[float, float]],
+        node: int,
+        count: int,
+        total_edge_weight: int,
     ) -> List[Dict]:
         """
         Generate parameters for varied self-loops using transformed circles.
-        
+
         Args:
             pos: Dictionary mapping node indices to (x, y) positions
             node: Node index for self-loop
             count: Number of transitions in this self-loop
             total_edge_weight: Total number of transitions
-            
+
         Returns:
             List of dictionaries containing loop parameters
         """
@@ -181,16 +181,16 @@ class RouteVisualizer:
         return loops
 
     def _create_feathered_node(
-        self, 
-        ax: plt.Axes, 
-        pos: Tuple[float, float], 
-        color: Union[np.ndarray, str], 
-        alpha: float = 1.0, 
-        zorder: int = 1000
+        self,
+        ax: plt.Axes,
+        pos: Tuple[float, float],
+        color: Union[np.ndarray, str],
+        alpha: float = 1.0,
+        zorder: int = 1000,
     ) -> None:
         """
         Create a feathered node using stacked rings with fixed alpha.
-        
+
         Args:
             ax: Matplotlib axes to draw on
             pos: (x, y) position of the node
@@ -252,10 +252,10 @@ class RouteVisualizer:
         """
         Determine appropriate text color (black or white) based on background color.
         Uses relative luminance formula to determine brightness.
-        
+
         Args:
             background_color: Background color to contrast with
-            
+
         Returns:
             "black" or "white" depending on background brightness
         """
@@ -272,23 +272,23 @@ class RouteVisualizer:
         return "white" if luminance < 0.5 else "black"
 
     def _get_curved_path_points(
-        self, 
-        pos: Dict[int, Tuple[float, float]], 
-        src: int, 
-        dst: int, 
-        rad: float, 
-        num_points: int = 20
+        self,
+        pos: Dict[int, Tuple[float, float]],
+        src: int,
+        dst: int,
+        rad: float,
+        num_points: int = 20,
     ) -> np.ndarray:
         """
         Generate points along a curved path between two nodes.
-        
+
         Args:
             pos: Dictionary mapping node indices to (x, y) positions
             src: Source node index
             dst: Destination node index
             rad: Radius of curvature
             num_points: Number of points along the curve
-            
+
         Returns:
             Array of points defining the curve
         """
@@ -321,16 +321,16 @@ class RouteVisualizer:
         return curve
 
     def _draw_gradient_edge(
-        self, 
-        ax: plt.Axes, 
-        pos: Dict[int, Tuple[float, float]], 
-        src: int, 
-        dst: int, 
-        alpha: float
+        self,
+        ax: plt.Axes,
+        pos: Dict[int, Tuple[float, float]],
+        src: int,
+        dst: int,
+        alpha: float,
     ) -> None:
         """
         Draw a single edge with a blue-to-red gradient.
-        
+
         Args:
             ax: Matplotlib axes to draw on
             pos: Dictionary mapping node indices to (x, y) positions
@@ -372,7 +372,7 @@ class RouteVisualizer:
         Generates a network graph showing routing patterns between experts.
         """
         fig, ax = plt.subplots(figsize=(15, 10))
-        plt.suptitle("Pathfinder Graph", fontsize=16, y=0.93)
+        plt.suptitle("Routing Graph", fontsize=16, y=0.93)
         plt.subplots_adjust(top=0.90)
         ax.set_aspect("equal", adjustable="datalim")
         ax.set_axis_on()
