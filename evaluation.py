@@ -3,6 +3,15 @@ import os
 from pprint import pprint
 
 import datasets
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+
+from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
+
+AutoConfig.register("praxis", PraxisConfig)
+AutoModel.register(PraxisConfig, PraxisModel)
+AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
+MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 import lighteval
 from lighteval.models.transformers.transformers_model import TransformersModel
 
@@ -11,12 +20,6 @@ class QuietTransformersModel(TransformersModel):
     @property
     def disable_tqdm(self) -> bool:
         return True
-
-    # def _create_auto_model(self, model=None) -> transformers.PreTrainedModel:
-    #     if model:
-    #         pass
-    #     else:
-    #         return super()._create_auto_model()
 
 
 lighteval.models.transformers.transformers_model.TransformersModel = (
@@ -29,13 +32,6 @@ from lighteval.models.transformers.transformers_model import (
     TransformersModelConfig,
 )
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
-
-from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
-
-AutoConfig.register("praxis", PraxisConfig)
-AutoModel.register(PraxisConfig, PraxisModel)
-AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 
 
 def evaluate_model(
@@ -65,19 +61,22 @@ def evaluate_model(
         max_samples=max_samples,
     )
 
-    if model is None and model_config is None:
-        model_config = TransformersModelConfig(
-            model_name=os.path.join(cache_dir, "praxis"),
-            device=device,
-            tokenizer=f"UNSAFE/praxis-{vocab_size}",
-            model_parallel=False,
-            batch_size=1,
-            max_length=4096,
-        )
-    elif model is not None:
+    # if model is None and model_config is None:
+    model_config = TransformersModelConfig(
+        model_name=os.path.join(cache_dir, "praxis"),
+        device=device,
+        tokenizer=f"UNSAFE/praxis-{vocab_size}",
+        model_parallel=False,
+        batch_size=1,
+        max_length=4096,
+    )
+    if model is not None:
+        # model = TransformersModel(model_config)
+        # print(model_config)
         model = TransformersModel.from_model(
-            model, tokenizer_name=f"UNSAFE/praxis-{vocab_size}"
+            model, config=model_config, tokenizer_name=f"UNSAFE/praxis-{vocab_size}"
         )
+        model_config = None
 
     pipeline = Pipeline(
         tasks=task,

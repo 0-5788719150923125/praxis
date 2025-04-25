@@ -21,7 +21,7 @@ dependencies = [
     "flask",
     "hivemind",
     "isort",
-    "lighteval[math] @ git+https://github.com/Vectorrent/lighteval@upgrade-protobuf",
+    "lighteval[math] @ git+https://github.com/Vectorrent/lighteval@load-transformers-model-directly",
     "lightning",
     "lsprotocol",
     "matplotlib",

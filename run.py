@@ -103,6 +103,7 @@ from lightning.pytorch.utilities import disable_possible_user_warnings
 from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 from evaluation import evaluate_model
 from optimizers import get_optimizer, get_optimizer_profile
@@ -129,6 +130,7 @@ logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
+MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 
 # Transform CLI args into global variables
 globals().update(vars(get_cli_args()))
@@ -1253,7 +1255,7 @@ train_params["callbacks"].append(
 #     task="helm|mmlu|5|1",
 #     device=device,
 #     vocab_size=vocab_size,
-#     verbose=False,
+#     verbose=True,
 # )
 # print(output)
 
