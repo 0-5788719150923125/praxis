@@ -18,16 +18,22 @@ class SequentialDecoder(nn.Module):
         current_state,
         block_ids,
     ):
-        new_states = []
-        aux_losses = []
-
         sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
         ordered_experts = self.stack.controller.sort_experts(sequential_experts.copy())
+        current_route = []
+        aux_losses = []
 
         for i in range(self.stack.depth):
-            aux_loss, next_expert_idx = self.stack.controller.get_next_expert(
-                hidden_states, sequential_experts, ordered_experts, current_depth=i
+            aux_loss, current_route, next_expert_idx = (
+                self.stack.controller.get_next_expert(
+                    hidden_states,
+                    sequential_experts,
+                    ordered_experts,
+                    current_route,
+                    current_depth=i,
+                )
             )
+
             aux_losses.append(aux_loss)
             if next_expert_idx is None:
                 break
@@ -48,13 +54,13 @@ class SequentialDecoder(nn.Module):
                 block_ids,
                 should_checkpoint(self.training, i, self.stack.checkpoint_every),
             )
-            new_states.append(layer_state)
             aux_losses.append(aux_loss)
-
             hidden_states = self.stack.post_layer(hidden_states, i)
+            if current_state is not None:
+                current_state[next_expert_idx] = layer_state
 
         hidden_states = self.stack.post_decoding(hidden_states)
 
-        self.stack.controller.reset_route(hidden_states)
+        self.stack.controller.post_forward(hidden_states, current_route)
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)

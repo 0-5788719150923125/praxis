@@ -12,12 +12,13 @@ class BaseController(nn.Module):
     A no-op controller.
     """
 
-    def __init__(self, config: "AutoConfig", allow_visualizer=False, *args, **kwargs):
+    def __init__(
+        self, config: "AutoConfig", allow_visualizer: bool = False, *args, **kwargs
+    ):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth
         self.num_experts = config.num_experts
-        self.current_route = []
         self.visualizer = (
             RouteVisualizer(
                 num_experts=config.num_experts,
@@ -29,14 +30,14 @@ class BaseController(nn.Module):
         )
 
     def add_context(
-        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, *args, **kwargs
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self, hidden_states: Tensor, attention_mask: Tensor, *args, **kwargs
+    ) -> Tuple[Tensor, Tensor]:
         """No-op implementation to maintain API compatibility."""
         return hidden_states, attention_mask
 
     def remove_context(
-        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, *args, **kwargs
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        self, hidden_states: Tensor, attention_mask: Tensor, *args, **kwargs
+    ) -> Tuple[Tensor, Tensor]:
         """No-op implementation to maintain API compatibility."""
         return hidden_states, attention_mask
 
@@ -48,30 +49,44 @@ class BaseController(nn.Module):
 
     def get_next_expert(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
+        current_route: List[int],
         current_depth: int,
-    ) -> Tuple[torch.Tensor, Optional[int]]:
-        return 0, current_depth
+    ) -> Tuple[Tensor, List[int], int]:
 
-    def _update_route(self, hidden_states, current_depth, next_expert_idx):
+        next_expert_idx = current_depth
+        current_route = self._update_route(
+            hidden_states, current_route, current_depth, next_expert_idx
+        )
+
+        return 0, current_route, current_depth
+
+    def _update_route(
+        self,
+        hidden_states: Tensor,
+        current_route: List[int],
+        current_depth: int,
+        next_expert_idx: int,
+    ):
         """Update routes used by the visualizer."""
         if self.debug:
-            self.current_route.append(next_expert_idx)
+            current_route.append(next_expert_idx)
             if (
                 self.visualizer
                 and not self.training
                 and hidden_states.size(0) == 1  # not validation
                 and current_depth > 0  # not the final layer
             ):
-                previous_idx = self.current_route[current_depth - 1]
+                previous_idx = current_route[current_depth - 1]
                 self.visualizer.add_transition(previous_idx, next_expert_idx)
 
-    def reset_route(self, hidden_states):
+        return current_route
+
+    def post_forward(self, hidden_states: Tensor, current_route: List[int]):
         """Reset the tracking of the current route through layers."""
         if self.debug:
-            route = [str(r) for r in self.current_route]
+            route = [str(r) for r in current_route]
             if not self.training and hidden_states.size(0) == 1:  # not validation
                 print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
-            self.current_route = []

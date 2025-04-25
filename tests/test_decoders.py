@@ -8,6 +8,7 @@ from praxis import BLOCK_REGISTRY, CONTROLLER_REGISTRY, DECODER_REGISTRY, Praxis
 from praxis.modules.router import MOD_LAYOUT
 
 TEST_PARAMS = {
+    "debug": [True, False],
     "hidden_size": [64, 128],
     "num_heads": [2],
     "mod": list(MOD_LAYOUT.keys()),

@@ -25,12 +25,10 @@ class ParallelDecoder(nn.Module):
         current_state,
         block_ids,
     ):
-
-        new_states = []
-        aux_losses = []
-
         sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
         ordered_experts = self.stack.controller.sort_experts(sequential_experts.copy())
+        new_states = []
+        aux_losses = []
 
         # Create wrapper functions for each expert
         def create_expert_forward(idx):

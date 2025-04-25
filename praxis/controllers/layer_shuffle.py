@@ -89,6 +89,7 @@ class LayerShuffle(BaseController):
         hidden_states: torch.Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
+        current_route: List[int],
         current_depth: int,
     ) -> tuple[torch.Tensor, Optional[int]]:
         """
@@ -108,6 +109,8 @@ class LayerShuffle(BaseController):
         next_expert = ordered_experts[current_depth]
         next_expert_idx = sequential_experts.index(next_expert)
 
-        self._update_route(hidden_states, current_depth, next_expert_idx)
+        current_route = self._update_route(
+            hidden_states, current_route, current_depth, next_expert_idx
+        )
 
-        return aux_loss, current_depth
+        return aux_loss, current_route, current_depth

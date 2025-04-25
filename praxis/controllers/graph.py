@@ -218,6 +218,7 @@ class GraphRouter(BaseController):
         hidden_states: torch.Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
+        current_route: List[int],
         current_depth: int,
     ) -> Tuple[torch.Tensor, Optional[int]]:
 
@@ -277,9 +278,11 @@ class GraphRouter(BaseController):
             next_expert_idx = torch.multinomial(probs, num_samples=1).item()
             routing_loss = 0
 
-        self._update_route(hidden_states, current_depth, next_expert_idx)
+        current_route = self._update_route(
+            hidden_states, current_route, current_depth, next_expert_idx
+        )
 
-        return routing_loss, next_expert_idx
+        return routing_loss, current_route, next_expert_idx
 
 
 class GraphAttention(nn.Module):
