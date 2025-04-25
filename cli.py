@@ -465,13 +465,13 @@ other_group.add_argument(
     "--use_cache",
     action="store_true",
     default=False,
-    help="Use KV caching during inference, at the cost of text consistency in the dashboard (but not in the API)",
+    help="Use KV caching during inference (but only at the API server)",
 )
 other_group.add_argument(
     "--dev",
     action="store_true",
     default=False,
-    help="Use fewer resources (3 layers, a smaller dataset, etc), always start from a new model (i.e. always '--reset'), and never conflict with existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
+    help="Use fewer resources (3 layers, smaller datasets, etc), always start from a new model (i.e. force '--reset'), and never conflict/remove existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
 )
 other_group.add_argument(
     "--debug",

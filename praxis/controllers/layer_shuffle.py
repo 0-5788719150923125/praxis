@@ -22,9 +22,6 @@ class LayerShuffle(BaseController):
         self.debug = config.debug
         self.depth = config.depth
         self.current_route = []
-        assert (
-            config.num_experts == config.depth
-        ), "There is no point in making `num_experts` greater than or less than `depth`, when `shuffle != True`. The additional experts would never be used."
 
         # self.navigator = (
         #     PraxisController(config, max_num_experts=config.num_experts * 3)
@@ -112,11 +109,11 @@ class LayerShuffle(BaseController):
         # else:
         aux_loss = 0
         next_expert = ordered_experts[current_depth]
-        next_expert_idx = ordered_experts.index(next_expert)
+        next_expert_idx = sequential_experts.index(next_expert)
 
         self.current_route.append(next_expert_idx)
 
-        return aux_loss, next_expert_idx
+        return aux_loss, current_depth
 
     def reset_route(self, hidden_states):
         """Reset the tracking of the current route through layers."""

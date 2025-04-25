@@ -20,13 +20,14 @@ class Pathfinder(BaseController):
         super().__init__(config)
         self.debug = config.debug
         self.depth = config.depth
+        self.num_experts = config.num_experts
 
         # Create a gating network for each layer to decide the next layer
-        extra = int(allow_early_exits)
+        extra_vectors = int(allow_early_exits)
         self.gates = nn.ModuleList(
             [
-                nn.Linear(config.hidden_size, self.depth + extra)
-                for _ in range(self.depth + extra)
+                nn.Linear(config.hidden_size, self.num_experts + extra_vectors)
+                for _ in range(self.depth)
             ]
         )
 
@@ -69,7 +70,7 @@ class Pathfinder(BaseController):
         next_expert_idx = torch.argmax(gate_probs, dim=1)[0].item()
 
         # Allow early exits
-        if next_expert_idx == self.depth:
+        if next_expert_idx == self.num_experts:
             return gating_loss, None
 
         # Record the current layer in the route

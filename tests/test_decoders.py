@@ -12,7 +12,7 @@ TEST_PARAMS = {
     "num_heads": [2],
     "mod": list(MOD_LAYOUT.keys()),
     "depth": [3],
-    "num_experts": [3],
+    "num_experts": [3, 5],
     "decoder_type": list(DECODER_REGISTRY.keys()),
     "block_type": list(BLOCK_REGISTRY.keys()),
     "controller_type": list(CONTROLLER_REGISTRY.keys()),
@@ -33,12 +33,12 @@ def get_decoder_configs() -> List[PraxisConfig]:
 def module_setup(request):
     config = request.param
     decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
-    return decoder, config.hidden_size, config.depth
+    return decoder, config.hidden_size, config.num_experts
 
 
 def test_forward_pass(module_setup):
     """Test forward pass with valid parameter combinations."""
-    decoder, hidden_size, depth = module_setup
+    decoder, hidden_size, num_experts = module_setup
     batch_size = 4
     seq_len = 16
 
@@ -58,4 +58,4 @@ def test_forward_pass(module_setup):
     # Verify output shape
     assert hidden_states.shape == inputs.shape
     # Verify correct number of layers/experts
-    assert depth == len(decoder.stack.locals)
+    assert num_experts == len(decoder.stack.locals)

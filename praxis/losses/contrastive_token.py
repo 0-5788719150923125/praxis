@@ -123,7 +123,8 @@ def contrastive_token_loss(
     sum_exp = (exp * pad_mask).sum(dim=-1)  # don't use pad tokens as negatives
     losses = (1 + sum_exp).log() * non_padding.int()
 
-    ct_loss = losses.sum() / non_padding.int().sum()
+    denominator = non_padding.int().sum()
+    ct_loss = losses.sum() / (denominator + 1e-10)  # Add small epsilon
 
     return ct_loss
 

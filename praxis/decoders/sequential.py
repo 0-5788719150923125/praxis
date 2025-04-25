@@ -34,7 +34,9 @@ class SequentialDecoder(nn.Module):
 
             expert = ordered_experts[next_expert_idx]
 
-            layer_state = current_state[i] if current_state is not None else None
+            layer_state = (
+                current_state[next_expert_idx] if current_state is not None else None
+            )
             hidden_states, past_key_values, layer_state, aux_loss = create_forward(
                 expert,
                 self.stack,

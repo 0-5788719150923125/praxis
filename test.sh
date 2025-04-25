@@ -1,3 +1,3 @@
 #!/bin/sh
 
-pytest tests -xv
+pytest tests -x
