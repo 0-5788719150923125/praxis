@@ -137,6 +137,9 @@ log_command()
 # Set seeds for reproducibility
 seed_everything(seed, workers=True)
 
+# Set behavior flags
+byte_latent = encoder_type == "byte_latent"
+
 # Global configuration
 block_size = block_size * 8 if byte_latent else block_size
 terminal_output_length = block_size // 2 if byte_latent else block_size * 2
@@ -176,6 +179,7 @@ config = PraxisConfig(
     mod=mod,
     controller_type=controller_type,
     attention_type=attention_type,
+    encoder_type=encoder_type,
     decoder_type=decoder_type,
     linear=linear,
     differential=differential,
@@ -762,7 +766,6 @@ class Generator:
             do_sample=True,
             renormalize_logits=True,
             remove_invalid_values=True,
-            use_cache=use_cache,
             # token_healing=True,
         )
         combined = {**defaults, **request.kwargs}

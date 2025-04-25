@@ -14,6 +14,7 @@ from praxis import (
     BLOCK_REGISTRY,
     CONTROLLER_REGISTRY,
     DECODER_REGISTRY,
+    ENCODER_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
     LOSS_REGISTRY,
@@ -139,6 +140,13 @@ persistence_group.add_argument(
 )
 # architecture
 architecture_group.add_argument(
+    "--encoder_type",
+    type=str,
+    choices=list(ENCODER_REGISTRY.keys()),
+    default="sequential",
+    help="Encoder module to use",
+)
+architecture_group.add_argument(
     "--decoder_type",
     type=str,
     choices=list(DECODER_REGISTRY.keys()),
@@ -186,6 +194,91 @@ architecture_group.add_argument(
     choices=MOD_LAYOUT.keys(),
     default=None,
     help="Use Mixture of Depths routing",
+)
+architecture_group.add_argument(
+    "--activation",
+    type=str,
+    choices=ACTIVATION_REGISTRY.keys(),
+    default="mish",
+    help="The primary activation function to use",
+)
+architecture_group.add_argument(
+    "--target_batch_size",
+    type=int,
+    default=256,
+    help="The actual batch size to use, including accumulation steps",
+)
+architecture_group.add_argument(
+    "--block_size",
+    type=int,
+    default=512,
+    help="The base sequence length to train with",
+)
+architecture_group.add_argument(
+    "--vocab_size",
+    type=int,
+    choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
+    default=16384,
+    help="The absolute vocab size to use, though some architectures might scale it differently",
+)
+architecture_group.add_argument(
+    "--depth",
+    type=int,
+    default=9,
+    help="The max number of experts to route through",
+)
+architecture_group.add_argument(
+    "--num_experts",
+    type=int,
+    default=False,
+    help="Number of experts to host (defaults to depth)",
+)
+architecture_group.add_argument(
+    "--hidden_size",
+    type=int,
+    default=256,
+    help="The size of the model's hidden dimensions",
+)
+architecture_group.add_argument(
+    "--embed_size",
+    type=int,
+    default=192,
+    help="The size of the model's embedding dimension (if applicable)",
+)
+architecture_group.add_argument(
+    "--dropout",
+    type=int,
+    default=0.1,
+    help="The percentage of neurons to drop-out during training",
+)
+architecture_group.add_argument(
+    "--num_heads",
+    type=lambda x: (
+        x
+        if ":" in x
+        and len(parts := x.split(":")) == 2
+        and all(p.isdigit() for p in parts)
+        and all(int(p) > 0 for p in parts)
+        else (_ for _ in ()).throw(
+            argparse.ArgumentTypeError(
+                f"'{x}' is not in format 'X:Y', where X and Y are positive integers"
+            )
+        )
+    ),
+    default="4:2",
+    help="The ratio of heads to queries per-head. (example: '4:2' is equal to 3 heads, with 2 queries per head)",
+)
+architecture_group.add_argument(
+    "--k_heads",
+    type=int,
+    default=None,
+    help="A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable.",
+)
+architecture_group.add_argument(
+    "--kv_rank",
+    type=int,
+    default=None,
+    help="Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest.",
 )
 architecture_group.add_argument(
     "--linear",
@@ -236,12 +329,6 @@ architecture_group.add_argument(
     help="Use a genomic bottleneck",
 )
 architecture_group.add_argument(
-    "--byte_latent",
-    action="store_true",
-    default=False,
-    help="Use a Byte Latent Tokenizer (BLT)",
-)
-architecture_group.add_argument(
     "--hyper",
     action="store_true",
     default=False,
@@ -252,98 +339,6 @@ architecture_group.add_argument(
     action="store_true",
     default=False,
     help="Scale the output of each layer by the inverse square root of its depth",
-)
-# hyperparameters
-hparam_group.add_argument(
-    "--seed",
-    type=int,
-    default=int(65536 * (2 * math.acos(1 - random.random()) / math.pi) ** 6.66),
-    help="Global seed",
-)
-hparam_group.add_argument(
-    "--target_batch_size",
-    type=int,
-    default=256,
-    help="The actual batch size to use, including accumulation steps",
-)
-hparam_group.add_argument(
-    "--block_size",
-    type=int,
-    default=512,
-    help="The base sequence length to train with",
-)
-hparam_group.add_argument(
-    "--vocab_size",
-    type=int,
-    choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
-    default=16384,
-    help="The absolute vocab size to use, though some architectures might scale it differently",
-)
-hparam_group.add_argument(
-    "--depth",
-    type=int,
-    default=9,
-    help="The max number of experts to route through",
-)
-hparam_group.add_argument(
-    "--num_experts",
-    type=int,
-    default=False,
-    help="Number of experts to host (defaults to depth)",
-)
-hparam_group.add_argument(
-    "--hidden_size",
-    type=int,
-    default=256,
-    help="The size of the model's hidden dimensions",
-)
-hparam_group.add_argument(
-    "--embed_size",
-    type=int,
-    default=192,
-    help="The size of the model's embedding dimension (if applicable)",
-)
-hparam_group.add_argument(
-    "--dropout",
-    type=int,
-    default=0.1,
-    help="The percentage of neurons to drop-out during training",
-)
-hparam_group.add_argument(
-    "--num_heads",
-    type=lambda x: (
-        x
-        if ":" in x
-        and len(parts := x.split(":")) == 2
-        and all(p.isdigit() for p in parts)
-        and all(int(p) > 0 for p in parts)
-        else (_ for _ in ()).throw(
-            argparse.ArgumentTypeError(
-                f"'{x}' is not in format 'X:Y', where X and Y are positive integers"
-            )
-        )
-    ),
-    default="4:2",
-    help="The ratio of heads to queries per-head. (example: '4:2' is equal to 3 heads, with 2 queries per head)",
-)
-hparam_group.add_argument(
-    "--k_heads",
-    type=int,
-    default=None,
-    help="A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable.",
-)
-hparam_group.add_argument(
-    "--kv_rank",
-    type=int,
-    default=None,
-    help="Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest.",
-)
-hparam_group.add_argument(
-    "--activation",
-    type=str,
-    choices=ACTIVATION_REGISTRY.keys(),
-    default="mish",
-    help="The primary activation function to use",
 )
 # optimization
 optimization_group.add_argument(
@@ -437,6 +432,13 @@ data_group.add_argument(
 )
 # other
 other_group.add_argument(
+    "--seed",
+    type=int,
+    default=int(65536 * (2 * math.acos(1 - random.random()) / math.pi) ** 6.66),
+    help="Global seed used for reproducibility",
+)
+
+other_group.add_argument(
     "--meta",
     type=str,
     action="append",
@@ -460,12 +462,6 @@ other_group.add_argument(
     action="store_true",
     default=False,
     help="Suppress text generation in the terminal",
-)
-other_group.add_argument(
-    "--use_cache",
-    action="store_true",
-    default=False,
-    help="Use KV caching during inference (but only at the API server)",
 )
 other_group.add_argument(
     "--dev",

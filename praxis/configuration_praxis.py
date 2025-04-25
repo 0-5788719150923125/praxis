@@ -28,6 +28,7 @@ class PraxisConfig(PretrainedConfig):
         mod: Optional[str] = None,
         controller_type: str = "base",
         attention_type: str = "standard",
+        encoder_type: Optional[str] = None,
         decoder_type: str = "sequential",
         linear: bool = False,
         differential: bool = False,
@@ -37,7 +38,6 @@ class PraxisConfig(PretrainedConfig):
         mega: bool = False,
         gated: bool = False,
         evolve: bool = False,
-        byte_latent: bool = False,
         hyper: bool = False,
         scaled: bool = False,
         hivemind: bool = False,
@@ -75,6 +75,7 @@ class PraxisConfig(PretrainedConfig):
         self.depth = depth
         self.num_experts = num_experts
         self.attention_type = attention_type
+        self.encoder_type = encoder_type
         self.decoder_type = decoder_type
         self.linear = linear
         self.differential = differential
@@ -94,7 +95,6 @@ class PraxisConfig(PretrainedConfig):
         self.mega = mega
         self.gated = gated
         self.evolve = evolve
-        self.byte_latent = byte_latent
         self.hyper = hyper
         self.scaled = scaled
         self.hivemind = hivemind

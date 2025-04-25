@@ -10,11 +10,9 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
 )
 
-from praxis import PraxisConfig
-from praxis.decoders import DECODER_REGISTRY
+from praxis import DECODER_REGISTRY, ENCODER_REGISTRY, PraxisConfig
 from praxis.losses import get_loss_function
 from praxis.modules import EMBEDDING_REGISTRY
-from praxis.modules.encoder import PraxisEncoder
 from praxis.utils import create_block_ids
 
 
@@ -25,8 +23,8 @@ class PraxisModel(PreTrainedModel):
     def __init__(self, config: PraxisConfig):
         super().__init__(config)
         self.encoder = False
-        if config.byte_latent:
-            self.encoder = PraxisEncoder(config)
+        if config.encoder_type is not None:
+            self.encoder = ENCODER_REGISTRY.get(config.encoder_type)(config)
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
@@ -92,7 +90,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def __init__(self, config: PraxisConfig):
         config.causal = True
         super().__init__(config)
-        if not config.byte_latent:
+        self.head = None
+        if config.encoder_type is None:
             self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
 

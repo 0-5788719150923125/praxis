@@ -4,8 +4,8 @@ import pytest
 import torch
 from torch import nn
 
-from praxis.modules.encoder import (
-    PraxisEncoder,
+from praxis import ENCODER_REGISTRY
+from praxis.encoders.byte_latent import (
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
     packed_rnn_block,
@@ -13,7 +13,7 @@ from praxis.modules.encoder import (
 )
 
 # Define test parameters
-MODULE_CLASSES = [PraxisEncoder]
+MODULE_CLASSES = list(ENCODER_REGISTRY.values())
 META_MODES = [
     ["space", "ngram"],
     ["space"],

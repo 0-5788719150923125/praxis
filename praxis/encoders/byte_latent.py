@@ -36,7 +36,7 @@ from praxis.modules.recurrent import minGRU
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisEncoder(nn.Module):
+class ByteLatentEncoder(nn.Module):
     """
     An implementation of the Byte Latent Encoder/Decoder, from:
     https://arxiv.org/abs/2412.09871
