@@ -38,8 +38,8 @@ class LayerShuffle(BaseController):
         nn.init.normal_(self.embeddings, mean=0.0, std=0.02)
 
     def add_context(
-        self, hidden_states: Tensor, attention_mask: Tensor, position: int
-    ) -> tuple[Tensor, Tensor]:
+        self, hidden_states: Tensor, attention_mask: Optional[Tensor], position: int
+    ) -> Tuple[Tensor, Optional[Tensor]]:
 
         if self.num_context_tokens < 1:
             return hidden_states, attention_mask
@@ -63,8 +63,8 @@ class LayerShuffle(BaseController):
         return extended_hidden_states, extended_attention_mask
 
     def remove_context(
-        self, hidden_states: Tensor, attention_mask: Tensor
-    ) -> tuple[Tensor, Tensor]:
+        self, hidden_states: Tensor, attention_mask: Optional[Tensor]
+    ) -> Tuple[Tensor, Optional[Tensor]]:
 
         if self.num_context_tokens < 1:
             return hidden_states, attention_mask
@@ -77,7 +77,7 @@ class LayerShuffle(BaseController):
             trimmed_mask = attention_mask[:, self.num_context_tokens :]
         return trimmed_states, trimmed_mask
 
-    def sort_experts(self, experts: list, allow_resampling: bool = False) -> list:
+    def sort_experts(self, experts: List[nn.Module], allow_resampling: bool = False) -> List[nn.Module]:
         depth = self.depth
         if allow_resampling:
             return random.choices(experts, k=depth)
@@ -91,10 +91,23 @@ class LayerShuffle(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> tuple[torch.Tensor, Optional[int]]:
+    ) -> Tuple[torch.Tensor, List[int], int]:
         """
         Compute next expert selection and associated loss.
         During inference, returns actual expert index.
+        
+        Args:
+            hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
+            sequential_experts: List of all available experts
+            ordered_experts: List of experts in the order they should be executed
+            current_route: Current execution path through the network
+            current_depth: Current depth in the network
+            
+        Returns:
+            Tuple containing:
+                - Auxiliary loss
+                - Updated current route
+                - Index of the next expert to use
         """
 
         # if self.navigator:

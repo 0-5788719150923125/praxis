@@ -1,6 +1,6 @@
 import math
 from copy import copy
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 import torch
 import torch.nn as nn
@@ -25,25 +25,31 @@ class PraxisAttention(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize PraxisAttention module with configuration.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         super().__init__()
-        self.causal = config.causal
+        self.causal: bool = config.causal
         # Set the core attention mechanism
-        self.linear = config.linear
-        self.differential = config.differential
-        self.stickbreaking = config.stickbreaking
+        self.linear: bool = config.linear
+        self.differential: bool = config.differential
+        self.stickbreaking: bool = config.stickbreaking
         assert (
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
 
-        hidden_size = config.hidden_size
-        self.num_heads = config.num_heads
-        self.num_queries = config.num_queries
-        self.num_query_heads = self.num_heads * self.num_queries
-        self.kv_rank = config.kv_rank
+        hidden_size: int = config.hidden_size
+        self.num_heads: int = config.num_heads
+        self.num_queries: int = config.num_queries
+        self.num_query_heads: int = self.num_heads * self.num_queries
+        self.kv_rank: Optional[int] = config.kv_rank
 
-        self.factor = 2 if self.differential else 1
-        self.head_dim = hidden_size // self.num_heads // self.factor
+        self.factor: int = 2 if self.differential else 1
+        self.head_dim: int = hidden_size // self.num_heads // self.factor
         setattr(config, "head_size", self.head_dim)
 
         assert (
@@ -51,7 +57,7 @@ class PraxisAttention(nn.Module):
         ), "Only one of 'mega' or 'gated' can be used at a time."
 
         # For query gating
-        self.ema = PraxisGatedEMA(config) if config.mega else False
+        self.ema: Union[PraxisGatedEMA, bool] = PraxisGatedEMA(config) if config.mega else False
 
         # Query and key projections for differential heads
         if config.k_heads is not None:
@@ -87,8 +93,8 @@ class PraxisAttention(nn.Module):
                 value_head_dim=self.head_dim,
             )
 
-        self.memory = config.memory
-        self.chunk_size = 0
+        self.memory: Union[PraxisCompressiveMemory, bool] = config.memory
+        self.chunk_size: int = 0
         if self.memory:
             self.chunk_size = 256
             self.memory = PraxisCompressiveMemory(config)
@@ -107,10 +113,10 @@ class PraxisAttention(nn.Module):
         self.encoding = ENCODING_REGISTRY[config.encoding](config)
 
         # For Multi-Token Attention
-        self.mta = MultiTokenAttention(config) if config.mta else False
+        self.mta: Union[MultiTokenAttention, bool] = MultiTokenAttention(config) if config.mta else False
 
         # For attention gating
-        self.gates = UniversalAttentionGate(config) if config.gated else False
+        self.gates: Union[UniversalAttentionGate, bool] = UniversalAttentionGate(config) if config.gated else False
 
         # Standard output projection
         self.output = nn.Linear(
@@ -120,13 +126,29 @@ class PraxisAttention(nn.Module):
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Tensor = None,
-        past_key_values: Tensor = None,
-        block_ids: Tensor = None,
+        attention_mask: Optional[Tensor] = None,
+        past_key_values: Optional[Union[Tensor, DynamicCache]] = None,
+        block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
+        """
+        Forward pass of the attention module.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            attention_mask: Optional mask tensor for padding tokens
+            past_key_values: Optional cache for key/value pairs from previous steps
+            block_ids: Optional tensor indicating block structure for blocked attention
+            current_depth: Current depth in the network (for caching)
+            
+        Returns:
+            Tuple containing:
+            - Output tensor after attention and projection
+            - Updated cache (if using caching)
+            - Auxiliary loss value
+        """
         batch_size, seq_len, _ = inputs.shape
-        aux_loss = 0
+        aux_loss: Union[int, float] = 0
 
         if self.ema:
             # Compute an exponential moving average-based gating mechanism
@@ -162,7 +184,7 @@ class PraxisAttention(nn.Module):
         chunk_size = self.chunk_size if self.chunk_size > 0 else full_seq_len
         num_chunks = (full_seq_len + chunk_size - 1) // chunk_size
 
-        outputs = []
+        outputs: List[Tensor] = []
 
         for i in range(num_chunks):
             start_idx = i * chunk_size
@@ -178,10 +200,10 @@ class PraxisAttention(nn.Module):
             chunk_k = k[:, :, start_idx:end_idx]
             chunk_v = v[:, :, start_idx:end_idx]
 
-            chunk_mask = (
+            chunk_mask: Optional[Tensor] = (
                 None if attention_mask is None else attention_mask[:, start_idx:end_idx]
             )
-            chunk_block_ids = None
+            chunk_block_ids: Optional[Tensor] = None
             if block_ids is not None:
                 if isinstance(past_key_values, DynamicCache):
                     chunk_block_ids = block_ids  # Keep full block_ids
@@ -226,11 +248,26 @@ class PraxisAttention(nn.Module):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        attention_mask: Tensor,
+        attention_mask: Optional[Tensor],
         chunk_size: int,
         offset: int = 0,
-        block_ids: Tensor = None,
+        block_ids: Optional[Tensor] = None,
     ) -> Tensor:
+        """
+        Process a chunk of the attention computation.
+        
+        Args:
+            q: Query tensor of shape [batch_size, num_heads, chunk_size, head_dim]
+            k: Key tensor of shape [batch_size, num_heads, chunk_size, head_dim]
+            v: Value tensor of shape [batch_size, num_heads, chunk_size, head_dim]
+            attention_mask: Optional mask tensor for padding tokens
+            chunk_size: Size of the current chunk
+            offset: Position offset for positional encoding
+            block_ids: Optional tensor indicating block structure
+            
+        Returns:
+            Processed chunk output tensor
+        """
         batch_size = q.size(0)
 
         # Apply positional encoding with offset
@@ -288,28 +325,65 @@ class ScaledDotProduct(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize scaled dot-product attention module.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         super().__init__()
-        self.meta = config.meta
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_heads
-        self.num_query_heads = self.num_heads * config.num_queries
-        self.head_dim = config.head_size
+        self.meta: str = config.meta
+        self.hidden_size: int = config.hidden_size
+        self.num_heads: int = config.num_heads
+        self.num_query_heads: int = self.num_heads * config.num_queries
+        self.head_dim: int = config.head_size
         # Force exploration of attention subnetworks
-        self.dropout = nn.Dropout(config.dropout)
+        self.dropout: nn.Dropout = nn.Dropout(config.dropout)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
 
-    def compute_scores(self, q, k, v):
+    def compute_scores(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        Compute attention scores between queries and keys.
+        
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
+            
+        Returns:
+            Tuple of (query, key, value, attention scores)
+        """
         scaling = 1.0 / math.sqrt(self.head_dim)
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
         return q, k, v, scores
 
     def apply_masking(
-        self, scores, attention_mask, block_ids, seq_len, hist_len, causal
-    ):
-        causal_mask = None
+        self, 
+        scores: Tensor, 
+        attention_mask: Optional[Tensor], 
+        block_ids: Optional[Tensor], 
+        seq_len: int, 
+        hist_len: int, 
+        causal: bool
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        """
+        Apply masking to attention scores.
+        
+        Args:
+            scores: Attention scores
+            attention_mask: Optional padding mask
+            block_ids: Optional block structure tensor
+            seq_len: Current sequence length
+            hist_len: History length
+            causal: Whether to apply causal masking
+            
+        Returns:
+            Tuple of (masked scores, causal mask, attention mask)
+        """
+        causal_mask: Optional[Tensor] = None
         # When using caching
         if scores.size(2) == 1:
             return scores, causal_mask, attention_mask
@@ -349,7 +423,27 @@ class ScaledDotProduct(nn.Module):
 
         return scores, causal_mask, attention_mask
 
-    def compute_weights(self, q, k, v, scores, *args, **kwargs):
+    def compute_weights(
+        self, 
+        q: Tensor, 
+        k: Tensor, 
+        v: Tensor, 
+        scores: Tensor, 
+        *args: Any, 
+        **kwargs: Any
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Compute attention weights from scores.
+        
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
+            scores: Attention scores
+            
+        Returns:
+            Tuple of (attention weights, value tensor)
+        """
         if "entmax" in self.meta:
             weights = alpha_entmax(scores, dim=-1)
         elif "relu" in self.meta:
@@ -360,7 +454,17 @@ class ScaledDotProduct(nn.Module):
             weights = ghostmax(scores, dim=-1)
         return weights, v
 
-    def compute_outputs(self, weights, v):
+    def compute_outputs(self, weights: Tensor, v: Tensor) -> Tensor:
+        """
+        Compute final attention outputs.
+        
+        Args:
+            weights: Attention weights
+            v: Value tensor
+            
+        Returns:
+            Output tensor after attention
+        """
         return self.dropout(weights) @ v
 
 
@@ -372,25 +476,51 @@ class Differential(ScaledDotProduct):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize differential attention module.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         super().__init__(config)
-        self.lambda_init = 0.8
-        head_dim = config.head_size
+        self.lambda_init: float = 0.8
+        head_dim: int = config.head_size
 
         # Parameters for differential attention
-        self.lambda_q1 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
-        self.lambda_k1 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
-        self.lambda_q2 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
-        self.lambda_k2 = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_q1: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_k1: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_q2: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_k2: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
 
         # GroupNorm should match the total channels
-        self.norm = nn.GroupNorm(
+        self.norm: nn.GroupNorm = nn.GroupNorm(
             num_groups=self.num_query_heads,
             num_channels=self.num_query_heads * head_dim,
             eps=config.epsilon,
         )
 
-    def compute_weights(self, q: Tensor, k: Tensor, v: Tensor, scores, *args, **kwargs):
+    def compute_weights(
+        self, 
+        q: Tensor, 
+        k: Tensor, 
+        v: Tensor, 
+        scores: Tensor, 
+        *args: Any, 
+        **kwargs: Any
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Compute differential attention weights from scores.
+        
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
+            scores: Attention scores
+            
+        Returns:
+            Tuple of (attention weights, value tensor)
+        """
         batch_size, num_heads, seq_len, _ = scores.shape
         head_dim = self.head_dim
 
@@ -413,7 +543,17 @@ class Differential(ScaledDotProduct):
 
         return attn_weights, v
 
-    def compute_outputs(self, weights, v):
+    def compute_outputs(self, weights: Tensor, v: Tensor) -> Tensor:
+        """
+        Compute final differential attention outputs with normalization.
+        
+        Args:
+            weights: Attention weights
+            v: Value tensor
+            
+        Returns:
+            Output tensor after differential attention
+        """
         batch_size, num_heads, seq_len, _ = weights.shape
 
         # Apply attention to values
@@ -532,16 +672,33 @@ class Stickbreaking(ScaledDotProduct):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize stickbreaking attention module.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         # force no positional encoding
         setattr(config, "encoding", "nope")
         super().__init__(config)
         self.register_buffer("key_history", None)
         self.register_buffer("value_history", None)
-        self.history_size = 32
-        self.use_history = True
+        self.history_size: int = 32
+        self.use_history: bool = True
 
-    def compute_scores(self, q, k, v):
+    def compute_scores(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        Compute attention scores with history management.
+        
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
+            
+        Returns:
+            Tuple of (query, key, value, attention scores)
+        """
         if self.training and self.use_history:
             k, v = self._update_history(k, v)
         return super().compute_scores(q, k, v)
@@ -551,11 +708,24 @@ class Stickbreaking(ScaledDotProduct):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        scores: List[Tensor],
+        scores: Tensor,
         causal_mask: Optional[Tensor] = None,
-        *args,
-        **kwargs,
-    ) -> Tensor:
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Compute stickbreaking attention weights from scores.
+        
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
+            scores: Attention scores
+            causal_mask: Optional causal mask tensor
+            
+        Returns:
+            Tuple of (attention weights, value tensor)
+        """
         logits = scores
         batch_size, num_heads, seq_len, hist_len = logits.shape
 
@@ -584,6 +754,13 @@ class Stickbreaking(ScaledDotProduct):
     ) -> Tuple[Tensor, Tensor]:
         """
         Sample fixed-size, aligned segments from key and value history tensors.
+        
+        Args:
+            k_hist: Key history tensor
+            v_hist: Value history tensor
+            
+        Returns:
+            Tuple of (sampled key history, sampled value history)
         """
         _, _, seq_len, _ = k_hist.shape
 
@@ -602,6 +779,16 @@ class Stickbreaking(ScaledDotProduct):
         return k_sample, v_sample
 
     def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Update and return history for keys and values.
+        
+        Args:
+            k: Key tensor for current batch
+            v: Value tensor for current batch
+            
+        Returns:
+            Tuple of (updated key tensor, updated value tensor)
+        """
         # First forward pass - initialize history
         if self.key_history is None or self.value_history is None:
             self.key_history = k.detach()
@@ -683,12 +870,32 @@ class Stickbreaking(ScaledDotProduct):
 
 
 class LinearQuery(nn.Linear):
-    def __init__(self, *args, **kwargs):
+    """
+    Linear projection for query vectors.
+    """
+    
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """
+        Initialize linear query projection.
+        
+        Args:
+            *args: Arguments for nn.Linear
+            **kwargs: Keyword arguments for nn.Linear
+        """
         super().__init__(*args, **kwargs)
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor) -> Tuple[Tensor, float]:
+        """
+        Forward pass for query projection.
+        
+        Args:
+            x: Input tensor
+            
+        Returns:
+            Tuple of (projected tensor, auxiliary loss)
+        """
         y = super().forward(x)
-        aux_loss = 0
+        aux_loss: float = 0
         return y, aux_loss
 
 
@@ -699,21 +906,39 @@ class LinearKeyValue(nn.Module):
 
     def __init__(
         self, hidden_size: int, num_heads: int, key_head_dim: int, value_head_dim: int
-    ):
+    ) -> None:
+        """
+        Initialize key and value projections.
+        
+        Args:
+            hidden_size: Size of input dimension
+            num_heads: Number of attention heads
+            key_head_dim: Dimension of each key head
+            value_head_dim: Dimension of each value head
+        """
         super().__init__()
         self.key = nn.Linear(hidden_size, num_heads * key_head_dim, bias=False)
         self.value = nn.Linear(hidden_size, num_heads * value_head_dim, bias=False)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}("
             + f"in_features={self.key.weight.size(0)}, "
             + f"out_keys={self.key.weight.size(1)}, "
-            + f"out_values={self.value.weight.size(0)}"
+            + f"out_values={self.value.weight.size(1)}"
             + ")"
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Forward pass for key and value projections.
+        
+        Args:
+            x: Input tensor
+            
+        Returns:
+            Tuple of (key tensor, value tensor)
+        """
         k = self.key(x)
         v = self.value(x)
         return k, v
@@ -733,24 +958,34 @@ class LowRankKeyValue(nn.Module):
         key_head_dim: int,
         value_head_dim: int,
         rank: int = 2,
-    ):
+    ) -> None:
+        """
+        Initialize low-rank key and value projections.
+        
+        Args:
+            hidden_size: Size of input dimension
+            num_heads: Number of attention heads
+            key_head_dim: Dimension of each key head
+            value_head_dim: Dimension of each value head
+            rank: Rank of the factorization (default: 2)
+        """
         super().__init__()
-        self.num_heads = num_heads
-        self.key_head_dim = key_head_dim
-        self.value_head_dim = value_head_dim
-        self.rank = rank
+        self.num_heads: int = num_heads
+        self.key_head_dim: int = key_head_dim
+        self.value_head_dim: int = value_head_dim
+        self.rank: int = rank
 
         # Define linear transformations for A projections
-        self.key_a = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
-        self.value_a = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
+        self.key_a: nn.Linear = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
+        self.value_a: nn.Linear = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
 
         # Define B projection parameters for K, V
-        self.key_b = nn.Linear(hidden_size, self.rank * self.key_head_dim, bias=False)
-        self.value_b = nn.Linear(
+        self.key_b: nn.Linear = nn.Linear(hidden_size, self.rank * self.key_head_dim, bias=False)
+        self.value_b: nn.Linear = nn.Linear(
             hidden_size, self.rank * self.value_head_dim, bias=False
         )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}("
             + f"in_features={self.key_a.weight.size(1)}, "
@@ -758,7 +993,16 @@ class LowRankKeyValue(nn.Module):
             + ")"
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Forward pass for low-rank key and value projections.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_size]
+            
+        Returns:
+            Tuple of (key tensor, value tensor)
+        """
         batch_size, seq_len, _ = x.size()
 
         # Compute intermediate variables A for K, and V
@@ -798,19 +1042,25 @@ class MultiTokenAttention(nn.Module):
     https://arxiv.org/abs/2504.00927v1
     """
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize Multi-Token Attention module.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         super().__init__()
-        self.num_query_heads = config.num_heads * config.num_queries
+        self.num_query_heads: int = config.num_heads * config.num_queries
 
         # Key-Query configuration
-        self.query_kernel_size = 6
-        self.key_kernel_size = 11
+        self.query_kernel_size: int = 6
+        self.key_kernel_size: int = 11
 
         # Head mixing configuration
-        self.head_kernel_size = 2
+        self.head_kernel_size: int = 2
 
         # Create a single grouped convolution for key-query convolution
-        self.kq_conv = nn.Conv2d(
+        self.kq_conv: nn.Conv2d = nn.Conv2d(
             in_channels=self.num_query_heads,
             out_channels=self.num_query_heads,
             kernel_size=(self.query_kernel_size, self.key_kernel_size),
@@ -823,17 +1073,17 @@ class MultiTokenAttention(nn.Module):
             self.num_query_heads % self.head_kernel_size == 0
         ), f"Number of heads ({self.num_query_heads}) must be divisible by head kernel size ({self.head_kernel_size})"
 
-        self.num_head_groups = self.num_query_heads // self.head_kernel_size
+        self.num_head_groups: int = self.num_query_heads // self.head_kernel_size
 
         # For each group, create a weight matrix that mixes the heads
-        self.head_mix_weights = nn.Parameter(
+        self.head_mix_weights: nn.Parameter = nn.Parameter(
             torch.zeros(
                 self.num_head_groups, self.head_kernel_size, self.head_kernel_size
             )
         )
 
         # In __init__:
-        self.norm = nn.LayerNorm(config.head_size, eps=config.epsilon)
+        self.norm: nn.LayerNorm = nn.LayerNorm(config.head_size, eps=config.epsilon)
 
         # Initialize identity weights
         with torch.no_grad():
@@ -844,7 +1094,7 @@ class MultiTokenAttention(nn.Module):
         # Initialize as identity kernels
         self._init_identity_kernels()
 
-    def _init_identity_kernels(self):
+    def _init_identity_kernels(self) -> None:
         """Initialize the kernels as identity (1 at center position)"""
         with torch.no_grad():
             # Initialize key-query convolution
@@ -856,17 +1106,16 @@ class MultiTokenAttention(nn.Module):
             for i in range(self.num_query_heads):
                 self.kq_conv.weight[i, 0, center_q, center_k] = 1.0
 
-    # def key_query_convolution(self, scores):
-    #     """
-    #     Apply key-query convolution to attention scores
-    #     """
-    #     batch_size, num_heads, seq_len, key_len = scores.shape
-    #     # Apply key-query convolution directly - no reshaping needed
-    #     return self.kq_conv(scores)
-    def key_query_convolution(self, scores):
+    def key_query_convolution(self, scores: Tensor) -> Tensor:
         """
         Apply key-query convolution to attention scores with proper double masking
         as described in the paper's equation (4)
+        
+        Args:
+            scores: Attention scores tensor of shape [batch_size, num_heads, seq_len, key_len]
+            
+        Returns:
+            Processed attention scores
         """
         batch_size, num_heads, seq_len, key_len = scores.shape
 
@@ -893,12 +1142,17 @@ class MultiTokenAttention(nn.Module):
 
         return final_scores
 
-    def head_mixing_convolution(self, attention_weights):
+    def head_mixing_convolution(self, attention_weights: Tensor) -> Tensor:
         """
         Apply head mixing convolution to attention weights (post-softmax)
         using fully vectorized operations
+        
+        Args:
+            attention_weights: Attention weights tensor of shape [batch_size, num_heads, seq_len, key_len]
+            
+        Returns:
+            Mixed attention weights
         """
-
         batch_size, num_heads, seq_len, key_len = attention_weights.shape
 
         # Reshape to separate head groups: [batch_size, num_groups, head_kernel_size, seq_len, key_len]
@@ -919,9 +1173,15 @@ class MultiTokenAttention(nn.Module):
         # Reshape back to original shape
         return mixed_weights.reshape(batch_size, num_heads, seq_len, key_len)
 
-    def group_norm(self, attention_output):
+    def group_norm(self, attention_output: Tensor) -> Tensor:
         """
         Apply normalization with much less reshaping
+        
+        Args:
+            attention_output: Attention output tensor of shape [batch_size, num_heads, seq_len, head_dim]
+            
+        Returns:
+            Normalized attention output
         """
         batch_size, num_heads, seq_len, head_dim = attention_output.shape
 
@@ -945,13 +1205,29 @@ class UniversalAttentionGate(nn.Module):
     https://arxiv.org/abs/2209.10655
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize universal attention gate module.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         super().__init__()
-        self.num_queries = config.num_queries
-        self.hidden_size = config.hidden_size
-        self.approximator = PraxisMLP(config, activation=config.activation)
+        self.num_queries: int = config.num_queries
+        self.hidden_size: int = config.hidden_size
+        self.approximator: PraxisMLP = PraxisMLP(config, activation=config.activation)
 
     def forward(self, inputs: Tensor, weights: Tensor) -> Tensor:
+        """
+        Forward pass to apply gating to attention outputs.
+        
+        Args:
+            inputs: Original input tensor of shape [batch_size, seq_len, hidden_size]
+            weights: Attention weights tensor of shape [batch_size, seq_len, num_queries*hidden_size]
+            
+        Returns:
+            Gated attention output
+        """
         batch_size, seq_len = inputs.shape[:2]
 
         if self.num_queries > 1:
@@ -997,25 +1273,32 @@ class PraxisGatedEMA(nn.Module):
     Original Code: https://github.com/facebookresearch/mega/blob/main/fairseq/modules/exponential_moving_average.py
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize gated EMA module.
+        
+        Args:
+            config: Configuration object containing model parameters
+        """
         super().__init__()
-        self.embed_dim = config.hidden_size
-        self.ndim = 3  # Adjust as needed
-        self.scale = math.sqrt(1.0 / self.ndim)
+        self.embed_dim: int = config.hidden_size
+        self.ndim: int = 3  # Adjust as needed
+        self.scale: float = math.sqrt(1.0 / self.ndim)
 
         # Truncation parameter to limit kernel size
-        self.truncation = None  # Set to a value like 256 if needed
+        self.truncation: Optional[int] = None  # Set to a value like 256 if needed
 
         # EMA parameters
-        self.delta = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
-        self.alpha = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
-        self.beta = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
-        self.gamma = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim))
-        self.omega = nn.Parameter(torch.Tensor(self.embed_dim))
+        self.delta: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.alpha: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.beta: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.gamma: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim))
+        self.omega: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim))
 
         self.reset_parameters()
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
+        """Initialize parameters with appropriate distributions"""
         with torch.no_grad():
             nn.init.normal_(self.delta, mean=0.0, std=0.2)
             nn.init.normal_(self.alpha, mean=0.0, std=0.2)
@@ -1028,6 +1311,15 @@ class PraxisGatedEMA(nn.Module):
             nn.init.normal_(self.omega, mean=0.0, std=1.0)
 
     def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass of the gated EMA module.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, embed_dim]
+            
+        Returns:
+            Processed tensor after applying EMA
+        """
         # Compute residual
         residual = x * self.omega  # Shape: (batch_size, seq_len, embed_dim)
 
@@ -1039,13 +1331,28 @@ class PraxisGatedEMA(nn.Module):
 
         return y
 
-    def _calc_coeffs(self):
+    def _calc_coeffs(self) -> Tuple[Tensor, Tensor]:
+        """
+        Calculate EMA coefficients.
+        
+        Returns:
+            Tuple of (p, q) coefficients
+        """
         p = torch.sigmoid(self.delta)  # (embed_dim, ndim, 1)
         alpha = torch.sigmoid(self.alpha)  # (embed_dim, ndim, 1)
         q = 1.0 - p * alpha  # (embed_dim, ndim, 1)
         return p, q
 
     def _compute_kernel(self, seq_len: int) -> Tensor:
+        """
+        Compute the EMA kernel.
+        
+        Args:
+            seq_len: Length of the sequence
+            
+        Returns:
+            Computed kernel tensor
+        """
         kernel_size = (
             seq_len if self.truncation is None else min(self.truncation, seq_len)
         )
@@ -1062,6 +1369,15 @@ class PraxisGatedEMA(nn.Module):
         return kernel
 
     def _compute_ema(self, x: Tensor) -> Tensor:
+        """
+        Compute EMA using FFT-based convolution.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, embed_dim]
+            
+        Returns:
+            EMA output tensor of same shape
+        """
         # x: (batch_size, seq_len, embed_dim)
         batch_size, seq_len, embed_dim = x.size()
         x = x.transpose(1, 2)  # (batch_size, embed_dim, seq_len)
@@ -1097,7 +1413,17 @@ class PraxisGatedEMA(nn.Module):
 
 
 class VanillaMHA(nn.MultiheadAttention):
-    def __init__(self, config: "AutoConfig"):
+    """
+    Standard multi-head attention implementation using PyTorch's nn.MultiheadAttention.
+    """
+    
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize vanilla multi-head attention module.
+        
+        Args:
+            config: Configuration object containing attention parameters
+        """
         super().__init__(
             embed_dim=config.hidden_size,
             num_heads=config.num_heads,
@@ -1109,11 +1435,25 @@ class VanillaMHA(nn.MultiheadAttention):
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Tensor,
-        past_key_values: Tensor = None,
-        *args,
-        **kwargs,
-    ):
+        attention_mask: Optional[Tensor],
+        past_key_values: Optional[Tensor] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[Tensor, Optional[Tensor], int]:
+        """
+        Forward pass of vanilla multi-head attention.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional key-value cache (unused in this implementation)
+            
+        Returns:
+            Tuple containing:
+            - Output tensor after attention
+            - None for the key-value cache (not used)
+            - 0 for auxiliary loss (not used)
+        """
         # scores shape: [B, S, E]
         seq_len = inputs.size(1)
         # Create causal mask
@@ -1129,11 +1469,12 @@ class VanillaMHA(nn.MultiheadAttention):
             is_causal=True,
             attn_mask=causal_mask,
         )
-        layer_kv = None
+        layer_kv: Optional[Tensor] = None
         return outputs, layer_kv, 0
 
 
-ATTENTION_REGISTRY = {
+# Registry of available attention mechanisms
+ATTENTION_REGISTRY: Dict[str, Type[nn.Module]] = {
     "standard": PraxisAttention,
     "vanilla": VanillaMHA,
     "pk": ProductKeyAttention,

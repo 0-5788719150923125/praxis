@@ -220,7 +220,7 @@ class GraphRouter(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[torch.Tensor, Optional[int]]:
+    ) -> Tuple[torch.Tensor, List[int], Optional[int]]:
 
         # Get available expert indices
         available_indices = [
@@ -231,7 +231,7 @@ class GraphRouter(BaseController):
 
         # Reset if no unused experts available
         if not available_indices:
-            return 0, None
+            return torch.tensor(0.0, device=hidden_states.device), current_route, None
 
         # Compute attention scores and probabilities
         scores = self._compute_attention_scores(

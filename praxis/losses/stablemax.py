@@ -26,10 +26,10 @@ class StableMaxCrossEntropyLoss(nn.Module):
         return loss
 
 
-def s(x, epsilon=1e-30):
+def s(x: torch.Tensor, epsilon: float = 1e-30) -> torch.Tensor:
     return torch.where(x < 0, 1 / (1 - x + epsilon), x + 1)
 
 
-def log_stablemax(x, dim=-1):
+def log_stablemax(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     s_x = s(x)
     return torch.log(s_x / torch.sum(s_x, dim=dim, keepdim=True))

@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, Tensor
 
 
 class SinLU(nn.Module):
@@ -14,5 +14,5 @@ class SinLU(nn.Module):
         self.alpha = nn.Parameter(torch.ones(1))
         self.beta = nn.Parameter(torch.ones(1))
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return F.sigmoid(x) * (x + self.alpha * torch.sin(self.beta * x))

@@ -1,9 +1,14 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
+from typing import List, Union
 
 
 class JaggedSine(nn.Module):
-    def __init__(self, frequencies=[1.0, 3.0, 5.0], amplitudes=[1.0, 0.3, 0.1]):
+    def __init__(
+        self, 
+        frequencies: List[float] = [1.0, 3.0, 5.0], 
+        amplitudes: List[float] = [1.0, 0.3, 0.1]
+    ):
         super().__init__()
         assert len(frequencies) == len(
             amplitudes
@@ -11,7 +16,7 @@ class JaggedSine(nn.Module):
         self.register_buffer("frequencies", torch.tensor(frequencies))
         self.register_buffer("amplitudes", torch.tensor(amplitudes))
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         # Add a new dimension to x for the frequencies
         # If x is [batch_size, features], it becomes [batch_size, features, 1]
         # If x is just [features], it becomes [features, 1]

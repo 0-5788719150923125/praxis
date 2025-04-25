@@ -1,4 +1,4 @@
-from typing import Optional, OrderedDict
+from typing import Any, Dict, List, Optional, OrderedDict, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -20,7 +20,7 @@ class PraxisTransformer(nn.Module):
     A standard transformer block, with adjustable feedforward "experts".
     """
 
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.attn_res = (
             HyperConnection(config.hidden_size)
@@ -40,16 +40,35 @@ class PraxisTransformer(nn.Module):
 
     def forward(
         self,
-        inputs: torch.Tensor,
-        attention_mask: torch.Tensor,
-        past_key_values: torch.Tensor = None,
-        current_state: torch.Tensor = None,
+        inputs: Tensor,
+        attention_mask: Optional[Tensor],
+        past_key_values: Optional[Union[List[Any], Dict[str, Any]]] = None,
+        current_state: Optional[Any] = None,
         current_depth: int = 0,
-        block_ids: torch.Tensor = None,
-        router_weights: Optional[torch.Tensor] = None,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
+        block_ids: Optional[Tensor] = None,
+        router_weights: Optional[Tensor] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[Any], Tensor]:
+        """
+        Forward pass through the transformer block.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional cached key/values for faster inference
+            current_state: Optional current layer state
+            current_depth: Current depth in the network
+            block_ids: Optional block identification tensor
+            router_weights: Optional weights from router for expert gating
+            
+        Returns:
+            Tuple containing:
+                - Output tensor
+                - Updated past key values
+                - Updated layer state (None in this implementation)
+                - Auxiliary loss
+        """
 
         aux_loss = 0
         # =========== Attention Block =============
@@ -80,7 +99,17 @@ class PraxisTransformer(nn.Module):
         final_output = self.ffn_res.connect_depth(residual, ffn_output, beta_ffn)
         return self.ffn_res.format_state(final_output), past_key_values, None, aux_loss
 
-    def _is_zero_tensor(self, tensor: torch.Tensor, tolerance: float = 1e-10) -> bool:
+    def _is_zero_tensor(self, tensor: Tensor, tolerance: float = 1e-10) -> bool:
+        """
+        Check if a tensor contains all zeros (or values close to zero).
+        
+        Args:
+            tensor: The tensor to check
+            tolerance: Threshold for considering values as zero
+            
+        Returns:
+            True if the tensor contains all zeros or near-zeros, False otherwise
+        """
         if tensor.dtype == torch.int64:
             return bool(torch.all(tensor == 0))
         return bool(torch.abs(tensor).max().item() < tolerance)

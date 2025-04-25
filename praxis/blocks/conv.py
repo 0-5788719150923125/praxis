@@ -1,11 +1,12 @@
 import math
 import time
-from typing import Optional
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from transformers.configuration_utils import PretrainedConfig
 
 from praxis.activations import ACT2FN
 from praxis.modules.dense import PraxisGLU
@@ -19,7 +20,13 @@ class PraxisConv(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
+        """
+        Initialize PraxisConv block.
+        
+        Args:
+            config: Model configuration
+        """
         super().__init__()
         hidden_dim = config.hidden_size
         capacity = 0.125
@@ -40,10 +47,23 @@ class PraxisConv(nn.Module):
 
     def forward(
         self,
-        inputs: torch.Tensor,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
+        inputs: Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
+        """
+        Forward pass through the convolutional block.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            
+        Returns:
+            Tuple containing:
+                - Output tensor
+                - None (no past key values)
+                - None (no layer state)
+                - Zero loss value
+        """
         # Local processing
         residual = inputs
         x_norm = self.conv_norm(inputs)  # Shape: (B, T, E)
@@ -65,7 +85,15 @@ class PraxisConv(nn.Module):
 
 
 class MultiHeadCausalConv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, num_heads):
+    def __init__(self, in_channels: int, out_channels: int, num_heads: int) -> None:
+        """
+        Initialize multi-head causal convolution.
+        
+        Args:
+            in_channels: Number of input channels
+            out_channels: Number of output channels
+            num_heads: Number of attention heads
+        """
         super().__init__()
         assert out_channels % num_heads == 0
         head_dim = out_channels // num_heads
@@ -73,7 +101,16 @@ class MultiHeadCausalConv1d(nn.Module):
             [CausalConv1d(in_channels, head_dim, (i + 3)) for i in range(num_heads)]
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass through multi-head causal convolution.
+        
+        Args:
+            x: Input tensor of shape [batch_size, in_channels, seq_len]
+            
+        Returns:
+            Output tensor of shape [batch_size, out_channels, seq_len]
+        """
         head_outputs = [conv(x) for conv in self.convs]
         return torch.cat(head_outputs, dim=1)
 
@@ -220,8 +257,18 @@ class CausalConv1d(nn.Conv1d):
     """1D Causal Convolution Layer."""
 
     def __init__(
-        self, in_channels, out_channels, kernel_size, dilation=1, bias=False, **kwargs
-    ):
+        self, in_channels: int, out_channels: int, kernel_size: int, dilation: int = 1, bias: bool = False, **kwargs: Any
+    ) -> None:
+        """
+        Initialize 1D causal convolution.
+        
+        Args:
+            in_channels: Number of input channels
+            out_channels: Number of output channels
+            kernel_size: Size of the convolving kernel
+            dilation: Spacing between kernel elements
+            bias: Whether to include a bias term
+        """
         padding = (kernel_size - 1) * dilation
         super().__init__(
             in_channels,
@@ -234,7 +281,16 @@ class CausalConv1d(nn.Conv1d):
         )
         self.left_padding = padding
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass through causal 1D convolution.
+        
+        Args:
+            x: Input tensor of shape [batch_size, in_channels, seq_len]
+            
+        Returns:
+            Output tensor of shape [batch_size, out_channels, seq_len]
+        """
         x = F.pad(x, (self.left_padding, 0))
         return super().forward(x)
 
@@ -246,7 +302,14 @@ class CausalGlobalContext(nn.Module):
     https://arxiv.org/abs/1904.11492v1
     """
 
-    def __init__(self, in_channels, capacity=0.125):
+    def __init__(self, in_channels: int, capacity: float = 0.125) -> None:
+        """
+        Initialize causal global context module.
+        
+        Args:
+            in_channels: Number of input channels
+            capacity: Bottleneck capacity ratio
+        """
         super().__init__()
         bottleneck = int(in_channels * capacity)
 
@@ -268,7 +331,16 @@ class CausalGlobalContext(nn.Module):
         self.pos_bias_start = nn.Parameter(torch.tensor([0.1]))
         self.pos_bias_end = nn.Parameter(torch.tensor([-0.1]))
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass through causal global context module.
+        
+        Args:
+            x: Input tensor of shape [batch_size, in_channels, seq_len]
+            
+        Returns:
+            Output tensor of shape [batch_size, in_channels, seq_len]
+        """
         B, C, T = x.shape
 
         # Generate attention weights

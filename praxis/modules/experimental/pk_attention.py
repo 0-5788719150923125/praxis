@@ -1,16 +1,17 @@
 from math import ceil, floor, sqrt
+from typing import Any, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, Tensor
 from torch.nn import Module, ModuleList
 
 
-def exists(v):
+def exists(v: Any) -> bool:
     return v is not None
 
 
-def default(v, d):
+def default(v: Any, d: Any) -> Any:
     return v if exists(v) else d
 
 
@@ -23,14 +24,14 @@ class ProductKeyAttention(Module):
     def __init__(
         self,
         config: "AutoConfig" = None,
-        dim: int = None,
-        causal: bool = None,
-        heads: int = None,
-        num_key_values: int = None,
+        dim: Optional[int] = None,
+        causal: Optional[bool] = None,
+        heads: Optional[int] = None,
+        num_key_values: Optional[int] = None,
         key_value_pk_topk: int = 8,
-        product_keys=2,
-        dropout: float = None,
-    ):
+        product_keys: int = 2,
+        dropout: Optional[float] = None,
+    ) -> None:
         super().__init__()
         self.causal = causal or config.causal
         self.heads = heads or config.num_heads
@@ -71,8 +72,13 @@ class ProductKeyAttention(Module):
         self.to_out = nn.Linear(self.dim * self.heads, self.dim, bias=False)
 
     def forward(
-        self, inputs, attention_mask=None, past_key_values=None, *args, **kwargs
-    ):
+        self, 
+        inputs: Tensor, 
+        attention_mask: Optional[Tensor] = None, 
+        past_key_values: Optional[Any] = None, 
+        *args: Any, 
+        **kwargs: Any
+    ) -> Tuple[Tensor, Optional[Any], float]:
         batch_size, seq_len, _ = inputs.shape
         device = inputs.device
 
@@ -130,7 +136,7 @@ class ProductKeyAttention(Module):
         out = out.permute(0, 2, 1, 3).contiguous()
         out = out.view(batch_size, seq_len, -1)
 
-        aux_loss = 0
+        aux_loss = 0.0
         layer_kv = None
         return self.to_out(out), layer_kv, aux_loss
 
@@ -138,15 +144,15 @@ class ProductKeyAttention(Module):
 class PK(Module):
     def __init__(
         self,
-        dim,
+        dim: int,
         *,
-        heads=8,
-        dim_key=None,
-        num_keys=1_000,
-        product_keys=2,
-        product_key_topk=None,
-        final_topk=16,
-    ):
+        heads: int = 8,
+        dim_key: Optional[int] = None,
+        num_keys: int = 1_000,
+        product_keys: int = 2,
+        product_key_topk: Optional[int] = None,
+        final_topk: int = 16,
+    ) -> None:
         super().__init__()
         assert (dim % 2) == 0
         dim_key = default(dim_key, dim // 2)
@@ -173,7 +179,11 @@ class PK(Module):
         # the maximum index, or the total space being indexed into
         self.max_index = int(num_keys**product_keys)
 
-    def forward(self, x, softmax_scores=False):
+    def forward(
+        self, 
+        x: Tensor, 
+        softmax_scores: bool = False
+    ) -> Tuple[Tensor, Tensor]:
         batch_size, seq_len, _ = x.shape
         device = x.device
 
@@ -219,22 +229,41 @@ class PK(Module):
         return final_scores, final_indices
 
 
-def is_perfect_square(n):
-    """Check if a number is a perfect square."""
+def is_perfect_square(n: Union[int, float]) -> bool:
+    """
+    Check if a number is a perfect square.
+    
+    Args:
+        n: Number to check
+        
+    Returns:
+        True if the number is a perfect square, False otherwise
+    """
     if n < 0:
         return False
     root = int(sqrt(n))
     return root * root == n
 
 
-def find_nearest_square(n):
-    """Find the nearest perfect square to a given number."""
+def find_nearest_square(n: Union[int, float]) -> int:
+    """
+    Find the nearest perfect square to a given number.
+    
+    Args:
+        n: Input number
+        
+    Returns:
+        Nearest perfect square to the input
+        
+    Raises:
+        ValueError: If the input is negative
+    """
     if n < 0:
         raise ValueError("Input must be non-negative")
 
     # If it's already a perfect square, return it
     if is_perfect_square(n):
-        return n
+        return int(n)
 
     # Find the floor and ceiling square numbers
     floor_root = floor(sqrt(n))
@@ -249,7 +278,7 @@ def find_nearest_square(n):
         return ceil_square
 
 
-def divide_and_round_to_square(number, divisor):
+def divide_and_round_to_square(number: Union[int, float], divisor: Union[int, float]) -> int:
     """
     Divide a number by a divisor and round to the nearest perfect square.
 
@@ -259,6 +288,9 @@ def divide_and_round_to_square(number, divisor):
 
     Returns:
         The nearest perfect square to the division result
+        
+    Raises:
+        ValueError: If divisor is zero
     """
     if divisor == 0:
         raise ValueError("Cannot divide by zero")

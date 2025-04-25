@@ -1,6 +1,7 @@
 import copy
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -20,16 +21,36 @@ class PraxisSMEAR(nn.Module):
     """
     This module implements Soft-Merging of Experts with Adaptive Routing (SMEAR):
     https://arxiv.org/abs/2306.03745
+    
+    SMEAR dynamically merges expert parameters based on routing probabilities,
+    rather than routing inputs to multiple experts. This enables more efficient
+    parameter sharing and adaptation to input patterns.
     """
 
     __version__ = "0.2.0"
 
-    def __init__(self, config: SMEARConfig, experts: list[nn.Module], *args, **kwargs):
+    def __init__(
+        self, 
+        config: SMEARConfig, 
+        experts: List[nn.Module], 
+        *args: Any, 
+        **kwargs: Any
+    ):
+        """
+        Initialize the SMEAR module.
+        
+        Args:
+            config: SMEAR configuration object
+            experts: List of expert modules to be merged
+            *args: Additional arguments
+            **kwargs: Additional keyword arguments
+        """
         super().__init__()
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
         self.experts = nn.ModuleList(experts)  # Properly register experts as submodules
+        self.parameter_names: List[str] = []
 
         # Router network: simple linear -> softmax
         self.router = nn.Sequential(
@@ -39,7 +60,28 @@ class PraxisSMEAR(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, inputs, current_state, *args, **kwargs):
+    def forward(
+        self, 
+        inputs: torch.Tensor, 
+        current_state: Any = None, 
+        *args: Any, 
+        **kwargs: Any
+    ) -> Tuple[torch.Tensor, Any, int]:
+        """
+        Forward pass through SMEAR module.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            current_state: Current state for stateful modules (like RNNs)
+            *args: Additional positional arguments to pass to the expert
+            **kwargs: Additional keyword arguments to pass to the expert
+            
+        Returns:
+            Tuple containing:
+                - Output tensor
+                - New state (for stateful modules)
+                - Load balancing loss (currently fixed at 0)
+        """
         # Get routing probabilities
         routing_probs = self.router(inputs.mean(dim=1))  # [batch_size, num_experts]
 
@@ -55,9 +97,20 @@ class PraxisSMEAR(nn.Module):
 
         return outputs, new_state, 0
 
-    def _collect_parameter_names(self, module, prefix=""):
+    def _collect_parameter_names(
+        self, 
+        module: nn.Module, 
+        prefix: str = ""
+    ) -> List[str]:
         """
         Recursively collect all parameter names from a module.
+        
+        Args:
+            module: Module to collect parameter names from
+            prefix: Prefix for nested parameter names
+            
+        Returns:
+            List of parameter names with full path
         """
         parameter_names = []
         for name, submodule in module.named_children():
@@ -68,12 +121,24 @@ class PraxisSMEAR(nn.Module):
             parameter_names.append(prefix + name)
         return parameter_names
 
-    def _merge_expert_parameters(self, routing_probs):
+    def _merge_expert_parameters(
+        self, 
+        routing_probs: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
         """
         Merge expert parameters based on routing probabilities.
+        
+        Args:
+            routing_probs: Routing probabilities of shape [batch_size, num_experts]
+            
+        Returns:
+            Dictionary of merged parameters
+            
+        Raises:
+            ValueError: If a parameter is not found in an expert
         """
         # Initialize a dictionary to hold the merged parameters
-        merged_state_dict = {}
+        merged_state_dict: Dict[str, torch.Tensor] = {}
 
         # Compute the mean routing probability across the batch for each expert
         expert_weights = routing_probs.mean(dim=0)  # [num_experts]
@@ -82,7 +147,7 @@ class PraxisSMEAR(nn.Module):
         self.parameter_names = self._collect_parameter_names(self.experts[0])
         for param_name in self.parameter_names:
             # Initialize the merged parameter with zeros
-            merged_param = None
+            merged_param: Optional[torch.Tensor] = None
 
             for expert_idx, expert in enumerate(self.experts):
                 # Get the parameter from the expert
@@ -104,13 +169,25 @@ class PraxisSMEAR(nn.Module):
                 else:
                     merged_param = merged_param + weighted_param
 
+            assert merged_param is not None, "Merged parameter should not be None"
             merged_state_dict[param_name] = merged_param
 
         return merged_state_dict
 
-    def _get_module_parameter(self, module, param_name):
+    def _get_module_parameter(
+        self, 
+        module: nn.Module, 
+        param_name: str
+    ) -> Optional[torch.Tensor]:
         """
         Retrieve a parameter from a module using a fully qualified parameter name.
+        
+        Args:
+            module: Module to get parameter from
+            param_name: Fully qualified parameter name (e.g., "layer1.weight")
+            
+        Returns:
+            Parameter tensor if found, None otherwise
         """
         parts = param_name.split(".")
         submodule = module

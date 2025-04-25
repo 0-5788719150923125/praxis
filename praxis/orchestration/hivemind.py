@@ -3,7 +3,7 @@ import random
 import time
 from ipaddress import ip_address
 from threading import Thread
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import hivemind
 import requests
@@ -19,6 +19,7 @@ from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils import BatchTensorDescriptor
 from hivemind.utils.networking import log_visible_maddrs
 from torch import Tensor
+from transformers.configuration_utils import PretrainedConfig
 
 from praxis.modules.experts import PraxisExpert
 from praxis.modules.router import PraxisMixtureOfDepths
@@ -40,7 +41,13 @@ class PraxisManagement:
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: "PretrainedConfig") -> None:
+        """
+        Initialize hivemind management system.
+        
+        Args:
+            config: Model configuration
+        """
         super().__init__()
 
         self.config = config
@@ -84,31 +91,68 @@ class PraxisManagement:
         self.thread = None
         self.task_manager(interval=30)
 
-    def task_manager(self, interval):
+    def task_manager(self, interval: int) -> None:
+        """
+        Initialize background task manager for expert discovery.
+        
+        Args:
+            interval: Time interval between expert searches in seconds
+        """
         self.running = True
         self.thread = Thread(target=self._run_task, args=(interval,))
         self.thread.daemon = True
         self.thread.start()
 
-    def _run_task(self, interval):
+    def _run_task(self, interval: int) -> None:
+        """
+        Background task loop for searching experts.
+        
+        Args:
+            interval: Time interval between expert searches in seconds
+        """
         while self.running:
             self._search_for_experts()
             time.sleep(interval)
 
     @property
-    def local_experts(self):
+    def local_experts(self) -> List[nn.Module]:
+        """
+        Get list of active local experts.
+        
+        Returns:
+            List of registered local expert modules
+        """
         return self.active_local_experts
 
     @property
-    def remote_experts(self):
+    def remote_experts(self) -> List[nn.Module]:
+        """
+        Get list of active remote experts.
+        
+        Returns:
+            List of discovered remote expert modules
+        """
         return self.active_remote_experts
 
-    def get_visible_maddrs(self):
+    def get_visible_maddrs(self) -> None:
+        """
+        Log visible multiaddresses for this node.
+        """
         log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=self.use_ipfs)
 
     def register_expert(
-        self, config: "AutoConfig", expert_cls: str = "hivemind_expert"
-    ):
+        self, config: "PretrainedConfig", expert_cls: str = "hivemind_expert"
+    ) -> nn.Module:
+        """
+        Register a new expert module with hivemind.
+        
+        Args:
+            config: Model configuration
+            expert_cls: Type of expert to register
+            
+        Returns:
+            Registered expert module
+        """
         assert expert_cls in name_to_block
 
         hidden_schema = BatchTensorDescriptor(
@@ -138,7 +182,10 @@ class PraxisManagement:
         self.active_local_experts.append(module)
         return module
 
-    def serve_experts(self):
+    def serve_experts(self) -> None:
+        """
+        Start serving registered experts to the hivemind network.
+        """
         device = self.config.device_map or (
             "cuda" if torch.cuda.is_available() else "cpu"
         )
@@ -153,16 +200,41 @@ class PraxisManagement:
             start=True,
         )
 
-    def handle_failure(self, expert):
+    def handle_failure(self, expert: nn.Module) -> None:
+        """
+        Handle a remote expert failure by removing it from the active list.
+        
+        Args:
+            expert: The expert module that failed
+        """
         self.active_remote_experts.remove(expert)
         if expert.block.uid in self.expert_uids:
             print("removing:", expert.block.uid)
             self.expert_uids.remove(expert.block.uid)
 
-    def _generate_random_name(self, k: int):
+    def _generate_random_name(self, k: int) -> str:
+        """
+        Generate a random expert name.
+        
+        Args:
+            k: Pool size parameter affecting name variety
+            
+        Returns:
+            Generated random name string
+        """
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
-    def _generate_unique_name(self, k=3, run_once=False):
+    def _generate_unique_name(self, k: int = 3, run_once: bool = False) -> Tuple[str, Optional[RemoteExpert]]:
+        """
+        Generate a unique expert name not currently in use.
+        
+        Args:
+            k: Pool size parameter affecting name variety
+            run_once: Whether to run search only once regardless of conflicts
+            
+        Returns:
+            Tuple containing the unique name and an expert instance (or None)
+        """
         attempts = 0
         MAX_ATTEMPTS = 100
         while True:
@@ -183,7 +255,10 @@ class PraxisManagement:
             else:
                 return new_name, new_expert
 
-    def _search_for_experts(self):
+    def _search_for_experts(self) -> None:
+        """
+        Search the hivemind network for additional experts.
+        """
         _, new_expert = self._generate_unique_name(self.pool_size, run_once=True)
         if new_expert is None:
             return
@@ -210,17 +285,52 @@ class HivemindWrapper:
     Ensures that gradients are not computed for remote experts.
     """
 
-    def __init__(self, module):
+    def __init__(self, module: RemoteExpert) -> None:
+        """
+        Initialize wrapper for remote expert.
+        
+        Args:
+            module: Remote expert to wrap
+        """
         self.module = module
 
     @torch.no_grad()
-    def forward(self, *args, **kwargs):
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Forward pass wrapper that ensures no gradients are computed.
+        
+        Args:
+            *args: Positional arguments to pass to the wrapped module
+            **kwargs: Keyword arguments to pass to the wrapped module
+            
+        Returns:
+            Output from the wrapped module's forward method
+        """
         return self.module.forward(*args, **kwargs)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Call operator that invokes the forward method.
+        
+        Args:
+            *args: Positional arguments to pass to forward
+            **kwargs: Keyword arguments to pass to forward
+            
+        Returns:
+            Output from the forward method
+        """
         return self.forward(*args, **kwargs)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
+        """
+        Attribute access that falls through to the wrapped module.
+        
+        Args:
+            name: Attribute name to access
+            
+        Returns:
+            The requested attribute from the wrapped module
+        """
         return getattr(self.module, name)
 
 

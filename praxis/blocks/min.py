@@ -1,10 +1,11 @@
 import math
-from typing import Optional
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from transformers.configuration_utils import PretrainedConfig
 
 from praxis.modules.dense import PraxisMLP
 from praxis.modules.recurrent import minGRU
@@ -17,7 +18,7 @@ class PraxisGRU(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(config.hidden_size)
         self.recurrent = minGRU(config.hidden_size, expansion_factor=1.0, proj_out=None)
@@ -25,17 +26,30 @@ class PraxisGRU(nn.Module):
 
     def forward(
         self,
-        inputs: torch.Tensor,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
+        inputs: Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
+        """
+        Forward pass through the PraxisGRU block.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            
+        Returns:
+            Tuple containing:
+                - Output tensor
+                - None (no past key values)
+                - None (no layer state)
+                - Zero loss value
+        """
         out, _ = self.recurrent(self.norm(inputs))
         return self.ffn(stretch(out, target_min=-1.0)) + inputs, None, None, 0
 
 
 def stretch(
-    x: torch.Tensor, target_min: float = None, target_max: float = None
-) -> torch.Tensor:
+    x: Tensor, target_min: Optional[float] = None, target_max: Optional[float] = None
+) -> Tensor:
     """
     Stretches tensor values using linear interpolation.
     At least one target bound must be specified.

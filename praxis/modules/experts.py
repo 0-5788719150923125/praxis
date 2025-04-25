@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,9 @@ from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
 from praxis.modules.router import PraxisMixtureOfDepths
 
-EXPERT_REGISTRY = {
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+
+EXPERT_REGISTRY: Dict[str, Type[nn.Module]] = {
     "glu": PraxisGLU,
     "kan": PraxisKAN,
     "mlp": PraxisMLP,
@@ -20,7 +22,7 @@ EXPERT_REGISTRY = {
     "scatter": PraxisScatter,
 }
 
-EXPERT_CONFIGS = {
+EXPERT_CONFIGS: Dict[str, Dict[str, Any]] = {
     "glu": {},
     "kan": {},
     "mlp": {},
@@ -37,7 +39,19 @@ EXPERT_CONFIGS = {
 }
 
 
-def get_expert_config(expert: str or dict):
+def get_expert_config(expert: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Get configuration for the specified expert.
+    
+    Args:
+        expert: Expert name as string or config as dictionary
+        
+    Returns:
+        Expert configuration dictionary
+        
+    Raises:
+        ValueError: If expert is not a string or dictionary, or if expert name is unknown
+    """
     # Handle expert configuration
     if isinstance(expert, str):
         if expert not in EXPERT_CONFIGS:
@@ -60,27 +74,61 @@ class PraxisExpert(nn.Module):
 
     def __init__(
         self,
-        config: "AutoConfig",
-        block: nn.Module = False,
-        router: nn.Module = False,
-        is_remote=False,
-    ):
+        config: ConfigType,
+        block: Union[nn.Module, bool] = False,
+        router: Union[nn.Module, bool] = False,
+        is_remote: bool = False,
+    ) -> None:
+        """
+        Initialize expert wrapper.
+        
+        Args:
+            config: Configuration object with model parameters
+            block: Block module to wrap
+            router: Router module (or False to use default router)
+            is_remote: Whether this is a remote expert
+        """
         super().__init__()
-        self.is_remote = is_remote
-        self.block = block
-        self.router = router
+        self.is_remote: bool = is_remote
+        self.block: Union[nn.Module, bool] = block
+        self.router: Union[nn.Module, bool] = router
         if config.mod is not None and not self.router:
             self.router = PraxisMixtureOfDepths(config)
 
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Tensor,
-        past_key_values: Tensor,
-        current_state: Tensor,
+        attention_mask: Optional[Tensor],
+        past_key_values: Optional[Tensor],
+        current_state: Optional[Tensor],
         current_depth: int,
-        block_ids,
-    ):
+        block_ids: Optional[Tensor] = None,
+    ) -> Union[
+        Tuple[Tensor, Optional[Tensor], Optional[Tensor], float],
+        Tuple[Tensor, float]
+    ]:
+        """
+        Forward pass through expert wrapper.
+        
+        Args:
+            inputs: Input tensor
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional cached key/value tensors
+            current_state: Optional current state tensor
+            current_depth: Current depth in the network
+            block_ids: Optional block IDs for structured attention
+            
+        Returns:
+            For local experts:
+                - Hidden states tensor
+                - Updated key/value cache
+                - Updated state tensor
+                - Auxiliary loss value
+                
+            For remote experts:
+                - Hidden states tensor
+                - Auxiliary loss value
+        """
         if self.is_remote:
             return self._remote_forward(inputs, attention_mask)
         else:
@@ -96,14 +144,32 @@ class PraxisExpert(nn.Module):
     def _local_forward(
         self,
         inputs: Tensor,
-        current_state: Tensor,
-        attention_mask: Tensor,
-        past_key_values: Tensor,
+        current_state: Optional[Tensor],
+        attention_mask: Optional[Tensor],
+        past_key_values: Optional[Tensor],
         current_depth: int,
-        block_ids=None,
-    ):
-        aux_losses = []
-        if self.router:
+        block_ids: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
+        """
+        Forward pass for local experts.
+        
+        Args:
+            inputs: Input tensor
+            current_state: Current state tensor
+            attention_mask: Attention mask tensor
+            past_key_values: Cached key/value tensors
+            current_depth: Current depth in the network
+            block_ids: Optional block IDs for structured attention
+            
+        Returns:
+            Tuple containing:
+                - Hidden states tensor
+                - Updated key/value cache
+                - Updated state tensor
+                - Auxiliary loss value
+        """
+        aux_losses: List[float] = []
+        if self.router and isinstance(self.router, nn.Module):
             hidden_states, layer_kv, state_update, aux_loss = self.router(
                 self.block,
                 inputs,
@@ -114,7 +180,7 @@ class PraxisExpert(nn.Module):
                 block_ids,
             )
             aux_losses.append(aux_loss)
-        else:
+        elif isinstance(self.block, nn.Module):
             hidden_states, layer_kv, state_update, aux_loss = self.block(
                 inputs,
                 attention_mask,
@@ -123,18 +189,42 @@ class PraxisExpert(nn.Module):
                 current_depth,
                 block_ids,
             )
-        return hidden_states, layer_kv, state_update, sum(aux_losses)
-
-    def _remote_forward(self, inputs, attention_mask):
-        # because we would otherwise break gradient flow
-        residual = inputs
-        aux_losses = []
-        inputs = inputs.to("cpu")
-        attention_mask = attention_mask.to("cpu")
-        if self.router:
-            hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
         else:
+            raise ValueError("Neither router nor block is a valid module")
+            
+        return hidden_states, layer_kv, state_update, sum(aux_losses)
+
+    def _remote_forward(
+        self, 
+        inputs: Tensor, 
+        attention_mask: Optional[Tensor]
+    ) -> Tuple[Tensor, float]:
+        """
+        Forward pass for remote experts.
+        
+        Args:
+            inputs: Input tensor
+            attention_mask: Optional attention mask tensor
+            
+        Returns:
+            Tuple containing:
+                - Hidden states tensor
+                - Auxiliary loss value
+        """
+        # because we would otherwise break gradient flow
+        residual = inputs
+        aux_losses: List[float] = []
+        
+        # Move to CPU for remote execution
+        inputs = inputs.to("cpu")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to("cpu")
+            
+        if self.router and isinstance(self.router, nn.Module):
+            hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
+            aux_losses.append(aux_loss)
+        elif isinstance(self.block, nn.Module):
             # because hivemind cannot receive undefined arguments in the forward pass
             dummy_router_weights = torch.zeros_like(inputs)
             # because we do not backpropagate through remote experts
@@ -143,6 +233,9 @@ class PraxisExpert(nn.Module):
                 attention_mask,
                 dummy_router_weights,
             )
+        else:
+            raise ValueError("Neither router nor block is a valid module")
+            
         # TODO: we could possibly add some differentiable noise here; perhaps as a penalty on slow experts?
         hidden_states = hidden_states.to(residual.device) + residual
         return hidden_states, sum(aux_losses)

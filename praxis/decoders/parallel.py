@@ -1,14 +1,20 @@
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+
 import torch
 import torch.nn.functional as F
 import torch.nn.parallel as parallel
-from torch import nn
+from torch import Tensor, nn
+from transformers.configuration_utils import PretrainedConfig
 
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
 from praxis.stacks import PraxisStack
 
 
+ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
+
+
 class ParallelDecoder(nn.Module):
-    def __init__(self, config: "AutoConfig", mode="mean"):
+    def __init__(self, config: ConfigType, mode: Literal["mean", "variance", "weighted"] = "mean") -> None:
         super().__init__()
         self.stack = PraxisStack(config)
         self.mode = mode
@@ -19,20 +25,37 @@ class ParallelDecoder(nn.Module):
 
     def forward(
         self,
-        hidden_states,
-        attention_mask,
-        past_key_values,
-        current_state,
-        block_ids,
-    ):
-        sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
-        ordered_experts = self.stack.controller.sort_experts(sequential_experts.copy())
-        new_states = []
-        aux_losses = []
+        hidden_states: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        past_key_values: Optional[Union[List[Any], Dict[str, Any]]] = None,
+        current_state: Optional[List[Any]] = None,
+        block_ids: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor]:
+        """
+        Forward pass through the parallel decoder.
+        
+        Args:
+            hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional cached key/values for faster inference
+            current_state: Optional current layer states
+            block_ids: Optional block identification tensor
+            
+        Returns:
+            Tuple containing:
+                - Output hidden states
+                - Updated past key values
+                - Updated layer states
+                - Combined auxiliary loss
+        """
+        sequential_experts: List[nn.Module] = list(self.stack.locals) + list(self.stack.remotes)
+        ordered_experts: List[nn.Module] = self.stack.controller.sort_experts(sequential_experts.copy())
+        new_states: List[Any] = []
+        aux_losses: List[Tensor] = []
 
         # Create wrapper functions for each expert
-        def create_expert_forward(idx):
-            def expert_forward(input_tensor):
+        def create_expert_forward(idx: int) -> callable:
+            def expert_forward(input_tensor: Tensor) -> Optional[Tuple[Tensor, Any, Any, Tensor]]:
                 expert = ordered_experts[idx]
                 layer_state = current_state[idx] if current_state is not None else None
                 return create_forward(
@@ -57,8 +80,8 @@ class ParallelDecoder(nn.Module):
         results = parallel.parallel_apply(expert_forwards, inputs_list)
 
         # Process results
-        all_hidden_updates = []
-        valid_expert_indices = []
+        all_hidden_updates: List[Tensor] = []
+        valid_expert_indices: List[int] = []
 
         for i, result in enumerate(results):
             if result is not None:
@@ -82,7 +105,23 @@ class ParallelDecoder(nn.Module):
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)
 
-    def _combine_outputs(self, hidden_updates, valid_indices, mode="mean"):
+    def _combine_outputs(
+        self, 
+        hidden_updates: List[Tensor], 
+        valid_indices: List[int], 
+        mode: Literal["mean", "variance", "weighted"] = "mean"
+    ) -> Tensor:
+        """
+        Combine outputs from multiple experts using the specified combination mode.
+        
+        Args:
+            hidden_updates: List of tensor outputs from each expert
+            valid_indices: List of indices of valid experts
+            mode: Combination mode ("mean", "variance", or "weighted")
+            
+        Returns:
+            Combined tensor output
+        """
         stacked_updates = torch.stack(hidden_updates)
         if mode == "mean":
             return torch.mean(stacked_updates, dim=0)
@@ -91,7 +130,19 @@ class ParallelDecoder(nn.Module):
         elif mode == "weighted":
             return self._compute_feature_weighted_sum(stacked_updates, valid_indices)
 
-    def _compute_variance_weighted_sum(self, stacked_updates):
+    def _compute_variance_weighted_sum(self, stacked_updates: Tensor) -> Tensor:
+        """
+        Compute variance-weighted sum of expert outputs.
+        
+        This method weights expert outputs based on their variance, giving more
+        weight to experts that produce more unique outputs for each feature.
+        
+        Args:
+            stacked_updates: Stacked hidden state updates from each expert
+            
+        Returns:
+            Variance-weighted sum of expert outputs
+        """
         # Calculate the mean across experts
         mean_output = torch.mean(stacked_updates, dim=0)
 
@@ -118,7 +169,20 @@ class ParallelDecoder(nn.Module):
         # Sum the weighted updates
         return torch.sum(weighted_updates, dim=0)
 
-    def _compute_feature_weighted_sum(self, stacked_updates, valid_indices):
+    def _compute_feature_weighted_sum(self, stacked_updates: Tensor, valid_indices: List[int]) -> Tensor:
+        """
+        Compute feature-weighted sum of expert outputs.
+        
+        This method uses learned weights for each feature and expert to compute
+        a weighted combination of expert outputs.
+        
+        Args:
+            stacked_updates: Stacked hidden state updates from each expert
+            valid_indices: List of indices of valid experts
+            
+        Returns:
+            Feature-weighted sum of expert outputs
+        """
         # Get weights for valid experts
         valid_weights = self.contributions[valid_indices]
 

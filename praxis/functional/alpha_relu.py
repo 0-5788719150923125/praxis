@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 from torch.autograd import Function
+from typing import Any, Optional, Tuple, Union
 
 
 class AlphaReLUFunction(Function):
@@ -12,7 +14,7 @@ class AlphaReLUFunction(Function):
     """
 
     @staticmethod
-    def forward(ctx, input, dim, alpha, tau):
+    def forward(ctx: Any, input: Tensor, dim: int, alpha: float, tau: float) -> Tensor:
         ctx.dim = dim
         ctx.alpha = alpha
 
@@ -25,7 +27,7 @@ class AlphaReLUFunction(Function):
         return output
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx: Any, grad_output: Tensor) -> Tuple[Optional[Tensor], None, None, None]:
         output, relu_output = ctx.saved_tensors
 
         # Compute gradient
@@ -36,7 +38,7 @@ class AlphaReLUFunction(Function):
         return grad_input, None, None, None
 
 
-def get_tau(X, dim=-1, k=None):
+def get_tau(X: Tensor, dim: int = -1, k: Optional[int] = None) -> Tensor:
     """Core computation for 1.5-entmax: optimal threshold (tau).
     Parameters
     ----------
@@ -88,7 +90,7 @@ def get_tau(X, dim=-1, k=None):
     return tau_star
 
 
-def _make_ix_like(X, dim):
+def _make_ix_like(X: Tensor, dim: int) -> Tensor:
     d = X.size(dim)
     rho = torch.arange(1, d + 1, device=X.device, dtype=X.dtype)
     view = [1] * X.dim()
@@ -96,7 +98,7 @@ def _make_ix_like(X, dim):
     return rho.view(view).transpose(0, dim)
 
 
-def _roll_last(X, dim):
+def _roll_last(X: Tensor, dim: int) -> Tensor:
     if dim == -1:
         return X
     elif dim < 0:
@@ -106,7 +108,7 @@ def _roll_last(X, dim):
     return X.permute(perm)
 
 
-def alpha_relu(input, dim=-1, alpha=1.5, tau=None):
+def alpha_relu(input: Tensor, dim: int = -1, alpha: float = 1.5, tau: Optional[float] = None) -> Tensor:
     if tau is None:
         # Default tau based on paper's recommendations
         tau = 0.5  # This should be properly initialized in practice
@@ -114,13 +116,13 @@ def alpha_relu(input, dim=-1, alpha=1.5, tau=None):
 
 
 class AlphaReLU(nn.Module):
-    def __init__(self, alpha=1.5, tau=None, dim=-1):
+    def __init__(self, alpha: float = 1.5, tau: Optional[float] = None, dim: int = -1):
         super().__init__()
         self.alpha = alpha
         self.tau = tau
         self.dim = dim
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return alpha_relu(x, self.dim, self.alpha, self.tau)
 
 

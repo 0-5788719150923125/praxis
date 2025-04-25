@@ -1,10 +1,11 @@
 import torch
-from torch import addcdiv, sin, square
+from torch import addcdiv, sin, square, Tensor
 from torch.autograd import Function
 from torch.distributions.exponential import Exponential
 from torch.nn import Module
 from torch.nn.modules.lazy import LazyModuleMixin
 from torch.nn.parameter import UninitializedParameter
+from typing import Any, Optional, Tuple, Union
 
 
 class SnakeFunction(Function):
@@ -14,7 +15,7 @@ class SnakeFunction(Function):
     """
 
     @staticmethod
-    def forward(ctx, x: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+    def forward(ctx, x: Tensor, a: Tensor) -> Tensor:
         ctx.save_for_backward(x, a)
         # We need to ensure 'a' is properly broadcast
         if a.dim() < x.dim():
@@ -24,8 +25,8 @@ class SnakeFunction(Function):
 
     @staticmethod
     def backward(
-        ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        ctx, grad_output: Tensor
+    ) -> Tuple[Optional[Tensor], Optional[Tensor]]:
         x, a = ctx.saved_tensors
         sin2ax = sin(2 * a * x) if any(ctx.needs_input_grad) else None
         grad_x = grad_output * (1 + sin2ax) if ctx.needs_input_grad[0] else None
@@ -41,7 +42,7 @@ class SnakeFunction(Function):
 class Snake(LazyModuleMixin, Module):
     def __init__(
         self,
-        a: float | None = None,
+        a: Optional[float] = None,
         trainable: bool = True,
         exp_rate: float = 1.0,
     ):
@@ -55,7 +56,7 @@ class Snake(LazyModuleMixin, Module):
         else:
             self.register_buffer("a", None)
 
-    def initialize_parameters(self, x, *args, **kwargs):
+    def initialize_parameters(self, x: Tensor, *args: Any, **kwargs: Any) -> None:
         """Initialize the parameter 'a' based on input tensor.
         For sequence models, we only use the hidden dimension (last dimension)."""
         # Get feature dimension (always last dimension)
@@ -80,5 +81,5 @@ class Snake(LazyModuleMixin, Module):
         else:
             self.register_buffer("a", initial_a)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         return SnakeFunction.apply(x, self.a)

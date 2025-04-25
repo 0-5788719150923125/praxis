@@ -1,9 +1,9 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 
 torch.sqrt2 = 1.414213562  # sqrt 2 \approx 1.414213562
 
 
 class Sine(nn.Module):
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return torch.sqrt2 * torch.sin(x)

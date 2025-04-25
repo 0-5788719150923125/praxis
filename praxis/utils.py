@@ -1,5 +1,5 @@
 import math
-from typing import List, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -7,7 +7,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def generate_alternating_values(size, interval=1, capacity=0.125):
+def generate_alternating_values(size: int, interval: int = 1, capacity: float = 0.125) -> List[float]:
+    """
+    Generate a list of alternating values between 1.0 and specified capacity.
+    
+    Args:
+        size: Number of values to generate
+        interval: Interval between capacity values
+        capacity: Value to use at specified intervals (default: 0.125)
+        
+    Returns:
+        List of alternating float values
+    """
     result = [1.0] * size
 
     for i in range(1, size, interval + 1):
@@ -23,7 +34,7 @@ def generate_decay_values(
     center: float = 0.5,
     lower_bound: float = 0.0,
     upper_bound: float = 1.0,
-) -> list:
+) -> List[float]:
     """
     Generate a list of S-shaped decaying values with adjustable center point and bounds
 
@@ -71,7 +82,7 @@ def generate_u_shape_values(
     lower_bound: float = 0.0,
     upper_bound: float = 1.0,
     steepness: float = 5.0,
-) -> list:
+) -> List[float]:
     """
     Generate a list of U-shaped values that start at upper_bound, decay to lower_bound,
     and then ramp back up to upper_bound.
@@ -119,10 +130,17 @@ def generate_u_shape_values(
     return values.tolist()
 
 
-def norm_scaling(normalized_x, depth):
+def norm_scaling(normalized_x: Union[torch.Tensor, float], depth: int) -> Union[torch.Tensor, float]:
     """
     Apply depth-based scaling to already-normalized inputs to address the Curse of Depth.
     https://arxiv.org/abs/2502.05795
+    
+    Args:
+        normalized_x: Normalized input values (tensor or scalar)
+        depth: Depth value for scaling factor calculation
+        
+    Returns:
+        Scaled values with same type as input
     """
     # Ensure depth is at least 1
     depth = max(1, depth)

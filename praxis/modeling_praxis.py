@@ -69,11 +69,20 @@ class PraxisModel(PreTrainedModel):
             patch_lengths=patch_lengths,
         )
 
-    def get_addr(self):
+    def get_addr(self) -> None:
+        """
+        Log visible multiaddresses for hivemind node if available.
+        """
         if self.decoder.stack.manager:
             self.decoder.stack.manager.get_visible_maddrs()
 
-    def get_metrics(self):
+    def get_metrics(self) -> dict:
+        """
+        Get model metrics from the stack.
+        
+        Returns:
+            Dictionary of model metrics
+        """
         return dict(**self.decoder.stack.get_metrics())
 
 
@@ -89,13 +98,13 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
     def prepare_inputs_for_generation(
         self,
-        input_ids,
-        attention_mask=None,
-        past_key_values=None,
-        current_state=None,
-        use_cache=False,
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        current_state: Optional[torch.LongTensor] = None,
+        use_cache: bool = False,
         **kwargs,
-    ):
+    ) -> dict:
         if not use_cache:
             return {
                 "input_ids": input_ids,

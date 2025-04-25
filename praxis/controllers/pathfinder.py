@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -15,7 +15,7 @@ class Pathfinder(BaseController):
     the current hidden state.
     """
 
-    def __init__(self, config: "AutoConfig", allow_early_exits=False):
+    def __init__(self, config: "AutoConfig", allow_early_exits: bool = False) -> None:
         super().__init__(config, allow_visualizer=True)
 
         # Create a gating network for each layer to decide the next layer
@@ -29,12 +29,12 @@ class Pathfinder(BaseController):
 
     def get_next_expert(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[torch.Tensor, Optional[int]]:
+    ) -> Tuple[Tensor, List[int], Optional[int]]:
         # Pool the hidden states - using mean pooling for simplicity
         pooled_hidden = hidden_states.mean(dim=1)  # [batch_size, hidden_size]
 
@@ -46,7 +46,7 @@ class Pathfinder(BaseController):
 
         # For training stability, compute a small entropy loss
         # This encourages exploration of different routing paths
-        gating_loss = 0
+        gating_loss = torch.tensor(0.0, device=hidden_states.device)
         if self.training:
             entropy = -(gate_probs * torch.log(gate_probs + 1e-10)).sum(dim=1).mean()
             gating_loss = -0.01 * entropy  # Encourage exploration with negative loss

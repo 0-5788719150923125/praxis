@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Any, Union
 
 import torch
 import torch.nn as nn
@@ -15,8 +15,8 @@ class FocalLoss(nn.Module):
         alpha: Union[float, torch.Tensor] = 1.0,
         gamma: float = 2.0,
         reduction: str = "mean",
-        *args,
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ):
         super().__init__()
         self.gamma = gamma
@@ -29,7 +29,7 @@ class FocalLoss(nn.Module):
             self.register_buffer("alpha_vector", alpha)
 
     def forward(
-        self, logits: torch.Tensor, labels: torch.Tensor, *args, **kwargs
+        self, logits: torch.Tensor, labels: torch.Tensor, *args: Any, **kwargs: Any
     ) -> torch.Tensor:
         # 1. Shift inputs for next-token prediction and reshape
         shift_logits = logits.view(-1, logits.shape[-1])

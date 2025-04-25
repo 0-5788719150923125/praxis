@@ -1,27 +1,50 @@
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
+
 import torch
-from torch import nn
+from torch import Tensor, nn
+from transformers.configuration_utils import PretrainedConfig
 
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
 from praxis.stacks import PraxisStack
 
 
+ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
+
+
 class SequentialDecoder(nn.Module):
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType) -> None:
         super().__init__()
         self.stack = PraxisStack(config)
 
     def forward(
         self,
-        hidden_states,
-        attention_mask,
-        past_key_values,
-        current_state,
-        block_ids,
-    ):
-        sequential_experts = list(self.stack.locals) + list(self.stack.remotes)
-        ordered_experts = self.stack.controller.sort_experts(sequential_experts.copy())
-        current_route = []
-        aux_losses = []
+        hidden_states: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        past_key_values: Optional[Union[List[Any], Dict[str, Any]]] = None,
+        current_state: Optional[List[Any]] = None,
+        block_ids: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor]:
+        """
+        Forward pass through the sequential decoder.
+        
+        Args:
+            hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional cached key/values for faster inference
+            current_state: Optional current layer states
+            block_ids: Optional block identification tensor
+            
+        Returns:
+            Tuple containing:
+                - Output hidden states
+                - Updated past key values
+                - Updated layer states
+                - Combined auxiliary loss
+        """
+        sequential_experts: List[nn.Module] = list(self.stack.locals) + list(self.stack.remotes)
+        ordered_experts: List[nn.Module] = self.stack.controller.sort_experts(sequential_experts.copy())
+        current_route: List[int] = []
+        aux_losses: List[Tensor] = []
 
         for i in range(self.stack.depth):
             aux_loss, current_route, next_expert_idx = (

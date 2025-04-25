@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -20,7 +20,7 @@ class PraxisStack(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: "AutoConfig") -> None:
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth
@@ -35,7 +35,7 @@ class PraxisStack(nn.Module):
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = False
         self.locals = nn.ModuleList()
-        self.remotes = []
+        self.remotes: List[nn.Module] = []
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remotes = self.manager.active_remote_experts
@@ -60,21 +60,45 @@ class PraxisStack(nn.Module):
         if self.manager:
             self.manager.serve_experts()
 
-    def post_layer(self, states, current_depth):
+    def post_layer(self, states: Tensor, current_depth: int) -> Tensor:
+        """
+        Process states after going through a layer.
+        
+        Args:
+            states: Hidden states from the layer
+            current_depth: Current layer depth
+            
+        Returns:
+            Processed states
+        """
         processed_states = states
         if self.genome and current_depth == 4:
             processed_states = self.genome(processed_states)
         return processed_states
 
-    def post_decoding(self, states):
+    def post_decoding(self, states: Tensor) -> Tensor:
+        """
+        Process states after going through all layers.
+        
+        Args:
+            states: Final hidden states
+            
+        Returns:
+            Normalized or unchanged states
+        """
         if self.norm:
             return self.norm(states)
         else:
             return states
 
-    def get_metrics(self):
-        """Return current prediction accuracies"""
-        extras = {}
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Return current prediction accuracies and other metrics.
+        
+        Returns:
+            Dictionary of metrics
+        """
+        extras: Dict[str, Any] = {}
         if self.genome:
             extras = {**extras, **self.genome.get_metrics()}
         return {

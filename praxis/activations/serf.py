@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, Tensor
 
 
 class SERF(nn.Module):
@@ -9,5 +9,5 @@ class SERF(nn.Module):
     https://arxiv.org/abs/2108.09598
     """
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return x * torch.erf(torch.log(1 + torch.exp(x)))

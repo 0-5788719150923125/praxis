@@ -1,9 +1,11 @@
-from typing import Tuple
+from typing import List, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, device as torch_device
+
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
 
 
 class PraxisCompressiveMemory(nn.Module):
@@ -15,21 +17,28 @@ class PraxisCompressiveMemory(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize compressive memory module.
+        
+        Args:
+            config: Configuration object with model parameters
+        """
         super().__init__()
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_heads
-        self.num_queries = config.num_queries
-        self.num_query_heads = self.num_heads * self.num_queries
-        self.head_dim = config.head_size
-        self.use_delta = True
-        self.betas = nn.Parameter(
+        self.hidden_size: int = config.hidden_size
+        self.num_heads: int = config.num_heads
+        self.num_queries: int = config.num_queries
+        self.num_query_heads: int = self.num_heads * self.num_queries
+        self.head_dim: int = config.head_size
+        self.use_delta: bool = True
+        self.betas: nn.Parameter = nn.Parameter(
             torch.zeros(1, self.num_query_heads, 1, self.head_dim)
         )
-        self._states_buffer = []
-        self.init_state_learnable = True
+        self._states_buffer: List[Tuple[Tensor, Tensor]] = []
+        self.init_state_learnable: bool = True
+        
         if self.init_state_learnable:
-            self.init_mem = nn.Parameter(
+            self.init_mem: Optional[nn.Parameter] = nn.Parameter(
                 torch.randn(
                     1,
                     self.num_query_heads,
@@ -37,16 +46,28 @@ class PraxisCompressiveMemory(nn.Module):
                     self.head_dim,
                 )
             )
-            self.init_z = nn.Parameter(
+            self.init_z: Optional[nn.Parameter] = nn.Parameter(
                 torch.ones(1, self.num_query_heads, self.head_dim, 1)
             )
         else:
-            self.init_mem = None
-            self.init_z = None
+            self.init_mem: Optional[nn.Parameter] = None
+            self.init_z: Optional[nn.Parameter] = None
 
     def forward(
         self, q: Tensor, k: Tensor, v: Tensor, attention_output: Tensor
     ) -> Tensor:
+        """
+        Forward pass for compressive memory.
+        
+        Args:
+            q: Query tensor of shape [batch_size, num_heads, seq_len, head_dim]
+            k: Key tensor of shape [batch_size, num_heads, seq_len, head_dim]
+            v: Value tensor of shape [batch_size, num_heads, seq_len, head_dim]
+            attention_output: Attention output tensor
+            
+        Returns:
+            Blended output tensor after applying memory mechanism
+        """
         batch_size = q.size(0)
 
         # Get states - either initialize or pop from buffer
@@ -76,6 +97,16 @@ class PraxisCompressiveMemory(nn.Module):
         return self._blend_outputs(memory_output, attention_output)
 
     def _blend_outputs(self, memory_output: Tensor, attention_output: Tensor) -> Tensor:
+        """
+        Blend memory output with attention output using learned gates.
+        
+        Args:
+            memory_output: Output from memory mechanism
+            attention_output: Output from attention mechanism
+            
+        Returns:
+            Blended output tensor
+        """
         gate = torch.sigmoid(self.betas)
         # if attention_output.dim() == 3:
         #     attention_output = attention_output.unsqueeze(1)
@@ -83,9 +114,21 @@ class PraxisCompressiveMemory(nn.Module):
         return gate * memory_output + (1 - gate) * attention_output
 
     def _init_states(
-        self, batch_size: int, device: torch.device
+        self, batch_size: int, device: torch_device
     ) -> Tuple[Tensor, Tensor]:
-        if self.init_state_learnable:
+        """
+        Initialize memory states.
+        
+        Args:
+            batch_size: Batch size
+            device: Device to create tensors on
+            
+        Returns:
+            Tuple containing:
+                - Memory states tensor
+                - Memory normalization tensor
+        """
+        if self.init_state_learnable and self.init_mem is not None and self.init_z is not None:
             # Use learnable initial states
             memory_states = self.init_mem.expand(batch_size, -1, -1, -1).to(device)
             memory_z = self.init_z.expand(batch_size, -1, -1, -1).to(device)
@@ -110,6 +153,6 @@ class PraxisCompressiveMemory(nn.Module):
             )
         return memory_states, memory_z
 
-    def reset_states(self):
+    def reset_states(self) -> None:
         """Clear the states buffer"""
         self._states_buffer.clear()

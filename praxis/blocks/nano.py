@@ -1,5 +1,5 @@
 import math
-from typing import Optional
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -20,7 +20,7 @@ class PraxisNano(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
         super().__init__()
         hidden_dim = config.hidden_size
 
@@ -47,10 +47,10 @@ class PraxisNano(nn.Module):
 
     def forward(
         self,
-        inputs: torch.Tensor,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
+        inputs: Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         # x shape: (B, T, E)
         chunk_norm = self.fft_norm(inputs)
         # Transpose (B, T, E) -> (B, E, T)
@@ -66,11 +66,19 @@ class PraxisNano(nn.Module):
         # Feedforward
         chunk_ffw = self.ffw(chunk_ffw)
         # Residual connection
-        return chunk_ffw + residual, None, None, 0
+        return chunk_ffw + residual, None, None, 0.0
 
 
 class ElasticLinear(nn.Module):
-    def __init__(self, features, bottleneck=0.5, causal=False):
+    def __init__(self, features: int, bottleneck: float = 0.5, causal: bool = False) -> None:
+        """
+        Initialize ElasticLinear layer.
+        
+        Args:
+            features: Number of input/output features
+            bottleneck: Bottleneck ratio for parameter reduction
+            causal: Whether to use causal masking
+        """
         super().__init__()
         self.causal = causal
         # Initialize with smaller dimensions to force interpolation
@@ -78,16 +86,25 @@ class ElasticLinear(nn.Module):
         self.weight = nn.Parameter(torch.Tensor(features, bottleneck_dim))
         self.reset_parameters()
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         # x shape: (batch_size, features, seq_len)
         _, features, _ = x.shape
         weights = self._interpolate_weights(features)
         return torch.matmul(weights, x)  # + self.bias.view(-1, 1)
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         nn.init.xavier_uniform_(self.weight)
 
-    def _interpolate_weights(self, features):
+    def _interpolate_weights(self, features: int) -> Tensor:
+        """
+        Interpolate weights to the target feature dimension.
+        
+        Args:
+            features: Target feature dimension
+            
+        Returns:
+            Interpolated weight tensor
+        """
         # Always interpolate since we're starting from a smaller base
         interpolated = F.interpolate(
             self.weight.unsqueeze(0),

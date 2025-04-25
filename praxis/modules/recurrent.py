@@ -1,10 +1,12 @@
 import math
-from typing import Optional
+from typing import Any, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
 
 
 class minGRU(nn.Module):
@@ -14,19 +16,52 @@ class minGRU(nn.Module):
     https://github.com/lucidrains/minGRU-pytorch/blob/main/minGRU_pytorch/minGRU.py
     """
 
-    def __init__(self, dim, expansion_factor=1.0, dim_out=None, proj_out=None):
+    def __init__(
+        self, 
+        dim: int, 
+        expansion_factor: float = 1.0, 
+        dim_out: Optional[int] = None, 
+        proj_out: Optional[bool] = None
+    ) -> None:
+        """
+        Initialize minGRU module.
+        
+        Args:
+            dim: Input dimension
+            expansion_factor: Factor to scale hidden dimension
+            dim_out: Output dimension (defaults to input dimension)
+            proj_out: Whether to project output (defaults to True if expansion_factor != 1.0)
+        """
         super().__init__()
 
         dim_out = dim_out or dim
         dim_inner = int(dim * expansion_factor)
         proj_out = proj_out if proj_out is not None else expansion_factor != 1.0
 
-        self.to_hidden_and_gate = nn.Linear(dim, dim_inner * 2, bias=False)
-        self.to_out = (
+        self.to_hidden_and_gate: nn.Linear = nn.Linear(dim, dim_inner * 2, bias=False)
+        self.to_out: nn.Module = (
             nn.Linear(dim_inner, dim_out, bias=False) if proj_out else nn.Identity()
         )
 
-    def forward(self, x, prev_hidden=None, input_ids=None):
+    def forward(
+        self, 
+        x: Tensor, 
+        prev_hidden: Optional[Tensor] = None, 
+        input_ids: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Forward pass through minGRU.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, dim]
+            prev_hidden: Optional previous hidden state
+            input_ids: Optional input token IDs for masking
+            
+        Returns:
+            Tuple containing:
+                - Output tensor
+                - Next hidden state
+        """
         seq_len = x.shape[1]
         batch_size = x.shape[0]
         hidden, gate = self.to_hidden_and_gate(x).chunk(2, dim=-1)
@@ -85,7 +120,22 @@ class minGRU(nn.Module):
 
 
 # https://github.com/glassroom/heinsen_sequence
-def heinsen_associative_scan_log_with_reset(log_coeffs, log_values, pad_mask):
+def heinsen_associative_scan_log_with_reset(
+    log_coeffs: Tensor, 
+    log_values: Tensor, 
+    pad_mask: Tensor
+) -> Tensor:
+    """
+    Modified Heinsen scan in log space that respects reset boundaries.
+    
+    Args:
+        log_coeffs: Log coefficients tensor
+        log_values: Log values tensor
+        pad_mask: Padding mask (True where tokens should be masked)
+        
+    Returns:
+        Output tensor after scan operation
+    """
     # Instead of masking with -inf, we'll modify the coefficients
     batch_size, seq_len, hidden_dim = log_coeffs.shape
 
@@ -115,12 +165,30 @@ def heinsen_associative_scan_log_with_reset(log_coeffs, log_values, pad_mask):
     return log_h.exp()
 
 
-def g(x):
+def g(x: Tensor) -> Tensor:
+    """
+    Activation function for minGRU.
+    
+    Args:
+        x: Input tensor
+        
+    Returns:
+        Activated tensor
+    """
     return torch.where(x >= 0, x + 0.5, x.sigmoid())
 
 
 # they enforce the hidden states to be positive
-def log_g(x):
+def log_g(x: Tensor) -> Tensor:
+    """
+    Log-space activation function for minGRU.
+    
+    Args:
+        x: Input tensor
+        
+    Returns:
+        Log-space activated tensor
+    """
     return torch.where(x >= 0, (F.relu(x) + 0.5).log(), -F.softplus(-x))
 
 
@@ -131,22 +199,28 @@ class PraxisRecurrent(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize recurrent module.
+        
+        Args:
+            config: Configuration object with model parameters
+        """
         super().__init__()
         hidden_dim = config.hidden_size
 
-        self.norm = nn.LayerNorm(hidden_dim)
-        self.lstm = nn.LSTM(
+        self.norm: nn.LayerNorm = nn.LayerNorm(hidden_dim)
+        self.lstm: nn.LSTM = nn.LSTM(
             input_size=hidden_dim,
             hidden_size=hidden_dim,
             batch_first=True,
         )
 
         # Change initialization to match required shape (hidden_dim,) instead of (hidden_dim, hidden_dim)
-        self.h0_logits = nn.Parameter(torch.zeros(hidden_dim))
-        self.c0_logits = nn.Parameter(torch.zeros(hidden_dim))
+        self.h0_logits: nn.Parameter = nn.Parameter(torch.zeros(hidden_dim))
+        self.c0_logits: nn.Parameter = nn.Parameter(torch.zeros(hidden_dim))
 
-        self.dropout = nn.Dropout(config.dropout)
+        self.dropout: nn.Dropout = nn.Dropout(config.dropout)
 
         # Initialize LSTM parameters
         for name, param in self.lstm.named_parameters():
@@ -158,10 +232,20 @@ class PraxisRecurrent(nn.Module):
     def forward(
         self,
         x: Tensor,
-        *args,
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ) -> Tensor:
-        """Forward pass with sampled initial states."""
+        """
+        Forward pass with sampled initial states.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_dim]
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Output tensor after recurrent processing with residual connection
+        """
         batch_size = x.size(0)
 
         # Process input

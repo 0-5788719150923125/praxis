@@ -1,4 +1,5 @@
 import random
+from typing import Any, Dict, Callable, List, Optional, Tuple, Union, TypeVar
 
 import torch
 import torch.nn as nn
@@ -11,7 +12,9 @@ from praxis.utils import (
     generate_u_shape_values,
 )
 
-MOD_LAYOUT = {
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+
+MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
     "standard": lambda config: generate_alternating_values(
         size=config.depth, interval=1, capacity=0.125
     ),
@@ -45,9 +48,9 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: "AutoConfig") -> None:
         super().__init__(in_features=config.hidden_size, out_features=1)
-        self.capacities = MOD_LAYOUT.get(config.mod, "standard")(config)
+        self.capacities: List[float] = MOD_LAYOUT.get(config.mod, "standard")(config)
         if config.debug:
             print(self.capacities)
 
@@ -55,14 +58,32 @@ class PraxisMixtureOfDepths(nn.Linear):
         self,
         layer: nn.Module,
         inputs: Tensor,
-        attention_mask: Tensor,
-        past_key_values: Tensor,
-        current_state: Tensor,
-        current_depth: Tensor,
-        block_ids: Tensor,
-    ):
-
-        router_loss = 0
+        attention_mask: Optional[Tensor],
+        past_key_values: Optional[Union[Tensor, List, Dict]],
+        current_state: Optional[Tensor],
+        current_depth: int,
+        block_ids: Optional[Tensor],
+    ) -> Tuple[Tensor, Optional[Union[Tensor, List, Dict]], Optional[Tensor], float]:
+        """
+        Forward pass with selective token routing based on capacity.
+        
+        Args:
+            layer: The layer module to process selected tokens
+            inputs: Input tensor [batch_size, seq_len, hidden_dim]
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional cached key/value tensors for attention
+            current_state: Optional current layer state
+            current_depth: Current layer depth
+            block_ids: Optional block identifiers for tokens
+            
+        Returns:
+            Tuple containing:
+                - Processed outputs tensor
+                - Updated key/value cache
+                - Updated layer state
+                - Combined loss value
+        """
+        router_loss = 0.0
         capacity = self.capacities[current_depth]
 
         b, s, d = inputs.shape
@@ -122,11 +143,13 @@ class PraxisMixtureOfDepths(nn.Linear):
                 index=squeezed_indices,
             )
 
-        filtered_block_ids = torch.gather(
-            input=block_ids,
-            dim=1,
-            index=squeezed_indices,
-        )  # [batch, k]
+        filtered_block_ids = None
+        if block_ids is not None:
+            filtered_block_ids = torch.gather(
+                input=block_ids,
+                dim=1,
+                index=squeezed_indices,
+            )  # [batch, k]
 
         # pass the selected tokens through a transformer block
         layer_outputs, layer_kv, state_update, aux_loss = layer(
@@ -149,10 +172,20 @@ class PraxisMixtureOfDepths(nn.Linear):
 
         return outputs, layer_kv, state_update, aux_loss + router_loss
 
-    def aux_loss(self, router_logits: torch.Tensor, selected_indices: torch.Tensor):
+    def aux_loss(self, router_logits: Tensor, selected_indices: Tensor) -> Tensor:
+        """
+        Compute auxiliary loss to center sigmoid outputs around 0.5.
+        
+        Args:
+            router_logits: Router output logits
+            selected_indices: Indices of selected tokens
+            
+        Returns:
+            Binary cross-entropy loss
+        """
         router_targets = torch.zeros_like(router_logits)
         router_targets.scatter_(1, selected_indices, 1.0)
-        # page 7: the aux loss centers the sigmoid of the router’s outputs around 0.5
+        # page 7: the aux loss centers the sigmoid of the router's outputs around 0.5
         return F.binary_cross_entropy_with_logits(
             router_logits.view(-1), router_targets.view(-1)
         )

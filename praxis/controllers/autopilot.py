@@ -1,8 +1,12 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import Tensor, nn
+from transformers.configuration_utils import PretrainedConfig
+
+
+ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
 
 
 class Autopilot(nn.Module):
@@ -13,7 +17,7 @@ class Autopilot(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", max_num_experts: int):
+    def __init__(self, config: ConfigType, max_num_experts: int) -> None:
         super().__init__()
         assert config.shuffle, "To use `autopilot`, you must also use `shuffle=True`."
 
@@ -28,12 +32,27 @@ class Autopilot(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: Tensor,
         current_depth: int,
         original_experts: List[nn.Module],
         current_experts: List[nn.Module],
         current_expert: nn.Module,
-    ):
+    ) -> Tuple[float, Optional[int]]:
+        """
+        Forward pass of the autopilot controller.
+        
+        Args:
+            hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
+            current_depth: Current depth in the network
+            original_experts: Original list of all experts
+            current_experts: Current list of available experts
+            current_expert: The current expert being processed
+            
+        Returns:
+            Tuple containing:
+                - Loss value (during training) or 0.0 (during inference)
+                - Index of the next recommended expert (during inference) or None (during training)
+        """:
 
         batch_size = hidden_states.size(0)
         device = hidden_states.device

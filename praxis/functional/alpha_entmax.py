@@ -1,9 +1,22 @@
+from typing import Any, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torch.autograd import Function
 
 
-def _make_ix_like(input, dim=0):
+def _make_ix_like(input: Tensor, dim: int = 0) -> Tensor:
+    """
+    Creates indices tensor for entmax calculation.
+    
+    Args:
+        input: Input tensor
+        dim: Dimension along which to create indices
+        
+    Returns:
+        Tensor with indices
+    """
     d = input.size(dim)
     rho = torch.arange(1, d + 1, device=input.device, dtype=input.dtype)
     view = [1] * input.dim()
@@ -13,7 +26,7 @@ def _make_ix_like(input, dim=0):
 
 class Entmax15Function(Function):
     @staticmethod
-    def forward(ctx, input, dim):  # Made dim a required positional argument
+    def forward(ctx: Any, input: Tensor, dim: int) -> Tensor:  # Made dim a required positional argument
         ctx.dim = dim
 
         # Normalize and scale
@@ -41,7 +54,7 @@ class Entmax15Function(Function):
         return output
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx: Any, grad_output: Tensor) -> Tuple[Tensor, None]:
         (Y,) = ctx.saved_tensors
         gppr = Y.sqrt()  # derivative of gradient
         dX = grad_output * gppr
@@ -52,16 +65,41 @@ class Entmax15Function(Function):
 
 
 # Create a wrapper function that handles the dim argument properly
-def alpha_entmax(input, dim=-1):
+def alpha_entmax(input: Tensor, dim: int = -1) -> Tensor:
+    """
+    Applies 1.5-entmax to input tensor along specified dimension.
+    
+    Args:
+        input: Input tensor
+        dim: Dimension along which to apply entmax
+        
+    Returns:
+        Tensor with entmax applied along the specified dimension
+    """
     return Entmax15Function.apply(input, dim)
 
 
 class Entmax15(nn.Module):
-    def __init__(self, dim=-1):
+    def __init__(self, dim: int = -1) -> None:
+        """
+        Initialize Entmax15 module.
+        
+        Args:
+            dim: Dimension along which to apply entmax
+        """
         super().__init__()
         self.dim = dim
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass applying 1.5-entmax.
+        
+        Args:
+            x: Input tensor
+            
+        Returns:
+            Tensor with entmax applied along the specified dimension
+        """
         return alpha_entmax(x, self.dim)
 
 

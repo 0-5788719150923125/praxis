@@ -63,7 +63,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
         text: str,
         text_pair: Optional[str] = None,
         add_special_tokens: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> List[int]:
         """Override encode to properly handle add_special_tokens flag."""
 
@@ -90,7 +90,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
             return token_ids_0
         return token_ids_0 + token_ids_1
 
-    def _tokenize(self, text: str, **kwargs) -> List[str]:
+    def _tokenize(self, text: str, **kwargs: Any) -> List[str]:
         """Converts a string into a sequence of tokens."""
         # First check if the text is a special token
         if text in [token for _, (token, _) in self.SPECIAL_TOKENS.items()]:

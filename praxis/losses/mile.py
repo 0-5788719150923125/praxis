@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
+from typing import Any, Literal, Optional, Union
 
 
 class MiLeLoss(nn.Module):
@@ -10,7 +12,13 @@ class MiLeLoss(nn.Module):
     Probably better than standard cross-entropy, but uses more VRAM, so it's not the default in Praxis today.
     """
 
-    def __init__(self, gamma=1.0, reduction="mean", *args, **kwargs):
+    def __init__(
+        self, 
+        gamma: float = 1.0, 
+        reduction: Literal["mean", "sum", "none"] = "mean", 
+        *args: Any, 
+        **kwargs: Any
+    ) -> None:
         super().__init__()
         self.base_gamma = gamma
         self.reduction = reduction
@@ -18,7 +26,16 @@ class MiLeLoss(nn.Module):
         self.ema_decay = 0.9
         self.register_buffer("ema_alpha", torch.tensor(1.0))
 
-    def entropy(self, logits):
+    def entropy(self, logits: Tensor) -> Tensor:
+        """
+        Calculate entropy of the input logits.
+        
+        Args:
+            logits: Input logits tensor
+            
+        Returns:
+            Tensor containing entropy values
+        """
         # Detach can help the model stay stable during the training process.
         logits = logits.detach()
         log_probs = F.log_softmax(logits, dim=-1)
@@ -28,11 +45,21 @@ class MiLeLoss(nn.Module):
 
     def forward(
         self,
-        logits: torch.Tensor,
-        labels: torch.Tensor,
-        *args,
-        **kwargs,
-    ):
+        logits: Tensor,
+        labels: Tensor,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tensor:
+        """
+        Calculate the MiLe loss.
+        
+        Args:
+            logits: Predicted logits
+            labels: Target labels
+            
+        Returns:
+            MiLe loss value
+        """
         shift_logits = logits.view(-1, logits.shape[-1])
         shift_labels = labels.view(-1)
         ce_loss = F.cross_entropy(

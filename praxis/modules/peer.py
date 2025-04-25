@@ -1,4 +1,5 @@
 import math
+from typing import Dict, List, Optional, Tuple, TypeVar, Any
 
 import torch
 import torch.nn as nn
@@ -7,28 +8,40 @@ from torch import Tensor
 
 from praxis.activations import ACT2FN
 
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+
 
 class PraxisPEER(nn.Module):
     """
     This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
     https://arxiv.org/abs/2407.04153v1
+    
+    PEER combines aspects of product key memory and mixture of experts, 
+    using factorized keys for efficient expert retrieval. It enables each token
+    to select its own set of experts for processing.
     """
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType):
+        """
+        Initialize the PEER module.
+        
+        Args:
+            config: Configuration object containing PEER parameters
+        """
         super().__init__()
 
         hidden_size = config.hidden_size
         key_dims = config.expert["key_dims"]
-        self.k = config.expert["k"]
-        self.num_heads = config.expert["num_heads"]
-        self.offset_heads = config.expert["offset_heads"]
-        self.num_experts = config.expert["num_experts"]
-        self.num_sets = 1 if not self.offset_heads else self.num_heads
+        self.k: int = config.expert["k"]
+        self.num_heads: int = config.expert["num_heads"]
+        self.offset_heads: bool = config.expert["offset_heads"]
+        self.num_experts: int = config.expert["num_experts"]
+        self.num_sets: int = 1 if not self.offset_heads else self.num_heads
 
         # Product-Key retrieval requires keys to be a perfect square of the total experts
-        self.num_keys = int(math.sqrt(self.num_experts))
+        self.num_keys: int = int(math.sqrt(self.num_experts))
 
         assert (
             self.num_experts**0.5
@@ -36,18 +49,40 @@ class PraxisPEER(nn.Module):
         assert (hidden_size % 2) == 0, "`hidden_size` should be divisible by 2"
 
         class Permute(nn.Module):
+            """Permute dimensions of tensor for product key memory."""
+            
             def __init__(self):
                 super().__init__()
 
-            def forward(self, x):
+            def forward(self, x: Tensor) -> Tensor:
+                """
+                Permute dimensions [p, b, n, h, d] → [p, b, n, h, d]
+                
+                Args:
+                    x: Input tensor
+                    
+                Returns:
+                    Permuted tensor
+                """
                 return x.permute(2, 0, 1, 3, 4).contiguous()
 
         # BatchNorm for combined partitions and heads
         class BatchNorm1d(nn.BatchNorm1d):
-            def __init__(self, *args, **kwargs):
+            """BatchNorm1d that handles sequence dimension."""
+            
+            def __init__(self, *args: Any, **kwargs: Any):
                 super().__init__(*args, **kwargs)
 
-            def forward(self, x):
+            def forward(self, x: Tensor) -> Tensor:
+                """
+                Apply batch norm across batch and sequence dimensions.
+                
+                Args:
+                    x: Input tensor of shape [batch_size, seq_len, dim]
+                    
+                Returns:
+                    Normalized tensor of same shape
+                """
                 b, s, d = x.shape
                 x = x.view(b * s, d)
                 x = super().forward(x)
@@ -72,7 +107,16 @@ class PraxisPEER(nn.Module):
         self.up = nn.Embedding(self.num_experts * self.num_sets, hidden_size)
         nn.init.xavier_uniform_(self.up.weight)
 
-    def forward(self, inputs: Tensor):
+    def forward(self, inputs: Tensor) -> Tensor:
+        """
+        Forward pass through the PEER module.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
+            
+        Returns:
+            Output tensor of shape [batch_size, seq_len, hidden_size]
+        """
         # Generate queries
         queries = self.queries(
             inputs
@@ -82,7 +126,9 @@ class PraxisPEER(nn.Module):
         sim = torch.einsum("p b n h d, h k p d -> p b n h k", queries, self.keys)
 
         # For each partition, get top-k indices and scores
-        (scores_x, scores_y), (indices_x, indices_y) = sim.topk(self.k, dim=-1)
+        scores_parts, indices_parts = sim.topk(self.k, dim=-1)
+        scores_x, scores_y = scores_parts
+        indices_x, indices_y = indices_parts
 
         # Compute Cartesian product of top-k indices and scores
         all_scores = scores_x.unsqueeze(-1) + scores_y.unsqueeze(-2)

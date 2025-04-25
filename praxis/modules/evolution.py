@@ -1,14 +1,25 @@
 import random
+from typing import Any, Dict, List, Optional, TypeVar, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+ConfigType = TypeVar('ConfigType', bound='object')
+
 
 class GenomicBottleneck(nn.Module):
+    """
+    Neural bottleneck with trainable weights and evolutionary selection.
+    
+    This module implements a genomic bottleneck that uses an evolutionary algorithm
+    to adapt transformation matrices (genomes) during training. It allows the network 
+    to discover efficient transformations for information compression.
+    """
+    
     def __init__(
         self,
-        config,
+        config: ConfigType,
         genome_dim: int = 23,
         population_size: int = 64,
         mutation_rate: float = 0.00001,
@@ -17,22 +28,35 @@ class GenomicBottleneck(nn.Module):
         evolve_every_n_steps: int = 10,
         num_trials: int = 5,
     ):
+        """
+        Initialize genomic bottleneck.
+        
+        Args:
+            config: Model configuration with hidden_size attribute
+            genome_dim: Dimension of the genome transformation matrix
+            population_size: Number of genomes in the population
+            mutation_rate: Rate of random mutations applied to genomes
+            tournament_size: Number of individuals to select in tournament selection
+            elite_size: Number of best individuals to preserve without mutation
+            evolve_every_n_steps: Frequency of evolution steps
+            num_trials: Number of trials for fitness evaluation
+        """
         super().__init__()
-        self.input_dim = config.hidden_size
-        self.quarter_input_dim = self.input_dim // 4
-        self.output_dim = config.hidden_size
-        self.genome_dim = genome_dim
-        self.population_size = population_size
-        self.mutation_rate = mutation_rate
-        self.tournament_size = tournament_size
-        self.elite_size = elite_size
-        self.evolve_every_n_steps = evolve_every_n_steps
-        self.num_trials = num_trials
-        self.step_counter = 0
+        self.input_dim: int = config.hidden_size
+        self.quarter_input_dim: int = self.input_dim // 4
+        self.output_dim: int = config.hidden_size
+        self.genome_dim: int = genome_dim
+        self.population_size: int = population_size
+        self.mutation_rate: float = mutation_rate
+        self.tournament_size: int = tournament_size
+        self.elite_size: int = elite_size
+        self.evolve_every_n_steps: int = evolve_every_n_steps
+        self.num_trials: int = num_trials
+        self.step_counter: int = 0
 
         # Initialize fitness scores to negative infinity
-        self.fitness_scores = torch.full((population_size,), float("-inf"))
-        self.best_fitness = float("-inf")
+        self.fitness_scores: torch.Tensor = torch.full((population_size,), float("-inf"))
+        self.best_fitness: float = float("-inf")
 
         # Single projection for quarter-sized inputs
         self.left = nn.Linear(self.quarter_input_dim, genome_dim)
@@ -48,9 +72,21 @@ class GenomicBottleneck(nn.Module):
             self.population[0].clone(), requires_grad=False
         )
 
-        self.stored_inputs = []
+        self.stored_inputs: List[torch.Tensor] = []
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through genomic bottleneck.
+        
+        Splits the input into four parts, routes one part through a residual connection,
+        and processes the other three through the genomic bottleneck.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_size]
+            
+        Returns:
+            Output tensor of same shape as input
+        """
         # Split the input tensor into four equal parts along the feature dimension
         A, T, C, G = torch.split(x, self.quarter_input_dim, dim=-1)
         splits = [A, T, C, G]
@@ -108,9 +144,17 @@ class GenomicBottleneck(nn.Module):
         x = torch.cat(output_splits, dim=-1)
         return x
 
-    # Rest of the methods remain unchanged
-    def compute_fitness(self, genome, num_trials=1):
-        """Compute fitness based on cosine similarity of the bottlenecked part"""
+    def compute_fitness(self, genome: torch.Tensor, num_trials: int = 1) -> float:
+        """
+        Compute fitness based on cosine similarity of the bottlenecked part.
+        
+        Args:
+            genome: Genome to evaluate
+            num_trials: Number of random input samples to use for evaluation
+            
+        Returns:
+            Fitness score (average cosine similarity)
+        """
         if not self.stored_inputs:
             return float("-inf")
 
@@ -125,21 +169,39 @@ class GenomicBottleneck(nn.Module):
         fitness /= num_trials
         return fitness
 
-    def tournament_select(self):
-        """Select an individual using tournament selection"""
+    def tournament_select(self) -> torch.Tensor:
+        """
+        Select an individual using tournament selection.
+        
+        Returns:
+            Selected genome
+        """
         indices = torch.randint(0, self.population_size, (self.tournament_size,))
         tournament_fitness = self.fitness_scores[indices]
         winner_idx = indices[torch.argmax(tournament_fitness)]
         return self.population[winner_idx]
 
-    def mutate(self, genome):
-        """Apply small random mutations to a genome"""
+    def mutate(self, genome: torch.Tensor) -> torch.Tensor:
+        """
+        Apply small random mutations to a genome.
+        
+        Args:
+            genome: Genome to mutate
+            
+        Returns:
+            Mutated genome
+        """
         with torch.no_grad():
             mutation = torch.randn_like(genome) * self.mutation_rate
             return genome + mutation
 
-    def evolve_population(self, num_trials=10):
-        """Evolve the population using tournament selection"""
+    def evolve_population(self, num_trials: int = 10) -> None:
+        """
+        Evolve the population using tournament selection.
+        
+        Args:
+            num_trials: Number of trials for fitness evaluation
+        """
         with torch.no_grad():
             # Evaluate the current population
             for i in range(self.population_size):
@@ -171,7 +233,13 @@ class GenomicBottleneck(nn.Module):
             # Update the population
             self.population.data.copy_(new_population)
 
-    def get_metrics(self):
+    def get_metrics(self) -> Dict[str, float]:
+        """
+        Get metrics for monitoring evolution progress.
+        
+        Returns:
+            Dictionary of metrics
+        """
         return {"fitness": self.best_fitness}
 
 

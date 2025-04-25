@@ -3,7 +3,7 @@ import os
 import random
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
@@ -22,30 +22,51 @@ from praxis.modules.dense import PraxisGLU
 
 
 class RouteVisualizer:
+    """
+    Visualizes routing between experts in a mixture-of-experts model.
+    Creates a network graph visualization showing transition patterns.
+    """
+    
     def __init__(
         self,
         num_experts: int,
         save_dir: str = "data",
         max_history: int = 10000,
         save_rate: int = 1000,
-    ):
-        self.num_experts = num_experts
-        self.save_dir = save_dir
-        self.max_history = max_history
-        self.save_rate = save_rate
+    ) -> None:
+        """
+        Initialize route visualizer.
+        
+        Args:
+            num_experts: Number of experts in the model
+            save_dir: Directory to save visualization images
+            max_history: Maximum number of transitions to track
+            save_rate: How often to save visualization (every N transitions)
+        """
+        self.num_experts: int = num_experts
+        self.save_dir: str = save_dir
+        self.max_history: int = max_history
+        self.save_rate: int = save_rate
 
         # Core data structures
-        self.transition_history = deque(
+        self.transition_history: deque = deque(
             maxlen=None
         )  # Store (from_expert, to_expert) tuples
-        self.route_counts = defaultdict(int)
-        self.recurrent_counts = defaultdict(int)
-        self.total_events = 0
+        self.route_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+        self.recurrent_counts: Dict[int, int] = defaultdict(int)
+        self.total_events: int = 0
 
-        self.inference_count = 0
-        self.node_radius = 0.15
+        self.inference_count: int = 0
+        self.node_radius: float = 0.15
 
-    def add_transition(self, from_expert: int, to_expert: int):
+    def add_transition(self, from_expert: int, to_expert: int) -> None:
+        """
+        Add a new transition between experts and update visualization if needed.
+        
+        Args:
+            from_expert: Source expert index
+            to_expert: Target expert index
+        """
         # Add new transition
         self.transition_history.append((from_expert, to_expert))
         self.route_counts[(from_expert, to_expert)] += 1
@@ -61,7 +82,7 @@ class RouteVisualizer:
         if self.inference_count % self.save_rate == 0:
             self._save_visualization()
 
-    def _prune_history(self):
+    def _prune_history(self) -> None:
         """Remove oldest transitions to maintain max_history limit"""
         while self.total_events > self.max_history and self.transition_history:
             # Remove oldest transition
@@ -80,16 +101,40 @@ class RouteVisualizer:
 
             self.total_events -= 1
 
-    def _get_current_counts(self) -> Tuple[Dict, Dict, List]:
-        """Get current statistics - returns pre-computed counts"""
+    def _get_current_counts(self) -> Tuple[Dict[Tuple[int, int], int], Dict[int, int]]:
+        """
+        Get current statistics - returns pre-computed counts
+        
+        Returns:
+            Tuple containing:
+                - Dictionary mapping (src, dst) to transition counts
+                - Dictionary mapping expert index to recurrent counts
+        """
         return self.route_counts, self.recurrent_counts
 
-    def _get_loop_parameters(self, pos, node, count, total_edge_weight):
-        """Generate parameters for varied self-loops using transformed circles"""
+    def _get_loop_parameters(
+        self, 
+        pos: Dict[int, Tuple[float, float]], 
+        node: int, 
+        count: int, 
+        total_edge_weight: int
+    ) -> List[Dict]:
+        """
+        Generate parameters for varied self-loops using transformed circles.
+        
+        Args:
+            pos: Dictionary mapping node indices to (x, y) positions
+            node: Node index for self-loop
+            count: Number of transitions in this self-loop
+            total_edge_weight: Total number of transitions
+            
+        Returns:
+            List of dictionaries containing loop parameters
+        """
         center_x, center_y = pos[node]
         num_loops = count
 
-        loops = []
+        loops: List[Dict] = []
         base_radius = 0.05
 
         for i in range(num_loops):
@@ -135,9 +180,24 @@ class RouteVisualizer:
 
         return loops
 
-    def _create_feathered_node(self, ax, pos, color, alpha=1.0, zorder=1000):
-        """Create a feathered node using stacked rings with fixed alpha"""
-
+    def _create_feathered_node(
+        self, 
+        ax: plt.Axes, 
+        pos: Tuple[float, float], 
+        color: Union[np.ndarray, str], 
+        alpha: float = 1.0, 
+        zorder: int = 1000
+    ) -> None:
+        """
+        Create a feathered node using stacked rings with fixed alpha.
+        
+        Args:
+            ax: Matplotlib axes to draw on
+            pos: (x, y) position of the node
+            color: Color of the node
+            alpha: Base alpha value for the node
+            zorder: Z-order for rendering (higher = on top)
+        """
         center_x, center_y = pos
         base_radius = self.node_radius * 0.05
 
@@ -156,7 +216,7 @@ class RouteVisualizer:
 
         # Create points for all rings
         theta = np.linspace(0, 2 * np.pi, n_points)
-        paths = []
+        paths: List[Path] = []
 
         # Fixed alpha for all rings
         ring_alpha = 4.0 / n_rings  # Fixed transparency
@@ -188,10 +248,16 @@ class RouteVisualizer:
 
         ax.add_collection(collection)
 
-    def _get_text_color(self, background_color):
+    def _get_text_color(self, background_color: Union[np.ndarray, str]) -> str:
         """
         Determine appropriate text color (black or white) based on background color.
         Uses relative luminance formula to determine brightness.
+        
+        Args:
+            background_color: Background color to contrast with
+            
+        Returns:
+            "black" or "white" depending on background brightness
         """
         if isinstance(background_color, np.ndarray):
             r, g, b = background_color[:3]
@@ -206,10 +272,26 @@ class RouteVisualizer:
         return "white" if luminance < 0.5 else "black"
 
     def _get_curved_path_points(
-        self, pos, src, dst, rad, num_points=20
-    ):  # Reduced from 100
-        """Generate points along a curved path between two nodes"""
-
+        self, 
+        pos: Dict[int, Tuple[float, float]], 
+        src: int, 
+        dst: int, 
+        rad: float, 
+        num_points: int = 20
+    ) -> np.ndarray:
+        """
+        Generate points along a curved path between two nodes.
+        
+        Args:
+            pos: Dictionary mapping node indices to (x, y) positions
+            src: Source node index
+            dst: Destination node index
+            rad: Radius of curvature
+            num_points: Number of points along the curve
+            
+        Returns:
+            Array of points defining the curve
+        """
         # Ensure positions are numpy arrays
         src_pos = np.array(pos[src], dtype=float)
         dst_pos = np.array(pos[dst], dtype=float)
@@ -238,9 +320,24 @@ class RouteVisualizer:
 
         return curve
 
-    def _draw_gradient_edge(self, ax, pos, src, dst, alpha):
-        """Draw a single edge with a blue-to-red gradient"""
-
+    def _draw_gradient_edge(
+        self, 
+        ax: plt.Axes, 
+        pos: Dict[int, Tuple[float, float]], 
+        src: int, 
+        dst: int, 
+        alpha: float
+    ) -> None:
+        """
+        Draw a single edge with a blue-to-red gradient.
+        
+        Args:
+            ax: Matplotlib axes to draw on
+            pos: Dictionary mapping node indices to (x, y) positions
+            src: Source node index
+            dst: Destination node index
+            alpha: Alpha (transparency) value for the edge
+        """
         # Get curved path points
         rad = 0.2 + np.random.uniform(-0.1, 0.1)
         points = self._get_curved_path_points(pos, src, dst, rad)
@@ -269,7 +366,11 @@ class RouteVisualizer:
         )
         ax.add_collection(lc)
 
-    def _save_visualization(self):
+    def _save_visualization(self) -> None:
+        """
+        Create and save visualization of the routing graph.
+        Generates a network graph showing routing patterns between experts.
+        """
         fig, ax = plt.subplots(figsize=(15, 10))
         plt.suptitle("Pathfinder Graph", fontsize=16, y=0.93)
         plt.subplots_adjust(top=0.90)

@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, Tensor
 
 
 class NMDA(nn.Module):
@@ -18,6 +18,6 @@ class NMDA(nn.Module):
         self.alpha = nn.Parameter(torch.tensor([alpha]))
         self.beta = nn.Parameter(torch.tensor([beta]))
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         alpha = 0 if self.alpha <= 0 else self.alpha.log()
         return x * torch.sigmoid(self.beta * x - alpha)

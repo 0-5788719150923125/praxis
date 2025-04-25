@@ -1,12 +1,14 @@
 import math
 from collections import OrderedDict
-from typing import Optional, OrderedDict, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
-from torch import nn
+from torch import Tensor
 
 from praxis.activations import ACT2CLS, ACT2FN
+
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
 
 
 class PraxisMLP(nn.Sequential):
@@ -18,13 +20,24 @@ class PraxisMLP(nn.Sequential):
 
     def __init__(
         self,
-        config: "AutoConfig",
-        activation=None,
-        input_dim=None,
-        hidden_dim=None,
-        *args,
-        **kwargs,
-    ):
+        config: ConfigType,
+        activation: Optional[str] = None,
+        input_dim: Optional[int] = None,
+        hidden_dim: Optional[int] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize a standard MLP module.
+        
+        Args:
+            config: Configuration object with model parameters
+            activation: Activation function name (from ACT2FN registry)
+            input_dim: Input dimension size
+            hidden_dim: Hidden dimension size
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+        """
         activation = activation or config.activation
         input_dim = input_dim or config.hidden_size
         hidden_dim = hidden_dim or input_dim * 4
@@ -39,7 +52,18 @@ class PraxisMLP(nn.Sequential):
             )
         )
 
-    def forward(self, inputs, *args, **kwargs):
+    def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        """
+        Forward pass through the MLP.
+        
+        Args:
+            inputs: Input tensor
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Output tensor after MLP processing
+        """
         return super().forward(inputs)
 
 
@@ -50,7 +74,22 @@ class PraxisGLU(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", activation=None, *args, **kwargs):
+    def __init__(
+        self, 
+        config: ConfigType, 
+        activation: Optional[str] = None, 
+        *args: Any, 
+        **kwargs: Any
+    ) -> None:
+        """
+        Initialize a GLU-based MLP module.
+        
+        Args:
+            config: Configuration object with model parameters
+            activation: Activation function name (from ACT2CLS registry)
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+        """
         super().__init__()
         activation = activation or config.activation
 
@@ -59,12 +98,23 @@ class PraxisGLU(nn.Module):
         # Double it for up projection to ensure chunks match
         up_size = 2 * down_size
 
-        self.up = nn.Linear(config.hidden_size, up_size)
-        self.act = ACT2CLS[activation](*args, **kwargs)
-        self.dropout = nn.Dropout(config.dropout)
-        self.down = nn.Linear(down_size, config.hidden_size)
+        self.up: nn.Linear = nn.Linear(config.hidden_size, up_size)
+        self.act: nn.Module = ACT2CLS[activation](*args, **kwargs)
+        self.dropout: nn.Dropout = nn.Dropout(config.dropout)
+        self.down: nn.Linear = nn.Linear(down_size, config.hidden_size)
 
-    def forward(self, inputs, *args, **kwargs):
+    def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        """
+        Forward pass through the GLU module.
+        
+        Args:
+            inputs: Input tensor
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Output tensor after GLU processing
+        """
         a, b = self.up(inputs).chunk(2, dim=-1)
         return self.down(self.dropout(a * self.act(b)))
 
@@ -81,28 +131,38 @@ class PraxisPoly(nn.Module):
 
     def __init__(
         self,
-        config: "AutoConfig",
+        config: ConfigType,
         degree: int = 6,
         bottleneck: float = 0.5,
-        *args,
-        **kwargs,
-    ):
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize a polynomial expansion layer.
+        
+        Args:
+            config: Configuration object with model parameters
+            degree: Maximum polynomial degree to compute
+            bottleneck: Bottleneck ratio for dimension reduction
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+        """
         super().__init__()
         dim = config.hidden_size
-        self.dim = dim
-        self.degree = degree
-        self.reduced_dim = int(dim * bottleneck)
+        self.dim: int = dim
+        self.degree: int = degree
+        self.reduced_dim: int = int(dim * bottleneck)
 
         # Reduce dimension for efficiency
-        self.down = nn.Linear(dim, self.reduced_dim)
+        self.down: nn.Linear = nn.Linear(dim, self.reduced_dim)
 
         # Learnable coefficients for each degree
-        self.degree_coeffs = nn.ParameterList(
+        self.degree_coeffs: nn.ParameterList = nn.ParameterList(
             [nn.Parameter(torch.randn(self.reduced_dim) * 0.02) for _ in range(degree)]
         )
 
         # Learnable mixing matrices for cross-terms
-        self.cross_terms = nn.ParameterList(
+        self.cross_terms: nn.ParameterList = nn.ParameterList(
             [
                 nn.Parameter(torch.randn(self.reduced_dim, self.reduced_dim) * 0.02)
                 for _ in range(degree - 1)
@@ -110,17 +170,28 @@ class PraxisPoly(nn.Module):
         )
 
         # Project back to original dimension
-        self.up = nn.Linear(self.reduced_dim, dim)
-        self.dropout = nn.Dropout(config.dropout)
+        self.up: nn.Linear = nn.Linear(self.reduced_dim, dim)
+        self.dropout: nn.Dropout = nn.Dropout(config.dropout)
 
-    def forward(self, inputs, *args, **kwargs):
+    def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        """
+        Forward pass through the polynomial layer.
+        
+        Args:
+            inputs: Input tensor
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Output tensor after polynomial processing
+        """
         residual = inputs
 
         # Project to lower dimension
         x = self.down(inputs)
 
         # Compute powers and cross-terms
-        terms = []
+        terms: List[Tensor] = []
         x_power = x
 
         for i in range(self.degree):
@@ -148,40 +219,68 @@ class PraxisPoly(nn.Module):
 
 
 class PraxisScatter(nn.Module):
+    """
+    A scatter-based neural network layer that dynamically modifies weights
+    during the forward pass based on input features.
+    """
+    
     def __init__(
         self,
-        config: "AutoConfig",
-        activation=None,
-        input_dim=None,
-        hidden_dim=None,
-        top_k: int = None,
-        *args,
-        **kwargs,
-    ):
+        config: ConfigType,
+        activation: Optional[str] = None,
+        input_dim: Optional[int] = None,
+        hidden_dim: Optional[int] = None,
+        top_k: Optional[int] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize a scatter-based layer.
+        
+        Args:
+            config: Configuration object with model parameters
+            activation: Activation function name (from ACT2FN registry)
+            input_dim: Input dimension size
+            hidden_dim: Hidden dimension size
+            top_k: Number of top weights to modify
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+        """
         super().__init__()
 
         # Initialize dimensions
-        self.input_dim = input_dim or config.hidden_size
-        self.hidden_dim = hidden_dim or self.input_dim * 4
-        self.top_k = top_k or self.hidden_dim // 4
+        self.input_dim: int = input_dim or config.hidden_size
+        self.hidden_dim: int = hidden_dim or self.input_dim * 4
+        self.top_k: int = top_k or self.hidden_dim // 4
 
         # Main projection layers
-        self.up = nn.Linear(self.input_dim, self.hidden_dim)
+        self.up: nn.Linear = nn.Linear(self.input_dim, self.hidden_dim)
         # Gate network
-        self.gate = nn.Sequential(
+        self.gate: nn.Sequential = nn.Sequential(
             nn.Linear(self.input_dim, self.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.hidden_dim, self.hidden_dim),
         )
         # Additional weights to pull from
-        self.mod = nn.Linear(self.input_dim, self.hidden_dim)
+        self.mod: nn.Linear = nn.Linear(self.input_dim, self.hidden_dim)
         # Activation and dropout
-        self.activation = activation or config.activation
-        self.act = ACT2FN[self.activation]
-        self.dropout = nn.Dropout(config.dropout)
-        self.down = nn.Linear(self.hidden_dim, self.input_dim)
+        self.activation: str = activation or config.activation
+        self.act: Callable[[Tensor], Tensor] = ACT2FN[self.activation]
+        self.dropout: nn.Dropout = nn.Dropout(config.dropout)
+        self.down: nn.Linear = nn.Linear(self.hidden_dim, self.input_dim)
 
-    def forward(self, inputs: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+    def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        """
+        Forward pass through the scatter layer.
+        
+        Args:
+            inputs: Input tensor
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Output tensor after scatter processing
+        """
         # Ensure input is 3D [batch, seq, features]
         if len(inputs.shape) == 2:
             inputs = inputs.unsqueeze(1)
@@ -202,8 +301,19 @@ class PraxisScatter(nn.Module):
         return self.down(h)
 
     def get_modified_weights(
-        self, inputs: torch.Tensor
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        self, inputs: Tensor
+    ) -> Tuple[Tensor, Optional[Tensor]]:
+        """
+        Compute dynamically modified weights based on input features.
+        
+        Args:
+            inputs: Input tensor of shape [batch_size, seq_len, input_dim]
+            
+        Returns:
+            Tuple containing:
+                - Modified weight tensor of shape [batch_size, hidden_dim, input_dim]
+                - Optional modified bias tensor of shape [batch_size, hidden_dim]
+        """
         # Handle input dimensions
         if len(inputs.shape) == 2:
             inputs = inputs.unsqueeze(1)  # [batch, 1, input_dim]
@@ -232,7 +342,7 @@ class PraxisScatter(nn.Module):
         mod_weights[batch_indices, hidden_indices] = self.mod.weight[hidden_indices]
 
         # Handle biases
-        mod_bias = None
+        mod_bias: Optional[Tensor] = None
         if self.up.bias is not None and self.mod.bias is not None:
             mod_bias = self.up.bias.repeat(batch_size, 1)
             mod_bias[batch_indices, hidden_indices] = self.mod.bias[hidden_indices]

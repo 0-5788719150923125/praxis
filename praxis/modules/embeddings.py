@@ -1,9 +1,11 @@
 from functools import partial
-from typing import OrderedDict
+from typing import Dict, OrderedDict, Type, TypeVar
 
 import torch
 import torch.nn as nn
 from torch import Tensor
+
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
 
 
 class PraxisEmbeddings(nn.Sequential):
@@ -13,7 +15,13 @@ class PraxisEmbeddings(nn.Sequential):
     to map the embeddings to the required hidden dimension.
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize embeddings module.
+        
+        Args:
+            config: Configuration object with model parameters
+        """
         layers = OrderedDict()
 
         # Token embeddings using embed_size
@@ -34,7 +42,13 @@ class PraxisLearnedEmbeddings(nn.Sequential):
     Uses Sequential organization of layers.
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize learned positional embeddings module.
+        
+        Args:
+            config: Configuration object with model parameters
+        """
         layers = OrderedDict(
             [
                 ("wte", nn.Embedding(config.vocab_size, config.embed_size)),
@@ -46,6 +60,15 @@ class PraxisLearnedEmbeddings(nn.Sequential):
         super().__init__(layers)
 
     def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass through learned embeddings.
+        
+        Args:
+            x: Input tensor of token IDs of shape [batch_size, seq_len]
+            
+        Returns:
+            Embeddings tensor of shape [batch_size, seq_len, hidden_size]
+        """
         B, T = x.shape
 
         # Token embeddings
@@ -69,7 +92,13 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
     Uses Sequential organization of layers.
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize factorized embeddings module.
+        
+        Args:
+            config: Configuration object with model parameters
+        """
         bottleneck_dim = config.hidden_size // 2
         layers = OrderedDict(
             [
@@ -83,6 +112,15 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
         super().__init__(layers)
 
     def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass through factorized embeddings.
+        
+        Args:
+            x: Input tensor of token IDs of shape [batch_size, seq_len]
+            
+        Returns:
+            Embeddings tensor of shape [batch_size, seq_len, hidden_size]
+        """
         # Token embeddings
         hidden_states = self.tokens(x)
 
@@ -100,7 +138,7 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
 
 
 # Registry mapping architecture names to embedding classes
-EMBEDDING_REGISTRY = {
+EMBEDDING_REGISTRY: Dict[str, Type[nn.Module]] = {
     "conv": PraxisFactorizedEmbeddings,
     "min": PraxisEmbeddings,
     "mru": PraxisEmbeddings,

@@ -1,12 +1,15 @@
 import math
-from typing import *
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from praxis.activations import ACT2FN
+
+ConfigType = TypeVar('ConfigType', bound='AutoConfig')
 
 
 class PraxisKAN(nn.Module):
@@ -22,29 +25,51 @@ class PraxisKAN(nn.Module):
 
     def __init__(
         self,
-        config: "AutoConfig",
+        config: ConfigType,
         grid_min: float = -2.0,
         grid_max: float = 2.0,
         num_grids: int = 8,
         use_base_update: bool = True,
         spline_weight_init_scale: float = 0.1,
     ) -> None:
+        """
+        Initialize KAN module.
+        
+        Args:
+            config: Configuration object with model parameters
+            grid_min: Minimum grid value for RBF
+            grid_max: Maximum grid value for RBF
+            num_grids: Number of grid points
+            use_base_update: Whether to use base update
+            spline_weight_init_scale: Scale for weight initialization
+        """
         super().__init__()
         input_dim = config.hidden_size
         output_dim = config.hidden_size
         base_activation = ACT2FN[config.activation]
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.rbf = RadialBasisFunction(grid_min, grid_max, num_grids)
-        self.spline_linear = SplineLinear(
+        self.input_dim: int = input_dim
+        self.output_dim: int = output_dim
+        self.rbf: RadialBasisFunction = RadialBasisFunction(grid_min, grid_max, num_grids)
+        self.spline_linear: SplineLinear = SplineLinear(
             input_dim * num_grids, output_dim, spline_weight_init_scale
         )
-        self.use_base_update = use_base_update
+        self.use_base_update: bool = use_base_update
         if use_base_update:
-            self.base_activation = base_activation
-            self.base_linear = nn.Linear(input_dim, output_dim)
+            self.base_activation: Callable[[Tensor], Tensor] = base_activation
+            self.base_linear: nn.Linear = nn.Linear(input_dim, output_dim)
 
-    def forward(self, inputs, *args, **kwargs):
+    def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
+        """
+        Forward pass through KAN module.
+        
+        Args:
+            inputs: Input tensor
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Output tensor after KAN processing
+        """
         spline_basis = self.rbf(inputs)
         ret = self.spline_linear(spline_basis.view(*spline_basis.shape[:-2], -1))
         if self.use_base_update:
@@ -58,13 +83,21 @@ class PraxisKAN(nn.Module):
         output_index: int,
         num_pts: int = 1000,
         num_extrapolate_bins: int = 2,
-    ):
-        """this function returns the learned curves in a FastKANLayer.
-        input_index: the selected index of the input, in [0, input_dim) .
-        output_index: the selected index of the output, in [0, output_dim) .
-        num_pts: num of points sampled for the curve.
-        num_extrapolate_bins (N_e): num of bins extrapolating from the given grids. The curve
-            will be calculate in the range of [grid_min - h * N_e, grid_max + h * N_e].
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Return the learned curves in a FastKANLayer.
+        
+        Args:
+            input_index: Selected index of the input, in [0, input_dim)
+            output_index: Selected index of the output, in [0, output_dim)
+            num_pts: Number of points sampled for the curve
+            num_extrapolate_bins: Number of bins extrapolating from the given grids
+                The curve will be calculated in [grid_min - h * N_e, grid_max + h * N_e]
+                
+        Returns:
+            Tuple containing:
+                - x-values for the curve
+                - y-values for the curve
         """
         ng = self.rbf.num_grids
         h = self.rbf.denominator
@@ -84,33 +117,73 @@ class PraxisKAN(nn.Module):
 
 
 class SplineLinear(nn.Linear):
+    """
+    Linear layer with special initialization for spline weights.
+    """
+    
     def __init__(
-        self, in_features: int, out_features: int, init_scale: float = 0.1, **kw
+        self, 
+        in_features: int, 
+        out_features: int, 
+        init_scale: float = 0.1, 
+        **kw: Any
     ) -> None:
-        self.init_scale = init_scale
+        """
+        Initialize spline linear layer.
+        
+        Args:
+            in_features: Size of input features
+            out_features: Size of output features
+            init_scale: Scale for weight initialization
+            **kw: Additional keyword arguments for nn.Linear
+        """
+        self.init_scale: float = init_scale
         super().__init__(in_features, out_features, bias=False, **kw)
 
     def reset_parameters(self) -> None:
+        """Initialize weights using truncated normal distribution"""
         nn.init.trunc_normal_(self.weight, mean=0, std=self.init_scale)
 
 
 class RadialBasisFunction(nn.Module):
+    """
+    Radial basis function module for KAN.
+    """
+    
     def __init__(
         self,
         grid_min: float = -2.0,
         grid_max: float = 2.0,
         num_grids: int = 8,
-        denominator: float = None,  # larger denominators lead to smoother basis
-    ):
+        denominator: Optional[float] = None,  # larger denominators lead to smoother basis
+    ) -> None:
+        """
+        Initialize radial basis function module.
+        
+        Args:
+            grid_min: Minimum grid value
+            grid_max: Maximum grid value
+            num_grids: Number of grid points
+            denominator: Denominator for RBF calculation (larger values = smoother basis)
+        """
         super().__init__()
-        self.grid_min = grid_min
-        self.grid_max = grid_max
-        self.num_grids = num_grids
+        self.grid_min: float = grid_min
+        self.grid_max: float = grid_max
+        self.num_grids: int = num_grids
         grid = torch.linspace(grid_min, grid_max, num_grids)
-        self.grid = torch.nn.Parameter(grid, requires_grad=False)
-        self.denominator = denominator or (grid_max - grid_min) / (num_grids - 1)
+        self.grid: nn.Parameter = torch.nn.Parameter(grid, requires_grad=False)
+        self.denominator: float = denominator or (grid_max - grid_min) / (num_grids - 1)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass through RBF.
+        
+        Args:
+            x: Input tensor
+            
+        Returns:
+            RBF values for the input
+        """
         return torch.exp(-(((x[..., None] - self.grid) / self.denominator) ** 2))
 
 
