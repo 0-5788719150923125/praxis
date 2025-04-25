@@ -418,6 +418,46 @@ class PraxisTrainer(LightningModule):
         return softmax_collapse
 
 
+class PeriodicEvaluation(Callback):
+    """Callback to perform periodic evaluation during training using the lighteval test suite."""
+
+    def on_validation_end(self, trainer, lm):
+        super().on_validation_end(trainer, lm)
+        self._run_evaluation_suites()
+
+    def _run_evaluation_suites(self):
+        tasks = {"mmlu": "helm|mmlu|5|1"}
+        results = {}
+        for name, task in tasks.items():
+            metrics = evaluate_model(
+                model,
+                max_samples=25,
+                task=task,
+                device=device,
+                vocab_size=vocab_size,
+                verbose=False,
+            )
+            metric_name = f"eval_{name}"
+            metric_value = metrics["results"]["all"]["pqem"]
+
+            if debug:
+                print(f"DEBUG: {name}: {metric_value}")
+
+            # Different loggers have different APIs
+            if hasattr(trainer.logger, "log_metrics"):
+                trainer.logger.log_metrics(
+                    {metric_name: metric_value}, step=trainer.global_step
+                )
+            elif hasattr(trainer.logger.experiment, "add_scalar"):
+                # TensorBoard logger
+                trainer.logger.experiment.add_scalar(
+                    metric_name, metric_value, trainer.global_step
+                )
+            else:
+                # Fallback for other loggers
+                print(f"Warning: Couldn't log {metric_name} to logger")
+
+
 class TerminalInterface(Callback):
     """
     A single pane of glass containing charts and information.
@@ -472,6 +512,10 @@ class TerminalInterface(Callback):
         super().on_validation_batch_end(trainer, lm, outputs, batch, batch_idx)
         if not quiet:
             self._generate_text(lm, batch_idx, self.interval)
+
+    def on_validation_end(self, trainer, lm):
+        super().on_validation_end(trainer, lm)
+        self.dashboard.set_mode("evaluation")
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
@@ -1248,16 +1292,7 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
-
-# output = evaluate_model(
-#     model,
-#     max_samples=10,
-#     task="helm|mmlu|5|1",
-#     device=device,
-#     vocab_size=vocab_size,
-#     verbose=True,
-# )
-# print(output)
+train_params["callbacks"].append(PeriodicEvaluation())
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)

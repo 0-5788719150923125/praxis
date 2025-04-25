@@ -36,7 +36,6 @@ from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 
 def evaluate_model(
     model=None,
-    model_config=None,
     max_samples=None,
     task="helm|mmlu|5|1",
     device="cpu",
@@ -56,12 +55,6 @@ def evaluate_model(
         save_details=True,
     )
 
-    pipeline_params = PipelineParameters(
-        launcher_type=ParallelismManager.ACCELERATE,
-        max_samples=max_samples,
-    )
-
-    # if model is None and model_config is None:
     model_config = TransformersModelConfig(
         model_name=os.path.join(cache_dir, "praxis"),
         device=device,
@@ -69,21 +62,21 @@ def evaluate_model(
         model_parallel=False,
         batch_size=1,
         max_length=4096,
+        # generation_parameters=dict(use_cache=True), #this would speed up testing a ton
     )
     if model is not None:
-        # model = TransformersModel(model_config)
-        # print(model_config)
-        model = TransformersModel.from_model(
-            model, config=model_config, tokenizer_name=f"UNSAFE/praxis-{vocab_size}"
-        )
+        model = TransformersModel.from_model(model, config=model_config)
         model_config = None
 
     pipeline = Pipeline(
-        tasks=task,
-        pipeline_parameters=pipeline_params,
+        pipeline_parameters=PipelineParameters(
+            launcher_type=ParallelismManager.NONE,
+            max_samples=max_samples,
+        ),
         evaluation_tracker=evaluation_tracker,
         model=model,
         model_config=model_config,
+        tasks=task,
     )
 
     pipeline.evaluate()
