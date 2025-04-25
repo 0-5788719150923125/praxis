@@ -15,32 +15,32 @@ from praxis.utils import (
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
-    "standard": lambda config: generate_alternating_values(
-        size=config.depth, interval=1, capacity=0.125
+    "standard": lambda depth: generate_alternating_values(
+        size=depth, interval=1, capacity=0.125
     ),
     "decayed": lambda config: generate_decay_values(
-        config.depth, reverse=True, center=0.5, lower_bound=0.125
+        depth, reverse=True, center=0.5, lower_bound=0.125
     ),
-    "ramped": lambda config: generate_decay_values(
+    "project": lambda config: generate_decay_values(
         config.depth, center=0.5, lower_bound=0.125
     ),
     "u": lambda config: generate_u_shape_values(
-        config.depth,
+        depth,
         decay_point=0.1,
         ramp_point=0.9,
         lower_bound=0.125,
         steepness=2.0,
     ),
     "skip_3": lambda config: generate_alternating_values(
-        size=config.depth, interval=2, capacity=0.125
+        size=depth, interval=2, capacity=0.125
     ),
     "skip_2": lambda config: generate_alternating_values(
-        size=config.depth, interval=2, capacity=0.125
+        size=depth, interval=2, capacity=0.125
     ),
 }
 
 
-class PraxisMixtureOfDepths(nn.Linear):
+class MixtureOfDepths(nn.Linear):
     """
     This uses expert-choice routing, which was greatly preferred by the
     original authors of this research: https://arxiv.org/abs/2404.02258
@@ -48,9 +48,9 @@ class PraxisMixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig") -> None:
+    def __init__(self, config: "AutoConfig", layout: str = "standard") -> None:
         super().__init__(in_features=config.hidden_size, out_features=1)
-        self.capacities: List[float] = MOD_LAYOUT.get(config.mod, "standard")(config)
+        self.capacities: List[float] = MOD_LAYOUT.get(layout)(config.depth)
         if config.debug:
             print(self.capacities)
 

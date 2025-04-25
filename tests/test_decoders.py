@@ -5,13 +5,13 @@ import pytest
 import torch
 
 from praxis import BLOCK_REGISTRY, CONTROLLER_REGISTRY, DECODER_REGISTRY, PraxisConfig
-from praxis.modules.router import MOD_LAYOUT
+from praxis.routers import ROUTER_REGISTRY
 
 TEST_PARAMS = {
     "debug": [True, False],
     "hidden_size": [64, 128],
     "num_heads": [2],
-    "mod": list(MOD_LAYOUT.keys()),
+    "mod": list(ROUTER_REGISTRY.keys()),
     "depth": [3],
     "num_experts": [3, 5],
     "decoder_type": list(DECODER_REGISTRY.keys()),

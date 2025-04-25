@@ -25,7 +25,7 @@ class PraxisConfig(PretrainedConfig):
         block: str = "transformer",
         expert: str = "glu",
         encoding: str = "rope",
-        mod: Optional[str] = None,
+        router_type: Optional[str] = None,
         controller_type: str = "base",
         attention_type: str = "standard",
         encoder_type: Optional[str] = None,
@@ -88,7 +88,7 @@ class PraxisConfig(PretrainedConfig):
         self.block_type = block
         self.expert = expert
         self.encoding = encoding
-        self.mod = mod
+        self.router_type = router_type
         self.controller_type = controller_type
         self.memory = memory
         self.mta = mta

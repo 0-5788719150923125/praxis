@@ -18,7 +18,7 @@ from praxis import (
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
     LOSS_REGISTRY,
-    MOD_LAYOUT,
+    ROUTER_REGISTRY,
 )
 
 
@@ -189,11 +189,11 @@ architecture_group.add_argument(
     help="Various methods used to route inputs through experts in the decoder",
 )
 architecture_group.add_argument(
-    "--mod",
+    "--router_type",
     type=str,
-    choices=MOD_LAYOUT.keys(),
+    choices=ROUTER_REGISTRY.keys(),
     default=None,
-    help="Use Mixture of Depths routing",
+    help="How to route tokens at every layer",
 )
 architecture_group.add_argument(
     "--activation",

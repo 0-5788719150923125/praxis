@@ -22,7 +22,7 @@ from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
 from praxis.modules.experts import PraxisExpert
-from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.routers import ROUTER_REGISTRY
 
 
 class PraxisManagement:
@@ -85,7 +85,7 @@ class PraxisManagement:
         self.backends = {}
         self.active_local_experts = []
 
-        self.router = PraxisMixtureOfDepths(config)
+        self.router = ROUTER_REGISTRY.get("mixture_of_depths")(config)
 
         self.running = False
         self.thread = None

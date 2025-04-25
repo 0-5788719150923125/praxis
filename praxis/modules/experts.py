@@ -8,7 +8,7 @@ from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly, PraxisScatter
 from praxis.modules.kan import PraxisKAN
 from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
-from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -92,8 +92,8 @@ class PraxisExpert(nn.Module):
         self.is_remote: bool = is_remote
         self.block: Union[nn.Module, bool] = block
         self.router: Union[nn.Module, bool] = router
-        if config.mod is not None and not self.router:
-            self.router = PraxisMixtureOfDepths(config)
+        if config.router_type is not None and not self.router:
+            self.router = ROUTER_REGISTRY.get("mixture_of_depths")(config)
 
     def forward(
         self,
