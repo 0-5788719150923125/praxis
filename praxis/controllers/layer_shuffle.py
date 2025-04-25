@@ -19,9 +19,6 @@ class LayerShuffle(BaseController):
 
     def __init__(self, config: "AutoConfig", num_context_tokens: int = 0):
         super().__init__(config)
-        self.debug = config.debug
-        self.depth = config.depth
-        self.current_route = []
 
         # self.navigator = (
         #     PraxisController(config, max_num_experts=config.num_experts * 3)
@@ -111,14 +108,6 @@ class LayerShuffle(BaseController):
         next_expert = ordered_experts[current_depth]
         next_expert_idx = sequential_experts.index(next_expert)
 
-        self.current_route.append(next_expert_idx)
+        self._update_route(hidden_states, current_depth, next_expert_idx)
 
         return aux_loss, current_depth
-
-    def reset_route(self, hidden_states):
-        """Reset the tracking of the current route through layers."""
-        if self.debug:
-            route = [str(r) for r in self.current_route]
-            if not self.training and hidden_states.size(0) == 1:  # not validation
-                print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
-        self.current_route = []

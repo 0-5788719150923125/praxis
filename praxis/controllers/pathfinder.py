@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
-from praxis.modules.visualization import RouteVisualizer
 
 
 class Pathfinder(BaseController):
@@ -18,9 +17,6 @@ class Pathfinder(BaseController):
 
     def __init__(self, config: "AutoConfig", allow_early_exits=False):
         super().__init__(config)
-        self.debug = config.debug
-        self.depth = config.depth
-        self.num_experts = config.num_experts
 
         # Create a gating network for each layer to decide the next layer
         extra_vectors = int(allow_early_exits)
@@ -29,18 +25,6 @@ class Pathfinder(BaseController):
                 nn.Linear(config.hidden_size, self.num_experts + extra_vectors)
                 for _ in range(self.depth)
             ]
-        )
-
-        self.current_route = []
-
-        self.visualizer = (
-            RouteVisualizer(
-                num_experts=config.num_experts,
-                max_history=10000,
-                save_rate=100 * config.depth,
-            )
-            if self.debug
-            else False
         )
 
     def get_next_expert(
@@ -73,26 +57,6 @@ class Pathfinder(BaseController):
         if next_expert_idx == self.num_experts:
             return gating_loss, None
 
-        # Record the current layer in the route
-        self.current_route.append(next_expert_idx)
-
-        # Update visualizer
-        if (
-            self.visualizer
-            and not self.training
-            and hidden_states.size(0) == 1  # not validation
-            and current_depth > 0  # not the final layer
-        ):
-            # Just send the immediate transition
-            previous_idx = self.current_route[current_depth - 1]
-            self.visualizer.add_transition(previous_idx, next_expert_idx)
+        self._update_route(hidden_states, current_depth, next_expert_idx)
 
         return gating_loss, next_expert_idx
-
-    def reset_route(self, hidden_states):
-        """Reset the tracking of the current route through layers."""
-        if self.debug:
-            route = [str(r) for r in self.current_route]
-            if not self.training and hidden_states.size(0) == 1:  # not validation
-                print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
-        self.current_route = []

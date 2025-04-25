@@ -19,7 +19,6 @@ from matplotlib.transforms import Affine2D
 
 from praxis.controllers.base import BaseController
 from praxis.modules.dense import PraxisGLU
-from praxis.modules.visualization import RouteVisualizer
 
 
 class GraphRouter(BaseController):
@@ -30,7 +29,6 @@ class GraphRouter(BaseController):
 
     def __init__(self, config: "AutoConfig"):
         super().__init__(config)
-        self.debug = config.debug
         self.causal = config.causal
         self.num_layers = config.num_experts
         self.hidden_dim = config.hidden_size
@@ -69,18 +67,6 @@ class GraphRouter(BaseController):
 
         self.dropout = nn.Dropout(config.dropout)
         self.reset_parameters()
-
-        # Extra functionality
-        self.current_route = []
-        self.visualizer = (
-            RouteVisualizer(
-                num_experts=config.num_experts,
-                max_history=10000,
-                save_rate=100 * config.depth,
-            )
-            if self.debug
-            else False
-        )
 
     def reset_parameters(self):
         # Base layer features - keep subtle
@@ -265,7 +251,7 @@ class GraphRouter(BaseController):
                 tau=temperature,
                 hard=False,
             )
-            next_idx = torch.argmax(probs[0], dim=-1).item()
+            next_expert_idx = torch.argmax(probs[0], dim=-1).item()
 
             # Compute importance losses
             importance = probs.sum(dim=0)
@@ -288,28 +274,12 @@ class GraphRouter(BaseController):
             temperature = 0.5
             scaled_scores = batch_averaged_scores / temperature
             probs = F.softmax(scaled_scores, dim=-1)
-            next_idx = torch.multinomial(probs, num_samples=1).item()
+            next_expert_idx = torch.multinomial(probs, num_samples=1).item()
             routing_loss = 0
 
-        self.current_route.append(next_idx)
+        self._update_route(hidden_states, current_depth, next_expert_idx)
 
-        # Update route
-        if not self.training and self.visualizer and hidden_states.size(0) == 1:
-            # Just send the immediate transition
-            if current_depth > 0:
-                previous_idx = self.current_route[current_depth - 1]
-                self.visualizer.add_transition(previous_idx, next_idx)
-
-        return routing_loss, next_idx
-
-    def reset_route(self, hidden_states):
-        if self.debug:
-            route = [str(r) for r in self.current_route]
-            if not self.training:
-                print(f"DEBUG: inferencing through: {' -> '.join(route)}")
-            elif random.random() < 0.005:
-                print(f"DEBUG: training through: {' -> '.join(route)}")
-        self.current_route = []
+        return routing_loss, next_expert_idx
 
 
 class GraphAttention(nn.Module):
