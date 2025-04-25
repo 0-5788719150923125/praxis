@@ -94,7 +94,8 @@ def contrastive_token_loss(
     else:  # exact value
         ct_length = round(ct_length)
 
-    input = input[..., :ct_length, :]
+    logit_clip_value = 10.0  # may need tuning
+    input = torch.clamp(input, min=-logit_clip_value, max=logit_clip_value)
     target = target[..., :ct_length]
 
     assert (
@@ -117,14 +118,19 @@ def contrastive_token_loss(
     positive_scores = input.gather(2, target_with_pad.unsqueeze(-1))  # label scores
     negative_scores = input.gather(2, preced_tokens)
     neg_minus_pos = negative_scores - positive_scores
+    # neg_minus_pos = torch.clamp(neg_minus_pos, max=20)  # Prevent extremely large values
     exp = neg_minus_pos.exp()
 
     pad_mask = preced_tokens.ne(pad_id).int()
     sum_exp = (exp * pad_mask).sum(dim=-1)  # don't use pad tokens as negatives
     losses = (1 + sum_exp).log() * non_padding.int()
 
-    denominator = non_padding.int().sum()
-    ct_loss = losses.sum() / (denominator + 1e-10)  # Add small epsilon
+    denom = non_padding.int().sum()
+    # if denom > 0:
+    ct_loss = losses.sum() / denom
+    # else:
+    #     # Return 0 loss if there are no valid tokens to compute loss over
+    #     ct_loss = torch.tensor(0.0, device=input.device, dtype=input.dtype)
 
     return ct_loss
 

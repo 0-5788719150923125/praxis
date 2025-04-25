@@ -12,9 +12,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from matplotlib.collections import LineCollection
+from matplotlib.collections import LineCollection, PathCollection
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
+from matplotlib.path import Path
 from matplotlib.transforms import Affine2D
 
 from praxis.modules.dense import PraxisGLU
@@ -136,9 +137,6 @@ class RouteVisualizer:
 
     def _create_feathered_node(self, ax, pos, color, alpha=1.0, zorder=1000):
         """Create a feathered node using stacked rings with fixed alpha"""
-        import numpy as np
-        from matplotlib.collections import PathCollection
-        from matplotlib.path import Path
 
         center_x, center_y = pos
         base_radius = self.node_radius * 0.05
@@ -359,11 +357,27 @@ class RouteVisualizer:
         max_usage = max(node_usage.values()) if node_usage else 1
         node_colors = {}
 
+        # Adjust this code in _save_visualization
         for node in G.nodes():
-            # color = plt.cm.YlOrRd(node_usage[node] / max_usage)
+            # Get the redness value (assuming blue_to_red colormap where higher values = more red)
             color = blue_to_red(node_usage[node] / max_usage)
             node_colors[node] = color
-            self._create_feathered_node(ax, pos[node], color)
+
+            # Calculate zorder based on color - more red = higher zorder (on top)
+            # Extract the red component from the color (first value in RGB)
+            redness = (
+                color[0]
+                if isinstance(color, np.ndarray)
+                else plt.cm.colors.to_rgb(color)[0]
+            )
+
+            # Scale to appropriate zorder range - edges are at zorder=0
+            # Highly red nodes (redness near 1.0) should have higher zorder than edges
+            # Highly blue nodes (redness near 0.0) should have lower zorder than edges
+            node_zorder = -100 + (redness * 200)  # Maps from -100 (blue) to +100 (red)
+
+            # Draw node with calculated zorder
+            self._create_feathered_node(ax, pos[node], color, zorder=node_zorder)
 
         # Add node labels
         labels = {node: str(node) for node in G.nodes()}

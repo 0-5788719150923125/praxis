@@ -56,16 +56,17 @@ class BaseController(nn.Module):
         return 0, current_depth
 
     def _update_route(self, hidden_states, current_depth, next_expert_idx):
-        # Update visualizer
-        if (
-            self.visualizer
-            and not self.training
-            and hidden_states.size(0) == 1  # not validation
-            and current_depth > 0  # not the final layer
-        ):
+        """Update routes used by the visualizer."""
+        if self.debug:
             self.current_route.append(next_expert_idx)
-            previous_idx = self.current_route[current_depth - 1]
-            self.visualizer.add_transition(previous_idx, next_expert_idx)
+            if (
+                self.visualizer
+                and not self.training
+                and hidden_states.size(0) == 1  # not validation
+                and current_depth > 0  # not the final layer
+            ):
+                previous_idx = self.current_route[current_depth - 1]
+                self.visualizer.add_transition(previous_idx, next_expert_idx)
 
     def reset_route(self, hidden_states):
         """Reset the tracking of the current route through layers."""
@@ -73,4 +74,4 @@ class BaseController(nn.Module):
             route = [str(r) for r in self.current_route]
             if not self.training and hidden_states.size(0) == 1:  # not validation
                 print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
-        self.current_route = []
+            self.current_route = []
