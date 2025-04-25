@@ -106,8 +106,8 @@ class PraxisAttention(nn.Module):
             self.algorithm = Stickbreaking(config)
         elif self.differential:
             self.algorithm = Differential(config)
-        # elif self.linear:
-        #     self.algorithm = Linear(config)
+        elif self.linear:
+            self.algorithm = Linear(config)
         else:
             self.algorithm = ScaledDotProduct(config)
 
@@ -339,6 +339,7 @@ class ScaledDotProduct(nn.Module):
             config: Configuration object containing attention parameters
         """
         super().__init__()
+        self.causal: bool = config.causal
         self.meta: str = config.meta
         self.hidden_size: int = config.hidden_size
         self.num_heads: int = config.num_heads
@@ -575,97 +576,145 @@ class Differential(ScaledDotProduct):
         return outputs * (1 - self.lambda_init)
 
 
-# class Linear(ScaledDotProduct):
-#     """
-#     Implements Linear Attention using kernel feature maps.
-#     Based on 'Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention'
-#     """
+class Linear(ScaledDotProduct):
+    """
+    Implements Linear Attention with efficient operations.
+    Based on kernelized attention patterns which have O(L) instead of O(L²) complexity.
+    """
 
-#     __version__ = "0.1.0"
+    __version__ = "0.1.0"
 
-#     def __init__(self, config: "AutoConfig"):
-#         super().__init__(config)
-#         self.epsilon = 1e-6
-#         self.causal = config.causal
+    def __init__(self, config: Any) -> None:
+        """
+        Initialize linear attention module.
 
-#         # Feature map for positive definite kernel
-#         self.feature_map = lambda x: F.elu(x) + 1
+        Args:
+            config: Configuration object containing attention parameters
+        """
+        super().__init__(config)
+        self.epsilon = 1e-6
+        # Optional normalization layer to stabilize computations
+        self.norm = nn.LayerNorm(config.head_size, eps=config.epsilon)
 
-#     def compute_scores(self, q: Tensor, k: Tensor, v: Tensor):
-#         """
-#         Instead of returning attention scores, we return the feature-mapped queries and keys.
-#         """
-#         # Apply the feature map
-#         q = self.feature_map(q)  # Shape: (B, H, L, D)
-#         k = self.feature_map(k)  # Shape: (B, H, L, D)
+    def compute_scores(
+        self, q: Tensor, k: Tensor, v: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        Apply feature map to queries and keys.
 
-#         return q, k, v, []  # Return an empty list for scores
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
 
-#     def apply_masking(self, scores, attention_mask, *args, **kwargs):
-#         return scores, None, attention_mask
+        Returns:
+            Tuple of (mapped query, mapped key, value, placeholder)
+        """
+        # Use elu(x) + 1 as feature map to ensure positivity
+        q = F.elu(q) + 1.0
+        k = F.elu(k) + 1.0
 
-#     def compute_weights(
-#         self,
-#         q: Tensor,
-#         k: Tensor,
-#         v: Tensor,
-#         scores: List[Tensor],
-#         causal_mask: Optional[Tensor] = None,
-#         attention_mask: Optional[Tensor] = None,
-#     ):
-#         """
-#         Perform the linear attention computation here, using the feature-mapped q and k.
-#         """
-#         # Now, perform the linear attention computation
-#         B, H, L, D = v.size()
+        # We don't actually use the scores in linear attention
+        placeholder = torch.tensor(0.0)
 
-#         # Apply mask to k and v if provided
-#         if attention_mask is not None:
-#             mask = attention_mask.unsqueeze(1).unsqueeze(-1)  # Shape: (B, 1, L, 1)
-#             k = k * mask
-#             v = v * mask
+        return q, k, v, placeholder
 
-#         if self.causal:
-#             # Implement causal linear attention using cumulative sums
-#             k_cumsum = torch.cumsum(k.transpose(2, 1), dim=2).transpose(
-#                 2, 1
-#             )  # (B, H, L, D)
-#             kv_cumsum = torch.cumsum((k * v).transpose(2, 1), dim=2).transpose(
-#                 2, 1
-#             )  # (B, H, L, D)
+    def apply_masking(
+        self,
+        scores: Tensor,
+        attention_mask: Optional[Tensor],
+        block_ids: Optional[Tensor],
+        seq_len: int,
+        hist_len: int,
+        causal: bool,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        """Pass-through for masking (handled in compute_weights)"""
+        return scores, None, attention_mask
 
-#             # Compute denominator z
-#             z = torch.einsum("bhld,bhld->bhl", q, k_cumsum) + self.epsilon  # (B, H, L)
+    def compute_weights(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        scores: Tensor,
+        causal_mask: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Compute linear attention with efficient operations.
 
-#             # Apply attention mask to z
-#             if attention_mask is not None:
-#                 z = z * attention_mask.unsqueeze(1)  # Shape: (B, 1, L)
+        Args:
+            q: Feature-mapped query tensor [B, H, L, D]
+            k: Feature-mapped key tensor [B, H, L, D]
+            v: Value tensor [B, H, L, D]
+            scores: Placeholder (unused)
+            causal_mask: Optional causal mask (unused)
+            attention_mask: Optional padding mask
 
-#             # Compute numerator
-#             output = torch.einsum(
-#                 "bhld,bhld->bhld", q, self.dropout(kv_cumsum)
-#             )  # (B, H, L, D)
-#         else:
-#             # Non-causal linear attention
-#             k_sum = k.sum(dim=2)  # (B, H, D)
-#             kv_sum = torch.einsum("bhld,bhld->bhd", k, v)  # (B, H, D)
+        Returns:
+            Tuple of (attention_output, v)
+        """
+        batch_size, num_heads, seq_len, dim = q.size()
+        v_dim = v.size(-1)
 
-#             # Compute denominator z
-#             z = torch.einsum("bhld,bhd->bhl", q, k_sum) + self.epsilon  # (B, H, L)
+        # Apply padding mask if provided
+        if attention_mask is not None:
+            mask = attention_mask.unsqueeze(1).unsqueeze(-1)
+            k = k * mask
+            v = v * mask
 
-#             # Apply attention mask to z
-#             if attention_mask is not None:
-#                 z = z * attention_mask.unsqueeze(1)  # Shape: (B, 1, L)
+        # For non-causal attention: direct computation with O(LD²) complexity
+        if not self.causal:
+            # (1) Sum keys across sequence dimension
+            k_sum = k.sum(dim=2)  # [B, H, D]
 
-#             # Compute numerator
-#             output = torch.einsum(
-#                 "bhld,bhd->bhld", q, self.dropout(kv_sum)
-#             )  # (B, H, L, D)
+            # (2) Compute key-value outer products and sum
+            kv = torch.einsum("bhld,bhle->bhde", k, v)  # [B, H, D, E]
 
-#         # Normalize output
-#         output = output / z.unsqueeze(-1)  # (B, H, L, D)
+            # (3) Compute outputs with linear complexity
+            denom = torch.einsum("bhld,bhd->bhl", q, k_sum) + self.epsilon  # [B, H, L]
+            numer = torch.einsum("bhld,bhde->bhle", q, kv)  # [B, H, L, E]
 
-#         return output
+            # Normalize and return
+            output = numer / denom.unsqueeze(-1)  # [B, H, L, E]
+            return output, v
+
+        # For causal attention: use cumulative sums
+        else:
+            # Compute causal linear attention using cumulative sums
+            # For each position i, we need the sum of keys and key-values up to position i-1
+
+            # First compute cumulative sums of keys and key-values
+            # We shift these arrays to implement causality
+            k_cumsum = torch.zeros_like(k)
+            k_cumsum[:, :, 1:] = torch.cumsum(
+                k[:, :, :-1], dim=2
+            )  # Shift by 1 for causality
+
+            # Compute key-value outer products
+            kv = k.unsqueeze(-1) * v.unsqueeze(-2)  # [B, H, L, D, E]
+
+            # Compute cumulative sum of key-values (with shift for causality)
+            kv_cumsum = torch.zeros_like(kv)
+            kv_cumsum[:, :, 1:] = torch.cumsum(kv[:, :, :-1], dim=2)
+
+            # Compute outputs
+            denom = torch.sum(q * k_cumsum, dim=3) + self.epsilon  # [B, H, L]
+            numer = torch.sum(q.unsqueeze(-1) * kv_cumsum, dim=3)  # [B, H, L, E]
+
+            # Normalize and return
+            output = numer / denom.unsqueeze(-1)  # [B, H, L, E]
+            return output, v
+
+    def compute_outputs(self, weights: Tensor, v: Tensor) -> Tensor:
+        """Apply normalization and dropout to outputs"""
+        # Apply normalization for numerical stability
+        batch_size, num_heads, seq_len, head_dim = weights.shape
+        shaped_weights = weights.reshape(-1, head_dim)
+        normalized = self.norm(shaped_weights)
+        weights = normalized.view(batch_size, num_heads, seq_len, head_dim)
+
+        return self.dropout(weights)
 
 
 class Stickbreaking(ScaledDotProduct):

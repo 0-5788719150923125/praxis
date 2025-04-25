@@ -13,7 +13,7 @@ MODULE_CLASSES = [PraxisAttention]
 
 class AttentionMode(Enum):
     BASE = "base"
-    # LINEAR = "linear"
+    LINEAR = "linear"
     DIFFERENTIAL = "differential"
     STICKBREAKING = "stickbreaking"
 

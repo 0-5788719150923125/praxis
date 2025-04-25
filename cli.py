@@ -143,7 +143,7 @@ architecture_group.add_argument(
     "--encoder_type",
     type=str,
     choices=list(ENCODER_REGISTRY.keys()),
-    default="sequential",
+    default=None,
     help="Encoder module to use",
 )
 architecture_group.add_argument(
