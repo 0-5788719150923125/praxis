@@ -7,11 +7,11 @@ def ghostmax(x: Tensor, dim: int = -1) -> Tensor:
     Implementation of softmax1, which adds 1 to denominator
     to allow for "no-op" attention.
     https://www.evanmiller.org/attention-is-off-by-one.html
-    
+
     Args:
         x: Input tensor
         dim: Dimension along which to apply ghostmax
-        
+
     Returns:
         Tensor with ghostmax applied along the specified dimension
     """

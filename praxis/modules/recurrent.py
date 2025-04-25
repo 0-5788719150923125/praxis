@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class minGRU(nn.Module):
@@ -17,15 +17,15 @@ class minGRU(nn.Module):
     """
 
     def __init__(
-        self, 
-        dim: int, 
-        expansion_factor: float = 1.0, 
-        dim_out: Optional[int] = None, 
-        proj_out: Optional[bool] = None
+        self,
+        dim: int,
+        expansion_factor: float = 1.0,
+        dim_out: Optional[int] = None,
+        proj_out: Optional[bool] = None,
     ) -> None:
         """
         Initialize minGRU module.
-        
+
         Args:
             dim: Input dimension
             expansion_factor: Factor to scale hidden dimension
@@ -44,19 +44,19 @@ class minGRU(nn.Module):
         )
 
     def forward(
-        self, 
-        x: Tensor, 
-        prev_hidden: Optional[Tensor] = None, 
-        input_ids: Optional[Tensor] = None
+        self,
+        x: Tensor,
+        prev_hidden: Optional[Tensor] = None,
+        input_ids: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor]:
         """
         Forward pass through minGRU.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, dim]
             prev_hidden: Optional previous hidden state
             input_ids: Optional input token IDs for masking
-            
+
         Returns:
             Tuple containing:
                 - Output tensor
@@ -121,18 +121,16 @@ class minGRU(nn.Module):
 
 # https://github.com/glassroom/heinsen_sequence
 def heinsen_associative_scan_log_with_reset(
-    log_coeffs: Tensor, 
-    log_values: Tensor, 
-    pad_mask: Tensor
+    log_coeffs: Tensor, log_values: Tensor, pad_mask: Tensor
 ) -> Tensor:
     """
     Modified Heinsen scan in log space that respects reset boundaries.
-    
+
     Args:
         log_coeffs: Log coefficients tensor
         log_values: Log values tensor
         pad_mask: Padding mask (True where tokens should be masked)
-        
+
     Returns:
         Output tensor after scan operation
     """
@@ -168,10 +166,10 @@ def heinsen_associative_scan_log_with_reset(
 def g(x: Tensor) -> Tensor:
     """
     Activation function for minGRU.
-    
+
     Args:
         x: Input tensor
-        
+
     Returns:
         Activated tensor
     """
@@ -182,10 +180,10 @@ def g(x: Tensor) -> Tensor:
 def log_g(x: Tensor) -> Tensor:
     """
     Log-space activation function for minGRU.
-    
+
     Args:
         x: Input tensor
-        
+
     Returns:
         Log-space activated tensor
     """
@@ -202,7 +200,7 @@ class PraxisRecurrent(nn.Module):
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize recurrent module.
-        
+
         Args:
             config: Configuration object with model parameters
         """
@@ -237,12 +235,12 @@ class PraxisRecurrent(nn.Module):
     ) -> Tensor:
         """
         Forward pass with sampled initial states.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, hidden_dim]
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Output tensor after recurrent processing with residual connection
         """

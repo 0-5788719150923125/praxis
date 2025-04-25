@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Optional, Tuple, TypeVar, Any
+from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
@@ -8,15 +8,15 @@ from torch import Tensor
 
 from praxis.activations import ACT2FN
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisPEER(nn.Module):
     """
     This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
     https://arxiv.org/abs/2407.04153v1
-    
-    PEER combines aspects of product key memory and mixture of experts, 
+
+    PEER combines aspects of product key memory and mixture of experts,
     using factorized keys for efficient expert retrieval. It enables each token
     to select its own set of experts for processing.
     """
@@ -26,7 +26,7 @@ class PraxisPEER(nn.Module):
     def __init__(self, config: ConfigType):
         """
         Initialize the PEER module.
-        
+
         Args:
             config: Configuration object containing PEER parameters
         """
@@ -50,17 +50,17 @@ class PraxisPEER(nn.Module):
 
         class Permute(nn.Module):
             """Permute dimensions of tensor for product key memory."""
-            
+
             def __init__(self):
                 super().__init__()
 
             def forward(self, x: Tensor) -> Tensor:
                 """
                 Permute dimensions [p, b, n, h, d] → [p, b, n, h, d]
-                
+
                 Args:
                     x: Input tensor
-                    
+
                 Returns:
                     Permuted tensor
                 """
@@ -69,17 +69,17 @@ class PraxisPEER(nn.Module):
         # BatchNorm for combined partitions and heads
         class BatchNorm1d(nn.BatchNorm1d):
             """BatchNorm1d that handles sequence dimension."""
-            
+
             def __init__(self, *args: Any, **kwargs: Any):
                 super().__init__(*args, **kwargs)
 
             def forward(self, x: Tensor) -> Tensor:
                 """
                 Apply batch norm across batch and sequence dimensions.
-                
+
                 Args:
                     x: Input tensor of shape [batch_size, seq_len, dim]
-                    
+
                 Returns:
                     Normalized tensor of same shape
                 """
@@ -110,10 +110,10 @@ class PraxisPEER(nn.Module):
     def forward(self, inputs: Tensor) -> Tensor:
         """
         Forward pass through the PEER module.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
-            
+
         Returns:
             Output tensor of shape [batch_size, seq_len, hidden_size]
         """

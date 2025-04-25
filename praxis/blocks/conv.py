@@ -23,7 +23,7 @@ class PraxisConv(nn.Module):
     def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
         """
         Initialize PraxisConv block.
-        
+
         Args:
             config: Model configuration
         """
@@ -53,10 +53,10 @@ class PraxisConv(nn.Module):
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         """
         Forward pass through the convolutional block.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
-            
+
         Returns:
             Tuple containing:
                 - Output tensor
@@ -88,7 +88,7 @@ class MultiHeadCausalConv1d(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, num_heads: int) -> None:
         """
         Initialize multi-head causal convolution.
-        
+
         Args:
             in_channels: Number of input channels
             out_channels: Number of output channels
@@ -104,10 +104,10 @@ class MultiHeadCausalConv1d(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass through multi-head causal convolution.
-        
+
         Args:
             x: Input tensor of shape [batch_size, in_channels, seq_len]
-            
+
         Returns:
             Output tensor of shape [batch_size, out_channels, seq_len]
         """
@@ -257,11 +257,17 @@ class CausalConv1d(nn.Conv1d):
     """1D Causal Convolution Layer."""
 
     def __init__(
-        self, in_channels: int, out_channels: int, kernel_size: int, dilation: int = 1, bias: bool = False, **kwargs: Any
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        dilation: int = 1,
+        bias: bool = False,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize 1D causal convolution.
-        
+
         Args:
             in_channels: Number of input channels
             out_channels: Number of output channels
@@ -284,10 +290,10 @@ class CausalConv1d(nn.Conv1d):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass through causal 1D convolution.
-        
+
         Args:
             x: Input tensor of shape [batch_size, in_channels, seq_len]
-            
+
         Returns:
             Output tensor of shape [batch_size, out_channels, seq_len]
         """
@@ -305,7 +311,7 @@ class CausalGlobalContext(nn.Module):
     def __init__(self, in_channels: int, capacity: float = 0.125) -> None:
         """
         Initialize causal global context module.
-        
+
         Args:
             in_channels: Number of input channels
             capacity: Bottleneck capacity ratio
@@ -334,10 +340,10 @@ class CausalGlobalContext(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass through causal global context module.
-        
+
         Args:
             x: Input tensor of shape [batch_size, in_channels, seq_len]
-            
+
         Returns:
             Output tensor of shape [batch_size, in_channels, seq_len]
         """

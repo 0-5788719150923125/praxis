@@ -1,9 +1,10 @@
+from typing import Any, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.autograd import Function
-from typing import Any, Optional, Tuple, Union
 
 
 class AlphaReLUFunction(Function):
@@ -27,7 +28,9 @@ class AlphaReLUFunction(Function):
         return output
 
     @staticmethod
-    def backward(ctx: Any, grad_output: Tensor) -> Tuple[Optional[Tensor], None, None, None]:
+    def backward(
+        ctx: Any, grad_output: Tensor
+    ) -> Tuple[Optional[Tensor], None, None, None]:
         output, relu_output = ctx.saved_tensors
 
         # Compute gradient
@@ -108,7 +111,9 @@ def _roll_last(X: Tensor, dim: int) -> Tensor:
     return X.permute(perm)
 
 
-def alpha_relu(input: Tensor, dim: int = -1, alpha: float = 1.5, tau: Optional[float] = None) -> Tensor:
+def alpha_relu(
+    input: Tensor, dim: int = -1, alpha: float = 1.5, tau: Optional[float] = None
+) -> Tensor:
     if tau is None:
         # Default tau based on paper's recommendations
         tau = 0.5  # This should be properly initialized in practice

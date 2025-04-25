@@ -70,10 +70,12 @@ class PraxisNano(nn.Module):
 
 
 class ElasticLinear(nn.Module):
-    def __init__(self, features: int, bottleneck: float = 0.5, causal: bool = False) -> None:
+    def __init__(
+        self, features: int, bottleneck: float = 0.5, causal: bool = False
+    ) -> None:
         """
         Initialize ElasticLinear layer.
-        
+
         Args:
             features: Number of input/output features
             bottleneck: Bottleneck ratio for parameter reduction
@@ -98,10 +100,10 @@ class ElasticLinear(nn.Module):
     def _interpolate_weights(self, features: int) -> Tensor:
         """
         Interpolate weights to the target feature dimension.
-        
+
         Args:
             features: Target feature dimension
-            
+
         Returns:
             Interpolated weight tensor
         """

@@ -1,13 +1,14 @@
-import torch
-from torch import nn, Tensor
 from typing import List, Union
+
+import torch
+from torch import Tensor, nn
 
 
 class JaggedSine(nn.Module):
     def __init__(
-        self, 
-        frequencies: List[float] = [1.0, 3.0, 5.0], 
-        amplitudes: List[float] = [1.0, 0.3, 0.1]
+        self,
+        frequencies: List[float] = [1.0, 3.0, 5.0],
+        amplitudes: List[float] = [1.0, 0.3, 0.1],
     ):
         super().__init__()
         assert len(frequencies) == len(

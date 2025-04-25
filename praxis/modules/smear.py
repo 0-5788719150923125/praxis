@@ -21,7 +21,7 @@ class PraxisSMEAR(nn.Module):
     """
     This module implements Soft-Merging of Experts with Adaptive Routing (SMEAR):
     https://arxiv.org/abs/2306.03745
-    
+
     SMEAR dynamically merges expert parameters based on routing probabilities,
     rather than routing inputs to multiple experts. This enables more efficient
     parameter sharing and adaptation to input patterns.
@@ -30,15 +30,11 @@ class PraxisSMEAR(nn.Module):
     __version__ = "0.2.0"
 
     def __init__(
-        self, 
-        config: SMEARConfig, 
-        experts: List[nn.Module], 
-        *args: Any, 
-        **kwargs: Any
+        self, config: SMEARConfig, experts: List[nn.Module], *args: Any, **kwargs: Any
     ):
         """
         Initialize the SMEAR module.
-        
+
         Args:
             config: SMEAR configuration object
             experts: List of expert modules to be merged
@@ -61,21 +57,17 @@ class PraxisSMEAR(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
-        self, 
-        inputs: torch.Tensor, 
-        current_state: Any = None, 
-        *args: Any, 
-        **kwargs: Any
+        self, inputs: torch.Tensor, current_state: Any = None, *args: Any, **kwargs: Any
     ) -> Tuple[torch.Tensor, Any, int]:
         """
         Forward pass through SMEAR module.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             current_state: Current state for stateful modules (like RNNs)
             *args: Additional positional arguments to pass to the expert
             **kwargs: Additional keyword arguments to pass to the expert
-            
+
         Returns:
             Tuple containing:
                 - Output tensor
@@ -98,17 +90,15 @@ class PraxisSMEAR(nn.Module):
         return outputs, new_state, 0
 
     def _collect_parameter_names(
-        self, 
-        module: nn.Module, 
-        prefix: str = ""
+        self, module: nn.Module, prefix: str = ""
     ) -> List[str]:
         """
         Recursively collect all parameter names from a module.
-        
+
         Args:
             module: Module to collect parameter names from
             prefix: Prefix for nested parameter names
-            
+
         Returns:
             List of parameter names with full path
         """
@@ -122,18 +112,17 @@ class PraxisSMEAR(nn.Module):
         return parameter_names
 
     def _merge_expert_parameters(
-        self, 
-        routing_probs: torch.Tensor
+        self, routing_probs: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
         Merge expert parameters based on routing probabilities.
-        
+
         Args:
             routing_probs: Routing probabilities of shape [batch_size, num_experts]
-            
+
         Returns:
             Dictionary of merged parameters
-            
+
         Raises:
             ValueError: If a parameter is not found in an expert
         """
@@ -175,17 +164,15 @@ class PraxisSMEAR(nn.Module):
         return merged_state_dict
 
     def _get_module_parameter(
-        self, 
-        module: nn.Module, 
-        param_name: str
+        self, module: nn.Module, param_name: str
     ) -> Optional[torch.Tensor]:
         """
         Retrieve a parameter from a module using a fully qualified parameter name.
-        
+
         Args:
             module: Module to get parameter from
             param_name: Fully qualified parameter name (e.g., "layer1.weight")
-            
+
         Returns:
             Parameter tensor if found, None otherwise
         """

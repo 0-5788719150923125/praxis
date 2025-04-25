@@ -9,11 +9,11 @@ from torch.autograd import Function
 def _make_ix_like(input: Tensor, dim: int = 0) -> Tensor:
     """
     Creates indices tensor for entmax calculation.
-    
+
     Args:
         input: Input tensor
         dim: Dimension along which to create indices
-        
+
     Returns:
         Tensor with indices
     """
@@ -26,7 +26,9 @@ def _make_ix_like(input: Tensor, dim: int = 0) -> Tensor:
 
 class Entmax15Function(Function):
     @staticmethod
-    def forward(ctx: Any, input: Tensor, dim: int) -> Tensor:  # Made dim a required positional argument
+    def forward(
+        ctx: Any, input: Tensor, dim: int
+    ) -> Tensor:  # Made dim a required positional argument
         ctx.dim = dim
 
         # Normalize and scale
@@ -68,11 +70,11 @@ class Entmax15Function(Function):
 def alpha_entmax(input: Tensor, dim: int = -1) -> Tensor:
     """
     Applies 1.5-entmax to input tensor along specified dimension.
-    
+
     Args:
         input: Input tensor
         dim: Dimension along which to apply entmax
-        
+
     Returns:
         Tensor with entmax applied along the specified dimension
     """
@@ -83,7 +85,7 @@ class Entmax15(nn.Module):
     def __init__(self, dim: int = -1) -> None:
         """
         Initialize Entmax15 module.
-        
+
         Args:
             dim: Dimension along which to apply entmax
         """
@@ -93,10 +95,10 @@ class Entmax15(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass applying 1.5-entmax.
-        
+
         Args:
             x: Input tensor
-            
+
         Returns:
             Tensor with entmax applied along the specified dimension
         """

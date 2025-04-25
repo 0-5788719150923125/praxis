@@ -79,7 +79,7 @@ class PraxisModel(PreTrainedModel):
     def get_metrics(self) -> dict:
         """
         Get model metrics from the stack.
-        
+
         Returns:
             Dictionary of model metrics
         """

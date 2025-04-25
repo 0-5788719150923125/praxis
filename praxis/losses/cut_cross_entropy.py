@@ -21,12 +21,12 @@ class CutCrossEntropyLoss(nn.Module):
     ) -> Tensor:
         """
         Calculate the cut cross entropy loss.
-        
+
         Args:
             embeddings: Input embeddings from model
             classifier: Linear classifier layer
             labels: Target labels
-            
+
         Returns:
             Cut cross entropy loss value
         """

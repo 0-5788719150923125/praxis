@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisEmbeddings(nn.Sequential):
@@ -18,7 +18,7 @@ class PraxisEmbeddings(nn.Sequential):
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize embeddings module.
-        
+
         Args:
             config: Configuration object with model parameters
         """
@@ -45,7 +45,7 @@ class PraxisLearnedEmbeddings(nn.Sequential):
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize learned positional embeddings module.
-        
+
         Args:
             config: Configuration object with model parameters
         """
@@ -62,10 +62,10 @@ class PraxisLearnedEmbeddings(nn.Sequential):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass through learned embeddings.
-        
+
         Args:
             x: Input tensor of token IDs of shape [batch_size, seq_len]
-            
+
         Returns:
             Embeddings tensor of shape [batch_size, seq_len, hidden_size]
         """
@@ -95,7 +95,7 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize factorized embeddings module.
-        
+
         Args:
             config: Configuration object with model parameters
         """
@@ -114,10 +114,10 @@ class PraxisFactorizedEmbeddings(nn.Sequential):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass through factorized embeddings.
-        
+
         Args:
             x: Input tensor of token IDs of shape [batch_size, seq_len]
-            
+
         Returns:
             Embeddings tensor of shape [batch_size, seq_len, hidden_size]
         """

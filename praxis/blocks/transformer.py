@@ -49,10 +49,12 @@ class PraxisTransformer(nn.Module):
         router_weights: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
-    ) -> Tuple[Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[Any], Tensor]:
+    ) -> Tuple[
+        Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[Any], Tensor
+    ]:
         """
         Forward pass through the transformer block.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional attention mask tensor
@@ -61,7 +63,7 @@ class PraxisTransformer(nn.Module):
             current_depth: Current depth in the network
             block_ids: Optional block identification tensor
             router_weights: Optional weights from router for expert gating
-            
+
         Returns:
             Tuple containing:
                 - Output tensor
@@ -102,11 +104,11 @@ class PraxisTransformer(nn.Module):
     def _is_zero_tensor(self, tensor: Tensor, tolerance: float = 1e-10) -> bool:
         """
         Check if a tensor contains all zeros (or values close to zero).
-        
+
         Args:
             tensor: The tensor to check
             tolerance: Threshold for considering values as zero
-            
+
         Returns:
             True if the tensor contains all zeros or near-zeros, False otherwise
         """

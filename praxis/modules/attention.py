@@ -1,6 +1,6 @@
 import math
 from copy import copy
-from typing import Any, Dict, List, Optional, Tuple, Union, Type
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -28,7 +28,7 @@ class PraxisAttention(nn.Module):
     def __init__(self, config: Any) -> None:
         """
         Initialize PraxisAttention module with configuration.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -57,7 +57,9 @@ class PraxisAttention(nn.Module):
         ), "Only one of 'mega' or 'gated' can be used at a time."
 
         # For query gating
-        self.ema: Union[PraxisGatedEMA, bool] = PraxisGatedEMA(config) if config.mega else False
+        self.ema: Union[PraxisGatedEMA, bool] = (
+            PraxisGatedEMA(config) if config.mega else False
+        )
 
         # Query and key projections for differential heads
         if config.k_heads is not None:
@@ -113,10 +115,14 @@ class PraxisAttention(nn.Module):
         self.encoding = ENCODING_REGISTRY[config.encoding](config)
 
         # For Multi-Token Attention
-        self.mta: Union[MultiTokenAttention, bool] = MultiTokenAttention(config) if config.mta else False
+        self.mta: Union[MultiTokenAttention, bool] = (
+            MultiTokenAttention(config) if config.mta else False
+        )
 
         # For attention gating
-        self.gates: Union[UniversalAttentionGate, bool] = UniversalAttentionGate(config) if config.gated else False
+        self.gates: Union[UniversalAttentionGate, bool] = (
+            UniversalAttentionGate(config) if config.gated else False
+        )
 
         # Standard output projection
         self.output = nn.Linear(
@@ -133,14 +139,14 @@ class PraxisAttention(nn.Module):
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
         """
         Forward pass of the attention module.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional mask tensor for padding tokens
             past_key_values: Optional cache for key/value pairs from previous steps
             block_ids: Optional tensor indicating block structure for blocked attention
             current_depth: Current depth in the network (for caching)
-            
+
         Returns:
             Tuple containing:
             - Output tensor after attention and projection
@@ -255,7 +261,7 @@ class PraxisAttention(nn.Module):
     ) -> Tensor:
         """
         Process a chunk of the attention computation.
-        
+
         Args:
             q: Query tensor of shape [batch_size, num_heads, chunk_size, head_dim]
             k: Key tensor of shape [batch_size, num_heads, chunk_size, head_dim]
@@ -264,7 +270,7 @@ class PraxisAttention(nn.Module):
             chunk_size: Size of the current chunk
             offset: Position offset for positional encoding
             block_ids: Optional tensor indicating block structure
-            
+
         Returns:
             Processed chunk output tensor
         """
@@ -328,7 +334,7 @@ class ScaledDotProduct(nn.Module):
     def __init__(self, config: Any) -> None:
         """
         Initialize scaled dot-product attention module.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -344,15 +350,17 @@ class ScaledDotProduct(nn.Module):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
 
-    def compute_scores(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    def compute_scores(
+        self, q: Tensor, k: Tensor, v: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Compute attention scores between queries and keys.
-        
+
         Args:
             q: Query tensor
             k: Key tensor
             v: Value tensor
-            
+
         Returns:
             Tuple of (query, key, value, attention scores)
         """
@@ -361,17 +369,17 @@ class ScaledDotProduct(nn.Module):
         return q, k, v, scores
 
     def apply_masking(
-        self, 
-        scores: Tensor, 
-        attention_mask: Optional[Tensor], 
-        block_ids: Optional[Tensor], 
-        seq_len: int, 
-        hist_len: int, 
-        causal: bool
+        self,
+        scores: Tensor,
+        attention_mask: Optional[Tensor],
+        block_ids: Optional[Tensor],
+        seq_len: int,
+        hist_len: int,
+        causal: bool,
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         """
         Apply masking to attention scores.
-        
+
         Args:
             scores: Attention scores
             attention_mask: Optional padding mask
@@ -379,7 +387,7 @@ class ScaledDotProduct(nn.Module):
             seq_len: Current sequence length
             hist_len: History length
             causal: Whether to apply causal masking
-            
+
         Returns:
             Tuple of (masked scores, causal mask, attention mask)
         """
@@ -424,23 +432,17 @@ class ScaledDotProduct(nn.Module):
         return scores, causal_mask, attention_mask
 
     def compute_weights(
-        self, 
-        q: Tensor, 
-        k: Tensor, 
-        v: Tensor, 
-        scores: Tensor, 
-        *args: Any, 
-        **kwargs: Any
+        self, q: Tensor, k: Tensor, v: Tensor, scores: Tensor, *args: Any, **kwargs: Any
     ) -> Tuple[Tensor, Tensor]:
         """
         Compute attention weights from scores.
-        
+
         Args:
             q: Query tensor
             k: Key tensor
             v: Value tensor
             scores: Attention scores
-            
+
         Returns:
             Tuple of (attention weights, value tensor)
         """
@@ -457,11 +459,11 @@ class ScaledDotProduct(nn.Module):
     def compute_outputs(self, weights: Tensor, v: Tensor) -> Tensor:
         """
         Compute final attention outputs.
-        
+
         Args:
             weights: Attention weights
             v: Value tensor
-            
+
         Returns:
             Output tensor after attention
         """
@@ -479,7 +481,7 @@ class Differential(ScaledDotProduct):
     def __init__(self, config: Any) -> None:
         """
         Initialize differential attention module.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -488,10 +490,18 @@ class Differential(ScaledDotProduct):
         head_dim: int = config.head_size
 
         # Parameters for differential attention
-        self.lambda_q1: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
-        self.lambda_k1: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
-        self.lambda_q2: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
-        self.lambda_k2: nn.Parameter = nn.Parameter(torch.zeros(head_dim).normal_(mean=0, std=0.1))
+        self.lambda_q1: nn.Parameter = nn.Parameter(
+            torch.zeros(head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k1: nn.Parameter = nn.Parameter(
+            torch.zeros(head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_q2: nn.Parameter = nn.Parameter(
+            torch.zeros(head_dim).normal_(mean=0, std=0.1)
+        )
+        self.lambda_k2: nn.Parameter = nn.Parameter(
+            torch.zeros(head_dim).normal_(mean=0, std=0.1)
+        )
 
         # GroupNorm should match the total channels
         self.norm: nn.GroupNorm = nn.GroupNorm(
@@ -501,23 +511,17 @@ class Differential(ScaledDotProduct):
         )
 
     def compute_weights(
-        self, 
-        q: Tensor, 
-        k: Tensor, 
-        v: Tensor, 
-        scores: Tensor, 
-        *args: Any, 
-        **kwargs: Any
+        self, q: Tensor, k: Tensor, v: Tensor, scores: Tensor, *args: Any, **kwargs: Any
     ) -> Tuple[Tensor, Tensor]:
         """
         Compute differential attention weights from scores.
-        
+
         Args:
             q: Query tensor
             k: Key tensor
             v: Value tensor
             scores: Attention scores
-            
+
         Returns:
             Tuple of (attention weights, value tensor)
         """
@@ -546,11 +550,11 @@ class Differential(ScaledDotProduct):
     def compute_outputs(self, weights: Tensor, v: Tensor) -> Tensor:
         """
         Compute final differential attention outputs with normalization.
-        
+
         Args:
             weights: Attention weights
             v: Value tensor
-            
+
         Returns:
             Output tensor after differential attention
         """
@@ -675,7 +679,7 @@ class Stickbreaking(ScaledDotProduct):
     def __init__(self, config: Any) -> None:
         """
         Initialize stickbreaking attention module.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -687,15 +691,17 @@ class Stickbreaking(ScaledDotProduct):
         self.history_size: int = 32
         self.use_history: bool = True
 
-    def compute_scores(self, q: Tensor, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    def compute_scores(
+        self, q: Tensor, k: Tensor, v: Tensor
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Compute attention scores with history management.
-        
+
         Args:
             q: Query tensor
             k: Key tensor
             v: Value tensor
-            
+
         Returns:
             Tuple of (query, key, value, attention scores)
         """
@@ -715,14 +721,14 @@ class Stickbreaking(ScaledDotProduct):
     ) -> Tuple[Tensor, Tensor]:
         """
         Compute stickbreaking attention weights from scores.
-        
+
         Args:
             q: Query tensor
             k: Key tensor
             v: Value tensor
             scores: Attention scores
             causal_mask: Optional causal mask tensor
-            
+
         Returns:
             Tuple of (attention weights, value tensor)
         """
@@ -754,11 +760,11 @@ class Stickbreaking(ScaledDotProduct):
     ) -> Tuple[Tensor, Tensor]:
         """
         Sample fixed-size, aligned segments from key and value history tensors.
-        
+
         Args:
             k_hist: Key history tensor
             v_hist: Value history tensor
-            
+
         Returns:
             Tuple of (sampled key history, sampled value history)
         """
@@ -781,11 +787,11 @@ class Stickbreaking(ScaledDotProduct):
     def _update_history(self, k: Tensor, v: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Update and return history for keys and values.
-        
+
         Args:
             k: Key tensor for current batch
             v: Value tensor for current batch
-            
+
         Returns:
             Tuple of (updated key tensor, updated value tensor)
         """
@@ -873,11 +879,11 @@ class LinearQuery(nn.Linear):
     """
     Linear projection for query vectors.
     """
-    
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
         Initialize linear query projection.
-        
+
         Args:
             *args: Arguments for nn.Linear
             **kwargs: Keyword arguments for nn.Linear
@@ -887,10 +893,10 @@ class LinearQuery(nn.Linear):
     def forward(self, x: Tensor) -> Tuple[Tensor, float]:
         """
         Forward pass for query projection.
-        
+
         Args:
             x: Input tensor
-            
+
         Returns:
             Tuple of (projected tensor, auxiliary loss)
         """
@@ -909,7 +915,7 @@ class LinearKeyValue(nn.Module):
     ) -> None:
         """
         Initialize key and value projections.
-        
+
         Args:
             hidden_size: Size of input dimension
             num_heads: Number of attention heads
@@ -932,10 +938,10 @@ class LinearKeyValue(nn.Module):
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Forward pass for key and value projections.
-        
+
         Args:
             x: Input tensor
-            
+
         Returns:
             Tuple of (key tensor, value tensor)
         """
@@ -961,7 +967,7 @@ class LowRankKeyValue(nn.Module):
     ) -> None:
         """
         Initialize low-rank key and value projections.
-        
+
         Args:
             hidden_size: Size of input dimension
             num_heads: Number of attention heads
@@ -976,11 +982,17 @@ class LowRankKeyValue(nn.Module):
         self.rank: int = rank
 
         # Define linear transformations for A projections
-        self.key_a: nn.Linear = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
-        self.value_a: nn.Linear = nn.Linear(hidden_size, self.num_heads * self.rank, bias=False)
+        self.key_a: nn.Linear = nn.Linear(
+            hidden_size, self.num_heads * self.rank, bias=False
+        )
+        self.value_a: nn.Linear = nn.Linear(
+            hidden_size, self.num_heads * self.rank, bias=False
+        )
 
         # Define B projection parameters for K, V
-        self.key_b: nn.Linear = nn.Linear(hidden_size, self.rank * self.key_head_dim, bias=False)
+        self.key_b: nn.Linear = nn.Linear(
+            hidden_size, self.rank * self.key_head_dim, bias=False
+        )
         self.value_b: nn.Linear = nn.Linear(
             hidden_size, self.rank * self.value_head_dim, bias=False
         )
@@ -996,10 +1008,10 @@ class LowRankKeyValue(nn.Module):
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Forward pass for low-rank key and value projections.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, hidden_size]
-            
+
         Returns:
             Tuple of (key tensor, value tensor)
         """
@@ -1045,7 +1057,7 @@ class MultiTokenAttention(nn.Module):
     def __init__(self, config: Any) -> None:
         """
         Initialize Multi-Token Attention module.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -1110,10 +1122,10 @@ class MultiTokenAttention(nn.Module):
         """
         Apply key-query convolution to attention scores with proper double masking
         as described in the paper's equation (4)
-        
+
         Args:
             scores: Attention scores tensor of shape [batch_size, num_heads, seq_len, key_len]
-            
+
         Returns:
             Processed attention scores
         """
@@ -1146,10 +1158,10 @@ class MultiTokenAttention(nn.Module):
         """
         Apply head mixing convolution to attention weights (post-softmax)
         using fully vectorized operations
-        
+
         Args:
             attention_weights: Attention weights tensor of shape [batch_size, num_heads, seq_len, key_len]
-            
+
         Returns:
             Mixed attention weights
         """
@@ -1176,10 +1188,10 @@ class MultiTokenAttention(nn.Module):
     def group_norm(self, attention_output: Tensor) -> Tensor:
         """
         Apply normalization with much less reshaping
-        
+
         Args:
             attention_output: Attention output tensor of shape [batch_size, num_heads, seq_len, head_dim]
-            
+
         Returns:
             Normalized attention output
         """
@@ -1208,7 +1220,7 @@ class UniversalAttentionGate(nn.Module):
     def __init__(self, config: Any) -> None:
         """
         Initialize universal attention gate module.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -1220,11 +1232,11 @@ class UniversalAttentionGate(nn.Module):
     def forward(self, inputs: Tensor, weights: Tensor) -> Tensor:
         """
         Forward pass to apply gating to attention outputs.
-        
+
         Args:
             inputs: Original input tensor of shape [batch_size, seq_len, hidden_size]
             weights: Attention weights tensor of shape [batch_size, seq_len, num_queries*hidden_size]
-            
+
         Returns:
             Gated attention output
         """
@@ -1276,7 +1288,7 @@ class PraxisGatedEMA(nn.Module):
     def __init__(self, config: Any) -> None:
         """
         Initialize gated EMA module.
-        
+
         Args:
             config: Configuration object containing model parameters
         """
@@ -1289,9 +1301,15 @@ class PraxisGatedEMA(nn.Module):
         self.truncation: Optional[int] = None  # Set to a value like 256 if needed
 
         # EMA parameters
-        self.delta: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
-        self.alpha: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
-        self.beta: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim, 1))
+        self.delta: nn.Parameter = nn.Parameter(
+            torch.Tensor(self.embed_dim, self.ndim, 1)
+        )
+        self.alpha: nn.Parameter = nn.Parameter(
+            torch.Tensor(self.embed_dim, self.ndim, 1)
+        )
+        self.beta: nn.Parameter = nn.Parameter(
+            torch.Tensor(self.embed_dim, self.ndim, 1)
+        )
         self.gamma: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim, self.ndim))
         self.omega: nn.Parameter = nn.Parameter(torch.Tensor(self.embed_dim))
 
@@ -1313,10 +1331,10 @@ class PraxisGatedEMA(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass of the gated EMA module.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, embed_dim]
-            
+
         Returns:
             Processed tensor after applying EMA
         """
@@ -1334,7 +1352,7 @@ class PraxisGatedEMA(nn.Module):
     def _calc_coeffs(self) -> Tuple[Tensor, Tensor]:
         """
         Calculate EMA coefficients.
-        
+
         Returns:
             Tuple of (p, q) coefficients
         """
@@ -1346,10 +1364,10 @@ class PraxisGatedEMA(nn.Module):
     def _compute_kernel(self, seq_len: int) -> Tensor:
         """
         Compute the EMA kernel.
-        
+
         Args:
             seq_len: Length of the sequence
-            
+
         Returns:
             Computed kernel tensor
         """
@@ -1371,10 +1389,10 @@ class PraxisGatedEMA(nn.Module):
     def _compute_ema(self, x: Tensor) -> Tensor:
         """
         Compute EMA using FFT-based convolution.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, embed_dim]
-            
+
         Returns:
             EMA output tensor of same shape
         """
@@ -1416,11 +1434,11 @@ class VanillaMHA(nn.MultiheadAttention):
     """
     Standard multi-head attention implementation using PyTorch's nn.MultiheadAttention.
     """
-    
+
     def __init__(self, config: Any) -> None:
         """
         Initialize vanilla multi-head attention module.
-        
+
         Args:
             config: Configuration object containing attention parameters
         """
@@ -1442,12 +1460,12 @@ class VanillaMHA(nn.MultiheadAttention):
     ) -> Tuple[Tensor, Optional[Tensor], int]:
         """
         Forward pass of vanilla multi-head attention.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional attention mask tensor
             past_key_values: Optional key-value cache (unused in this implementation)
-            
+
         Returns:
             Tuple containing:
             - Output tensor after attention

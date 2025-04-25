@@ -5,18 +5,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-ConfigType = TypeVar('ConfigType', bound='object')
+ConfigType = TypeVar("ConfigType", bound="object")
 
 
 class GenomicBottleneck(nn.Module):
     """
     Neural bottleneck with trainable weights and evolutionary selection.
-    
+
     This module implements a genomic bottleneck that uses an evolutionary algorithm
-    to adapt transformation matrices (genomes) during training. It allows the network 
+    to adapt transformation matrices (genomes) during training. It allows the network
     to discover efficient transformations for information compression.
     """
-    
+
     def __init__(
         self,
         config: ConfigType,
@@ -30,7 +30,7 @@ class GenomicBottleneck(nn.Module):
     ):
         """
         Initialize genomic bottleneck.
-        
+
         Args:
             config: Model configuration with hidden_size attribute
             genome_dim: Dimension of the genome transformation matrix
@@ -55,7 +55,9 @@ class GenomicBottleneck(nn.Module):
         self.step_counter: int = 0
 
         # Initialize fitness scores to negative infinity
-        self.fitness_scores: torch.Tensor = torch.full((population_size,), float("-inf"))
+        self.fitness_scores: torch.Tensor = torch.full(
+            (population_size,), float("-inf")
+        )
         self.best_fitness: float = float("-inf")
 
         # Single projection for quarter-sized inputs
@@ -77,13 +79,13 @@ class GenomicBottleneck(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through genomic bottleneck.
-        
+
         Splits the input into four parts, routes one part through a residual connection,
         and processes the other three through the genomic bottleneck.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, hidden_size]
-            
+
         Returns:
             Output tensor of same shape as input
         """
@@ -147,11 +149,11 @@ class GenomicBottleneck(nn.Module):
     def compute_fitness(self, genome: torch.Tensor, num_trials: int = 1) -> float:
         """
         Compute fitness based on cosine similarity of the bottlenecked part.
-        
+
         Args:
             genome: Genome to evaluate
             num_trials: Number of random input samples to use for evaluation
-            
+
         Returns:
             Fitness score (average cosine similarity)
         """
@@ -172,7 +174,7 @@ class GenomicBottleneck(nn.Module):
     def tournament_select(self) -> torch.Tensor:
         """
         Select an individual using tournament selection.
-        
+
         Returns:
             Selected genome
         """
@@ -184,10 +186,10 @@ class GenomicBottleneck(nn.Module):
     def mutate(self, genome: torch.Tensor) -> torch.Tensor:
         """
         Apply small random mutations to a genome.
-        
+
         Args:
             genome: Genome to mutate
-            
+
         Returns:
             Mutated genome
         """
@@ -198,7 +200,7 @@ class GenomicBottleneck(nn.Module):
     def evolve_population(self, num_trials: int = 10) -> None:
         """
         Evolve the population using tournament selection.
-        
+
         Args:
             num_trials: Number of trials for fitness evaluation
         """
@@ -236,7 +238,7 @@ class GenomicBottleneck(nn.Module):
     def get_metrics(self) -> Dict[str, float]:
         """
         Get metrics for monitoring evolution progress.
-        
+
         Returns:
             Dictionary of metrics
         """

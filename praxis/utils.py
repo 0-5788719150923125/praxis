@@ -7,15 +7,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def generate_alternating_values(size: int, interval: int = 1, capacity: float = 0.125) -> List[float]:
+def generate_alternating_values(
+    size: int, interval: int = 1, capacity: float = 0.125
+) -> List[float]:
     """
     Generate a list of alternating values between 1.0 and specified capacity.
-    
+
     Args:
         size: Number of values to generate
         interval: Interval between capacity values
         capacity: Value to use at specified intervals (default: 0.125)
-        
+
     Returns:
         List of alternating float values
     """
@@ -130,15 +132,17 @@ def generate_u_shape_values(
     return values.tolist()
 
 
-def norm_scaling(normalized_x: Union[torch.Tensor, float], depth: int) -> Union[torch.Tensor, float]:
+def norm_scaling(
+    normalized_x: Union[torch.Tensor, float], depth: int
+) -> Union[torch.Tensor, float]:
     """
     Apply depth-based scaling to already-normalized inputs to address the Curse of Depth.
     https://arxiv.org/abs/2502.05795
-    
+
     Args:
         normalized_x: Normalized input values (tensor or scalar)
         depth: Depth value for scaling factor calculation
-        
+
     Returns:
         Scaled values with same type as input
     """

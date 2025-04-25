@@ -1,4 +1,5 @@
 from typing import List, Optional, Union
+
 from transformers import PretrainedConfig
 
 
@@ -56,7 +57,7 @@ class PraxisConfig(PretrainedConfig):
             initial_peers = []
         if meta is None:
             meta = []
-            
+
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,

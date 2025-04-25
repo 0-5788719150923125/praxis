@@ -77,7 +77,9 @@ class LayerShuffle(BaseController):
             trimmed_mask = attention_mask[:, self.num_context_tokens :]
         return trimmed_states, trimmed_mask
 
-    def sort_experts(self, experts: List[nn.Module], allow_resampling: bool = False) -> List[nn.Module]:
+    def sort_experts(
+        self, experts: List[nn.Module], allow_resampling: bool = False
+    ) -> List[nn.Module]:
         depth = self.depth
         if allow_resampling:
             return random.choices(experts, k=depth)
@@ -95,14 +97,14 @@ class LayerShuffle(BaseController):
         """
         Compute next expert selection and associated loss.
         During inference, returns actual expert index.
-        
+
         Args:
             hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
             sequential_experts: List of all available experts
             ordered_experts: List of experts in the order they should be executed
             current_route: Current execution path through the network
             current_depth: Current depth in the network
-            
+
         Returns:
             Tuple containing:
                 - Auxiliary loss

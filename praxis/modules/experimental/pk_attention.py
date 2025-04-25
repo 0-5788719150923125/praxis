@@ -3,7 +3,7 @@ from typing import Any, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from torch import nn, Tensor
+from torch import Tensor, nn
 from torch.nn import Module, ModuleList
 
 
@@ -72,12 +72,12 @@ class ProductKeyAttention(Module):
         self.to_out = nn.Linear(self.dim * self.heads, self.dim, bias=False)
 
     def forward(
-        self, 
-        inputs: Tensor, 
-        attention_mask: Optional[Tensor] = None, 
-        past_key_values: Optional[Any] = None, 
-        *args: Any, 
-        **kwargs: Any
+        self,
+        inputs: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        past_key_values: Optional[Any] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> Tuple[Tensor, Optional[Any], float]:
         batch_size, seq_len, _ = inputs.shape
         device = inputs.device
@@ -179,11 +179,7 @@ class PK(Module):
         # the maximum index, or the total space being indexed into
         self.max_index = int(num_keys**product_keys)
 
-    def forward(
-        self, 
-        x: Tensor, 
-        softmax_scores: bool = False
-    ) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, softmax_scores: bool = False) -> Tuple[Tensor, Tensor]:
         batch_size, seq_len, _ = x.shape
         device = x.device
 
@@ -232,10 +228,10 @@ class PK(Module):
 def is_perfect_square(n: Union[int, float]) -> bool:
     """
     Check if a number is a perfect square.
-    
+
     Args:
         n: Number to check
-        
+
     Returns:
         True if the number is a perfect square, False otherwise
     """
@@ -248,13 +244,13 @@ def is_perfect_square(n: Union[int, float]) -> bool:
 def find_nearest_square(n: Union[int, float]) -> int:
     """
     Find the nearest perfect square to a given number.
-    
+
     Args:
         n: Input number
-        
+
     Returns:
         Nearest perfect square to the input
-        
+
     Raises:
         ValueError: If the input is negative
     """
@@ -278,7 +274,9 @@ def find_nearest_square(n: Union[int, float]) -> int:
         return ceil_square
 
 
-def divide_and_round_to_square(number: Union[int, float], divisor: Union[int, float]) -> int:
+def divide_and_round_to_square(
+    number: Union[int, float], divisor: Union[int, float]
+) -> int:
     """
     Divide a number by a divisor and round to the nearest perfect square.
 
@@ -288,7 +286,7 @@ def divide_and_round_to_square(number: Union[int, float], divisor: Union[int, fl
 
     Returns:
         The nearest perfect square to the division result
-        
+
     Raises:
         ValueError: If divisor is zero
     """

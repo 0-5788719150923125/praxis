@@ -44,7 +44,7 @@ class PraxisManagement:
     def __init__(self, config: "PretrainedConfig") -> None:
         """
         Initialize hivemind management system.
-        
+
         Args:
             config: Model configuration
         """
@@ -94,7 +94,7 @@ class PraxisManagement:
     def task_manager(self, interval: int) -> None:
         """
         Initialize background task manager for expert discovery.
-        
+
         Args:
             interval: Time interval between expert searches in seconds
         """
@@ -106,7 +106,7 @@ class PraxisManagement:
     def _run_task(self, interval: int) -> None:
         """
         Background task loop for searching experts.
-        
+
         Args:
             interval: Time interval between expert searches in seconds
         """
@@ -118,7 +118,7 @@ class PraxisManagement:
     def local_experts(self) -> List[nn.Module]:
         """
         Get list of active local experts.
-        
+
         Returns:
             List of registered local expert modules
         """
@@ -128,7 +128,7 @@ class PraxisManagement:
     def remote_experts(self) -> List[nn.Module]:
         """
         Get list of active remote experts.
-        
+
         Returns:
             List of discovered remote expert modules
         """
@@ -145,11 +145,11 @@ class PraxisManagement:
     ) -> nn.Module:
         """
         Register a new expert module with hivemind.
-        
+
         Args:
             config: Model configuration
             expert_cls: Type of expert to register
-            
+
         Returns:
             Registered expert module
         """
@@ -203,7 +203,7 @@ class PraxisManagement:
     def handle_failure(self, expert: nn.Module) -> None:
         """
         Handle a remote expert failure by removing it from the active list.
-        
+
         Args:
             expert: The expert module that failed
         """
@@ -215,23 +215,25 @@ class PraxisManagement:
     def _generate_random_name(self, k: int) -> str:
         """
         Generate a random expert name.
-        
+
         Args:
             k: Pool size parameter affecting name variety
-            
+
         Returns:
             Generated random name string
         """
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
-    def _generate_unique_name(self, k: int = 3, run_once: bool = False) -> Tuple[str, Optional[RemoteExpert]]:
+    def _generate_unique_name(
+        self, k: int = 3, run_once: bool = False
+    ) -> Tuple[str, Optional[RemoteExpert]]:
         """
         Generate a unique expert name not currently in use.
-        
+
         Args:
             k: Pool size parameter affecting name variety
             run_once: Whether to run search only once regardless of conflicts
-            
+
         Returns:
             Tuple containing the unique name and an expert instance (or None)
         """
@@ -288,7 +290,7 @@ class HivemindWrapper:
     def __init__(self, module: RemoteExpert) -> None:
         """
         Initialize wrapper for remote expert.
-        
+
         Args:
             module: Remote expert to wrap
         """
@@ -298,11 +300,11 @@ class HivemindWrapper:
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         """
         Forward pass wrapper that ensures no gradients are computed.
-        
+
         Args:
             *args: Positional arguments to pass to the wrapped module
             **kwargs: Keyword arguments to pass to the wrapped module
-            
+
         Returns:
             Output from the wrapped module's forward method
         """
@@ -311,11 +313,11 @@ class HivemindWrapper:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """
         Call operator that invokes the forward method.
-        
+
         Args:
             *args: Positional arguments to pass to forward
             **kwargs: Keyword arguments to pass to forward
-            
+
         Returns:
             Output from the forward method
         """
@@ -324,10 +326,10 @@ class HivemindWrapper:
     def __getattr__(self, name: str) -> Any:
         """
         Attribute access that falls through to the wrapped module.
-        
+
         Args:
             name: Attribute name to access
-            
+
         Returns:
             The requested attribute from the wrapped module
         """

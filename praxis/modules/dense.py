@@ -8,7 +8,7 @@ from torch import Tensor
 
 from praxis.activations import ACT2CLS, ACT2FN
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisMLP(nn.Sequential):
@@ -29,7 +29,7 @@ class PraxisMLP(nn.Sequential):
     ) -> None:
         """
         Initialize a standard MLP module.
-        
+
         Args:
             config: Configuration object with model parameters
             activation: Activation function name (from ACT2FN registry)
@@ -55,12 +55,12 @@ class PraxisMLP(nn.Sequential):
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         """
         Forward pass through the MLP.
-        
+
         Args:
             inputs: Input tensor
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Output tensor after MLP processing
         """
@@ -75,15 +75,15 @@ class PraxisGLU(nn.Module):
     __version__ = "0.1.0"
 
     def __init__(
-        self, 
-        config: ConfigType, 
-        activation: Optional[str] = None, 
-        *args: Any, 
-        **kwargs: Any
+        self,
+        config: ConfigType,
+        activation: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize a GLU-based MLP module.
-        
+
         Args:
             config: Configuration object with model parameters
             activation: Activation function name (from ACT2CLS registry)
@@ -106,12 +106,12 @@ class PraxisGLU(nn.Module):
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         """
         Forward pass through the GLU module.
-        
+
         Args:
             inputs: Input tensor
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Output tensor after GLU processing
         """
@@ -139,7 +139,7 @@ class PraxisPoly(nn.Module):
     ) -> None:
         """
         Initialize a polynomial expansion layer.
-        
+
         Args:
             config: Configuration object with model parameters
             degree: Maximum polynomial degree to compute
@@ -176,12 +176,12 @@ class PraxisPoly(nn.Module):
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         """
         Forward pass through the polynomial layer.
-        
+
         Args:
             inputs: Input tensor
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Output tensor after polynomial processing
         """
@@ -223,7 +223,7 @@ class PraxisScatter(nn.Module):
     A scatter-based neural network layer that dynamically modifies weights
     during the forward pass based on input features.
     """
-    
+
     def __init__(
         self,
         config: ConfigType,
@@ -236,7 +236,7 @@ class PraxisScatter(nn.Module):
     ) -> None:
         """
         Initialize a scatter-based layer.
-        
+
         Args:
             config: Configuration object with model parameters
             activation: Activation function name (from ACT2FN registry)
@@ -272,12 +272,12 @@ class PraxisScatter(nn.Module):
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         """
         Forward pass through the scatter layer.
-        
+
         Args:
             inputs: Input tensor
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Output tensor after scatter processing
         """
@@ -300,15 +300,13 @@ class PraxisScatter(nn.Module):
         # Final projection
         return self.down(h)
 
-    def get_modified_weights(
-        self, inputs: Tensor
-    ) -> Tuple[Tensor, Optional[Tensor]]:
+    def get_modified_weights(self, inputs: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
         """
         Compute dynamically modified weights based on input features.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, input_dim]
-            
+
         Returns:
             Tuple containing:
                 - Modified weight tensor of shape [batch_size, hidden_dim, input_dim]

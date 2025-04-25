@@ -1,8 +1,9 @@
+from typing import Any, Literal, Optional, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from typing import Any, Literal, Optional, Union
 
 
 class MiLeLoss(nn.Module):
@@ -13,11 +14,11 @@ class MiLeLoss(nn.Module):
     """
 
     def __init__(
-        self, 
-        gamma: float = 1.0, 
-        reduction: Literal["mean", "sum", "none"] = "mean", 
-        *args: Any, 
-        **kwargs: Any
+        self,
+        gamma: float = 1.0,
+        reduction: Literal["mean", "sum", "none"] = "mean",
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.base_gamma = gamma
@@ -29,10 +30,10 @@ class MiLeLoss(nn.Module):
     def entropy(self, logits: Tensor) -> Tensor:
         """
         Calculate entropy of the input logits.
-        
+
         Args:
             logits: Input logits tensor
-            
+
         Returns:
             Tensor containing entropy values
         """
@@ -52,11 +53,11 @@ class MiLeLoss(nn.Module):
     ) -> Tensor:
         """
         Calculate the MiLe loss.
-        
+
         Args:
             logits: Predicted logits
             labels: Target labels
-            
+
         Returns:
             MiLe loss value
         """

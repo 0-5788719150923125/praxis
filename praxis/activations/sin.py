@@ -1,5 +1,5 @@
 import torch
-from torch import nn, Tensor
+from torch import Tensor, nn
 
 torch.sqrt2 = 1.414213562  # sqrt 2 \approx 1.414213562
 

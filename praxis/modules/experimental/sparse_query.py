@@ -94,14 +94,16 @@ class SparseQuery(nn.Module):
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
             nn.init.uniform_(self.output_bias, -bound, bound)
 
-    def forward(self, x: Tensor, multiply_by_gates: bool = True) -> Tuple[Tensor, Union[Tensor, float]]:
+    def forward(
+        self, x: Tensor, multiply_by_gates: bool = True
+    ) -> Tuple[Tensor, Union[Tensor, float]]:
         """
         Forward pass with sparse top-k head selection.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, in_features]
             multiply_by_gates: Whether to apply gating weights to outputs
-            
+
         Returns:
             Tuple containing:
                 - Output tensor of shape [batch_size, seq_len, num_heads * head_dim]
@@ -197,13 +199,13 @@ class SparseQuery(nn.Module):
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         Compute gating for mixture-of-experts routing.
-        
+
         Args:
             top_k: Number of top experts to select
             probs: Routing probabilities
             top_k_probs: Probabilities of top-k selected experts
             top_k_indices: Indices of top-k selected experts
-            
+
         Returns:
             Tuple containing:
                 - batch_gates: Gating values for each expert
@@ -234,7 +236,7 @@ class SparseQuery(nn.Module):
     def init_aux_statistics(self, window_size: int = 5) -> None:
         """
         Initialize auxiliary statistics for load balancing.
-        
+
         Args:
             window_size: Size of the sliding window for statistics
         """
@@ -244,10 +246,12 @@ class SparseQuery(nn.Module):
         self.acc_freq_queue: List[Tensor] = []
         self.acc_lsesq_queue: List[Tensor] = []
 
-    def update_aux_statistics(self, probs: Tensor, logits: Tensor, gates: Tensor) -> None:
+    def update_aux_statistics(
+        self, probs: Tensor, logits: Tensor, gates: Tensor
+    ) -> None:
         """
         Update auxiliary statistics used for load balancing loss.
-        
+
         Args:
             probs: Routing probabilities
             logits: Routing logits
@@ -277,7 +281,7 @@ class SparseQuery(nn.Module):
     def get_aux_loss_and_clear(self) -> Union[Tensor, float]:
         """
         Calculate auxiliary loss based on collected statistics.
-        
+
         Returns:
             Combined switch loss and z-loss for load balancing
         """
@@ -307,10 +311,10 @@ class SparseQuery(nn.Module):
     def compute_routing_weights(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Compute routing weights using GMM-based routing.
-        
+
         Args:
             x: Input tensor of shape [batch_size, seq_len, in_features]
-            
+
         Returns:
             Tuple containing:
                 - Routing probabilities
@@ -353,10 +357,12 @@ class SparseQuery(nn.Module):
 
         return probs, logits
 
-    def _print_frequencies(self, top_k_indices: Tensor, batch_size: int, seq_len: int) -> None:
+    def _print_frequencies(
+        self, top_k_indices: Tensor, batch_size: int, seq_len: int
+    ) -> None:
         """
         Print head selection frequencies for debugging.
-        
+
         Args:
             top_k_indices: Indices of selected heads
             batch_size: Batch size

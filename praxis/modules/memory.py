@@ -3,9 +3,10 @@ from typing import List, Optional, Tuple, TypeVar
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor, device as torch_device
+from torch import Tensor
+from torch import device as torch_device
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisCompressiveMemory(nn.Module):
@@ -20,7 +21,7 @@ class PraxisCompressiveMemory(nn.Module):
     def __init__(self, config: ConfigType) -> None:
         """
         Initialize compressive memory module.
-        
+
         Args:
             config: Configuration object with model parameters
         """
@@ -36,7 +37,7 @@ class PraxisCompressiveMemory(nn.Module):
         )
         self._states_buffer: List[Tuple[Tensor, Tensor]] = []
         self.init_state_learnable: bool = True
-        
+
         if self.init_state_learnable:
             self.init_mem: Optional[nn.Parameter] = nn.Parameter(
                 torch.randn(
@@ -58,13 +59,13 @@ class PraxisCompressiveMemory(nn.Module):
     ) -> Tensor:
         """
         Forward pass for compressive memory.
-        
+
         Args:
             q: Query tensor of shape [batch_size, num_heads, seq_len, head_dim]
             k: Key tensor of shape [batch_size, num_heads, seq_len, head_dim]
             v: Value tensor of shape [batch_size, num_heads, seq_len, head_dim]
             attention_output: Attention output tensor
-            
+
         Returns:
             Blended output tensor after applying memory mechanism
         """
@@ -99,11 +100,11 @@ class PraxisCompressiveMemory(nn.Module):
     def _blend_outputs(self, memory_output: Tensor, attention_output: Tensor) -> Tensor:
         """
         Blend memory output with attention output using learned gates.
-        
+
         Args:
             memory_output: Output from memory mechanism
             attention_output: Output from attention mechanism
-            
+
         Returns:
             Blended output tensor
         """
@@ -118,17 +119,21 @@ class PraxisCompressiveMemory(nn.Module):
     ) -> Tuple[Tensor, Tensor]:
         """
         Initialize memory states.
-        
+
         Args:
             batch_size: Batch size
             device: Device to create tensors on
-            
+
         Returns:
             Tuple containing:
                 - Memory states tensor
                 - Memory normalization tensor
         """
-        if self.init_state_learnable and self.init_mem is not None and self.init_z is not None:
+        if (
+            self.init_state_learnable
+            and self.init_mem is not None
+            and self.init_z is not None
+        ):
             # Use learnable initial states
             memory_states = self.init_mem.expand(batch_size, -1, -1, -1).to(device)
             memory_z = self.init_z.expand(batch_size, -1, -1, -1).to(device)

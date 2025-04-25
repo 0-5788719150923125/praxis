@@ -21,12 +21,12 @@ class CrossEntropyLoss(nn.Module):
     ) -> Tensor:
         """
         Calculate the cross entropy loss with optional penalty for duplicated tokens.
-        
+
         Args:
             logits: Predicted logits
             labels: Target labels
             input_ids: Input token IDs
-            
+
         Returns:
             Cross entropy loss with optional duplication penalty
         """

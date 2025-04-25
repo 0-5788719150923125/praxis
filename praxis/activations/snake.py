@@ -1,11 +1,12 @@
+from typing import Any, Optional, Tuple, Union
+
 import torch
-from torch import addcdiv, sin, square, Tensor
+from torch import Tensor, addcdiv, sin, square
 from torch.autograd import Function
 from torch.distributions.exponential import Exponential
 from torch.nn import Module
 from torch.nn.modules.lazy import LazyModuleMixin
 from torch.nn.parameter import UninitializedParameter
-from typing import Any, Optional, Tuple, Union
 
 
 class SnakeFunction(Function):
@@ -24,9 +25,7 @@ class SnakeFunction(Function):
         return torch.where(a == 0, x, addcdiv(x, square(sin(a * x)), a))
 
     @staticmethod
-    def backward(
-        ctx, grad_output: Tensor
-    ) -> Tuple[Optional[Tensor], Optional[Tensor]]:
+    def backward(ctx, grad_output: Tensor) -> Tuple[Optional[Tensor], Optional[Tensor]]:
         x, a = ctx.saved_tensors
         sin2ax = sin(2 * a * x) if any(ctx.needs_input_grad) else None
         grad_x = grad_output * (1 + sin2ax) if ctx.needs_input_grad[0] else None

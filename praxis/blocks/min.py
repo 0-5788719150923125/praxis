@@ -32,10 +32,10 @@ class PraxisGRU(nn.Module):
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         """
         Forward pass through the PraxisGRU block.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
-            
+
         Returns:
             Tuple containing:
                 - Output tensor

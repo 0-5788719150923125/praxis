@@ -7,7 +7,6 @@ from transformers.configuration_utils import PretrainedConfig
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
 from praxis.stacks import PraxisStack
 
-
 ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
 
 
@@ -23,17 +22,19 @@ class SequentialDecoder(nn.Module):
         past_key_values: Optional[Union[List[Any], Dict[str, Any]]] = None,
         current_state: Optional[List[Any]] = None,
         block_ids: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor]:
+    ) -> Tuple[
+        Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
+    ]:
         """
         Forward pass through the sequential decoder.
-        
+
         Args:
             hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional attention mask tensor
             past_key_values: Optional cached key/values for faster inference
             current_state: Optional current layer states
             block_ids: Optional block identification tensor
-            
+
         Returns:
             Tuple containing:
                 - Output hidden states
@@ -41,8 +42,12 @@ class SequentialDecoder(nn.Module):
                 - Updated layer states
                 - Combined auxiliary loss
         """
-        sequential_experts: List[nn.Module] = list(self.stack.locals) + list(self.stack.remotes)
-        ordered_experts: List[nn.Module] = self.stack.controller.sort_experts(sequential_experts.copy())
+        sequential_experts: List[nn.Module] = list(self.stack.locals) + list(
+            self.stack.remotes
+        )
+        ordered_experts: List[nn.Module] = self.stack.controller.sort_experts(
+            sequential_experts.copy()
+        )
         current_route: List[int] = []
         aux_losses: List[Tensor] = []
 

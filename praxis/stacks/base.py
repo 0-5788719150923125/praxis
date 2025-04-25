@@ -63,11 +63,11 @@ class PraxisStack(nn.Module):
     def post_layer(self, states: Tensor, current_depth: int) -> Tensor:
         """
         Process states after going through a layer.
-        
+
         Args:
             states: Hidden states from the layer
             current_depth: Current layer depth
-            
+
         Returns:
             Processed states
         """
@@ -79,10 +79,10 @@ class PraxisStack(nn.Module):
     def post_decoding(self, states: Tensor) -> Tensor:
         """
         Process states after going through all layers.
-        
+
         Args:
             states: Final hidden states
-            
+
         Returns:
             Normalized or unchanged states
         """
@@ -94,7 +94,7 @@ class PraxisStack(nn.Module):
     def get_metrics(self) -> Dict[str, Any]:
         """
         Return current prediction accuracies and other metrics.
-        
+
         Returns:
             Dictionary of metrics
         """

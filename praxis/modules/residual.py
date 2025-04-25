@@ -1,6 +1,5 @@
-from typing import Any, Optional, Tuple, Union
-
 import random
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -12,11 +11,11 @@ class ResidualConnection(nn.Module):
     """
     Base class for residual connections that connect hidden states across layers.
     """
-    
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
         Initialize the residual connection.
-        
+
         Args:
             *args: Variable length argument list
             **kwargs: Arbitrary keyword arguments
@@ -26,10 +25,10 @@ class ResidualConnection(nn.Module):
     def connect_width(self, h: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
         """
         Connect width dimension of hidden states.
-        
+
         Args:
             h: Input tensor
-            
+
         Returns:
             Tuple containing processed tensor and None
         """
@@ -38,12 +37,12 @@ class ResidualConnection(nn.Module):
     def connect_depth(self, mix_h: Tensor, h_o: Tensor, beta: Tensor) -> Tensor:
         """
         Connect depth dimension of hidden states.
-        
+
         Args:
             mix_h: Mixed hidden state tensor
             h_o: Output hidden state tensor
             beta: Beta tensor for scaling
-            
+
         Returns:
             Combined tensor after connection
         """
@@ -52,10 +51,10 @@ class ResidualConnection(nn.Module):
     def format_state(self, h: Tensor) -> Tensor:
         """
         Format state for further processing.
-        
+
         Args:
             h: Input tensor
-            
+
         Returns:
             Formatted tensor
         """
@@ -70,15 +69,15 @@ class HyperConnection(ResidualConnection):
     """
 
     def __init__(
-        self, 
-        dim: int, 
-        rate: int = 2, 
-        current_depth: Optional[int] = None, 
-        dynamic: bool = True
+        self,
+        dim: int,
+        rate: int = 2,
+        current_depth: Optional[int] = None,
+        dynamic: bool = True,
     ) -> None:
         """
         Initialize the hyper-connection.
-        
+
         Args:
             dim: Hidden dimension size
             rate: Rate parameter for connection
@@ -99,7 +98,9 @@ class HyperConnection(ResidualConnection):
         init_alpha0[self.current_depth % rate, 0] = 1.0
         eye_alpha = torch.eye(rate)
         # shape => (rate, rate+1)
-        self.static_alpha: nn.Parameter = nn.Parameter(torch.cat([init_alpha0, eye_alpha], dim=1))
+        self.static_alpha: nn.Parameter = nn.Parameter(
+            torch.cat([init_alpha0, eye_alpha], dim=1)
+        )
 
         # If dynamic, add extra transforms
         if self.dynamic:
@@ -114,7 +115,7 @@ class HyperConnection(ResidualConnection):
     def __repr__(self) -> str:
         """
         String representation of the module.
-        
+
         Returns:
             String representation
         """
@@ -123,10 +124,10 @@ class HyperConnection(ResidualConnection):
     def connect_width(self, h: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Connect width dimension with hyper-connections.
-        
+
         Args:
             h: Input tensor of shape [batch_size, seq_len, hidden_dim]
-            
+
         Returns:
             Tuple containing:
                 - Mixed hidden state tensor of shape [batch_size, seq_len, rate+1, hidden_dim]
@@ -147,12 +148,12 @@ class HyperConnection(ResidualConnection):
     def connect_depth(self, mix_h: Tensor, h_o: Tensor, beta: Tensor) -> Tensor:
         """
         Connect depth dimension with hyper-connections.
-        
+
         Args:
             mix_h: Mixed hidden state tensor of shape [batch_size, seq_len, rate+1, hidden_dim]
             h_o: Output hidden state tensor of shape [batch_size, seq_len, hidden_dim]
             beta: Beta tensor for scaling of shape [batch_size, seq_len, rate]
-            
+
         Returns:
             Combined tensor after hyper-connection of shape [batch_size, seq_len, rate+1, hidden_dim]
         """
@@ -175,10 +176,10 @@ class HyperConnection(ResidualConnection):
     def _compute_alpha_beta(self, h: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Compute alpha and beta parameters for hyper-connections.
-        
+
         Args:
             h: Input tensor of shape [batch_size, seq_len, hidden_dim]
-            
+
         Returns:
             Tuple containing:
                 - Alpha tensor of shape [batch_size, seq_len, rate, rate+1]

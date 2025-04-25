@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class NoPE(nn.Module):
@@ -19,7 +19,7 @@ class NoPE(nn.Module):
     def __init__(self, config: ConfigType):
         """
         Initialize NoPE with head-wise attention scaling.
-        
+
         Args:
             config: Model configuration object containing attention settings
         """
@@ -28,23 +28,23 @@ class NoPE(nn.Module):
         self.head_scales = nn.Parameter(torch.linspace(-1.2, 1.2, self.num_query_heads))
 
     def before_scores(
-        self, 
-        q: torch.Tensor, 
-        k: torch.Tensor, 
-        v: torch.Tensor, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Apply scaling to queries before computing attention scores.
-        
+
         Args:
             q: Query tensor of shape [batch_size, num_heads, seq_len, head_dim]
             k: Key tensor of shape [batch_size, num_heads, seq_len, head_dim]
             v: Value tensor of shape [batch_size, num_heads, seq_len, head_dim]
             offset: Position offset (unused in NoPE, for API compatibility)
             block_ids: Optional block IDs for segmented attention
-            
+
         Returns:
             Tuple of (scaled_queries, keys, values)
         """
@@ -63,19 +63,19 @@ class NoPE(nn.Module):
         return q * scaling, k, v
 
     def after_scores(
-        self, 
-        scores: torch.Tensor, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        scores: torch.Tensor,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Process attention scores (no-op in NoPE).
-        
+
         Args:
             scores: Attention scores tensor of shape [batch_size, num_heads, seq_len, seq_len]
             offset: Position offset (unused in NoPE, for API compatibility)
             block_ids: Optional block IDs for segmented attention
-            
+
         Returns:
             Unmodified attention scores
         """
@@ -94,7 +94,7 @@ class ALiBi(NoPE):
     def __init__(self, config: ConfigType, *args, **kwargs):
         """
         Initialize ALiBi positional encoding.
-        
+
         Args:
             config: Model configuration object
             *args: Additional arguments
@@ -105,56 +105,56 @@ class ALiBi(NoPE):
     def compute_slopes(self, num_heads: int, device: torch.device) -> torch.Tensor:
         """
         Compute ALiBi slopes based on number of attention heads.
-        
+
         Slopes decrease exponentially with head index, allowing different
         heads to focus on different position differences.
-        
+
         Args:
             num_heads: Number of attention heads
             device: Device to create tensor on
-            
+
         Returns:
             Tensor of slopes for each attention head
         """
         return 2 ** (-8 * torch.arange(1, num_heads + 1, device=device) / num_heads)
 
     def before_scores(
-        self, 
-        q: torch.Tensor, 
-        k: torch.Tensor, 
-        v: torch.Tensor, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Pass through inputs unchanged (ALiBi applies biases after score computation).
-        
+
         Args:
-            q: Query tensor 
+            q: Query tensor
             k: Key tensor
             v: Value tensor
             offset: Position offset
             block_ids: Optional block IDs for segmented attention
-            
+
         Returns:
             Unmodified (q, k, v) tensors
         """
         return q, k, v
 
     def after_scores(
-        self, 
-        scores: torch.Tensor, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        scores: torch.Tensor,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply ALiBi position-dependent biases to attention scores.
-        
+
         Args:
             scores: Attention scores of shape [batch_size, num_heads, seq_len, seq_len]
             offset: Position offset for continuous positions
             block_ids: Optional block IDs for segmented attention
-            
+
         Returns:
             Modified attention scores with ALiBi biases applied
         """
@@ -190,17 +190,15 @@ class ALiBi(NoPE):
         return scores - biases
 
     def _compute_relative_positions_vectorized(
-        self, 
-        block_ids: torch.Tensor, 
-        device: torch.device
+        self, block_ids: torch.Tensor, device: torch.device
     ) -> torch.Tensor:
         """
         Compute relative positions respecting block boundaries.
-        
+
         Args:
             block_ids: Block IDs tensor of shape [batch_size, seq_len]
             device: Device to create tensors on
-            
+
         Returns:
             Tensor of positions respecting block boundaries
         """
@@ -229,7 +227,7 @@ class RoPE(NoPE):
     def __init__(self, config: ConfigType, *args, **kwargs):
         """
         Initialize Rotary Position Embeddings.
-        
+
         Args:
             config: Model configuration object
             *args: Additional arguments
@@ -243,23 +241,23 @@ class RoPE(NoPE):
         self._cached_seq_length: Optional[int] = None
 
     def before_scores(
-        self, 
-        q: torch.Tensor, 
-        k: torch.Tensor, 
-        v: torch.Tensor, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Apply rotary position embeddings to queries and keys.
-        
+
         Args:
             q: Query tensor of shape [batch_size, num_heads, seq_len, head_dim]
             k: Key tensor of shape [batch_size, num_heads, seq_len, head_dim]
             v: Value tensor of shape [batch_size, num_heads, seq_len, head_dim]
             offset: Position offset for continuous positions
             block_ids: Optional block IDs for segmented attention
-            
+
         Returns:
             Tuple of (rotated_queries, rotated_keys, values)
         """
@@ -295,36 +293,36 @@ class RoPE(NoPE):
         return q_rope, k_rope, v
 
     def after_scores(
-        self, 
-        scores: torch.Tensor, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        scores: torch.Tensor,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Process attention scores (no-op in RoPE).
-        
+
         Args:
             scores: Attention scores tensor of shape [batch_size, num_heads, seq_len, seq_len]
             offset: Position offset (unused in RoPE, for API compatibility)
             block_ids: Optional block IDs for segmented attention
-            
+
         Returns:
             Unmodified attention scores
         """
         return scores
 
     def _compute_rope_embeddings(
-        self, 
-        head_dim: int, 
-        seq_len: int, 
-        device: torch.device, 
-        dtype: torch.dtype, 
-        offset: int = 0, 
-        block_ids: Optional[torch.Tensor] = None
+        self,
+        head_dim: int,
+        seq_len: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        offset: int = 0,
+        block_ids: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Compute rotary positional embeddings for the given parameters.
-        
+
         Args:
             head_dim: Dimension of each attention head
             seq_len: Maximum sequence length to compute embeddings for
@@ -364,17 +362,15 @@ class RoPE(NoPE):
         self._cached_seq_length = seq_len
 
     def _compute_relative_positions_vectorized(
-        self, 
-        block_ids: torch.Tensor, 
-        device: torch.device
+        self, block_ids: torch.Tensor, device: torch.device
     ) -> torch.Tensor:
         """
         Compute relative positions respecting block boundaries.
-        
+
         Args:
             block_ids: Block IDs tensor of shape [batch_size, seq_len]
             device: Device to create tensors on
-            
+
         Returns:
             Tensor of positions respecting block boundaries
         """
@@ -402,19 +398,16 @@ class RoPE(NoPE):
         return segment_positions * mask
 
     def _apply_rotary_pos_emb(
-        self, 
-        x: torch.Tensor, 
-        cos: torch.Tensor, 
-        sin: torch.Tensor
+        self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
     ) -> torch.Tensor:
         """
         Apply rotary position embeddings with proper handling of odd dimensions.
-        
+
         Args:
             x: Input tensor to apply rotations to
             cos: Cosine part of the rotation
             sin: Sine part of the rotation
-            
+
         Returns:
             Tensor with rotary positional embeddings applied
         """

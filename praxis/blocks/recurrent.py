@@ -19,7 +19,7 @@ class PraxisRecurrent(nn.Module):
     def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
         """
         Initialize recurrent block.
-        
+
         Args:
             config: Model configuration
         """
@@ -44,11 +44,11 @@ class PraxisRecurrent(nn.Module):
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], Tensor]:
         """
         Forward pass through the recurrent block.
-        
+
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
             current_state: Optional current recurrent state
-            
+
         Returns:
             Tuple containing:
                 - Output tensor

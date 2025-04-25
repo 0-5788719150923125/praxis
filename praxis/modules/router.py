@@ -1,5 +1,5 @@
 import random
-from typing import Any, Dict, Callable, List, Optional, Tuple, Union, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -12,7 +12,7 @@ from praxis.utils import (
     generate_u_shape_values,
 )
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
     "standard": lambda config: generate_alternating_values(
@@ -66,7 +66,7 @@ class PraxisMixtureOfDepths(nn.Linear):
     ) -> Tuple[Tensor, Optional[Union[Tensor, List, Dict]], Optional[Tensor], float]:
         """
         Forward pass with selective token routing based on capacity.
-        
+
         Args:
             layer: The layer module to process selected tokens
             inputs: Input tensor [batch_size, seq_len, hidden_dim]
@@ -75,7 +75,7 @@ class PraxisMixtureOfDepths(nn.Linear):
             current_state: Optional current layer state
             current_depth: Current layer depth
             block_ids: Optional block identifiers for tokens
-            
+
         Returns:
             Tuple containing:
                 - Processed outputs tensor
@@ -175,11 +175,11 @@ class PraxisMixtureOfDepths(nn.Linear):
     def aux_loss(self, router_logits: Tensor, selected_indices: Tensor) -> Tensor:
         """
         Compute auxiliary loss to center sigmoid outputs around 0.5.
-        
+
         Args:
             router_logits: Router output logits
             selected_indices: Indices of selected tokens
-            
+
         Returns:
             Binary cross-entropy loss
         """

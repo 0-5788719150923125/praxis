@@ -10,7 +10,7 @@ from praxis.modules.peer import PraxisPEER
 from praxis.modules.recurrent import PraxisRecurrent
 from praxis.modules.router import PraxisMixtureOfDepths
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 EXPERT_REGISTRY: Dict[str, Type[nn.Module]] = {
     "glu": PraxisGLU,
@@ -42,13 +42,13 @@ EXPERT_CONFIGS: Dict[str, Dict[str, Any]] = {
 def get_expert_config(expert: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     """
     Get configuration for the specified expert.
-    
+
     Args:
         expert: Expert name as string or config as dictionary
-        
+
     Returns:
         Expert configuration dictionary
-        
+
     Raises:
         ValueError: If expert is not a string or dictionary, or if expert name is unknown
     """
@@ -81,7 +81,7 @@ class PraxisExpert(nn.Module):
     ) -> None:
         """
         Initialize expert wrapper.
-        
+
         Args:
             config: Configuration object with model parameters
             block: Block module to wrap
@@ -104,12 +104,11 @@ class PraxisExpert(nn.Module):
         current_depth: int,
         block_ids: Optional[Tensor] = None,
     ) -> Union[
-        Tuple[Tensor, Optional[Tensor], Optional[Tensor], float],
-        Tuple[Tensor, float]
+        Tuple[Tensor, Optional[Tensor], Optional[Tensor], float], Tuple[Tensor, float]
     ]:
         """
         Forward pass through expert wrapper.
-        
+
         Args:
             inputs: Input tensor
             attention_mask: Optional attention mask tensor
@@ -117,14 +116,14 @@ class PraxisExpert(nn.Module):
             current_state: Optional current state tensor
             current_depth: Current depth in the network
             block_ids: Optional block IDs for structured attention
-            
+
         Returns:
             For local experts:
                 - Hidden states tensor
                 - Updated key/value cache
                 - Updated state tensor
                 - Auxiliary loss value
-                
+
             For remote experts:
                 - Hidden states tensor
                 - Auxiliary loss value
@@ -152,7 +151,7 @@ class PraxisExpert(nn.Module):
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         """
         Forward pass for local experts.
-        
+
         Args:
             inputs: Input tensor
             current_state: Current state tensor
@@ -160,7 +159,7 @@ class PraxisExpert(nn.Module):
             past_key_values: Cached key/value tensors
             current_depth: Current depth in the network
             block_ids: Optional block IDs for structured attention
-            
+
         Returns:
             Tuple containing:
                 - Hidden states tensor
@@ -192,21 +191,19 @@ class PraxisExpert(nn.Module):
             aux_losses.append(aux_loss)
         else:
             raise ValueError("Neither router nor block is a valid module")
-            
+
         return hidden_states, layer_kv, state_update, sum(aux_losses)
 
     def _remote_forward(
-        self, 
-        inputs: Tensor, 
-        attention_mask: Optional[Tensor]
+        self, inputs: Tensor, attention_mask: Optional[Tensor]
     ) -> Tuple[Tensor, float]:
         """
         Forward pass for remote experts.
-        
+
         Args:
             inputs: Input tensor
             attention_mask: Optional attention mask tensor
-            
+
         Returns:
             Tuple containing:
                 - Hidden states tensor
@@ -215,12 +212,12 @@ class PraxisExpert(nn.Module):
         # because we would otherwise break gradient flow
         residual = inputs
         aux_losses: List[float] = []
-        
+
         # Move to CPU for remote execution
         inputs = inputs.to("cpu")
         if attention_mask is not None:
             attention_mask = attention_mask.to("cpu")
-            
+
         if self.router and isinstance(self.router, nn.Module):
             hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
             aux_losses.append(aux_loss)
@@ -235,7 +232,7 @@ class PraxisExpert(nn.Module):
             )
         else:
             raise ValueError("Neither router nor block is a valid module")
-            
+
         # TODO: we could possibly add some differentiable noise here; perhaps as a penalty on slow experts?
         hidden_states = hidden_states.to(residual.device) + residual
         return hidden_states, sum(aux_losses)

@@ -20,7 +20,7 @@ def create_forward(
 ) -> Optional[Tuple[Tensor, Any, Any, Tensor]]:
     """
     Create and execute a forward pass function for an expert module with optional checkpointing.
-    
+
     Args:
         expert: Expert module to execute the forward pass on
         stack: Stack module containing the expert
@@ -31,7 +31,7 @@ def create_forward(
         current_depth: Current depth in the network
         block_ids: Optional block identification tensor
         should_checkpoint: Whether to use gradient checkpointing to save memory
-        
+
     Returns:
         Optional tuple containing:
             - Output hidden states
@@ -39,6 +39,7 @@ def create_forward(
             - Updated layer state
             - Auxiliary loss
     """
+
     def custom_forward(
         hidden_states: Tensor,
         attention_mask: Optional[Tensor],
@@ -49,7 +50,7 @@ def create_forward(
     ) -> Tuple[Tensor, Any, Any, Tensor]:
         """
         Custom forward function that can be used with gradient checkpointing.
-        
+
         Args:
             hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
             attention_mask: Optional attention mask tensor
@@ -57,7 +58,7 @@ def create_forward(
             current_state: Optional current layer state
             current_depth: Current depth in the network
             block_ids: Optional block identification tensor
-            
+
         Returns:
             Tuple containing:
                 - Output hidden states
@@ -111,15 +112,17 @@ def create_forward(
         return None
 
 
-def should_checkpoint(training: bool, current_depth: int, checkpoint_every: Optional[int]) -> bool:
+def should_checkpoint(
+    training: bool, current_depth: int, checkpoint_every: Optional[int]
+) -> bool:
     """
     Determine whether to use gradient checkpointing for a given layer.
-    
+
     Args:
         training: Whether the model is in training mode
         current_depth: Current layer depth
         checkpoint_every: Frequency to apply checkpointing (None or 0 means no checkpointing)
-        
+
     Returns:
         Boolean indicating whether to apply checkpointing
     """

@@ -9,7 +9,7 @@ from torch import Tensor
 
 from praxis.activations import ACT2FN
 
-ConfigType = TypeVar('ConfigType', bound='AutoConfig')
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisKAN(nn.Module):
@@ -34,7 +34,7 @@ class PraxisKAN(nn.Module):
     ) -> None:
         """
         Initialize KAN module.
-        
+
         Args:
             config: Configuration object with model parameters
             grid_min: Minimum grid value for RBF
@@ -49,7 +49,9 @@ class PraxisKAN(nn.Module):
         base_activation = ACT2FN[config.activation]
         self.input_dim: int = input_dim
         self.output_dim: int = output_dim
-        self.rbf: RadialBasisFunction = RadialBasisFunction(grid_min, grid_max, num_grids)
+        self.rbf: RadialBasisFunction = RadialBasisFunction(
+            grid_min, grid_max, num_grids
+        )
         self.spline_linear: SplineLinear = SplineLinear(
             input_dim * num_grids, output_dim, spline_weight_init_scale
         )
@@ -61,12 +63,12 @@ class PraxisKAN(nn.Module):
     def forward(self, inputs: Tensor, *args: Any, **kwargs: Any) -> Tensor:
         """
         Forward pass through KAN module.
-        
+
         Args:
             inputs: Input tensor
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Output tensor after KAN processing
         """
@@ -86,14 +88,14 @@ class PraxisKAN(nn.Module):
     ) -> Tuple[Tensor, Tensor]:
         """
         Return the learned curves in a FastKANLayer.
-        
+
         Args:
             input_index: Selected index of the input, in [0, input_dim)
             output_index: Selected index of the output, in [0, output_dim)
             num_pts: Number of points sampled for the curve
             num_extrapolate_bins: Number of bins extrapolating from the given grids
                 The curve will be calculated in [grid_min - h * N_e, grid_max + h * N_e]
-                
+
         Returns:
             Tuple containing:
                 - x-values for the curve
@@ -120,17 +122,13 @@ class SplineLinear(nn.Linear):
     """
     Linear layer with special initialization for spline weights.
     """
-    
+
     def __init__(
-        self, 
-        in_features: int, 
-        out_features: int, 
-        init_scale: float = 0.1, 
-        **kw: Any
+        self, in_features: int, out_features: int, init_scale: float = 0.1, **kw: Any
     ) -> None:
         """
         Initialize spline linear layer.
-        
+
         Args:
             in_features: Size of input features
             out_features: Size of output features
@@ -149,17 +147,19 @@ class RadialBasisFunction(nn.Module):
     """
     Radial basis function module for KAN.
     """
-    
+
     def __init__(
         self,
         grid_min: float = -2.0,
         grid_max: float = 2.0,
         num_grids: int = 8,
-        denominator: Optional[float] = None,  # larger denominators lead to smoother basis
+        denominator: Optional[
+            float
+        ] = None,  # larger denominators lead to smoother basis
     ) -> None:
         """
         Initialize radial basis function module.
-        
+
         Args:
             grid_min: Minimum grid value
             grid_max: Maximum grid value
@@ -177,10 +177,10 @@ class RadialBasisFunction(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward pass through RBF.
-        
+
         Args:
             x: Input tensor
-            
+
         Returns:
             RBF values for the input
         """

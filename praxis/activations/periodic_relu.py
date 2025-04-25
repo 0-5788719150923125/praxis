@@ -1,5 +1,5 @@
 import torch
-from torch import nn, Tensor
+from torch import Tensor, nn
 
 torch.pi = 3.1415926535897932
 torch.pdiv2 = 1.570796326  # π/2
