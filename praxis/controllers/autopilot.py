@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from transformers.configuration_utils import PretrainedConfig
 
-
 ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
 
 
@@ -40,19 +39,19 @@ class Autopilot(nn.Module):
     ) -> Tuple[float, Optional[int]]:
         """
         Forward pass of the autopilot controller.
-        
+
         Args:
             hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
             current_depth: Current depth in the network
             original_experts: Original list of all experts
             current_experts: Current list of available experts
             current_expert: The current expert being processed
-            
+
         Returns:
             Tuple containing:
                 - Loss value (during training) or 0.0 (during inference)
                 - Index of the next recommended expert (during inference) or None (during training)
-        """:
+        """
 
         batch_size = hidden_states.size(0)
         device = hidden_states.device
