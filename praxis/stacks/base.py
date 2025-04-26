@@ -29,9 +29,7 @@ class PraxisStack(nn.Module):
         assert (
             self.num_experts >= self.depth
         ), "`num_experts` should be at least as large as `depth`."
-        self.controller = CONTROLLER_REGISTRY.get(config.controller_type, "base")(
-            config
-        )
+        self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.manager = False
         self.locals = nn.ModuleList()

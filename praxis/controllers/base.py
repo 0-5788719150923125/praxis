@@ -28,8 +28,8 @@ class BaseController(nn.Module):
         self.visualizer = (
             RouteVisualizer(
                 num_experts=config.num_experts,
-                max_history=10000,
-                save_rate=100 * config.depth,
+                max_history=1000,
+                save_rate=1000 * config.depth,
             )
             if self.debug and allow_visualizer
             else False

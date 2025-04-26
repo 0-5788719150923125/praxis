@@ -1292,7 +1292,8 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
-train_params["callbacks"].append(PeriodicEvaluation())
+if do_eval:
+    train_params["callbacks"].append(PeriodicEvaluation())
 
 # fit the trainer and run forever
 trainer = Trainer(**train_params)

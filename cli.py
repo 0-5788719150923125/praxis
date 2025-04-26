@@ -470,6 +470,12 @@ other_group.add_argument(
     help="Use fewer resources (3 layers, smaller datasets, etc), always start from a new model (i.e. force '--reset'), and never conflict/remove existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
 )
 other_group.add_argument(
+    "--do_eval",
+    action="store_true",
+    default=False,
+    help="Run a subset of evaluation tests after each validation step. This is slow.",
+)
+other_group.add_argument(
     "--debug",
     action="store_true",
     default=False,
