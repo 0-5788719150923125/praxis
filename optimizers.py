@@ -22,8 +22,9 @@ def get_optimizer(
 ):
     weight_decay = kwargs.get("weight_decay", 0.0)
     if schedule_free:
-        # author recommendations:
+        # Increase the LR by 2x-10x:
         kwargs["lr"] *= 2.0
+        # Move weight decay into the wrapper, instead of the base optimizer.
         kwargs["weight_decay"] = 0.0
     optimizer = create_optimizer(model, *args, **kwargs)
     if trac:
