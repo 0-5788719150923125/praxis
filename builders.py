@@ -121,6 +121,13 @@ HUGGINGFACE_DATASETS = {
         format=DataFormat.SIMPLE,
         weight=1.0,
     ),
+    "slimpajama": dict(
+        path="cerebras/SlimPajama-627B",
+        name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        weight=1.0,
+    ),
     "fineweb-edu-10bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-10BT",
@@ -163,11 +170,11 @@ DATASET_COLLECTIONS = dict(
         "fineweb": 0.5,
     },
     phi={
-        "textbooks": 0.002,
-        "soda": 0.02,
+        "textbooks": 0.003,
+        "soda": 0.01,
         "cosmopedia-v2": 0.005,
+        "natural-instructions": 0.01,
         # "smoltalk": 0.005,
-        # "natural-instructions": 0.008,
         # "persona-chat": 0.002,
         # "wikipedia": 0.001,
         # "github-code": 0.01,
