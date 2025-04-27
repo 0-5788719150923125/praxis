@@ -48,9 +48,11 @@ save_path = "data/praxis"
 archive_path = f"{save_path}-{vocab_size}-{tokenizer_type}"
 
 special_tokens = {
-    "pad_token": "<|endoftext|>",
-    "bos_token": "<|im_start|>",
-    "eos_token": "<|im_end|>",
+    "pad_token": "[PAD]",
+    "bos_token": "[BOS]",
+    "eos_token": "[EOS]",
+    # "mask_token": "[MASK]",
+    "sep_token": "[SEP]",
 }
 additional_special_tokens = []
 
@@ -86,7 +88,7 @@ if tokenizer_type == "bpe":
 elif tokenizer_type == "unigram":
     tokenizer = Tokenizer(models.Unigram(byte_fallback=True))
     trainer = trainers.UnigramTrainer(
-        shrinking_factor=0.75, max_piece_length=16, n_sub_iterations=2, **trainer_args
+        shrinking_factor=0.75, max_piece_length=16, n_sub_iterations=8, **trainer_args
     )
 
 tokenizer.add_special_tokens(all_special_tokens)
@@ -103,6 +105,7 @@ trained_tokenizer.add_special_tokens(
 )
 
 # Define a ChatML template
+# https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/chat-markup-language
 chat_template = """{% for message in messages %}
 {% if message['role'] == 'system' %}
 {{ bos_token }}system
@@ -131,11 +134,11 @@ os.makedirs(archive_path, exist_ok=True)
 trained_tokenizer.save_pretrained(save_path)
 trained_tokenizer.save_pretrained(archive_path)
 
-print("Tokenizer trained and saved with ChatML template!")
-print(f"A sample ChatML-formatted message would look like:")
+print(f"A sample ChatML-formatted message:")
 print(
     trained_tokenizer.apply_chat_template(
         [
+            {"role": "system", "content": "The assistant is an AI."},
             {"role": "user", "content": "Hello, how are you?"},
             {"role": "assistant", "content": "I'm doing well, thank you!"},
         ],
