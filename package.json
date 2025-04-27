@@ -12,9 +12,6 @@
     "url": "https://github.com/0-5788719150923125/praxis/issues"
   },
   "homepage": "https://src.eco",
-  "devDependencies": {
-    "prettier": "^3.3.3"
-  },
   "dependencies": {
     "gun": "^0.2020.1240"
   }

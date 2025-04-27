@@ -639,7 +639,7 @@ class TerminalInterface(Callback):
         ):
             self.text = self.initial_text
             if self.dashboard:
-                self.dashboard.update_status(tokenizer.pad_token)
+                self.dashboard.update_status(self.initial_text)
                 self.dashboard.force_redraw()
         elif self.dashboard:
             self.dashboard.update_status(self.text)
