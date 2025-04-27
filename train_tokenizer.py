@@ -52,6 +52,7 @@ special_tokens = {
     "bos_token": "<|im_start|>",
     "eos_token": "<|im_end|>",
 }
+additional_special_tokens = []
 
 dataset = load_dataset(
     "HuggingFaceFW/fineweb",
@@ -68,11 +69,15 @@ dataset = load_dataset(
 key = "text"
 iterator = islice((item[key] for item in dataset), num_examples)
 
+all_special_tokens = list(
+    set(list(special_tokens.values()) + additional_special_tokens)
+)
+
 trainer_args = dict(
     vocab_size=vocab_size,
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     show_progress=True,
-    special_tokens=list(special_tokens.values()),
+    special_tokens=all_special_tokens,
 )
 
 if tokenizer_type == "bpe":
@@ -81,10 +86,10 @@ if tokenizer_type == "bpe":
 elif tokenizer_type == "unigram":
     tokenizer = Tokenizer(models.Unigram(byte_fallback=True))
     trainer = trainers.UnigramTrainer(
-        shrinking_factor=0.75, max_piece_length=16, n_sub_iterations=8, **trainer_args
+        shrinking_factor=0.75, max_piece_length=16, n_sub_iterations=2, **trainer_args
     )
 
-tokenizer.add_special_tokens(list(special_tokens.values()))
+tokenizer.add_special_tokens(all_special_tokens)
 tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()
 tokenizer.normalizer = normalizers.NFKC()
 tokenizer.decoder = decoders.ByteLevel()
@@ -93,10 +98,47 @@ tokenizer.post_processor = processors.ByteLevel()
 tokenizer.train_from_iterator(iterator=iterator, trainer=trainer, length=num_examples)
 
 trained_tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
-trained_tokenizer.add_special_tokens(special_tokens)
+trained_tokenizer.add_special_tokens(
+    {**special_tokens, "additional_special_tokens": additional_special_tokens}
+)
+
+# Define a ChatML template
+chat_template = """{% for message in messages %}
+{% if message['role'] == 'system' %}
+{{ bos_token }}system
+{{ message['content'] }}
+{{ eos_token }}
+{% elif message['role'] == 'user' %}
+{{ bos_token }}user
+{{ message['content'] }}
+{{ eos_token }}
+{% elif message['role'] == 'assistant' %}
+{{ bos_token }}assistant
+{{ message['content'] }}
+{{ eos_token }}
+{% endif %}
+{% endfor %}
+{% if add_generation_prompt %}
+{{ bos_token }}assistant
+{% endif %}"""
+
+
+trained_tokenizer.chat_template = chat_template
 
 os.makedirs(save_path, exist_ok=True)
 os.makedirs(archive_path, exist_ok=True)
 
 trained_tokenizer.save_pretrained(save_path)
 trained_tokenizer.save_pretrained(archive_path)
+
+print("Tokenizer trained and saved with ChatML template!")
+print(f"A sample ChatML-formatted message would look like:")
+print(
+    trained_tokenizer.apply_chat_template(
+        [
+            {"role": "user", "content": "Hello, how are you?"},
+            {"role": "assistant", "content": "I'm doing well, thank you!"},
+        ],
+        tokenize=False,
+    )
+)
