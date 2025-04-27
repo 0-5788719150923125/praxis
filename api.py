@@ -23,7 +23,7 @@ class APIServer:
         generator,
         host="localhost",
         port=2100,
-        tokenizer: "PreTrainedTokenizer" = None,
+        tokenizer=None,
     ):
         self.generator = generator
         self.server_thread = None
@@ -35,8 +35,7 @@ class APIServer:
             port += 1
         self.port = port
         self.parent_pid = os.getppid()
-        self.bos_token = tokenizer.bos_token
-        self.eos_token = tokenizer.eos_token
+        self.tokenizer = tokenizer
 
     def _is_port_in_use(self, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -86,8 +85,7 @@ class APIServer:
     def _run_server(self):
         with app.app_context():
             app.config["generator"] = self.generator
-            app.config["bos_token"] = self.bos_token
-            app.config["eos_token"] = self.eos_token
+            app.config["tokenizer"] = self.tokenizer
             self.server = make_server("0.0.0.0", self.port, app)
             self.started.set()  # Signal that the server has started
             self.server.serve_forever()
@@ -107,39 +105,42 @@ def serve_static(filename):
         return send_from_directory(app.static_folder, filename)
 
 
-def format_messages_to_chatml(messages, bos_token, eos_token):
-    """Format a list of message objects into a ChatML-formatted string."""
-    formatted = ""
+def format_messages_to_chatml(messages, tokenizer):
+    """Format a list of message objects using the tokenizer's chat template."""
+    # Validate message roles
     for message in messages:
         role = message.get("role", "").strip()
-        content = message.get("content", "").strip()
         if role not in {"system", "user", "assistant"}:
             raise ValueError(f"Invalid role: {role}")
-        formatted += f"{bos_token}{role}\n{content}\n{eos_token}\n"
-    # Ensure the prompt ends with the assistant's role
-    if not formatted.strip().endswith("<|im_start|> assistant"):
-        formatted += f"{bos_token}assistant\n"
-    return formatted
+
+    # Apply the chat template and add assistant generation prompt
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
 
 
-def extract_assistant_reply(generated_text, bos_token, eos_token):
+def extract_assistant_reply(generated_text, tokenizer):
     """Extract the assistant's reply from the generated text."""
-    # Tokens used in ChatML
-    begin_token = f"{bos_token}assistant\n"
+    # Find the pattern that marks the start of the assistant's response
+    assistant_start = f"{tokenizer.bos_token}assistant\n"
+
     # Find the last occurrence of the assistant's start token
-    start_index = generated_text.rfind(begin_token)
+    start_index = generated_text.rfind(assistant_start)
     if start_index == -1:
         # If the start token is not found, return the whole text
         return generated_text.strip()
-    else:
-        start_index += len(begin_token)
+
+    # Skip past the start token
+    start_index += len(assistant_start)
+
     # Find the end token after the start_index
-    end_index = generated_text.find(eos_token, start_index)
+    end_index = generated_text.find(tokenizer.eos_token, start_index)
     if end_index == -1:
         # If the end token is not found, return everything after the start token
         assistant_reply = generated_text[start_index:].strip()
     else:
         assistant_reply = generated_text[start_index:end_index].strip()
+
     return assistant_reply
 
 
@@ -164,13 +165,12 @@ def generate():
 
         is_chatml = False
         if messages is not None:
-            # Format messages into ChatML format
+            # Format messages using the tokenizer's chat template
             try:
-                prompt = format_messages_to_chatml(
-                    messages, app.config["bos_token"], app.config["eos_token"]
-                )
+                tokenizer = app.config["tokenizer"]
+                prompt = format_messages_to_chatml(messages, tokenizer)
                 is_chatml = True
-                kwargs["stop_strings"] = [app.config["eos_token"]]
+                kwargs["stop_strings"] = [tokenizer.eos_token]
                 kwargs["skip_special_tokens"] = False
                 del kwargs["messages"]
             except ValueError as ve:
@@ -190,10 +190,8 @@ def generate():
             raise Exception("Failed to generate an output from this API.")
 
         if is_chatml:
-            # Extract only the assistant's reply
-            assistant_reply = extract_assistant_reply(
-                output, app.config["bos_token"], app.config["eos_token"]
-            )
+            # Extract only the assistant's reply using the tokenizer
+            assistant_reply = extract_assistant_reply(output, app.config["tokenizer"])
             response = {"response": assistant_reply}
         else:
             # Return the full output as before
