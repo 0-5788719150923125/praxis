@@ -12,30 +12,7 @@
     "url": "https://github.com/0-5788719150923125/praxis/issues"
   },
   "homepage": "https://src.eco",
-  "devDependencies": {
-    "prettier": "^3.3.3"
-  },
   "dependencies": {
     "gun": "^0.2020.1240"
-  },
-  "prettier": {
-    "semi": false,
-    "singleQuote": true,
-    "trailingComma": "none",
-    "printWidth": 80,
-    "options": {
-      "arrowParens": "always",
-      "bracketSpacing": true,
-      "tabWidth": 4,
-      "trailingComma": "none"
-    },
-    "overrides": [
-      {
-        "files": "*.json,*.yml",
-        "options": {
-          "tabWidth": 2
-        }
-      }
-    ]
   }
 }

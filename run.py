@@ -105,7 +105,7 @@ from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from evaluation import evaluate_model
+from evaluation import evaluate_model, get_all_task_metrics
 from optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
@@ -162,9 +162,9 @@ else:
     for path in possible_paths:
         try:
             tokenizer = AutoTokenizer.from_pretrained(path, cache_dir=cache_dir)
+            break
         except Exception as e:
             logging.warning(f"No tokenizer found at: {str(path)}")
-
 
 # Transformers config
 config = PraxisConfig(
@@ -206,6 +206,7 @@ config = PraxisConfig(
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
+    sep_token_id=tokenizer.sep_token_id,
     device_map=device,
     cache_dir=cache_dir,
     debug=debug,
@@ -426,36 +427,38 @@ class PeriodicEvaluation(Callback):
         self._run_evaluation_suites()
 
     def _run_evaluation_suites(self):
-        tasks = {"mmlu": "helm|mmlu|5|1"}
-        results = {}
-        for name, task in tasks.items():
-            metrics = evaluate_model(
-                model,
-                max_samples=25,
-                task=task,
-                device=device,
-                vocab_size=vocab_size,
-                verbose=False,
-            )
+        metrics = evaluate_model(
+            model,
+            max_samples=100,
+            tasks=eval_tasks,
+            device=device,
+            vocab_size=vocab_size,
+            verbose=False,
+        )
+        parsed = get_all_task_metrics(metrics)
+
+        for metric in parsed:
+            name = metric["task"]
             metric_name = f"eval_{name}"
-            metric_value = metrics["results"]["all"]["pqem"]
+            for key, value in list(metric.items()):
+                if key not in ["pqem", "pqem_stderr", "acc", "acc_stderr"]:
+                    metric_value = metric[key]
+                    if debug:
+                        print(f"DEBUG: {name}: {metric_value}")
 
-            if debug:
-                print(f"DEBUG: {name}: {metric_value}")
-
-            # Different loggers have different APIs
-            if hasattr(trainer.logger, "log_metrics"):
-                trainer.logger.log_metrics(
-                    {metric_name: metric_value}, step=trainer.global_step
-                )
-            elif hasattr(trainer.logger.experiment, "add_scalar"):
-                # TensorBoard logger
-                trainer.logger.experiment.add_scalar(
-                    metric_name, metric_value, trainer.global_step
-                )
-            else:
-                # Fallback for other loggers
-                print(f"Warning: Couldn't log {metric_name} to logger")
+                        # Different loggers have different APIs
+                        if hasattr(trainer.logger, "log_metrics"):
+                            trainer.logger.log_metrics(
+                                {metric_name: metric_value}, step=trainer.global_step
+                            )
+                        elif hasattr(trainer.logger.experiment, "add_scalar"):
+                            # TensorBoard logger
+                            trainer.logger.experiment.add_scalar(
+                                metric_name, metric_value, trainer.global_step
+                            )
+                        else:
+                            # Fallback for other loggers
+                            print(f"Warning: Couldn't log {metric_name} to logger")
 
 
 class TerminalInterface(Callback):
@@ -469,7 +472,7 @@ class TerminalInterface(Callback):
         self.ema_loss = 0
         self.start_time = datetime.now()
         self.last_time = datetime.now()
-        self.initial_text = tokenizer.pad_token
+        self.initial_text = tokenizer.bos_token
         self.text = self.initial_text
         self.interval = 3
         self.url = url
@@ -623,6 +626,8 @@ class TerminalInterface(Callback):
         ignored_n_grams = [
             tokenizer.bos_token,
             tokenizer.eos_token,
+            tokenizer.pad_token,
+            tokenizer.sep_token,
             f"{tokenizer.bos_token}system",
             f"{tokenizer.bos_token}user",
             f"{tokenizer.bos_token}assistant",
@@ -634,7 +639,7 @@ class TerminalInterface(Callback):
         ):
             self.text = self.initial_text
             if self.dashboard:
-                self.dashboard.update_status(tokenizer.pad_token)
+                self.dashboard.update_status(self.initial_text)
                 self.dashboard.force_redraw()
         elif self.dashboard:
             self.dashboard.update_status(self.text)
@@ -1161,9 +1166,7 @@ if wandb:
 generator = Generator(model, tokenizer)
 
 if local_rank == 0:
-    api_server = APIServer(
-        generator, host_name, port, tokenizer.bos_token, tokenizer.eos_token
-    )
+    api_server = APIServer(generator, host_name, port, tokenizer)
     api_server.start()
 
 
@@ -1292,10 +1295,9 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
-if do_eval:
+if eval_tasks:
     train_params["callbacks"].append(PeriodicEvaluation())
 
-# fit the trainer and run forever
 trainer = Trainer(**train_params)
 trainer.fit(
     train_model,
