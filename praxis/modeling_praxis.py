@@ -49,7 +49,7 @@ class PraxisModel(PreTrainedModel):
             )
             self.aux_losses.append(entropy_loss)
         else:
-            block_ids = create_block_ids(input_ids, self.config.pad_token_id)
+            block_ids = create_block_ids(input_ids, self.config.sep_token_id)
             inputs = self.embeds(input_ids)
 
         last_hidden_state, new_key_values, new_state, aux_loss = self.decoder(

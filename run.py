@@ -162,9 +162,9 @@ else:
     for path in possible_paths:
         try:
             tokenizer = AutoTokenizer.from_pretrained(path, cache_dir=cache_dir)
+            break
         except Exception as e:
             logging.warning(f"No tokenizer found at: {str(path)}")
-
 
 # Transformers config
 config = PraxisConfig(
@@ -206,6 +206,7 @@ config = PraxisConfig(
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,
     eos_token_id=tokenizer.eos_token_id,
+    sep_token_id=tokenizer.sep_token_id,
     device_map=device,
     cache_dir=cache_dir,
     debug=debug,
@@ -469,7 +470,7 @@ class TerminalInterface(Callback):
         self.ema_loss = 0
         self.start_time = datetime.now()
         self.last_time = datetime.now()
-        self.initial_text = tokenizer.pad_token
+        self.initial_text = tokenizer.bos_token
         self.text = self.initial_text
         self.interval = 3
         self.url = url
@@ -623,6 +624,8 @@ class TerminalInterface(Callback):
         ignored_n_grams = [
             tokenizer.bos_token,
             tokenizer.eos_token,
+            tokenizer.pad_token,
+            tokenizer.sep_token,
             f"{tokenizer.bos_token}system",
             f"{tokenizer.bos_token}user",
             f"{tokenizer.bos_token}assistant",

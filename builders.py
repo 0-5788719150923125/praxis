@@ -193,45 +193,38 @@ def format_simple(
 def format_instruction(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format as instruction/output pairs in ChatML format."""
+    """Format as instruction/output pairs using the tokenizer's chat template."""
     assert len(keys) == 2, "Instruction format requires exactly 2 keys"
     instruction = document.get(keys[0], "")
     output = document.get(keys[1], "")
-    bos_token = tokenizer.bos_token
-    eos_token = tokenizer.eos_token
-    return (
-        f"{bos_token}user\n{instruction}\n{eos_token}\n"
-        f"{bos_token}assistant\n{output}\n{eos_token}\n"
-    )
+
+    messages = [
+        {"role": "user", "content": instruction},
+        {"role": "assistant", "content": output},
+    ]
+
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def format_conversation(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format as a conversation in ChatML format."""
+    """Format as a conversation using the tokenizer's chat template."""
     assert len(keys) == 3, "Conversation format requires exactly 3 keys"
-    bos_token = tokenizer.bos_token
-    eos_token = tokenizer.eos_token
-    parts = []
-    for i, key in enumerate(keys):
-        if i == 0:
-            role = "system"
-        elif i == 1:
-            role = "user"
-        elif i == 2:
-            role = "assistant"
-        message = document.get(key, "")
-        parts.append(f"{bos_token}{role}\n{message}\n{eos_token}\n")
-    return "".join(parts)
+
+    messages = [
+        {"role": "system", "content": document.get(keys[0], "")},
+        {"role": "user", "content": document.get(keys[1], "")},
+        {"role": "assistant", "content": document.get(keys[2], "")},
+    ]
+
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def format_personachat(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format persona chat conversations into ChatML format."""
-    bos_token = tokenizer.bos_token
-    eos_token = tokenizer.eos_token
-
+    """Format persona chat conversations using the tokenizer's chat template."""
     # Extract personas
     user_personas = document.get("user 1 personas", "").split("\n")
     assistant_personas = document.get("user 2 personas", "").split("\n")
@@ -248,9 +241,6 @@ def format_personachat(
             f"- {p.strip()}\n" for p in assistant_personas if p.strip()
         )
 
-    # Initialize the formatted text with system message
-    formatted = f"{bos_token}system\n{system_message.strip()}\n{eos_token}\n"
-
     # Map speaker labels to ChatML roles
     speaker_map = {
         "A": "user",
@@ -261,7 +251,9 @@ def format_personachat(
         "USER2": "assistant",
     }
 
-    # Format the conversation using "user" and "assistant"
+    # Build messages list
+    messages = [{"role": "system", "content": system_message.strip()}]
+
     for i, utterance in enumerate(conversation):
         if ": " in utterance:
             speaker_label, text = utterance.split(": ", 1)
@@ -270,53 +262,47 @@ def format_personachat(
             # Alternate speakers if no prefix is present
             role = "user" if i % 2 == 0 else "assistant"
             text = utterance
-        formatted += f"{bos_token}{role}\n{text.strip()}\n{eos_token}\n"
 
-    return formatted
+        messages.append({"role": role, "content": text.strip()})
+
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def format_smoltalk(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format Smoltalk-style message arrays into ChatML format."""
+    """Format Smoltalk-style message arrays using the tokenizer's chat template."""
     assert (
         len(keys) == 1 and keys[0] == "messages"
     ), "Smoltalk format requires 'messages' key"
 
-    bos_token = tokenizer.bos_token
-    eos_token = tokenizer.eos_token
-
     # Get messages array
     messages = document.get(keys[0], [])
 
-    # Format each message in original order
-    formatted_messages = []
-    for message in messages:
-        role = message.get("role", "user")  # Default to user if role missing
-        content = message.get("content", "").strip()
-        if content:  # Only add non-empty messages
-            formatted_messages.append(f"{bos_token}{role}\n{content}\n{eos_token}\n")
+    # Filter out any empty messages
+    filtered_messages = [
+        message for message in messages if message.get("content", "").strip()
+    ]
 
-    # Join all messages together
-    return "".join(formatted_messages)
+    return tokenizer.apply_chat_template(filtered_messages, tokenize=False) + "\n"
 
 
 def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Format wiki text."""
     assert len(keys) == 2, "Wiki format requires exactly 2 keys"
-    bos_token = tokenizer.bos_token
-    eos_token = tokenizer.eos_token
     title = document.get(keys[0], "")
     body = document.get(keys[1], "")
-    return f"{bos_token}{title}\n{body}{eos_token}\n"
+
+    messages = [
+        {"role": "user", "content": title},
+        {"role": "assistant", "content": body},
+    ]
+
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
-    """Formats a single example into ChatML format."""
-
-    bos_token = tokenizer.bos_token
-    eos_token = tokenizer.eos_token
-
+    """Formats a single SODA example using the tokenizer's chat template."""
     speakers = document[keys[0]]
     narrative = document[keys[1]]
     literal = document[keys[2]]
@@ -342,31 +328,31 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     for speaker in unique_speakers[2:]:
         speaker_roles[speaker] = "other"
 
-    # Start with system message
-    chatml = f"{bos_token}system\n"
+    # Create system message content
+    system_content = ""
 
     # Add role mappings to system context
     for speaker, role in speaker_roles.items():
-        chatml += f"{role}: {speaker}\n"
+        system_content += f"{role}: {speaker}\n"
 
     # Add knowledge structure
-    chatml += f"cause: {replace_person_references(head, person_mapping)}\n"
-    chatml += f"relation: {relation[1:]}\n"
-    chatml += f"effect: {replace_person_references(tail, person_mapping)}\n"
+    system_content += f"cause: {replace_person_references(head, person_mapping)}\n"
+    system_content += f"relation: {relation[1:]}\n"
+    system_content += f"effect: {replace_person_references(tail, person_mapping)}\n"
 
     # Add context from literal and narrative
-    chatml += f"context: {narrative}\n"
-    chatml += f"thought: ({literal})\n"  # <|thinking|>
-    chatml += f"{eos_token}\n"
+    system_content += f"context: {narrative}\n"
+    system_content += f"thought: ({literal})\n"
+
+    # Create messages array
+    messages = [{"role": "system", "content": system_content}]
 
     # Add conversation turns
     for speaker, message in zip(speakers, dialogue):
         role = speaker_roles[speaker]
-        chatml += f"{bos_token}{role}\n"
-        chatml += f"{message}\n"
-        chatml += f"{eos_token}\n"
+        messages.append({"role": role, "content": message})
 
-    return chatml
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def create_person_mapping(example: Dict) -> Dict[str, str]:
@@ -609,7 +595,8 @@ class InterleaveDataManager:
             sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
-            sequence += new_sequences[0] + self.tokenizer.pad_token + "\n"
+            # Use a separator token between sequences
+            sequence += new_sequences[0] + self.tokenizer.sep_token + "\n"
         return sequence
 
     def _extend_token_stream(self):
@@ -885,13 +872,16 @@ class GunChatDataset(PraxisSampler):
 
         system_prompt = f"{user_description}\n{assistant_description}"
 
-        # Initialize the formatted text with system message
-        formatted = f"{self.tokenizer.bos_token}system\n{system_prompt}\n{self.tokenizer.eos_token}\n"
+        # Build conversation in ChatML format using the tokenizer's template
+        messages = [{"role": "system", "content": system_prompt}]
 
-        # Build the conversation by randomly assigning text to user or assistant
+        # Add the conversation messages
         for text in text_list:
             role = random.choice(["user", "assistant"])
-            formatted += f"{self.tokenizer.bos_token}{role}\n{text.strip()}\n{self.tokenizer.eos_token}\n"
+            messages.append({"role": role, "content": text.strip()})
+
+        # Apply the chat template
+        formatted = tokenizer.apply_chat_template(messages, tokenize=False)
 
         # Add the conversation to the sequence cache
         self.sequence_cache.append(formatted)

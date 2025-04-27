@@ -48,6 +48,7 @@ class PraxisConfig(PretrainedConfig):
         pad_token_id: int = 0,
         bos_token_id: int = 1,
         eos_token_id: int = 2,
+        sep_token_id: int = 3,
         seed: int = 42,
         debug: bool = False,
         meta: List[str] = None,
@@ -62,6 +63,7 @@ class PraxisConfig(PretrainedConfig):
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
             eos_token_id=eos_token_id,
+            sep_token_id=sep_token_id,
             **kwargs,
         )
 
