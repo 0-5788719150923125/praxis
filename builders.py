@@ -159,17 +159,11 @@ HUGGINGFACE_DATASETS = {
 }
 
 DATASET_COLLECTIONS = dict(
-    pile={
-        "minipile-train": 1.0,
-    },
-    validation={
-        "minipile-validation": 1.0,
-    },
     base={
         "fineweb-edu-350bt": 1.0,
-        "fineweb": 0.5,
     },
     phi={
+        "fineweb": 0.5,
         "textbooks": 0.003,
         "soda": 0.01,
         "cosmopedia-v2": 0.005,
@@ -180,6 +174,12 @@ DATASET_COLLECTIONS = dict(
         # "github-code": 0.01,
         # "tinystories": 0.05,
         # "legal": 0.001,
+    },
+    pile={
+        "minipile-train": 1.0,
+    },
+    validation={
+        "minipile-validation": 1.0,
     },
     dev={
         "textbooks": 1.0,

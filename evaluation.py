@@ -37,7 +37,7 @@ from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 def evaluate_model(
     model=None,
     max_samples=None,
-    task="helm|mmlu|5|1",
+    tasks="helm|hellaswag|5|1,lighteval|glue:cola|5|1",
     device="cpu",
     vocab_size=16384,
     verbose=True,
@@ -72,15 +72,17 @@ def evaluate_model(
         pipeline_parameters=PipelineParameters(
             launcher_type=ParallelismManager.NONE,
             max_samples=max_samples,
+            use_chat_template=True,
+            system_prompt="You are an intelligent chatbot. Please answer the following questions accurately.",
         ),
         evaluation_tracker=evaluation_tracker,
         model=model,
         model_config=model_config,
-        tasks=task,
+        tasks=tasks,
     )
 
     pipeline.evaluate()
-    pipeline.save_and_push_results()
+    # pipeline.save_and_push_results()
 
     if verbose:
         pipeline.show_results()
@@ -88,5 +90,56 @@ def evaluate_model(
     return pipeline.get_results()
 
 
+def get_all_task_metrics(results_dict):
+    """
+    Extract all available metrics for each task in the results dictionary.
+
+    Args:
+        results_dict: The lighteval results dictionary returned by pipeline.get_results()
+
+    Returns:
+        List of dictionaries, each containing task name and all available metrics with their values
+    """
+    task_metrics = []
+
+    # Skip the 'all' entry which is just an aggregate
+    for task_key, task_results in results_dict["results"].items():
+        if task_key == "all":
+            continue
+
+        # Clean the task name if needed
+        clean_task = task_key
+
+        for prefix in ["lighteval", "helm"]:
+            prefix += ":"
+            if task_key.startswith(prefix):
+                clean_task = task_key.replace(prefix, "")
+
+        # Create a dictionary for this task
+        task_data = {"original_task": task_key, "task": clean_task}
+
+        # Get the version from the versions dictionary
+        if task_key in results_dict.get("versions", {}):
+            task_data["version"] = results_dict["versions"][task_key]
+
+        # Add all metrics available for this task
+        for metric_key, metric_value in task_results.items():
+            # Skip stderr entries as we'll handle them separately
+            if metric_key.endswith("_stderr"):
+                continue
+
+            # Add the metric value
+            task_data[metric_key] = metric_value
+
+            # Add stderr if available
+            stderr_key = f"{metric_key}_stderr"
+            if stderr_key in task_results:
+                task_data[stderr_key] = task_results[stderr_key]
+
+        task_metrics.append(task_data)
+
+    return task_metrics
+
+
 if __name__ == "__main__":
-    evaluate_model(max_samples=10, verbose=True)
+    evaluate_model(max_samples=100, verbose=True)

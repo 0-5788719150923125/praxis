@@ -105,7 +105,7 @@ from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from evaluation import evaluate_model
+from evaluation import evaluate_model, get_all_task_metrics
 from optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
@@ -242,9 +242,9 @@ train_params = dict(
     enable_progress_bar=not use_dashboard,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
+    val_check_interval=16 * hparams["target_batch_size"] // hparams["batch_size"],
     num_sanity_val_steps=0,
-    limit_val_batches=4096 // hparams["batch_size"],
+    limit_val_batches=16 // hparams["batch_size"],
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
@@ -427,36 +427,38 @@ class PeriodicEvaluation(Callback):
         self._run_evaluation_suites()
 
     def _run_evaluation_suites(self):
-        tasks = {"mmlu": "helm|mmlu|5|1"}
-        results = {}
-        for name, task in tasks.items():
-            metrics = evaluate_model(
-                model,
-                max_samples=25,
-                task=task,
-                device=device,
-                vocab_size=vocab_size,
-                verbose=False,
-            )
+        metrics = evaluate_model(
+            model,
+            max_samples=25,
+            tasks=eval_tasks,
+            device=device,
+            vocab_size=vocab_size,
+            verbose=False,
+        )
+        parsed = get_all_task_metrics(metrics)
+
+        for metric in parsed:
+            name = metric["task"]
             metric_name = f"eval_{name}"
-            metric_value = metrics["results"]["all"]["pqem"]
+            for key, value in list(metric.items()):
+                if key not in ["pqem", "pqem_stderr", "acc", "acc_stderr"]:
+                    metric_value = metric[key]
+                    if debug:
+                        print(f"DEBUG: {name}: {metric_value}")
 
-            if debug:
-                print(f"DEBUG: {name}: {metric_value}")
-
-            # Different loggers have different APIs
-            if hasattr(trainer.logger, "log_metrics"):
-                trainer.logger.log_metrics(
-                    {metric_name: metric_value}, step=trainer.global_step
-                )
-            elif hasattr(trainer.logger.experiment, "add_scalar"):
-                # TensorBoard logger
-                trainer.logger.experiment.add_scalar(
-                    metric_name, metric_value, trainer.global_step
-                )
-            else:
-                # Fallback for other loggers
-                print(f"Warning: Couldn't log {metric_name} to logger")
+                        # Different loggers have different APIs
+                        if hasattr(trainer.logger, "log_metrics"):
+                            trainer.logger.log_metrics(
+                                {metric_name: metric_value}, step=trainer.global_step
+                            )
+                        elif hasattr(trainer.logger.experiment, "add_scalar"):
+                            # TensorBoard logger
+                            trainer.logger.experiment.add_scalar(
+                                metric_name, metric_value, trainer.global_step
+                            )
+                        else:
+                            # Fallback for other loggers
+                            print(f"Warning: Couldn't log {metric_name} to logger")
 
 
 class TerminalInterface(Callback):
@@ -1293,10 +1295,9 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
-if do_eval:
+if eval_tasks:
     train_params["callbacks"].append(PeriodicEvaluation())
 
-# fit the trainer and run forever
 trainer = Trainer(**train_params)
 trainer.fit(
     train_model,
