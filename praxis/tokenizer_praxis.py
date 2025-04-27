@@ -4,15 +4,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from bytelatent.tokenizers.blt_tokenizer import BltTokenizer
-from bytelatent.tokenizers.constants import (
-    BOE_ID,
-    BOS_ID,
-    BPE_ID,
-    BYTE_UNITS,
-    EOS_ID,
-    OFFSET,
-    PAD_ID,
-)
 from jinja2 import Template
 from transformers import PreTrainedTokenizer
 
@@ -25,7 +16,7 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
 
     SPECIAL_TOKENS = {
         "boe_token": ("[BOE]", 0),
-        "pad_token": ("[PAD]", 0),  # since PAD_ID is -1
+        "pad_token": ("[PAD]", 0),  # since original PAD_ID is -1
         "bos_token": ("[BOS]", 1),
         "eos_token": ("[EOS]", 2),
         "sep_token": ("[SEP]", 3),
