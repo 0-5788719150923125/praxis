@@ -184,19 +184,21 @@ DATASET_COLLECTIONS = dict(
 
 
 def format_simple(
-    document: Dict, keys: List[str], bos_token: str, eos_token: str
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Just concatenate content with spaces"""
     return document.get(keys[0], "") + "\n"
 
 
 def format_instruction(
-    document: Dict, keys: List[str], bos_token: str, eos_token: str
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Format as instruction/output pairs in ChatML format."""
     assert len(keys) == 2, "Instruction format requires exactly 2 keys"
     instruction = document.get(keys[0], "")
     output = document.get(keys[1], "")
+    bos_token = tokenizer.bos_token
+    eos_token = tokenizer.eos_token
     return (
         f"{bos_token}user\n{instruction}\n{eos_token}\n"
         f"{bos_token}assistant\n{output}\n{eos_token}\n"
@@ -204,10 +206,12 @@ def format_instruction(
 
 
 def format_conversation(
-    document: Dict, keys: List[str], bos_token: str, eos_token: str
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Format as a conversation in ChatML format."""
     assert len(keys) == 3, "Conversation format requires exactly 3 keys"
+    bos_token = tokenizer.bos_token
+    eos_token = tokenizer.eos_token
     parts = []
     for i, key in enumerate(keys):
         if i == 0:
@@ -222,9 +226,12 @@ def format_conversation(
 
 
 def format_personachat(
-    document: Dict, keys: List[str], bos_token: str, eos_token: str
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Format persona chat conversations into ChatML format."""
+    bos_token = tokenizer.bos_token
+    eos_token = tokenizer.eos_token
+
     # Extract personas
     user_personas = document.get("user 1 personas", "").split("\n")
     assistant_personas = document.get("user 2 personas", "").split("\n")
@@ -269,12 +276,15 @@ def format_personachat(
 
 
 def format_smoltalk(
-    document: Dict, keys: List[str], bos_token: str, eos_token: str
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Format Smoltalk-style message arrays into ChatML format."""
     assert (
         len(keys) == 1 and keys[0] == "messages"
     ), "Smoltalk format requires 'messages' key"
+
+    bos_token = tokenizer.bos_token
+    eos_token = tokenizer.eos_token
 
     # Get messages array
     messages = document.get(keys[0], [])
@@ -291,16 +301,21 @@ def format_smoltalk(
     return "".join(formatted_messages)
 
 
-def format_wiki(document: Dict, keys: List[str], bos_token: str, eos_token: str) -> str:
+def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Format wiki text."""
     assert len(keys) == 2, "Wiki format requires exactly 2 keys"
+    bos_token = tokenizer.bos_token
+    eos_token = tokenizer.eos_token
     title = document.get(keys[0], "")
     body = document.get(keys[1], "")
     return f"{bos_token}{title}\n{body}{eos_token}\n"
 
 
-def format_soda(document: Dict, keys: List[str], bos_token: str, eos_token: str) -> str:
+def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Formats a single example into ChatML format."""
+
+    bos_token = tokenizer.bos_token
+    eos_token = tokenizer.eos_token
 
     speakers = document[keys[0]]
     narrative = document[keys[1]]
@@ -632,6 +647,7 @@ class HuggingfaceDataset(PraxisSampler):
 
     def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
         super().__init__(tokenizer)
+        self.tokenizer = tokenizer
         self.keys = config.get("keys", ["text"])
         self.format = config.get("format", DataFormat.SIMPLE)
         if isinstance(self.format, str):
@@ -675,9 +691,7 @@ class HuggingfaceDataset(PraxisSampler):
             self.dataset_iterator = iter(self.shuffled_dataset)
 
     def _format_document(self, document):
-        return self.format_handler(
-            document, self.keys, self.tokenizer.bos_token, self.tokenizer.eos_token
-        )
+        return self.format_handler(document, self.keys, self.tokenizer)
 
     def state_dict(self):
         # Get the internal state of the shuffled dataset
