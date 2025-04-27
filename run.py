@@ -437,28 +437,35 @@ class PeriodicEvaluation(Callback):
         )
         parsed = get_all_task_metrics(metrics)
 
+        # Dictionary to collect all metrics
+        all_metrics = {}
+
+        # Iterate through metrics and collect them
         for metric in parsed:
             name = metric["task"]
-            metric_name = f"eval_{name}"
             for key, value in list(metric.items()):
-                if key not in ["pqem", "pqem_stderr", "acc", "acc_stderr"]:
+                if key in ["pqem", "pqem_stderr", "acc", "acc_stderr"]:
+                    metric_name = f"eval_{name}_{key}"
                     metric_value = metric[key]
                     if debug:
                         print(f"DEBUG: {name}: {metric_value}")
 
-                        # Different loggers have different APIs
-                        if hasattr(trainer.logger, "log_metrics"):
-                            trainer.logger.log_metrics(
-                                {metric_name: metric_value}, step=trainer.global_step
-                            )
-                        elif hasattr(trainer.logger.experiment, "add_scalar"):
-                            # TensorBoard logger
-                            trainer.logger.experiment.add_scalar(
-                                metric_name, metric_value, trainer.global_step
-                            )
-                        else:
-                            # Fallback for other loggers
-                            print(f"Warning: Couldn't log {metric_name} to logger")
+                    # Add to collected metrics dictionary
+                    all_metrics[metric_name] = metric_value
+
+        # Log all metrics at once
+        if hasattr(trainer.logger, "log_metrics"):
+            # WandB or other loggers that support log_metrics
+            trainer.logger.log_metrics(all_metrics, step=trainer.global_step)
+        elif hasattr(trainer.logger.experiment, "add_scalar"):
+            # TensorBoard logger
+            for metric_name, metric_value in all_metrics.items():
+                trainer.logger.experiment.add_scalar(
+                    metric_name, metric_value, trainer.global_step
+                )
+        else:
+            # Fallback for other loggers
+            print(f"Warning: Couldn't log metrics to logger. Metrics: {all_metrics}")
 
 
 class TerminalInterface(Callback):
