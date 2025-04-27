@@ -1164,9 +1164,7 @@ if wandb:
 generator = Generator(model, tokenizer)
 
 if local_rank == 0:
-    api_server = APIServer(
-        generator, host_name, port, tokenizer.bos_token, tokenizer.eos_token
-    )
+    api_server = APIServer(generator, host_name, port, tokenizer)
     api_server.start()
 
 

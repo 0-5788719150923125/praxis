@@ -23,8 +23,7 @@ class APIServer:
         generator,
         host="localhost",
         port=2100,
-        bos_token="<bos>",
-        eos_token="<eos>",
+        tokenizer: "PreTrainedTokenizer" = None,
     ):
         self.generator = generator
         self.server_thread = None
@@ -36,8 +35,8 @@ class APIServer:
             port += 1
         self.port = port
         self.parent_pid = os.getppid()
-        self.bos_token = bos_token
-        self.eos_token = eos_token
+        self.bos_token = tokenizer.bos_token
+        self.eos_token = tokenizer.eos_token
 
     def _is_port_in_use(self, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
