@@ -242,9 +242,9 @@ train_params = dict(
     enable_progress_bar=not use_dashboard,
     enable_model_summary=False,
     detect_anomaly=True if dev else False,
-    val_check_interval=16 * hparams["target_batch_size"] // hparams["batch_size"],
+    val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
     num_sanity_val_steps=0,
-    limit_val_batches=16 // hparams["batch_size"],
+    limit_val_batches=4096 // hparams["batch_size"],
     log_every_n_steps=1,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
@@ -429,7 +429,7 @@ class PeriodicEvaluation(Callback):
     def _run_evaluation_suites(self):
         metrics = evaluate_model(
             model,
-            max_samples=25,
+            max_samples=100,
             tasks=eval_tasks,
             device=device,
             vocab_size=vocab_size,
