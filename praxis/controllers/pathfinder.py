@@ -19,14 +19,14 @@ class Pathfinder(BaseController):
         super().__init__(config, allow_visualizer=True)
 
         # Create a gating network for each layer to decide the next layer
-        extra_vectors = int(allow_early_exits)
+        self.extra_vectors = int(allow_early_exits)
         self.gates = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.Linear(config.hidden_size, config.hidden_size // 2),
                     nn.ReLU(),
                     nn.Linear(
-                        config.hidden_size // 2, self.num_experts + extra_vectors
+                        config.hidden_size // 2, self.num_experts + self.extra_vectors
                     ),
                 )
                 for _ in range(self.depth)
@@ -50,15 +50,20 @@ class Pathfinder(BaseController):
         # Compute next layer probabilities
         gate_probs = F.softmax(gate_logits, dim=1)
 
-        # For training stability, compute a small entropy loss
-        # This encourages exploration of different routing paths
+        # Calculate entropy loss for training
         gating_loss = torch.tensor(0.0, device=hidden_states.device)
         if self.training:
             entropy = -(gate_probs * torch.log(gate_probs + 1e-10)).sum(dim=1).mean()
-            gating_loss = -0.01 * entropy  # Encourage exploration with negative loss
+            gating_loss = -0.01 * entropy  # Encourage exploration
 
-        # Select the next layer (expert) to process
-        next_expert_idx = torch.argmax(gate_probs, dim=1)[0].item()
+        # Get each example's vote for which expert to use next
+        batch_votes = torch.argmax(gate_probs, dim=1)  # [batch_size]
+
+        # Find the most common vote (mode) across the batch
+        vote_counts = torch.bincount(
+            batch_votes, minlength=self.num_experts + self.extra_vectors
+        )
+        next_expert_idx = torch.argmax(vote_counts).item()
 
         # Allow early exits
         if next_expert_idx == self.num_experts:
