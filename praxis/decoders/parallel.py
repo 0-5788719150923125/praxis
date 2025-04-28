@@ -6,18 +6,17 @@ import torch.nn.parallel as parallel
 from torch import Tensor, nn
 from transformers.configuration_utils import PretrainedConfig
 
+from praxis.decoders.base import BaseDecoder
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
-from praxis.stacks import PraxisStack
 
 ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
 
 
-class ParallelDecoder(nn.Module):
+class ParallelDecoder(BaseDecoder):
     def __init__(
         self, config: ConfigType, mode: Literal["mean", "variance", "weighted"] = "mean"
     ) -> None:
-        super().__init__()
-        self.stack = PraxisStack(config)
+        super().__init__(config)
         self.mode = mode
         if self.mode == "weighted":
             self.contributions = nn.Parameter(
@@ -51,10 +50,8 @@ class ParallelDecoder(nn.Module):
                 - Updated layer states
                 - Combined auxiliary loss
         """
-        sequential_experts: List[nn.Module] = list(self.stack.locals) + list(
-            self.stack.remotes
-        )
-        ordered_experts: List[nn.Module] = self.stack.controller.sort_experts(
+        sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
+        ordered_experts: List[nn.Module] = self.controller.sort_experts(
             sequential_experts.copy()
         )
         new_states: List[Any] = []
@@ -69,21 +66,22 @@ class ParallelDecoder(nn.Module):
                 layer_state = current_state[idx] if current_state is not None else None
                 return create_forward(
                     expert,
-                    self.stack,
+                    self.controller,
+                    self.manager,
                     input_tensor,
                     attention_mask,
                     past_key_values,
                     layer_state,
                     idx,
                     block_ids,
-                    should_checkpoint(self.training, idx, self.stack.checkpoint_every),
+                    should_checkpoint(self.training, idx, self.checkpoint_every),
                 )
 
             return expert_forward
 
         # Create function list and replicate inputs
-        expert_forwards = [create_expert_forward(i) for i in range(self.stack.depth)]
-        inputs_list = [hidden_states] * self.stack.depth
+        expert_forwards = [create_expert_forward(i) for i in range(self.depth)]
+        inputs_list = [hidden_states] * self.depth
 
         # Execute all expert forwards in parallel
         results = parallel.parallel_apply(expert_forwards, inputs_list)
@@ -99,7 +97,7 @@ class ParallelDecoder(nn.Module):
                 new_states.append(layer_state)
                 aux_losses.append(aux_loss)
 
-                hidden_update = self.stack.post_layer(hidden_update, i)
+                hidden_update = self.post_layer(hidden_update, i)
 
                 all_hidden_updates.append(hidden_update)
                 valid_expert_indices.append(i)
@@ -110,7 +108,7 @@ class ParallelDecoder(nn.Module):
         )
 
         # Apply post-decoding if defined
-        hidden_states = self.stack.post_decoding(hidden_states)
+        hidden_states = self.post_decoding(hidden_states)
 
         return hidden_states, past_key_values, current_state, sum(aux_losses)
 

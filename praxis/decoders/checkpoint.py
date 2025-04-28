@@ -9,7 +9,8 @@ from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
 
 def create_forward(
     expert: nn.Module,
-    stack: nn.Module,
+    controller: nn.Module,
+    manager: nn.Module,
     hidden_states: Tensor,
     attention_mask: Optional[Tensor],
     past_key_values: Optional[Union[List[Any], Dict[str, Any]]],
@@ -23,7 +24,8 @@ def create_forward(
 
     Args:
         expert: Expert module to execute the forward pass on
-        stack: Stack module containing the expert
+        controller: Controller module that determines routing decisions
+        manager: A network management module used for Hivemind
         hidden_states: Input tensor of shape [batch_size, seq_len, hidden_size]
         attention_mask: Optional attention mask tensor
         past_key_values: Optional cached key/values for faster inference
@@ -67,7 +69,7 @@ def create_forward(
                 - Auxiliary loss
         """
         # Add positional context to both hidden states and attention mask
-        hidden_states, attention_mask = stack.controller.add_context(
+        hidden_states, attention_mask = controller.add_context(
             hidden_states, attention_mask, current_depth
         )
         # Forward pass
@@ -80,7 +82,7 @@ def create_forward(
             block_ids,
         )
         # Remove context from both hidden states and attention mask
-        states, attention_mask = stack.controller.remove_context(states, attention_mask)
+        states, attention_mask = controller.remove_context(states, attention_mask)
 
         return states, layer_kv, state_update, aux_loss
 
@@ -106,9 +108,8 @@ def create_forward(
                 block_ids,
             )
     except (P2PDaemonError, P2PHandlerError) as e:
-        if stack.debug:
-            print(e)
-        stack.manager.handle_failure(expert)
+        print(e)
+        manager.handle_failure(expert)
         return None
 
 

@@ -71,17 +71,17 @@ class PraxisModel(PreTrainedModel):
         """
         Log visible multiaddresses for hivemind node if available.
         """
-        if self.decoder.stack.manager:
-            self.decoder.stack.manager.get_visible_maddrs()
+        if self.decoder.manager:
+            self.decoder.manager.get_visible_maddrs()
 
     def get_metrics(self) -> dict:
         """
-        Get model metrics from the stack.
+        Get model metrics from the decoder.
 
         Returns:
             Dictionary of model metrics
         """
-        return dict(**self.decoder.stack.get_metrics())
+        return dict(**self.decoder.get_metrics())
 
 
 class PraxisForCausalLM(PraxisModel, GenerationMixin):

@@ -13,9 +13,9 @@ from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
 from praxis.orchestration.hivemind import PraxisManagement
 
 
-class PraxisStack(nn.Module):
+class BaseDecoder(nn.Module):
     """
-    A module that wraps specialized operations in a decoder.
+    A module that wraps decoder operations.
     """
 
     __version__ = "0.1.0"

@@ -59,4 +59,4 @@ def test_forward_pass(module_setup):
     # Verify output shape
     assert hidden_states.shape == inputs.shape
     # Verify correct number of layers/experts
-    assert num_experts == len(decoder.stack.locals)
+    assert num_experts == len(decoder.locals)
