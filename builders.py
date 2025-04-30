@@ -91,6 +91,7 @@ HUGGINGFACE_DATASETS = {
         keys=["code"],
         format=DataFormat.SIMPLE,
         weight=1.0,
+        trust_remote_code=True,
     ),
     "tinystories": dict(
         path="roneneldan/TinyStories",
@@ -164,14 +165,14 @@ DATASET_COLLECTIONS = dict(
     },
     phi={
         "fineweb": 0.5,
-        "textbooks": 0.003,
+        "textbooks": 0.005,
         "soda": 0.01,
-        "cosmopedia-v2": 0.005,
-        "natural-instructions": 0.01,
+        "cosmopedia-v2": 0.01,
+        "natural-instructions": 0.02,
+        "github-code": 0.01,
         # "smoltalk": 0.005,
         # "persona-chat": 0.002,
         # "wikipedia": 0.001,
-        # "github-code": 0.01,
         # "tinystories": 0.05,
         # "legal": 0.001,
     },
@@ -603,7 +604,7 @@ class InterleaveDataManager:
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
             # Use a separator token between sequences
-            sequence += new_sequences[0] + self.tokenizer.sep_token + "\n"
+            sequence += new_sequences[0] + self.tokenizer.eos_token + "\n"
         return sequence
 
     def _extend_token_stream(self):
@@ -657,7 +658,7 @@ class HuggingfaceDataset(PraxisSampler):
             path=self.dataset_path,
             split=config.get("split", "train"),
             streaming=config.get("streaming", True),
-            trust_remote_code=False,
+            trust_remote_code=config.get("trust_remote_code", False),
         )
         if "name" in config:
             dataset_args["name"] = config["name"]

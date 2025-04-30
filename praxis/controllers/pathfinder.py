@@ -22,13 +22,7 @@ class Pathfinder(BaseController):
         self.extra_vectors = int(allow_early_exits)
         self.gates = nn.ModuleList(
             [
-                nn.Sequential(
-                    nn.Linear(config.hidden_size, config.hidden_size // 2),
-                    nn.ReLU(),
-                    nn.Linear(
-                        config.hidden_size // 2, self.num_experts + self.extra_vectors
-                    ),
-                )
+                nn.Linear(config.hidden_size, self.num_experts + self.extra_vectors)
                 for _ in range(self.depth)
             ]
         )
