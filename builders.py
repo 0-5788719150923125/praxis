@@ -28,48 +28,42 @@ HUGGINGFACE_DATASETS = {
         split="train",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
+        streaming=False,
     ),
     "minipile-validation": dict(
         path="JeanKaddour/minipile",
         split="validation",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
         streaming=False,
     ),
     "textbooks": dict(
         path="open-phi/textbooks",
         keys=["markdown"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "cosmopedia-v2": dict(
         path="HuggingFaceTB/smollm-corpus",
         name="cosmopedia-v2",
         keys=["prompt", "text"],
         format=DataFormat.INSTRUCTION,
-        weight=1.0,
     ),
     "natural-instructions": dict(
         path="Muennighoff/natural-instructions",
         name="default",
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
-        weight=1.0,
     ),
     "persona-chat": dict(
         path="google/Synthetic-Persona-Chat",
         keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
         format=DataFormat.PERSONACHAT,
-        weight=1.0,
     ),
     "smoltalk": dict(
         path="HuggingFaceTB/smoltalk",
         name="all",
         keys=["messages"],
         format=DataFormat.SMOLTALK,
-        weight=1.0,
     ),
     "soda": dict(
         path="allenai/soda",
@@ -83,14 +77,12 @@ HUGGINGFACE_DATASETS = {
             "tail",
         ],
         format=DataFormat.SODA,
-        weight=1.0,
     ),
     "github-code": dict(
         path="codeparrot/github-code",
         name="all-all",
         keys=["code"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
         trust_remote_code=True,
     ),
     "tinystories": dict(
@@ -98,21 +90,18 @@ HUGGINGFACE_DATASETS = {
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "legal": dict(
         path="pile-of-law/pile-of-law",
         name="all",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "wikipedia": dict(
         path="wikimedia/wikipedia",
         name="20231101.en",
         keys=["title", "text"],
         format=DataFormat.WIKI,
-        weight=1.0,
     ),
     "redpajama": dict(
         path="togethercomputer/RedPajama-Data-V2",
@@ -120,48 +109,43 @@ HUGGINGFACE_DATASETS = {
         snapshots=["2023-14"],
         keys=["raw_content"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "slimpajama": dict(
         path="cerebras/SlimPajama-627B",
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "fineweb-edu-10bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-10BT",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "fineweb-edu-100bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-100BT",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "fineweb-edu-350bt": dict(
         path="HuggingFaceFW/fineweb-edu",
         name="sample-350BT",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
     "fineweb": dict(
         path="HuggingFaceFW/fineweb",
         name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
-        weight=1.0,
     ),
 }
 
+DEFAULT_WEIGHT = 1.0
 DATASET_COLLECTIONS = dict(
     base={
-        "fineweb-edu-350bt": 1.0,
+        "fineweb-edu-350bt": DEFAULT_WEIGHT,
     },
     phi={
         "fineweb": 0.5,
@@ -177,16 +161,16 @@ DATASET_COLLECTIONS = dict(
         # "legal": 0.001,
     },
     pile={
-        "minipile-train": 1.0,
+        "minipile-train": DEFAULT_WEIGHT,
     },
     validation={
-        "minipile-validation": 1.0,
+        "minipile-validation": DEFAULT_WEIGHT,
     },
     dev={
-        "textbooks": 1.0,
+        "textbooks": DEFAULT_WEIGHT,
     },
     redpajama={
-        "redpajama": 1.0,
+        "redpajama": DEFAULT_WEIGHT,
     },
 )
 

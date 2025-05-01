@@ -122,7 +122,7 @@ def format_messages_to_chatml(messages, tokenizer):
 def extract_assistant_reply(generated_text, tokenizer):
     """Extract the assistant's reply from the generated text."""
     # Find the pattern that marks the start of the assistant's response
-    assistant_start = f"{tokenizer.bos_token}assistant\n"
+    assistant_start = f"{tokenizer.bos_token}assistant"
 
     # Find the last occurrence of the assistant's start token
     start_index = generated_text.rfind(assistant_start)

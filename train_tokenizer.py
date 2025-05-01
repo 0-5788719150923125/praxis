@@ -121,8 +121,7 @@ chat_template = """{% for message in messages %}
 {% endfor %}
 {% if add_generation_prompt %}
 {{ bos_token }}assistant
-{% endif %}
-{{ eos_token }}"""
+{% endif %}"""
 
 
 trained_tokenizer.chat_template = chat_template
