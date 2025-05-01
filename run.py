@@ -429,7 +429,7 @@ class PeriodicEvaluation(Callback):
     def _run_evaluation_suites(self):
         metrics = evaluate_model(
             model,
-            max_samples=1000,
+            max_samples=500,
             tasks=eval_tasks,
             device=device,
             vocab_size=vocab_size,
@@ -525,7 +525,8 @@ class TerminalInterface(Callback):
 
     def on_validation_end(self, trainer, lm):
         super().on_validation_end(trainer, lm)
-        self.dashboard.set_mode("evaluation")
+        if self.dashboard:
+            self.dashboard.set_mode("evaluation")
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)

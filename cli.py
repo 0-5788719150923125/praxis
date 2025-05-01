@@ -495,7 +495,7 @@ def get_cli_args():
     return args
 
 
-def log_command(exclude_from_hash=["--reset"]):
+def log_command(exclude_from_hash=["--reset", "--debug"]):
     """
     Logs the current command line execution to history.log in the root directory.
     New commands are added to the top of the file.
