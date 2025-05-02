@@ -10,24 +10,13 @@ from torch import Tensor
 from praxis.controllers.base import BaseController
 
 
-class ToolStackState:
-    """Extended stack state that also includes information about the selected tool."""
-
-    def __init__(
-        self,
-        stack_state: StackState,
-        tool_idx: Optional[Tensor] = None,
-        tool_output: Optional[Tensor] = None,
-    ):
-        self.stack_state = stack_state
-        self.tool_idx = tool_idx  # [batch_size]
-        self.tool_output = tool_output  # [batch_size, hidden_size]
-
-
 class NeuralController(BaseController):
     """
-    An enhanced neural controller that deeply integrates tool selection
-    with NeuralLambda's stack operations.
+    A neural routing module that uses NeuralLambda's stack to maintain memory of routing
+    decisions while being compatible with the Pathfinder interface.
+
+    This module enhances routing decisions by using a differentiable stack to track
+    layer visitation history and applying different activation functions as tools.
     """
 
     def __init__(self, config: "AutoConfig") -> None:
@@ -35,7 +24,7 @@ class NeuralController(BaseController):
 
         # Retrieve dimensions from config
         self.hidden_size = config.hidden_size
-        self.stack_depth = min(16, self.depth * 2)
+        self.stack_depth = min(16, self.depth * 2)  # Allow for some revisits
 
         # Define tools (activation functions)
         self.tools = [
@@ -65,10 +54,8 @@ class NeuralController(BaseController):
         # Parameter for pointer sharpening in stack
         self.sharpen_pointer = 5.0
 
-    def _initialize_stack(
-        self, batch_size: int, device: torch.device
-    ) -> ToolStackState:
-        """Initialize a new stack state with tool information."""
+    def _initialize_stack(self, batch_size: int, device: torch.device) -> StackState:
+        """Initialize a new stack state."""
         # Create initial pointer (focused on position 0)
         pointer = torch.zeros((batch_size, self.stack_depth), device=device)
         pointer[:, 0] = 1.0
@@ -81,21 +68,22 @@ class NeuralController(BaseController):
         # Zero vector for empty stack positions
         zero_vec = torch.zeros((batch_size, self.hidden_size // 4), device=device)
 
-        # Create basic stack state
-        stack_state = StackState(stack, pointer, zero_vec)
-
-        # Initialize with no tool selected
-        return ToolStackState(stack_state)
+        return StackState(stack, pointer, zero_vec)
 
     def _apply_tool_and_stack_op(
         self,
-        tool_stack_state: ToolStackState,
+        stack_state: StackState,
         op_probs: Tensor,  # [batch_size, 3+num_tools]
         value: Tensor,  # [batch_size, hidden_size//4]
         projected_hidden: Tensor,  # [batch_size, hidden_size//2]
-    ) -> ToolStackState:
+    ) -> Tuple[StackState, Tensor, Tensor]:
         """
         Apply combined stack operation and tool selection.
+
+        Returns:
+            new_stack_state: Updated stack state
+            tool_indices: The indices of the selected tools [batch_size]
+            tool_outputs: The output from applying the selected tools [batch_size, hidden_size//2]
         """
         batch_size = op_probs.shape[0]
         device = op_probs.device
@@ -115,7 +103,7 @@ class NeuralController(BaseController):
 
         # Apply stack operation
         new_stack_state, _ = push_pop_nop(
-            tool_stack_state.stack_state,
+            stack_state,
             self.sharpen_pointer,
             should_push,
             should_pop,
@@ -133,29 +121,46 @@ class NeuralController(BaseController):
             tool = self.tools[tool_idx]
             tool_outputs[idx] = tool(projected_hidden[idx])
 
-        # Return updated state with tool information
-        return ToolStackState(
-            stack_state=new_stack_state, tool_idx=tool_indices, tool_output=tool_outputs
-        )
+        return new_stack_state, tool_indices, tool_outputs
 
     def get_next_expert(
         self,
         hidden_states: Tensor,
-        controller_state: Optional[ToolStackState],
+        controller_state: Optional[
+            Tuple[StackState, Optional[Tensor], Optional[Tensor]]
+        ],
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[ToolStackState, Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tuple[StackState, Tensor, Tensor], Tensor, List[int], Optional[int]]:
         """
         Determine the next expert/layer to route to using the integrated tool-stack approach.
+
+        Args:
+            hidden_states: The input tensor [batch_size, seq_len, hidden_size]
+            controller_state: Tuple of (stack_state, tool_indices, tool_outputs)
+            sequential_experts: List of sequential expert modules
+            ordered_experts: List of ordered expert modules
+            current_route: The current route list
+            current_depth: The current depth/layer index
+
+        Returns:
+            new_controller_state: Updated controller state (stack_state, tool_indices, tool_outputs)
+            gating_loss: Loss tensor for auxiliary loss
+            updated_route: Updated route list
+            next_expert_idx: Index of the next expert, or None for early exit
         """
-        batch_size, seq_len, _ = hidden_states.shape
+        batch_size, _, _ = hidden_states.shape
         device = hidden_states.device
 
-        # Get or initialize tool stack state
+        # Initialize or unpack controller state
         if controller_state is None:
-            controller_state = self._initialize_stack(batch_size, device)
+            stack_state = self._initialize_stack(batch_size, device)
+            tool_indices = None
+            tool_outputs = None
+        else:
+            stack_state, tool_indices, tool_outputs = controller_state
 
         # Get the embedding for the current layer
         layer_embedding = (
@@ -171,22 +176,20 @@ class NeuralController(BaseController):
         op_probs = F.softmax(op_logits, dim=1)
 
         # Apply stack operation and tool selection
-        new_controller_state = self._apply_tool_and_stack_op(
-            controller_state, op_probs, layer_embedding, projected_hidden
+        new_stack_state, new_tool_indices, new_tool_outputs = (
+            self._apply_tool_and_stack_op(
+                stack_state, op_probs, layer_embedding, projected_hidden
+            )
         )
 
         # Read from the top of the stack
         stack_info = torch.sum(
-            new_controller_state.stack_state.stack
-            * new_controller_state.stack_state.pointer.unsqueeze(-1),
+            new_stack_state.stack * new_stack_state.pointer.unsqueeze(-1),
             dim=1,
         )
 
-        # Get the tool output from the controller state
-        tool_output = new_controller_state.tool_output
-
         # Combine tool output with stack information for routing decision
-        combined_features = torch.cat([tool_output, stack_info], dim=1)
+        combined_features = torch.cat([new_tool_outputs, stack_info], dim=1)
 
         # Get routing logits and probabilities
         routing_logits = self.router(combined_features)
@@ -206,24 +209,31 @@ class NeuralController(BaseController):
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
+        # Prepare new controller state
+        new_controller_state = (new_stack_state, new_tool_indices, new_tool_outputs)
+
         return new_controller_state, gating_loss, current_route, next_expert_idx
 
     def visualize_operation(
-        self, controller_state: ToolStackState, batch_idx: int = 0
+        self,
+        controller_state: Tuple[StackState, Optional[Tensor], Optional[Tensor]],
+        batch_idx: int = 0,
     ) -> Dict:
         """Generate visualization data for understanding tool and stack usage."""
-        if controller_state is None or controller_state.tool_idx is None:
+        if controller_state is None or controller_state[1] is None:
             return {}
 
+        stack_state, tool_indices, _ = controller_state
+
         # Get tool name
-        tool_idx = controller_state.tool_idx[batch_idx].item()
+        tool_idx = tool_indices[batch_idx].item()
         tool_names = ["ReLU", "Tanh", "Sigmoid", "Identity"]
         tool_name = (
             tool_names[tool_idx] if tool_idx < len(tool_names) else f"Tool {tool_idx}"
         )
 
         # Get stack pointer
-        pointer = controller_state.stack_state.pointer[batch_idx].detach().cpu().numpy()
+        pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
 
         # Return visualization data
         return {
@@ -265,7 +275,7 @@ if __name__ == "__main__":
     router = NeuralController(config)
 
     # Test the router
-    print("Testing NeuralToolController:")
+    print("Testing NeuralController:")
 
     # Simulate routing through layers
     controller_state = None
