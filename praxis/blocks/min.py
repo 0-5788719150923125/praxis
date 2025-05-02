@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
-from praxis.modules.dense import PraxisMLP
+from praxis.dense import DENSE_REGISTRY
 from praxis.modules.recurrent import minGRU
 
 
@@ -22,7 +22,7 @@ class PraxisGRU(nn.Module):
         super().__init__()
         self.norm = nn.LayerNorm(config.hidden_size)
         self.recurrent = minGRU(config.hidden_size, expansion_factor=1.0, proj_out=None)
-        self.ffn = PraxisMLP(config)
+        self.ffn = DENSE_REGISTRY.get("mlp")(config)
 
     def forward(
         self,

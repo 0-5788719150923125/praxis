@@ -7,7 +7,7 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 
 from praxis.modules.attention import ATTENTION_REGISTRY
-from praxis.modules.experts import EXPERT_REGISTRY, get_expert_config
+from praxis.modules.experts import EXPERT_REGISTRY
 from praxis.modules.residual import HyperConnection, ResidualConnection
 from praxis.utils import norm_scaling
 
@@ -35,7 +35,7 @@ class PraxisTransformer(nn.Module):
             else ResidualConnection()
         )
         self.ffn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
-        self.ffn = EXPERT_REGISTRY[get_expert_config(config.expert)["type"]](config)
+        self.ffn = EXPERT_REGISTRY[config.expert](config)
         self.use_scaler = config.scaled
 
     def forward(

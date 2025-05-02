@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.modules.dense import PraxisMLP
+from praxis.dense import DENSE_REGISTRY
 
 
 class PraxisMRU(nn.Module):
@@ -83,7 +83,7 @@ class PraxisMRU(nn.Module):
         self.dropout = nn.Dropout(self.dropout_rate)
 
         # MLP block
-        self.ffn = PraxisMLP(config)
+        self.ffn = DENSE_REGISTRY.get("mlp")(config)
         nn.init.normal_(self.ffn.up.weight, mean=0, std=0.02)
         nn.init.normal_(self.ffn.down.weight, mean=0, std=0.02 / math.sqrt(self.depth))
 

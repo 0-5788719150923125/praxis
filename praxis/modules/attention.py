@@ -8,8 +8,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import DynamicCache
 
+from praxis.dense import DENSE_REGISTRY
 from praxis.functional import alpha_entmax, alpha_relu, ghostmax
-from praxis.modules.dense import PraxisGLU, PraxisMLP
 from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.experimental.pk_attention import ProductKeyAttention
 from praxis.modules.experimental.sparse_query import SparseQuery
@@ -1276,7 +1276,9 @@ class UniversalAttentionGate(nn.Module):
         super().__init__()
         self.num_queries: int = config.num_queries
         self.hidden_size: int = config.hidden_size
-        self.approximator: PraxisMLP = PraxisMLP(config, activation=config.activation)
+        self.approximator: nn.Module = DENSE_REGISTRY.get("mlp")(
+            config, activation=config.activation
+        )
 
     def forward(self, inputs: Tensor, weights: Tensor) -> Tensor:
         """

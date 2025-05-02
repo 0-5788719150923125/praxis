@@ -19,7 +19,7 @@ from matplotlib.transforms import Affine2D
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
-from praxis.modules.dense import PraxisGLU
+from praxis.dense import DENSE_REGISTRY
 
 
 class GraphRouter(BaseController):
@@ -56,7 +56,7 @@ class GraphRouter(BaseController):
 
         # Transform the hidden states
         self.mix_norm = nn.LayerNorm(self.hidden_dim)
-        self.mixer = PraxisGLU(config)
+        self.mixer = DENSE_REGISTRY.get("glu")(config)
 
         # Graph attention components
         self.attn_norm = nn.LayerNorm(self.hidden_dim)

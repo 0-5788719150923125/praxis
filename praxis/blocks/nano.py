@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from praxis.modules.dense import PraxisMLP
+from praxis.dense import DENSE_REGISTRY
 
 
 class PraxisNano(nn.Module):
@@ -43,7 +43,7 @@ class PraxisNano(nn.Module):
         # Feed-forward network with sine activation
         config.activation = "sin"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = PraxisMLP(config)
+        self.ffw = DENSE_REGISTRY.get("mlp")(config)
 
     def forward(
         self,

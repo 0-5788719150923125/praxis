@@ -4,63 +4,21 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.modules.dense import PraxisGLU, PraxisMLP, PraxisPoly, PraxisScatter
-from praxis.modules.kan import PraxisKAN
-from praxis.modules.peer import PraxisPEER
+from praxis.dense import DENSE_REGISTRY
 from praxis.modules.recurrent import PraxisRecurrent
 from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 EXPERT_REGISTRY: Dict[str, Type[nn.Module]] = {
-    "glu": PraxisGLU,
-    "kan": PraxisKAN,
-    "mlp": PraxisMLP,
-    "peer": PraxisPEER,
-    "poly": PraxisPoly,
+    "glu": DENSE_REGISTRY.get("glu"),
+    "kan": DENSE_REGISTRY.get("kan"),
+    "mlp": DENSE_REGISTRY.get("mlp"),
+    "peer": DENSE_REGISTRY.get("peer"),
+    "poly": DENSE_REGISTRY.get("poly"),
     "recurrent": PraxisRecurrent,
-    "scatter": PraxisScatter,
+    "scatter": DENSE_REGISTRY.get("scatter"),
 }
-
-EXPERT_CONFIGS: Dict[str, Dict[str, Any]] = {
-    "glu": {},
-    "kan": {},
-    "mlp": {},
-    "peer": {
-        "num_experts": 32**2,
-        "num_heads": 4,
-        "k": 8,
-        "key_dims": 90,
-        "offset_heads": False,
-    },
-    "poly": {},
-    "recurrent": {},
-    "scatter": {},
-}
-
-
-def get_expert_config(expert: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Get configuration for the specified expert.
-
-    Args:
-        expert: Expert name as string or config as dictionary
-
-    Returns:
-        Expert configuration dictionary
-
-    Raises:
-        ValueError: If expert is not a string or dictionary, or if expert name is unknown
-    """
-    # Handle expert configuration
-    if isinstance(expert, str):
-        if expert not in EXPERT_CONFIGS:
-            raise ValueError(f"Unknown expert type: {expert}")
-        return {"type": expert, **EXPERT_CONFIGS[expert]}
-    elif isinstance(expert, dict):
-        return expert
-    else:
-        raise ValueError("Expert must be either a string or a dictionary")
 
 
 class PraxisExpert(nn.Module):

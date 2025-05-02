@@ -11,7 +11,7 @@ from praxis.activations import ACT2FN
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisPEER(nn.Module):
+class ParameterEfficientExpertRetrieval(nn.Module):
     """
     This class implements the Parameter-Efficient Expert Retrieval (PEER) mechanism:
     https://arxiv.org/abs/2407.04153v1
@@ -23,7 +23,15 @@ class PraxisPEER(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: ConfigType):
+    def __init__(
+        self,
+        config: ConfigType,
+        key_dims: int = 90,
+        num_experts: int = 32**2,
+        num_heads: int = 4,
+        k: int = 8,
+        offset_heads: bool = False,
+    ):
         """
         Initialize the PEER module.
 
@@ -33,11 +41,11 @@ class PraxisPEER(nn.Module):
         super().__init__()
 
         hidden_size = config.hidden_size
-        key_dims = config.expert["key_dims"]
-        self.k: int = config.expert["k"]
-        self.num_heads: int = config.expert["num_heads"]
-        self.offset_heads: bool = config.expert["offset_heads"]
-        self.num_experts: int = config.expert["num_experts"]
+        key_dims = key_dims
+        self.k: int = k
+        self.num_heads: int = num_heads
+        self.offset_heads: bool = offset_heads
+        self.num_experts: int = num_experts
         self.num_sets: int = 1 if not self.offset_heads else self.num_heads
 
         # Product-Key retrieval requires keys to be a perfect square of the total experts
@@ -265,7 +273,7 @@ if __name__ == "__main__":
             f"hidden_size={config.hidden_size}, activation={config.activation}, dropout={config.dropout}"
         )
 
-        model = PraxisPEER(config)
+        model = ParameterEfficientExpertRetrieval(config)
         model = model.to("cuda")
 
         # Test multiple input shapes

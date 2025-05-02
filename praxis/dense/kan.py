@@ -12,7 +12,7 @@ from praxis.activations import ACT2FN
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisKAN(nn.Module):
+class KolmogorovArnoldNetwork(nn.Module):
     """
     An implementation of an approximate Kolmogorov-Arnold Network, of which is
     a theoretical alternative to the traditional Multi-Layer Perceptron. We use
@@ -205,7 +205,7 @@ if __name__ == "__main__":
             activation = "silu"
 
         # Create model
-        model = PraxisKAN(config=DummyConfig())
+        model = KolmogorovArnoldNetwork(config=DummyConfig())
 
         # Create input tensor
         x = torch.randn(config["batch_size"], config["seq_len"], config["dim"])
@@ -249,7 +249,7 @@ if __name__ == "__main__":
 
     # Test with zero inputs
     try:
-        model = PraxisKAN(DummyConfig())
+        model = KolmogorovArnoldNetwork(DummyConfig())
         x_zero = torch.zeros(1, 1, 2)
         y_zero = model(x_zero)
         print("✓ Zero input test passed")
@@ -258,7 +258,7 @@ if __name__ == "__main__":
 
     # Test with very large values
     try:
-        model = PraxisKAN(DummyConfig())
+        model = KolmogorovArnoldNetwork(DummyConfig())
         x_large = torch.ones(1, 1, 2) * 1000
         y_large = model(x_large)
         print("✓ Large value test passed")

@@ -9,7 +9,7 @@ from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
 from praxis.activations import ACT2FN
-from praxis.modules.dense import PraxisGLU
+from praxis.dense import DENSE_REGISTRY
 
 
 class PraxisConv(nn.Module):
@@ -43,7 +43,7 @@ class PraxisConv(nn.Module):
 
         config.activation = "sin_cos"
         self.ffw_norm = nn.LayerNorm(hidden_dim)
-        self.ffw = PraxisGLU(config)
+        self.ffw = DENSE_REGISTRY.get("glu")(config)
 
     def forward(
         self,

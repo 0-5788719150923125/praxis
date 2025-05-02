@@ -18,8 +18,6 @@ from matplotlib.patches import Circle
 from matplotlib.path import Path
 from matplotlib.transforms import Affine2D
 
-from praxis.modules.dense import PraxisGLU
-
 
 class RouteVisualizer:
     """
