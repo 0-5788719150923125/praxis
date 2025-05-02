@@ -15,5 +15,5 @@ CONTROLLER_REGISTRY = dict(
     # autopilot=Autopilot,
     pathfinder=Pathfinder,
     shortcutter=partial(Pathfinder, allow_early_exits=True),
-    neural_controller=NeuralController,
+    neural=NeuralController,
 )
