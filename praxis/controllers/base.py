@@ -56,18 +56,19 @@ class BaseController(nn.Module):
     def get_next_expert(
         self,
         hidden_states: Tensor,
+        controller_state: Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, List[int], int]:
+    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
 
         next_expert_idx = current_depth
         current_route = self._update_route(
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return 0, current_route, current_depth
+        return None, 0, current_route, current_depth
 
     def _update_route(
         self,
@@ -77,8 +78,8 @@ class BaseController(nn.Module):
         next_expert_idx: int,
     ) -> List[int]:
         """Update routes used by the visualizer."""
+        current_route.append(next_expert_idx)
         if self.debug:
-            current_route.append(next_expert_idx)
             if (
                 self.visualizer
                 and not self.training

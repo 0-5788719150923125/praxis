@@ -88,12 +88,13 @@ class LayerShuffle(BaseController):
 
     def get_next_expert(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: Tensor,
+        controller_state: Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[torch.Tensor, List[int], int]:
+    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
         """
         Compute next expert selection and associated loss.
         During inference, returns actual expert index.
@@ -128,4 +129,4 @@ class LayerShuffle(BaseController):
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return aux_loss, current_route, current_depth
+        return controller_state, aux_loss, current_route, current_depth

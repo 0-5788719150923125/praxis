@@ -41,6 +41,7 @@ class SequentialDecoder(BaseDecoder):
                 - Updated layer states
                 - Combined auxiliary loss
         """
+        controller_state = None
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
         ordered_experts: List[nn.Module] = self.controller.sort_experts(
             sequential_experts.copy()
@@ -49,12 +50,15 @@ class SequentialDecoder(BaseDecoder):
         aux_losses: List[Tensor] = []
 
         for i in range(self.depth):
-            aux_loss, current_route, next_expert_idx = self.controller.get_next_expert(
-                hidden_states,
-                sequential_experts,
-                ordered_experts,
-                current_route,
-                current_depth=i,
+            controller_state, aux_loss, current_route, next_expert_idx = (
+                self.controller.get_next_expert(
+                    hidden_states,
+                    controller_state,
+                    sequential_experts,
+                    ordered_experts,
+                    current_route,
+                    current_depth=i,
+                )
             )
 
             aux_losses.append(aux_loss)

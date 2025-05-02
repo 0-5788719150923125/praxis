@@ -35,11 +35,12 @@ class Pathfinder(BaseController):
     def get_next_expert(
         self,
         hidden_states: Tensor,
+        controller_state: Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
         # Pool the hidden states - using mean pooling for simplicity
         pooled_hidden = hidden_states.mean(dim=1)  # [batch_size, hidden_size]
 
@@ -66,10 +67,10 @@ class Pathfinder(BaseController):
 
         # Allow early exits
         if next_expert_idx == self.num_experts:
-            return gating_loss, current_route, None
+            return controller_state, gating_loss, current_route, None
 
         current_route = self._update_route(
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return gating_loss, current_route, next_expert_idx
+        return controller_state, gating_loss, current_route, next_expert_idx

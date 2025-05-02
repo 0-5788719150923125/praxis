@@ -5,6 +5,7 @@ from praxis.controllers.base import BaseController
 # from praxis.controllers.autopilot import Autopilot
 from praxis.controllers.graph import GraphRouter
 from praxis.controllers.layer_shuffle import LayerShuffle
+from praxis.controllers.neural_controller import NeuralController
 from praxis.controllers.pathfinder import Pathfinder
 
 CONTROLLER_REGISTRY = dict(
@@ -14,4 +15,5 @@ CONTROLLER_REGISTRY = dict(
     # autopilot=Autopilot,
     pathfinder=Pathfinder,
     shortcutter=partial(Pathfinder, allow_early_exits=True),
+    neural_controller=NeuralController,
 )

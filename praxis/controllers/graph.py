@@ -16,6 +16,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
+from torch import Tensor
 
 from praxis.controllers.base import BaseController
 from praxis.modules.dense import PraxisGLU
@@ -215,12 +216,13 @@ class GraphRouter(BaseController):
 
     def get_next_expert(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: Tensor,
+        controller_state: Tensor,
         sequential_experts: List[nn.Module],
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[torch.Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
 
         # Get available expert indices
         available_indices = [
@@ -282,7 +284,7 @@ class GraphRouter(BaseController):
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return routing_loss, current_route, next_expert_idx
+        return controller_state, routing_loss, current_route, next_expert_idx
 
 
 class GraphAttention(nn.Module):

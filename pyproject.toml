@@ -25,6 +25,7 @@ dependencies = [
     "lightning",
     "lsprotocol",
     "matplotlib",
+    "neurallambda @ git+https://github.com/neurallambda/neurallambda",
     "cut-cross-entropy @ git+https://github.com/apple/ml-cross-entropy",
     "networkx",
     "pygls",
