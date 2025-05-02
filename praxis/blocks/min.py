@@ -8,7 +8,7 @@ from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
 from praxis.dense import DENSE_REGISTRY
-from praxis.modules.recurrent import minGRU
+from praxis.recurrent import RECURRENT_REGISTRY
 
 
 class PraxisGRU(nn.Module):
@@ -21,7 +21,9 @@ class PraxisGRU(nn.Module):
     def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(config.hidden_size)
-        self.recurrent = minGRU(config.hidden_size, expansion_factor=1.0, proj_out=None)
+        self.recurrent = RECURRENT_REGISTRY["min_gru"](
+            config.hidden_size, expansion_factor=1.0, proj_out=None
+        )
         self.ffn = DENSE_REGISTRY.get("mlp")(config)
 
     def forward(

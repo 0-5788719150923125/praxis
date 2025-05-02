@@ -8,35 +8,7 @@ from torch import Tensor
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class ProjectedEmbeddings(nn.Sequential):
-    """
-    An embeddings module with optional projection layer and dropout.
-    If embed_size differs from hidden_size, a linear projection layer is added
-    to map the embeddings to the required hidden dimension.
-    """
-
-    def __init__(self, config: ConfigType) -> None:
-        """
-        Initialize embeddings module.
-
-        Args:
-            config: Configuration object with model parameters
-        """
-        layers = OrderedDict()
-
-        # Token embeddings using embed_size
-        layers["tokens"] = nn.Embedding(config.vocab_size, config.embed_size)
-
-        # Add projection layer if dimensions differ
-        if config.embed_size != config.hidden_size:
-            layers["projection"] = nn.Linear(config.embed_size, config.hidden_size)
-
-        layers["dropout"] = nn.Dropout(config.dropout)
-
-        super().__init__(layers)
-
-
-class LearnedEmbeddings(nn.Sequential):
+class PositionalEmbedding(nn.Sequential):
     """
     Praxis embeddings with learned positional encodings (GPT2-style).
     Uses Sequential organization of layers.
@@ -84,14 +56,3 @@ class LearnedEmbeddings(nn.Sequential):
         hidden_states = self.reduction(hidden_states)
 
         return hidden_states
-
-
-# Registry mapping architecture names to embedding classes
-EMBEDDING_REGISTRY: Dict[str, Type[nn.Module]] = {
-    "conv": ProjectedEmbeddings,
-    "min": ProjectedEmbeddings,
-    "mru": LearnedEmbeddings,
-    "nano": LearnedEmbeddings,
-    "recurrent": ProjectedEmbeddings,
-    "transformer": ProjectedEmbeddings,
-}

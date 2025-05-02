@@ -31,7 +31,7 @@ from bytelatent.tokenizers.constants import BYTE_UNITS, EOS_ID, OFFSET
 from bytelatent.transformer import LMTransformer, LMTransformerArgs
 from torch import nn
 
-from praxis.modules.recurrent import minGRU
+from praxis.recurrent import RECURRENT_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 

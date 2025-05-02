@@ -5,8 +5,8 @@ import torch.nn as nn
 from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
-from praxis.modules.recurrent import minGRU
 from praxis.modules.smear import PraxisSMEAR
+from praxis.recurrent import RECURRENT_REGISTRY
 
 
 class PraxisRecurrent(nn.Module):
@@ -29,7 +29,7 @@ class PraxisRecurrent(nn.Module):
             config,
             experts=nn.ModuleList(
                 [
-                    minGRU(config.hidden_size, proj_out=True)
+                    RECURRENT_REGISTRY["min_gru"](config.hidden_size, proj_out=True)
                     for _ in range(config.num_experts)
                 ]
             ),

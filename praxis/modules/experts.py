@@ -5,20 +5,12 @@ import torch.nn as nn
 from torch import Tensor
 
 from praxis.dense import DENSE_REGISTRY
-from praxis.modules.recurrent import PraxisRecurrent
+from praxis.recurrent import RECURRENT_REGISTRY
 from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
-EXPERT_REGISTRY: Dict[str, Type[nn.Module]] = {
-    "glu": DENSE_REGISTRY.get("glu"),
-    "kan": DENSE_REGISTRY.get("kan"),
-    "mlp": DENSE_REGISTRY.get("mlp"),
-    "peer": DENSE_REGISTRY.get("peer"),
-    "poly": DENSE_REGISTRY.get("poly"),
-    "recurrent": PraxisRecurrent,
-    "scatter": DENSE_REGISTRY.get("scatter"),
-}
+EXPERT_REGISTRY: Dict[str, Type[nn.Module]] = {**DENSE_REGISTRY}
 
 
 class PraxisExpert(nn.Module):

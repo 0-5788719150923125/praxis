@@ -10,9 +10,8 @@ from transformers.modeling_outputs import (
     CausalLMOutputWithPast,
 )
 
-from praxis import DECODER_REGISTRY, ENCODER_REGISTRY, PraxisConfig
+from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
 from praxis.losses import get_loss_function
-from praxis.modules import EMBEDDING_REGISTRY
 from praxis.utils import create_block_ids
 
 
