@@ -3,7 +3,7 @@ import os
 import random
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TypeVar
 
 import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
@@ -21,6 +21,8 @@ from torch import Tensor
 from praxis.controllers.base import BaseController
 from praxis.dense import DENSE_REGISTRY
 
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
 
 class GraphRouter(BaseController):
     """
@@ -28,7 +30,7 @@ class GraphRouter(BaseController):
     https://arxiv.org/abs/2209.10655
     """
 
-    def __init__(self, config: "AutoConfig"):
+    def __init__(self, config: ConfigType):
         super().__init__(config, allow_visualizer=True)
         self.causal = config.causal
         self.num_layers = config.num_experts

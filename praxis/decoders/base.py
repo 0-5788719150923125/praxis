@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,8 @@ from praxis.modules.evolution import GenomicBottleneck
 from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
 from praxis.orchestration.hivemind import PraxisManagement
 
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
 
 class BaseDecoder(nn.Module):
     """
@@ -20,7 +22,7 @@ class BaseDecoder(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig") -> None:
+    def __init__(self, config: ConfigType) -> None:
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth

@@ -1,6 +1,6 @@
 import math
 import time
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -11,6 +11,8 @@ from transformers.configuration_utils import PretrainedConfig
 from praxis.activations import ACT2FN
 from praxis.dense import DENSE_REGISTRY
 
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
 
 class PraxisConv(nn.Module):
     """
@@ -20,7 +22,7 @@ class PraxisConv(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
+    def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         """
         Initialize PraxisConv block.
 

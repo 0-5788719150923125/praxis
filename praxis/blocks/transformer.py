@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, OrderedDict, Tuple, Union
+from typing import Any, Dict, List, Optional, OrderedDict, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -11,6 +11,7 @@ from praxis.modules.experts import EXPERT_REGISTRY
 from praxis.modules.residual import HyperConnection, ResidualConnection
 from praxis.utils import norm_scaling
 
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))
 
 
@@ -20,7 +21,7 @@ class PraxisTransformer(nn.Module):
     A standard transformer block, with adjustable feedforward "experts".
     """
 
-    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
+    def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.attn_res = (
             HyperConnection(config.hidden_size)

@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class Pathfinder(BaseController):
@@ -15,7 +17,7 @@ class Pathfinder(BaseController):
     the current hidden state.
     """
 
-    def __init__(self, config: "AutoConfig", allow_early_exits: bool = False) -> None:
+    def __init__(self, config: ConfigType, allow_early_exits: bool = False) -> None:
         super().__init__(config, allow_visualizer=True)
 
         # Create a gating network for each layer to decide the next layer

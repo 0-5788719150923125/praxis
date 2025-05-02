@@ -1,10 +1,12 @@
 from math import ceil, floor, sqrt
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn import Module, ModuleList
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 def exists(v: Any) -> bool:
@@ -23,7 +25,7 @@ class ProductKeyAttention(Module):
 
     def __init__(
         self,
-        config: "AutoConfig" = None,
+        config: ConfigType = None,
         dim: Optional[int] = None,
         causal: Optional[bool] = None,
         heads: Optional[int] = None,

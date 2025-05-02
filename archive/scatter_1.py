@@ -1,16 +1,18 @@
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
 
 from praxis.activations import ACT2CLS, ACT2FN
 
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
 
 class PraxisScatter(nn.Module):
     def __init__(
         self,
-        config: "AutoConfig",
+        config: ConfigType,
         activation=None,
         input_dim=None,
         hidden_dim=None,

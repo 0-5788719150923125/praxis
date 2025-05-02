@@ -1,5 +1,5 @@
 import math
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.dense import DENSE_REGISTRY
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisNano(nn.Module):
@@ -20,7 +22,7 @@ class PraxisNano(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args: Any, **kwargs: Any) -> None:
+    def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         hidden_dim = config.hidden_size
 

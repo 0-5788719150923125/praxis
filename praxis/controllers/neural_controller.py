@@ -1,13 +1,14 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from neurallambda.stack import StackState, push_pop_nop
-from neurallambda.torch import cosine_similarity
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class NeuralController(BaseController):
@@ -19,7 +20,7 @@ class NeuralController(BaseController):
     layer visitation history and applying different activation functions as tools.
     """
 
-    def __init__(self, config: "AutoConfig") -> None:
+    def __init__(self, config: ConfigType) -> None:
         super().__init__(config, allow_visualizer=True)
 
         # Retrieve dimensions from config

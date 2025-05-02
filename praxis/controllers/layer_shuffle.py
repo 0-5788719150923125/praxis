@@ -1,5 +1,5 @@
 import random
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class LayerShuffle(BaseController):
@@ -17,7 +19,7 @@ class LayerShuffle(BaseController):
     https://arxiv.org/abs/2407.04513
     """
 
-    def __init__(self, config: "AutoConfig", num_context_tokens: int = 0):
+    def __init__(self, config: ConfigType, num_context_tokens: int = 0):
         super().__init__(config)
 
         # self.navigator = (

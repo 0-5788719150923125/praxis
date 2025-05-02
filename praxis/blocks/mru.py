@@ -1,6 +1,6 @@
 import math
 import random
-from typing import Optional
+from typing import Optional, TypeVar
 
 import torch
 import torch.nn as nn
@@ -8,6 +8,8 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.dense import DENSE_REGISTRY
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisMRU(nn.Module):
@@ -19,7 +21,7 @@ class PraxisMRU(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "AutoConfig", *args, **kwargs):
+    def __init__(self, config: ConfigType, *args, **kwargs):
         super().__init__()
 
         # Architecture parameters
