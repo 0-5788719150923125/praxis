@@ -9,8 +9,7 @@ from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
-from praxis.experimental.experts import EXPERT_REGISTRY, PraxisExpert
-from praxis.orchestration.hivemind import PraxisManagement
+from praxis.orchestration import EXPERT_REGISTRY, PraxisExpert, PraxisManagement
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 

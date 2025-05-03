@@ -4,13 +4,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.dense import DENSE_REGISTRY
-from praxis.recurrent import RECURRENT_REGISTRY
 from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
-
-EXPERT_REGISTRY: Dict[str, Type[nn.Module]] = {**DENSE_REGISTRY}
 
 
 class PraxisExpert(nn.Module):
