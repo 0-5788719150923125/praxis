@@ -7,9 +7,9 @@ import torch
 from torch import nn
 
 from praxis import PraxisConfig
-from praxis.modules.residual import HyperConnection, ResidualConnection
+from praxis.residuals import RESIDUAL_REGISTRY
 
-MODULE_CLASSES = [HyperConnection, ResidualConnection]
+MODULE_CLASSES = list(RESIDUAL_REGISTRY.values())
 
 
 # Define test parameters in a more structured way

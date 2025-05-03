@@ -30,6 +30,7 @@ class PraxisConfig(PretrainedConfig):
         attention_type: str = "standard",
         encoder_type: Optional[str] = None,
         decoder_type: str = "sequential",
+        residual_type: str = "standard",
         linear: bool = False,
         differential: bool = False,
         stickbreaking: bool = False,
@@ -38,7 +39,6 @@ class PraxisConfig(PretrainedConfig):
         mega: bool = False,
         gated: bool = False,
         evolve: bool = False,
-        hyper: bool = False,
         scaled: bool = False,
         hivemind: bool = False,
         initial_peers: List[str] = None,
@@ -92,12 +92,12 @@ class PraxisConfig(PretrainedConfig):
         self.encoding = encoding
         self.router_type = router_type
         self.controller_type = controller_type
+        self.residual_type = residual_type
         self.memory = memory
         self.mta = mta
         self.mega = mega
         self.gated = gated
         self.evolve = evolve
-        self.hyper = hyper
         self.scaled = scaled
         self.hivemind = hivemind
         self.initial_peers = initial_peers

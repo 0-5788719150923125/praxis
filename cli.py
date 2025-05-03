@@ -18,6 +18,7 @@ from praxis import (
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
     LOSS_REGISTRY,
+    RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
 )
 
@@ -196,6 +197,13 @@ architecture_group.add_argument(
     help="How to route tokens at every layer",
 )
 architecture_group.add_argument(
+    "--residual_type",
+    type=str,
+    choices=RESIDUAL_REGISTRY.keys(),
+    default="standard",
+    help="The style of residual connection to use",
+)
+architecture_group.add_argument(
     "--activation",
     type=str,
     choices=ACTIVATION_REGISTRY.keys(),
@@ -327,12 +335,6 @@ architecture_group.add_argument(
     action="store_true",
     default=False,
     help="Use a genomic bottleneck",
-)
-architecture_group.add_argument(
-    "--hyper",
-    action="store_true",
-    default=False,
-    help="Replace residual connections with hyper-connections",
 )
 architecture_group.add_argument(
     "--scaled",

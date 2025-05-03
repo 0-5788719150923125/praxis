@@ -281,7 +281,7 @@ class NeuralController(BaseController):
             self.debug
             and not self.training
             and hidden_states.size(0) == 1
-            and random.random() < 0.1
+            and random.random() < (0.1 / self.depth)
         ):
             output = self.visualize_operation(new_controller_state, batch_idx=0)
             print(f"DEBUG: tool: {output['tool']}, sharpness: {output['sharpness']}")

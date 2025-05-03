@@ -8,7 +8,7 @@ from torch import Tensor
 
 from praxis.modules.attention import ATTENTION_REGISTRY
 from praxis.modules.experts import EXPERT_REGISTRY
-from praxis.modules.residual import HyperConnection, ResidualConnection
+from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.utils import norm_scaling
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -23,18 +23,10 @@ class PraxisTransformer(nn.Module):
 
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
-        self.attn_res = (
-            HyperConnection(config.hidden_size)
-            if config.hyper
-            else ResidualConnection()
-        )
+        self.attn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
         self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
-        self.ffn_res = (
-            HyperConnection(config.hidden_size)
-            if config.hyper
-            else ResidualConnection()
-        )
+        self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
         self.ffn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.ffn = EXPERT_REGISTRY[config.expert](config)
         self.use_scaler = config.scaled
