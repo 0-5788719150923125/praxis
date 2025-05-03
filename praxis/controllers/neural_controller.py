@@ -173,18 +173,11 @@ class NeuralController(BaseController):
         tool_outputs = torch.zeros_like(projected_state)
 
         for idx in range(batch_size):
-            # Get tool index
+            # Get tool
             tool_idx = tool_indices[idx].item()
-
-            # Get the appropriate tool
-            if tool_idx < len(self.fixed_tools):
-                # Apply fixed activation function
-                tool = self.tools[tool_idx]
-                tool_outputs[idx] = tool(projected_state[idx])
-            else:
-                # Apply trainable neural network
-                tool = self.tools[tool_idx]
-                tool_outputs[idx] = tool(projected_state[idx].unsqueeze(0)).squeeze(0)
+            tool = self.tools[tool_idx]
+            # Apply tool
+            tool_outputs[idx] = tool(projected_state[idx])
 
         return tool_indices, tool_outputs
 
@@ -304,7 +297,7 @@ class NeuralController(BaseController):
             tool_name = "Unknown"
 
         # Get stack pointer
-        pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
+        # pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
 
         # Return visualization data
         return {
