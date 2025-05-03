@@ -1,9 +1,10 @@
+import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from neurallambda.stack import StackState, push_pop_nop
+from neurallambda.stack import StackState, initialize, push_pop_nop, read
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
@@ -16,91 +17,87 @@ class NeuralController(BaseController):
     A neural routing module that uses NeuralLambda's stack to maintain memory of routing
     decisions while being compatible with the Pathfinder interface.
 
-    This module enhances routing decisions by using a differentiable stack to track
-    layer visitation history and applying different activation functions as tools.
+    This version includes gradient stabilization and tensor dimensionality preservation
+    to avoid optimizer errors.
     """
 
     def __init__(self, config: ConfigType) -> None:
         super().__init__(config, allow_visualizer=True)
 
-        # Retrieve dimensions from config
+        # Core dimensions
         self.hidden_size = config.hidden_size
-        self.stack_depth = min(16, self.depth * 2)  # Allow for some revisits
+        self.stack_depth = min(16, self.depth * 2)
+        self.emb_dim = self.hidden_size // 4
 
-        # Define tools (activation functions)
+        # Tools (activation functions)
         self.tools = [
             F.relu,  # Tool 0: ReLU
             torch.tanh,  # Tool 1: Tanh
             torch.sigmoid,  # Tool 2: Sigmoid
-            lambda x: x,  # Tool 3: Identity (pass-through)
+            lambda x: x,  # Tool 3: Identity
         ]
 
-        # Embedding for each layer
-        self.layer_embeddings = nn.Parameter(
-            torch.randn(self.depth, self.hidden_size // 4)
-        )
+        # Layer embeddings - unique representations for each layer
+        self.layer_embeddings = nn.Parameter(torch.randn(self.depth, self.emb_dim))
 
-        # Projection for hidden states
+        # Projection networks
         self.state_projector = nn.Linear(self.hidden_size, self.hidden_size // 2)
 
-        # Combined operation controller (stack ops + tools in one decision)
-        # 3 stack operations + len(tools) tool operations
-        self.op_controller = nn.Linear(self.hidden_size // 2, 3 + len(self.tools))
+        # Separate decision networks for stack and tools
+        self.stack_controller = nn.Linear(
+            self.hidden_size // 2, 3
+        )  # push, pop, null_op
+        self.tool_selector = nn.Linear(self.hidden_size // 2, len(self.tools))
 
-        # Routing decision network
-        self.router = nn.Linear(
-            self.hidden_size // 2 + self.hidden_size // 4, self.num_experts
-        )
+        # Routing decision network (combines information from state and memory)
+        self.router = nn.Linear(self.hidden_size // 2 + self.emb_dim, self.num_experts)
 
-        # Parameter for pointer sharpening in stack
-        self.sharpen_pointer = 5.0
+        # Stack parameters - use a buffer instead of parameter to avoid scalar gradients
+        self.sharpen_pointer = nn.Parameter(torch.tensor([5.0]))
+
+        # Initialize parameters
+        self._init_parameters()
+
+    def _init_parameters(self):
+        """Initialize parameters with appropriate scaling."""
+        for module in [
+            self.state_projector,
+            self.stack_controller,
+            self.tool_selector,
+            self.router,
+        ]:
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
     def _initialize_stack(self, batch_size: int, device: torch.device) -> StackState:
-        """Initialize a new stack state."""
-        # Create initial pointer (focused on position 0)
-        pointer = torch.zeros((batch_size, self.stack_depth), device=device)
-        pointer[:, 0] = 1.0
-
-        # Create empty stack
-        stack = torch.zeros(
-            (batch_size, self.stack_depth, self.hidden_size // 4), device=device
+        """Initialize a new stack state with proper zeros."""
+        return initialize(
+            self.emb_dim,
+            self.stack_depth,
+            batch_size,
+            0.0,  # zero offset
+            device,
+            dtype=torch.float32,
         )
 
-        # Zero vector for empty stack positions
-        zero_vec = torch.zeros((batch_size, self.hidden_size // 4), device=device)
-
-        return StackState(stack, pointer, zero_vec)
-
-    def _apply_tool_and_stack_op(
-        self,
-        stack_state: StackState,
-        op_probs: Tensor,  # [batch_size, 3+num_tools]
-        value: Tensor,  # [batch_size, hidden_size//4]
-        projected_hidden: Tensor,  # [batch_size, hidden_size//2]
-    ) -> Tuple[StackState, Tensor, Tensor]:
+    def _update_stack(
+        self, stack_state: StackState, projected_state: Tensor, layer_embedding: Tensor
+    ) -> StackState:
         """
-        Apply combined stack operation and tool selection.
-
-        Returns:
-            new_stack_state: Updated stack state
-            tool_indices: The indices of the selected tools [batch_size]
-            tool_outputs: The output from applying the selected tools [batch_size, hidden_size//2]
+        Update stack based on current state with gradient stabilization.
         """
-        batch_size = op_probs.shape[0]
-        device = op_probs.device
+        # Get stack operation probabilities
+        stack_logits = self.stack_controller(projected_state)
 
-        # Split probabilities into stack ops and tool selection
-        stack_op_probs = op_probs[:, :3]  # [batch_size, 3]
-        tool_probs = op_probs[:, 3:]  # [batch_size, num_tools]
-
-        # Normalize probabilities for each group
-        stack_op_probs = F.softmax(stack_op_probs, dim=1)
-        tool_probs = F.softmax(tool_probs, dim=1)
+        # Apply gradient stabilization before softmax
+        stack_logits = torch.clamp(stack_logits, min=-15.0, max=15.0)
+        stack_probs = F.softmax(stack_logits, dim=1)
 
         # Extract operation probabilities
-        should_push = stack_op_probs[:, 0]
-        should_pop = stack_op_probs[:, 1]
-        should_null_op = stack_op_probs[:, 2]
+        should_push = stack_probs[:, 0]
+        should_pop = stack_probs[:, 1]
+        should_null_op = stack_probs[:, 2]
 
         # Apply stack operation
         new_stack_state, _ = push_pop_nop(
@@ -109,20 +106,64 @@ class NeuralController(BaseController):
             should_push,
             should_pop,
             should_null_op,
-            value,
+            layer_embedding,
         )
 
-        # Select tool (discrete selection)
-        tool_indices = torch.argmax(tool_probs, dim=1)  # [batch_size]
+        return new_stack_state
 
-        # Apply the selected tool for each batch item
-        tool_outputs = torch.zeros_like(projected_hidden)
+    def _select_and_apply_tool(self, projected_state: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Select and apply a tool (activation function) with gradient stability.
+        """
+        batch_size = projected_state.shape[0]
+        device = projected_state.device
+
+        # Get tool probabilities with stability measures
+        tool_logits = self.tool_selector(projected_state)
+        tool_logits = torch.clamp(tool_logits, min=-15.0, max=15.0)
+        tool_probs = F.softmax(tool_logits, dim=1)
+
+        # Select tool (discrete selection via argmax)
+        tool_indices = torch.argmax(tool_probs, dim=1)
+
+        # Apply selected tool to each batch item with gradient stability
+        tool_outputs = projected_state.clone()  # Start with identity as fallback
+
         for idx in range(batch_size):
+            # Apply tool
             tool_idx = tool_indices[idx].item()
             tool = self.tools[tool_idx]
-            tool_outputs[idx] = tool(projected_hidden[idx])
+            output = tool(projected_state[idx])
+            tool_outputs[idx] = output
 
-        return new_stack_state, tool_indices, tool_outputs
+        return tool_indices, tool_outputs
+
+    def _make_routing_decision(
+        self, tool_outputs: Tensor, stack_memory: Tensor
+    ) -> Tuple[int, Tensor]:
+        """
+        Determine the next expert with gradient stability.
+        """
+
+        # Combine tool output with stack memory for routing
+        combined_features = torch.cat([tool_outputs, stack_memory], dim=1)
+
+        # Calculate routing logits and probabilities with stability
+        routing_logits = self.router(combined_features)
+        routing_logits = torch.clamp(routing_logits, min=-15.0, max=15.0)
+        gate_probs = F.softmax(routing_logits, dim=1)
+
+        # Calculate entropy loss - stabilized to avoid NaN
+        log_probs = torch.log(gate_probs + 1e-10)
+        entropy = -(gate_probs * log_probs).sum(dim=1).mean()
+        gating_loss = -0.01 * entropy.clamp(min=-10.0, max=10.0)
+
+        # Get majority vote for routing decision
+        batch_votes = torch.argmax(gate_probs, dim=1)
+        vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
+        next_expert_idx = torch.argmax(vote_counts).item()
+
+        return next_expert_idx, gating_loss
 
     def get_next_expert(
         self,
@@ -136,21 +177,7 @@ class NeuralController(BaseController):
         current_depth: int,
     ) -> Tuple[Tuple[StackState, Tensor, Tensor], Tensor, List[int], Optional[int]]:
         """
-        Determine the next expert/layer to route to using the integrated tool-stack approach.
-
-        Args:
-            hidden_states: The input tensor [batch_size, seq_len, hidden_size]
-            controller_state: Tuple of (stack_state, tool_indices, tool_outputs)
-            sequential_experts: List of sequential expert modules
-            ordered_experts: List of ordered expert modules
-            current_route: The current route list
-            current_depth: The current depth/layer index
-
-        Returns:
-            new_controller_state: Updated controller state (stack_state, tool_indices, tool_outputs)
-            gating_loss: Loss tensor for auxiliary loss
-            updated_route: Updated route list
-            next_expert_idx: Index of the next expert, or None for early exit
+        Determine the next expert/layer to route to with stabilized gradient operations.
         """
         batch_size, _, _ = hidden_states.shape
         device = hidden_states.device
@@ -163,55 +190,44 @@ class NeuralController(BaseController):
         else:
             stack_state, tool_indices, tool_outputs = controller_state
 
-        # Get the embedding for the current layer
+        # Get embedding for current layer
         layer_embedding = (
             self.layer_embeddings[current_depth].unsqueeze(0).expand(batch_size, -1)
         )
 
-        # Use the last hidden state (instead of mean pooling)
-        reduced_hidden = hidden_states[:, -1, :]
-        projected_hidden = self.state_projector(reduced_hidden)
+        # Project hidden state (use last token for autoregressive models)
+        last_hidden = hidden_states[:, -1, :]
+        projected_state = self.state_projector(last_hidden)
 
-        # Get combined operation probabilities (stack ops + tools)
-        op_logits = self.op_controller(projected_hidden)
-        op_probs = F.softmax(op_logits, dim=1)
-
-        # Apply stack operation and tool selection
-        new_stack_state, new_tool_indices, new_tool_outputs = (
-            self._apply_tool_and_stack_op(
-                stack_state, op_probs, layer_embedding, projected_hidden
-            )
+        # 1. Update stack with layer information
+        new_stack_state = self._update_stack(
+            stack_state, projected_state, layer_embedding
         )
 
-        # Read from the top of the stack
-        stack_info = torch.sum(
-            new_stack_state.stack * new_stack_state.pointer.unsqueeze(-1),
-            dim=1,
+        # 2. Read from stack (memory of past routing)
+        stack_memory = read(new_stack_state)
+
+        # 3. Select and apply tool
+        new_tool_indices, new_tool_outputs = self._select_and_apply_tool(
+            projected_state
         )
 
-        # Combine tool output with stack information for routing decision
-        combined_features = torch.cat([new_tool_outputs, stack_info], dim=1)
+        # 4. Make routing decision
+        next_expert_idx, gating_loss = self._make_routing_decision(
+            new_tool_outputs, stack_memory
+        )
 
-        # Get routing logits and probabilities
-        routing_logits = self.router(combined_features)
-        gate_probs = F.softmax(routing_logits, dim=1)
-
-        # Calculate entropy loss for training
-        entropy = -(gate_probs * torch.log(gate_probs + 1e-10)).sum(dim=1).mean()
-        gating_loss = -0.01 * entropy  # Encourage exploration
-
-        # Get batch majority vote for next expert
-        batch_votes = torch.argmax(gate_probs, dim=1)
-        vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
-        next_expert_idx = torch.argmax(vote_counts).item()
-
-        # Update route
+        # Update route for visualization
         current_route = self._update_route(
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        # Prepare new controller state
+        # Prepare controller state for next iteration
         new_controller_state = (new_stack_state, new_tool_indices, new_tool_outputs)
+
+        if self.debug and random.random() < 0.005:
+            output = self.visualize_operation(new_controller_state, batch_idx=0)
+            print(str(output))
 
         return new_controller_state, gating_loss, current_route, next_expert_idx
 
@@ -221,25 +237,31 @@ class NeuralController(BaseController):
         batch_idx: int = 0,
     ) -> Dict:
         """Generate visualization data for understanding tool and stack usage."""
-        if controller_state is None or controller_state[1] is None:
-            return {}
-
         stack_state, tool_indices, _ = controller_state
 
-        # Get tool name
-        tool_idx = tool_indices[batch_idx].item()
-        tool_names = ["ReLU", "Tanh", "Sigmoid", "Identity"]
-        tool_name = (
-            tool_names[tool_idx] if tool_idx < len(tool_names) else f"Tool {tool_idx}"
-        )
+        # Get tool name with safety checks
+        if tool_indices.numel() > batch_idx:
+            tool_idx = tool_indices[batch_idx].item()
+            tool_names = ["ReLU", "Tanh", "Sigmoid", "Identity"]
+            tool_name = (
+                tool_names[tool_idx]
+                if tool_idx < len(tool_names)
+                else f"Tool {tool_idx}"
+            )
+        else:
+            tool_name = "Unknown"
 
-        # Get stack pointer
-        pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
+        # Get stack pointer with safety checks
+        if hasattr(stack_state, "pointer"):
+            pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
+        else:
+            pointer = None
 
         # Return visualization data
         return {
             "tool_selected": tool_name,
             "stack_pointer": pointer,
+            "sharpness": self.sharpen_pointer.item(),
         }
 
 
@@ -253,9 +275,6 @@ if __name__ == "__main__":
             self.dropout = 0.1
             self.depth = 8
             self.num_experts = 8
-
-    # Set random seed for reproducibility
-    torch.manual_seed(5555)
 
     # Parameters
     batch_size = 2
