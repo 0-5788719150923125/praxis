@@ -277,7 +277,12 @@ class NeuralController(BaseController):
         new_controller_state = (new_stack_state, new_tool_indices, new_tool_outputs)
 
         # Debug visualization (only occasionally to avoid flooding logs)
-        if self.debug and random.random() < 0.005:
+        if (
+            self.debug
+            and not self.training
+            and hidden_states.size(0) == 1
+            and random.random() < 0.1
+        ):
             output = self.visualize_operation(new_controller_state, batch_idx=0)
             print(f"DEBUG: tool: {output['tool']}, sharpness: {output['sharpness']}")
 
