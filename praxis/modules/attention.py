@@ -9,8 +9,8 @@ from torch import Tensor
 from transformers import DynamicCache
 
 from praxis.dense import DENSE_REGISTRY
+from praxis.encoding import ENCODING_REGISTRY
 from praxis.functional import alpha_entmax, alpha_relu, ghostmax
-from praxis.modules.encoding import ENCODING_REGISTRY
 from praxis.modules.experimental.pk_attention import ProductKeyAttention
 from praxis.modules.experimental.sparse_query import SparseQuery
 from praxis.modules.memory import PraxisCompressiveMemory
