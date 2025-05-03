@@ -8,6 +8,7 @@ from neurallambda.stack import StackState, initialize, push_pop_nop, read
 from torch import Tensor
 
 from praxis.controllers.base import BaseController
+from praxis.dense import MultiLayerPerceptron
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -48,11 +49,13 @@ class NeuralController(BaseController):
             F.relu,  # ReLU activation
             torch.tanh,  # Tanh activation
             torch.sigmoid,  # Sigmoid activation
+            torch.sin,  # Sine activation
             lambda x: x,  # Identity function
         ]
 
         # Add trainable neural network tools
         num_tools = 3
+        num_mlps = 2
         self.trainable_tools = nn.ModuleList(
             [
                 TrainableTool(
@@ -60,6 +63,15 @@ class NeuralController(BaseController):
                     name=f"linear_{i}",
                 )
                 for i in range(num_tools)
+            ]
+            + [
+                TrainableTool(
+                    MultiLayerPerceptron(
+                        config, activation="swish", input_dim=self.tool_output_dim
+                    ),
+                    name=f"mlp_{i}",
+                )
+                for i in range(num_mlps)
             ]
         )
 
@@ -85,9 +97,6 @@ class NeuralController(BaseController):
         # Stack parameters - use Parameter to allow training
         self.sharpen_pointer = nn.Parameter(torch.tensor([5.0]))
 
-        # Initialize parameters
-        self._init_parameters()
-
     def _get_tool_names(self) -> List[str]:
         """Automatically generate tool names from the tools list."""
         tool_names = []
@@ -108,21 +117,6 @@ class NeuralController(BaseController):
             tool_names.append(str(tool))
 
         return tool_names
-
-    def _init_parameters(self) -> None:
-        """Initialize parameters with appropriate scaling."""
-        for module in [
-            self.state_projector,
-            self.stack_controller,
-            self.tool_selector,
-            self.router,
-        ]:
-            nn.init.xavier_uniform_(module.weight)
-            if module.bias is not None:
-                nn.init.zeros_(module.bias)
-
-        # Initialize layer embeddings
-        nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
 
     def _initialize_stack(self, batch_size: int, device: torch.device) -> StackState:
         """Initialize a new stack state with proper zeros."""
