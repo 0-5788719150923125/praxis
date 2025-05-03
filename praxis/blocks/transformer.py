@@ -6,8 +6,8 @@ import torch.nn.functional as F
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 
-from praxis.modules.attention import ATTENTION_REGISTRY
-from praxis.modules.experts import EXPERT_REGISTRY
+from praxis.attention import ATTENTION_REGISTRY
+from praxis.experimental.experts import EXPERT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.utils import norm_scaling
 

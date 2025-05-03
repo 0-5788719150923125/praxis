@@ -21,7 +21,7 @@ from hivemind.utils.networking import log_visible_maddrs
 from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
-from praxis.modules.experts import PraxisExpert
+from praxis.experimental.experts import PraxisExpert
 from praxis.routers import ROUTER_REGISTRY
 
 

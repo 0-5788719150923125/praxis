@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 from transformers.configuration_utils import PretrainedConfig
 
-from praxis.modules.smear import PraxisSMEAR
+from praxis.experimental.smear import PraxisSMEAR
 from praxis.recurrent import RECURRENT_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")

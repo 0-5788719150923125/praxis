@@ -649,14 +649,14 @@ class PraxisMemory(nn.Module):
 
 
 def test_praxis_memory():
-    from attention import PraxisAttention
+    from attention import ModularAttention
 
     class SimpleBlock(nn.Module):
         def __init__(self, config):
             super().__init__()
             self.memory = PraxisMemory(config)
             self.attn_norm = nn.LayerNorm(config.hidden_size)
-            self.attn = PraxisAttention(config)
+            self.attn = ModularAttention(config)
 
         def forward(
             self,

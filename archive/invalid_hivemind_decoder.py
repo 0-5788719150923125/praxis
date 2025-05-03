@@ -18,8 +18,8 @@ from hivemind.utils import BatchTensorDescriptor, get_dht_time
 from torch import Tensor
 
 from praxis import PraxisConfig
-from praxis.modules.experts import PraxisBlock
-from praxis.modules.router import PraxisMixtureOfDepths
+from praxis.experimental.experts import PraxisBlock
+from praxis.experimental.router import PraxisMixtureOfDepths
 
 
 class PraxisDecoder(nn.Module):

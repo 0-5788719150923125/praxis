@@ -6,9 +6,10 @@ import pytest
 import torch
 
 from praxis import PraxisConfig
-from praxis.modules.attention import ENCODING_REGISTRY, PraxisAttention
+from praxis.attention import ATTENTION_REGISTRY
+from praxis.encoding import ENCODING_REGISTRY
 
-MODULE_CLASSES = [PraxisAttention]
+MODULE_CLASSES = list(ATTENTION_REGISTRY.values())
 
 
 class AttentionMode(Enum):

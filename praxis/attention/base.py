@@ -1,6 +1,6 @@
 import math
 from copy import copy
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -8,15 +8,17 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import DynamicCache
 
+from praxis.attention.memory import PraxisCompressiveMemory
+from praxis.attention.pk_attention import ProductKeyAttention
+from praxis.attention.sparse_query import SparseQuery
 from praxis.dense import DENSE_REGISTRY
 from praxis.encoding import ENCODING_REGISTRY
 from praxis.functional import alpha_entmax, alpha_relu, ghostmax
-from praxis.modules.experimental.pk_attention import ProductKeyAttention
-from praxis.modules.experimental.sparse_query import SparseQuery
-from praxis.modules.memory import PraxisCompressiveMemory
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisAttention(nn.Module):
+class ModularAttention(nn.Module):
     """
     This class is akin to a wrapper, which implements a number of interesting attention
     mechanisms, and makes them optional with feature flags. By toggling features, one can
@@ -25,9 +27,9 @@ class PraxisAttention(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
-        Initialize PraxisAttention module with configuration.
+        Initialize ModularAttention module with configuration.
 
         Args:
             config: Configuration object containing attention parameters
@@ -331,7 +333,7 @@ class ScaledDotProduct(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize scaled dot-product attention module.
 
@@ -479,7 +481,7 @@ class Differential(ScaledDotProduct):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize differential attention module.
 
@@ -584,7 +586,7 @@ class Linear(ScaledDotProduct):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize linear attention module.
 
@@ -725,7 +727,7 @@ class Stickbreaking(ScaledDotProduct):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize stickbreaking attention module.
 
@@ -1103,7 +1105,7 @@ class MultiTokenAttention(nn.Module):
     https://arxiv.org/abs/2504.00927v1
     """
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize Multi-Token Attention module.
 
@@ -1266,7 +1268,7 @@ class UniversalAttentionGate(nn.Module):
     https://arxiv.org/abs/2209.10655
     """
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize universal attention gate module.
 
@@ -1336,7 +1338,7 @@ class PraxisGatedEMA(nn.Module):
     Original Code: https://github.com/facebookresearch/mega/blob/main/fairseq/modules/exponential_moving_average.py
     """
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize gated EMA module.
 
@@ -1486,13 +1488,15 @@ class VanillaMHA(nn.MultiheadAttention):
     Standard multi-head attention implementation using PyTorch's nn.MultiheadAttention.
     """
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize vanilla multi-head attention module.
 
         Args:
             config: Configuration object containing attention parameters
         """
+        while config.hidden_size % config.num_heads != 0:
+            setattr(config, "num_heads", config.num_heads - 1)
         super().__init__(
             embed_dim=config.hidden_size,
             num_heads=config.num_heads,
@@ -1504,7 +1508,7 @@ class VanillaMHA(nn.MultiheadAttention):
     def forward(
         self,
         inputs: Tensor,
-        attention_mask: Optional[Tensor],
+        attention_mask: Optional[Tensor] = None,
         past_key_values: Optional[Tensor] = None,
         *args: Any,
         **kwargs: Any,
@@ -1540,11 +1544,3 @@ class VanillaMHA(nn.MultiheadAttention):
         )
         layer_kv: Optional[Tensor] = None
         return outputs, layer_kv, 0
-
-
-# Registry of available attention mechanisms
-ATTENTION_REGISTRY: Dict[str, Type[nn.Module]] = {
-    "standard": PraxisAttention,
-    "vanilla": VanillaMHA,
-    "pk": ProductKeyAttention,
-}

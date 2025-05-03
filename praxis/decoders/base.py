@@ -8,8 +8,8 @@ from torch import Tensor
 from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
-from praxis.modules.evolution import GenomicBottleneck
-from praxis.modules.experts import EXPERT_REGISTRY, PraxisExpert
+from praxis.experimental.evolution import GenomicBottleneck
+from praxis.experimental.experts import EXPERT_REGISTRY, PraxisExpert
 from praxis.orchestration.hivemind import PraxisManagement
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
