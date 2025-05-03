@@ -49,7 +49,8 @@ pip install -e .
 
 ## run tests
 
-Use Pytest:
+To run unit testing:
+
 ```sh
 pytest tests -x
 ```

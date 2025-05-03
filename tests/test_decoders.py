@@ -4,7 +4,13 @@ from typing import List
 import pytest
 import torch
 
-from praxis import BLOCK_REGISTRY, CONTROLLER_REGISTRY, DECODER_REGISTRY, PraxisConfig
+from praxis import (
+    BLOCK_REGISTRY,
+    CONTROLLER_REGISTRY,
+    DECODER_REGISTRY,
+    RESIDUAL_REGISTRY,
+    PraxisConfig,
+)
 from praxis.routers import ROUTER_REGISTRY
 
 TEST_PARAMS = {
@@ -17,6 +23,7 @@ TEST_PARAMS = {
     "decoder_type": list(DECODER_REGISTRY.keys()),
     "block_type": list(BLOCK_REGISTRY.keys()),
     "controller_type": list(CONTROLLER_REGISTRY.keys()),
+    "residual_type": list(RESIDUAL_REGISTRY.keys()),
 }
 PARAM_KEYS = list(TEST_PARAMS.keys())
 
