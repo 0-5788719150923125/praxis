@@ -12,13 +12,26 @@ from praxis.controllers.base import BaseController
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
+class TrainableTool(nn.Module):
+    def __init__(self, module: nn.Module, name: str = "tool_1"):
+        super().__init__()
+        self.module = module
+        self.name = name
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.module(x)
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class NeuralController(BaseController):
     """
     A neural routing module that uses NeuralLambda's stack to maintain memory of routing
     decisions while being compatible with the Pathfinder interface.
 
-    This version includes gradient stabilization and tensor dimensionality preservation
-    to avoid optimizer errors.
+    This version includes both fixed activation functions and trainable neural network
+    tools to provide a more flexible routing mechanism.
     """
 
     def __init__(self, config: ConfigType) -> None:
@@ -28,37 +41,75 @@ class NeuralController(BaseController):
         self.hidden_size = config.hidden_size
         self.stack_depth = min(16, self.depth * 2)
         self.emb_dim = self.hidden_size // 4
+        self.tool_output_dim = self.hidden_size // 2
 
-        # Tools (activation functions)
-        self.tools = [
-            F.relu,  # Tool 0: ReLU
-            torch.tanh,  # Tool 1: Tanh
-            torch.sigmoid,  # Tool 2: Sigmoid
-            lambda x: x,  # Tool 3: Identity
+        # Define fixed activation function tools
+        self.fixed_tools = [
+            F.relu,  # ReLU activation
+            torch.tanh,  # Tanh activation
+            torch.sigmoid,  # Sigmoid activation
+            lambda x: x,  # Identity function
         ]
+
+        # Add trainable neural network tools
+        num_tools = 3
+        self.trainable_tools = nn.ModuleList(
+            [
+                TrainableTool(
+                    nn.Linear(self.tool_output_dim, self.tool_output_dim),
+                    name=f"linear_{i}",
+                )
+                for i in range(num_tools)
+            ]
+        )
+
+        # Combine all tools
+        self.tools = self.fixed_tools + list(self.trainable_tools)
+
+        # Create automatic tool names
+        self.tool_names = self._get_tool_names()
 
         # Layer embeddings - unique representations for each layer
         self.layer_embeddings = nn.Parameter(torch.randn(self.depth, self.emb_dim))
 
         # Projection networks
-        self.state_projector = nn.Linear(self.hidden_size, self.hidden_size // 2)
+        self.state_projector = nn.Linear(self.hidden_size, self.tool_output_dim)
 
         # Separate decision networks for stack and tools
-        self.stack_controller = nn.Linear(
-            self.hidden_size // 2, 3
-        )  # push, pop, null_op
-        self.tool_selector = nn.Linear(self.hidden_size // 2, len(self.tools))
+        self.stack_controller = nn.Linear(self.tool_output_dim, 3)  # push, pop, null_op
+        self.tool_selector = nn.Linear(self.tool_output_dim, len(self.tools))
 
         # Routing decision network (combines information from state and memory)
-        self.router = nn.Linear(self.hidden_size // 2 + self.emb_dim, self.num_experts)
+        self.router = nn.Linear(self.tool_output_dim + self.emb_dim, self.num_experts)
 
-        # Stack parameters - use a buffer instead of parameter to avoid scalar gradients
+        # Stack parameters - use Parameter to allow training
         self.sharpen_pointer = nn.Parameter(torch.tensor([5.0]))
 
         # Initialize parameters
         self._init_parameters()
 
-    def _init_parameters(self):
+    def _get_tool_names(self) -> List[str]:
+        """Automatically generate tool names from the tools list."""
+        tool_names = []
+
+        for tool in self.fixed_tools:
+            # Get name from function
+            if hasattr(tool, "__name__"):
+                name = tool.__name__
+            elif tool.__class__.__name__ == "function":
+                # For lambda functions
+                name = "Identity" if "lambda" in str(tool) else str(tool)
+            else:
+                name = str(tool)
+            tool_names.append(name)
+
+        # Add trainable tool names
+        for tool in self.trainable_tools:
+            tool_names.append(str(tool))
+
+        return tool_names
+
+    def _init_parameters(self) -> None:
         """Initialize parameters with appropriate scaling."""
         for module in [
             self.state_projector,
@@ -69,6 +120,9 @@ class NeuralController(BaseController):
             nn.init.xavier_uniform_(module.weight)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
+
+        # Initialize layer embeddings
+        nn.init.normal_(self.layer_embeddings, mean=0.0, std=0.02)
 
     def _initialize_stack(self, batch_size: int, device: torch.device) -> StackState:
         """Initialize a new stack state with proper zeros."""
@@ -84,9 +138,7 @@ class NeuralController(BaseController):
     def _update_stack(
         self, stack_state: StackState, projected_state: Tensor, layer_embedding: Tensor
     ) -> StackState:
-        """
-        Update stack based on current state with gradient stabilization.
-        """
+        """Update stack based on current state with gradient stabilization."""
         # Get stack operation probabilities
         stack_logits = self.stack_controller(projected_state)
 
@@ -112,11 +164,8 @@ class NeuralController(BaseController):
         return new_stack_state
 
     def _select_and_apply_tool(self, projected_state: Tensor) -> Tuple[Tensor, Tensor]:
-        """
-        Select and apply a tool (activation function) with gradient stability.
-        """
+        """Select and apply a tool (activation function or trainable neural network)."""
         batch_size = projected_state.shape[0]
-        device = projected_state.device
 
         # Get tool probabilities with stability measures
         tool_logits = self.tool_selector(projected_state)
@@ -126,25 +175,29 @@ class NeuralController(BaseController):
         # Select tool (discrete selection via argmax)
         tool_indices = torch.argmax(tool_probs, dim=1)
 
-        # Apply selected tool to each batch item with gradient stability
-        tool_outputs = projected_state.clone()  # Start with identity as fallback
+        # Apply selected tool to each batch item
+        tool_outputs = torch.zeros_like(projected_state)
 
         for idx in range(batch_size):
-            # Apply tool
+            # Get tool index
             tool_idx = tool_indices[idx].item()
-            tool = self.tools[tool_idx]
-            output = tool(projected_state[idx])
-            tool_outputs[idx] = output
+
+            # Get the appropriate tool
+            if tool_idx < len(self.fixed_tools):
+                # Apply fixed activation function
+                tool = self.tools[tool_idx]
+                tool_outputs[idx] = tool(projected_state[idx])
+            else:
+                # Apply trainable neural network
+                tool = self.tools[tool_idx]
+                tool_outputs[idx] = tool(projected_state[idx].unsqueeze(0)).squeeze(0)
 
         return tool_indices, tool_outputs
 
     def _make_routing_decision(
         self, tool_outputs: Tensor, stack_memory: Tensor
     ) -> Tuple[int, Tensor]:
-        """
-        Determine the next expert with gradient stability.
-        """
-
+        """Determine the next expert based on tool outputs and stack memory."""
         # Combine tool output with stack memory for routing
         combined_features = torch.cat([tool_outputs, stack_memory], dim=1)
 
@@ -176,9 +229,7 @@ class NeuralController(BaseController):
         current_route: List[int],
         current_depth: int,
     ) -> Tuple[Tuple[StackState, Tensor, Tensor], Tensor, List[int], Optional[int]]:
-        """
-        Determine the next expert/layer to route to with stabilized gradient operations.
-        """
+        """Determine the next expert/layer to route to."""
         batch_size, _, _ = hidden_states.shape
         device = hidden_states.device
 
@@ -225,9 +276,10 @@ class NeuralController(BaseController):
         # Prepare controller state for next iteration
         new_controller_state = (new_stack_state, new_tool_indices, new_tool_outputs)
 
+        # Debug visualization (only occasionally to avoid flooding logs)
         if self.debug and random.random() < 0.005:
             output = self.visualize_operation(new_controller_state, batch_idx=0)
-            print(str(output))
+            print(f"DEBUG: tool: {output['tool']}, sharpness: {output['sharpness']}")
 
         return new_controller_state, gating_loss, current_route, next_expert_idx
 
@@ -237,30 +289,27 @@ class NeuralController(BaseController):
         batch_idx: int = 0,
     ) -> Dict:
         """Generate visualization data for understanding tool and stack usage."""
+        if controller_state is None or controller_state[1] is None:
+            return {}
+
         stack_state, tool_indices, _ = controller_state
 
-        # Get tool name with safety checks
+        # Get tool name using the automatic tool names
         if tool_indices.numel() > batch_idx:
             tool_idx = tool_indices[batch_idx].item()
-            tool_names = ["ReLU", "Tanh", "Sigmoid", "Identity"]
-            tool_name = (
-                tool_names[tool_idx]
-                if tool_idx < len(tool_names)
-                else f"Tool {tool_idx}"
-            )
+            if 0 <= tool_idx < len(self.tool_names):
+                tool_name = self.tool_names[tool_idx]
+            else:
+                tool_name = f"Unknown Tool {tool_idx}"
         else:
             tool_name = "Unknown"
 
-        # Get stack pointer with safety checks
-        if hasattr(stack_state, "pointer"):
-            pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
-        else:
-            pointer = None
+        # Get stack pointer
+        pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
 
         # Return visualization data
         return {
-            "tool_selected": tool_name,
-            "stack_pointer": pointer,
+            "tool": tool_name,
             "sharpness": self.sharpen_pointer.item(),
         }
 
@@ -270,7 +319,7 @@ if __name__ == "__main__":
     # Mock AutoConfig class for testing
     class AutoConfig:
         def __init__(self):
-            self.debug = False
+            self.debug = True
             self.hidden_size = 256
             self.dropout = 0.1
             self.depth = 8
@@ -294,8 +343,11 @@ if __name__ == "__main__":
     # Create the router module
     router = NeuralController(config)
 
+    # Print available tools
+    print(f"Available tools: {router.tool_names}")
+
     # Test the router
-    print("Testing NeuralController:")
+    print("\nTesting NeuralController:")
 
     # Simulate routing through layers
     controller_state = None
@@ -323,7 +375,7 @@ if __name__ == "__main__":
         # Get visualization data
         viz_data = router.visualize_operation(controller_state)
         print(f"  Selected Expert: {next_expert_idx}")
-        print(f"  Selected Tool: {viz_data.get('tool_selected', 'Unknown')}")
+        print(f"  Selected Tool: {viz_data.get('tool', 'Unknown')}")
         print(f"  Gating Loss: {gating_loss.item():.6f}")
         print(f"  Current Route: {current_route}")
 
