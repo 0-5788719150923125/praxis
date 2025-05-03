@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from transformers.configuration_utils import PretrainedConfig
 
 from praxis.activations import ACT2FN
 from praxis.dense import DENSE_REGISTRY

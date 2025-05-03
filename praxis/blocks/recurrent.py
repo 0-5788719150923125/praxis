@@ -3,7 +3,6 @@ from typing import Any, Optional, Tuple, TypeVar, Union
 import torch
 import torch.nn as nn
 from torch import Tensor
-from transformers.configuration_utils import PretrainedConfig
 
 from praxis.experimental.smear import PraxisSMEAR
 from praxis.recurrent import RECURRENT_REGISTRY

@@ -4,12 +4,11 @@ import torch
 import torch.nn.functional as F
 import torch.nn.parallel as parallel
 from torch import Tensor, nn
-from transformers.configuration_utils import PretrainedConfig
 
 from praxis.decoders.base import BaseDecoder
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
 
-ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class ParallelDecoder(BaseDecoder):

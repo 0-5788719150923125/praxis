@@ -3,7 +3,7 @@ import random
 import time
 from ipaddress import ip_address
 from threading import Thread
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import hivemind
 import requests
@@ -19,10 +19,11 @@ from hivemind.proto.runtime_pb2 import CompressionType
 from hivemind.utils import BatchTensorDescriptor
 from hivemind.utils.networking import log_visible_maddrs
 from torch import Tensor
-from transformers.configuration_utils import PretrainedConfig
 
 from praxis.orchestration import PraxisExpert
 from praxis.routers import ROUTER_REGISTRY
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
 class PraxisManagement:
@@ -41,7 +42,7 @@ class PraxisManagement:
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: "PretrainedConfig") -> None:
+    def __init__(self, config: ConfigType) -> None:
         """
         Initialize hivemind management system.
 
@@ -141,7 +142,7 @@ class PraxisManagement:
         log_visible_maddrs(self.dht.get_visible_maddrs(), only_p2p=self.use_ipfs)
 
     def register_expert(
-        self, config: "PretrainedConfig", expert_cls: str = "hivemind_expert"
+        self, config: ConfigType, expert_cls: str = "hivemind_expert"
     ) -> nn.Module:
         """
         Register a new expert module with hivemind.

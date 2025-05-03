@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple, TypeVar, Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
-from transformers.configuration_utils import PretrainedConfig
 
 ConfigType = TypeVar("ConfigType", bound=PretrainedConfig)
 
