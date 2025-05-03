@@ -296,6 +296,9 @@ class NeuralController(BaseController):
         else:
             tool_name = "Unknown"
 
+        if tool_name == "<lambda>":
+            tool_name = "identity"
+
         # Get stack pointer
         # pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
 
