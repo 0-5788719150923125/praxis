@@ -40,6 +40,9 @@ class SequentialDecoder(BaseDecoder):
                 - Updated layer states
                 - Combined auxiliary loss
         """
+
+        _, seq_len, _ = hidden_states.shape
+
         controller_state = None
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
         ordered_experts: List[nn.Module] = self.controller.sort_experts(
@@ -82,9 +85,13 @@ class SequentialDecoder(BaseDecoder):
                 should_checkpoint(self.training, i, self.checkpoint_every),
             )
             aux_losses.append(aux_loss)
+            hidden_states = self.compressor.reduce_sequence(hidden_states)
+            block_ids = self.compressor.reduce_block_ids(block_ids)
             hidden_states = self.post_layer(hidden_states, i)
             if current_state is not None:
                 current_state[next_expert_idx] = layer_state
+
+        hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)
 
         hidden_states = self.post_decoding(hidden_states)
 

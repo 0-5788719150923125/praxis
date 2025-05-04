@@ -7,6 +7,7 @@ from torch import Tensor
 
 from praxis.activations import ACT2FN
 from praxis.blocks import BLOCK_REGISTRY
+from praxis.compression import COMPRESSION_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
 from praxis.orchestration import EXPERT_REGISTRY, PraxisExpert, PraxisManagement
@@ -32,6 +33,7 @@ class BaseDecoder(nn.Module):
         ), "`num_experts` should be at least as large as `depth`."
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
+        self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
         self.manager = False
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []

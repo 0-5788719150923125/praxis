@@ -31,6 +31,7 @@ class PraxisConfig(PretrainedConfig):
         encoder_type: Optional[str] = None,
         decoder_type: str = "sequential",
         residual_type: str = "standard",
+        compression_type: str = "none",
         linear: bool = False,
         differential: bool = False,
         stickbreaking: bool = False,
@@ -93,6 +94,7 @@ class PraxisConfig(PretrainedConfig):
         self.router_type = router_type
         self.controller_type = controller_type
         self.residual_type = residual_type
+        self.compression_type = compression_type
         self.memory = memory
         self.mta = mta
         self.mega = mega

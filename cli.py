@@ -12,6 +12,7 @@ from praxis import (
     ACTIVATION_REGISTRY,
     ATTENTION_REGISTRY,
     BLOCK_REGISTRY,
+    COMPRESSION_REGISTRY,
     CONTROLLER_REGISTRY,
     DECODER_REGISTRY,
     ENCODER_REGISTRY,
@@ -202,6 +203,13 @@ architecture_group.add_argument(
     choices=RESIDUAL_REGISTRY.keys(),
     default="standard",
     help="The style of residual connection to use",
+)
+architecture_group.add_argument(
+    "--compression_type",
+    type=str,
+    choices=COMPRESSION_REGISTRY.keys(),
+    default="none",
+    help="The type of sequence compression to use",
 )
 architecture_group.add_argument(
     "--activation",
