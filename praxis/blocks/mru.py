@@ -12,7 +12,7 @@ from praxis.dense import DENSE_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisMRU(nn.Module):
+class MRUBlock(nn.Module):
     """
     A recurrent model with efficient parallel scan.
     Based upon Matrix Recurrent Units:
@@ -280,7 +280,7 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = AutoConfig()
-    model = PraxisMRU(config).to(device)
+    model = MRUBlock(config).to(device)
 
     # Test 1: Basic Functionality
     print("\nTest 1: Basic Functionality")

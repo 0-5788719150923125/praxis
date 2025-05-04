@@ -16,7 +16,7 @@ input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim
 
 
 @register_expert_class("hivemind_expert", input_shape)
-class PraxisTransformer(nn.Module):
+class TransformerBlock(nn.Module):
     """
     A standard transformer block, with adjustable feedforward "experts".
     """

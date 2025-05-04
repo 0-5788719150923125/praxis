@@ -10,7 +10,7 @@ from praxis.recurrent import RECURRENT_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisRecurrent(nn.Module):
+class RecurrentBlock(nn.Module):
     """
     A recurrent block type.
     """

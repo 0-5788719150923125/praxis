@@ -13,7 +13,7 @@ from praxis.dense import DENSE_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisConv(nn.Module):
+class ConvolutionalBlock(nn.Module):
     """
     A special kind of block that omits the self-attention mechanism, in favor
     of causal convolutional layers and periodic activations.
@@ -23,7 +23,7 @@ class PraxisConv(nn.Module):
 
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         """
-        Initialize PraxisConv block.
+        Initialize ConvolutionalBlock block.
 
         Args:
             config: Model configuration
@@ -418,10 +418,10 @@ if __name__ == "__main__":
         )  # Convert to MB
         return output, end_time - start_time, max_memory
 
-    print("Running tests for PraxisConv...")
+    print("Running tests for ConvolutionalBlock...")
 
     # Create model once for all tests
-    model = PraxisConv(config, chunk_size=chunk_size, stride=stride).to(device)
+    model = ConvolutionalBlock(config, chunk_size=chunk_size, stride=stride).to(device)
 
     # Test 1: Basic Functionality (Short Sequence)
     print("\nTest 1: Short Sequence Test")
@@ -463,7 +463,9 @@ if __name__ == "__main__":
     for cs in chunk_sizes:
         # Adjust stride accordingly (for simplicity, stride = cs // 2)
         current_stride = cs // 2
-        model_test = PraxisConv(config, chunk_size=cs, stride=current_stride).to(device)
+        model_test = ConvolutionalBlock(
+            config, chunk_size=cs, stride=current_stride
+        ).to(device)
         x_test = torch.randn(1, cs * 4, config.hidden_size).to(device)
         output, duration, memory = run_memory_test(model_test, x_test)
         results.append((cs, duration, memory))

@@ -12,7 +12,7 @@ from praxis.recurrent import RECURRENT_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisGRU(nn.Module):
+class MinGRUBlock(nn.Module):
     """
     A minimally-recurrent network.
     """
@@ -34,7 +34,7 @@ class PraxisGRU(nn.Module):
         **kwargs: Any,
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         """
-        Forward pass through the PraxisGRU block.
+        Forward pass through the MinGRUBlock block.
 
         Args:
             inputs: Input tensor of shape [batch_size, seq_len, hidden_size]
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     # Initialize model and test input
     config = MockConfig()
-    model = PraxisGRU(config)
+    model = MinGRUBlock(config)
 
     # Create sample input (batch_size=2, sequence_length=3, hidden_size=64)
     x = torch.randn(2, 3, 64)

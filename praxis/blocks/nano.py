@@ -11,7 +11,7 @@ from praxis.dense import DENSE_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisNano(nn.Module):
+class NanoBlock(nn.Module):
     """
     A special kind of block that omits all self-attention mechanisms, in favor
     of dense layers with periodic activations. Inspired by NanoFFT:
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     print("Running tests for PraxisNano...")
 
     # Create model once for all tests
-    model = PraxisNano(config).to(device)
+    model = NanoBlock(config).to(device)
 
     # Test 1: Basic Functionality (Short Sequence)
     print("\nTest 1: Short Sequence Test")
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     for cs in chunk_sizes:
         # Adjust stride accordingly (for simplicity, stride = cs // 2)
         current_stride = cs // 2
-        model_test = PraxisNano(config).to(device)
+        model_test = NanoBlock(config).to(device)
         x_test = torch.randn(1, cs * 4, config.hidden_size).to(device)
         output, duration, memory = run_memory_test(model_test, x_test)
         results.append((cs, duration, memory))

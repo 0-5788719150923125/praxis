@@ -1,15 +1,15 @@
-from praxis.blocks.conv import PraxisConv
-from praxis.blocks.min import PraxisGRU
-from praxis.blocks.mru import PraxisMRU
-from praxis.blocks.nano import PraxisNano
-from praxis.blocks.recurrent import PraxisRecurrent
-from praxis.blocks.transformer import PraxisTransformer
+from praxis.blocks.conv import ConvolutionalBlock
+from praxis.blocks.min import MinGRUBlock
+from praxis.blocks.mru import MRUBlock
+from praxis.blocks.nano import NanoBlock
+from praxis.blocks.recurrent import RecurrentBlock
+from praxis.blocks.transformer import TransformerBlock
 
 BLOCK_REGISTRY = {
-    "conv": PraxisConv,
-    "mru": PraxisMRU,
-    "min": PraxisGRU,
-    "nano": PraxisNano,
-    "recurrent": PraxisRecurrent,
-    "transformer": PraxisTransformer,
+    "conv": ConvolutionalBlock,
+    "mru": MRUBlock,
+    "min": MinGRUBlock,
+    "nano": NanoBlock,
+    "recurrent": RecurrentBlock,
+    "transformer": TransformerBlock,
 }
