@@ -3,6 +3,7 @@ from typing import List, Tuple, TypeVar, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from praxis.compression.base import NoCompression
 from praxis.utils import create_block_ids
@@ -53,7 +54,7 @@ class SequenceInterpolation(NoCompression):
 
         self.method = method
 
-    def reduce_sequence(self, sequence):
+    def reduce_sequence(self, sequence: Tensor):
         """
         Reduce sequence length by a multiplication factor (e.g., 0.9 for 90% length).
 
@@ -70,7 +71,7 @@ class SequenceInterpolation(NoCompression):
 
         return self._reduce_sequence(sequence, target_length)
 
-    def _reduce_sequence(self, sequence, target_length):
+    def _reduce_sequence(self, sequence: Tensor, target_length: int):
         """
         Internal method to reduce sequence length through interpolation.
 
@@ -111,22 +112,22 @@ class SequenceInterpolation(NoCompression):
 
         return reduced_sequence
 
-    def expand_sequence(self, reduced_sequence, original_length):
+    def expand_sequence(self, sequence: Tensor, original_length: int):
         """
         Expand a reduced sequence back to its original length through interpolation.
 
         Args:
-            reduced_sequence: Tensor of shape (batch_size, reduced_length, hidden_dim)
+            sequence: Tensor of shape (batch_size, reduced_length, hidden_dim)
             original_length: The original sequence length to expand to
 
         Returns:
             Expanded sequence of shape (batch_size, original_length, hidden_dim)
         """
-        batch_size, reduced_length, hidden_dim = reduced_sequence.shape
+        batch_size, reduced_length, hidden_dim = sequence.shape
 
         # If reduced length is already equal to original length, return the input sequence
         if reduced_length == original_length:
-            return reduced_sequence
+            return sequence
 
         # If reduced length is greater than original length, that's not an expansion
         if reduced_length > original_length:
@@ -135,7 +136,7 @@ class SequenceInterpolation(NoCompression):
             )
 
         # Reshape for interpolate: [batch_size, hidden_dim, reduced_length]
-        x = reduced_sequence.transpose(1, 2)
+        x = sequence.transpose(1, 2)
 
         # Use F.interpolate to perform the expansion in a vectorized way
         mode = self.method
@@ -151,7 +152,7 @@ class SequenceInterpolation(NoCompression):
 
         return expanded_sequence
 
-    def reduce_block_ids(self, block_ids):
+    def reduce_block_ids(self, block_ids: Tensor):
         """
         Reduce block IDs by a multiplication factor (e.g., 0.9 for 90% length).
 
@@ -168,7 +169,7 @@ class SequenceInterpolation(NoCompression):
 
         return self._reduce_block_ids(block_ids, target_length)
 
-    def _reduce_block_ids(self, block_ids, target_length):
+    def _reduce_block_ids(self, block_ids: Tensor, target_length: int):
         """
         Internal method to reduce block IDs to match a reduced token sequence length.
 
