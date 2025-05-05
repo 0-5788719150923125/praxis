@@ -192,7 +192,6 @@ def text_formatter(text):
     Returns:
         str: Reformatted text with appropriate double newlines
     """
-    import re
 
     # First, preserve existing multiple newlines (2 or more)
     # Use regex to match and replace sequences of 2 or more newlines
