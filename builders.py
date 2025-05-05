@@ -183,7 +183,7 @@ def text_formatter(text):
 
     A paragraph boundary is identified by:
     1. End of line is a letter, number, punctuation, or quote
-    2. Start of next line is a capital letter
+    2. Start of next line is a capital letter (possibly preceded by quotes)
     3. Start of next line is NOT a list marker, indentation, or code-like content
 
     Args:
@@ -192,6 +192,7 @@ def text_formatter(text):
     Returns:
         str: Reformatted text with appropriate double newlines
     """
+    import re
 
     # First, preserve existing multiple newlines (2 or more)
     # Use regex to match and replace sequences of 2 or more newlines
@@ -203,7 +204,7 @@ def text_formatter(text):
 
     # Special case for lines ending with triple backticks
     # This specifically handles code block endings
-    backtick_pattern = r"(```)\n(?![ \t]|[-*•+] |[0-9]+[\.\)] )([A-Z])"
+    backtick_pattern = r"(```)\n(?![ \t]|[-*•+] |[0-9]+[\.\)] )([\"\']*[A-Z])"
     backtick_replacement = r"\1\n\n\2"
     text = re.sub(backtick_pattern, backtick_replacement, text)
 
@@ -212,8 +213,8 @@ def text_formatter(text):
     # 1. One of these characters at the end: letter, number, common punctuation, quote, parenthesis
     # 2. Followed by a single newline
     # 3. NOT followed by indentation, list markers, or code keywords
-    # 4. Followed by an uppercase letter
-    pattern = r'([a-zA-Z0-9.,;:!?"\')])(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([A-Z])'
+    # 4. Followed by an optional quotation mark and then an uppercase letter
+    pattern = r'([a-zA-Z0-9.,;:!?"\')])(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"\']*[A-Z])'
 
     # Replace with the same characters but with double newline
     replacement = r"\1\n\n\3"
