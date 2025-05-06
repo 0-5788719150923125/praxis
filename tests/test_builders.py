@@ -118,6 +118,12 @@ TEST_CASES = [
         "First paragraph ends normally.\n\n\"Second paragraph starts with quotes.\" And continues.\n\n'Third paragraph uses single quotes.' And also continues.",
         "Multiple paragraphs with quotation marks test",
     ),
+    # Case 20: Paragraphs following a quote (should convert)
+    (
+        '"This is a test."\nBut this is also a test.',
+        '"This is a test."\n\nBut this is also a test.',
+        "Paragraph following a quote test",
+    ),
 ]
 
 

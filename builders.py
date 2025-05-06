@@ -291,8 +291,8 @@ def format_instruction(
 ) -> str:
     """Format as instruction/output pairs using the tokenizer's chat template."""
     assert len(keys) == 2, "Instruction format requires exactly 2 keys"
-    instruction = document.get(keys[0], "")
-    output = document.get(keys[1], "")
+    instruction = text_formatter(document.get(keys[0], ""))
+    output = text_formatter(document.get(keys[1], ""))
 
     messages = [
         {"role": "user", "content": instruction},

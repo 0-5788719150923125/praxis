@@ -481,7 +481,7 @@ other_group.add_argument(
 other_group.add_argument(
     "--eval_tasks",
     type=str,
-    default="helm|hellaswag|5|1,lighteval|glue:cola|5|1",
+    default="helm|hellaswag|2|1,lighteval|glue:cola|2|1",
     help="Run a subset of evaluation tests after each validation step. This can be slow.",
 )
 other_group.add_argument(
