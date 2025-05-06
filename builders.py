@@ -283,7 +283,7 @@ def format_simple(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Just concatenate content with spaces"""
-    return text_formatter(document.get(keys[0])) + "\n"
+    return tokenizer.bos_token + text_formatter(document.get(keys[0])) + "\n"
 
 
 def format_instruction(
