@@ -193,6 +193,8 @@ def text_formatter(text):
         str: Reformatted text with appropriate double newlines
     """
 
+    text = add_newline_before_lists(text)
+
     # First, preserve existing multiple newlines (2 or more)
     # Use regex to match and replace sequences of 2 or more newlines
     text = re.sub(
@@ -229,6 +231,52 @@ def text_formatter(text):
     )
 
     return reformatted_text
+
+
+def add_newline_before_lists(text):
+    # Define patterns for list items
+    list_patterns = [
+        r"^\s*- ",  # Bullet points
+        r"^\s*\d+\.\s",  # Numbered lists with dot
+        r"^\s*\d+\)\s*",  # Numbered lists with parenthesis
+        r"^\s*\d+#\s*",  # Hash notation as mentioned in example
+    ]
+
+    # Function to check if a line is a list item
+    def is_list_item(line):
+        return any(re.match(pattern, line) for pattern in list_patterns)
+
+    # Split the text into lines
+    lines = text.split("\n")
+    if not lines:  # Handle empty text
+        return ""
+
+    # Process the text
+    result = []
+    i = 0
+    while i < len(lines):
+        result.append(lines[i])
+
+        # Check if we need to add a newline before a list item
+        if i < len(lines) - 1:
+            current = lines[i]
+            next_line = lines[i + 1]
+
+            # If current line has content and is not a list item,
+            # and next line is a list item
+            if (
+                current.strip()
+                and not is_list_item(current)
+                and is_list_item(next_line)
+            ):
+
+                # Check if there's already a blank line between them
+                if next_line.strip():  # This means there's only one newline separator
+                    result.append("")  # Add a blank line
+
+        i += 1
+
+    return "\n".join(result)
 
 
 def format_simple(
