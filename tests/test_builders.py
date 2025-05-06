@@ -94,11 +94,29 @@ TEST_CASES = [
         "Consider this code:\n var = 100\n  slightly_indented = 200",
         "Subtle indentation test",
     ),
-    # Case 16: Triple newlines should be preserved
+    # Case 16: 3 or more newlines should be collapsed into 2
     (
         "First paragraph.\n\n\nSecond paragraph after triple newline.",
-        "First paragraph.\n\n\nSecond paragraph after triple newline.",
-        "Triple newline preservation test",
+        "First paragraph.\n\nSecond paragraph after triple newline.",
+        "Triple newline collapsed test",
+    ),
+    # Case 17: Mix of single, double, triple, and quad newlines
+    (
+        "Line one.\nLine two with single newline.\n\nLine three after double.\n\n\nLine four after triple.\n\n\n\nLine five after quad.",
+        "Line one.\n\nLine two with single newline.\n\nLine three after double.\n\nLine four after triple.\n\nLine five after quad.",
+        "Mixed newline sequences test",
+    ),
+    # Case 18: Paragraph starting with quotation marks (should convert)
+    (
+        'SmolLM2 is a family of compact language models available in three size: 135M, 360M, and 1.7B parameters. They are capable of solving a wide range of tasks while being lightweight enough to run on-device.\n"SmolLM2 demonstrates significant advances over its predecessor SmolLM1, particularly in instruction following, knowledge, reasoning."',
+        'SmolLM2 is a family of compact language models available in three size: 135M, 360M, and 1.7B parameters. They are capable of solving a wide range of tasks while being lightweight enough to run on-device.\n\n"SmolLM2 demonstrates significant advances over its predecessor SmolLM1, particularly in instruction following, knowledge, reasoning."',
+        "Paragraph starting with quotation marks test",
+    ),
+    # Case 19: Multiple paragraphs with quotation marks (should convert)
+    (
+        "First paragraph ends normally.\n\"Second paragraph starts with quotes.\" And continues.\n'Third paragraph uses single quotes.' And also continues.",
+        "First paragraph ends normally.\n\n\"Second paragraph starts with quotes.\" And continues.\n\n'Third paragraph uses single quotes.' And also continues.",
+        "Multiple paragraphs with quotation marks test",
     ),
 ]
 

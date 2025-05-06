@@ -62,7 +62,6 @@ def evaluate_model(
         model_parallel=False,
         batch_size=1,
         max_length=4096,
-        # generation_parameters=dict(use_cache=True), #this would speed up testing a ton
     )
     if model is not None:
         model = TransformersModel.from_model(model, config=model_config)
@@ -82,7 +81,6 @@ def evaluate_model(
     )
 
     pipeline.evaluate()
-    # pipeline.save_and_push_results()
 
     if verbose:
         pipeline.show_results()

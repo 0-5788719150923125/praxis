@@ -223,10 +223,10 @@ def text_formatter(text):
     # Perform the replacement
     reformatted_text = re.sub(pattern, replacement, text)
 
-    # Restore original multiple newlines
+    # Restore original multiple newlines, but collapse 3+ newlines to 2
     reformatted_text = re.sub(
         r"\n__NEWLINE_(\d+)__\n",
-        lambda m: "\n" * (int(m.group(1)) + 1),
+        lambda m: "\n\n" if int(m.group(1)) >= 2 else "\n" * (int(m.group(1)) + 1),
         reformatted_text,
     )
 
