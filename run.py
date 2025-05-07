@@ -434,7 +434,7 @@ class PeriodicEvaluation(Callback):
 
         metrics = evaluate_model(
             model,
-            max_samples=1000,
+            max_samples=500,
             tasks=eval_tasks,
             device=device,
             vocab_size=vocab_size,
@@ -449,7 +449,14 @@ class PeriodicEvaluation(Callback):
         for metric in parsed:
             name = metric["task"]
             for key, value in list(metric.items()):
-                if key in ["pqem", "pqem_stderr", "acc", "acc_stderr"]:
+                if key in [
+                    "pqem",
+                    "pqem_stderr",
+                    "acc",
+                    "acc_stderr",
+                    "f1",
+                    "perfect_em",
+                ]:
                     metric_name = f"eval_{name}_{key}"
                     metric_value = metric[key]
                     if debug:

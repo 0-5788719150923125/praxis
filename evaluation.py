@@ -13,6 +13,7 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 import lighteval
+from lighteval.models.model_input import GenerationParameters
 from lighteval.models.transformers.transformers_model import TransformersModel
 
 
@@ -37,7 +38,7 @@ from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 def evaluate_model(
     model=None,
     max_samples=None,
-    tasks="helm|hellaswag|5|1,lighteval|glue:cola|5|1",
+    tasks="helm|hellaswag|5|1,lighteval|glue:cola|5|1,lighteval|coqa|5|1",
     device="cpu",
     vocab_size=16384,
     verbose=True,
@@ -48,7 +49,7 @@ def evaluate_model(
     if not verbose:
         logging.getLogger("lighteval").setLevel(logging.CRITICAL)
         logging.getLogger("transformers").setLevel(logging.CRITICAL)
-        datasets.disable_progress_bars()
+        # datasets.disable_progress_bars()
 
     evaluation_tracker = EvaluationTracker(
         output_dir=os.path.join(cache_dir, "eval"),
@@ -61,8 +62,11 @@ def evaluate_model(
         tokenizer=f"UNSAFE/praxis-{vocab_size}",
         model_parallel=False,
         batch_size=1,
-        max_length=2048,
+        max_length=4096,
         generation_size=256,
+        generation_parameters=GenerationParameters(
+            repetition_penalty=1.5, max_new_tokens=256
+        ),
     )
     if model is not None:
         model = TransformersModel.from_model(model, config=model_config)
