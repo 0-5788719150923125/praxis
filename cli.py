@@ -485,6 +485,12 @@ other_group.add_argument(
     help="Run a subset of evaluation tests after each validation step. This can be slow.",
 )
 other_group.add_argument(
+    "--no_eval",
+    action="store_true",
+    default=False,
+    help="Disable evaluation. This might be helpful when eval leads to spikes in memory consumption, which crash CUDA",
+)
+other_group.add_argument(
     "--debug",
     action="store_true",
     default=False,

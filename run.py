@@ -428,9 +428,13 @@ class PeriodicEvaluation(Callback):
         self._run_evaluation_suites()
 
     def _run_evaluation_suites(self):
+
+        if no_eval:
+            return
+
         metrics = evaluate_model(
             model,
-            max_samples=250,
+            max_samples=1000,
             tasks=eval_tasks,
             device=device,
             vocab_size=vocab_size,
