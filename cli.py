@@ -488,7 +488,7 @@ other_group.add_argument(
     "--no_eval",
     action="store_true",
     default=False,
-    help="Disable evaluation. This might be helpful when eval leads to spikes in memory consumption, which crash CUDA",
+    help="Disable evaluation. This is helpful when eval is causing spikes in memory consumption, crashing CUDA",
 )
 other_group.add_argument(
     "--debug",
