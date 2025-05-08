@@ -144,6 +144,10 @@ HUGGINGFACE_DATASETS = {
 }
 
 DEFAULT_WEIGHT = 1.0
+SOURCE_WEIGHT = 0.025
+DIRECTORY_WEIGHT = 2.0
+GUN_WEIGHT = 0.01
+
 DATASET_COLLECTIONS = dict(
     base={
         "fineweb-edu-350bt": DEFAULT_WEIGHT,
@@ -567,7 +571,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         return dataset
     elif format == "directory":
         dataset = MultiDirectoryDataset(tokenizer, directories=kwargs.get("data_path"))
-        dataset.weight = 0.1
+        dataset.weight = DIRECTORY_WEIGHT
         return dataset
     elif format == "self":
         dataset = MultiDirectoryDataset(
@@ -590,11 +594,11 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
                 ".txt",
             ],
         )
-        dataset.weight = 0.01
+        dataset.weight = SOURCE_WEIGHT
         return dataset
     elif format == "gun":
         dataset = GunChatDataset(tokenizer)
-        dataset.weight = 0.01
+        dataset.weight = GUN_WEIGHT
         return dataset
 
 
@@ -813,6 +817,7 @@ class MultiDirectoryDataset(PraxisSampler):
             "node_modules",
             "build",
             "dist",
+            "praxis.egg-info",
             ".pytest_cache",
             ".mypy_cache",
             ".tox",
