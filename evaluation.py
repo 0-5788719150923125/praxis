@@ -38,7 +38,7 @@ from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
 def evaluate_model(
     model=None,
     max_samples=None,
-    tasks="helm|hellaswag|5|1,lighteval|glue:cola|5|1,lighteval|coqa|5|1",
+    tasks="helm|hellaswag|5|1",
     device="cpu",
     vocab_size=16384,
     verbose=True,

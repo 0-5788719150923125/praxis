@@ -1191,8 +1191,9 @@ if local_rank == 0:
 
 
 # Load datasets
+use_source_code = not no_source
 datamodule = get_datamodules(
-    seed, dev, pile, phi, gun, source, tokenizer, hparams, data_path
+    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path
 )
 
 # create the optimizer

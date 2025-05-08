@@ -578,6 +578,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
             tokenizer,
             directories="./",
             allowed_extensions=[
+                ".bib",
                 ".cfg",
                 ".css",
                 ".gd",
@@ -589,9 +590,14 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
                 ".mjs",
                 ".py",
                 ".sh",
+                ".tex",
+                ".toml",
                 ".ts",
                 ".tscn",
                 ".txt",
+                ".yaml",
+                ".yml",
+                "LICENSE",
             ],
         )
         dataset.weight = SOURCE_WEIGHT
@@ -814,9 +820,10 @@ class MultiDirectoryDataset(PraxisSampler):
             ".venv",
             "venv",
             "__pycache__",
-            "node_modules",
+            "archive",
             "build",
             "dist",
+            "node_modules",
             "praxis.egg-info",
             ".pytest_cache",
             ".mypy_cache",
@@ -922,7 +929,7 @@ class MultiDirectoryDataset(PraxisSampler):
     def fill_sequence_cache(self):
         try:
             file_path = next(self.file_iterator)
-            content = self._read_file(file_path)
+            content = self.tokenizer.bos_token + self._read_file(file_path)
             self.sequence_cache.append(content)
         except StopIteration:
             random.shuffle(self.file_list)

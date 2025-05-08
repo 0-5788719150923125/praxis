@@ -42,9 +42,5 @@ dependencies = [
     "xformers",
 ]
 
-# [project.optional-dependencies]
-# local-blt = ["bytelatent @ file:///home/crow/repos/blt"]
-# alt-blt = ["bytelatent @ git+https://github.com/Vectorrent/blt.git@fix-realtime-entropy-patching"]
-
 [tool.setuptools]
 packages = ["praxis"]
