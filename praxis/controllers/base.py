@@ -36,12 +36,7 @@ class BaseController(nn.Module):
         )
 
     def __repr__(self) -> str:
-        """
-        String representation of the module.
-
-        Returns:
-            String representation
-        """
+        """String representation of the module."""
         return f"{self.__class__.__name__}()"
 
     def add_context(

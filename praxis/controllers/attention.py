@@ -12,8 +12,8 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 class AttentionController(BaseController):
     """
-    A simplified attention-based controller that makes routing decisions by attending to
-    the history of previously selected layers, operating directly in hidden_size space.
+    An attention-based controller that makes routing decisions by attending to the
+    history of previously-selected layers.
     """
 
     def __init__(self, config: ConfigType) -> None:
@@ -30,7 +30,7 @@ class AttentionController(BaseController):
         # Attention mechanism operating in hidden_size space
         self.attention = nn.MultiheadAttention(
             embed_dim=hidden_size,
-            num_heads=4,
+            num_heads=config.num_heads,
             batch_first=True,
             dropout=config.dropout,
         )

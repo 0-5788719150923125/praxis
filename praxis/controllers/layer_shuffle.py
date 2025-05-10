@@ -22,12 +22,6 @@ class LayerShuffle(BaseController):
     def __init__(self, config: ConfigType, num_context_tokens: int = 0):
         super().__init__(config)
 
-        # self.navigator = (
-        #     PraxisController(config, max_num_experts=config.num_experts * 3)
-        #     if config.autopilot
-        #     else False
-        # )
-
         self.num_context_tokens = num_context_tokens
         if self.num_context_tokens < 1:
             return
