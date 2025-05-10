@@ -56,7 +56,7 @@ class AttentionController(BaseController):
         current_route: List[int],
         current_depth: int,
     ) -> Tuple[Tensor, Optional[Tensor], Tensor, List[int], Optional[int]]:
-        batch_size = hidden_states.shape[0]
+        batch_size = hidden_states.size(0)
         device = hidden_states.device
 
         # Get the last token state directly
@@ -68,10 +68,10 @@ class AttentionController(BaseController):
             logits = self.router(current_state)
         else:
             # Create history tensor from route
-            history_layers = torch.tensor(current_route, device=device).long()
+            route_tensor = torch.tensor(current_route, device=device).long()
 
             # Get layer embeddings for previous route
-            history_embeddings = self.expert_embeddings[current_depth](history_layers)
+            history_embeddings = self.expert_embeddings[current_depth](route_tensor)
             history_embeddings = history_embeddings.unsqueeze(0).expand(
                 batch_size, -1, -1
             )
@@ -80,9 +80,10 @@ class AttentionController(BaseController):
             query = current_state.unsqueeze(1)  # [batch_size, 1, hidden_size]
 
             # Create attention mask (causal)
-            mask_size = len(current_route)
             attn_mask = (
-                torch.triu(torch.ones(1, mask_size), diagonal=1).bool().to(device)
+                torch.triu(torch.ones(1, len(current_route)), diagonal=1)
+                .bool()
+                .to(device)
             )
 
             # Apply attention with causality
