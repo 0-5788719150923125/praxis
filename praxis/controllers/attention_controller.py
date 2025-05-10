@@ -41,6 +41,9 @@ class AttentionController(BaseController):
         # Router for final decision
         self.router = nn.Linear(self.hidden_size, self.num_experts)
 
+        # Project expert preds back to original hidden size
+        self.projector = nn.Linear(self.num_experts, self.hidden_size)
+
         # Layer that combines original hidden state with routing information
         self.combiner = nn.Linear(self.hidden_size * 2, self.hidden_size)
 
@@ -62,8 +65,7 @@ class AttentionController(BaseController):
         # Handle the case with no route history
         if not current_route:
             # Simple prediction with no history
-            attn_output = current_state
-            logits = self.router(attn_output)
+            logits = self.router(current_state)
         else:
             # Create history tensor from route
             history_layers = torch.tensor(current_route, device=device).long()
@@ -91,14 +93,17 @@ class AttentionController(BaseController):
                 attn_mask=attn_mask,
                 is_causal=True,
             )
-            attn_output = attn_output.squeeze(1)  # Back to [batch_size, hidden_size]
 
             # Route based on attention output
-            logits = self.router(attn_output)
+            logits = self.router(attn_output.squeeze(1))
+
+        # Get state-mixing weights
+        probs = F.softmax(logits, dim=-1)
+        state_update = self.projector(probs)
 
         # Update only the last token with routing information
         # Use a gated combination to control information flow
-        combined = torch.cat([hidden_states[:, -1], attn_output], dim=-1)
+        combined = torch.cat([hidden_states[:, -1], state_update], dim=-1)
         updated_last_token = self.combiner(combined)
 
         # Create a copy of hidden_states to modify
