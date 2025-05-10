@@ -20,32 +20,31 @@ class AttentionController(BaseController):
         super().__init__(config, allow_visualizer=True)
 
         # Configuration
-        self.hidden_size = config.hidden_size
+        hidden_size = config.hidden_size
 
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
-            [
-                nn.Embedding(self.num_experts, self.hidden_size)
-                for _ in range(config.depth)
-            ]
+            [nn.Embedding(self.num_experts, hidden_size) for _ in range(config.depth)]
         )
 
         # Attention mechanism operating in hidden_size space
         self.attention = nn.MultiheadAttention(
-            embed_dim=self.hidden_size,
+            embed_dim=hidden_size,
             num_heads=4,
             batch_first=True,
             dropout=config.dropout,
         )
 
         # Router for final decision
-        self.router = nn.Linear(self.hidden_size, self.num_experts)
+        self.router = nn.Linear(hidden_size, self.num_experts)
 
         # Project expert preds back to original hidden size
-        self.projector = nn.Linear(self.num_experts, self.hidden_size)
+        self.projector = nn.Linear(self.num_experts, hidden_size)
 
         # Layer that combines original hidden state with routing information
-        self.combiner = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        self.blenders = nn.ModuleList(
+            [nn.Linear(hidden_size * 2, hidden_size) for _ in range(config.depth)]
+        )
 
     def get_next_expert(
         self,
@@ -105,7 +104,7 @@ class AttentionController(BaseController):
         # Update only the last token with routing information
         # Use a gated combination to control information flow
         combined = torch.cat([hidden_states[:, -1], state_update], dim=-1)
-        updated_last_token = self.combiner(combined)
+        updated_last_token = self.blenders[current_depth](combined)
 
         # Create a copy of hidden_states to modify
         new_states = hidden_states.clone()

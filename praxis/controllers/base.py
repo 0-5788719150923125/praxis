@@ -35,6 +35,15 @@ class BaseController(nn.Module):
             else False
         )
 
+    def __repr__(self) -> str:
+        """
+        String representation of the module.
+
+        Returns:
+            String representation
+        """
+        return f"{self.__class__.__name__}()"
+
     def add_context(
         self, hidden_states: Tensor, attention_mask: Tensor, *args: Any, **kwargs: Any
     ) -> Tuple[Tensor, Tensor]:
