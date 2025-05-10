@@ -23,8 +23,11 @@ class AttentionController(BaseController):
         self.hidden_size = config.hidden_size
 
         # Layer embeddings directly in hidden_size dimension
-        self.expert_embeddings = nn.Parameter(
-            torch.randn(self.num_experts, self.hidden_size)
+        self.expert_embeddings = nn.ModuleList(
+            [
+                nn.Embedding(self.num_experts, self.hidden_size)
+                for _ in range(config.depth)
+            ]
         )
 
         # Attention mechanism operating in hidden_size space
@@ -66,7 +69,7 @@ class AttentionController(BaseController):
             history_layers = torch.tensor(current_route, device=device).long()
 
             # Get layer embeddings for previous route
-            history_embeddings = F.embedding(history_layers, self.expert_embeddings)
+            history_embeddings = self.expert_embeddings[current_depth](history_layers)
             history_embeddings = history_embeddings.unsqueeze(0).expand(
                 batch_size, -1, -1
             )
