@@ -52,15 +52,19 @@ class SequentialDecoder(BaseDecoder):
         aux_losses: List[Tensor] = []
 
         for i in range(self.depth):
-            controller_state, aux_loss, current_route, next_expert_idx = (
-                self.controller.get_next_expert(
-                    hidden_states,
-                    controller_state,
-                    sequential_experts,
-                    ordered_experts,
-                    current_route,
-                    current_depth=i,
-                )
+            (
+                hidden_states,
+                controller_state,
+                aux_loss,
+                current_route,
+                next_expert_idx,
+            ) = self.controller.get_next_expert(
+                hidden_states,
+                controller_state,
+                sequential_experts,
+                ordered_experts,
+                current_route,
+                current_depth=i,
             )
 
             aux_losses.append(aux_loss)

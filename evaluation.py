@@ -1,5 +1,8 @@
 import logging
 import os
+
+os.environ["LIGHTEVAL_DISABLE_TQDM"] = "1"
+
 from pprint import pprint
 
 import datasets
@@ -65,7 +68,7 @@ def evaluate_model(
         max_length=4096,
         generation_size=256,
         generation_parameters=GenerationParameters(
-            repetition_penalty=1.5, max_new_tokens=256
+            repetition_penalty=1.2, max_new_tokens=256
         ),
     )
     if model is not None:

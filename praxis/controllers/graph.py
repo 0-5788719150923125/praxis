@@ -286,7 +286,13 @@ class GraphRouter(BaseController):
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return controller_state, routing_loss, current_route, next_expert_idx
+        return (
+            hidden_states,
+            controller_state,
+            routing_loss,
+            current_route,
+            next_expert_idx,
+        )
 
 
 class GraphAttention(nn.Module):

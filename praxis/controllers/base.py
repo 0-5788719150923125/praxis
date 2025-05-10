@@ -68,7 +68,7 @@ class BaseController(nn.Module):
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return None, 0, current_route, current_depth
+        return hidden_states, None, 0, current_route, current_depth
 
     def _update_route(
         self,

@@ -1,5 +1,6 @@
 from functools import partial
 
+from praxis.controllers.attention_controller import AttentionController
 from praxis.controllers.base import BaseController
 
 # from praxis.controllers.autopilot import Autopilot
@@ -16,4 +17,5 @@ CONTROLLER_REGISTRY = dict(
     pathfinder=Pathfinder,
     shortcutter=partial(Pathfinder, allow_early_exits=True),
     neural=NeuralController,
+    attention=AttentionController,
 )

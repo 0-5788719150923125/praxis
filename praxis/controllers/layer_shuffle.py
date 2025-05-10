@@ -131,4 +131,4 @@ class LayerShuffle(BaseController):
             hidden_states, current_route, current_depth, next_expert_idx
         )
 
-        return controller_state, aux_loss, current_route, current_depth
+        return hidden_states, controller_state, aux_loss, current_route, current_depth
