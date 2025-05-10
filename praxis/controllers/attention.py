@@ -46,6 +46,11 @@ class AttentionController(BaseController):
             [nn.Linear(hidden_size * 2, hidden_size) for _ in range(config.depth)]
         )
 
+        # Gated residuals
+        self.gates = nn.ModuleList(
+            [nn.Linear(hidden_size * 2, 1) for _ in range(config.depth)]
+        )
+
     def get_next_expert(
         self,
         hidden_states: Tensor,
@@ -104,9 +109,13 @@ class AttentionController(BaseController):
         # Update only the last token with routing information
         # Use a gated combination to control information flow
         combined = torch.cat([hidden_states[:, -1], state_update], dim=-1)
-        updated_last_token = self.blenders[current_depth](combined)
+        update_candidate = self.blenders[current_depth](combined)
 
-        # Create a copy of hidden_states to modify
+        # Compute a gate value between 0 and 1
+        gate = torch.sigmoid(self.gates[current_depth](combined))
+        updated_last_token = gate * update_candidate + (1 - gate) * hidden_states[:, -1]
+
+        # Now apply the gated update
         new_states = hidden_states.clone()
         new_states[:, -1] = updated_last_token
 
