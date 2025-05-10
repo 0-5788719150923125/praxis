@@ -115,20 +115,6 @@ class LayerShuffle(BaseController):
                 - Index of the next expert to use
         """
 
-        # if self.navigator:
-        #     aux_loss, next_expert_idx = self.navigator(
-        #         hidden_states,
-        #         current_depth,
-        #         ordered_experts,
-        #         ordered_experts,
-        #     )
-        # else:
         aux_loss = 0
-        next_expert = ordered_experts[current_depth]
-        next_expert_idx = sequential_experts.index(next_expert)
-
-        current_route = self._update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
-
-        return hidden_states, controller_state, aux_loss, current_route, current_depth
+        next_expert_idx = current_depth
+        return hidden_states, controller_state, aux_loss, current_depth

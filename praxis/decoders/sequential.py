@@ -52,24 +52,25 @@ class SequentialDecoder(BaseDecoder):
         aux_losses: List[Tensor] = []
 
         for i in range(self.depth):
-            (
-                hidden_states,
-                controller_state,
-                aux_loss,
-                current_route,
-                next_expert_idx,
-            ) = self.controller.get_next_expert(
-                hidden_states,
-                controller_state,
-                sequential_experts,
-                ordered_experts,
-                current_route,
-                current_depth=i,
+            current_depth = i
+            hidden_states, controller_state, aux_loss, next_expert_idx = (
+                self.controller.get_next_expert(
+                    hidden_states,
+                    controller_state,
+                    sequential_experts,
+                    ordered_experts,
+                    current_route,
+                    current_depth,
+                )
             )
 
             aux_losses.append(aux_loss)
             if next_expert_idx is None:
                 break
+
+            current_route = self.controller.update_route(
+                hidden_states, current_route, current_depth, next_expert_idx
+            )
 
             expert = ordered_experts[next_expert_idx]
 
@@ -84,14 +85,14 @@ class SequentialDecoder(BaseDecoder):
                 attention_mask,
                 past_key_values,
                 layer_state,
-                i,
+                current_depth,
                 block_ids,
-                should_checkpoint(self.training, i, self.checkpoint_every),
+                should_checkpoint(self.training, current_depth, self.checkpoint_every),
             )
             aux_losses.append(aux_loss)
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             block_ids = self.compressor.reduce_block_ids(block_ids)
-            hidden_states = self.post_layer(hidden_states, i)
+            hidden_states = self.post_layer(hidden_states, current_depth)
             if current_state is not None:
                 current_state[next_expert_idx] = layer_state
 

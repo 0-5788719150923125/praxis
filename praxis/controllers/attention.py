@@ -16,7 +16,7 @@ class AttentionController(BaseController):
     the history of previously selected layers, operating directly in hidden_size space.
     """
 
-    def __init__(self, config: ConfigType, allow_early_exits: bool = False) -> None:
+    def __init__(self, config: ConfigType) -> None:
         super().__init__(config, allow_visualizer=True)
 
         # Configuration
@@ -118,9 +118,4 @@ class AttentionController(BaseController):
         vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
         next_expert_idx = torch.argmax(vote_counts).item()
 
-        # Update route
-        current_route = self._update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
-
-        return new_states, controller_state, 0, current_route, next_expert_idx
+        return new_states, controller_state, 0, next_expert_idx

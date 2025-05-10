@@ -70,10 +70,6 @@ class Pathfinder(BaseController):
 
         # Allow early exits
         if next_expert_idx == self.num_experts:
-            return hidden_states, controller_state, aux_loss, current_route, None
+            return hidden_states, controller_state, aux_loss, None
 
-        current_route = self._update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
-
-        return hidden_states, controller_state, aux_loss, current_route, next_expert_idx
+        return hidden_states, controller_state, aux_loss, next_expert_idx

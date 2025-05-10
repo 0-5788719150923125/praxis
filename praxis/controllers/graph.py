@@ -233,9 +233,9 @@ class GraphRouter(BaseController):
             if expert in ordered_experts
         ]
 
-        # Reset if no unused experts available
-        if not available_indices:
-            return torch.tensor(0.0, device=hidden_states.device), current_route, None
+        # # Reset if no unused experts available
+        # if not available_indices:
+        #     return torch.tensor(0.0, device=hidden_states.device), current_route, None
 
         # Compute attention scores and probabilities
         scores = self._compute_attention_scores(
@@ -282,17 +282,7 @@ class GraphRouter(BaseController):
             next_expert_idx = torch.multinomial(probs, num_samples=1).item()
             routing_loss = 0
 
-        current_route = self._update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
-
-        return (
-            hidden_states,
-            controller_state,
-            routing_loss,
-            current_route,
-            next_expert_idx,
-        )
+        return hidden_states, controller_state, routing_loss, next_expert_idx
 
 
 class GraphAttention(nn.Module):

@@ -255,11 +255,6 @@ class NeuralController(BaseController):
             new_tool_outputs, stack_memory
         )
 
-        # Update route for visualization
-        current_route = self._update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
-
         # Prepare controller state for next iteration
         new_controller_state = (new_stack_state, new_tool_indices, new_tool_outputs)
 
@@ -273,13 +268,7 @@ class NeuralController(BaseController):
             output = self.visualize_operation(new_controller_state, batch_idx=0)
             print(f"DEBUG: tool: {output['tool']}, sharpness: {output['sharpness']}")
 
-        return (
-            hidden_states,
-            new_controller_state,
-            gating_loss,
-            current_route,
-            next_expert_idx,
-        )
+        return hidden_states, new_controller_state, gating_loss, next_expert_idx
 
     def visualize_operation(
         self,

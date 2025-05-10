@@ -191,7 +191,7 @@ class NeuralLambdaRouter(BaseController):
             return gating_loss, current_route, None
 
         # Update route (matching the original Pathfinder behavior)
-        current_route = self._update_route(
+        current_route = self.update_route(
             hidden_states, current_route, current_depth, next_expert_idx
         )
 

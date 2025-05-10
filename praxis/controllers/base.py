@@ -63,14 +63,11 @@ class BaseController(nn.Module):
         current_depth: int,
     ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
 
+        aux_loss = 0
         next_expert_idx = current_depth
-        current_route = self._update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
+        return hidden_states, controller_state, aux_loss, next_expert_idx
 
-        return hidden_states, None, 0, current_route, current_depth
-
-    def _update_route(
+    def update_route(
         self,
         hidden_states: Tensor,
         current_route: List[int],
