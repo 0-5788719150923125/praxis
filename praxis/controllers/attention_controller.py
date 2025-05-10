@@ -12,8 +12,8 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 class AttentionController(BaseController):
     """
-    An attention-based controller that makes routing decisions by attending to
-    the history of previously selected layers.
+    A simplified attention-based controller that makes routing decisions by attending to
+    the history of previously selected layers, operating directly in hidden_size space.
     """
 
     def __init__(self, config: ConfigType, allow_early_exits: bool = False) -> None:
@@ -21,27 +21,22 @@ class AttentionController(BaseController):
 
         # Configuration
         self.hidden_size = config.hidden_size
-        embed_dim = min(256, self.hidden_size // 2)
 
-        # Projection from hidden states to embedding dimension
-        self.projector = nn.Linear(self.hidden_size, embed_dim)
+        # Layer embeddings directly in hidden_size dimension
+        self.expert_embeddings = nn.Parameter(
+            torch.randn(self.num_experts, self.hidden_size)
+        )
 
-        # Layer embeddings - unique representation for each layer
-        self.embedder = nn.Parameter(torch.randn(self.num_experts, embed_dim))
-
-        # Attention mechanism
+        # Attention mechanism operating in hidden_size space
         self.attention = nn.MultiheadAttention(
-            embed_dim=embed_dim,
+            embed_dim=self.hidden_size,
             num_heads=4,
             batch_first=True,
             dropout=config.dropout,
         )
 
         # Router for final decision
-        self.router = nn.Linear(embed_dim, self.num_experts)
-
-        # Linear transformation to map attention output back to hidden dimension
-        self.updater = nn.Linear(embed_dim, self.hidden_size)
+        self.router = nn.Linear(self.hidden_size, self.num_experts)
 
         # Layer that combines original hidden state with routing information
         self.combiner = nn.Linear(self.hidden_size * 2, self.hidden_size)
@@ -58,8 +53,8 @@ class AttentionController(BaseController):
         batch_size = hidden_states.shape[0]
         device = hidden_states.device
 
-        # Project current hidden state
-        current_state = self.projector(hidden_states[:, -1])
+        # Get the last token state directly
+        current_state = hidden_states[:, -1]
 
         # Handle the case with no route history
         if not current_route:
@@ -69,13 +64,15 @@ class AttentionController(BaseController):
         else:
             # Create history tensor from route
             history_layers = torch.tensor(current_route, device=device).long()
-            history_embeddings = F.embedding(history_layers, self.embedder)
+
+            # Get layer embeddings for previous route
+            history_embeddings = F.embedding(history_layers, self.expert_embeddings)
             history_embeddings = history_embeddings.unsqueeze(0).expand(
                 batch_size, -1, -1
             )
 
             # Reshape current state for attention
-            query = current_state.unsqueeze(1)  # [batch_size, 1, emb_dim]
+            query = current_state.unsqueeze(1)  # [batch_size, 1, hidden_size]
 
             # Create attention mask (causal)
             mask_size = len(current_route)
@@ -91,22 +88,18 @@ class AttentionController(BaseController):
                 attn_mask=attn_mask,
                 is_causal=True,
             )
-            attn_output = attn_output.squeeze(1)
+            attn_output = attn_output.squeeze(1)  # Back to [batch_size, hidden_size]
 
             # Route based on attention output
             logits = self.router(attn_output)
 
-        # Create differentiable connection by updating hidden states
-        # This ensures gradient flow from routing decisions back to model parameters
-        routing_hidden = self.updater(attn_output)
+        # Update only the last token with routing information
+        # Use a gated combination to control information flow
+        combined = torch.cat([hidden_states[:, -1], attn_output], dim=-1)
+        updated_last_token = self.combiner(combined)
 
         # Create a copy of hidden_states to modify
         new_states = hidden_states.clone()
-
-        # Update only the last token with routing information
-        # Use a gated combination to control information flow
-        combined = torch.cat([hidden_states[:, -1], routing_hidden], dim=-1)
-        updated_last_token = self.combiner(combined)
         new_states[:, -1] = updated_last_token
 
         # Get each example's vote for which expert to use next
