@@ -1,566 +1,511 @@
-import math
 import os
-import random
-from collections import defaultdict, deque
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+import time
+from collections import defaultdict
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
-import matplotlib.transforms as transforms
-import networkx as nx
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from matplotlib.collections import LineCollection, PathCollection
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Circle
-from matplotlib.path import Path
-from matplotlib.transforms import Affine2D
+from matplotlib.patches import FancyArrowPatch
 
 
 class RouteVisualizer:
     """
-    Visualizes routing between experts in a mixture-of-experts model.
-    Creates a network graph visualization showing transition patterns.
+    Visualizes routing patterns between experts in a mixture-of-experts model,
+    with support for time-weighted route tracking to identify evolving patterns.
     """
 
     def __init__(
         self,
         num_experts: int,
         save_dir: str = "data",
-        max_history: int = 10000,
-        save_rate: int = 1000,
+        save_rate: int = 100,
+        max_routes: int = 1000,
+        max_depth: int = 4,
+        window_size: int = 10000,  # Size of rolling window
+        decay_factor: float = 0.99,  # Optional decay for aging routes
+        use_time_weighting: bool = True,  # Whether to use time weighting
     ) -> None:
-        """
-        Initialize route visualizer.
+        self.num_experts = num_experts
+        self.save_dir = save_dir
+        self.save_rate = save_rate
+        self.max_routes = max_routes
+        self.max_depth = max_depth
+        self.window_size = window_size
+        self.decay_factor = decay_factor
+        self.use_time_weighting = use_time_weighting
 
-        Args:
-            num_experts: Number of experts in the model
-            save_dir: Directory to save visualization images
-            max_history: Maximum number of transitions to track
-            save_rate: How often to save visualization (every N transitions)
-        """
-        self.num_experts: int = num_experts
-        self.save_dir: str = save_dir
-        self.max_history: int = max_history
-        self.save_rate: int = save_rate
+        os.makedirs(save_dir, exist_ok=True)
 
-        # Core data structures
-        self.transition_history: deque = deque(
-            maxlen=None
-        )  # Store (from_expert, to_expert) tuples
-        self.route_counts: Dict[Tuple[int, int], int] = defaultdict(int)
-        self.recurrent_counts: Dict[int, int] = defaultdict(int)
-        self.total_events: int = 0
+        # Traditional count-based tracking
+        self.routes: Dict[Tuple[int, ...], int] = defaultdict(int)
+        self.total_routes = 0
 
-        self.inference_count: int = 0
-        self.node_radius: float = 0.15
+        # Time-weighted tracking with rolling window
+        self.recent_routes: List[Tuple[Tuple[int, ...], int]] = []  # (route, timestamp)
+        self.last_decay_time = 0  # For periodic decay
+        self.decay_interval = 1000  # Apply decay every N routes
 
-    def add_transition(self, from_expert: int, to_expert: int) -> None:
-        """
-        Add a new transition between experts and update visualization if needed.
+    def add_full_route(self, route: Sequence[int]) -> None:
+        """Add a complete route through the network with time-based tracking."""
+        if len(route) > self.max_depth + 1:
+            route = route[: self.max_depth + 1]
 
-        Args:
-            from_expert: Source expert index
-            to_expert: Target expert index
-        """
-        # Add new transition
-        self.transition_history.append((from_expert, to_expert))
-        self.route_counts[(from_expert, to_expert)] += 1
-        if from_expert == to_expert:
-            self.recurrent_counts[from_expert] += 1
-        self.total_events += 1
+        route_tuple = tuple(route)
+        timestamp = self.total_routes  # Using route count as timestamp
 
-        # Prune if needed
-        self._prune_history()
+        # Add to traditional counter
+        self.routes[route_tuple] += 1
 
-        # Handle visualization saving
-        self.inference_count += 1
-        if self.inference_count % self.save_rate == 0:
+        # Add to time-weighted rolling window
+        if self.use_time_weighting:
+            self.recent_routes.append((route_tuple, timestamp))
+
+            # Maintain window size
+            if len(self.recent_routes) > self.window_size:
+                self.recent_routes.pop(0)  # Remove oldest
+
+        # Apply periodic decay to all routes
+        if self.use_time_weighting and (
+            timestamp - self.last_decay_time >= self.decay_interval
+        ):
+            self._apply_decay()
+            self.last_decay_time = timestamp
+
+        self.total_routes += 1
+
+        # Maintain max_routes limit for traditional tracking
+        if len(self.routes) > self.max_routes:
+            least_common = min(self.routes.items(), key=lambda x: x[1])
+            del self.routes[least_common[0]]
+
+        if self.total_routes % self.save_rate == 0:
             self._save_visualization()
+            # Also save time-weighted version
+            if self.use_time_weighting:
+                self._save_visualization(time_weighted=True)
 
-    def _prune_history(self) -> None:
-        """Remove oldest transitions to maintain max_history limit"""
-        while self.total_events > self.max_history and self.transition_history:
-            # Remove oldest transition
-            from_expert, to_expert = self.transition_history.popleft()
+    def _apply_decay(self) -> None:
+        """Apply decay factor to route counts to gradually age out older patterns."""
+        for route in list(self.routes.keys()):
+            self.routes[route] *= self.decay_factor
+            # Remove routes that have decayed below threshold
+            if self.routes[route] < 0.5:
+                del self.routes[route]
 
-            # Update counts
-            self.route_counts[(from_expert, to_expert)] -= 1
-            if self.route_counts[(from_expert, to_expert)] == 0:
-                del self.route_counts[(from_expert, to_expert)]
+    def get_recent_routes(self) -> List[Tuple[Tuple[int, ...], float]]:
+        """Calculate route frequencies based on the recent time window."""
+        if not self.recent_routes:
+            return []
 
-            # Update recurrence counts if applicable
-            if from_expert == to_expert:
-                self.recurrent_counts[from_expert] -= 1
-                if self.recurrent_counts[from_expert] == 0:
-                    del self.recurrent_counts[from_expert]
+        # Count frequencies in recent window
+        recent_counts = defaultdict(int)
+        for route, _ in self.recent_routes:
+            recent_counts[route] += 1
 
-            self.total_events -= 1
+        # Normalize by window size
+        window_size = len(self.recent_routes)
+        return [(route, count) for route, count in recent_counts.items()]
 
-    def _get_current_counts(self) -> Tuple[Dict[Tuple[int, int], int], Dict[int, int]]:
-        """
-        Get current statistics - returns pre-computed counts
+    # Backward compatibility method
+    def add_transition(self, from_expert: int, to_expert: int) -> None:
+        """Legacy method for backward compatibility - does nothing."""
+        pass
 
-        Returns:
-            Tuple containing:
-                - Dictionary mapping (src, dst) to transition counts
-                - Dictionary mapping expert index to recurrent counts
-        """
-        return self.route_counts, self.recurrent_counts
-
-    def _get_loop_parameters(
-        self,
-        pos: Dict[int, Tuple[float, float]],
-        node: int,
-        count: int,
-        total_edge_weight: int,
-    ) -> List[Dict]:
-        """
-        Generate parameters for varied self-loops using transformed circles.
-
-        Args:
-            pos: Dictionary mapping node indices to (x, y) positions
-            node: Node index for self-loop
-            count: Number of transitions in this self-loop
-            total_edge_weight: Total number of transitions
-
-        Returns:
-            List of dictionaries containing loop parameters
-        """
-        center_x, center_y = pos[node]
-        num_loops = count
-
-        loops: List[Dict] = []
-        base_radius = 0.05
-
-        for i in range(num_loops):
-            # Calculate base position around node
-            angle = (i * 2 * np.pi / num_loops) + np.random.uniform(-0.1, 0.1)
-
-            # Size variation (keep modest to maintain consistent look)
-            size_factor = 1.0 + np.random.uniform(-0.1, 0.1)
-            radius = base_radius * size_factor
-
-            # Position circle so inner edge touches node center
-            # Distance from node center to circle center should equal circle radius
-            circle_center_x = center_x + radius * np.cos(angle)
-            circle_center_y = center_y + radius * np.sin(angle)
-
-            # Generate transform variations
-            scale_x = np.random.normal(0.2, 0.75)
-            scale_y = np.random.normal(0.2, 0.75)
-            rotation = np.random.uniform(0, 2 * np.pi)
-            skew = np.random.uniform(-0.05, 0.05)  # Reduced skew range for cleaner look
-
-            # Create transform matrix
-            transform = (
-                Affine2D()
-                .scale(scale_x, scale_y)
-                .rotate(rotation)
-                .skew(skew, 0)
-                .translate(circle_center_x, circle_center_y)
-            )
-
-            # Alpha based on count
-            base_alpha = 0.8 / np.sqrt(num_loops)
-            alpha = max(0.1, min(0.8, base_alpha))
-
-            loops.append(
-                {
-                    "center": (0, 0),  # Will be transformed
-                    "radius": radius,
-                    "transform": transform,
-                    "alpha": alpha,
-                }
-            )
-
-        return loops
-
-    def _create_feathered_node(
-        self,
-        ax: plt.Axes,
-        pos: Tuple[float, float],
-        color: Union[np.ndarray, str],
-        alpha: float = 1.0,
-        zorder: int = 1000,
-    ) -> None:
-        """
-        Create a feathered node using stacked rings with fixed alpha.
-
-        Args:
-            ax: Matplotlib axes to draw on
-            pos: (x, y) position of the node
-            color: Color of the node
-            alpha: Base alpha value for the node
-            zorder: Z-order for rendering (higher = on top)
-        """
-        center_x, center_y = pos
-        base_radius = self.node_radius * 0.05
-
-        # More rings for smoother gradient
-        n_rings = 30
-        n_points = 50  # Points per ring for smooth circle
-
-        # Convert color to RGBA
-        if isinstance(color, np.ndarray):
-            if len(color) == 4:
-                rgba = color
-            else:
-                rgba = np.append(color, alpha)
-        else:
-            rgba = plt.cm.colors.to_rgba(color, alpha)
-
-        # Create points for all rings
-        theta = np.linspace(0, 2 * np.pi, n_points)
-        paths: List[Path] = []
-
-        # Fixed alpha for all rings
-        ring_alpha = 4.0 / n_rings  # Fixed transparency
-        ring_scale = 7.0
-
-        # Create rings from largest to smallest for proper stacking
-        for i in range(n_rings - 1, -1, -1):
-            # Linear spacing for more uniform gradient
-            progress = i / (n_rings - 1)
-            ring_radius = base_radius * (1 + progress * ring_scale)
-
-            # Create circle points
-            x = center_x + ring_radius * np.cos(theta)
-            y = center_y + ring_radius * np.sin(theta)
-
-            # Create path for this ring
-            vertices = np.column_stack((x, y))
-            vertices = np.vstack((vertices, vertices[0]))
-            codes = [Path.MOVETO] + [Path.LINETO] * (n_points - 1) + [Path.CLOSEPOLY]
-            paths.append(Path(vertices, codes))
-
-        # Create uniform colors array with fixed alpha
-        colors = [(rgba[0], rgba[1], rgba[2], ring_alpha)] * n_rings
-
-        # Create path collection
-        collection = PathCollection(
-            paths, facecolors=colors, edgecolors="none", zorder=zorder
-        )
-
-        ax.add_collection(collection)
-
-    def _get_text_color(self, background_color: Union[np.ndarray, str]) -> str:
-        """
-        Determine appropriate text color (black or white) based on background color.
-        Uses relative luminance formula to determine brightness.
-
-        Args:
-            background_color: Background color to contrast with
-
-        Returns:
-            "black" or "white" depending on background brightness
-        """
-        if isinstance(background_color, np.ndarray):
-            r, g, b = background_color[:3]
-        else:
-            rgb = plt.cm.colors.to_rgb(background_color)
-            r, g, b = rgb
-
-        # Calculate relative luminance
-        luminance = 0.299 * r + 0.587 * g + 0.114 * b
-
-        # Return white for dark backgrounds, black for light backgrounds
-        return "white" if luminance < 0.5 else "black"
-
-    def _get_curved_path_points(
-        self,
-        pos: Dict[int, Tuple[float, float]],
-        src: int,
-        dst: int,
-        rad: float,
-        num_points: int = 20,
-    ) -> np.ndarray:
-        """
-        Generate points along a curved path between two nodes.
-
-        Args:
-            pos: Dictionary mapping node indices to (x, y) positions
-            src: Source node index
-            dst: Destination node index
-            rad: Radius of curvature
-            num_points: Number of points along the curve
-
-        Returns:
-            Array of points defining the curve
-        """
-        # Ensure positions are numpy arrays
-        src_pos = np.array(pos[src], dtype=float)
-        dst_pos = np.array(pos[dst], dtype=float)
+    def _calculate_path_points(self, start, end, rad, num_points=100):
+        """Calculate points along a curved path to visually extend to node centers."""
+        # Convert to numpy arrays
+        start = np.array(start)
+        end = np.array(end)
 
         # Calculate midpoint
-        mid_pos = (src_pos + dst_pos) / 2
+        mid = (start + end) / 2
 
-        # Calculate perpendicular offset for control point
-        diff = dst_pos - src_pos
-        norm = np.array([-diff[1], diff[0]])  # Perpendicular vector
+        # Calculate perpendicular vector
+        diff = end - start
+        perp = np.array([-diff[1], diff[0]])
 
         # Normalize and scale
-        length = np.linalg.norm(norm)
-        if length > 0:
-            norm = norm / length * rad
+        norm = np.linalg.norm(perp)
+        if norm > 0:
+            perp = perp / norm * rad
 
-        # Control point
-        ctrl_pos = mid_pos + norm
+        # Control point for quadratic Bezier curve
+        ctrl = mid + perp
 
         # Generate curve points
         t = np.linspace(0, 1, num_points)
-        t = t.reshape(-1, 1)
+        curve = np.zeros((num_points, 2))
 
-        # Quadratic Bezier curve
-        curve = (1 - t) ** 2 * src_pos + 2 * (1 - t) * t * ctrl_pos + t**2 * dst_pos
+        # Quadratic Bezier curve formula
+        for i in range(num_points):
+            curve[i] = (
+                (1 - t[i]) ** 2 * start + 2 * (1 - t[i]) * t[i] * ctrl + t[i] ** 2 * end
+            )
 
         return curve
 
-    def _draw_gradient_edge(
-        self,
-        ax: plt.Axes,
-        pos: Dict[int, Tuple[float, float]],
-        src: int,
-        dst: int,
-        alpha: float,
-    ) -> None:
-        """
-        Draw a single edge with a blue-to-red gradient.
+    def _create_curved_connection(
+        self, ax, start, end, color, width, path_index, num_paths
+    ):
+        """Create a curved connection between points that visually connects to nodes."""
+        # Use a different approach to calculate curvature
+        # Higher index paths get more curvature to avoid overlap
+        rad_base = 0.12 + (path_index % 5) * 0.04
 
-        Args:
-            ax: Matplotlib axes to draw on
-            pos: Dictionary mapping node indices to (x, y) positions
-            src: Source node index
-            dst: Destination node index
-            alpha: Alpha (transparency) value for the edge
-        """
-        # Get curved path points
-        rad = 0.2 + np.random.uniform(-0.1, 0.1)
-        points = self._get_curved_path_points(pos, src, dst, rad)
+        # Alternate direction based on path index
+        rad = rad_base * (1 if path_index % 2 == 0 else -1)
 
-        # Create segments for LineCollection
-        segments = np.concatenate(
-            [points[:-1, np.newaxis], points[1:, np.newaxis]], axis=1
-        )
+        # For longer horizontal distances, reduce the curvature
+        if abs(end[0] - start[0]) > 1:
+            rad *= 0.7
 
-        # Create blue-to-red gradient colors
-        t = np.linspace(0, 1, len(segments))
-        colors = np.zeros((len(segments), 4))
-        colors[:, 0] = t  # Red increases
-        colors[:, 2] = 1 - t  # Blue decreases
-        colors[:, 3] = alpha  # Constant alpha
+        # Calculate the path points
+        curve = self._calculate_path_points(start, end, rad)
 
-        # Create and add LineCollection with solid lines
-        lc = LineCollection(
-            segments,
-            colors=colors,
-            linewidth=1.5,
-            zorder=0,
-            capstyle=None,
-            joinstyle=None,
-            linestyle="solid",
-        )
-        ax.add_collection(lc)
+        # Create the line collection
+        line = ax.plot(
+            curve[:, 0],
+            curve[:, 1],
+            color=color,
+            linewidth=width,
+            alpha=0.7,
+            solid_capstyle="round",
+            zorder=5,
+        )[0]
 
-    def _save_visualization(self) -> None:
-        """
-        Create and save visualization of the routing graph.
-        Generates a network graph showing routing patterns between experts.
-        """
-        fig, ax = plt.subplots(figsize=(15, 10))
-        plt.suptitle("Routing Graph", fontsize=16, y=0.93)
-        plt.subplots_adjust(top=0.90)
-        ax.set_aspect("equal", adjustable="datalim")
-        ax.set_axis_on()
-        # Remove ticks
-        ax.set_xticks([])
-        ax.set_yticks([])
+        return line
 
-        # Remove tick labels
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-
-        # Keep spines (border) visible
-        for spine in ax.spines.values():
-            spine.set_visible(True)
-            spine.set_color("black")
-            spine.set_linewidth(1.0)
-
-        # Initialize graph and get counts
-        G = nx.DiGraph()
-        for i in range(self.num_experts):
-            G.add_node(i)
-
-        route_counts, recurrent_counts = self._get_current_counts()
-        total_edge_weight = sum(route_counts.values())
-        if total_edge_weight == 0:
-            print("Warning: No edges found!")
+    def _save_visualization(self, time_weighted: bool = False) -> None:
+        """Create and save a grid-based visualization showing routing paths."""
+        if time_weighted and not self.recent_routes:
+            return
+        elif not time_weighted and not self.routes:
             return
 
-        # Calculate node usage
-        node_usage = defaultdict(int)
-        for (src, dst), count in route_counts.items():
-            node_usage[src] += count
-            node_usage[dst] += count
-        total_usage = sum(node_usage.values())
+        # Get appropriate path data based on visualization type
+        if time_weighted:
+            paths = sorted(self.get_recent_routes(), key=lambda x: x[1], reverse=True)
+            viz_type = "recent"
+            filename = "route_viz_recent.png"
+        else:
+            paths = sorted(self.routes.items(), key=lambda x: x[1], reverse=True)
+            viz_type = "all-time"
+            filename = "route_viz.png"
 
-        # Generate layout with increased scale
-        pos = nx.spring_layout(
-            G, k=2.0, iterations=50, scale=2.0, center=(0, 0)  # Increased scale
-        )
+        if not paths:
+            return
 
-        # Scale positions while maintaining proportions
-        positions = np.array(list(pos.values()))
-        max_range = max(np.ptp(positions[:, 0]), np.ptp(positions[:, 1]))
+        # Fixed to match actual depth range (0-4 = 5 positions)
+        display_depth = self.max_depth + 1
 
-        if max_range > 0:
-            for key in pos:
-                pos[key] = pos[key] / max_range
+        # Create figure
+        fig_width = 14
+        fig_height = 8
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
-        # Set bounds with reduced margins
-        ax.set_xlim(-0.7, 0.7)
-        ax.set_ylim(-0.7, 0.7)
+        # Set up grid
+        ax.set_xlim(-0.8, display_depth - 0.2)
+        ax.set_ylim(-0.8, self.num_experts - 0.2)
 
-        # Define color maps
-        blue_to_red = LinearSegmentedColormap.from_list("", ["blue", "red"])
-        max_edge_count = max(route_counts.values()) if route_counts else 1
+        # Add grid lines
+        for i in range(display_depth):
+            ax.axvline(i, color="gray", linestyle="-", alpha=0.15)
+        for i in range(self.num_experts):
+            ax.axhline(i, color="gray", linestyle="-", alpha=0.15)
 
-        # Draw edges with gradients
-        for (src, dst), count in route_counts.items():
-            color_val = count / max_edge_count
-            edge_color = blue_to_red(color_val)
-            if src == dst:
-                # Self-loops
-                loops = self._get_loop_parameters(pos, src, count, total_edge_weight)
-                for loop in loops:
-                    circle = Circle(
-                        loop["center"],
-                        loop["radius"],
-                        facecolor="none",
-                        edgecolor=edge_color,
-                        alpha=loop["alpha"],
-                        zorder=0,
-                        transform=loop["transform"] + ax.transData,
-                    )
-                    ax.add_patch(circle)
-            else:
-                # Regular edges with gradient
-                num_curves = min(int(np.sqrt(count)), 100)
-                for _ in range(num_curves):
-                    alpha = 0.15 + np.random.uniform(0, 0.1)
-                    self._draw_gradient_edge(ax, pos, src, dst, alpha)
+        # Label axes
+        ax.set_xticks(range(display_depth))
+        ax.set_xticklabels([f"{i}" for i in range(display_depth)])
+        ax.set_xlabel("Depth", fontsize=12, labelpad=10)
 
-        # Draw nodes
-        max_usage = max(node_usage.values()) if node_usage else 1
-        node_colors = {}
+        ax.set_yticks(range(self.num_experts))
+        ax.set_yticklabels([f"{i}" for i in range(self.num_experts)])
+        ax.set_ylabel("Expert", fontsize=12, labelpad=10)
 
-        # In the _save_visualization method, locate this section:
-        for node in G.nodes():
-            # Get the redness value (assuming blue_to_red colormap where higher values = more red)
-            color = blue_to_red(node_usage[node] / max_usage)
-            node_colors[node] = color
+        title_prefix = "Recent" if time_weighted else "All-time"
+        ax.set_title(f"{title_prefix} Expert Routing Patterns", fontsize=14, pad=15)
 
-            # Calculate zorder based on color - more red = higher zorder (on top)
-            # Extract the red component from the color (first value in RGB)
-            redness = (
-                color[0]
-                if isinstance(color, np.ndarray)
-                else plt.cm.colors.to_rgb(color)[0]
-            )
+        # Draw paths
+        top_paths = paths[:15]
+        total_count = sum(count for _, count in top_paths)
+        cmap = plt.cm.viridis
+        max_count = max(count for _, count in paths)
 
-            # CHANGE THIS LINE - Invert the relationship
-            # Now red nodes (redness near 1.0) will have lower zorder (behind edges)
-            # And blue nodes (redness near 0.0) will have higher zorder (in front of edges)
-            node_zorder = 100 - (redness * 200)  # Maps from +100 (blue) to -100 (red)
-
-            # Draw node with calculated zorder
-            self._create_feathered_node(ax, pos[node], color, zorder=node_zorder)
-
-        # Add node labels
-        labels = {node: str(node) for node in G.nodes()}
-        for node, (x, y) in pos.items():
-            text_color = self._get_text_color(node_colors[node])
-            ax.text(
-                x,
-                y,
-                labels[node],
-                horizontalalignment="center",
-                verticalalignment="center",
-                color=text_color,
-                fontweight="bold",
-                zorder=2000,
-            )
-
-        # Create legend content
+        # Add legend entries
         legend_lines = []
         legend_labels = []
 
-        # Expert usage section
-        legend_labels.append("Expert Usage")
-        legend_lines.append(plt.Line2D([0], [0], color="none"))
+        # Draw connections FIRST (so nodes will be on top)
+        for i, (path, count) in enumerate(top_paths):
+            if len(path) > display_depth:
+                path = path[:display_depth]
 
-        for node in sorted(node_usage.keys()):
-            count = node_usage[node]
-            percentage = (count / total_usage) * 100 if total_usage > 0 else 0
-            color = plt.cm.YlOrRd(node_usage[node] / max_usage)
-            legend_lines.append(
-                plt.Line2D(
-                    [0], [0], color=color, marker="o", linestyle="", markersize=10
+            # Calculate line width based on frequency
+            line_width = 1 + 3 * (count / max_count)
+            color = cmap(i / max(1, len(top_paths) - 1))
+
+            # Add to legend
+            legend_lines.append(plt.Line2D([0], [0], color=color, linewidth=line_width))
+            percentage = (count / total_count) * 100
+            legend_labels.append(f"Path {i+1}: {percentage:.1f}%")
+
+            # Draw connections FIRST
+            for j in range(len(path) - 1):
+                start = (j, path[j])
+                end = (j + 1, path[j + 1])
+                self._create_curved_connection(
+                    ax, start, end, color, line_width, i, len(top_paths)
                 )
+
+        # Now draw ALL nodes AFTER connections to ensure they're on top
+        for i, (path, count) in enumerate(top_paths):
+            if len(path) > display_depth:
+                path = path[:display_depth]
+
+            # Calculate line width and color again
+            line_width = 1 + 3 * (count / max_count)
+            color = cmap(i / max(1, len(top_paths) - 1))
+
+            # Draw nodes with slightly larger size to cover connection ends
+            node_size = line_width * 35  # Slightly larger than before
+
+            # Draw outline nodes first (black border, slightly larger)
+            for j, expert in enumerate(path):
+                ax.scatter(
+                    j,
+                    expert,
+                    s=node_size + 10,  # Larger for outline
+                    color="black",
+                    zorder=18,
+                )
+
+            # Then draw actual colored nodes on top
+            for j, expert in enumerate(path):
+                ax.scatter(
+                    j,
+                    expert,
+                    s=node_size,
+                    color=color,
+                    zorder=20,
+                )
+
+        # Add info text
+        if time_weighted:
+            window_size = min(len(self.recent_routes), self.window_size)
+            info_text = (
+                f"Recent routes (last {window_size:,})   "
+                f"Unique paths: {len(paths):,}   "
+                f"Total routes tracked: {self.total_routes:,}"
             )
-            legend_labels.append(f"E{node}: {count} ({percentage:.1f}%)")
-
-        # Spacing between sections
-        legend_lines.append(plt.Line2D([0], [0], color="none"))
-        legend_labels.append("")
-
-        # Transitions section
-        legend_labels.append("Top Transitions")
-        legend_lines.append(plt.Line2D([0], [0], color="none"))
-
-        # Sort and select transitions to show
-        num_transitions_to_show = 10
-        sorted_edges = sorted(route_counts.items(), key=lambda x: x[1], reverse=True)
-        edges_to_show = sorted_edges[:num_transitions_to_show]
-
-        # Add transitions to legend
-        for (src, dst), count in edges_to_show:
-            color_val = count / max_edge_count
-            edge_color = blue_to_red(color_val)
-            legend_lines.append(
-                plt.Line2D([0], [0], color=edge_color, marker=">", markersize=8)
+        else:
+            info_text = (
+                f"All-time data   "
+                f"Unique paths: {len(self.routes):,}   "
+                f"Total routes tracked: {self.total_routes:,}"
             )
-            percentage = (count / total_edge_weight) * 100
-            legend_labels.append(f"{src}→{dst}: {count} ({percentage:.1f}%)")
 
-        legend = ax.legend(
-            legend_lines,
-            legend_labels,
-            loc="upper right",
-            bbox_to_anchor=(0.98, 0.98),
-            borderaxespad=0,
-            frameon=True,
-            fontsize=9,
-            title="Statistics",
-            title_fontsize=10,
-            handletextpad=1,
-            labelspacing=0.2,
+        # Create stats box
+        text_box = plt.annotate(
+            info_text,
+            xy=(0.5, 0.01),
+            xycoords="figure fraction",
+            ha="center",
+            fontsize=10,
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor="white",
+                alpha=0.8,
+                edgecolor="lightgray",
+            ),
         )
 
-        legend.get_frame().set_alpha(0.8)
-        legend.get_frame().set_facecolor("white")
-        legend.set_zorder(2000)
+        # Adjust layout
+        plt.tight_layout(rect=[0, 0.15, 1, 0.98])
 
-        # Save with tight layout
+        # Add legend
+        if legend_lines:
+            legend = ax.legend(
+                legend_lines,
+                legend_labels,
+                title="Path Distribution",
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.15),
+                ncol=min(5, len(legend_lines)),
+                fontsize=9,
+                frameon=True,
+                framealpha=0.8,
+            )
+            legend.get_frame().set_facecolor("#f8f8f8")
+
+        # Save visualization
         plt.savefig(
-            os.path.join(self.save_dir, f"route_viz.png"),
+            os.path.join(self.save_dir, filename),
             dpi=300,
             bbox_inches="tight",
-            pad_inches=0.1,
+            pad_inches=0.3,
+        )
+        plt.close()
+
+    def save_comparison_visualization(self) -> None:
+        """Create a visualization comparing recent vs all-time popular routes."""
+        if not self.routes or not self.recent_routes:
+            return
+
+        # Get data for both metrics
+        all_time_routes = dict(
+            sorted(self.routes.items(), key=lambda x: x[1], reverse=True)[:15]
+        )
+        recent_routes = dict(self.get_recent_routes())
+
+        # Calculate trend scores (positive = trending up, negative = trending down)
+        comparison_data = []
+
+        # Convert to list before slicing (fix TypeError: 'set' object is not subscriptable)
+        combined_routes = list(
+            set(list(all_time_routes.keys()) + list(recent_routes.keys()))
+        )
+        for route in combined_routes[:20]:
+            all_time_count = all_time_routes.get(route, 0)
+            recent_count = recent_routes.get(route, 0)
+
+            # Skip routes with very low counts
+            if all_time_count < 0.5 and recent_count < 0.5:
+                continue
+
+            # Calculate a normalized trend score
+            if all_time_count > 0:
+                # Normalize recent count based on window size
+                window_ratio = min(self.window_size, len(self.recent_routes)) / max(
+                    1, self.total_routes
+                )
+                expected_count = all_time_count * window_ratio
+                trend_score = (recent_count - expected_count) / (
+                    expected_count + 1
+                )  # +1 to avoid division by zero
+            else:
+                # New route not in all-time top routes
+                trend_score = 1.0  # Maximum trend score
+
+            comparison_data.append((route, all_time_count, recent_count, trend_score))
+
+        # Sort by trend score
+        comparison_data.sort(key=lambda x: x[3], reverse=True)
+
+        # Create visualization
+        display_depth = self.max_depth + 1
+        fig, ax = plt.subplots(figsize=(16, 10))
+
+        # Set up grid similar to previous visualizations
+        # Note: display_depth is max_depth + 1, which is the correct number of positions (0 to max_depth)
+        ax.set_xlim(-0.8, display_depth - 0.2)
+        ax.set_ylim(-0.8, self.num_experts - 0.2)
+
+        # Grid lines and labels
+        for i in range(display_depth):
+            ax.axvline(i, color="gray", linestyle="-", alpha=0.15)
+        for i in range(self.num_experts):
+            ax.axhline(i, color="gray", linestyle="-", alpha=0.15)
+
+        ax.set_xticks(range(display_depth))
+        ax.set_xticklabels([f"{i}" for i in range(display_depth)])
+        ax.set_xlabel("Depth", fontsize=12, labelpad=10)
+
+        ax.set_yticks(range(self.num_experts))
+        ax.set_yticklabels([f"{i}" for i in range(self.num_experts)])
+        ax.set_ylabel("Expert", fontsize=12, labelpad=10)
+
+        ax.set_title("Trending Expert Routing Patterns", fontsize=16, pad=15)
+
+        # Draw paths
+        legend_lines = []
+        legend_labels = []
+
+        # Use different color for trending up vs down
+        trend_cmap_up = plt.cm.Greens
+        trend_cmap_down = plt.cm.Reds
+
+        # Draw connections
+        for i, (path, all_time, recent, trend) in enumerate(comparison_data[:10]):
+            if len(path) > display_depth:
+                path = path[:display_depth]
+
+            # Width based on recent popularity
+            width_factor = 1 + 2 * (
+                recent / (max(r for _, _, r, _ in comparison_data[:10]) + 0.1)
+            )
+
+            # Color based on trend (green = up, red = down)
+            if trend >= 0:
+                # Trending up or new
+                color = trend_cmap_up(min(0.3 + 0.7 * trend, 0.9))
+                trend_desc = f"↑ {trend:.1f}x"
+            else:
+                # Trending down
+                color = trend_cmap_down(min(0.3 + 0.7 * abs(trend), 0.9))
+                trend_desc = f"↓ {abs(trend):.1f}x"
+
+            legend_lines.append(
+                plt.Line2D([0], [0], color=color, linewidth=width_factor * 2)
+            )
+            legend_labels.append(f"Path {i+1}: {trend_desc}")
+
+            # Draw connections
+            for j in range(len(path) - 1):
+                start = (j, path[j])
+                end = (j + 1, path[j + 1])
+                self._create_curved_connection(
+                    ax, start, end, color, width_factor, i, 10
+                )
+
+            # Draw nodes
+            node_size = width_factor * 30
+            for j, expert in enumerate(path):
+                # Outline
+                ax.scatter(j, expert, s=node_size + 10, color="black", zorder=18)
+                # Fill
+                ax.scatter(j, expert, s=node_size, color=color, zorder=20)
+
+        # Info text
+        window_size = min(len(self.recent_routes), self.window_size)
+        info_text = f"Comparison: Recent ({window_size:,} routes) vs All-time ({self.total_routes:,} routes) patterns"
+
+        plt.annotate(
+            info_text,
+            xy=(0.5, 0.01),
+            xycoords="figure fraction",
+            ha="center",
+            fontsize=10,
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor="white",
+                alpha=0.8,
+                edgecolor="lightgray",
+            ),
         )
 
+        # Legend
+        if legend_lines:
+            legend = ax.legend(
+                legend_lines,
+                legend_labels,
+                title="Trending Paths (↑ gaining, ↓ declining)",
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.15),
+                ncol=min(5, len(legend_lines)),
+                fontsize=9,
+                frameon=True,
+                framealpha=0.8,
+            )
+            legend.get_frame().set_facecolor("#f8f8f8")
+
+        # Save visualization
+        plt.tight_layout(rect=[0, 0.15, 1, 0.98])
+        plt.savefig(
+            os.path.join(self.save_dir, "route_viz_trend.png"),
+            dpi=300,
+            bbox_inches="tight",
+            pad_inches=0.3,
+        )
         plt.close()
 
 
@@ -568,30 +513,89 @@ if __name__ == "__main__":
     import random
 
     num_experts = 5
-    num_transitions = 1000000
-    recurrent_loop_probability = 0.3
 
     visualizer = RouteVisualizer(
-        num_experts=num_experts, save_dir="data", save_rate=1000, max_history=10000
+        num_experts=num_experts,
+        save_dir="data",
+        save_rate=1000,
+        window_size=5000,  # Keep last 5000 routes for time-weighted analysis
+        use_time_weighting=True,
+        max_depth=4,  # Ensure x-axis is 0-4 (5 positions total)
     )
 
-    current_expert = random.randint(0, num_experts - 1)
+    # Demo with changing patterns over time
+    print("Generating routes with evolving patterns...")
 
-    for _ in range(num_transitions):
-        # Determine next expert
-        if random.random() < recurrent_loop_probability:
-            next_expert = current_expert  # Generate a recurrent loop
+    # Phase 1: Initial pattern
+    print("Phase 1: Initial routing pattern")
+    initial_path = [0, 2, 1, 3, 4][
+        : visualizer.max_depth + 1
+    ]  # Ensure path matches max_depth
+    for i in range(3000):
+        # Sometimes add noise
+        if random.random() < 0.2:
+            idx = random.randint(0, len(initial_path) - 1)
+            new_path = initial_path.copy()
+            new_path[idx] = random.randint(0, num_experts - 1)
+            visualizer.add_full_route(new_path)
         else:
-            next_expert = random.randint(
-                0, num_experts - 1
-            )  # Generate a regular transition
-            while next_expert == current_expert:  # Avoid accidental loops
-                next_expert = random.randint(0, num_experts - 1)
+            visualizer.add_full_route(initial_path)
 
-        # Add transition to visualizer
-        visualizer.add_transition(current_expert, next_expert)
+    # Phase 2: Transition to new pattern
+    print("Phase 2: Transition to new routing pattern")
+    new_path = [1, 3, 0, 4, 2][
+        : visualizer.max_depth + 1
+    ]  # Ensure path matches max_depth
+    for i in range(3000):
+        # Gradually increase probability of new path
+        p_new = min(0.1 + i / 3000, 0.9)
 
-        # Update current expert for next iteration
-        current_expert = next_expert
+        if random.random() < p_new:
+            # Use new path, sometimes with noise
+            if random.random() < 0.2:
+                idx = random.randint(0, len(new_path) - 1)
+                path = new_path.copy()
+                path[idx] = random.randint(0, num_experts - 1)
+                visualizer.add_full_route(path)
+            else:
+                visualizer.add_full_route(new_path)
+        else:
+            # Use old path, sometimes with noise
+            if random.random() < 0.2:
+                idx = random.randint(0, len(initial_path) - 1)
+                path = initial_path.copy()
+                path[idx] = random.randint(0, num_experts - 1)
+                visualizer.add_full_route(path)
+            else:
+                visualizer.add_full_route(initial_path)
 
-    print("Visualization saved to data/route_viz.png")
+    # Phase 3: New dominant pattern
+    print("Phase 3: New dominant routing pattern")
+    for i in range(3000):
+        # High probability of new path
+        if random.random() < 0.8:
+            # Use new path, sometimes with noise
+            if random.random() < 0.1:
+                idx = random.randint(0, len(new_path) - 1)
+                path = new_path.copy()
+                path[idx] = random.randint(0, num_experts - 1)
+                visualizer.add_full_route(path)
+            else:
+                visualizer.add_full_route(new_path)
+        else:
+            # Random exploration of other paths
+            path_len = random.randint(3, 6)
+            random_path = [random.randint(0, num_experts - 1) for _ in range(path_len)]
+            visualizer.add_full_route(random_path)
+
+    print(f"Generated {visualizer.total_routes} routes")
+
+    # Force final visualizations
+    visualizer._save_visualization(time_weighted=False)  # All-time popular routes
+    visualizer._save_visualization(time_weighted=True)  # Recent popular routes
+    visualizer.save_comparison_visualization()  # Trending analysis
+
+    print("Visualizations saved to data/")
+    print("- route_viz.png: All-time popular routes")
+    print("- route_viz_recent.png: Recently popular routes")
+    print("- route_viz_trend.png: Trending analysis (rising/falling patterns)")

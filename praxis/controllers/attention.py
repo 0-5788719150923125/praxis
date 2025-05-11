@@ -128,7 +128,7 @@ class AttentionChanneler(BaseController):
 
         if self.training:
             # Sample from Gumbel distribution for each batch element
-            probs = F.gumbel_softmax(logits, tau=0.5, hard=True)
+            probs = F.gumbel_softmax(logits, tau=0.75, hard=True)
             batch_votes = torch.multinomial(probs, 1).squeeze(1)
         else:
             # During inference, use standard softmax for determinism

@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Tuple, TypeVar
+from typing import Any, List, Optional, Sequence, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
@@ -27,9 +27,7 @@ class BaseController(nn.Module):
         self.num_experts = config.num_experts
         self.visualizer = (
             RouteVisualizer(
-                num_experts=config.num_experts,
-                max_history=100 * config.depth,
-                save_rate=250 * config.depth,
+                save_dir="./", num_experts=self.num_experts, max_depth=self.depth
             )
             if self.debug and allow_visualizer
             else False
@@ -91,6 +89,15 @@ class BaseController(nn.Module):
                 self.visualizer.add_transition(previous_idx, next_expert_idx)
 
         return current_route
+
+    def add_full_route(self, hidden_states: Tensor, route: Sequence[int]) -> None:
+        if (
+            self.debug
+            and self.visualizer
+            and not self.training
+            and hidden_states.size(0) == 1  # not validation
+        ):
+            self.visualizer.add_full_route(route)
 
     def post_forward(self, hidden_states: Tensor, current_route: List[int]) -> None:
         """Reset the tracking of the current route through layers."""

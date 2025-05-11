@@ -9,6 +9,7 @@
 *.bbl
 *.blg
 *.key
+*.png
 __pycache__
 .parcel-cache
 build
