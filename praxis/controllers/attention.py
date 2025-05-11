@@ -11,7 +11,7 @@ from praxis.controllers.base import BaseController
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class AttentionController(BaseController):
+class AttentionChanneler(BaseController):
     """
     An attention-based controller that makes routing decisions by attending to the
     history of previously-selected layers while minimally modifying hidden states.
@@ -32,6 +32,9 @@ class AttentionController(BaseController):
         )
 
         # Attention mechanism operating in hidden_size space
+        self.attention_norm = nn.ModuleList(
+            [nn.LayerNorm(hidden_size) for _ in range(config.depth - 1)]
+        )
         self.attention = nn.ModuleList(
             [
                 nn.MultiheadAttention(
@@ -44,16 +47,22 @@ class AttentionController(BaseController):
             ]
         )
 
-        # Routers for final decision
-        self.routers = nn.ModuleList(
+        # Router MLPs with residual connections
+        self.router_ffns = nn.ModuleList(
             [
                 nn.Sequential(
+                    nn.LayerNorm(hidden_size),
                     nn.Linear(hidden_size, hidden_size * 4),
                     ACT2FN["relu"],
-                    nn.Linear(hidden_size * 4, self.num_experts),
+                    nn.Linear(hidden_size * 4, hidden_size),
                 )
                 for _ in range(config.depth)
             ]
+        )
+
+        # Final output projection for routing decisions
+        self.router_outputs = nn.ModuleList(
+            [nn.Linear(hidden_size, self.num_experts) for _ in range(config.depth)]
         )
 
         # Project expert probs to just the subset of features we'll modify
@@ -81,8 +90,9 @@ class AttentionController(BaseController):
 
         # Handle the case with no route history
         if not current_route:
-            # Simple prediction with no history
-            logits = self.routers[current_depth](current_state)
+            # Apply router with residual connection
+            router_hidden = self.router_ffns[current_depth](current_state)
+            router_hidden += current_state
         else:
             # Create history tensor from route
             route_tensor = torch.tensor(current_route, device=device).long()
@@ -104,16 +114,28 @@ class AttentionController(BaseController):
             )
 
             # Apply attention with causality
+            query_norm = self.attention_norm[current_depth - 1](query)
             attn_output, _ = self.attention[current_depth - 1](
-                query=query,
+                query=query_norm,
                 key=history_embeddings,
                 value=history_embeddings,
                 attn_mask=attn_mask,
                 is_causal=True,
             )
+            # Apply residual connection
+            attn_output += query
 
-            # Route based on attention output
-            logits = self.routers[current_depth](attn_output.squeeze(1))
+            # Reshape current state for attention
+            router_input = attn_output.squeeze(1)  # [batch_size, hidden_size]
+
+            # Apply router with residual
+            router_hidden = self.router_ffns[current_depth](router_input)
+            router_hidden += router_input
+
+        # Predict an expert layer
+        logits = self.router_outputs[current_depth](
+            router_hidden
+        )  # [batch_size, num_experts]
 
         # Project to just the feature subset we'll modify
         feature_updates = self.channelers[current_depth](logits)
@@ -124,7 +146,7 @@ class AttentionController(BaseController):
         # Create a new hidden states tensor
         new_states = hidden_states.clone()
 
-        # Update only the subset of features in the last token (create a side channel)
+        # Update a subset of features in all tokens (create a side channel)
         new_states[:, :, -self.channel_size :] += global_update
 
         # Get each example's vote for which expert to use next
