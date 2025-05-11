@@ -48,22 +48,21 @@ class AttentionChanneler(BaseController):
         )
 
         # Router MLPs with residual connections
-        self.router_ffns = nn.ModuleList(
+        self.feedforward = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.LayerNorm(hidden_size),
-                    nn.Linear(hidden_size, hidden_size * 4),
-                    ACT2FN["relu"],
-                    nn.Linear(hidden_size * 4, hidden_size),
+                    nn.Linear(hidden_size, hidden_size * 2),
+                    ACT2FN["leaky_relu"],
+                    nn.Dropout(config.dropout),
+                    nn.Linear(hidden_size * 2, hidden_size),
                 )
                 for _ in range(config.depth)
             ]
         )
 
         # Final output projection for routing decisions
-        self.router_outputs = nn.ModuleList(
-            [nn.Linear(hidden_size, self.num_experts) for _ in range(config.depth)]
-        )
+        self.router = nn.Linear(hidden_size, self.num_experts)
 
         # Project expert probs to just the subset of features we'll modify
         self.channelers = nn.ModuleList(
@@ -86,14 +85,10 @@ class AttentionChanneler(BaseController):
         device = hidden_states.device
 
         # Get the last token state directly
-        current_state = hidden_states[:, -1]
+        context_token = hidden_states[:, -1]
 
         # Handle the case with no route history
-        if not current_route:
-            # Apply router with residual connection
-            router_hidden = self.router_ffns[current_depth](current_state)
-            router_hidden += current_state
-        else:
+        if current_route:
             # Create history tensor from route
             route_tensor = torch.tensor(current_route, device=device).long()
 
@@ -103,9 +98,6 @@ class AttentionChanneler(BaseController):
                 batch_size, -1, -1
             )
 
-            # Reshape current state for attention
-            query = current_state.unsqueeze(1)  # [batch_size, 1, hidden_size]
-
             # Create attention mask (causal)
             attn_mask = (
                 torch.triu(torch.ones(1, len(current_route)), diagonal=1)
@@ -113,32 +105,37 @@ class AttentionChanneler(BaseController):
                 .to(device)
             )
 
-            # Apply attention with causality
+            # Reshape current state for attention
+            query = context_token.unsqueeze(1)  # [batch_size, 1, hidden_size]
             query_norm = self.attention_norm[current_depth - 1](query)
-            attn_output, _ = self.attention[current_depth - 1](
+
+            # Apply attention with causality
+            output, _ = self.attention[current_depth - 1](
                 query=query_norm,
                 key=history_embeddings,
                 value=history_embeddings,
                 attn_mask=attn_mask,
                 is_causal=True,
             )
-            # Apply residual connection
-            attn_output += query
 
-            # Reshape current state for attention
-            router_input = attn_output.squeeze(1)  # [batch_size, hidden_size]
+            # Apply residual and reshape
+            context_token = (output + query).squeeze(1)  # [batch_size, hidden_size]
 
-            # Apply router with residual
-            router_hidden = self.router_ffns[current_depth](router_input)
-            router_hidden += router_input
+        # Apply router with residual
+        router_hidden = self.feedforward[current_depth](context_token)
+        router_hidden += context_token
 
         # Predict an expert layer
-        logits = self.router_outputs[current_depth](
-            router_hidden
-        )  # [batch_size, num_experts]
+        logits = self.router(router_hidden)  # [batch_size, num_experts]
 
         # Project to just the feature subset we'll modify
         feature_updates = self.channelers[current_depth](logits)
+
+        # # Create a new hidden states tensor
+        # new_states = hidden_states.clone()
+
+        # # Update a subset of features in the final token (create a side channel)
+        # new_states[:, -1, -self.channel_size :] += feature_updates
 
         # Create a broadcast-compatible version of the feature updates
         global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
@@ -153,7 +150,7 @@ class AttentionChanneler(BaseController):
         batch_votes = torch.argmax(logits, dim=1)  # [batch_size]
 
         # Find the most common vote (mode) across the batch
-        vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
+        vote_counts = torch.bincount(batch_votes)
         next_expert_idx = torch.argmax(vote_counts).item()
 
         # No auxiliary loss
