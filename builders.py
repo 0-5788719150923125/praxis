@@ -159,7 +159,7 @@ DATASET_COLLECTIONS = dict(
         "cosmopedia-v2": 0.01,
         "natural-instructions": 0.02,
         "github-code": 0.01,
-        # "smoltalk": 0.005,
+        "smoltalk": 0.01,
         # "persona-chat": 0.002,
         # "wikipedia": 0.001,
         # "tinystories": 0.05,

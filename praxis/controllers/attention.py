@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.activations import ACT2FN
 from praxis.controllers.base import BaseController
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -13,7 +14,7 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 class AttentionController(BaseController):
     """
     An attention-based controller that makes routing decisions by attending to the
-    history of previously-selected layers.
+    history of previously-selected layers while minimally modifying hidden states.
     """
 
     def __init__(self, config: ConfigType) -> None:
@@ -22,33 +23,45 @@ class AttentionController(BaseController):
         # Configuration
         hidden_size = config.hidden_size
 
+        # Number of features to modify (small fraction of hidden size)
+        self.channel_size = min(32, hidden_size // 16)  # Just a few features
+
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
             [nn.Embedding(self.num_experts, hidden_size) for _ in range(config.depth)]
         )
 
         # Attention mechanism operating in hidden_size space
-        self.attention = nn.MultiheadAttention(
-            embed_dim=hidden_size,
-            num_heads=config.num_heads,
-            batch_first=True,
-            dropout=config.dropout,
+        self.attention = nn.ModuleList(
+            [
+                nn.MultiheadAttention(
+                    embed_dim=hidden_size,
+                    num_heads=config.num_heads,
+                    batch_first=True,
+                    dropout=config.dropout,
+                )
+                for _ in range(config.depth - 1)
+            ]
         )
 
-        # Router for final decision
-        self.router = nn.Linear(hidden_size, self.num_experts)
-
-        # Project expert preds back to original hidden size
-        self.projector = nn.Linear(self.num_experts, hidden_size)
-
-        # Layer that combines original hidden state with routing information
-        self.blenders = nn.ModuleList(
-            [nn.Linear(hidden_size * 2, hidden_size) for _ in range(config.depth)]
+        # Routers for final decision
+        self.routers = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(hidden_size, hidden_size * 4),
+                    ACT2FN["relu"],
+                    nn.Linear(hidden_size * 4, self.num_experts),
+                )
+                for _ in range(config.depth)
+            ]
         )
 
-        # Gated residuals
-        self.gates = nn.ModuleList(
-            [nn.Linear(hidden_size * 2, 1) for _ in range(config.depth)]
+        # Project expert probs to just the subset of features we'll modify
+        self.channelers = nn.ModuleList(
+            [
+                nn.Linear(self.num_experts, self.channel_size)
+                for _ in range(config.depth)
+            ]
         )
 
     def get_next_expert(
@@ -59,7 +72,7 @@ class AttentionController(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, Optional[Tensor], Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Optional[Tensor], Tensor, Optional[int]]:
         batch_size = hidden_states.size(0)
         device = hidden_states.device
 
@@ -69,7 +82,7 @@ class AttentionController(BaseController):
         # Handle the case with no route history
         if not current_route:
             # Simple prediction with no history
-            logits = self.router(current_state)
+            logits = self.routers[current_depth](current_state)
         else:
             # Create history tensor from route
             route_tensor = torch.tensor(current_route, device=device).long()
@@ -91,7 +104,7 @@ class AttentionController(BaseController):
             )
 
             # Apply attention with causality
-            attn_output, _ = self.attention(
+            attn_output, _ = self.attention[current_depth - 1](
                 query=query,
                 key=history_embeddings,
                 value=history_embeddings,
@@ -100,24 +113,19 @@ class AttentionController(BaseController):
             )
 
             # Route based on attention output
-            logits = self.router(attn_output.squeeze(1))
+            logits = self.routers[current_depth](attn_output.squeeze(1))
 
-        # Get state-mixing weights
-        probs = F.softmax(logits, dim=-1)
-        state_update = self.projector(probs)
+        # Project to just the feature subset we'll modify
+        feature_updates = self.channelers[current_depth](logits)
 
-        # Update only the last token with routing information
-        # Use a gated combination to control information flow
-        combined = torch.cat([hidden_states[:, -1], state_update], dim=-1)
-        update_candidate = self.blenders[current_depth](combined)
+        # Create a broadcast-compatible version of the feature updates
+        global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
 
-        # Compute a gate value between 0 and 1
-        gate = torch.sigmoid(self.gates[current_depth](combined))
-        updated_last_token = gate * update_candidate + (1 - gate) * hidden_states[:, -1]
-
-        # Now apply the gated update
+        # Create a new hidden states tensor
         new_states = hidden_states.clone()
-        new_states[:, -1] = updated_last_token
+
+        # Update only the subset of features in the last token (create a side channel)
+        new_states[:, :, -self.channel_size :] += global_update
 
         # Get each example's vote for which expert to use next
         batch_votes = torch.argmax(logits, dim=1)  # [batch_size]
@@ -126,4 +134,7 @@ class AttentionController(BaseController):
         vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
         next_expert_idx = torch.argmax(vote_counts).item()
 
-        return new_states, controller_state, 0, next_expert_idx
+        # No auxiliary loss
+        aux_loss = torch.tensor(0.0, device=device)
+
+        return new_states, controller_state, aux_loss, next_expert_idx
