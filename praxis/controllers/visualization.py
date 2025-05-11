@@ -18,9 +18,9 @@ class TransitionVisualizer:
         num_experts: int,
         save_dir: str = "data",
         max_depth: int = 4,
-        window_size: int = 10000,
+        window_size: int = 1000,
         use_time_weighting: bool = True,
-        save_every: int = 1000,  # Save visualizations every N routes
+        save_every: int = 100,  # Save visualizations every N routes
         fig_width: int = 20,  # Adjustable figure width
         fig_height: int = 10,  # Adjustable figure height
     ) -> None:
