@@ -93,10 +93,8 @@ class AttentionChanneler(BaseController):
             route_tensor = torch.tensor(current_route, device=device).long()
 
             # Get layer embeddings for previous route
-            history_embeddings = self.expert_embeddings[current_depth](route_tensor)
-            history_embeddings = history_embeddings.unsqueeze(0).expand(
-                batch_size, -1, -1
-            )
+            history_embeds = self.expert_embeddings[current_depth](route_tensor)
+            history_embeds = history_embeds.unsqueeze(0).expand(batch_size, -1, -1)
 
             # Create attention mask (causal)
             attn_mask = (
@@ -112,8 +110,8 @@ class AttentionChanneler(BaseController):
             # Apply attention with causality
             output, _ = self.attention[current_depth - 1](
                 query=query_norm,
-                key=history_embeddings,
-                value=history_embeddings,
+                key=history_embeds,
+                value=history_embeds,
                 attn_mask=attn_mask,
                 is_causal=True,
             )
@@ -128,14 +126,18 @@ class AttentionChanneler(BaseController):
         # Predict an expert layer
         logits = self.router(router_hidden)  # [batch_size, num_experts]
 
+        if self.training:
+            # Sample from Gumbel distribution for each batch element
+            probs = F.gumbel_softmax(logits, tau=0.5, hard=True)
+            batch_votes = torch.multinomial(probs, 1).squeeze(1)
+        else:
+            # During inference, use standard softmax for determinism
+            probs = F.softmax(logits, dim=-1)
+            # Get each example's vote for which expert to use next
+            batch_votes = torch.argmax(probs, dim=1)  # [batch_size]
+
         # Project to just the feature subset we'll modify
-        feature_updates = self.channelers[current_depth](logits)
-
-        # # Create a new hidden states tensor
-        # new_states = hidden_states.clone()
-
-        # # Update a subset of features in the final token (create a side channel)
-        # new_states[:, -1, -self.channel_size :] += feature_updates
+        feature_updates = self.channelers[current_depth](probs)
 
         # Create a broadcast-compatible version of the feature updates
         global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
@@ -143,11 +145,11 @@ class AttentionChanneler(BaseController):
         # Create a new hidden states tensor
         new_states = hidden_states.clone()
 
+        # # Update a subset of features in the final token (create a side channel)
+        # new_states[:, -1, -self.channel_size :] += feature_updates
+
         # Update a subset of features in all tokens (create a side channel)
         new_states[:, :, -self.channel_size :] += global_update
-
-        # Get each example's vote for which expert to use next
-        batch_votes = torch.argmax(logits, dim=1)  # [batch_size]
 
         # Find the most common vote (mode) across the batch
         vote_counts = torch.bincount(batch_votes)
