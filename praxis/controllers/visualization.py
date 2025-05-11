@@ -21,6 +21,8 @@ class TransitionVisualizer:
         window_size: int = 10000,
         use_time_weighting: bool = True,
         save_every: int = 1000,  # Save visualizations every N routes
+        fig_width: int = 20,  # Adjustable figure width
+        fig_height: int = 10,  # Adjustable figure height
     ) -> None:
         self.num_experts = num_experts
         self.save_dir = save_dir
@@ -28,6 +30,8 @@ class TransitionVisualizer:
         self.window_size = window_size
         self.use_time_weighting = use_time_weighting
         self.save_every = save_every
+        self.fig_width = fig_width
+        self.fig_height = fig_height
 
         os.makedirs(save_dir, exist_ok=True)
 
@@ -107,8 +111,11 @@ class TransitionVisualizer:
             self._calculate_recent_transitions() if time_weighted else self.transitions
         )
 
-        # Create figure
-        fig, ax = plt.subplots(figsize=(14, 10))
+        # Create figure with adjustable size
+        fig, ax = plt.subplots(figsize=(self.fig_width, self.fig_height))
+
+        # Add more horizontal space between depth levels
+        horizontal_spacing = 1.0  # Increase for more space between columns
 
         # Title and labels
         title_prefix = "Recent" if time_weighted else "All-time"
@@ -116,28 +123,30 @@ class TransitionVisualizer:
         ax.set_xlabel("Depth", fontsize=14, labelpad=15)
         ax.set_ylabel("Expert", fontsize=14, labelpad=15)
 
-        # Setup grid
-        ax.set_xlim(-0.5, self.max_depth + 0.5)
+        # Setup grid with extra spacing
+        x_min = -0.5
+        x_max = self.max_depth * horizontal_spacing + 0.5
+        ax.set_xlim(x_min, x_max)
         ax.set_ylim(-0.5, self.num_experts - 0.5)
 
-        # Add grid lines
+        # Add grid lines with adjusted spacing
         for i in range(self.max_depth + 1):
-            ax.axvline(i, color="gray", linestyle="-", alpha=0.15)
+            ax.axvline(i * horizontal_spacing, color="gray", linestyle="-", alpha=0.15)
         for i in range(self.num_experts):
             ax.axhline(i, color="gray", linestyle="-", alpha=0.15)
 
-        # Add labels
-        ax.set_xticks(range(self.max_depth + 1))
+        # Add labels with adjusted spacing
+        ax.set_xticks([i * horizontal_spacing for i in range(self.max_depth + 1)])
         ax.set_xticklabels([f"{i}" for i in range(self.max_depth + 1)])
 
         ax.set_yticks(range(self.num_experts))
         ax.set_yticklabels([f"{i}" for i in range(self.num_experts)])
 
-        # Node positions (fixed grid)
+        # Node positions with adjusted spacing
         node_positions = {}
         for depth in range(self.max_depth + 1):
             for expert in range(self.num_experts):
-                node_positions[(depth, expert)] = (depth, expert)
+                node_positions[(depth, expert)] = (depth * horizontal_spacing, expert)
 
         # Draw edges (transitions)
         max_weight = 0
@@ -178,7 +187,7 @@ class TransitionVisualizer:
                 # Edge transparency based on weight to emphasize strong connections
                 edge_alpha = 0.4 + 0.5 * norm_weight
 
-                # Get positions
+                # Get positions with adjusted spacing
                 start = node_positions[(depth, from_expert)]
                 end = node_positions[(depth + 1, to_expert)]
 
@@ -186,6 +195,9 @@ class TransitionVisualizer:
                 # Curve more if the from_expert and to_expert are far apart
                 distance = abs(from_expert - to_expert)
                 curvature = 0.2 + 0.1 * distance
+
+                # Adjust curvature based on horizontal spacing
+                curvature = curvature * horizontal_spacing
 
                 # Direction of curve based on relative position
                 curve_direction = 1 if from_expert <= to_expert else -1
@@ -215,28 +227,34 @@ class TransitionVisualizer:
                 )
                 ax.add_patch(patch)
 
-                # Only label significant transitions
-                if weight > max_weight * 0.05:  # Only label transitions above 5% of max
-                    # Percentage of all transitions at this depth
-                    total_depth_weight = sum(transitions_data[depth].values())
-                    percentage = (weight / total_depth_weight) * 100
+                # Only label the most significant transition at each depth
+                if depth_transitions:
+                    # Find the most significant transition at this depth
+                    max_transition = max(depth_transitions.items(), key=lambda x: x[1])
+                    max_transition_key, max_transition_weight = max_transition
 
-                    # Position the label at the midpoint of the curve
-                    ax.annotate(
-                        f"{percentage:.1f}%",
-                        (mid_x, mid_y),
-                        fontsize=8,
-                        color="black",
-                        ha="center",
-                        va="center",
-                        bbox=dict(
-                            boxstyle="round,pad=0.2",
-                            facecolor="white",
-                            alpha=0.7,
-                            edgecolor="none",
-                        ),
-                        zorder=10,
-                    )
+                    # Only add a label if this is the current transition
+                    if (from_expert, to_expert) == max_transition_key:
+                        # Percentage of all transitions at this depth
+                        total_depth_weight = sum(transitions_data[depth].values())
+                        percentage = (weight / total_depth_weight) * 100
+
+                        # Position the label at the midpoint of the curve
+                        ax.annotate(
+                            f"{percentage:.1f}%",
+                            (mid_x, mid_y),
+                            fontsize=10,  # Slightly larger font
+                            color="black",
+                            ha="center",
+                            va="center",
+                            bbox=dict(
+                                boxstyle="round,pad=0.3",
+                                facecolor="white",
+                                alpha=0.9,
+                                edgecolor="none",
+                            ),
+                            zorder=10,
+                        )
 
         # Draw nodes
         for depth in range(self.max_depth + 1):
@@ -268,14 +286,14 @@ class TransitionVisualizer:
             for expert in range(self.num_experts):
                 # Node size based on usage
                 norm_usage = node_usage[expert] / max_usage
-                node_size = 100 + 400 * norm_usage
+                node_size = 120 + 400 * norm_usage  # Slightly larger nodes
 
                 # Color based on depth
                 node_color = plt.cm.plasma(depth / self.max_depth)
 
                 # First draw black outline
                 ax.scatter(
-                    depth,
+                    depth * horizontal_spacing,  # Adjusted spacing
                     expert,
                     s=node_size + 20,
                     color="black",
@@ -285,7 +303,7 @@ class TransitionVisualizer:
 
                 # Then draw the colored node
                 ax.scatter(
-                    depth,
+                    depth * horizontal_spacing,  # Adjusted spacing
                     expert,
                     s=node_size,
                     color=node_color,
@@ -293,12 +311,10 @@ class TransitionVisualizer:
                     zorder=20,
                 )
 
-                # Removed node labels as requested - expert numbers are already on y-axis
-
         # Add a colorbar to show the transition weight scale
         sm = plt.cm.ScalarMappable(cmap=edge_cmap, norm=norm)
         sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax, shrink=0.8, pad=0.02)
+        cbar = plt.colorbar(sm, ax=ax, shrink=0.7, pad=0.02)
         cbar.set_label("Transition Frequency", fontsize=12)
 
         # Add additional information with simple approach
@@ -326,11 +342,11 @@ class TransitionVisualizer:
             ),
         )
 
-        # Save the visualization
+        # Save the visualization with more space for the info text
         filename = (
             "transition_viz_recent.png" if time_weighted else "transition_viz.png"
         )
-        plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+        plt.tight_layout(rect=[0, 0.05, 1, 0.97])
         plt.savefig(
             os.path.join(self.save_dir, filename),
             dpi=300,
@@ -363,8 +379,13 @@ class TransitionVisualizer:
             final_depth_usage[to_expert] += weight
         expert_usage.append(final_depth_usage)
 
-        # Create a grid of subplots, one for each depth
-        fig, axs = plt.subplots(1, self.max_depth + 1, figsize=(15, 5), sharey=True)
+        # Create a grid of subplots, one for each depth - wider figure
+        fig, axs = plt.subplots(
+            1, self.max_depth + 1, figsize=(self.fig_width + 2, 6), sharey=True
+        )
+
+        # Adjust spacing between subplots
+        plt.subplots_adjust(wspace=0.05)  # Reduce space between plots
 
         # Plot each depth as a bar chart
         for depth, usage in enumerate(expert_usage):
@@ -385,32 +406,27 @@ class TransitionVisualizer:
                 alpha=0.8,
                 edgecolor="black",
                 linewidth=0.5,
+                width=0.7,  # Slightly wider bars
             )
 
-            # Add percentage labels on top of bars
+            # Add percentage labels on top of bars with increased vertical margin
+            max_percentage = max(percentages) if percentages else 0
+
+            # Set reasonable y-limit with much more headroom for labels
+            ax.set_ylim(0, max(max_percentage * 1.4, 10))
+
             for i, bar in enumerate(bars):
                 if percentages[i] > 5:  # Only label significant bars
                     ax.text(
                         bar.get_x() + bar.get_width() / 2,
-                        bar.get_height() + 1,
+                        bar.get_height()
+                        + (max_percentage * 0.05),  # Position labels closer to bars
                         f"{percentages[i]:.1f}%",
                         ha="center",
                         va="bottom",
-                        fontsize=8,
+                        fontsize=9,
                         rotation=0,
                     )
-
-            # Set title and labels
-            ax.set_title(f"Depth {depth}", fontsize=12)
-            ax.set_xticks(range(self.num_experts))
-            ax.set_xticklabels([str(i) for i in range(self.num_experts)])
-
-            # Only set y-label on leftmost subplot
-            if depth == 0:
-                ax.set_ylabel("Expert Usage (%)", fontsize=12)
-
-            # Set reasonable y-limit (slightly above max percentage)
-            ax.set_ylim(0, max(max(percentages) * 1.15, 5))
 
             # Add grid lines
             ax.grid(axis="y", linestyle="--", alpha=0.3)
@@ -427,10 +443,10 @@ class TransitionVisualizer:
             fontsize=10,
         )
 
-        # Save the visualization
+        # Save visualization with consistent naming
         plt.tight_layout(rect=[0, 0.05, 1, 0.95])
         plt.savefig(
-            os.path.join(self.save_dir, "transition_expert_usages.png"),
+            os.path.join(self.save_dir, "transition_expert_usage.png"),
             dpi=300,
             bbox_inches="tight",
             pad_inches=0.3,
@@ -452,6 +468,8 @@ if __name__ == "__main__":
         window_size=5000,
         use_time_weighting=True,
         save_every=1000,  # Save visualizations every 1000 routes
+        fig_width=20,  # Wider figure (default was 14)
+        fig_height=10,  # Same height as before
     )
 
     # Demo with changing patterns over time
@@ -520,7 +538,7 @@ if __name__ == "__main__":
                 idx = random.randint(0, len(path) - 1)
                 path[idx] = random.randint(0, num_experts - 1)
 
-                visualizer.add_full_route(path)
+            visualizer.add_full_route(path)
         else:
             # Random exploration of other paths
             path_len = random.randint(3, visualizer.max_depth + 1)
@@ -537,4 +555,4 @@ if __name__ == "__main__":
     print("Visualizations saved to data/")
     print("- transition_viz.png: All-time transition patterns")
     print("- transition_viz_recent.png: Recent transition patterns")
-    print("- transition_expert_usages.png: Expert usage distribution by depth")
+    print("- transition_expert_usage.png: Expert usage distribution by depth")
