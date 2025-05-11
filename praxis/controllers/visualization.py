@@ -381,8 +381,8 @@ class TransitionVisualizer:
 
         # Create a grid of subplots, one for each depth - wider figure
         fig, axs = plt.subplots(
-            1, self.max_depth + 1, figsize=(self.fig_width + 2, 6), sharey=True
-        )
+            1, self.max_depth + 1, figsize=(self.fig_width + 2, 8), sharey=True
+        )  # Increased height from 6 to 8
 
         # Adjust spacing between subplots
         plt.subplots_adjust(wspace=0.05)  # Reduce space between plots
@@ -415,18 +415,37 @@ class TransitionVisualizer:
             # Set reasonable y-limit with much more headroom for labels
             ax.set_ylim(0, max(max_percentage * 1.4, 10))
 
-            for i, bar in enumerate(bars):
-                if percentages[i] > 5:  # Only label significant bars
-                    ax.text(
-                        bar.get_x() + bar.get_width() / 2,
-                        bar.get_height()
-                        + (max_percentage * 0.05),  # Position labels closer to bars
-                        f"{percentages[i]:.1f}%",
-                        ha="center",
-                        va="bottom",
-                        fontsize=9,
-                        rotation=0,
-                    )
+            # Only label the highest percentage bar in each depth
+            if percentages:
+                max_value_index = percentages.index(max(percentages))
+                bar = bars[max_value_index]
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + (max_percentage * 0.05),
+                    f"{percentages[max_value_index]:.1f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,  # Slightly larger
+                    weight="bold",  # Make it stand out
+                    bbox=dict(
+                        boxstyle="round,pad=0.2",
+                        facecolor="white",
+                        alpha=0.9,
+                        edgecolor="none",
+                    ),
+                )
+
+            # Set title and labels
+            ax.set_title(f"Depth {depth}", fontsize=12)
+            ax.set_xticks(range(self.num_experts))
+            ax.set_xticklabels([str(i) for i in range(self.num_experts)])
+
+            # Only set y-label on leftmost subplot
+            if depth == 0:
+                ax.set_ylabel("Expert Usage (%)", fontsize=12)
+
+            # Set x-label on all subplots
+            ax.set_xlabel("Expert", fontsize=10)
 
             # Add grid lines
             ax.grid(axis="y", linestyle="--", alpha=0.3)
