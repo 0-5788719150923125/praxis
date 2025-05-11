@@ -29,7 +29,7 @@ class RouteVisualizer:
         self.save_dir = save_dir
         self.save_rate = save_rate
         self.max_routes = max_routes
-        self.max_depth = max_depth
+        self.max_depth = max_depth - 1
         self.window_size = window_size
         self.decay_factor = decay_factor
         self.use_time_weighting = use_time_weighting
@@ -512,6 +512,7 @@ class RouteVisualizer:
 if __name__ == "__main__":
     import random
 
+    max_depth = 5
     num_experts = 5
 
     visualizer = RouteVisualizer(
@@ -520,7 +521,7 @@ if __name__ == "__main__":
         save_rate=1000,
         window_size=5000,  # Keep last 5000 routes for time-weighted analysis
         use_time_weighting=True,
-        max_depth=4,  # Ensure x-axis is 0-4 (5 positions total)
+        max_depth=max_depth,  # Ensure x-axis is 0-4 (5 positions total)
     )
 
     # Demo with changing patterns over time
