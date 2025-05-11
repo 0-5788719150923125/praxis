@@ -1,343 +1,336 @@
 import os
-import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import DefaultDict, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 
-class RouteVisualizer:
+class TransitionVisualizer:
     """
-    Visualizes routing patterns between experts in a mixture-of-experts model,
-    with support for time-weighted route tracking to identify evolving patterns.
+    Visualizes transition patterns between experts in a mixture-of-experts model,
+    focusing on each depth transition independently rather than on full paths.
     """
 
     def __init__(
         self,
         num_experts: int,
         save_dir: str = "data",
-        save_rate: int = 100,
-        max_routes: int = 1000,
         max_depth: int = 4,
-        window_size: int = 10000,  # Size of rolling window
-        decay_factor: float = 0.99,  # Optional decay for aging routes
-        use_time_weighting: bool = True,  # Whether to use time weighting
+        window_size: int = 10000,
+        use_time_weighting: bool = True,
+        save_every: int = 1000,  # Save visualizations every N routes
     ) -> None:
         self.num_experts = num_experts
         self.save_dir = save_dir
-        self.save_rate = save_rate
-        self.max_routes = max_routes
-        self.max_depth = max_depth - 1
+        self.max_depth = max_depth - 1  # Fix off-by-one issue
         self.window_size = window_size
-        self.decay_factor = decay_factor
         self.use_time_weighting = use_time_weighting
+        self.save_every = save_every
 
         os.makedirs(save_dir, exist_ok=True)
 
-        # Traditional count-based tracking
-        self.routes: Dict[Tuple[int, ...], int] = defaultdict(int)
+        # Tracking transitions between adjacent depth levels
+        # Format: transitions[from_depth][(from_expert, to_expert)] = count
+        self.transitions: List[DefaultDict[Tuple[int, int], float]] = [
+            defaultdict(float) for _ in range(max_depth)
+        ]
+
+        # Time-weighted transition tracking
+        self.recent_routes: List[Tuple[Sequence[int], int]] = []  # (route, timestamp)
         self.total_routes = 0
 
-        # Time-weighted tracking with rolling window
-        self.recent_routes: List[Tuple[Tuple[int, ...], int]] = []  # (route, timestamp)
-        self.last_decay_time = 0  # For periodic decay
-        self.decay_interval = 1000  # Apply decay every N routes
-
-    def add_full_route(self, route: Sequence[int]) -> None:
-        """Add a complete route through the network with time-based tracking."""
-        if len(route) > self.max_depth + 1:
-            route = route[: self.max_depth + 1]
-
-        route_tuple = tuple(route)
-        timestamp = self.total_routes  # Using route count as timestamp
-
-        # Add to traditional counter
-        self.routes[route_tuple] += 1
-
-        # Add to time-weighted rolling window
-        if self.use_time_weighting:
-            self.recent_routes.append((route_tuple, timestamp))
-
-            # Maintain window size
-            if len(self.recent_routes) > self.window_size:
-                self.recent_routes.pop(0)  # Remove oldest
-
-        # Apply periodic decay to all routes
-        if self.use_time_weighting and (
-            timestamp - self.last_decay_time >= self.decay_interval
-        ):
-            self._apply_decay()
-            self.last_decay_time = timestamp
-
-        self.total_routes += 1
-
-        # Maintain max_routes limit for traditional tracking
-        if len(self.routes) > self.max_routes:
-            least_common = min(self.routes.items(), key=lambda x: x[1])
-            del self.routes[least_common[0]]
-
-        if self.total_routes % self.save_rate == 0:
-            self._save_visualization()
-            # Also save time-weighted version
-            if self.use_time_weighting:
-                self._save_visualization(time_weighted=True)
-
-    def _apply_decay(self) -> None:
-        """Apply decay factor to route counts to gradually age out older patterns."""
-        for route in list(self.routes.keys()):
-            self.routes[route] *= self.decay_factor
-            # Remove routes that have decayed below threshold
-            if self.routes[route] < 0.5:
-                del self.routes[route]
-
-    def get_recent_routes(self) -> List[Tuple[Tuple[int, ...], float]]:
-        """Calculate route frequencies based on the recent time window."""
-        if not self.recent_routes:
-            return []
-
-        # Count frequencies in recent window
-        recent_counts = defaultdict(int)
-        for route, _ in self.recent_routes:
-            recent_counts[route] += 1
-
-        # Normalize by window size
-        window_size = len(self.recent_routes)
-        return [(route, count) for route, count in recent_counts.items()]
-
-    # Backward compatibility method
     def add_transition(self, from_expert: int, to_expert: int) -> None:
         """Legacy method for backward compatibility - does nothing."""
         pass
 
-    def _calculate_path_points(self, start, end, rad, num_points=100):
-        """Calculate points along a curved path to visually extend to node centers."""
-        # Convert to numpy arrays
-        start = np.array(start)
-        end = np.array(end)
+    def add_full_route(self, route: Sequence[int]) -> None:
+        """Add a complete route and update transition statistics between adjacent experts."""
+        if len(route) > self.max_depth + 1:
+            route = route[: self.max_depth + 1]
 
-        # Calculate midpoint
-        mid = (start + end) / 2
+        # Record the route for time-weighted analysis
+        if self.use_time_weighting:
+            self.recent_routes.append((route, self.total_routes))
+            if len(self.recent_routes) > self.window_size:
+                self.recent_routes.pop(0)  # Remove oldest
 
-        # Calculate perpendicular vector
-        diff = end - start
-        perp = np.array([-diff[1], diff[0]])
+        # Update transition counts
+        for i in range(len(route) - 1):
+            if i < self.max_depth:
+                from_expert = route[i]
+                to_expert = route[i + 1]
+                self.transitions[i][(from_expert, to_expert)] += 1
 
-        # Normalize and scale
-        norm = np.linalg.norm(perp)
-        if norm > 0:
-            perp = perp / norm * rad
+        self.total_routes += 1
 
-        # Control point for quadratic Bezier curve
-        ctrl = mid + perp
+        # Automatically save visualizations at the specified interval
+        if self.save_every > 0 and self.total_routes % self.save_every == 0:
+            self.visualize_transitions(time_weighted=False)  # All-time transitions
+            if self.use_time_weighting:
+                self.visualize_transitions(time_weighted=True)  # Recent transitions
 
-        # Generate curve points
-        t = np.linspace(0, 1, num_points)
-        curve = np.zeros((num_points, 2))
+            # Also save expert usage visualization on the same schedule
+            self.visualize_expert_usage()
 
-        # Quadratic Bezier curve formula
-        for i in range(num_points):
-            curve[i] = (
-                (1 - t[i]) ** 2 * start + 2 * (1 - t[i]) * t[i] * ctrl + t[i] ** 2 * end
-            )
+    def reset_transitions(self) -> None:
+        """Reset all transition statistics."""
+        self.transitions = [defaultdict(float) for _ in range(self.max_depth)]
 
-        return curve
+    def _calculate_recent_transitions(
+        self,
+    ) -> List[DefaultDict[Tuple[int, int], float]]:
+        """Calculate transition frequencies based on only recent routes."""
+        if not self.recent_routes:
+            return [defaultdict(float) for _ in range(self.max_depth)]
 
-    def _create_curved_connection(
-        self, ax, start, end, color, width, path_index, num_paths
-    ):
-        """Create a curved connection between points that visually connects to nodes."""
-        # Use a different approach to calculate curvature
-        # Higher index paths get more curvature to avoid overlap
-        rad_base = 0.12 + (path_index % 5) * 0.04
+        recent_transitions = [defaultdict(float) for _ in range(self.max_depth)]
 
-        # Alternate direction based on path index
-        rad = rad_base * (1 if path_index % 2 == 0 else -1)
+        for route, _ in self.recent_routes:
+            for i in range(len(route) - 1):
+                if i < self.max_depth:
+                    from_expert = route[i]
+                    to_expert = route[i + 1]
+                    recent_transitions[i][(from_expert, to_expert)] += 1
 
-        # For longer horizontal distances, reduce the curvature
-        if abs(end[0] - start[0]) > 1:
-            rad *= 0.7
+        return recent_transitions
 
-        # Calculate the path points
-        curve = self._calculate_path_points(start, end, rad)
+    def visualize_transitions(self, time_weighted: bool = False) -> None:
+        """
+        Create an edge-weighted network graph showing transitions between experts at adjacent depths.
 
-        # Create the line collection
-        line = ax.plot(
-            curve[:, 0],
-            curve[:, 1],
-            color=color,
-            linewidth=width,
-            alpha=0.7,
-            solid_capstyle="round",
-            zorder=5,
-        )[0]
-
-        return line
-
-    def _save_visualization(self, time_weighted: bool = False) -> None:
-        """Create and save a grid-based visualization showing routing paths."""
-        if time_weighted and not self.recent_routes:
-            return
-        elif not time_weighted and not self.routes:
-            return
-
-        # Get appropriate path data based on visualization type
-        if time_weighted:
-            paths = sorted(self.get_recent_routes(), key=lambda x: x[1], reverse=True)
-            viz_type = "recent"
-            filename = "route_viz_recent.png"
-        else:
-            paths = sorted(self.routes.items(), key=lambda x: x[1], reverse=True)
-            viz_type = "all-time"
-            filename = "route_viz.png"
-
-        if not paths:
-            return
-
-        # Fixed to match actual depth range (0-4 = 5 positions)
-        display_depth = self.max_depth + 1
+        Args:
+            time_weighted: If True, visualize only recent transitions
+        """
+        transitions_data = (
+            self._calculate_recent_transitions() if time_weighted else self.transitions
+        )
 
         # Create figure
-        fig_width = 14
-        fig_height = 8
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        fig, ax = plt.subplots(figsize=(14, 10))
 
-        # Set up grid
-        ax.set_xlim(-0.8, display_depth - 0.2)
-        ax.set_ylim(-0.8, self.num_experts - 0.2)
+        # Title and labels
+        title_prefix = "Recent" if time_weighted else "All-time"
+        ax.set_title(f"{title_prefix} Expert Transition Patterns", fontsize=16, pad=20)
+        ax.set_xlabel("Depth", fontsize=14, labelpad=15)
+        ax.set_ylabel("Expert", fontsize=14, labelpad=15)
+
+        # Setup grid
+        ax.set_xlim(-0.5, self.max_depth + 0.5)
+        ax.set_ylim(-0.5, self.num_experts - 0.5)
 
         # Add grid lines
-        for i in range(display_depth):
+        for i in range(self.max_depth + 1):
             ax.axvline(i, color="gray", linestyle="-", alpha=0.15)
         for i in range(self.num_experts):
             ax.axhline(i, color="gray", linestyle="-", alpha=0.15)
 
-        # Label axes
-        ax.set_xticks(range(display_depth))
-        ax.set_xticklabels([f"{i}" for i in range(display_depth)])
-        ax.set_xlabel("Depth", fontsize=12, labelpad=10)
+        # Add labels
+        ax.set_xticks(range(self.max_depth + 1))
+        ax.set_xticklabels([f"{i}" for i in range(self.max_depth + 1)])
 
         ax.set_yticks(range(self.num_experts))
         ax.set_yticklabels([f"{i}" for i in range(self.num_experts)])
-        ax.set_ylabel("Expert", fontsize=12, labelpad=10)
 
-        title_prefix = "Recent" if time_weighted else "All-time"
-        ax.set_title(f"{title_prefix} Expert Routing Patterns", fontsize=14, pad=15)
+        # Node positions (fixed grid)
+        node_positions = {}
+        for depth in range(self.max_depth + 1):
+            for expert in range(self.num_experts):
+                node_positions[(depth, expert)] = (depth, expert)
 
-        # Draw paths
-        top_paths = paths[:15]
-        total_count = sum(count for _, count in top_paths)
-        cmap = plt.cm.viridis
-        max_count = max(count for _, count in paths)
+        # Draw edges (transitions)
+        max_weight = 0
+        for depth, depth_transitions in enumerate(transitions_data):
+            if not depth_transitions:
+                continue
 
-        # Add legend entries
-        legend_lines = []
-        legend_labels = []
+            for (from_expert, to_expert), weight in depth_transitions.items():
+                max_weight = max(max_weight, weight)
 
-        # Draw connections FIRST (so nodes will be on top)
-        for i, (path, count) in enumerate(top_paths):
-            if len(path) > display_depth:
-                path = path[:display_depth]
+        # Global normalization for edge weights
+        norm = Normalize(vmin=0, vmax=max_weight)
 
-            # Calculate line width based on frequency
-            line_width = 1 + 3 * (count / max_count)
-            color = cmap(i / max(1, len(top_paths) - 1))
+        # Create a custom colormap
+        edge_cmap = plt.cm.viridis
 
-            # Add to legend
-            legend_lines.append(plt.Line2D([0], [0], color=color, linewidth=line_width))
-            percentage = (count / total_count) * 100
-            legend_labels.append(f"Path {i+1}: {percentage:.1f}%")
+        # Draw edges with variable width and color based on weight
+        for depth, depth_transitions in enumerate(transitions_data):
+            if not depth_transitions:
+                continue
 
-            # Draw connections FIRST
-            for j in range(len(path) - 1):
-                start = (j, path[j])
-                end = (j + 1, path[j + 1])
-                self._create_curved_connection(
-                    ax, start, end, color, line_width, i, len(top_paths)
+            for (from_expert, to_expert), weight in depth_transitions.items():
+                # Skip only extremely low weight edges - show many more transitions
+                if (
+                    weight < max_weight * 0.0001
+                ):  # Showing transitions down to 0.01% of max weight
+                    continue
+
+                # Get normalized weight for visual mapping
+                norm_weight = norm(weight)
+
+                # Edge width based on weight
+                edge_width = 0.5 + 6 * norm_weight
+
+                # Edge color based on weight
+                edge_color = edge_cmap(norm_weight)
+
+                # Edge transparency based on weight to emphasize strong connections
+                edge_alpha = 0.4 + 0.5 * norm_weight
+
+                # Get positions
+                start = node_positions[(depth, from_expert)]
+                end = node_positions[(depth + 1, to_expert)]
+
+                # Calculate control points for a curved edge
+                # Curve more if the from_expert and to_expert are far apart
+                distance = abs(from_expert - to_expert)
+                curvature = 0.2 + 0.1 * distance
+
+                # Direction of curve based on relative position
+                curve_direction = 1 if from_expert <= to_expert else -1
+
+                # Calculate midpoint with offset for curve
+                mid_x = (start[0] + end[0]) / 2
+                mid_y = (start[1] + end[1]) / 2 + curve_direction * curvature
+
+                # Create curved path
+                curve = plt.matplotlib.path.Path(
+                    [start, (mid_x, mid_y), end],
+                    [
+                        plt.matplotlib.path.Path.MOVETO,
+                        plt.matplotlib.path.Path.CURVE3,
+                        plt.matplotlib.path.Path.CURVE3,
+                    ],
                 )
 
-        # Now draw ALL nodes AFTER connections to ensure they're on top
-        for i, (path, count) in enumerate(top_paths):
-            if len(path) > display_depth:
-                path = path[:display_depth]
+                # Draw the edge
+                patch = plt.matplotlib.patches.PathPatch(
+                    curve,
+                    facecolor="none",
+                    edgecolor=edge_color,
+                    linewidth=edge_width,
+                    alpha=edge_alpha,
+                    zorder=5,
+                )
+                ax.add_patch(patch)
 
-            # Calculate line width and color again
-            line_width = 1 + 3 * (count / max_count)
-            color = cmap(i / max(1, len(top_paths) - 1))
+                # Only label significant transitions
+                if weight > max_weight * 0.05:  # Only label transitions above 5% of max
+                    # Percentage of all transitions at this depth
+                    total_depth_weight = sum(transitions_data[depth].values())
+                    percentage = (weight / total_depth_weight) * 100
 
-            # Draw nodes with slightly larger size to cover connection ends
-            node_size = line_width * 35  # Slightly larger than before
+                    # Position the label at the midpoint of the curve
+                    ax.annotate(
+                        f"{percentage:.1f}%",
+                        (mid_x, mid_y),
+                        fontsize=8,
+                        color="black",
+                        ha="center",
+                        va="center",
+                        bbox=dict(
+                            boxstyle="round,pad=0.2",
+                            facecolor="white",
+                            alpha=0.7,
+                            edgecolor="none",
+                        ),
+                        zorder=10,
+                    )
 
-            # Draw outline nodes first (black border, slightly larger)
-            for j, expert in enumerate(path):
+        # Draw nodes
+        for depth in range(self.max_depth + 1):
+            # Calculate node sizes based on usage at this depth
+            node_usage = [0] * self.num_experts
+
+            # For first depth, count outgoing transitions
+            if depth == 0:
+                if transitions_data[0]:  # If we have data for depth 0->1
+                    for (from_expert, _), weight in transitions_data[0].items():
+                        node_usage[from_expert] += weight
+            # For middle depths, average incoming and outgoing
+            elif depth < self.max_depth:
+                # Incoming
+                for (from_expert, to_expert), weight in transitions_data[
+                    depth - 1
+                ].items():
+                    node_usage[to_expert] += weight
+                # Outgoing
+                for (from_expert, to_expert), weight in transitions_data[depth].items():
+                    node_usage[from_expert] += weight
+            # For last depth, count incoming transitions
+            else:
+                for (_, to_expert), weight in transitions_data[depth - 1].items():
+                    node_usage[to_expert] += weight
+
+            # Normalize node sizes
+            max_usage = max(node_usage) if max(node_usage) > 0 else 1
+            for expert in range(self.num_experts):
+                # Node size based on usage
+                norm_usage = node_usage[expert] / max_usage
+                node_size = 100 + 400 * norm_usage
+
+                # Color based on depth
+                node_color = plt.cm.plasma(depth / self.max_depth)
+
+                # First draw black outline
                 ax.scatter(
-                    j,
+                    depth,
                     expert,
-                    s=node_size + 10,  # Larger for outline
+                    s=node_size + 20,
                     color="black",
-                    zorder=18,
+                    alpha=0.8,
+                    zorder=15,
                 )
 
-            # Then draw actual colored nodes on top
-            for j, expert in enumerate(path):
+                # Then draw the colored node
                 ax.scatter(
-                    j,
+                    depth,
                     expert,
                     s=node_size,
-                    color=color,
+                    color=node_color,
+                    alpha=0.9,
                     zorder=20,
                 )
 
-        # Add info text
-        if time_weighted:
-            window_size = min(len(self.recent_routes), self.window_size)
-            info_text = (
-                f"Recent routes (last {window_size:,})   "
-                f"Unique paths: {len(paths):,}   "
-                f"Total routes tracked: {self.total_routes:,}"
-            )
-        else:
-            info_text = (
-                f"All-time data   "
-                f"Unique paths: {len(self.routes):,}   "
-                f"Total routes tracked: {self.total_routes:,}"
-            )
+                # Removed node labels as requested - expert numbers are already on y-axis
 
-        # Create stats box
-        text_box = plt.annotate(
+        # Add a colorbar to show the transition weight scale
+        sm = plt.cm.ScalarMappable(cmap=edge_cmap, norm=norm)
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax, shrink=0.8, pad=0.02)
+        cbar.set_label("Transition Frequency", fontsize=12)
+
+        # Add additional information with simple approach
+        info_text = (
+            f"{'Recent' if time_weighted else 'All-time'} transitions between experts"
+        )
+        if time_weighted:
+            info_text += (
+                f" (last {min(self.window_size, len(self.recent_routes)):,} routes)"
+            )
+        info_text += f" | Total routes: {self.total_routes:,}"
+
+        # Use simple text annotation without custom axes
+        plt.figtext(
+            0.5,
+            0.01,
             info_text,
-            xy=(0.5, 0.01),
-            xycoords="figure fraction",
             ha="center",
-            fontsize=10,
+            fontsize=12,
             bbox=dict(
                 boxstyle="round,pad=0.5",
                 facecolor="white",
-                alpha=0.8,
+                alpha=0.9,
                 edgecolor="lightgray",
             ),
         )
 
-        # Adjust layout
-        plt.tight_layout(rect=[0, 0.15, 1, 0.98])
-
-        # Add legend
-        if legend_lines:
-            legend = ax.legend(
-                legend_lines,
-                legend_labels,
-                title="Path Distribution",
-                loc="upper center",
-                bbox_to_anchor=(0.5, -0.15),
-                ncol=min(5, len(legend_lines)),
-                fontsize=9,
-                frameon=True,
-                framealpha=0.8,
-            )
-            legend.get_frame().set_facecolor("#f8f8f8")
-
-        # Save visualization
+        # Save the visualization
+        filename = (
+            "transition_viz_recent.png" if time_weighted else "transition_viz.png"
+        )
+        plt.tight_layout(rect=[0, 0.03, 1, 0.97])
         plt.savefig(
             os.path.join(self.save_dir, filename),
             dpi=300,
@@ -346,162 +339,98 @@ class RouteVisualizer:
         )
         plt.close()
 
-    def save_comparison_visualization(self) -> None:
-        """Create a visualization comparing recent vs all-time popular routes."""
-        if not self.routes or not self.recent_routes:
-            return
+    def visualize_expert_usage(self) -> None:
+        """Create a visualization showing the usage distribution of experts at each depth."""
+        # Calculate expert usage at each depth
+        expert_usage = []
 
-        # Get data for both metrics
-        all_time_routes = dict(
-            sorted(self.routes.items(), key=lambda x: x[1], reverse=True)[:15]
-        )
-        recent_routes = dict(self.get_recent_routes())
+        # First depth usage (from outgoing connections)
+        depth0_usage = [0] * self.num_experts
+        for (from_expert, _), weight in self.transitions[0].items():
+            depth0_usage[from_expert] += weight
+        expert_usage.append(depth0_usage)
 
-        # Calculate trend scores (positive = trending up, negative = trending down)
-        comparison_data = []
+        # Middle depths (from incoming connections)
+        for depth in range(1, self.max_depth):
+            depth_usage = [0] * self.num_experts
+            for (_, to_expert), weight in self.transitions[depth - 1].items():
+                depth_usage[to_expert] += weight
+            expert_usage.append(depth_usage)
 
-        # Convert to list before slicing (fix TypeError: 'set' object is not subscriptable)
-        combined_routes = list(
-            set(list(all_time_routes.keys()) + list(recent_routes.keys()))
-        )
-        for route in combined_routes[:20]:
-            all_time_count = all_time_routes.get(route, 0)
-            recent_count = recent_routes.get(route, 0)
+        # Last depth (from incoming connections to final depth)
+        final_depth_usage = [0] * self.num_experts
+        for (_, to_expert), weight in self.transitions[self.max_depth - 1].items():
+            final_depth_usage[to_expert] += weight
+        expert_usage.append(final_depth_usage)
 
-            # Skip routes with very low counts
-            if all_time_count < 0.5 and recent_count < 0.5:
-                continue
+        # Create a grid of subplots, one for each depth
+        fig, axs = plt.subplots(1, self.max_depth + 1, figsize=(15, 5), sharey=True)
 
-            # Calculate a normalized trend score
-            if all_time_count > 0:
-                # Normalize recent count based on window size
-                window_ratio = min(self.window_size, len(self.recent_routes)) / max(
-                    1, self.total_routes
-                )
-                expected_count = all_time_count * window_ratio
-                trend_score = (recent_count - expected_count) / (
-                    expected_count + 1
-                )  # +1 to avoid division by zero
-            else:
-                # New route not in all-time top routes
-                trend_score = 1.0  # Maximum trend score
+        # Plot each depth as a bar chart
+        for depth, usage in enumerate(expert_usage):
+            ax = axs[depth]
 
-            comparison_data.append((route, all_time_count, recent_count, trend_score))
+            # Calculate percentages
+            total = sum(usage) if sum(usage) > 0 else 1
+            percentages = [(u / total) * 100 for u in usage]
 
-        # Sort by trend score
-        comparison_data.sort(key=lambda x: x[3], reverse=True)
+            # Color bars by their percentage
+            colors = [plt.cm.viridis(p / 100) for p in percentages]
 
-        # Create visualization
-        display_depth = self.max_depth + 1
-        fig, ax = plt.subplots(figsize=(16, 10))
-
-        # Set up grid similar to previous visualizations
-        # Note: display_depth is max_depth + 1, which is the correct number of positions (0 to max_depth)
-        ax.set_xlim(-0.8, display_depth - 0.2)
-        ax.set_ylim(-0.8, self.num_experts - 0.2)
-
-        # Grid lines and labels
-        for i in range(display_depth):
-            ax.axvline(i, color="gray", linestyle="-", alpha=0.15)
-        for i in range(self.num_experts):
-            ax.axhline(i, color="gray", linestyle="-", alpha=0.15)
-
-        ax.set_xticks(range(display_depth))
-        ax.set_xticklabels([f"{i}" for i in range(display_depth)])
-        ax.set_xlabel("Depth", fontsize=12, labelpad=10)
-
-        ax.set_yticks(range(self.num_experts))
-        ax.set_yticklabels([f"{i}" for i in range(self.num_experts)])
-        ax.set_ylabel("Expert", fontsize=12, labelpad=10)
-
-        ax.set_title("Trending Expert Routing Patterns", fontsize=16, pad=15)
-
-        # Draw paths
-        legend_lines = []
-        legend_labels = []
-
-        # Use different color for trending up vs down
-        trend_cmap_up = plt.cm.Greens
-        trend_cmap_down = plt.cm.Reds
-
-        # Draw connections
-        for i, (path, all_time, recent, trend) in enumerate(comparison_data[:10]):
-            if len(path) > display_depth:
-                path = path[:display_depth]
-
-            # Width based on recent popularity
-            width_factor = 1 + 2 * (
-                recent / (max(r for _, _, r, _ in comparison_data[:10]) + 0.1)
+            # Create bars
+            bars = ax.bar(
+                range(self.num_experts),
+                percentages,
+                color=colors,
+                alpha=0.8,
+                edgecolor="black",
+                linewidth=0.5,
             )
 
-            # Color based on trend (green = up, red = down)
-            if trend >= 0:
-                # Trending up or new
-                color = trend_cmap_up(min(0.3 + 0.7 * trend, 0.9))
-                trend_desc = f"↑ {trend:.1f}x"
-            else:
-                # Trending down
-                color = trend_cmap_down(min(0.3 + 0.7 * abs(trend), 0.9))
-                trend_desc = f"↓ {abs(trend):.1f}x"
+            # Add percentage labels on top of bars
+            for i, bar in enumerate(bars):
+                if percentages[i] > 5:  # Only label significant bars
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + 1,
+                        f"{percentages[i]:.1f}%",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                        rotation=0,
+                    )
 
-            legend_lines.append(
-                plt.Line2D([0], [0], color=color, linewidth=width_factor * 2)
-            )
-            legend_labels.append(f"Path {i+1}: {trend_desc}")
+            # Set title and labels
+            ax.set_title(f"Depth {depth}", fontsize=12)
+            ax.set_xticks(range(self.num_experts))
+            ax.set_xticklabels([str(i) for i in range(self.num_experts)])
 
-            # Draw connections
-            for j in range(len(path) - 1):
-                start = (j, path[j])
-                end = (j + 1, path[j + 1])
-                self._create_curved_connection(
-                    ax, start, end, color, width_factor, i, 10
-                )
+            # Only set y-label on leftmost subplot
+            if depth == 0:
+                ax.set_ylabel("Expert Usage (%)", fontsize=12)
 
-            # Draw nodes
-            node_size = width_factor * 30
-            for j, expert in enumerate(path):
-                # Outline
-                ax.scatter(j, expert, s=node_size + 10, color="black", zorder=18)
-                # Fill
-                ax.scatter(j, expert, s=node_size, color=color, zorder=20)
+            # Set reasonable y-limit (slightly above max percentage)
+            ax.set_ylim(0, max(max(percentages) * 1.15, 5))
 
-        # Info text
-        window_size = min(len(self.recent_routes), self.window_size)
-        info_text = f"Comparison: Recent ({window_size:,} routes) vs All-time ({self.total_routes:,} routes) patterns"
+            # Add grid lines
+            ax.grid(axis="y", linestyle="--", alpha=0.3)
 
-        plt.annotate(
-            info_text,
-            xy=(0.5, 0.01),
-            xycoords="figure fraction",
+        # Overall title
+        fig.suptitle("Expert Usage Distribution by Depth", fontsize=16)
+
+        # Add information about total routes
+        plt.figtext(
+            0.5,
+            0.01,
+            f"Based on {self.total_routes:,} total routes",
             ha="center",
             fontsize=10,
-            bbox=dict(
-                boxstyle="round,pad=0.5",
-                facecolor="white",
-                alpha=0.8,
-                edgecolor="lightgray",
-            ),
         )
 
-        # Legend
-        if legend_lines:
-            legend = ax.legend(
-                legend_lines,
-                legend_labels,
-                title="Trending Paths (↑ gaining, ↓ declining)",
-                loc="upper center",
-                bbox_to_anchor=(0.5, -0.15),
-                ncol=min(5, len(legend_lines)),
-                fontsize=9,
-                frameon=True,
-                framealpha=0.8,
-            )
-            legend.get_frame().set_facecolor("#f8f8f8")
-
-        # Save visualization
-        plt.tight_layout(rect=[0, 0.15, 1, 0.98])
+        # Save the visualization
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
         plt.savefig(
-            os.path.join(self.save_dir, "route_viz_trend.png"),
+            os.path.join(self.save_dir, "transition_expert_usages.png"),
             dpi=300,
             bbox_inches="tight",
             pad_inches=0.3,
@@ -509,19 +438,20 @@ class RouteVisualizer:
         plt.close()
 
 
+# Example usage with the same data as RouteVisualizer
 if __name__ == "__main__":
     import random
 
     max_depth = 5
     num_experts = 5
 
-    visualizer = RouteVisualizer(
+    visualizer = TransitionVisualizer(
         num_experts=num_experts,
         save_dir="data",
-        save_rate=1000,
-        window_size=5000,  # Keep last 5000 routes for time-weighted analysis
+        max_depth=max_depth,  # No need to adjust here since it's handled in __init__
+        window_size=5000,
         use_time_weighting=True,
-        max_depth=max_depth,  # Ensure x-axis is 0-4 (5 positions total)
+        save_every=1000,  # Save visualizations every 1000 routes
     )
 
     # Demo with changing patterns over time
@@ -529,9 +459,7 @@ if __name__ == "__main__":
 
     # Phase 1: Initial pattern
     print("Phase 1: Initial routing pattern")
-    initial_path = [0, 2, 1, 3, 4][
-        : visualizer.max_depth + 1
-    ]  # Ensure path matches max_depth
+    initial_path = [0, 2, 1, 3, 4][: visualizer.max_depth + 1]
     for i in range(3000):
         # Sometimes add noise
         if random.random() < 0.2:
@@ -543,10 +471,8 @@ if __name__ == "__main__":
             visualizer.add_full_route(initial_path)
 
     # Phase 2: Transition to new pattern
-    print("Phase 2: Transition to new routing pattern")
-    new_path = [1, 3, 0, 4, 2][
-        : visualizer.max_depth + 1
-    ]  # Ensure path matches max_depth
+    print("Phase 2: Transition to new pattern")
+    new_path = [1, 3, 0, 4, 2][: visualizer.max_depth + 1]
     for i in range(3000):
         # Gradually increase probability of new path
         p_new = min(0.1 + i / 3000, 0.9)
@@ -570,33 +496,45 @@ if __name__ == "__main__":
             else:
                 visualizer.add_full_route(initial_path)
 
-    # Phase 3: New dominant pattern
-    print("Phase 3: New dominant routing pattern")
+    # Phase 3: New dominant pattern plus intentional expert biases at certain depths
+    print("Phase 3: New pattern with expert biases")
+
+    # Create depth-specific expert biases (e.g., depth 1 heavily uses expert 2)
+    depth_biases = {
+        1: 3,
+        3: 1,
+    }  # At depth 1, bias toward expert 3; at depth 3, bias toward expert 1
+
     for i in range(3000):
-        # High probability of new path
         if random.random() < 0.8:
-            # Use new path, sometimes with noise
+            # Use new path with occasional expert biases
+            path = new_path.copy()
+
+            # Apply the biases with high probability
+            for depth, expert in depth_biases.items():
+                if depth < len(path) and random.random() < 0.7:
+                    path[depth] = expert
+
+            # Sometimes add noise
             if random.random() < 0.1:
-                idx = random.randint(0, len(new_path) - 1)
-                path = new_path.copy()
+                idx = random.randint(0, len(path) - 1)
                 path[idx] = random.randint(0, num_experts - 1)
+
                 visualizer.add_full_route(path)
-            else:
-                visualizer.add_full_route(new_path)
         else:
             # Random exploration of other paths
-            path_len = random.randint(3, 6)
+            path_len = random.randint(3, visualizer.max_depth + 1)
             random_path = [random.randint(0, num_experts - 1) for _ in range(path_len)]
             visualizer.add_full_route(random_path)
 
     print(f"Generated {visualizer.total_routes} routes")
 
-    # Force final visualizations
-    visualizer._save_visualization(time_weighted=False)  # All-time popular routes
-    visualizer._save_visualization(time_weighted=True)  # Recent popular routes
-    visualizer.save_comparison_visualization()  # Trending analysis
+    # Generate final visualizations (in case the total routes isn't divisible by save_every)
+    visualizer.visualize_transitions(time_weighted=False)  # All-time transitions
+    visualizer.visualize_transitions(time_weighted=True)  # Recent transitions
+    visualizer.visualize_expert_usage()  # Expert usage by depth
 
     print("Visualizations saved to data/")
-    print("- route_viz.png: All-time popular routes")
-    print("- route_viz_recent.png: Recently popular routes")
-    print("- route_viz_trend.png: Trending analysis (rising/falling patterns)")
+    print("- transition_viz.png: All-time transition patterns")
+    print("- transition_viz_recent.png: Recent transition patterns")
+    print("- transition_expert_usages.png: Expert usage distribution by depth")

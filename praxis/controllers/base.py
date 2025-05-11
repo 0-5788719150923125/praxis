@@ -6,7 +6,7 @@ from torch import Tensor
 
 ConfigType = TypeVar("ConfigType", bound="PretrainedConfig")
 
-from praxis.controllers.visualization import RouteVisualizer
+from praxis.controllers.visualization import TransitionVisualizer
 
 
 class BaseController(nn.Module):
@@ -26,8 +26,11 @@ class BaseController(nn.Module):
         self.depth = config.depth
         self.num_experts = config.num_experts
         self.visualizer = (
-            RouteVisualizer(
-                save_dir="./", num_experts=self.num_experts, max_depth=self.depth
+            TransitionVisualizer(
+                save_dir="./",
+                save_every=100,
+                num_experts=self.num_experts,
+                max_depth=self.depth,
             )
             if self.debug and allow_visualizer
             else False
