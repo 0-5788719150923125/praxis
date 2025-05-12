@@ -102,8 +102,11 @@ class AttentionChanneler(BaseController):
             route_tensor = torch.tensor(current_route, device=device).long()
 
             # Get layer embeddings for previous route
-            history_embeds = self.expert_embeddings[current_depth](route_tensor)
-            history_embeds = history_embeds.unsqueeze(0).expand(batch_size, -1, -1)
+            history_embeds = (
+                self.expert_embeddings[current_depth](route_tensor)
+                .unsqueeze(0)
+                .expand(batch_size, -1, -1)
+            )
 
             # Create attention mask (causal)
             attn_mask = (
@@ -138,12 +141,9 @@ class AttentionChanneler(BaseController):
         if self.training:
             # Sample from Gumbel distribution for each batch element
             probs = F.gumbel_softmax(logits, tau=0.75, hard=True)
-            batch_votes = torch.multinomial(probs, 1).squeeze(1)
         else:
             # During inference, use standard softmax for determinism
             probs = F.softmax(logits, dim=-1)
-            # Get each example's vote for which expert to use next
-            batch_votes = torch.argmax(probs, dim=1)  # [batch_size]
 
         # Project to just the feature subset we'll modify
         feature_updates = self.channelers[current_depth](probs)
@@ -157,22 +157,11 @@ class AttentionChanneler(BaseController):
         # Update a subset of features in all tokens (create a side channel)
         new_states[:, :, -self.channel_size :] += global_update
 
-        # Find the most common vote with randomized tie-breaking
-        vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
+        # Probability-based expert selection
+        mean_probs = probs.mean(dim=0)  # [num_experts]
 
-        # Find indices that have the maximum vote count
-        max_count = vote_counts.max()
-        max_indices = (vote_counts == max_count).nonzero(as_tuple=True)[0]
-
-        # If multiple maxima, choose a random one (tie-breaking)
-        if len(max_indices) > 1:
-            chosen_idx = max_indices[
-                torch.randint(0, len(max_indices), (1,), device=device)
-            ]
-            next_expert_idx = chosen_idx.item()
-        else:
-            # Otherwise use the first (during inference for determinism)
-            next_expert_idx = max_indices[0].item()
+        # Select the top expert index
+        next_expert_idx = torch.argmax(mean_probs).item()
 
         # Auxiliary loss
         aux_loss = self.load_balancing_loss(probs, current_depth, next_expert_idx)

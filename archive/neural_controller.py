@@ -190,11 +190,6 @@ class NeuralLambdaRouter(BaseController):
         if self.allow_early_exits and next_expert_idx == self.num_experts:
             return gating_loss, current_route, None
 
-        # Update route (matching the original Pathfinder behavior)
-        current_route = self.update_route(
-            hidden_states, current_route, current_depth, next_expert_idx
-        )
-
         return gating_loss, current_route, next_expert_idx
 
 

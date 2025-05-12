@@ -45,10 +45,6 @@ class TransitionVisualizer:
         self.recent_routes: List[Tuple[Sequence[int], int]] = []  # (route, timestamp)
         self.total_routes = 0
 
-    def add_transition(self, from_expert: int, to_expert: int) -> None:
-        """Legacy method for backward compatibility - does nothing."""
-        pass
-
     def add_full_route(self, route: Sequence[int]) -> None:
         """Add a complete route and update transition statistics between adjacent experts."""
         if len(route) > self.max_depth + 1:
@@ -413,7 +409,14 @@ class TransitionVisualizer:
             max_percentage = max(percentages) if percentages else 0
 
             # Set reasonable y-limit with much more headroom for labels
-            ax.set_ylim(0, max(max_percentage * 1.4, 10))
+            # Find global maximum before plotting
+            global_max_percentage = max(
+                [max(usage_list) if usage_list else 0 for usage_list in expert_usage]
+            )
+            global_max_percentage = (global_max_percentage / total) * 100
+
+            # Then in the plotting loop:
+            ax.set_ylim(0, max(global_max_percentage * 1.4, 10))
 
             # Only label the highest percentage bar in each depth
             if percentages:

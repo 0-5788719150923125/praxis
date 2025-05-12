@@ -78,16 +78,6 @@ class BaseController(nn.Module):
     ) -> List[int]:
         """Update routes used by the visualizer."""
         current_route.append(next_expert_idx)
-        if self.debug:
-            if (
-                self.visualizer
-                and not self.training
-                and hidden_states.size(0) == 1  # not validation
-                and current_depth > 0  # not the final layer
-            ):
-                previous_idx = current_route[current_depth - 1]
-                self.visualizer.add_transition(previous_idx, next_expert_idx)
-
         return current_route
 
     def post_forward(self, hidden_states: Tensor, current_route: List[int]) -> None:
