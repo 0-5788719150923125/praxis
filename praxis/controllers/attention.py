@@ -64,6 +64,14 @@ class AttentionChanneler(BaseController):
         # Final output projection for routing decisions
         self.router = nn.Linear(hidden_size, self.num_experts)
 
+        # Logits residual connection
+        self.logits_projection = nn.ModuleList(
+            [
+                nn.Linear(self.num_experts, self.channel_size)
+                for _ in range(config.depth)
+            ]
+        )
+
         # Project expert probs to just the subset of features we'll modify
         self.channelers = nn.ModuleList(
             [
@@ -145,8 +153,20 @@ class AttentionChanneler(BaseController):
             # During inference, use standard softmax for determinism
             probs = F.softmax(logits, dim=-1)
 
-        # Project to just the feature subset we'll modify
-        feature_updates = self.channelers[current_depth](probs)
+        # Calculate batch consensus
+        mean_probs = probs.mean(dim=0)  # [num_experts]
+
+        # Scale by batch consensus
+        scaled_probs = probs * mean_probs.unsqueeze(0)  # Element-wise multiplication
+
+        # Renormalize to maintain probability distribution
+        scaled_probs = F.normalize(scaled_probs, p=1, dim=1)  # Row-wise normalization
+
+        # Project logits for residual connection
+        logits_residual = self.logits_projection[current_depth](logits)
+
+        # Use for feature updates
+        feature_updates = self.channelers[current_depth](scaled_probs) + logits_residual
 
         # Create a broadcast-compatible version of the feature updates
         global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
@@ -157,19 +177,16 @@ class AttentionChanneler(BaseController):
         # Update a subset of features in all tokens (create a side channel)
         new_states[:, :, -self.channel_size :] += global_update
 
-        # Probability-based expert selection
-        mean_probs = probs.mean(dim=0)  # [num_experts]
-
         # Select the top expert index
         next_expert_idx = torch.argmax(mean_probs).item()
 
         # Auxiliary loss
-        aux_loss = self.load_balancing_loss(probs, current_depth, next_expert_idx)
+        aux_loss = self.load_balancing_loss(mean_probs, current_depth, next_expert_idx)
 
         return new_states, controller_state, aux_loss, next_expert_idx
 
-    def load_balancing_loss(self, probs, current_depth, next_expert_idx):
-        device = probs.device
+    def load_balancing_loss(self, mean_probs, current_depth, next_expert_idx):
+        device = mean_probs.device
 
         # Track expert usage
         expert_one_hot = F.one_hot(
@@ -178,7 +195,6 @@ class AttentionChanneler(BaseController):
         ).float()
 
         # Update usage statistics without affecting gradients
-        self.expert_usage_per_depth = self.expert_usage_per_depth.to(device)
         self.expert_usage_per_depth[current_depth] = (
             self.ema_factor * self.expert_usage_per_depth[current_depth]
             + (1 - self.ema_factor) * expert_one_hot
@@ -188,10 +204,6 @@ class AttentionChanneler(BaseController):
         if not self.training:
             return torch.tensor(0.0, device=device)
 
-        # Calculate batch-level distribution (average of probabilities)
-        # This creates a direct gradient path from probs to loss
-        batch_distribution = probs.mean(dim=0)  # [num_experts]
-
         # Get current usage distribution
         usage_distribution = F.normalize(
             self.expert_usage_per_depth[current_depth], p=1, dim=0
@@ -200,7 +212,7 @@ class AttentionChanneler(BaseController):
         # Create target that's between uniform and current distribution
         # α controls specialization (higher == exploration, lower == exploitation)
         alpha = 0.35
-        uniform_target = torch.ones_like(batch_distribution) / self.num_experts
+        uniform_target = torch.ones_like(mean_probs) / self.num_experts
         biased_target = alpha * uniform_target + (1 - alpha) * usage_distribution
 
         # Apply minimum usage threshold to prevent complete abandonment
@@ -210,7 +222,7 @@ class AttentionChanneler(BaseController):
 
         # KL divergence to this biased target instead of uniform
         balance_loss = F.kl_div(
-            (batch_distribution + 1e-10).log(),
+            (mean_probs + 1e-10).log(),
             biased_target,
             reduction="sum",
         )
