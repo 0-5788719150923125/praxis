@@ -47,15 +47,15 @@ class AttentionChanneler(BaseController):
             ]
         )
 
-        # Router MLPs with residual connections
-        self.feedforward = nn.ModuleList(
+        # Router bottlenecks with residual connections
+        self.bottleneck = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.LayerNorm(hidden_size),
-                    nn.Linear(hidden_size, hidden_size * 2),
-                    ACT2FN["leaky_relu"],
+                    nn.Linear(hidden_size, hidden_size // 4),
+                    ACT2FN["gelu"],
                     nn.Dropout(config.dropout),
-                    nn.Linear(hidden_size * 2, hidden_size),
+                    nn.Linear(hidden_size // 4, hidden_size),
                 )
                 for _ in range(config.depth)
             ]
@@ -71,6 +71,15 @@ class AttentionChanneler(BaseController):
                 for _ in range(config.depth)
             ]
         )
+
+        # Initialize expert usage tracking per depth
+        self.register_buffer(
+            "expert_usage_per_depth", torch.ones(config.depth, self.num_experts) * 1e-5
+        )
+
+        # Hyperparameters for balancing
+        self.balance_coefficient = 0.01
+        self.ema_factor = 0.99  # For exponential moving average of usage statistics
 
     def get_next_expert(
         self,
@@ -120,7 +129,7 @@ class AttentionChanneler(BaseController):
             context_token = (output + query).squeeze(1)  # [batch_size, hidden_size]
 
         # Apply router with residual
-        router_hidden = self.feedforward[current_depth](context_token)
+        router_hidden = self.bottleneck[current_depth](context_token)
         router_hidden += context_token
 
         # Predict an expert layer
@@ -145,17 +154,77 @@ class AttentionChanneler(BaseController):
         # Create a new hidden states tensor
         new_states = hidden_states.clone()
 
-        # # Update a subset of features in the final token (create a side channel)
-        # new_states[:, -1, -self.channel_size :] += feature_updates
-
         # Update a subset of features in all tokens (create a side channel)
         new_states[:, :, -self.channel_size :] += global_update
 
-        # Find the most common vote (mode) across the batch
-        vote_counts = torch.bincount(batch_votes)
-        next_expert_idx = torch.argmax(vote_counts).item()
+        # Find the most common vote with randomized tie-breaking
+        vote_counts = torch.bincount(batch_votes, minlength=self.num_experts)
 
-        # No auxiliary loss
-        aux_loss = torch.tensor(0.0, device=device)
+        # Find indices that have the maximum vote count
+        max_count = vote_counts.max()
+        max_indices = (vote_counts == max_count).nonzero(as_tuple=True)[0]
+
+        # If multiple maxima, choose a random one (tie-breaking)
+        if len(max_indices) > 1:
+            chosen_idx = max_indices[
+                torch.randint(0, len(max_indices), (1,), device=device)
+            ]
+            next_expert_idx = chosen_idx.item()
+        else:
+            # Otherwise use the first (during inference for determinism)
+            next_expert_idx = max_indices[0].item()
+
+        # Auxiliary loss
+        aux_loss = self.load_balancing_loss(probs, current_depth, next_expert_idx)
 
         return new_states, controller_state, aux_loss, next_expert_idx
+
+    def load_balancing_loss(self, probs, current_depth, next_expert_idx):
+        device = probs.device
+
+        # Track expert usage (with torch.no_grad to avoid modifying gradients)
+        with torch.no_grad():
+            expert_one_hot = F.one_hot(
+                torch.tensor(next_expert_idx, device=device),
+                num_classes=self.num_experts,
+            ).float()
+
+            # Update usage statistics without affecting gradients
+            self.expert_usage_per_depth = self.expert_usage_per_depth.to(device)
+            self.expert_usage_per_depth[current_depth] = (
+                self.ema_factor * self.expert_usage_per_depth[current_depth]
+                + (1 - self.ema_factor) * expert_one_hot
+            )
+
+        # Only calculate loss during training
+        if not self.training:
+            return torch.tensor(0.0, device=device)
+
+        # Calculate batch-level distribution (average of probabilities)
+        # This creates a direct gradient path from probs to loss
+        batch_distribution = probs.mean(dim=0)  # [num_experts]
+
+        # Get current usage distribution
+        usage_distribution = F.normalize(
+            self.expert_usage_per_depth[current_depth], p=1, dim=0
+        )
+
+        # Create target that's between uniform and current distribution
+        # α controls how much specialization we allow (0.5-0.8 is a good range)
+        alpha = 0.35
+        uniform_target = torch.ones_like(batch_distribution) / self.num_experts
+        biased_target = alpha * uniform_target + (1 - alpha) * usage_distribution
+
+        # Apply minimum usage threshold to prevent complete abandonment
+        min_usage = 0.01 / self.num_experts
+        biased_target = torch.max(biased_target, torch.tensor(min_usage, device=device))
+        biased_target = F.normalize(biased_target, p=1, dim=0)  # Renormalize
+
+        # KL divergence to this biased target instead of uniform
+        balance_loss = F.kl_div(
+            (batch_distribution + 1e-10).log(),
+            biased_target,
+            reduction="sum",
+        )
+
+        return balance_loss * self.balance_coefficient
