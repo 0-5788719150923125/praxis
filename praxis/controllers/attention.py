@@ -24,7 +24,7 @@ class AttentionChanneler(BaseController):
         hidden_size = config.hidden_size
 
         # Number of features to modify (small fraction of hidden size)
-        self.channel_size = min(32, hidden_size // 16)  # Just a few features
+        self.channel_size = min(16, hidden_size // 16)  # Just a few features
 
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
@@ -182,19 +182,18 @@ class AttentionChanneler(BaseController):
     def load_balancing_loss(self, probs, current_depth, next_expert_idx):
         device = probs.device
 
-        # Track expert usage (with torch.no_grad to avoid modifying gradients)
-        with torch.no_grad():
-            expert_one_hot = F.one_hot(
-                torch.tensor(next_expert_idx, device=device),
-                num_classes=self.num_experts,
-            ).float()
+        # Track expert usage
+        expert_one_hot = F.one_hot(
+            torch.tensor(next_expert_idx, device=device),
+            num_classes=self.num_experts,
+        ).float()
 
-            # Update usage statistics without affecting gradients
-            self.expert_usage_per_depth = self.expert_usage_per_depth.to(device)
-            self.expert_usage_per_depth[current_depth] = (
-                self.ema_factor * self.expert_usage_per_depth[current_depth]
-                + (1 - self.ema_factor) * expert_one_hot
-            )
+        # Update usage statistics without affecting gradients
+        self.expert_usage_per_depth = self.expert_usage_per_depth.to(device)
+        self.expert_usage_per_depth[current_depth] = (
+            self.ema_factor * self.expert_usage_per_depth[current_depth]
+            + (1 - self.ema_factor) * expert_one_hot
+        )
 
         # Only calculate loss during training
         if not self.training:
@@ -210,7 +209,7 @@ class AttentionChanneler(BaseController):
         )
 
         # Create target that's between uniform and current distribution
-        # α controls how much specialization we allow (0.5-0.8 is a good range)
+        # α controls specialization (higher == exploration, lower == exploitation)
         alpha = 0.35
         uniform_target = torch.ones_like(batch_distribution) / self.num_experts
         biased_target = alpha * uniform_target + (1 - alpha) * usage_distribution
