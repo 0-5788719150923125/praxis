@@ -73,16 +73,22 @@ class AttentionChanneler(BaseController):
         )
 
         # Project expert probs to just the subset of features we'll modify
-        self.channelers = nn.ModuleList(
+        bottleneck_size = self.channel_size // 2
+        self.embedders = nn.ModuleList(
             [
-                nn.Linear(self.num_experts, self.channel_size)
+                nn.Sequential(
+                    nn.LayerNorm(self.num_experts),
+                    nn.Linear(self.num_experts, bottleneck_size),
+                    nn.Tanh(),
+                    nn.Linear(bottleneck_size, self.channel_size),
+                )
                 for _ in range(config.depth)
             ]
         )
 
         # Initialize expert usage tracking per depth
         self.register_buffer(
-            "expert_usage_per_depth", torch.ones(config.depth, self.num_experts) * 1e-5
+            "expert_utilization", torch.ones(config.depth, self.num_experts) * 1e-5
         )
 
         # Hyperparameters for balancing
@@ -139,12 +145,8 @@ class AttentionChanneler(BaseController):
             # Apply residual and reshape
             context_token = (output + query).squeeze(1)  # [batch_size, hidden_size]
 
-        # Apply router with residual
-        router_hidden = self.bottleneck[current_depth](context_token)
-        router_hidden += context_token
-
         # Predict an expert layer
-        logits = self.router(router_hidden)  # [batch_size, num_experts]
+        logits = self.router(context_token)  # [batch_size, num_experts]
 
         if self.training:
             # Sample from Gumbel distribution for each batch element
@@ -166,7 +168,7 @@ class AttentionChanneler(BaseController):
         logits_residual = self.logits_projection[current_depth](logits)
 
         # Use for feature updates
-        feature_updates = self.channelers[current_depth](scaled_probs) + logits_residual
+        feature_updates = self.embedders[current_depth](scaled_probs) + logits_residual
 
         # Create a broadcast-compatible version of the feature updates
         global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
@@ -195,8 +197,8 @@ class AttentionChanneler(BaseController):
         ).float()
 
         # Update usage statistics without affecting gradients
-        self.expert_usage_per_depth[current_depth] = (
-            self.ema_factor * self.expert_usage_per_depth[current_depth]
+        self.expert_utilization[current_depth] = (
+            self.ema_factor * self.expert_utilization[current_depth]
             + (1 - self.ema_factor) * expert_one_hot
         )
 
@@ -206,7 +208,7 @@ class AttentionChanneler(BaseController):
 
         # Get current usage distribution
         usage_distribution = F.normalize(
-            self.expert_usage_per_depth[current_depth], p=1, dim=0
+            self.expert_utilization[current_depth], p=1, dim=0
         )
 
         # Create target that's between uniform and current distribution
