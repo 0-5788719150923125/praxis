@@ -90,18 +90,14 @@ class BaseController(nn.Module):
 
         return current_route
 
-    def add_full_route(self, hidden_states: Tensor, route: Sequence[int]) -> None:
-        if (
-            self.debug
-            and self.visualizer
-            and not self.training
-            and hidden_states.size(0) == 1  # not validation
-        ):
-            self.visualizer.add_full_route(route)
-
     def post_forward(self, hidden_states: Tensor, current_route: List[int]) -> None:
         """Reset the tracking of the current route through layers."""
-        if self.debug:
-            route = [str(r) for r in current_route]
-            if not self.training and hidden_states.size(0) == 1:  # not validation
-                print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
+        if (
+            not self.debug or self.training or hidden_states.size(0) != 1
+        ):  # not training or validation
+            return
+
+        route = [str(r) for r in current_route]
+        print(f"DEBUG: inferencing through:  {' -> '.join(route)}")
+        if self.visualizer:
+            self.visualizer.add_full_route(current_route)

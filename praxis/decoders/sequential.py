@@ -102,6 +102,4 @@ class SequentialDecoder(BaseDecoder):
 
         self.controller.post_forward(hidden_states, current_route)
 
-        self.controller.add_full_route(hidden_states, current_route)
-
         return hidden_states, past_key_values, current_state, sum(aux_losses)
