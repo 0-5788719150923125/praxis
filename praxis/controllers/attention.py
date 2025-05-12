@@ -179,16 +179,10 @@ class AttentionChanneler(BaseController):
     def load_balancing_loss(self, mean_probs, current_depth, next_expert_idx):
         device = mean_probs.device
 
-        # Track expert usage
-        expert_one_hot = F.one_hot(
-            torch.tensor(next_expert_idx, device=device),
-            num_classes=self.num_experts,
-        ).float()
-
-        # Update usage statistics without affecting gradients
+        # Track expert usage using the full probability distribution
         self.expert_utilization[current_depth] = (
             self.ema_factor * self.expert_utilization[current_depth]
-            + (1 - self.ema_factor) * expert_one_hot
+            + (1 - self.ema_factor) * mean_probs
         )
 
         # Only calculate loss during training
@@ -200,22 +194,22 @@ class AttentionChanneler(BaseController):
             self.expert_utilization[current_depth], p=1, dim=0
         )
 
-        # Create target that's between uniform and current distribution
-        # α controls specialization (higher == exploration, lower == exploitation)
-        alpha = 0.35
+        # Primary component: Push toward uniform distribution
         uniform_target = torch.ones_like(mean_probs) / self.num_experts
-        biased_target = alpha * uniform_target + (1 - alpha) * usage_distribution
 
-        # Apply minimum usage threshold to prevent complete abandonment
-        min_usage = 0.01 / self.num_experts
-        biased_target = torch.max(biased_target, torch.tensor(min_usage, device=device))
-        biased_target = F.normalize(biased_target, p=1, dim=0)  # Renormalize
-
-        # KL divergence to this biased target instead of uniform
+        # Calculate standard KL loss toward uniform distribution
+        # This encourages balanced usage across experts
         balance_loss = F.kl_div(
             (mean_probs + 1e-10).log(),
-            biased_target,
+            uniform_target,
             reduction="sum",
         )
 
-        return balance_loss * self.balance_coefficient
+        # Secondary component: L2 regularization on the probability peakiness
+        # This discourages extremely uneven distributions
+        peaky_penalty = ((mean_probs - uniform_target) ** 2).sum()
+
+        # Combined loss with appropriate weighting
+        combined_loss = balance_loss + 0.1 * peaky_penalty
+
+        return combined_loss * self.balance_coefficient
