@@ -47,40 +47,28 @@ class AttentionChanneler(BaseController):
             ]
         )
 
-        # Router bottlenecks with residual connections
-        self.bottleneck = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.LayerNorm(hidden_size),
-                    nn.Linear(hidden_size, hidden_size // 4),
-                    ACT2FN["gelu"],
-                    nn.Dropout(config.dropout),
-                    nn.Linear(hidden_size // 4, hidden_size),
-                )
-                for _ in range(config.depth)
-            ]
-        )
-
         # Final output projection for routing decisions
-        self.router = nn.Linear(hidden_size, self.num_experts)
-
-        # Logits residual connection
-        self.logits_projection = nn.ModuleList(
-            [
-                nn.Linear(self.num_experts, self.channel_size)
-                for _ in range(config.depth)
-            ]
+        self.router = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, hidden_size * 2),
+            ACT2FN["gelu"],
+            nn.Linear(hidden_size * 2, self.num_experts),
         )
 
-        # Project expert probs to just the subset of features we'll modify
-        bottleneck_size = self.channel_size // 2
+        # Residual projections
+        self.router_projection = nn.Linear(hidden_size, self.num_experts)
+        self.logits_projection = nn.ModuleList(
+            nn.Linear(self.num_experts, self.channel_size) for _ in range(config.depth)
+        )
+
+        # Project expert probs through a bottleneck
         self.embedders = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.LayerNorm(self.num_experts),
-                    nn.Linear(self.num_experts, bottleneck_size),
-                    nn.Tanh(),
-                    nn.Linear(bottleneck_size, self.channel_size),
+                    nn.Linear(self.num_experts, self.channel_size // 2),
+                    ACT2FN["tanh"],
+                    nn.Linear(self.channel_size // 2, self.channel_size),
                 )
                 for _ in range(config.depth)
             ]
@@ -146,7 +134,10 @@ class AttentionChanneler(BaseController):
             context_token = (output + query).squeeze(1)  # [batch_size, hidden_size]
 
         # Predict an expert layer
-        logits = self.router(context_token)  # [batch_size, num_experts]
+        router_residual = self.router_projection(context_token)
+        logits = (
+            self.router(context_token) + router_residual
+        )  # [batch_size, num_experts]
 
         if self.training:
             # Sample from Gumbel distribution for each batch element
@@ -164,10 +155,8 @@ class AttentionChanneler(BaseController):
         # Renormalize to maintain probability distribution
         scaled_probs = F.normalize(scaled_probs, p=1, dim=1)  # Row-wise normalization
 
-        # Project logits for residual connection
-        logits_residual = self.logits_projection[current_depth](logits)
-
         # Use for feature updates
+        logits_residual = self.logits_projection[current_depth](logits)
         feature_updates = self.embedders[current_depth](scaled_probs) + logits_residual
 
         # Create a broadcast-compatible version of the feature updates
