@@ -22,7 +22,7 @@ dependencies = [
     "flask",
     "hivemind",
     "isort",
-    "lighteval[math] @ git+https://github.com/Vectorrent/lighteval@fix-tqdm-logging",
+    "lighteval[math]",
     "lightning",
     "lsprotocol",
     "matplotlib",

@@ -52,6 +52,7 @@ class AttentionChanneler(BaseController):
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, hidden_size * 2),
             ACT2FN["gelu"],
+            nn.Dropout(config.dropout),
             nn.Linear(hidden_size * 2, self.num_experts),
         )
 
@@ -67,21 +68,12 @@ class AttentionChanneler(BaseController):
                 nn.Sequential(
                     nn.LayerNorm(self.num_experts),
                     nn.Linear(self.num_experts, self.channel_size // 2),
-                    ACT2FN["tanh"],
+                    ACT2FN["sin"],
                     nn.Linear(self.channel_size // 2, self.channel_size),
                 )
                 for _ in range(config.depth)
             ]
         )
-
-        # Initialize expert usage tracking per depth
-        self.register_buffer(
-            "expert_utilization", torch.ones(config.depth, self.num_experts) * 1e-5
-        )
-
-        # Hyperparameters for balancing
-        self.balance_coefficient = 0.01
-        self.ema_factor = 0.99  # For exponential moving average of usage statistics
 
     def get_next_expert(
         self,
@@ -108,30 +100,22 @@ class AttentionChanneler(BaseController):
                 self.expert_embeddings[current_depth](route_tensor)
                 .unsqueeze(0)
                 .expand(batch_size, -1, -1)
-            )
+            )  # [batch_size, len(route), hidden_size]
 
-            # Create attention mask (causal)
-            attn_mask = (
-                torch.triu(torch.ones(1, len(current_route)), diagonal=1)
-                .bool()
-                .to(device)
-            )
+            # Reshape for attention
+            keys = context_token.unsqueeze(1)  # [batch_size, 1, hidden_size]
+            keys_norm = self.attention_norm[current_depth - 1](keys)
 
-            # Reshape current state for attention
-            query = context_token.unsqueeze(1)  # [batch_size, 1, hidden_size]
-            query_norm = self.attention_norm[current_depth - 1](query)
-
-            # Apply attention with causality
+            # Apply attention
             output, _ = self.attention[current_depth - 1](
-                query=query_norm,
-                key=history_embeds,
-                value=history_embeds,
-                attn_mask=attn_mask,
-                is_causal=True,
+                query=history_embeds,
+                key=keys_norm,
+                value=keys_norm,
             )
 
-            # Apply residual and reshape
-            context_token = (output + query).squeeze(1)  # [batch_size, hidden_size]
+            # Take maximum value per feature across all experts
+            max_output = torch.max(output, dim=1)[0]  # [batch_size, hidden_size]
+            context_token = max_output + context_token
 
         # Predict an expert layer
         router_residual = self.router_projection(context_token)
@@ -146,43 +130,34 @@ class AttentionChanneler(BaseController):
             # During inference, use standard softmax for determinism
             probs = F.softmax(logits, dim=-1)
 
-        # Calculate batch consensus
-        mean_probs = probs.mean(dim=0)  # [num_experts]
-
-        # Scale by batch consensus
-        scaled_probs = probs * mean_probs.unsqueeze(0)  # Element-wise multiplication
-
-        # Renormalize to maintain probability distribution
-        scaled_probs = F.normalize(scaled_probs, p=1, dim=1)  # Row-wise normalization
-
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
-        feature_updates = self.embedders[current_depth](scaled_probs) + logits_residual
+        feature_updates = self.embedders[current_depth](logits) + logits_residual
 
         # Create a broadcast-compatible version of the feature updates
         global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
 
-        # Create a new hidden states tensor
-        new_states = hidden_states.clone()
-
         # Update a subset of features in all tokens (create a side channel)
-        new_states[:, :, -self.channel_size :] += global_update
+        new_states = hidden_states.clone()
+        new_states[:, :, -self.channel_size :] *= global_update
+
+        # Calculate batch consensus
+        mean_probs = probs.mean(dim=0)  # [num_experts]
 
         # Select the top expert index
         next_expert_idx = torch.argmax(mean_probs).item()
 
-        # Calculate entropy loss for training
         # Reward confident per-example decisions
         confidence = torch.mean(probs.max(dim=1)[0])
 
-        # Penalizes only severe imbalance
+        # Penalizes severe imbalance
         imbalance = torch.max(mean_probs) - torch.min(mean_probs)
 
         # Balance between specialization and load balancing
         # α controls the priority (higher = more balanced utilization)
-        alpha = 0.5
+        alpha = 0.75
 
-        # Weighted objective
+        # Weighted objective loss
         aux_loss = (confidence * -1.0 * (1 - alpha)) + imbalance * alpha
 
         return new_states, controller_state, aux_loss, next_expert_idx
