@@ -15,5 +15,5 @@ CONTROLLER_REGISTRY = dict(
     shortcutter=partial(Pathfinder, allow_early_exits=True),
     neural=NeuralController,
     attention=AttentionChanneler,
-    counter_attention=partial(AttentionChanneler, max_tokens=5),
+    counter_attention=partial(AttentionChanneler, max_tokens=5, initial_queries=3),
 )

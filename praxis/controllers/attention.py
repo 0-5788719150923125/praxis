@@ -17,7 +17,9 @@ class AttentionChanneler(BaseController):
     history of previously-selected layers while minimally modifying hidden states.
     """
 
-    def __init__(self, config: ConfigType, max_tokens: int = 1) -> None:
+    def __init__(
+        self, config: ConfigType, max_tokens: int = 1, initial_queries: int = 1
+    ) -> None:
         super().__init__(config, allow_visualizer=True)
 
         # Configuration
@@ -29,14 +31,22 @@ class AttentionChanneler(BaseController):
         # The maximum number of recent tokens to consider during attention
         self.max_tokens = max_tokens
 
+        # Add learnable embeddings for initial state (when no route exists)
+        self.initial_queries = nn.Parameter(
+            torch.randn(1, initial_queries, hidden_size)
+        )
+
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
-            [nn.Embedding(self.num_experts, hidden_size) for _ in range(config.depth)]
+            [
+                nn.Embedding(self.num_experts, hidden_size)
+                for _ in range(config.depth - 1)
+            ]
         )
 
         # Attention mechanism operating in hidden_size space
         self.attention_norm = nn.ModuleList(
-            [nn.LayerNorm(hidden_size) for _ in range(config.depth - 1)]
+            [nn.LayerNorm(hidden_size) for _ in range(config.depth)]
         )
         self.attention = nn.ModuleList(
             [
@@ -46,7 +56,7 @@ class AttentionChanneler(BaseController):
                     batch_first=True,
                     dropout=config.dropout,
                 )
-                for _ in range(config.depth - 1)
+                for _ in range(config.depth)
             ]
         )
 
@@ -98,29 +108,37 @@ class AttentionChanneler(BaseController):
         # Start with the last token as default
         context_token = context_sequence[:, -1]  # [batch_size, hidden_size]
 
-        # Attend to route history
-        if current_route:
-            # Create history tensor from route
-            route_tensor = torch.tensor(current_route, device=device).long()
+        # Always start with initial queries
+        queries = self.initial_queries.expand(
+            batch_size, -1, -1
+        )  # [batch_size, num_initial_queries, hidden_size]
 
-            # Get layer embeddings for previous route
+        # If we have route history, append those embeddings to our query set
+        if current_route:
+            # Create route tensor and get embeddings
+            route_tensor = torch.tensor(current_route, device=device).long()
             history_embeds = (
-                self.expert_embeddings[current_depth](route_tensor)
+                self.expert_embeddings[current_depth - 1](route_tensor)
                 .unsqueeze(0)
                 .expand(batch_size, -1, -1)
-            )  # [batch_size, len(route), hidden_size]
-
-            # Apply attention
-            keys_norm = self.attention_norm[current_depth - 1](context_sequence)
-            output, _ = self.attention[current_depth - 1](
-                query=history_embeds,
-                key=keys_norm,
-                value=keys_norm,
             )
 
-            # Sum the features of all experts
-            sum_output = output.sum(dim=1)  # [batch_size, hidden_size]
-            context_token = sum_output + context_token  # residual connection
+            # Concatenate initial queries with route history embeddings
+            queries = torch.cat(
+                [queries, history_embeds], dim=1
+            )  # [batch_size, num_initial_queries + len(route), hidden_size]
+
+        # Apply attention
+        keys_norm = self.attention_norm[current_depth](context_sequence)
+        output, _ = self.attention[current_depth](
+            query=queries,
+            key=keys_norm,
+            value=keys_norm,
+        )
+
+        # Sum the features of all experts
+        sum_output = output.sum(dim=1)  # [batch_size, hidden_size]
+        context_token = sum_output + context_token  # residual connection
 
         # Predict an expert layer
         router_residual = self.router_projection(context_token)
@@ -139,12 +157,8 @@ class AttentionChanneler(BaseController):
         new_states = hidden_states.clone()
         new_states[:, :, -self.channel_size :] *= global_update
 
-        if self.training:
-            # Sample from Gumbel distribution for each batch element
-            probs = F.gumbel_softmax(logits, tau=0.75, hard=True)
-        else:
-            # During inference, use standard softmax for determinism
-            probs = F.softmax(logits, dim=-1)
+        # Convert to probability distribution
+        probs = F.softmax(logits, dim=-1)
 
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
