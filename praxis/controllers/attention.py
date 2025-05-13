@@ -64,7 +64,7 @@ class AttentionChanneler(BaseController):
         self.router = nn.Sequential(
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, hidden_size * 2),
-            ACT2FN["gelu"],
+            ACT2FN[config.activation],
             nn.Dropout(config.dropout),
             nn.Linear(hidden_size * 2, self.num_experts),
         )
@@ -81,7 +81,7 @@ class AttentionChanneler(BaseController):
                 nn.Sequential(
                     nn.LayerNorm(self.num_experts),
                     nn.Linear(self.num_experts, self.channel_size // 2),
-                    ACT2FN["sin"],
+                    ACT2FN["relu"],
                     nn.Linear(self.channel_size // 2, self.channel_size),
                 )
                 for _ in range(config.depth)
@@ -139,12 +139,14 @@ class AttentionChanneler(BaseController):
         # Residual connection
         context = output + queries
 
-        # Sum the features of all experts
-        sum_context = context.sum(dim=1)  # [batch_size, hidden_size]
+        # Average the features of all experts
+        reduced_context = context.mean(dim=1)  # [batch_size, hidden_size]
 
         # Predict an expert layer
-        router_residual = self.router_projection(sum_context)
-        logits = self.router(sum_context) + router_residual  # [batch_size, num_experts]
+        router_residual = self.router_projection(reduced_context)
+        logits = (
+            self.router(reduced_context) + router_residual
+        )  # [batch_size, num_experts]
 
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
@@ -155,13 +157,28 @@ class AttentionChanneler(BaseController):
 
         # Update a subset of features in all tokens (create a side channel)
         new_states = hidden_states.clone()
-        new_states[:, :, -self.channel_size :] += global_update
+        new_states[:, :, -self.channel_size :] *= global_update
 
         # Convert to probability distribution
         probs = F.softmax(logits, dim=-1)
 
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
+
+        # # Force exploration via sampling
+        # if self.training:
+        #     # During training, sample from distribution
+        #     next_expert_dist = torch.multinomial(
+        #         F.softmax(mean_probs, dim=0), num_samples=1
+        #     ).item()
+        #     next_expert_idx = next_expert_dist
+        # else:
+        #     # During inference, select the top expert index
+        #     next_expert_idx = torch.argmax(mean_probs).item()
+
+        # # Add router z-loss to prevent overconfidence
+        # z_loss = 0.001 * (logits**2).mean()
+        # aux_loss = torch.tensor(0.0, device=device) + z_loss
 
         # Select the top expert index
         next_expert_idx = torch.argmax(mean_probs).item()

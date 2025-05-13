@@ -1,5 +1,5 @@
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import DefaultDict, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
@@ -75,6 +75,7 @@ class TransitionVisualizer:
             self.visualize_expert_usage(time_weighted=False)  # All-time usage
             if self.use_time_weighting:
                 self.visualize_expert_usage(time_weighted=True)  # Recent usage
+                self.visualize_top_routes()  # Top 10 most common recent routes
 
     def reset_transitions(self) -> None:
         """Reset all transition statistics."""
@@ -516,6 +517,201 @@ class TransitionVisualizer:
         )
         plt.close()
 
+    def visualize_top_routes(self, top_n: int = 10) -> None:
+        """
+        Visualize the top N most common full routes through the model as paths from left to right,
+        using only the most recent routes in the rolling window.
+
+        Args:
+            top_n: Number of top routes to display (default 10)
+        """
+        if not self.recent_routes or not self.use_time_weighting:
+            print("No recent routes data available for top routes visualization")
+            return
+
+        # Extract just the routes from the recent routes list
+        routes = [tuple(route) for route, _ in self.recent_routes]
+
+        # Count frequency of each unique route
+        route_counter = Counter(routes)
+
+        # Get the top N most common routes
+        top_routes = route_counter.most_common(top_n)
+
+        if not top_routes:
+            print("No routes found for visualization")
+            return
+
+        # Create figure with adjustable size similar to transition visualization
+        fig, ax = plt.subplots(figsize=(self.fig_width, self.fig_height))
+
+        # Add more horizontal space between depth levels
+        horizontal_spacing = 1.0
+
+        # Find the maximum depth among the top routes
+        max_depth = max(len(route) for route, _ in top_routes)
+
+        # Title and labels
+        ax.set_title(
+            f"Top {len(top_routes)} Most Common Routes (Recent {len(self.recent_routes):,} Routes)",
+            fontsize=16,
+            pad=20,
+        )
+        ax.set_xlabel("Depth", fontsize=14, labelpad=15)
+        ax.set_ylabel("Expert", fontsize=14, labelpad=15)
+
+        # Setup grid similar to transition visualization
+        x_min = -0.5
+        x_max = (max_depth - 1) * horizontal_spacing + 0.5
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(-0.5, self.num_experts - 0.5)
+
+        # Add grid lines
+        for i in range(max_depth):
+            ax.axvline(i * horizontal_spacing, color="gray", linestyle="-", alpha=0.15)
+        for i in range(self.num_experts):
+            ax.axhline(i, color="gray", linestyle="-", alpha=0.15)
+
+        # Add labels
+        ax.set_xticks([i * horizontal_spacing for i in range(max_depth)])
+        ax.set_xticklabels([f"{i}" for i in range(max_depth)])
+        ax.set_yticks(range(self.num_experts))
+        ax.set_yticklabels([f"{i}" for i in range(self.num_experts)])
+
+        # Calculate total routes for percentage
+        total_routes = len(self.recent_routes)
+
+        # Create a colormap for the top routes - each route gets a distinct color
+        route_colors = plt.cm.tab10(np.linspace(0, 1, min(10, len(top_routes))))
+        if len(top_routes) > 10:
+            # If more than 10 routes, use a different colormap for the remainder
+            additional_colors = plt.cm.Set3(np.linspace(0, 1, len(top_routes) - 10))
+            route_colors = np.vstack([route_colors, additional_colors])
+
+        # First, draw ALL nodes at all depths and for all experts
+        for depth in range(max_depth):
+            for expert in range(self.num_experts):
+                # Draw gray outline for all nodes
+                ax.scatter(
+                    depth * horizontal_spacing,
+                    expert,
+                    s=80,  # Consistent size with transition viz
+                    color="lightgray",
+                    alpha=0.5,
+                    zorder=5,
+                )
+
+        # Draw each route as a connected path
+        legend_elements = []
+
+        for i, (route, count) in enumerate(top_routes):
+            # Get route's color
+            route_color = route_colors[i]
+
+            # Calculate percentage of this route
+            percentage = (count / total_routes) * 100
+
+            # Create route label for legend
+            route_label = (
+                f"#{i+1}: "
+                + " → ".join([str(e) for e in route])
+                + f" ({percentage:.1f}%)"
+            )
+            legend_elements.append(
+                plt.Line2D([0], [0], color=route_color, lw=4, label=route_label)
+            )
+
+            # Draw the route as a series of connected points with curved lines
+            for j in range(len(route) - 1):
+                # Get positions of current and next expert
+                x1 = j * horizontal_spacing
+                y1 = route[j]
+                x2 = (j + 1) * horizontal_spacing
+                y2 = route[j + 1]
+
+                # Line width based on percentage (scaled to be visible)
+                line_width = 1 + 5 * (percentage / 100)
+
+                # Calculate curve parameters (similar to transition visualization)
+                distance = abs(y1 - y2)
+                curvature = 0.2 + 0.1 * distance
+                curvature = curvature * horizontal_spacing
+                curve_direction = 1 if y1 <= y2 else -1
+
+                # Calculate midpoint with offset for curve
+                mid_x = (x1 + x2) / 2
+                mid_y = (y1 + y2) / 2 + curve_direction * curvature
+
+                # Create curved path
+                curve = plt.matplotlib.path.Path(
+                    [(x1, y1), (mid_x, mid_y), (x2, y2)],
+                    [
+                        plt.matplotlib.path.Path.MOVETO,
+                        plt.matplotlib.path.Path.CURVE3,
+                        plt.matplotlib.path.Path.CURVE3,
+                    ],
+                )
+
+                # Draw the curved line
+                patch = plt.matplotlib.patches.PathPatch(
+                    curve,
+                    facecolor="none",
+                    edgecolor=route_color,
+                    linewidth=line_width,
+                    alpha=0.9,
+                    zorder=10,
+                )
+                ax.add_patch(patch)
+
+            # Second pass - add colored circle for each node in the route
+            for j in range(len(route)):
+                x = j * horizontal_spacing
+                y = route[j]
+
+                # Draw black outline
+                ax.scatter(x, y, s=100, color="black", zorder=15)
+                # Draw colored node
+                ax.scatter(x, y, s=80, color=route_color, zorder=20)
+
+        # Add the legend below the chart
+        # Use 2 columns if there are more than 5 routes to save vertical space
+        n_cols = 2 if len(top_routes) > 5 else 1
+        ax.legend(
+            handles=legend_elements,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.15),  # Position below the chart
+            fontsize=10,
+            title="Top Routes",
+            ncol=n_cols,
+        )
+
+        # Add visualization info
+        plt.figtext(
+            0.5,
+            0.01,
+            f"Based on last {len(self.recent_routes):,} routes | Window size: {self.window_size:,}",
+            ha="center",
+            fontsize=10,
+            bbox=dict(
+                boxstyle="round,pad=0.5",
+                facecolor="white",
+                alpha=0.9,
+                edgecolor="lightgray",
+            ),
+        )
+
+        # Save the visualization with "transition_" prefix
+        plt.tight_layout(
+            rect=[0, 0.05, 1, 0.85]
+        )  # Adjust layout to make room for the legend below
+        plt.savefig(
+            os.path.join(self.save_dir, "transition_top_routes.png"),
+            dpi=300,
+            bbox_inches="tight",
+            pad_inches=0.3,
+        )
+        plt.close()
+
 
 # Example usage with the same data as RouteVisualizer
 if __name__ == "__main__":
@@ -615,6 +811,7 @@ if __name__ == "__main__":
     visualizer.visualize_transitions(time_weighted=True)  # Recent transitions
     visualizer.visualize_expert_usage(time_weighted=False)  # All-time expert usage
     visualizer.visualize_expert_usage(time_weighted=True)  # Recent expert usage
+    visualizer.visualize_top_routes()  # Top 10 most common recent routes
 
     print("Visualizations saved to data/")
     print("- transition_viz.png: All-time transition patterns")
@@ -623,3 +820,4 @@ if __name__ == "__main__":
     print(
         "- transition_expert_usage_recent.png: Recent expert usage distribution by depth"
     )
+    print("- transition_top_routes.png: Top 10 most common recent routes")
