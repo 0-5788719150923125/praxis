@@ -118,9 +118,9 @@ class AttentionChanneler(BaseController):
                 value=keys_norm,
             )
 
-            # Take maximum value per feature across all experts
-            max_output = torch.max(output, dim=1)[0]  # [batch_size, hidden_size]
-            context_token = max_output + context_token
+            # Sum the features of all experts
+            sum_output = output.sum(dim=1)  # [batch_size, hidden_size]
+            context_token = sum_output + context_token  # residual connection
 
         # Predict an expert layer
         router_residual = self.router_projection(context_token)
