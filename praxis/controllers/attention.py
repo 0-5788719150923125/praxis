@@ -26,6 +26,9 @@ class AttentionChanneler(BaseController):
         # Number of features to modify (small fraction of hidden size)
         self.channel_size = min(16, hidden_size // 16)  # Just a few features
 
+        # The maximum number of recent tokens to consider during attention
+        self.max_tokens = 1
+
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
             [nn.Embedding(self.num_experts, hidden_size) for _ in range(config.depth)]
@@ -87,8 +90,13 @@ class AttentionChanneler(BaseController):
         batch_size = hidden_states.size(0)
         device = hidden_states.device
 
-        # Get the last token state directly
-        context_token = hidden_states[:, -1]
+        sequence_length = min(self.max_tokens, hidden_states.size(1))
+        context_sequence = hidden_states[
+            :, -sequence_length:
+        ]  # [batch_size, seq_len, hidden_size]
+
+        # Start with the last token as default
+        context_token = context_sequence[:, -1]  # [batch_size, hidden_size]
 
         # Attend to route history
         if current_route:
@@ -102,11 +110,8 @@ class AttentionChanneler(BaseController):
                 .expand(batch_size, -1, -1)
             )  # [batch_size, len(route), hidden_size]
 
-            # Reshape for attention
-            keys = context_token.unsqueeze(1)  # [batch_size, 1, hidden_size]
-            keys_norm = self.attention_norm[current_depth - 1](keys)
-
             # Apply attention
+            keys_norm = self.attention_norm[current_depth - 1](context_sequence)
             output, _ = self.attention[current_depth - 1](
                 query=history_embeds,
                 key=keys_norm,
