@@ -1,3 +1,4 @@
+import math
 from typing import List, Optional, Tuple, TypeVar
 
 import torch
@@ -58,6 +59,17 @@ class AttentionChanneler(BaseController):
                 )
                 for _ in range(config.depth)
             ]
+        )
+
+        # Weight expert attention importance
+        self.reducer = nn.ModuleList(
+            nn.Sequential(
+                nn.Linear(hidden_size, hidden_size // 2),
+                ACT2FN["tanh"],
+                nn.Linear(hidden_size // 2, 1),
+                nn.Softmax(dim=1),
+            )
+            for _ in range(config.depth)
         )
 
         # Final output projection for routing decisions
@@ -139,14 +151,14 @@ class AttentionChanneler(BaseController):
         # Residual connection
         context = output + queries
 
-        # Average the features of all experts
-        reduced_context = context.mean(dim=1)  # [batch_size, hidden_size]
+        # Dynamic importance weights calculation
+        weights = self.reducer[current_depth](context)  # [batch_size, context_len, 1]
+        scaled_context = context * (1.0 / math.sqrt(context.size(1)))
+        reduced_context = torch.bmm(weights.transpose(1, 2), scaled_context).squeeze(1)
 
-        # Predict an expert layer
+        # Predict an expert layer: [batch_size, num_experts]
         router_residual = self.router_projection(reduced_context)
-        logits = (
-            self.router(reduced_context) + router_residual
-        )  # [batch_size, num_experts]
+        logits = self.router(reduced_context) + router_residual
 
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
@@ -164,21 +176,6 @@ class AttentionChanneler(BaseController):
 
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
-
-        # # Force exploration via sampling
-        # if self.training:
-        #     # During training, sample from distribution
-        #     next_expert_dist = torch.multinomial(
-        #         F.softmax(mean_probs, dim=0), num_samples=1
-        #     ).item()
-        #     next_expert_idx = next_expert_dist
-        # else:
-        #     # During inference, select the top expert index
-        #     next_expert_idx = torch.argmax(mean_probs).item()
-
-        # # Add router z-loss to prevent overconfidence
-        # z_loss = 0.001 * (logits**2).mean()
-        # aux_loss = torch.tensor(0.0, device=device) + z_loss
 
         # Select the top expert index
         next_expert_idx = torch.argmax(mean_probs).item()

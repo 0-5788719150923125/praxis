@@ -27,7 +27,10 @@ class BaseController(nn.Module):
         self.num_experts = config.num_experts
         self.visualizer = (
             TransitionVisualizer(
-                save_dir="./", num_experts=self.num_experts, max_depth=self.depth
+                save_dir="./",
+                num_experts=self.num_experts,
+                max_depth=self.depth,
+                save_every=300,  # 15 minutes
             )
             if self.debug and allow_visualizer
             else False
