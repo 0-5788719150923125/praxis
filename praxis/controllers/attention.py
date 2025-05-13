@@ -137,14 +137,14 @@ class AttentionChanneler(BaseController):
         )
 
         # Residual connection
-        context_vector = output + queries
+        context = output + queries
 
         # Sum the features of all experts
-        sum_output = context_vector.sum(dim=1)  # [batch_size, hidden_size]
+        sum_context = context.sum(dim=1)  # [batch_size, hidden_size]
 
         # Predict an expert layer
-        router_residual = self.router_projection(sum_output)
-        logits = self.router(sum_output) + router_residual  # [batch_size, num_experts]
+        router_residual = self.router_projection(sum_context)
+        logits = self.router(sum_context) + router_residual  # [batch_size, num_experts]
 
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
@@ -155,7 +155,7 @@ class AttentionChanneler(BaseController):
 
         # Update a subset of features in all tokens (create a side channel)
         new_states = hidden_states.clone()
-        new_states[:, :, -self.channel_size :] *= global_update
+        new_states[:, :, -self.channel_size :] += global_update
 
         # Convert to probability distribution
         probs = F.softmax(logits, dim=-1)
