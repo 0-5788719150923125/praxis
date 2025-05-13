@@ -71,8 +71,10 @@ class TransitionVisualizer:
             if self.use_time_weighting:
                 self.visualize_transitions(time_weighted=True)  # Recent transitions
 
-            # Also save expert usage visualization on the same schedule
-            self.visualize_expert_usage()
+            # Also save expert usage visualization on the same schedule - both all-time and recent
+            self.visualize_expert_usage(time_weighted=False)  # All-time usage
+            if self.use_time_weighting:
+                self.visualize_expert_usage(time_weighted=True)  # Recent usage
 
     def reset_transitions(self) -> None:
         """Reset all transition statistics."""
@@ -351,29 +353,54 @@ class TransitionVisualizer:
         )
         plt.close()
 
-    def visualize_expert_usage(self) -> None:
-        """Create a visualization showing the usage distribution of experts at each depth."""
+    def _calculate_expert_usage(self, time_weighted: bool = False) -> List[List[float]]:
+        """
+        Calculate expert usage distribution at each depth, using either all-time or recent data.
+
+        Args:
+            time_weighted: If True, use only recent transitions
+
+        Returns:
+            List of usage counts for each depth
+        """
+        # Get the appropriate transition data
+        transitions_data = (
+            self._calculate_recent_transitions() if time_weighted else self.transitions
+        )
+
         # Calculate expert usage at each depth
         expert_usage = []
 
         # First depth usage (from outgoing connections)
         depth0_usage = [0] * self.num_experts
-        for (from_expert, _), weight in self.transitions[0].items():
+        for (from_expert, _), weight in transitions_data[0].items():
             depth0_usage[from_expert] += weight
         expert_usage.append(depth0_usage)
 
         # Middle depths (from incoming connections)
         for depth in range(1, self.max_depth):
             depth_usage = [0] * self.num_experts
-            for (_, to_expert), weight in self.transitions[depth - 1].items():
+            for (_, to_expert), weight in transitions_data[depth - 1].items():
                 depth_usage[to_expert] += weight
             expert_usage.append(depth_usage)
 
         # Last depth (from incoming connections to final depth)
         final_depth_usage = [0] * self.num_experts
-        for (_, to_expert), weight in self.transitions[self.max_depth - 1].items():
+        for (_, to_expert), weight in transitions_data[self.max_depth - 1].items():
             final_depth_usage[to_expert] += weight
         expert_usage.append(final_depth_usage)
+
+        return expert_usage
+
+    def visualize_expert_usage(self, time_weighted: bool = False) -> None:
+        """
+        Create a visualization showing the usage distribution of experts at each depth.
+
+        Args:
+            time_weighted: If True, visualize only recent expert usage
+        """
+        # Calculate expert usage using appropriate data
+        expert_usage = self._calculate_expert_usage(time_weighted)
 
         # Create a grid of subplots, one for each depth - wider figure
         fig, axs = plt.subplots(
@@ -453,22 +480,36 @@ class TransitionVisualizer:
             # Add grid lines
             ax.grid(axis="y", linestyle="--", alpha=0.3)
 
-        # Overall title
-        fig.suptitle("Expert Usage Distribution by Depth", fontsize=16)
+        # Overall title with time prefix
+        title_prefix = "Recent" if time_weighted else "All-time"
+        fig.suptitle(f"{title_prefix} Expert Usage Distribution by Depth", fontsize=16)
 
-        # Add information about total routes
+        # Add information about total routes or recent routes
+        info_text = f"Based on "
+        if time_weighted:
+            info_text += (
+                f"last {min(self.window_size, len(self.recent_routes)):,} routes"
+            )
+        else:
+            info_text += f"{self.total_routes:,} total routes"
+
         plt.figtext(
             0.5,
             0.01,
-            f"Based on {self.total_routes:,} total routes",
+            info_text,
             ha="center",
             fontsize=10,
         )
 
         # Save visualization with consistent naming
+        filename = (
+            "transition_expert_usage_recent.png"
+            if time_weighted
+            else "transition_expert_usage.png"
+        )
         plt.tight_layout(rect=[0, 0.05, 1, 0.95])
         plt.savefig(
-            os.path.join(self.save_dir, "transition_expert_usage.png"),
+            os.path.join(self.save_dir, filename),
             dpi=300,
             bbox_inches="tight",
             pad_inches=0.3,
@@ -572,9 +613,13 @@ if __name__ == "__main__":
     # Generate final visualizations (in case the total routes isn't divisible by save_every)
     visualizer.visualize_transitions(time_weighted=False)  # All-time transitions
     visualizer.visualize_transitions(time_weighted=True)  # Recent transitions
-    visualizer.visualize_expert_usage()  # Expert usage by depth
+    visualizer.visualize_expert_usage(time_weighted=False)  # All-time expert usage
+    visualizer.visualize_expert_usage(time_weighted=True)  # Recent expert usage
 
     print("Visualizations saved to data/")
     print("- transition_viz.png: All-time transition patterns")
     print("- transition_viz_recent.png: Recent transition patterns")
-    print("- transition_expert_usage.png: Expert usage distribution by depth")
+    print("- transition_expert_usage.png: All-time expert usage distribution by depth")
+    print(
+        "- transition_expert_usage_recent.png: Recent expert usage distribution by depth"
+    )
