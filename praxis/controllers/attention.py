@@ -136,15 +136,15 @@ class AttentionChanneler(BaseController):
             value=keys_norm,
         )
 
+        # Residual connection
+        context_vector = output + queries
+
         # Sum the features of all experts
-        sum_output = output.sum(dim=1)  # [batch_size, hidden_size]
-        context_token = sum_output + context_token  # residual connection
+        sum_output = context_vector.sum(dim=1)  # [batch_size, hidden_size]
 
         # Predict an expert layer
-        router_residual = self.router_projection(context_token)
-        logits = (
-            self.router(context_token) + router_residual
-        )  # [batch_size, num_experts]
+        router_residual = self.router_projection(sum_output)
+        logits = self.router(sum_output) + router_residual  # [batch_size, num_experts]
 
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
