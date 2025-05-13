@@ -17,7 +17,7 @@ class AttentionChanneler(BaseController):
     history of previously-selected layers while minimally modifying hidden states.
     """
 
-    def __init__(self, config: ConfigType) -> None:
+    def __init__(self, config: ConfigType, max_tokens: int = 1) -> None:
         super().__init__(config, allow_visualizer=True)
 
         # Configuration
@@ -27,7 +27,7 @@ class AttentionChanneler(BaseController):
         self.channel_size = min(16, hidden_size // 16)  # Just a few features
 
         # The maximum number of recent tokens to consider during attention
-        self.max_tokens = 1
+        self.max_tokens = max_tokens
 
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
@@ -87,12 +87,12 @@ class AttentionChanneler(BaseController):
         current_route: List[int],
         current_depth: int,
     ) -> Tuple[Tensor, Optional[Tensor], Tensor, Optional[int]]:
-        batch_size = hidden_states.size(0)
+        batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
 
-        sequence_length = min(self.max_tokens, hidden_states.size(1))
+        allowed_length = min(self.max_tokens, seq_len)
         context_sequence = hidden_states[
-            :, -sequence_length:
+            :, -allowed_length:
         ]  # [batch_size, seq_len, hidden_size]
 
         # Start with the last token as default
@@ -128,13 +128,6 @@ class AttentionChanneler(BaseController):
             self.router(context_token) + router_residual
         )  # [batch_size, num_experts]
 
-        if self.training:
-            # Sample from Gumbel distribution for each batch element
-            probs = F.gumbel_softmax(logits, tau=0.75, hard=True)
-        else:
-            # During inference, use standard softmax for determinism
-            probs = F.softmax(logits, dim=-1)
-
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
         feature_updates = self.embedders[current_depth](logits) + logits_residual
@@ -145,6 +138,13 @@ class AttentionChanneler(BaseController):
         # Update a subset of features in all tokens (create a side channel)
         new_states = hidden_states.clone()
         new_states[:, :, -self.channel_size :] *= global_update
+
+        if self.training:
+            # Sample from Gumbel distribution for each batch element
+            probs = F.gumbel_softmax(logits, tau=0.75, hard=True)
+        else:
+            # During inference, use standard softmax for determinism
+            probs = F.softmax(logits, dim=-1)
 
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
