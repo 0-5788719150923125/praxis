@@ -122,20 +122,18 @@ class AttentionChanneler(BaseController):
             batch_size, -1, -1
         )  # [batch_size, num_initial_queries, hidden_size]
 
-        # If we have route history, append those embeddings to our query set
-        if current_route:
-            # Create route tensor and get embeddings
-            route_tensor = torch.tensor(current_route, device=device).long()
-            history_embeds = (
-                self.expert_embeddings[current_depth - 1](route_tensor)
-                .unsqueeze(0)
-                .expand(batch_size, -1, -1)
-            )
+        # Create route tensor and get embeddings
+        route_tensor = torch.tensor(current_route, device=device).long()
+        history_embeds = (
+            self.expert_embeddings[current_depth - 1](route_tensor)
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1)
+        )
 
-            # Concatenate initial queries with route history embeddings
-            queries = torch.cat(
-                [queries, history_embeds], dim=1
-            )  # [batch_size, num_initial_queries + len(route), hidden_size]
+        # If we have route history, append those embeddings to our query set
+        queries = torch.cat(
+            [queries, history_embeds], dim=1
+        )  # [batch_size, num_initial_queries + len(route), hidden_size]
 
         # Apply attention
         kv_norm = self.attention_norm[current_depth](context_tokens)
@@ -144,7 +142,7 @@ class AttentionChanneler(BaseController):
             + queries  # Residual connection
         )
 
-        # Dynamic importance weights calculation
+        # Dynamic importance weighting
         weights = self.reducer[current_depth](output)  # [batch_size, context_len, 1]
         scaled_output = output * (1.0 / math.sqrt(output.size(1)))
         reduced_output = torch.bmm(weights.transpose(1, 2), scaled_output).squeeze(1)
