@@ -118,7 +118,7 @@ class AttentionChanneler(BaseController):
         ]  # [batch_size, seq_len, hidden_size]
 
         # Always start with initial queries
-        queries = self.initial_queries.expand(
+        initial_queries = self.initial_queries.expand(
             batch_size, -1, -1
         )  # [batch_size, num_initial_queries, hidden_size]
 
@@ -132,7 +132,7 @@ class AttentionChanneler(BaseController):
 
         # If we have route history, append those embeddings to our query set
         queries = torch.cat(
-            [queries, history_embeds], dim=1
+            [initial_queries, history_embeds], dim=1
         )  # [batch_size, num_initial_queries + len(route), hidden_size]
 
         # Apply attention
@@ -145,11 +145,15 @@ class AttentionChanneler(BaseController):
         # Dynamic importance weighting
         weights = self.reducer[current_depth](output)  # [batch_size, context_len, 1]
         scaled_output = output * (1.0 / math.sqrt(output.size(1)))
-        reduced_output = torch.bmm(weights.transpose(1, 2), scaled_output).squeeze(1)
+        reduced_output = torch.bmm(weights.transpose(1, 2), scaled_output).squeeze(
+            1
+        )  # [batch_size, hidden_size]
 
-        # Predict an expert layer: [batch_size, num_experts]
+        # Predict an expert layer
         router_residual = self.router_projection(reduced_output)
-        logits = self.router(reduced_output) + router_residual
+        logits = (
+            self.router(reduced_output) + router_residual
+        )  # [batch_size, num_experts]
 
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
@@ -168,6 +172,9 @@ class AttentionChanneler(BaseController):
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
 
+        # Select the top expert index
+        next_expert_idx = torch.argmax(mean_probs).item()
+
         # Compute expert selection (one-hot)
         expert_mask = torch.zeros_like(probs)
         expert_indices = torch.argmax(probs, dim=-1)  # [batch_size]
@@ -179,15 +186,12 @@ class AttentionChanneler(BaseController):
         expert_density = expert_mask.mean(dim=0)  # [num_experts]
 
         # Compute balance loss (correlation between utilization and probability)
-        balance_loss = (mean_probs * expert_density).sum() * float(self.num_experts**2)
+        balance_loss = 0.01 * (mean_probs * expert_density).sum() * self.num_experts**2
 
         # Z-loss penalizes overconfidence
         z_loss = 0.001 * torch.logsumexp(logits, dim=-1).square().mean()
 
         # Combined loss (adjust relative weights as needed)
-        aux_loss = z_loss + (0.01 * balance_loss)
-
-        # Select the top expert index
-        next_expert_idx = torch.argmax(mean_probs).item()
+        aux_loss = z_loss + balance_loss
 
         return new_states, controller_state, aux_loss, next_expert_idx
