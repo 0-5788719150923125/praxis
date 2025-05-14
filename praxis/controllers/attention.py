@@ -113,12 +113,9 @@ class AttentionChanneler(BaseController):
         device = hidden_states.device
 
         allowed_length = min(self.max_tokens, seq_len)
-        context_sequence = hidden_states[
+        context_tokens = hidden_states[
             :, -allowed_length:
         ]  # [batch_size, seq_len, hidden_size]
-
-        # Start with the last token as default
-        context_token = context_sequence[:, -1]  # [batch_size, hidden_size]
 
         # Always start with initial queries
         queries = self.initial_queries.expand(
@@ -141,24 +138,20 @@ class AttentionChanneler(BaseController):
             )  # [batch_size, num_initial_queries + len(route), hidden_size]
 
         # Apply attention
-        keys_norm = self.attention_norm[current_depth](context_sequence)
-        output, _ = self.attention[current_depth](
-            query=queries,
-            key=keys_norm,
-            value=keys_norm,
+        kv_norm = self.attention_norm[current_depth](context_tokens)
+        output = (
+            self.attention[current_depth](query=queries, key=kv_norm, value=kv_norm)[0]
+            + queries  # Residual connection
         )
 
-        # Residual connection
-        context = output + queries
-
         # Dynamic importance weights calculation
-        weights = self.reducer[current_depth](context)  # [batch_size, context_len, 1]
-        scaled_context = context * (1.0 / math.sqrt(context.size(1)))
-        reduced_context = torch.bmm(weights.transpose(1, 2), scaled_context).squeeze(1)
+        weights = self.reducer[current_depth](output)  # [batch_size, context_len, 1]
+        scaled_output = output * (1.0 / math.sqrt(output.size(1)))
+        reduced_output = torch.bmm(weights.transpose(1, 2), scaled_output).squeeze(1)
 
         # Predict an expert layer: [batch_size, num_experts]
-        router_residual = self.router_projection(reduced_context)
-        logits = self.router(reduced_context) + router_residual
+        router_residual = self.router_projection(reduced_output)
+        logits = self.router(reduced_output) + router_residual
 
         # Use for feature updates
         logits_residual = self.logits_projection[current_depth](logits)
