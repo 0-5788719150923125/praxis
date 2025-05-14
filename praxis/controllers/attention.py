@@ -165,25 +165,31 @@ class AttentionChanneler(BaseController):
         new_states[:, :, -self.channel_size :] *= global_update
 
         # Convert to probability distribution
-        probs = F.softmax(logits, dim=-1)
+        probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
 
+        # Compute expert selection (one-hot)
+        expert_mask = torch.zeros_like(probs)
+        expert_indices = torch.argmax(probs, dim=-1)  # [batch_size]
+        expert_mask.scatter_(
+            -1, expert_indices.unsqueeze(-1), 1.0
+        )  # [batch_size, num_experts]
+
+        # Compute actual utilization
+        expert_density = expert_mask.mean(dim=0)  # [num_experts]
+
+        # Compute balance loss (correlation between utilization and probability)
+        balance_loss = (mean_probs * expert_density).sum() * float(self.num_experts**2)
+
+        # Z-loss penalizes overconfidence
+        z_loss = 0.001 * torch.logsumexp(logits, dim=-1).square().mean()
+
+        # Combined loss (adjust relative weights as needed)
+        aux_loss = z_loss + (0.01 * balance_loss)
+
         # Select the top expert index
         next_expert_idx = torch.argmax(mean_probs).item()
-
-        # Reward confident per-example decisions
-        confidence = torch.mean(probs.max(dim=1)[0])
-
-        # Penalizes severe imbalance
-        imbalance = torch.max(mean_probs) - torch.min(mean_probs)
-
-        # Balance between specialization and load balancing
-        # α controls the priority (higher = more balanced utilization)
-        alpha = 0.75
-
-        # Weighted objective loss
-        aux_loss = (confidence * -1.0 * (1 - alpha)) + imbalance * alpha
 
         return new_states, controller_state, aux_loss, next_expert_idx
