@@ -11,15 +11,11 @@ class UncertaintyWeighted(nn.Module):
     https://medium.com/@baicenxiao/strategies-for-balancing-multiple-loss-functions-in-deep-learning-e1a641e0bcc0
     """
 
-    def __init__(self):
+    def __init__(self, num_params: int = 2):
         super().__init__()
-        self.params = None
+        self.params = nn.Parameter(torch.ones(num_params, requires_grad=True))
 
     def forward(self, losses: List[Tensor]) -> Tensor:
-        # Lazy-loading: initialize parameters based on number of losses
-        if self.params is None:
-            self.params = nn.Parameter(torch.ones(len(losses), requires_grad=True))
-
         total_loss = 0.0
 
         # Process each loss with its corresponding weight parameter

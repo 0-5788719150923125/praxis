@@ -3,135 +3,885 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Praxis</title>
+    <title>Praxis Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        body, html {
-            height: 100%;
+        :root {
+            --primary: #4caf50;
+            --primary-light: #80e27e;
+            --primary-dark: #087f23;
+            --background: #f9f9f9;
+            --text: #333333;
+            --light-text: #666666;
+            --user-message-bg: #e8f5e9;
+            --assistant-message-bg: #ffffff;
+            --border: #d0d0d0;
+            --shadow: rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            box-sizing: border-box;
             margin: 0;
+            padding: 0;
+        }
+
+        body, html {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            height: 100%;
+            background-color: var(--background);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .app-container {
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            height: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
             align-items: center;
-            background-color: #f0f0f0;
-            overflow: hidden;
+            padding: 15px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 20px;
         }
-        .container {
+
+        .logo {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--primary-dark);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background-color: var(--primary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .settings-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--light-text);
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .settings-button:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+
+        .settings-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+
+        .settings-modal.open {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .close-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 20px;
+            color: var(--light-text);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .save-button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 4px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .save-button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            max-width: 85%;
+            padding: 16px 20px;
+            border-radius: 12px;
+            box-shadow: 0 1px 2px var(--shadow);
             position: relative;
-            width: 100px;
-            height: 100px;
+            animation: fadeIn 0.3s forwards;
         }
-        .circle {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background-color: var(--user-message-bg);
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background-color: var(--assistant-message-bg);
+            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .user .message-header {
+            color: var(--primary-dark);
+        }
+
+        .assistant .message-header {
+            color: var(--primary);
+        }
+
+        .message-content {
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .assistant .message-content {
+            line-height: 1.7;
+        }
+
+        .thinking {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--light-text);
+            font-style: italic;
+            margin-bottom: 20px;
+            align-self: flex-start;
+            animation: fadeIn 0.3s forwards;
+        }
+
+        .dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            transition: background-color 3s ease;
+            background-color: var(--primary);
+            opacity: 0.7;
         }
-        .push {
-            animation: pushPulse 4s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+
+        .dot:nth-child(1) { animation: bounce 1.2s infinite 0s; }
+        .dot:nth-child(2) { animation: bounce 1.2s infinite 0.2s; }
+        .dot:nth-child(3) { animation: bounce 1.2s infinite 0.4s; }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
         }
-        .pull {
-            animation: pullPulse 4s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+
+        .input-container {
+            display: flex;
+            gap: 10px;
+            position: relative;
+            border-top: 1px solid var(--border);
+            padding-top: 20px;
         }
-        @keyframes pushPulse {
-            0% {
-                width: 0;
-                height: 0;
-                opacity: 1;
+
+        .message-input {
+            flex: 1;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 16px;
+            resize: none;
+            min-height: 60px;
+            max-height: 200px;
+            overflow-y: auto;
+            transition: border-color 0.2s;
+            font-family: inherit;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .send-button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            width: 60px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+
+        .send-button:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .send-button:disabled {
+            background-color: var(--border);
+            cursor: not-allowed;
+        }
+
+        .send-icon {
+            width: 24px;
+            height: 24px;
+        }
+
+        /* Helper classes */
+        .hidden {
+            display: none;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .app-container {
+                padding: 10px;
             }
-            100% {
-                width: 100px;
-                height: 100px;
-                opacity: 0;
+
+            .message {
+                max-width: 90%;
+                padding: 12px 16px;
             }
         }
-        @keyframes pullPulse {
-            0% {
-                width: 100px;
-                height: 100px;
-                opacity: 0;
-            }
-            100% {
-                width: 0;
-                height: 0;
-                opacity: 1;
-            }
+
+        /* Live reload notification */
+        .live-reload-indicator {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 100;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="circle"></div>
-        <div class="circle"></div>
-        <div class="circle"></div>
+    <div class="app-container">
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">P</div>
+                Praxis Chat
+            </div>
+            <button class="settings-button" id="settings-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+                    <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+                </svg>
+                Settings
+            </button>
+        </header>
+
+        <div class="chat-container" id="chat-container">
+            <div class="system-message" style="text-align: center; padding: 10px; color: #666; font-size: 14px; margin-bottom: 15px;">
+                Write thy wrong.
+            </div>
+            
+            <!-- Messages will be added here -->
+            <div class="message assistant">
+                <div class="message-header">Assistant</div>
+                <div class="message-content">Hello! I'm your AI assistant. How can I help you today?</div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <textarea class="message-input" id="message-input" placeholder="Type your message here..." rows="1"></textarea>
+            <button class="send-button" id="send-button">
+                <svg class="send-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </div>
     </div>
 
-    <script>
-        // Define your specific colors here
-        const BLUE_COLOR = {r: 66, g: 150, b: 228};  // A bright blue color
-        const RED_COLOR = {r: 196, g: 63, b: 63};    // A pure red color
+    <div class="settings-modal" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Settings</h3>
+                <button class="close-button" id="close-modal">&times;</button>
+            </div>
+            <div class="form-group">
+                <label for="api-url">API Server URL</label>
+                <input type="text" id="api-url" placeholder="Enter API URL" value="">
+            </div>
+            
+            <h4 style="margin-top: 20px; margin-bottom: 15px; font-weight: 500;">Generation Parameters</h4>
+            
+            <div class="form-group">
+                <label for="max-tokens">Max New Tokens (50-1000)</label>
+                <input type="number" id="max-tokens" min="50" max="1000" value="256">
+            </div>
+            
+            <div class="form-group">
+                <label for="temperature">Temperature (0.1-2.0)</label>
+                <input type="range" id="temperature" min="0.1" max="2.0" step="0.1" value="0.5">
+                <span id="temperature-value">0.5</span>
+            </div>
+            
+            <div class="form-group">
+                <label for="repetition-penalty">Repetition Penalty (1.0-2.0)</label>
+                <input type="range" id="repetition-penalty" min="1.0" max="2.0" step="0.1" value="1.2">
+                <span id="repetition-penalty-value">1.2</span>
+            </div>
+            
+            <div class="form-group">
+                <label for="do-sample">
+                    <input type="checkbox" id="do-sample" checked>
+                    Enable Sampling
+                </label>
+            </div>
+            
+            <button class="save-button" id="save-settings">Save Settings</button>
+        </div>
+    </div>
 
-        const circles = document.querySelectorAll('.circle');
-        let isPush = true;
-        let transitionInProgress = false;
-    
-        function setColor(element, color) {
-            element.style.backgroundColor = `rgba(${color.r}, ${color.g}, ${color.b}, 0.7)`;
-        }
-    
-        function animateColor(startColor, endColor, duration) {
-            const startTime = performance.now();
-            
-            function update() {
-                const elapsedTime = performance.now() - startTime;
-                const progress = Math.min(elapsedTime / duration, 1);
-                
-                const currentColor = {
-                    r: Math.round(startColor.r + (endColor.r - startColor.r) * progress),
-                    g: Math.round(startColor.g + (endColor.g - startColor.g) * progress),
-                    b: Math.round(startColor.b + (endColor.b - startColor.b) * progress)
-                };
-                
-                circles.forEach(circle => setColor(circle, currentColor));
-                
-                if (progress < 1) {
-                    requestAnimationFrame(update);
-                } else {
-                    transitionInProgress = false;
-                }
-            }
-            
-            requestAnimationFrame(update);
-        }
-    
-        function togglePushPull() {
-            if (transitionInProgress) return;
-            transitionInProgress = true;
-    
-            isPush = !isPush;
-            const targetClass = isPush ? 'push' : 'pull';
-            const startColor = isPush ? RED_COLOR : BLUE_COLOR;
-            const endColor = isPush ? BLUE_COLOR : RED_COLOR;
-    
-            circles.forEach((circle, index) => {
-                setTimeout(() => {
-                    circle.classList.remove('push', 'pull');
-                    void circle.offsetWidth; // Trigger reflow
-                    circle.classList.add(targetClass);
-                }, index * 500); // Stagger the animation start
-            });
-    
-            animateColor(startColor, endColor, 3000);
-        }
-    
-        // Initial setup
-        circles.forEach((circle, index) => {
-            setColor(circle, BLUE_COLOR);
-            setTimeout(() => circle.classList.add('push'), index * 500);
+    <div class="live-reload-indicator" id="live-reload-indicator">Live Reload Active</div>
+
+    <!-- Socket.IO for live reload -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script>
+        // Live reload setup
+        const socket = io.connect(window.location.origin + '/live-reload');
+        
+        socket.on('connect', () => {
+            console.log('Live reload connected');
+            document.getElementById('live-reload-indicator').style.display = 'block';
         });
-    
-        // Toggle every 12 seconds
-        setInterval(togglePushPull, 12000);
+        
+        socket.on('reload', () => {
+            console.log('Template change detected, reloading...');
+            window.location.reload();
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('Live reload disconnected');
+            document.getElementById('live-reload-indicator').style.display = 'none';
+        });
+        
+        // Chat application logic
+        document.addEventListener('DOMContentLoaded', () => {
+            // DOM elements
+            const chatContainer = document.getElementById('chat-container');
+            const messageInput = document.getElementById('message-input');
+            const sendButton = document.getElementById('send-button');
+            const settingsButton = document.getElementById('settings-button');
+            const settingsModal = document.getElementById('settings-modal');
+            const closeModalButton = document.getElementById('close-modal');
+            const saveSettingsButton = document.getElementById('save-settings');
+            const apiUrlInput = document.getElementById('api-url');
+            
+            // Generation parameter inputs
+            const maxTokensInput = document.getElementById('max-tokens');
+            const temperatureInput = document.getElementById('temperature');
+            const temperatureValue = document.getElementById('temperature-value');
+            const repetitionPenaltyInput = document.getElementById('repetition-penalty');
+            const repetitionPenaltyValue = document.getElementById('repetition-penalty-value');
+            const doSampleInput = document.getElementById('do-sample');
+            
+            // Default API URL is the current server
+            let apiUrl = window.location.origin + '/input/';
+            
+            // Default generation parameters
+            let generationParams = {
+                max_new_tokens: 256,
+                temperature: 0.5,
+                repetition_penalty: 1.2,
+                do_sample: true
+            };
+            
+            // Debug info
+            console.log(`Default API URL: ${apiUrl}`);
+            console.log(`Window location: ${window.location.href}`);
+            
+            // Chat history to maintain conversation context
+            let chatHistory = [
+                { role: "assistant", content: "Hello! I'm your AI assistant. How can I help you today?" }
+            ];
+            
+            // Load saved settings from localStorage
+            const loadSettings = () => {
+                // Load API URL
+                const savedApiUrl = localStorage.getItem('praxis_api_url');
+                if (savedApiUrl) {
+                    apiUrl = savedApiUrl;
+                    apiUrlInput.value = savedApiUrl;
+                } else {
+                    apiUrlInput.value = apiUrl;
+                }
+                
+                // Load generation parameters
+                const savedParams = localStorage.getItem('praxis_gen_params');
+                if (savedParams) {
+                    try {
+                        const params = JSON.parse(savedParams);
+                        generationParams = { ...generationParams, ...params };
+                        
+                        // Update UI elements with saved values
+                        maxTokensInput.value = generationParams.max_new_tokens;
+                        temperatureInput.value = generationParams.temperature;
+                        temperatureValue.textContent = generationParams.temperature;
+                        repetitionPenaltyInput.value = generationParams.repetition_penalty;
+                        repetitionPenaltyValue.textContent = generationParams.repetition_penalty;
+                        doSampleInput.checked = generationParams.do_sample;
+                    } catch (error) {
+                        console.error('Error loading saved generation parameters:', error);
+                    }
+                }
+                
+                // Set up parameter input event listeners
+                temperatureInput.addEventListener('input', () => {
+                    temperatureValue.textContent = temperatureInput.value;
+                });
+                
+                repetitionPenaltyInput.addEventListener('input', () => {
+                    repetitionPenaltyValue.textContent = repetitionPenaltyInput.value;
+                });
+            };
+            
+            // Test API connectivity
+            const testApiConnection = async (url) => {
+                try {
+                    // Format the URL for ping endpoint
+                    let baseUrl = url;
+                    
+                    // Remove the '/input/' path if it exists
+                    if (baseUrl.endsWith('/input/')) {
+                        baseUrl = baseUrl.substring(0, baseUrl.length - 7);
+                    }
+                    
+                    // Ensure URL has http:// or https:// prefix
+                    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+                        baseUrl = 'http://' + baseUrl;
+                    }
+                    
+                    // Remove trailing slash if it exists
+                    if (baseUrl.endsWith('/')) {
+                        baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+                    }
+                    
+                    const pingUrl = `${baseUrl}/api/ping`;
+                    console.log(`Testing API connection to: ${pingUrl}`);
+                    
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Connection test timed out')), 15000)
+                    );
+                    
+                    const fetchPromise = fetch(pingUrl, {
+                        method: 'GET',
+                        mode: 'cors',
+                        credentials: 'omit'
+                    });
+                    
+                    const response = await Promise.race([fetchPromise, timeoutPromise]);
+                    const result = await response.json();
+                    
+                    console.log('API connection test result:', result);
+                    return { success: true, message: result.message || 'Connected to API server' };
+                } catch (error) {
+                    console.error('API connection test failed:', error);
+                    return { success: false, message: 'Failed to connect to API server: ' + error.message };
+                }
+            };
+            
+            // Save settings to localStorage
+            const saveSettings = async () => {
+                // Save API URL
+                const newApiUrl = apiUrlInput.value.trim();
+                if (newApiUrl) {
+                    // Test the connection before saving
+                    const connectionTest = await testApiConnection(newApiUrl);
+                    
+                    // Save generation parameters
+                    generationParams = {
+                        max_new_tokens: parseInt(maxTokensInput.value, 10),
+                        temperature: parseFloat(temperatureInput.value),
+                        repetition_penalty: parseFloat(repetitionPenaltyInput.value),
+                        do_sample: doSampleInput.checked
+                    };
+                    
+                    // Store parameters
+                    localStorage.setItem('praxis_gen_params', JSON.stringify(generationParams));
+                    
+                    if (connectionTest.success) {
+                        apiUrl = newApiUrl;
+                        localStorage.setItem('praxis_api_url', newApiUrl);
+                        alert('Connection successful! Settings saved. The page will refresh now.');
+                        closeModal();
+                        
+                        // Force page refresh to ensure clean state with new API
+                        setTimeout(() => window.location.reload(), 500);
+                    } else {
+                        const proceed = confirm(`Warning: ${connectionTest.message}\n\nDo you want to save the API URL anyway?`);
+                        if (proceed) {
+                            apiUrl = newApiUrl;
+                            localStorage.setItem('praxis_api_url', newApiUrl);
+                            closeModal();
+                            
+                            // Force page refresh to ensure clean state with new API
+                            setTimeout(() => window.location.reload(), 500);
+                        } else {
+                            // Save only the generation parameters without refreshing
+                            alert('Generation parameters saved. API URL remains unchanged.');
+                            closeModal();
+                        }
+                    }
+                } else {
+                    // Save only the generation parameters
+                    generationParams = {
+                        max_new_tokens: parseInt(maxTokensInput.value, 10),
+                        temperature: parseFloat(temperatureInput.value),
+                        repetition_penalty: parseFloat(repetitionPenaltyInput.value),
+                        do_sample: doSampleInput.checked
+                    };
+                    
+                    localStorage.setItem('praxis_gen_params', JSON.stringify(generationParams));
+                    alert('Generation parameters saved.');
+                    closeModal();
+                }
+            };
+            
+            // Open settings modal
+            const openModal = () => {
+                settingsModal.classList.add('open');
+            };
+            
+            // Close settings modal
+            const closeModal = () => {
+                settingsModal.classList.remove('open');
+            };
+            
+            // Add a new message to the chat
+            const addMessage = (content, isUser) => {
+                // Add to visual chat
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;
+                
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'message-header';
+                headerDiv.textContent = isUser ? 'You' : 'Assistant';
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                contentDiv.textContent = content;
+                
+                messageDiv.appendChild(headerDiv);
+                messageDiv.appendChild(contentDiv);
+                
+                chatContainer.appendChild(messageDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+                
+                // Add to chat history
+                chatHistory.push({
+                    role: isUser ? 'user' : 'assistant',
+                    content: content
+                });
+            };
+            
+            // Show thinking indicator
+            const showThinking = () => {
+                const thinkingDiv = document.createElement('div');
+                thinkingDiv.className = 'thinking';
+                thinkingDiv.id = 'thinking-indicator';
+                
+                thinkingDiv.innerHTML = `
+                    Assistant is thinking
+                    <div class="dots">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                `;
+                
+                // Add a timer to update the thinking indicator after a minute
+                let thinkingTimeSeconds = 0;
+                const thinkingTimer = setInterval(() => {
+                    thinkingTimeSeconds += 1;
+                    
+                    // After 60 seconds, show a time indicator
+                    if (thinkingTimeSeconds >= 60) {
+                        const minutes = Math.floor(thinkingTimeSeconds / 60);
+                        const seconds = thinkingTimeSeconds % 60;
+                        const timeDisplay = `${minutes}m ${seconds}s`;
+                        
+                        const timerElement = document.createElement('div');
+                        timerElement.className = 'thinking-timer';
+                        timerElement.textContent = timeDisplay;
+                        timerElement.style.fontSize = '12px';
+                        timerElement.style.color = '#777';
+                        timerElement.style.marginTop = '5px';
+                        
+                        // Replace previous timer if exists
+                        const existingTimer = thinkingDiv.querySelector('.thinking-timer');
+                        if (existingTimer) {
+                            thinkingDiv.replaceChild(timerElement, existingTimer);
+                        } else {
+                            thinkingDiv.appendChild(timerElement);
+                        }
+                    }
+                }, 1000);
+                
+                // Store the timer reference so we can clear it later
+                thinkingDiv.dataset.timerId = thinkingTimer;
+                
+                chatContainer.appendChild(thinkingDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            };
+            
+            // Hide thinking indicator
+            const hideThinking = () => {
+                const thinkingDiv = document.getElementById('thinking-indicator');
+                if (thinkingDiv) {
+                    // Clear the timer if it exists
+                    if (thinkingDiv.dataset.timerId) {
+                        clearInterval(parseInt(thinkingDiv.dataset.timerId));
+                    }
+                    thinkingDiv.remove();
+                }
+            };
+            
+            // Send message to API
+            const sendMessage = async () => {
+                const message = messageInput.value.trim();
+                
+                if (!message) return;
+                
+                // Add user message to chat
+                addMessage(message, true);
+                
+                // Clear input
+                messageInput.value = '';
+                
+                // Show thinking indicator
+                showThinking();
+                
+                try {
+                    // Prepare the request with full chat history and generation parameters
+                    const requestBody = {
+                        messages: chatHistory.slice(-10).concat([
+                            { role: "user", content: message }
+                        ]),
+                        // Use saved generation parameters
+                        ...generationParams
+                    };
+                    
+                    // Use a timeout promise to handle network issues - 5 minute timeout for LLM responses
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Request timed out after 5 minutes')), 5 * 60 * 1000)
+                    );
+                    
+                    // Make sure URL is properly formatted
+                    let formattedUrl = apiUrl;
+                    
+                    // Ensure URL has http:// or https:// prefix
+                    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+                        formattedUrl = 'http://' + formattedUrl;
+                    }
+                    
+                    // Ensure URL has trailing slash for API
+                    if (!formattedUrl.endsWith('/')) {
+                        formattedUrl = formattedUrl + '/';
+                    }
+                    
+                    console.log(`Sending request to: ${formattedUrl}`);
+                    
+                    // Send request to API with timeout
+                    const fetchPromise = fetch(formattedUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestBody),
+                        mode: 'cors', // Explicitly request CORS
+                        credentials: 'omit' // Don't send cookies to avoid extra CORS preflight
+                    });
+                    
+                    // Race between fetch and timeout
+                    const response = await Promise.race([fetchPromise, timeoutPromise]);
+                    
+                    // Check if request was successful
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => '');
+                        throw new Error(`API error: ${response.status} - ${errorText || response.statusText}`);
+                    }
+                    
+                    // Parse response
+                    const result = await response.json();
+                    
+                    // Hide thinking indicator
+                    hideThinking();
+                    
+                    // Add assistant response to chat
+                    addMessage(result.response, false);
+                    
+                } catch (error) {
+                    console.error('Error sending message:', error);
+                    
+                    // Hide thinking indicator
+                    hideThinking();
+                    
+                    // Determine error message based on error type
+                    let errorMessage = "Sorry, there was an error processing your request. Please check your connection or API settings and try again.";
+                    
+                    if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch') || error.message.includes('timed out')) {
+                        errorMessage = `Network error: Unable to connect to the API server at "${apiUrl}". Please check that the server is running and accessible.`;
+                    } else if (error.message.includes('CORS')) {
+                        errorMessage = `CORS error: The API server at "${apiUrl}" is not allowing requests from this webpage. Please ensure CORS is properly configured on the server.`;
+                    } else if (error.message.includes('API error')) {
+                        errorMessage = `Server error: ${error.message}. Please check your API server configuration.`;
+                    }
+                    
+                    // Add error message
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'message assistant';
+                    errorDiv.innerHTML = `
+                        <div class="message-header">Assistant</div>
+                        <div class="message-content">${errorMessage}</div>
+                    `;
+                    chatContainer.appendChild(errorDiv);
+                }
+                
+                // Scroll to bottom
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            };
+            
+            // Auto-resize textarea as user types
+            const autoResizeTextarea = () => {
+                messageInput.style.height = 'auto';
+                messageInput.style.height = messageInput.scrollHeight + 'px';
+            };
+            
+            // Event listeners
+            sendButton.addEventListener('click', sendMessage);
+            
+            messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+            
+            messageInput.addEventListener('input', autoResizeTextarea);
+            
+            settingsButton.addEventListener('click', openModal);
+            closeModalButton.addEventListener('click', closeModal);
+            saveSettingsButton.addEventListener('click', () => {
+                // Call the async function properly in the event handler
+                saveSettings().catch(err => {
+                    console.error('Error in save settings:', err);
+                    alert('There was an error saving settings. See console for details.');
+                });
+            });
+            
+            // Click outside modal to close
+            settingsModal.addEventListener('click', (e) => {
+                if (e.target === settingsModal) {
+                    closeModal();
+                }
+            });
+            
+            // Initialize
+            loadSettings();
+        });
     </script>
 </body>
 </html>
