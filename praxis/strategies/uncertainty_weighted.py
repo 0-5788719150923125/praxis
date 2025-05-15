@@ -3,23 +3,29 @@ from torch import Tensor, nn
 
 
 class UncertaintyWeighted(nn.Module):
+    """
+    Use homoscedastic uncertainty to balance single-task losses.
+    Adapted from:
+    https://medium.com/@baicenxiao/strategies-for-balancing-multiple-loss-functions-in-deep-learning-e1a641e0bcc0
+    """
+
     def __init__(self):
         super().__init__()
-        # Initialize log variances
-        self.log_var_main = nn.Parameter(torch.zeros(1))
-        self.log_var_aux = nn.Parameter(torch.zeros(1))
+        # Initialize weight parameters for each loss (similar to blog post)
+        self.params = nn.Parameter(torch.ones(2, requires_grad=True))
 
     def forward(self, main_loss: Tensor, aux_loss: Tensor):
-        # Get weights from uncertainties
-        precision_main = torch.exp(-self.log_var_main)
-        precision_aux = torch.exp(-self.log_var_aux)
+        # Weight for main loss
+        weighted_main = 0.5 / (self.params[0] ** 2) * main_loss
+        # Regularization for main loss
+        reg_main = torch.log(1 + self.params[0] ** 2)
 
-        # Calculate weighted loss
-        loss = (
-            precision_main * main_loss
-            + 0.5 * self.log_var_main
-            + precision_aux * aux_loss
-            + 0.5 * self.log_var_aux
-        )
+        # Weight for auxiliary loss
+        weighted_aux = 0.5 / (self.params[1] ** 2) * aux_loss
+        # Regularization for auxiliary loss
+        reg_aux = torch.log(1 + self.params[1] ** 2)
+
+        # Calculate final weighted loss
+        loss = weighted_main + reg_main + weighted_aux + reg_aux
 
         return loss
