@@ -13,3 +13,4 @@ from praxis.modeling_praxis import PraxisForCausalLM, PraxisModel
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.routers import ROUTER_REGISTRY
+from praxis.strategies import STRATEGIES_REGISTRY

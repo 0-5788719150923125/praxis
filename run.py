@@ -203,6 +203,7 @@ config = PraxisConfig(
     encoding=encoding_type,
     checkpoint_every=checkpoint_every,
     loss_func=loss_func,
+    strategy=strategy,
     max_length=block_size * 8,
     pad_token_id=tokenizer.pad_token_id,
     bos_token_id=tokenizer.bos_token_id,

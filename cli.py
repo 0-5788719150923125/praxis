@@ -21,6 +21,7 @@ from praxis import (
     LOSS_REGISTRY,
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
+    STRATEGIES_REGISTRY,
 )
 
 
@@ -364,6 +365,13 @@ optimization_group.add_argument(
     choices=LOSS_REGISTRY.keys(),
     default="cross_entropy",
     help="The loss function to use",
+)
+optimization_group.add_argument(
+    "--strategy",
+    type=str,
+    choices=STRATEGIES_REGISTRY.keys(),
+    default="naive",
+    help="The multitask objective strategy to use for loss combination",
 )
 optimization_group.add_argument(
     "--trac",

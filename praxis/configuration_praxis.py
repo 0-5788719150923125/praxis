@@ -45,6 +45,7 @@ class PraxisConfig(PretrainedConfig):
         initial_peers: List[str] = None,
         checkpoint_every: int = 0,
         loss_func: str = "cross_entropy",
+        strategy: str = "naive",
         device_map: Union[str, dict] = "cpu",
         pad_token_id: int = 0,
         bos_token_id: int = 1,
@@ -105,6 +106,7 @@ class PraxisConfig(PretrainedConfig):
         self.initial_peers = initial_peers
         self.checkpoint_every = checkpoint_every
         self.loss_func = loss_func
+        self.strategy = strategy
         self.device_map = device_map
         self.seed = seed
         self.debug = debug

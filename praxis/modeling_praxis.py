@@ -12,6 +12,7 @@ from transformers.modeling_outputs import (
 
 from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
 from praxis.losses import get_loss_function
+from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.utils import create_block_ids
 
 
@@ -93,6 +94,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if config.encoder_type is None:
             self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
+        self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
     def prepare_inputs_for_generation(
         self,
@@ -159,7 +161,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             if self.training:
                 # We omit auxiliary losses during validation and inference
-                loss += sum(self.aux_losses)
+                loss = self.strategy(loss, sum(self.aux_losses))
 
         self.aux_losses = []
 

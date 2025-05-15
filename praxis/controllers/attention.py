@@ -53,9 +53,10 @@ class AttentionChanneler(BaseController):
             [
                 nn.MultiheadAttention(
                     embed_dim=hidden_size,
-                    num_heads=config.num_heads,
+                    num_heads=config.num_heads * 4,
                     batch_first=True,
                     dropout=config.dropout,
+                    add_zero_attn=True,
                 )
                 for _ in range(config.depth)
             ]
@@ -172,7 +173,7 @@ class AttentionChanneler(BaseController):
         # Calculate batch consensus
         mean_probs = probs.mean(dim=0)  # [num_experts]
 
-        # Select the top expert index
+        # During inference, use the top expert
         next_expert_idx = torch.argmax(mean_probs).item()
 
         # Compute expert selection (one-hot)
