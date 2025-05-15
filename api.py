@@ -235,7 +235,7 @@ def extract_assistant_reply(generated_text, tokenizer):
         # If the start token is not found, return the whole text
         return generated_text.strip()
 
-    # Skip past the start token
+    # Skip past the start token AND the "assistant" role identifier
     start_index += len(assistant_start)
 
     # Find the end token after the start_index
@@ -245,6 +245,10 @@ def extract_assistant_reply(generated_text, tokenizer):
         assistant_reply = generated_text[start_index:].strip()
     else:
         assistant_reply = generated_text[start_index:end_index].strip()
+    
+    # Remove any remaining BOS token that might appear at the beginning of the response
+    if assistant_reply.startswith(tokenizer.bos_token):
+        assistant_reply = assistant_reply[len(tokenizer.bos_token):].strip()
 
     return assistant_reply
 
