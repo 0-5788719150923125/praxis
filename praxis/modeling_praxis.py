@@ -159,9 +159,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 labels=labels,
                 input_ids=input_ids,
             )
+            # We omit auxiliary losses during validation and inference
             if self.training:
-                # We omit auxiliary losses during validation and inference
-                loss = self.strategy(loss, sum(self.aux_losses))
+                loss = self.strategy([loss, sum(self.aux_losses)])
 
         self.aux_losses = []
 
