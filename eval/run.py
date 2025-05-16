@@ -30,13 +30,17 @@ lighteval.models.transformers.transformers_model.TransformersModel = (
     QuietTransformersModel
 )
 
-import tasks
 from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import (
     TransformersModel,
     TransformersModelConfig,
 )
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
+
+try:
+    import eval.tasks
+except:
+    pass
 
 
 def evaluate_model(
