@@ -16,7 +16,7 @@ class UncertaintyWeighted(nn.Module, LazyModuleMixin):
     def __init__(self):
         super().__init__()
         # Use UninitializedParameter as a placeholder until first forward pass
-        self.params = UninitializedParameter()
+        self.params = UninitializedParameter(requires_grad=True)
 
     def reset_parameters(self, num_params):
         # Initialize the parameters with the correct shape

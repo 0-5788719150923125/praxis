@@ -1061,14 +1061,19 @@ def initialize_lazy_modules(model, device):
     # Create dummy batch for initialization
     batch_size = 2
     seq_length = 64
-    dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
+    dummy_input = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
     dummy_labels = dummy_input[..., 1:].contiguous()
 
-    # Run dummy batch through model to initialize lazy parameters
-    with torch.no_grad():
-        model.train()
-        model(input_ids=dummy_input, labels=dummy_labels)
-        model.eval()
+    # Do a dummy forward pass to initialize lazy parameters
+    model.train()
+    outputs = model(input_ids=dummy_input, labels=dummy_labels)
+
+    # Reset any gradient accumulation
+    for param in model.parameters():
+        if param.grad is not None:
+            param.grad.zero_()
+
+    return model
 
 
 initialize_lazy_modules(model, device)
