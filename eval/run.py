@@ -30,6 +30,7 @@ lighteval.models.transformers.transformers_model.TransformersModel = (
     QuietTransformersModel
 )
 
+import tasks
 from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import (
     TransformersModel,
@@ -68,7 +69,9 @@ def evaluate_model(
         max_length=4096,
         generation_size=256,
         generation_parameters=GenerationParameters(
-            repetition_penalty=1.2, max_new_tokens=256
+            # temperature=0.5,
+            repetition_penalty=1.2,
+            max_new_tokens=256,
         ),
     )
     if model is not None:
@@ -81,11 +84,13 @@ def evaluate_model(
             max_samples=max_samples,
             use_chat_template=True,
             system_prompt="You are an intelligent chatbot. Please answer the following questions accurately.",
+            custom_tasks_directory="tasks.praxis_hellaswag",
         ),
         evaluation_tracker=evaluation_tracker,
         model=model,
         model_config=model_config,
         tasks=tasks,
+        # tasks="helm|praxis_hellaswag|5|1",
     )
 
     pipeline.evaluate()
@@ -148,4 +153,5 @@ def get_all_task_metrics(results_dict):
 
 
 if __name__ == "__main__":
-    evaluate_model(max_samples=100, verbose=True)
+    tasks = "lighteval|glue:sst2|2|1"
+    evaluate_model(tasks=tasks, max_samples=100, verbose=True)

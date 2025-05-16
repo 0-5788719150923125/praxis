@@ -105,7 +105,7 @@ from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from evaluation import evaluate_model, get_all_task_metrics
+from eval import evaluate_model, get_all_task_metrics
 from optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
