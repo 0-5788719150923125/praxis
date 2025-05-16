@@ -84,7 +84,7 @@ def evaluate_model(
             max_samples=max_samples,
             use_chat_template=True,
             system_prompt="You are an intelligent chatbot. Please answer the following questions accurately.",
-            custom_tasks_directory="tasks.praxis_hellaswag",
+            custom_tasks_directory="tasks",
         ),
         evaluation_tracker=evaluation_tracker,
         model=model,

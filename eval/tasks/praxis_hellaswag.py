@@ -28,5 +28,3 @@ praxis_hellaswag = LightevalTaskConfig(
     trust_dataset=True,
     version=0,
 )
-
-TASKS_TABLE = [praxis_hellaswag]
