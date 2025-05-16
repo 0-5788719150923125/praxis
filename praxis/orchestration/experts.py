@@ -9,33 +9,28 @@ from praxis.routers import ROUTER_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisExpert(nn.Module):
+class LocalExpert(nn.Module):
     """
-    This class is a wrapper around the orchestration of both local and remote experts.
-    TODO: There is some unreliable routing in this class. We need to fix the local/remote parity, while
-    also addressing the depth and state handling.
+    A module for handling local experts in a mixture-of-experts architecture.
     """
 
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
     def __init__(
         self,
         config: ConfigType,
         block: Union[nn.Module, bool] = False,
         router: Union[nn.Module, bool] = False,
-        is_remote: bool = False,
     ) -> None:
         """
-        Initialize expert wrapper.
+        Initialize local expert wrapper.
 
         Args:
             config: Configuration object with model parameters
             block: Block module to wrap
             router: Router module (or False to use default router)
-            is_remote: Whether this is a remote expert
         """
         super().__init__()
-        self.is_remote: bool = is_remote
         self.block: Union[nn.Module, bool] = block
         self.router: Union[nn.Module, bool] = router
         if config.router_type is not None and not self.router:
@@ -49,11 +44,9 @@ class PraxisExpert(nn.Module):
         current_state: Optional[Tensor],
         current_depth: int,
         block_ids: Optional[Tensor] = None,
-    ) -> Union[
-        Tuple[Tensor, Optional[Tensor], Optional[Tensor], float], Tuple[Tensor, float]
-    ]:
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         """
-        Forward pass through expert wrapper.
+        Forward pass through local expert.
 
         Args:
             inputs: Input tensor
@@ -64,29 +57,22 @@ class PraxisExpert(nn.Module):
             block_ids: Optional block IDs for structured attention
 
         Returns:
-            For local experts:
+            Tuple containing:
                 - Hidden states tensor
                 - Updated key/value cache
                 - Updated state tensor
                 - Auxiliary loss value
-
-            For remote experts:
-                - Hidden states tensor
-                - Auxiliary loss value
         """
-        if self.is_remote:
-            return self._remote_forward(inputs, attention_mask)
-        else:
-            return self._local_forward(
-                inputs,
-                current_state,
-                attention_mask,
-                past_key_values,
-                current_depth,
-                block_ids,
-            )
+        return self._forward(
+            inputs,
+            current_state,
+            attention_mask,
+            past_key_values,
+            current_depth,
+            block_ids,
+        )
 
-    def _local_forward(
+    def _forward(
         self,
         inputs: Tensor,
         current_state: Optional[Tensor],
@@ -96,7 +82,7 @@ class PraxisExpert(nn.Module):
         block_ids: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
         """
-        Forward pass for local experts.
+        Forward pass implementation for local experts.
 
         Args:
             inputs: Input tensor
@@ -140,11 +126,61 @@ class PraxisExpert(nn.Module):
 
         return hidden_states, layer_kv, state_update, sum(aux_losses)
 
+
+class RemoteExpert(LocalExpert):
+    """
+    A module for handling remote experts in a mixture-of-experts architecture.
+    This extends LocalExpert with additional functionality for remote execution.
+    """
+
+    def __init__(
+        self,
+        config: ConfigType,
+        block: Union[nn.Module, bool] = False,
+        router: Union[nn.Module, bool] = False,
+    ) -> None:
+        """
+        Initialize remote expert wrapper.
+
+        Args:
+            config: Configuration object with model parameters
+            block: Block module to wrap
+            router: Router module (or False to use default router)
+        """
+        super().__init__(config, block, router)
+
+    def forward(
+        self,
+        inputs: Tensor,
+        attention_mask: Optional[Tensor],
+        past_key_values: Optional[Tensor] = None,
+        current_state: Optional[Tensor] = None,
+        current_depth: int = 0,
+        block_ids: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, float]:
+        """
+        Forward pass through remote expert.
+
+        Args:
+            inputs: Input tensor
+            attention_mask: Optional attention mask tensor
+            past_key_values: Optional cached key/value tensors (not used in remote)
+            current_state: Optional current state tensor (not used in remote)
+            current_depth: Current depth in the network (not used in remote)
+            block_ids: Optional block IDs for structured attention (not used in remote)
+
+        Returns:
+            Tuple containing:
+                - Hidden states tensor
+                - Auxiliary loss value
+        """
+        return self._remote_forward(inputs, attention_mask)
+
     def _remote_forward(
         self, inputs: Tensor, attention_mask: Optional[Tensor]
     ) -> Tuple[Tensor, float]:
         """
-        Forward pass for remote experts.
+        Forward pass implementation for remote experts.
 
         Args:
             inputs: Input tensor

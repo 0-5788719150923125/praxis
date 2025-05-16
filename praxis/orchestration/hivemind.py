@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hivemind import DHT
-from hivemind.moe import ModuleBackend, RemoteExpert, Server, get_experts
+from hivemind.moe import ModuleBackend, Server, get_experts
 from hivemind.moe.server.layers import name_to_block
 from hivemind.moe.server.layers.custom_experts import register_expert_class
 from hivemind.p2p import P2PDaemonError, P2PHandlerError
@@ -20,7 +20,7 @@ from hivemind.utils import BatchTensorDescriptor
 from hivemind.utils.networking import log_visible_maddrs
 from torch import Tensor
 
-from praxis.orchestration import PraxisExpert
+from praxis.orchestration import RemoteExpert
 from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -266,11 +266,10 @@ class PraxisManagement:
         if new_expert is None:
             return
         if new_expert.uid not in self.expert_uids:
-            expert = PraxisExpert(
+            expert = RemoteExpert(
                 self.config,
                 HivemindWrapper(new_expert),
                 self.router,
-                is_remote=True,
             )
             self.active_remote_experts.append(expert)
             self.expert_uids.append(new_expert.uid)

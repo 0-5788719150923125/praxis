@@ -10,7 +10,12 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
-from praxis.orchestration import EXPERT_REGISTRY, PraxisExpert, PraxisManagement
+from praxis.orchestration import (
+    EXPERT_REGISTRY,
+    LocalExpert,
+    PraxisManagement,
+    RemoteExpert,
+)
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -42,7 +47,7 @@ class BaseDecoder(nn.Module):
             self.remotes = self.manager.active_remote_experts
         if "scatter" in config.meta or config.expert in ["scatter"]:
             block = BLOCK_REGISTRY[config.block_type](config)
-            expert = PraxisExpert(config, block=block)
+            expert = LocalExpert(config, block=block)
             for i in range(self.num_experts):
                 self.locals.append(expert)
         else:
@@ -51,7 +56,7 @@ class BaseDecoder(nn.Module):
                     block = self.manager.register_expert(config)
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
-                expert = PraxisExpert(config, block=block)
+                expert = LocalExpert(config, block=block)
                 self.locals.append(expert)
         self.norm = (
             nn.LayerNorm(config.hidden_size, bias=True)
