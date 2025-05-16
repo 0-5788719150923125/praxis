@@ -1055,23 +1055,26 @@ model = AutoModelForCausalLM.from_config(config)
 print("model:", model)
 
 
-def count_initialized_params(model):
-    """
-    Count only initialized parameters in a model, skipping UninitializedParameters.
-    """
-    from torch.nn.parameter import UninitializedParameter
+def initialize_lazy_modules(model, device):
+    model = model.to(device)
 
-    total = 0
-    for p in model.parameters():
-        # We have to skip uninitialized parameters, because we don't
-        # know how many parameters they will have and it crashes.
-        if not isinstance(p, UninitializedParameter):
-            total += p.numel()
-    return total
+    # Create dummy batch for initialization
+    batch_size = 2
+    seq_length = 64
+    dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
+    dummy_labels = dummy_input[..., 1:].contiguous()
 
+    # Run dummy batch through model to initialize lazy parameters
+    with torch.no_grad():
+        model.train()
+        model(input_ids=dummy_input, labels=dummy_labels)
+        model.eval()
+
+
+initialize_lazy_modules(model, device)
 
 # Print the total parameter count
-total_params = count_initialized_params(model)
+total_params = sum(p.numel() for p in model.parameters())
 reduced = str(int(total_params / 10**6)) + "M"
 hparams["num_params"] = reduced
 print(f"parameters: {reduced}")
@@ -1230,7 +1233,7 @@ if wandb:
     wandb_logger = CustomWandbLogger(**wandb_opts)
 
     # log gradients and model topology
-    wandb_logger.watch(model, log="parameters", log_freq=100, log_graph=False)
+    wandb_logger.watch(model, log="all", log_freq=100, log_graph=False)
     train_params["logger"] = wandb_logger
 
 generator = Generator(model, tokenizer)
