@@ -58,16 +58,14 @@ class ByteLevelTokenizer(PreTrainedTokenizer):
 {% if message['role'] == 'system' %}
 {{ bos_token }}system
 {{ message['content'] }}
-{{ eos_token }}
 {% elif message['role'] == 'user' %}
 {{ bos_token }}user
 {{ message['content'] }}
-{{ eos_token }}
 {% elif message['role'] == 'assistant' %}
 {{ bos_token }}assistant
 {{ message['content'] }}
-{{ eos_token }}
 {% endif %}
+{{ sep_token }}
 {% endfor %}
 {% if add_generation_prompt %}
 {{ bos_token }}assistant
