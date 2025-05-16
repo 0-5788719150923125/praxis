@@ -30,17 +30,21 @@ lighteval.models.transformers.transformers_model.TransformersModel = (
     QuietTransformersModel
 )
 
+import os
+import sys
+
+# Get the path to the parent directory
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Add the sibling directory to the path
+sys.path.append(os.path.join(parent_dir, "eval"))
+
+import tasks
 from lighteval.logging.evaluation_tracker import EvaluationTracker
 from lighteval.models.transformers.transformers_model import (
     TransformersModel,
     TransformersModelConfig,
 )
 from lighteval.pipeline import ParallelismManager, Pipeline, PipelineParameters
-
-try:
-    import eval.tasks
-except:
-    pass
 
 
 def evaluate_model(

@@ -515,7 +515,6 @@ class TerminalInterface(Callback):
                 self.dashboard.stop()
                 api_server.stop()
             self.print = print
-            total_params = sum(p.numel() for p in lm.model.parameters())
             self.dashboard.update_params(total_params)
             self.dashboard.set_start_time(self.start_time)
         elif self.progress_bar is not None:
@@ -656,6 +655,7 @@ class TerminalInterface(Callback):
         if (
             self._detect_repetition(n_gram_size, frequency)
             or self._detect_sequential_repetition(threshold=5, min_segment_length=8)
+            or self._is_degenerated_text(self.text)
             or self._is_all_whitespace()
         ):
             self.text = self.initial_text
@@ -759,6 +759,55 @@ class TerminalInterface(Callback):
 
     def _is_all_whitespace(self):
         return self.text.isspace()
+
+    def _is_degenerated_text(self, text):
+        """
+        Detects if text shows signs of bracket-pipe degeneration pattern.
+        Returns True if the text appears to be degenerated, False otherwise.
+
+        The degeneration pattern we're looking for is:
+        - Words enclosed in square brackets
+        - Multiple of these bracketed words separated by pipe characters
+        - This pattern occurring across multiple lines
+
+        Parameters:
+        - text (str): The text to analyze
+
+        Returns:
+        - bool: True if degeneration is detected, False otherwise
+        """
+        if not text or len(text.strip()) == 0:
+            return False
+
+        # Split the text into lines
+        lines = text.strip().split("\n")
+
+        # Skip detection if there's just a single line
+        if len(lines) <= 1:
+            return False
+
+        # Count lines with the degeneration pattern
+        pattern_lines = 0
+        bracket_pipe_pattern = r"\[.+?\](\||\s*$)"
+
+        for line in lines:
+            # Check if line contains bracketed items separated by pipes
+            if re.search(bracket_pipe_pattern, line):
+                # Additional check: count brackets and pipes to confirm pattern
+                brackets = line.count("[") + line.count("]")
+                pipes = line.count("|")
+
+                # If a line has multiple brackets and pipes, it matches our pattern
+                if (
+                    brackets >= 4 and pipes >= 1
+                ):  # At least 2 sets of brackets and 1 pipe
+                    pattern_lines += 1
+
+        # Calculate what percentage of lines show the degeneration pattern
+        pattern_percentage = pattern_lines / len(lines)
+
+        # If more than 50% of lines show the pattern, consider it degenerated
+        return pattern_percentage >= 0.5
 
     def _is_trigger_passed(self, original_time, x_seconds):
         time_difference = datetime.now() - original_time
@@ -1006,23 +1055,23 @@ model = AutoModelForCausalLM.from_config(config)
 print("model:", model)
 
 
-def initialize_lazy_modules(model, device):
-    model = model.to(device)
+def count_initialized_params(model):
+    """
+    Count only initialized parameters in a model, skipping UninitializedParameters.
+    """
+    from torch.nn.parameter import UninitializedParameter
 
-    # Create dummy batch for initialization
-    batch_size = 2
-    seq_length = 64
-    dummy_input = torch.zeros((batch_size, seq_length), dtype=torch.long).to(device)
+    total = 0
+    for p in model.parameters():
+        # We have to skip uninitialized parameters, because we don't
+        # know how many parameters they will have and it crashes.
+        if not isinstance(p, UninitializedParameter):
+            total += p.numel()
+    return total
 
-    # Run dummy batch through model to initialize lazy parameters
-    with torch.no_grad():
-        model(dummy_input)
-
-
-initialize_lazy_modules(model, device)
 
 # Print the total parameter count
-total_params = sum(p.numel() for p in model.parameters())
+total_params = count_initialized_params(model)
 reduced = str(int(total_params / 10**6)) + "M"
 hparams["num_params"] = reduced
 print(f"parameters: {reduced}")
