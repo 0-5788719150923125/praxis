@@ -53,7 +53,7 @@ class AttentionChanneler(BaseController):
             [
                 nn.MultiheadAttention(
                     embed_dim=hidden_size,
-                    num_heads=config.num_heads * 4,
+                    num_heads=config.num_heads,
                     batch_first=True,
                     dropout=config.dropout,
                     add_zero_attn=True,
@@ -192,7 +192,7 @@ class AttentionChanneler(BaseController):
         # Z-loss penalizes overconfidence
         z_loss = 0.001 * torch.logsumexp(logits, dim=-1).square().mean()
 
-        # Combined loss (adjust relative weights as needed)
+        # Combined loss
         aux_loss = z_loss + balance_loss
 
         return new_states, controller_state, aux_loss, next_expert_idx
