@@ -201,6 +201,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [NoProp: Training Neural Networks without Back-propagation or Forward-propagation](https://arxiv.org/abs/2503.24322)
 - [The Belief State Transformer](https://arxiv.org/abs/2410.23506)
 - [Inner Thinking Transformer: Leveraging Dynamic Depth Scaling to Foster Adaptive Internal Thinking](https://arxiv.org/abs/2502.13842)
+- [Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach](https://arxiv.org/abs/2502.05171), https://huggingface.co/tomg-group-umd/huginn-0125/blob/main/raven_modeling_minimal.py
 
 ## won't do
 
