@@ -11,6 +11,7 @@ from praxis import (
     RESIDUAL_REGISTRY,
     PraxisConfig,
 )
+from praxis.containers import LossContainer
 from praxis.routers import ROUTER_REGISTRY
 
 TEST_PARAMS = {
@@ -61,6 +62,7 @@ def test_forward_pass(module_setup):
         past_key_values=None,
         current_state=None,
         block_ids=block_ids,
+        losses=LossContainer(),
     )
 
     # Verify output shape

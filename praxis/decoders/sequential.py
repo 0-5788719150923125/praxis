@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 import torch
 from torch import Tensor, nn
 
+from praxis.containers import LossContainer
 from praxis.decoders.base import BaseDecoder
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
 
@@ -20,6 +21,7 @@ class SequentialDecoder(BaseDecoder):
         past_key_values: Optional[Union[List[Any], Dict[str, Any]]] = None,
         current_state: Optional[List[Any]] = None,
         block_ids: Optional[Tensor] = None,
+        losses: LossContainer = None,
     ) -> Tuple[
         Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
     ]:
@@ -32,13 +34,14 @@ class SequentialDecoder(BaseDecoder):
             past_key_values: Optional cached key/values for faster inference
             current_state: Optional current layer states
             block_ids: Optional block identification tensor
+            losses: A storage class for auxiliary losses
 
         Returns:
             Tuple containing:
                 - Output hidden states
                 - Updated past key values
                 - Updated layer states
-                - Combined auxiliary loss
+                - Auxiliary loss container
         """
 
         _, seq_len, _ = hidden_states.shape
@@ -49,11 +52,10 @@ class SequentialDecoder(BaseDecoder):
             sequential_experts.copy()
         )
         current_route: List[int] = []
-        aux_losses: List[Tensor] = []
 
         for i in range(self.depth):
             current_depth = i
-            hidden_states, controller_state, aux_loss, next_expert_idx = (
+            hidden_states, controller_state, controller_loss, next_expert_idx = (
                 self.controller.get_next_expert(
                     hidden_states,
                     controller_state,
@@ -64,7 +66,7 @@ class SequentialDecoder(BaseDecoder):
                 )
             )
 
-            aux_losses.append(aux_loss)
+            losses.add_loss("controller", controller_loss)
             if next_expert_idx is None:
                 break
 
@@ -77,7 +79,7 @@ class SequentialDecoder(BaseDecoder):
             layer_state = (
                 current_state[next_expert_idx] if current_state is not None else None
             )
-            hidden_states, past_key_values, layer_state, aux_loss = create_forward(
+            hidden_states, past_key_values, layer_state, decoder_loss = create_forward(
                 expert,
                 self.controller,
                 self.manager,
@@ -89,7 +91,7 @@ class SequentialDecoder(BaseDecoder):
                 block_ids,
                 should_checkpoint(self.training, current_depth, self.checkpoint_every),
             )
-            aux_losses.append(aux_loss)
+            losses.add_loss("decoder", decoder_loss)
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             block_ids = self.compressor.reduce_block_ids(block_ids)
             hidden_states = self.post_layer(hidden_states, current_depth)
@@ -102,4 +104,4 @@ class SequentialDecoder(BaseDecoder):
 
         self.controller.post_forward(hidden_states, current_route)
 
-        return hidden_states, past_key_values, current_state, sum(aux_losses)
+        return hidden_states, past_key_values, current_state, losses

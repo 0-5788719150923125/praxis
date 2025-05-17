@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.nn.parallel as parallel
 from torch import Tensor, nn
 
+from praxis.containers import LossContainer
 from praxis.decoders.base import BaseDecoder
 from praxis.decoders.checkpoint import create_forward, should_checkpoint
 
@@ -29,6 +30,7 @@ class ParallelDecoder(BaseDecoder):
         past_key_values: Optional[Union[List[Any], Dict[str, Any]]] = None,
         current_state: Optional[List[Any]] = None,
         block_ids: Optional[Tensor] = None,
+        losses: LossContainer = None,
     ) -> Tuple[
         Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
     ]:
@@ -41,20 +43,20 @@ class ParallelDecoder(BaseDecoder):
             past_key_values: Optional cached key/values for faster inference
             current_state: Optional current layer states
             block_ids: Optional block identification tensor
+            losses: A storage class for auxiliary losses
 
         Returns:
             Tuple containing:
                 - Output hidden states
                 - Updated past key values
                 - Updated layer states
-                - Combined auxiliary loss
+                - Auxiliary loss container
         """
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
         ordered_experts: List[nn.Module] = self.controller.sort_experts(
             sequential_experts.copy()
         )
         new_states: List[Any] = []
-        aux_losses: List[Tensor] = []
 
         # Create wrapper functions for each expert
         def create_expert_forward(idx: int) -> callable:
@@ -94,7 +96,7 @@ class ParallelDecoder(BaseDecoder):
                 hidden_update, pkv, layer_state, aux_loss = result
 
                 new_states.append(layer_state)
-                aux_losses.append(aux_loss)
+                losses.add_loss("decoder", aux_loss)
 
                 hidden_update = self.post_layer(hidden_update, i)
 
@@ -109,7 +111,7 @@ class ParallelDecoder(BaseDecoder):
         # Apply post-decoding if defined
         hidden_states = self.post_decoding(hidden_states)
 
-        return hidden_states, past_key_values, current_state, sum(aux_losses)
+        return hidden_states, past_key_values, current_state, losses
 
     def _combine_outputs(
         self,

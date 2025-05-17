@@ -11,6 +11,7 @@ from transformers.modeling_outputs import (
 )
 
 from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
+from praxis.containers import LossContainer
 from praxis.losses import get_loss_function
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.utils import create_block_ids
@@ -39,23 +40,27 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        aux_losses = []
-
+        losses = LossContainer()
         h_encoder = None
         patch_lengths = None
+
         if self.encoder:
-            inputs, h_encoder, patch_lengths, block_ids, entropy_loss = (
+            inputs, h_encoder, patch_lengths, block_ids, encoder_loss = (
                 self.encoder.encode(input_ids)
             )
-            aux_losses.append(entropy_loss)
+            losses.add_loss("encoder", encoder_loss)
         else:
             block_ids = create_block_ids(input_ids, self.config.eos_token_id)
             inputs = self.embeds(input_ids)
 
-        last_hidden_state, new_key_values, new_state, aux_loss = self.decoder(
-            inputs, attention_mask, past_key_values, current_state, block_ids
+        last_hidden_state, new_key_values, new_state, losses = self.decoder(
+            inputs,
+            attention_mask,
+            past_key_values,
+            current_state,
+            block_ids,
+            losses,
         )
-        aux_losses.append(aux_loss)
 
         return PraxisModelOutput(
             last_hidden_state=last_hidden_state,
@@ -65,7 +70,7 @@ class PraxisModel(PreTrainedModel):
             current_state=new_state,
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
-            aux_losses=aux_losses,
+            losses=losses,
         )
 
     def get_addr(self) -> None:
@@ -153,16 +158,17 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            loss = self.criterion(
+            main_loss = self.criterion(
                 logits=logits[..., :-1, :].contiguous(),
                 embeddings=outputs.last_hidden_state,
                 classifier=self.head,
                 labels=labels,
                 input_ids=input_ids,
             )
+            loss = outputs.losses.add_loss("main", main_loss)
             # We omit auxiliary losses during validation and inference
             if self.training:
-                loss = self.strategy([loss, sum(outputs.aux_losses)])
+                loss = self.strategy(outputs.losses.get_loss_values())
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -178,4 +184,4 @@ class PraxisModelOutput(BaseModelOutputWithPast):
     current_state: Optional[torch.LongTensor] = None
     h_encoder: Optional[torch.FloatTensor] = None
     patch_lengths: Optional[torch.LongTensor] = None
-    aux_losses: List[torch.LongTensor] = None
+    losses: List[torch.LongTensor] = None
