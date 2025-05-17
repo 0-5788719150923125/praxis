@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -28,8 +28,6 @@ class PraxisModel(PreTrainedModel):
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
-        self.current_state = []
-        self.aux_losses = []
 
     def forward(
         self,
@@ -41,13 +39,15 @@ class PraxisModel(PreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
+        aux_losses = []
+
         h_encoder = None
         patch_lengths = None
         if self.encoder:
             inputs, h_encoder, patch_lengths, block_ids, entropy_loss = (
                 self.encoder.encode(input_ids)
             )
-            self.aux_losses.append(entropy_loss)
+            aux_losses.append(entropy_loss)
         else:
             block_ids = create_block_ids(input_ids, self.config.eos_token_id)
             inputs = self.embeds(input_ids)
@@ -55,7 +55,7 @@ class PraxisModel(PreTrainedModel):
         last_hidden_state, new_key_values, new_state, aux_loss = self.decoder(
             inputs, attention_mask, past_key_values, current_state, block_ids
         )
-        self.aux_losses.append(aux_loss)
+        aux_losses.append(aux_loss)
 
         return PraxisModelOutput(
             last_hidden_state=last_hidden_state,
@@ -65,6 +65,7 @@ class PraxisModel(PreTrainedModel):
             current_state=new_state,
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
+            aux_losses=aux_losses,
         )
 
     def get_addr(self) -> None:
@@ -161,9 +162,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             )
             # We omit auxiliary losses during validation and inference
             if self.training:
-                loss = self.strategy([loss, sum(self.aux_losses)])
-
-        self.aux_losses = []
+                loss = self.strategy([loss, sum(outputs.aux_losses)])
 
         return CausalLMOutputWithPast(
             loss=loss,
@@ -179,3 +178,4 @@ class PraxisModelOutput(BaseModelOutputWithPast):
     current_state: Optional[torch.LongTensor] = None
     h_encoder: Optional[torch.FloatTensor] = None
     patch_lengths: Optional[torch.LongTensor] = None
+    aux_losses: List[torch.LongTensor] = None

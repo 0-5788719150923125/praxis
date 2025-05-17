@@ -42,8 +42,6 @@ def test_praxis_model_init(small_config):
     assert model.encoder is False
     assert model.embeds is not None
     assert model.decoder is not None
-    assert len(model.current_state) == 0
-    assert len(model.aux_losses) == 0
 
 
 def test_praxis_causal_lm_init(small_config):
@@ -164,17 +162,10 @@ def test_training_vs_inference_mode(small_config, input_ids, attention_mask):
     """Test that the model behaves differently in training vs. inference mode."""
     model = PraxisForCausalLM(small_config)
 
-    # Generate some auxiliary losses to make training and inference differ
-    # This is a bit of a hack, but it simulates the behavior of auxiliary losses
-    model.aux_losses = [torch.tensor(0.5)]  # Add a dummy auxiliary loss
-
     # Training mode
     model.train()
     with torch.no_grad():
         outputs_train = model(input_ids=input_ids, attention_mask=attention_mask)
-
-    # Reset auxiliary losses
-    model.aux_losses = [torch.tensor(0.5)]  # Same dummy auxiliary loss
 
     # Inference mode
     model.eval()
