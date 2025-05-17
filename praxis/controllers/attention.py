@@ -184,10 +184,10 @@ class AttentionChanneler(BaseController):
         expert_density = expert_mask.mean(dim=0)  # [num_experts]
 
         # Compute balance loss (correlation between utilization and probability)
-        balance_loss = 0.01 * (mean_probs * expert_density).sum() * self.num_experts**2
+        balance_loss = 0.1 * (mean_probs * expert_density).sum() * self.num_experts**2
 
         # Z-loss penalizes overconfidence
-        z_loss = 0.001 * torch.logsumexp(logits, dim=-1).square().mean()
+        z_loss = 0.01 * torch.logsumexp(logits, dim=-1).square().mean()
 
         # Combined loss
         aux_loss = z_loss + balance_loss
