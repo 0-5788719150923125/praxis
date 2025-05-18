@@ -10,6 +10,7 @@ class UncertaintyWeighted(nn.Module, LazyModuleMixin):
     """
     Use homoscedastic uncertainty to balance multi-task losses.
     Adapted from:
+    https://arxiv.org/abs/1705.07115
     https://medium.com/@baicenxiao/strategies-for-balancing-multiple-loss-functions-in-deep-learning-e1a641e0bcc0
     """
 

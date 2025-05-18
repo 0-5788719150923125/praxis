@@ -7,6 +7,8 @@ class LossContainer:
         self.loss_dict = {"main": 0.0}
 
     def add_loss(self, key: str = "main", loss: Tensor = 0):
+        if loss == 0 or loss.item() == 0:
+            return 0
         if key not in self.loss_dict:
             self.loss_dict[key] = 0
         self.loss_dict[key] = self.loss_dict[key] + loss

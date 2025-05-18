@@ -159,6 +159,9 @@ class AttentionChanneler(BaseController):
 
         # Create a broadcast-compatible version of the feature updates
         global_update = feature_updates.unsqueeze(1)  # [batch_size, 1, channel_size]
+        global_update = F.layer_norm(
+            global_update, normalized_shape=[self.channel_size]
+        )
 
         # Update a subset of features in all tokens (create a side channel)
         new_states = hidden_states.clone()
@@ -184,10 +187,10 @@ class AttentionChanneler(BaseController):
         expert_density = expert_mask.mean(dim=0)  # [num_experts]
 
         # Compute balance loss (correlation between utilization and probability)
-        balance_loss = 0.1 * (mean_probs * expert_density).sum() * self.num_experts**2
+        balance_loss = 0.01 * (mean_probs * expert_density).mean() * self.num_experts**2
 
         # Z-loss penalizes overconfidence
-        z_loss = 0.01 * torch.logsumexp(logits, dim=-1).square().mean()
+        z_loss = 0.001 * torch.logsumexp(logits, dim=-1).square().mean()
 
         # Combined loss
         aux_loss = z_loss + balance_loss
