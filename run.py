@@ -1252,7 +1252,7 @@ if wandb:
     wandb_logger = CustomWandbLogger(**wandb_opts)
 
     # log gradients and model topology
-    wandb_logger.watch(model, log="all", log_freq=100, log_graph=False)
+    wandb_logger.watch(model, log=None, log_freq=100, log_graph=False)
     train_params["logger"] = wandb_logger
 
 generator = Generator(model, tokenizer)
