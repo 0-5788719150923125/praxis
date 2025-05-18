@@ -475,6 +475,12 @@ other_group.add_argument(
     help="Log metrics to Weights and Biases (https://wandb.ai)",
 )
 other_group.add_argument(
+    "--wandb_run_name",
+    type=str,
+    default=None,
+    help="Custom name for the W&B run (default: auto-generated)",
+)
+other_group.add_argument(
     "--no_dashboard",
     action="store_true",
     default=False,

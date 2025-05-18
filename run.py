@@ -1249,6 +1249,16 @@ if wandb:
             wandb_opts["id"] = run_id
             wandb_opts["resume"] = "must"
 
+    wandb_opts["name"] = "-".join(
+        [
+            decoder_type[:3],
+            controller_type,
+            attention_type,
+            str(config.depth),
+            str(config.num_experts),
+        ]
+    )
+
     wandb_logger = CustomWandbLogger(**wandb_opts)
 
     # log gradients and model topology

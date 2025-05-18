@@ -157,7 +157,7 @@ DATASET_COLLECTIONS = dict(
         "textbooks": 0.005,
         "soda": 0.01,
         "cosmopedia-v2": 0.01,
-        "natural-instructions": 0.02,
+        "natural-instructions": 0.05,
         "github-code": 0.01,
         "smoltalk": 0.01,
         # "persona-chat": 0.002,
