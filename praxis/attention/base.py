@@ -1586,6 +1586,11 @@ class MLAQuery(nn.Module):
     """
     Multi-head Latent Attention query projection with compression.
     Based on DeepSeek-V2: https://arxiv.org/abs/2405.04434
+    
+    Note: The DeepSeek-V2 implementation includes additional features not present here:
+    - Two-stage projections with intermediate RMSNorm (q_a_proj -> norm -> q_b_proj)
+    - Different terminology (uses "LoRA rank" instead of "compression dim")
+    These features may be added in future versions if needed for performance parity.
     """
 
     def __init__(self, config: ConfigType) -> None:
@@ -1658,6 +1663,12 @@ class MLAKeyValue(nn.Module):
     """
     Multi-head Latent Attention key-value compression.
     Based on DeepSeek-V2: https://arxiv.org/abs/2405.04434
+    
+    Note: The DeepSeek-V2 implementation includes additional features not present here:
+    - Two-stage projections with intermediate RMSNorm (kv_a_proj -> norm -> kv_b_proj)
+    - Explicit Multi-Query Attention (MQA) support in projections
+    - More flexible RoPE scaling strategies (linear, dynamic, yarn)
+    These features may be added in future versions if needed for performance parity.
     """
 
     def __init__(self, config: ConfigType) -> None:
