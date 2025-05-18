@@ -493,16 +493,16 @@ other_group.add_argument(
     help="Use fewer resources (3 layers, smaller datasets, etc), always start from a new model (i.e. force '--reset'), and never conflict/remove existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
 )
 other_group.add_argument(
+    "--eval_every",
+    type=int,
+    default=None,
+    help="Run partial evaluation every N validation intervals",
+)
+other_group.add_argument(
     "--eval_tasks",
     type=str,
     default="helm|hellaswag|2|1,lighteval|glue:cola|2|1,lighteval|coqa|2|1",
     help="Run a subset of evaluation tests after each validation step. This can be slow.",
-)
-other_group.add_argument(
-    "--no_eval",
-    action="store_true",
-    default=False,
-    help="Disable evaluation. This is helpful when eval is causing spikes in memory consumption, crashing CUDA",
 )
 other_group.add_argument(
     "--debug",

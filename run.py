@@ -425,13 +425,18 @@ class PraxisTrainer(LightningModule):
 class PeriodicEvaluation(Callback):
     """Callback to perform periodic evaluation during training using the lighteval test suite."""
 
+    def __init__(self):
+        super().__init__()
+        self.counter = 0
+
     def on_validation_end(self, trainer, lm):
         super().on_validation_end(trainer, lm)
+        self.counter += 1
         self._run_evaluation_suites()
 
     def _run_evaluation_suites(self):
 
-        if no_eval:
+        if eval_every is None or self.counter % eval_every != 0:
             return
 
         metrics = evaluate_model(
@@ -480,6 +485,14 @@ class PeriodicEvaluation(Callback):
         else:
             # Fallback for other loggers
             print(f"Warning: Couldn't log metrics to logger. Metrics: {all_metrics}")
+
+    def state_dict(self):
+        # Return the state that should be saved
+        return {"counter": self.counter}
+
+    def load_state_dict(self, state_dict):
+        # Restore the state from the saved dictionary
+        self.counter = state_dict["counter"]
 
 
 class TerminalInterface(Callback):
