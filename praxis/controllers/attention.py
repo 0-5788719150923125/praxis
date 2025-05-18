@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from praxis.activations import ACT2FN
+from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -106,7 +107,7 @@ class AttentionChanneler(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, Optional[Tensor], Tensor, Optional[int]]:
+    ) -> Tuple[Tensor, Optional[Tensor], LossContainer, Optional[int]]:
         batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
 
@@ -192,7 +193,7 @@ class AttentionChanneler(BaseController):
         # Z-loss penalizes overconfidence
         z_loss = 0.001 * torch.logsumexp(logits, dim=-1).square().mean()
 
-        # Combined loss
-        aux_loss = z_loss + balance_loss
+        # Create loss container with initial losses
+        loss_container = LossContainer(balance=balance_loss, z_loss=z_loss)
 
-        return new_states, controller_state, aux_loss, next_expert_idx
+        return new_states, controller_state, loss_container, next_expert_idx

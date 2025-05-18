@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -90,7 +91,7 @@ class LayerShuffle(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tensor, LossContainer, Optional[int]]:
         """
         Compute next expert selection and associated loss.
         During inference, returns actual expert index.
@@ -109,6 +110,6 @@ class LayerShuffle(BaseController):
                 - Index of the next expert to use
         """
 
-        aux_loss = 0
+        loss_container = LossContainer()
         next_expert_idx = current_depth
-        return hidden_states, controller_state, aux_loss, current_depth
+        return hidden_states, controller_state, loss_container, current_depth

@@ -6,6 +6,7 @@ from torch import Tensor
 
 ConfigType = TypeVar("ConfigType", bound="PretrainedConfig")
 
+from praxis.containers.loss import LossContainer
 from praxis.controllers.visualization import TransitionVisualizer
 
 
@@ -66,11 +67,11 @@ class BaseController(nn.Module):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tensor, LossContainer, Optional[int]]:
 
-        aux_loss = 0
+        loss_container = LossContainer()
         next_expert_idx = current_depth
-        return hidden_states, controller_state, aux_loss, next_expert_idx
+        return hidden_states, controller_state, loss_container, next_expert_idx
 
     def update_route(
         self,

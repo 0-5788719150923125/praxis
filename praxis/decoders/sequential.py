@@ -66,7 +66,7 @@ class SequentialDecoder(BaseDecoder):
                 )
             )
 
-            losses.add_loss("controller", controller_loss)
+            losses.add_loss_container(controller_loss)
             if next_expert_idx is None:
                 break
 
@@ -91,6 +91,7 @@ class SequentialDecoder(BaseDecoder):
                 block_ids,
                 should_checkpoint(self.training, current_depth, self.checkpoint_every),
             )
+            # Handle expert decoder loss (which is scalar/tensor, not LossContainer)
             losses.add_loss("decoder", decoder_loss)
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             block_ids = self.compressor.reduce_block_ids(block_ids)

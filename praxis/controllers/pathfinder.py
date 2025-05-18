@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -43,7 +44,7 @@ class Pathfinder(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tensor, LossContainer, Optional[int]]:
         # Use the last vector; attention "pushes" information into this vector
         last_hidden = hidden_states[:, -1, :]
 
@@ -54,10 +55,12 @@ class Pathfinder(BaseController):
         gate_probs = F.softmax(gate_logits, dim=1)
 
         # Calculate entropy loss for training
-        aux_loss = torch.tensor(0.0, device=hidden_states.device)
         if self.training:
             entropy = -(gate_probs * torch.log(gate_probs + 1e-10)).sum(dim=1).mean()
-            aux_loss = -0.01 * entropy  # Encourage exploration
+            entropy_loss = -0.01 * entropy  # Encourage exploration
+            loss_container = LossContainer(entropy=entropy_loss)
+        else:
+            loss_container = LossContainer()
 
         # Get each example's vote for which expert to use next
         batch_votes = torch.argmax(gate_probs, dim=1)  # [batch_size]
@@ -70,6 +73,6 @@ class Pathfinder(BaseController):
 
         # Allow early exits
         if next_expert_idx == self.num_experts:
-            return hidden_states, controller_state, aux_loss, None
+            return hidden_states, controller_state, loss_container, None
 
-        return hidden_states, controller_state, aux_loss, next_expert_idx
+        return hidden_states, controller_state, loss_container, next_expert_idx

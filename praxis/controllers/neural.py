@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from neurallambda.stack import StackState, initialize, push_pop_nop, read
 from torch import Tensor
 
+from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
 from praxis.dense import MultiLayerPerceptron
 
@@ -215,7 +216,7 @@ class NeuralController(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tuple[StackState, Tensor, Tensor], Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tuple[StackState, Tensor, Tensor], LossContainer, Optional[int]]:
         """Determine the next expert/layer to route to."""
         batch_size, _, _ = hidden_states.shape
         device = hidden_states.device
@@ -268,7 +269,10 @@ class NeuralController(BaseController):
             output = self.visualize_operation(new_controller_state, batch_idx=0)
             print(f"DEBUG: tool: {output['tool']}, sharpness: {output['sharpness']}")
 
-        return hidden_states, new_controller_state, gating_loss, next_expert_idx
+        # Create loss container with gating loss
+        loss_container = LossContainer(gating=gating_loss)
+
+        return hidden_states, new_controller_state, loss_container, next_expert_idx
 
     def visualize_operation(
         self,
@@ -347,7 +351,7 @@ if __name__ == "__main__":
     for step in range(10):  # Test routing for 10 steps
         print(f"Step {step}, Current Depth: {current_depth}")
 
-        controller_state, gating_loss, current_route, next_expert_idx = (
+        hidden_states, controller_state, loss_container, next_expert_idx = (
             router.get_next_expert(
                 hidden_states,
                 controller_state,
@@ -366,7 +370,7 @@ if __name__ == "__main__":
         viz_data = router.visualize_operation(controller_state)
         print(f"  Selected Expert: {next_expert_idx}")
         print(f"  Selected Tool: {viz_data.get('tool', 'Unknown')}")
-        print(f"  Gating Loss: {gating_loss.item():.6f}")
+        print(f"  Gating Loss: {loss_container.get_loss('gating').item():.6f}")
         print(f"  Current Route: {current_route}")
 
         current_depth = next_expert_idx

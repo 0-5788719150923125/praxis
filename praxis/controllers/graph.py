@@ -18,6 +18,7 @@ from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
 from torch import Tensor
 
+from praxis.containers.loss import LossContainer
 from praxis.controllers.base import BaseController
 from praxis.dense import DENSE_REGISTRY
 
@@ -224,7 +225,7 @@ class GraphRouter(BaseController):
         ordered_experts: List[nn.Module],
         current_route: List[int],
         current_depth: int,
-    ) -> Tuple[Tensor, Tensor, List[int], Optional[int]]:
+    ) -> Tuple[Tensor, Tensor, LossContainer, Optional[int]]:
 
         # Get available expert indices
         available_indices = [
@@ -271,18 +272,18 @@ class GraphRouter(BaseController):
             if individual_probs.size(0) > 1:
                 route_variance = individual_probs.var(dim=0, unbiased=False).mean()
                 variance_loss = route_variance * self.variance_scale
-
-            # Sum the losses
-            routing_loss = importance_loss + variance_loss
+            
+            # Create loss container with all losses
+            loss_container = LossContainer(importance=importance_loss, variance=variance_loss)
         else:
             # Use similar logic for inference
             temperature = 0.5
             scaled_scores = batch_averaged_scores / temperature
             probs = F.softmax(scaled_scores, dim=-1)
             next_expert_idx = torch.multinomial(probs, num_samples=1).item()
-            routing_loss = 0
+            loss_container = LossContainer()
 
-        return hidden_states, controller_state, routing_loss, next_expert_idx
+        return hidden_states, controller_state, loss_container, next_expert_idx
 
 
 class GraphAttention(nn.Module):
