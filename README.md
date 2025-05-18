@@ -18,6 +18,7 @@ The Praxis architecture is an ever-evolving, peer-to-peer, flexible and decentra
 ## features
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence through a layer, and to remote peers - reducing the time required for remote computation. All other tokens bypass the layer via a residual connection.
+- We implement [Multihead Latent Attention](https://arxiv.org/abs/2405.04434), originally discovered by DeepSeek-V2.
 - [LayerShuffle](https://arxiv.org/abs/2407.04513) proved that transformers can maintain coherence, even when every layer is shuffled at every forward pass. We take this a step further, and implement the `PraxisController`, which teaches the model how to predict an optimal route through expert layers during inference. The ability to work with out-of-order layers is crucial in a decentralized architecture, where some peers may fail, others may disappear, some may be overloaded, or undertrained, or are otherwise penalized for some reason or another...
 - As an alternative to LayerShuffle's controller, we have an experiment that implements elements from [Graphformer](https://arxiv.org/abs/2105.02605), teaching the model to route through layers as if they were nodes in a graph.
 - In addition to the shuffling, we implement a simplified version of [CALM](https://arxiv.org/abs/2207.07061), which allows the model to early-exit from computation.

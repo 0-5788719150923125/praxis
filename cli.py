@@ -322,6 +322,12 @@ architecture_group.add_argument(
     help="Use a long-term episodic memory module",
 )
 architecture_group.add_argument(
+    "--mla",
+    action="store_true",
+    default=False,
+    help="Use Multi-Head Latent Attention (MLA)",
+)
+architecture_group.add_argument(
     "--mta",
     action="store_true",
     default=False,

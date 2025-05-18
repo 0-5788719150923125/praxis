@@ -189,6 +189,7 @@ config = PraxisConfig(
     differential=differential,
     stickbreaking=stickbreaking,
     memory=memory,
+    mla=mla,
     mta=mta,
     mega=mega,
     gated=gated,

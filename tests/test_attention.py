@@ -17,6 +17,7 @@ class AttentionMode(Enum):
     LINEAR = "linear"
     DIFFERENTIAL = "differential"
     STICKBREAKING = "stickbreaking"
+    MULTIHEAD_LATENT_ATTENTION = "mla"
 
 
 # Define test parameters in a more structured way
@@ -97,6 +98,7 @@ def module_setup(request, config):
     setattr(config, "linear", False)
     setattr(config, "differential", False)
     setattr(config, "stickbreaking", False)
+    setattr(config, "mla", False)
 
     if attention_config.mode == AttentionMode.DIFFERENTIAL:
         setattr(config, "differential", True)
@@ -104,6 +106,8 @@ def module_setup(request, config):
     #     setattr(config, "linear", True)
     elif attention_config.mode == AttentionMode.STICKBREAKING:
         setattr(config, "stickbreaking", True)
+    elif attention_config.mode == AttentionMode.MULTIHEAD_LATENT_ATTENTION:
+        setattr(config, "mla", True)
 
     module = module_class(config)
     return module, attention_config

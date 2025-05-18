@@ -41,6 +41,7 @@ class PraxisConfig(PretrainedConfig):
         gated: bool = False,
         evolve: bool = False,
         scaled: bool = False,
+        mla: bool = False,
         hivemind: bool = False,
         initial_peers: List[str] = None,
         checkpoint_every: int = 0,
@@ -97,6 +98,7 @@ class PraxisConfig(PretrainedConfig):
         self.residual_type = residual_type
         self.compression_type = compression_type
         self.memory = memory
+        self.mla = mla
         self.mta = mta
         self.mega = mega
         self.gated = gated

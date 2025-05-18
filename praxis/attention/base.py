@@ -40,6 +40,7 @@ class ModularAttention(nn.Module):
         self.linear: bool = config.linear
         self.differential: bool = config.differential
         self.stickbreaking: bool = config.stickbreaking
+        self.mla: bool = config.mla
         assert (
             sum([self.differential, self.stickbreaking, self.linear]) <= 1
         ), "Only one of differential, stickbreaking, or linear attention can be used at a time."
@@ -54,6 +55,20 @@ class ModularAttention(nn.Module):
         self.head_dim: int = hidden_size // self.num_heads // self.factor
         setattr(config, "head_size", self.head_dim)
 
+        # MLA-specific dimensions
+        if self.mla:
+            # Calculate compression dimensions automatically
+            self.kv_compression_dim: int = hidden_size // 8
+            self.q_compression_dim: int = hidden_size // 8
+            # Decoupled RoPE dimensions
+            self.rope_head_dim: int = self.head_dim // 4
+            self.use_mla_in_inference: bool = True
+
+            # Set these on the config for MLA modules to access them
+            setattr(config, "kv_compression_dim", self.kv_compression_dim)
+            setattr(config, "q_compression_dim", self.q_compression_dim)
+            setattr(config, "rope_head_dim", self.rope_head_dim)
+
         assert (
             sum([config.mega, config.gated]) <= 1
         ), "Only one of 'mega' or 'gated' can be used at a time."
@@ -64,7 +79,10 @@ class ModularAttention(nn.Module):
         )
 
         # Query and key projections for differential heads
-        if config.k_heads is not None:
+        if self.mla:
+            # MLA uses compressed projections followed by up-projections
+            self.query = MLAQuery(config)
+        elif config.k_heads is not None:
             self.query = SparseQuery(
                 hidden_size,
                 self.num_query_heads,
@@ -81,7 +99,9 @@ class ModularAttention(nn.Module):
                 bias=False,
             )
 
-        if self.kv_rank is not None:
+        if self.mla:
+            self.key_value = MLAKeyValue(config)
+        elif self.kv_rank is not None:
             self.key_value = LowRankKeyValue(
                 hidden_size=hidden_size,
                 num_heads=self.num_heads,
@@ -278,10 +298,26 @@ class ModularAttention(nn.Module):
         """
         batch_size = q.size(0)
 
-        # Apply positional encoding with offset
-        q, k, v = self.encoding.before_scores(
-            q, k, v, offset=offset, block_ids=block_ids
-        )
+        if self.mla:
+            # MLA uses decoupled RoPE - split the queries and keys into compressed and RoPE parts
+            q_c = q[..., : self.head_dim]  # Compressed queries
+            q_r = q[..., self.head_dim :]  # RoPE queries
+            k_c = k[..., : self.head_dim]  # Compressed keys
+            k_r = k[..., self.head_dim :]  # RoPE keys
+
+            # Apply RoPE only to the RoPE components
+            q_r, k_r, _ = self.encoding.before_scores(
+                q_r, k_r, None, offset=offset, block_ids=block_ids
+            )
+
+            # Concatenate back
+            q = torch.cat([q_c, q_r], dim=-1)
+            k = torch.cat([k_c, k_r], dim=-1)
+        else:
+            # Apply positional encoding with offset
+            q, k, v = self.encoding.before_scores(
+                q, k, v, offset=offset, block_ids=block_ids
+            )
 
         # Compute attention scores
         q, k, v, scores = self.algorithm.compute_scores(q, k, v)
@@ -367,7 +403,7 @@ class ScaledDotProduct(nn.Module):
         Returns:
             Tuple of (query, key, value, attention scores)
         """
-        scaling = 1.0 / math.sqrt(self.head_dim)
+        scaling = 1.0 / math.sqrt(q.size(-1))
         scores = torch.matmul(q, k.transpose(-2, -1)) * scaling
         return q, k, v, scores
 
@@ -1544,3 +1580,152 @@ class VanillaMHA(nn.MultiheadAttention):
         )
         layer_kv: Optional[Tensor] = None
         return outputs, layer_kv, 0
+
+
+class MLAQuery(nn.Module):
+    """
+    Multi-head Latent Attention query projection with compression.
+    Based on DeepSeek-V2: https://arxiv.org/abs/2405.04434
+    """
+
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize MLA query projection.
+
+        Args:
+            config: Configuration object containing attention parameters
+        """
+        super().__init__()
+        self.hidden_size: int = config.hidden_size
+        self.num_heads: int = config.num_heads
+        self.num_queries: int = config.num_queries
+        self.num_query_heads: int = self.num_heads * self.num_queries
+        self.head_dim: int = config.head_size
+        self.q_compression_dim: int = config.q_compression_dim
+        self.rope_head_dim: int = config.rope_head_dim
+
+        # Down-projection for query compression
+        self.down_q: nn.Linear = nn.Linear(
+            self.hidden_size, self.q_compression_dim, bias=False
+        )
+
+        # Up-projection for compressed queries
+        self.up_q: nn.Linear = nn.Linear(
+            self.q_compression_dim, self.num_query_heads * self.head_dim, bias=False
+        )
+
+        # Decoupled RoPE queries
+        self.rope_q: nn.Linear = nn.Linear(
+            self.q_compression_dim,
+            self.num_query_heads * self.rope_head_dim,
+            bias=False,
+        )
+
+    def forward(self, x: Tensor) -> Tuple[Tensor, int]:
+        """
+        Forward pass for MLA query projection.
+
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_size]
+
+        Returns:
+            Tuple of (query tensor, auxiliary loss)
+        """
+        # Compress queries
+        c_q = self.down_q(x)  # [B, S, q_compression_dim]
+
+        # Up-project to full query dimension
+        q_c = self.up_q(c_q)  # [B, S, num_query_heads * head_dim]
+
+        # Generate RoPE queries (for position encoding)
+        q_r = self.rope_q(c_q)  # [B, S, num_query_heads * rope_head_dim]
+
+        # Concatenate compressed and RoPE queries
+        batch_size, seq_len = x.shape[:2]
+
+        # Reshape for concatenation
+        q_c = q_c.view(batch_size, seq_len, self.num_query_heads, self.head_dim)
+        q_r = q_r.view(batch_size, seq_len, self.num_query_heads, self.rope_head_dim)
+
+        # Concatenate along feature dimension
+        q = torch.cat([q_c, q_r], dim=3)  # [B, S, H, D + D_r]
+        q = q.reshape(batch_size, seq_len, -1)  # [B, S, H * (D + D_r)]
+
+        return q, 0
+
+
+class MLAKeyValue(nn.Module):
+    """
+    Multi-head Latent Attention key-value compression.
+    Based on DeepSeek-V2: https://arxiv.org/abs/2405.04434
+    """
+
+    def __init__(self, config: ConfigType) -> None:
+        """
+        Initialize MLA key-value compression.
+
+        Args:
+            config: Configuration object containing attention parameters
+        """
+        super().__init__()
+        self.hidden_size: int = config.hidden_size
+        self.num_heads: int = config.num_heads
+        self.head_dim: int = config.head_size
+        self.kv_compression_dim: int = config.kv_compression_dim
+        self.rope_head_dim: int = config.rope_head_dim
+
+        # Joint compression for keys and values
+        self.down_kv: nn.Linear = nn.Linear(
+            self.hidden_size, self.kv_compression_dim, bias=False
+        )
+
+        # Up-projections for keys and values
+        self.up_k: nn.Linear = nn.Linear(
+            self.kv_compression_dim, self.num_heads * self.head_dim, bias=False
+        )
+
+        self.up_v: nn.Linear = nn.Linear(
+            self.kv_compression_dim, self.num_heads * self.head_dim, bias=False
+        )
+
+        # Decoupled RoPE key (shared across heads)
+        self.rope_k: nn.Linear = nn.Linear(
+            self.hidden_size, self.rope_head_dim, bias=False
+        )
+
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Forward pass for MLA key-value compression.
+
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_size]
+
+        Returns:
+            Tuple of (key tensor, value tensor)
+        """
+        # Joint compression for keys and values
+        c_kv = self.down_kv(x)  # [B, S, kv_compression_dim]
+
+        # Up-project to get keys and values
+        k_c = self.up_k(c_kv)  # [B, S, num_heads * head_dim]
+        v = self.up_v(c_kv)  # [B, S, num_heads * head_dim]
+
+        # Generate shared RoPE key
+        k_r = self.rope_k(x)  # [B, S, rope_head_dim]
+
+        # Combine compressed keys with RoPE keys
+        batch_size, seq_len = x.shape[:2]
+
+        # Reshape compressed keys
+        k_c = k_c.view(batch_size, seq_len, self.num_heads, self.head_dim)
+
+        # Expand RoPE key to all heads
+        k_r = k_r.unsqueeze(2).expand(
+            -1, -1, self.num_heads, -1
+        )  # [B, S, H, rope_head_dim]
+
+        # Concatenate compressed and RoPE keys
+        k = torch.cat([k_c, k_r], dim=3)  # [B, S, H, D + D_r]
+        k = k.reshape(batch_size, seq_len, -1)  # [B, S, H * (D + D_r)]
+
+        return k, v
