@@ -14,7 +14,6 @@
 .parcel-cache
 .pytest*
 .venv
-CLAUDE.md
 __pycache__
 build
 data
