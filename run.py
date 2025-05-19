@@ -1252,10 +1252,11 @@ if wandb:
     wandb_opts["name"] = "-".join(
         [
             decoder_type[:3],
-            controller_type,
+            "ctrl_" + controller_type,
             attention_type,
             str(config.depth),
             str(config.num_experts),
+            str(hidden_size),
         ]
     )
 
