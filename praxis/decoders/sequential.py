@@ -104,5 +104,8 @@ class SequentialDecoder(BaseDecoder):
         hidden_states = self.post_decoding(hidden_states)
 
         self.controller.post_forward(hidden_states, current_route)
+        
+        # Apply feature sorting
+        hidden_states = self.sorter(hidden_states)
 
         return hidden_states, past_key_values, current_state, losses

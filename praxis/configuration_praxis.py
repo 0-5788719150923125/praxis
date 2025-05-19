@@ -32,6 +32,7 @@ class PraxisConfig(PretrainedConfig):
         decoder_type: str = "sequential",
         residual_type: str = "standard",
         compression_type: str = "none",
+        sorting_type: str = "none",
         linear: bool = False,
         differential: bool = False,
         stickbreaking: bool = False,
@@ -97,6 +98,7 @@ class PraxisConfig(PretrainedConfig):
         self.controller_type = controller_type
         self.residual_type = residual_type
         self.compression_type = compression_type
+        self.sorting_type = sorting_type
         self.memory = memory
         self.mla = mla
         self.mta = mta

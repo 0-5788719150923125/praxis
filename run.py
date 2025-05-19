@@ -185,6 +185,7 @@ config = PraxisConfig(
     decoder_type=decoder_type,
     residual_type=residual_type,
     compression_type=compression_type,
+    sorting_type=sorting_type,
     linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,

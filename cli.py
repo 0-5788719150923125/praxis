@@ -21,6 +21,7 @@ from praxis import (
     LOSS_REGISTRY,
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
+    SORTING_REGISTRY,
     STRATEGIES_REGISTRY,
 )
 
@@ -211,6 +212,13 @@ architecture_group.add_argument(
     choices=COMPRESSION_REGISTRY.keys(),
     default="none",
     help="The type of sequence compression to use",
+)
+architecture_group.add_argument(
+    "--sorting_type",
+    type=str,
+    choices=SORTING_REGISTRY.keys(),
+    default="none",
+    help="The type of feature sorting to use",
 )
 architecture_group.add_argument(
     "--activation",
