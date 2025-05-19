@@ -1,7 +1,5 @@
 # praxis
 
-<!-- Triangulated Human Observation for Reasoning in the Natural Sciences -->
-
 _Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice._
 
 ![Terminal](./static/terminal.webp)
@@ -82,7 +80,7 @@ python run.py --batch_size 16 --device cuda
 
 ## constraints
 
-- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some single, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.
+- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some singular, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.
 - You will quickly run into rate limits with the Huggingface Datasets API. This is because anonymous users tend to be spam, and are subjected to severe restrictions. To alleviate this problem, you can install [huggingface-cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli), and authenticate with a real user.
 
 ## do inference
