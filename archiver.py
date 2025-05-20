@@ -38,11 +38,20 @@ def save_project(project_name: str) -> None:
 def restore_project(project_name: str) -> None:
     """Restore a zip file back to the data directory."""
     archive_dir = Path("./archive")
+    data_dir = Path("./data")
     zip_path = archive_dir / f"{project_name}.zip"
 
     if not zip_path.exists():
         print(f"Error: Archive '{zip_path}' does not exist.")
         sys.exit(1)
+
+    # Wipe the data directory if it exists
+    if data_dir.exists():
+        shutil.rmtree(data_dir)
+        print(f"Cleared existing data directory: {data_dir}")
+    
+    # Create an empty data directory
+    data_dir.mkdir(exist_ok=True)
 
     # Extract the zip file
     with zipfile.ZipFile(zip_path, "r") as zipf:
