@@ -40,10 +40,10 @@ class BaseDecoder(nn.Module):
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
-        self.sorter = SORTING_REGISTRY.get(config.sorting_type)(config)
         self.manager = False
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
+        self.sorter = SORTING_REGISTRY.get(config.sorting_type)(config)
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remotes = self.manager.active_remote_experts
