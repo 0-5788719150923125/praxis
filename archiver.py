@@ -7,16 +7,37 @@ import shutil
 import sys
 import zipfile
 from pathlib import Path
+import termios
+import tty
+import select
 
 
-def save_project(project_name: str) -> None:
-    """Create a zip file from the data directory and save it to archive."""
+def get_model_hash() -> str:
+    """Read the model hash from MODEL_HASH.txt file."""
+    hash_file_path = Path("./data/praxis/MODEL_HASH.txt")
+    
+    if not hash_file_path.exists():
+        print(f"Error: Model hash file '{hash_file_path}' does not exist.")
+        print("Please run the model at least once to generate this file.")
+        sys.exit(1)
+        
+    with open(hash_file_path, "r") as f:
+        model_hash = f.read().strip()
+        
+    return model_hash
+
+
+def save_project() -> None:
+    """Create a zip file from the data directory and save it to archive using the model hash as name."""
     data_dir = Path("./data")
     archive_dir = Path("./archive")
 
     if not data_dir.exists():
         print(f"Error: Data directory '{data_dir}' does not exist.")
         sys.exit(1)
+
+    # Get the model hash as project name
+    project_name = get_model_hash()
 
     # Create archive directory if it doesn't exist
     archive_dir.mkdir(exist_ok=True)
@@ -32,7 +53,100 @@ def save_project(project_name: str) -> None:
                 arcname = file_path.relative_to(data_dir.parent)
                 zipf.write(file_path, arcname)
 
-    print(f"Successfully saved project '{project_name}' to {zip_path}")
+    print(f"Successfully saved project with hash '{project_name}' to {zip_path}")
+
+
+def _get_key():
+    """Wait for a keypress and return a single character string."""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        # Check if there's input waiting, and if not, keep waiting
+        while not select.select([sys.stdin], [], [], 0.1)[0]:
+            continue
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
+
+def _get_available_projects():
+    """Return a list of available projects."""
+    archive_dir = Path("./archive")
+    
+    if not archive_dir.exists() or not list(archive_dir.glob("*.zip")):
+        return []
+        
+    return sorted([zip_file.stem for zip_file in archive_dir.glob("*.zip")])
+
+
+def _display_menu(options, selected=0):
+    """Display the menu with the selected option highlighted."""
+    # Clear the terminal
+    print("\033[H\033[J", end="")
+    
+    print("Select a project to restore (use UP/DOWN arrows, ENTER to select):\n")
+    
+    for i, option in enumerate(options):
+        if i == selected:
+            # Highlight selected option (reverse video)
+            print(f"\033[7m  {option}\033[0m")
+        else:
+            print(f"  {option}")
+    
+    print("\nPress 'q' to quit")
+
+
+def interactive_restore():
+    """Provide an interactive menu to select which project to restore."""
+    projects = _get_available_projects()
+    
+    if not projects:
+        print("No archived projects found.")
+        return
+    
+    selected = 0
+    
+    # Save terminal state
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    
+    try:
+        # Display the initial menu
+        _display_menu(projects, selected)
+        
+        while True:
+            key = _get_key()
+            
+            # Check for navigation keys
+            if key == '\x1b':  # Escape sequence for arrow keys
+                # Read the next two characters
+                key = sys.stdin.read(2)
+                
+                if key == '[A':  # Up arrow
+                    selected = (selected - 1) % len(projects)
+                elif key == '[B':  # Down arrow
+                    selected = (selected + 1) % len(projects)
+            elif key == '\r':  # Enter key
+                # User made a selection
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                print("\033[H\033[J", end="")  # Clear screen
+                restore_project(projects[selected])
+                return
+            elif key.lower() == 'q':  # Quit
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                print("\033[H\033[J", end="")  # Clear screen
+                print("Restore cancelled.")
+                return
+            
+            # Redisplay the menu with the new selection
+            _display_menu(projects, selected)
+    except Exception as e:
+        # In case of error, restore terminal settings
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        print(f"Error: {e}")
+        return
 
 
 def restore_project(project_name: str) -> None:
@@ -87,22 +201,26 @@ def main():
 
     parser.add_argument(
         "--save",
-        type=str,
-        metavar="project_name",
-        help="Save project state to 'archive/<project_name>.zip'",
+        action="store_true",
+        help="Save project state using model hash as the archive name",
     )
     parser.add_argument(
         "--restore",
+        action="store_true",
+        help="Interactively select a project to restore",
+    )
+    parser.add_argument(
+        "--restore-id",
         type=str,
         metavar="project_name",
-        help="Restore project from 'archive/<project_name>.zip'",
+        help="Restore specific project from 'archive/<project_name>.zip'",
     )
     parser.add_argument("--list", action="store_true", help="List archived projects")
 
     args = parser.parse_args()
 
     # Check that exactly one option is specified
-    options_count = sum([bool(args.save), bool(args.restore), args.list])
+    options_count = sum([bool(args.save), bool(args.restore), bool(args.restore_id), args.list])
     if options_count == 0:
         parser.print_help()
         sys.exit(1)
@@ -111,9 +229,11 @@ def main():
         sys.exit(1)
 
     if args.save:
-        save_project(args.save)
+        save_project()
     elif args.restore:
-        restore_project(args.restore)
+        interactive_restore()
+    elif args.restore_id:
+        restore_project(args.restore_id)
     elif args.list:
         list_projects()
 

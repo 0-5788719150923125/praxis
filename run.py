@@ -134,7 +134,7 @@ MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 
 # Transform CLI args into global variables
 globals().update(vars(get_cli_args()))
-log_command()
+(_, args_hash, truncated_hash) = log_command()
 
 # Set seeds for reproducibility
 seed_everything(seed, workers=True)
@@ -1250,16 +1250,7 @@ if wandb:
             wandb_opts["id"] = run_id
             wandb_opts["resume"] = "must"
 
-    wandb_opts["name"] = "-".join(
-        [
-            decoder_type[:3],
-            "ctrl_" + controller_type,
-            attention_type,
-            str(config.depth),
-            str(config.num_experts),
-            str(hidden_size),
-        ]
-    )
+    wandb_opts["name"] = truncated_hash
 
     wandb_logger = CustomWandbLogger(**wandb_opts)
 

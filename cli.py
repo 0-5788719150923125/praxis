@@ -606,7 +606,8 @@ def log_command(exclude_from_hash=["--reset", "--debug"]):
     # Format log entry
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     truncate_to = 9
-    new_entry = f'{timestamp} | {args_hash[:truncate_to]} | "{full_command}"\n'
+    truncated_hash = args_hash[:truncate_to]
+    new_entry = f'{timestamp} | {truncated_hash} | "{full_command}"\n'
 
     # Get the path for history.log in root directory
     log_file = "history.log"
@@ -621,4 +622,15 @@ def log_command(exclude_from_hash=["--reset", "--debug"]):
     with open(log_file, "w") as f:
         f.write(new_entry + existing_content)
 
-    return full_command, args_hash
+    # Save the truncated hash to MODEL_HASH.txt in data/praxis directory
+    hash_file_dir = os.path.join("data", "praxis")
+    hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
+
+    # Ensure the directory exists
+    os.makedirs(hash_file_dir, exist_ok=True)
+
+    # Write just the hash to the file (overwriting any existing content)
+    with open(hash_file_path, "w") as f:
+        f.write(truncated_hash)
+
+    return full_command, args_hash, truncated_hash
