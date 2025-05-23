@@ -5,17 +5,10 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, TypeVar
 
-import matplotlib.pyplot as plt
-import matplotlib.transforms as transforms
-import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from matplotlib.collections import LineCollection
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Circle
-from matplotlib.transforms import Affine2D
 from torch import Tensor
 
 from praxis.containers.loss import LossContainer
@@ -272,9 +265,11 @@ class GraphRouter(BaseController):
             if individual_probs.size(0) > 1:
                 route_variance = individual_probs.var(dim=0, unbiased=False).mean()
                 variance_loss = route_variance * self.variance_scale
-            
+
             # Create loss container with all losses
-            loss_container = LossContainer(importance=importance_loss, variance=variance_loss)
+            loss_container = LossContainer(
+                importance=importance_loss, variance=variance_loss
+            )
         else:
             # Use similar logic for inference
             temperature = 0.5

@@ -2,6 +2,8 @@ import os
 from collections import Counter, defaultdict
 from typing import DefaultDict, Dict, List, Optional, Sequence, Tuple
 
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, Normalize
