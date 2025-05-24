@@ -249,7 +249,7 @@ train_params = dict(
     val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
     num_sanity_val_steps=0,
     limit_val_batches=4096 // hparams["batch_size"],
-    log_every_n_steps=1,
+    log_every_n_steps=10,
     logger=CSVLogger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
 )
@@ -337,9 +337,11 @@ class PraxisTrainer(LightningModule):
                 "softmax_collapse": softmax_collapse,
             },
             on_step=True,
+            on_epoch=False,
             logger=True,
             batch_size=batch_size,
             prog_bar=True,
+            sync_dist=False,
         )
 
         return loss
@@ -366,6 +368,7 @@ class PraxisTrainer(LightningModule):
             logger=True,
             batch_size=batch.size(0),
             prog_bar=True,
+            sync_dist=False,  # Don't sync across distributed processes
         )
 
     def on_validation_end(self):
@@ -592,9 +595,11 @@ class TerminalInterface(Callback):
         self.log_dict(
             data,
             on_step=True,
+            on_epoch=False,
             logger=True,
             batch_size=batch_size,
             prog_bar=True,
+            sync_dist=False,
         )
 
         if self.dashboard:
@@ -649,12 +654,12 @@ class TerminalInterface(Callback):
             ),
         )
         while True:
+            time.sleep(0.1)
             generator.fulfill_requests(max_requests=5)
             result = generator.get_result(request_id)
             if result is not None:
                 self.text = result
                 break
-            time.sleep(0.1)
 
         n_gram_size = 13 if byte_latent else 7
         frequency = 50 if byte_latent else 20
@@ -1243,7 +1248,17 @@ if wandb:
         return None
 
     # Example usage:
-    wandb_opts = dict(project="praxis", save_dir=cache_dir)
+    wandb_opts = dict(
+        project="praxis",
+        save_dir=cache_dir,
+        save_code=False,  # Don't save code files
+        log_model=False,  # Don't log model artifacts
+        settings=wandb.Settings(
+            disable_code=True,  # Disable code saving
+            disable_git=True,  # Disable git info
+            _disable_stats=True,  # Disable system metrics
+        ),
+    )
     if ckpt_path is not None:
         run_id = find_latest_wandb_run(cache_dir, cleanup_old_runs=True)
         if run_id is not None:
@@ -1254,8 +1269,6 @@ if wandb:
 
     wandb_logger = CustomWandbLogger(**wandb_opts)
 
-    # log gradients and model topology
-    wandb_logger.watch(model, log=None, log_freq=100, log_graph=False)
     train_params["logger"] = wandb_logger
 
 generator = Generator(model, tokenizer)
