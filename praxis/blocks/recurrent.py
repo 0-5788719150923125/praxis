@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.experimental.smear import PraxisSMEAR
 from praxis.recurrent import RECURRENT_REGISTRY
+from praxis.routers.smear import SMEAR
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -26,7 +26,7 @@ class RecurrentBlock(nn.Module):
         """
         super().__init__()
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
-        self.experts = PraxisSMEAR(
+        self.experts = SMEAR(
             config,
             experts=nn.ModuleList(
                 [

@@ -160,9 +160,9 @@ DATASET_COLLECTIONS = dict(
         "natural-instructions": 0.05,
         "github-code": 0.01,
         "smoltalk": 0.01,
-        # "persona-chat": 0.002,
+        "tinystories": 0.05,
+        "persona-chat": 0.005,
         # "wikipedia": 0.001,
-        # "tinystories": 0.05,
         # "legal": 0.001,
     },
     pile={

@@ -21,6 +21,7 @@ class LocalExpert(nn.Module):
         config: ConfigType,
         block: Union[nn.Module, bool] = False,
         router: Union[nn.Module, bool] = False,
+        expert_blocks: Optional[List[nn.Module]] = None,
     ) -> None:
         """
         Initialize local expert wrapper.
@@ -29,12 +30,14 @@ class LocalExpert(nn.Module):
             config: Configuration object with model parameters
             block: Block module to wrap
             router: Router module (or False to use default router)
+            expert_blocks: List of expert blocks for routers that need multiple experts (like SMEAR)
         """
         super().__init__()
         self.block: Union[nn.Module, bool] = block
         self.router: Union[nn.Module, bool] = router
         if config.router_type is not None and not self.router:
-            self.router = ROUTER_REGISTRY.get("mixture_of_depths")(config)
+            router_cls = ROUTER_REGISTRY.get(config.router_type, "mixture_of_depths")
+            self.router = router_cls(config, experts=expert_blocks)
 
     def forward(
         self,

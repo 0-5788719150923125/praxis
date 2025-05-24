@@ -48,7 +48,9 @@ class MixtureOfDepths(nn.Linear):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: ConfigType, layout: str = "standard") -> None:
+    def __init__(
+        self, config: ConfigType, layout: str = "standard", *args: Any, **kwargs: Any
+    ) -> None:
         super().__init__(in_features=config.hidden_size, out_features=1)
         self.capacities: List[float] = MOD_LAYOUT.get(layout)(config.depth)
         if config.debug:

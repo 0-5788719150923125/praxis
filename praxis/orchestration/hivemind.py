@@ -86,7 +86,10 @@ class PraxisManagement:
         self.backends = {}
         self.active_local_experts = []
 
-        self.router = ROUTER_REGISTRY.get("mixture_of_depths")(config)
+        router_cls = ROUTER_REGISTRY.get("mixture_of_depths")
+        self.router = router_cls(
+            config, experts=self.active_local_experts + self.active_remote_experts
+        )
 
         self.running = False
         self.thread = None

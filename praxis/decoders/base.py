@@ -52,6 +52,20 @@ class BaseDecoder(nn.Module):
             expert = LocalExpert(config, block=block)
             for i in range(self.num_experts):
                 self.locals.append(expert)
+        elif config.router_type == "smear":
+            # For SMEAR, we need to create all blocks first, then pass them to each expert
+            expert_blocks = []
+            for i in range(self.num_experts):
+                if self.manager:
+                    block = self.manager.register_expert(config)
+                else:
+                    block = BLOCK_REGISTRY[config.block_type](config)
+                expert_blocks.append(block)
+            
+            # Now create LocalExperts with access to all blocks
+            for i in range(self.num_experts):
+                expert = LocalExpert(config, block=expert_blocks[i], expert_blocks=expert_blocks)
+                self.locals.append(expert)
         else:
             for i in range(self.num_experts):
                 if self.manager:
