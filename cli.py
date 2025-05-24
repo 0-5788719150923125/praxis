@@ -249,7 +249,7 @@ architecture_group.add_argument(
 architecture_group.add_argument(
     "--depth",
     type=int,
-    default=9,
+    default=2,
     help="The max number of experts to route through",
 )
 architecture_group.add_argument(
