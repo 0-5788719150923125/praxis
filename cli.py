@@ -18,6 +18,7 @@ from praxis import (
     ENCODER_REGISTRY,
     ENCODING_REGISTRY,
     EXPERT_REGISTRY,
+    HEAD_REGISTRY,
     LOSS_REGISTRY,
     RESIDUAL_REGISTRY,
     ROUTER_REGISTRY,
@@ -226,6 +227,13 @@ architecture_group.add_argument(
     choices=ACTIVATION_REGISTRY.keys(),
     default="mish",
     help="The primary activation function to use",
+)
+architecture_group.add_argument(
+    "--head_type",
+    type=str,
+    choices=HEAD_REGISTRY.keys(),
+    default="forward",
+    help="The type of language modeling head to use",
 )
 architecture_group.add_argument(
     "--target_batch_size",

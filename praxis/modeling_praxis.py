@@ -12,6 +12,7 @@ from transformers.modeling_outputs import (
 
 from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, PraxisConfig
 from praxis.containers import LossContainer
+from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.utils import create_block_ids
@@ -96,11 +97,32 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     def __init__(self, config: PraxisConfig):
         config.causal = True
         super().__init__(config)
-        self.head = None
+
+        # Initialize the language modeling head based on head_type
         if config.encoder_type is None:
-            self.head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+            self.head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
+        else:
+            self.head = None
+
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
+
+    def _compute_loss(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        embeddings: torch.Tensor,
+        classifier: Optional[nn.Module],
+        input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute the main loss using the criterion."""
+        return self.criterion(
+            logits=logits[..., :-1, :].contiguous(),
+            embeddings=embeddings,
+            classifier=classifier,
+            labels=labels,
+            input_ids=input_ids,
+        )
 
     def prepare_inputs_for_generation(
         self,
@@ -153,22 +175,25 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 input_ids,
                 outputs.patch_lengths,
             )
+            classifier = None
         else:
             logits = self.head(outputs.last_hidden_state)
+            classifier = self.head.classifier
 
         loss = 0
         if labels is not None:
-            main_loss = self.criterion(
-                logits=logits[..., :-1, :].contiguous(),
-                embeddings=outputs.last_hidden_state,
-                classifier=self.head,
+            main_loss = self._compute_loss(
+                logits=logits,
                 labels=labels,
+                embeddings=outputs.last_hidden_state,
+                classifier=classifier,
                 input_ids=input_ids,
             )
             loss = outputs.losses.add_loss("main", main_loss)
-            # We omit auxiliary losses during validation and inference
-            if self.training:
-                loss = self.strategy(outputs.losses.get_loss_values())
+
+        # We omit auxiliary losses during validation and inference
+        if self.training and labels is not None:
+            loss = self.strategy(outputs.losses.get_loss_values())
 
         return CausalLMOutputWithPast(
             loss=loss,

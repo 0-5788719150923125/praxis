@@ -99,6 +99,7 @@ class PraxisConfig(PretrainedConfig):
         self.residual_type = residual_type
         self.compression_type = compression_type
         self.sorting_type = sorting_type
+        self.head_type = kwargs.get("head_type", "forward")
         self.memory = memory
         self.mla = mla
         self.mta = mta
