@@ -33,11 +33,11 @@ class LocalExpert(nn.Module):
             expert_blocks: List of expert blocks for routers that need multiple experts (like SMEAR)
         """
         super().__init__()
-        self.block: Union[nn.Module, bool] = block
         self.router: Union[nn.Module, bool] = router
         if config.router_type is not None and not self.router:
             router_cls = ROUTER_REGISTRY.get(config.router_type, "mixture_of_depths")
             self.router = router_cls(config, experts=expert_blocks)
+        self.block: Union[nn.Module, bool] = block
 
     def forward(
         self,

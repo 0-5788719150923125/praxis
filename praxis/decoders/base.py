@@ -41,9 +41,9 @@ class BaseDecoder(nn.Module):
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
         self.manager = False
+        self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
-        self.sorter = SORTING_REGISTRY.get(config.sorting_type)(config)
         if config.hivemind:
             self.manager = PraxisManagement(config)
             self.remotes = self.manager.active_remote_experts
@@ -61,10 +61,12 @@ class BaseDecoder(nn.Module):
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
-            
+
             # Now create LocalExperts with access to all blocks
             for i in range(self.num_experts):
-                expert = LocalExpert(config, block=expert_blocks[i], expert_blocks=expert_blocks)
+                expert = LocalExpert(
+                    config, block=expert_blocks[i], expert_blocks=expert_blocks
+                )
                 self.locals.append(expert)
         else:
             for i in range(self.num_experts):

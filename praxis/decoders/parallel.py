@@ -110,9 +110,9 @@ class ParallelDecoder(BaseDecoder):
 
         # Apply post-decoding if defined
         hidden_states = self.post_decoding(hidden_states)
-        
+
         # Apply feature sorting
-        hidden_states = self.sorter(hidden_states)
+        hidden_states = self.order(hidden_states)
 
         return hidden_states, past_key_values, current_state, losses
 

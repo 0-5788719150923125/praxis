@@ -161,8 +161,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             input_ids=input_ids,
         )
 
-        # Combine losses (equal weighting by default)
-        return (forward_loss + backward_loss) / 2
+        # Weighted combination based on forward_weight
+        forward_weight = self.config.forward_weight
+        backward_weight = 1.0 - forward_weight
+        
+        return forward_weight * forward_loss + backward_weight * backward_loss
 
     def prepare_inputs_for_generation(
         self,

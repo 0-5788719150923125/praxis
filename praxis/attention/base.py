@@ -130,13 +130,13 @@ class ModularAttention(nn.Module):
 
         # The core attention mechanism
         if self.stickbreaking:
-            self.algorithm = Stickbreaking(config)
+            self.core = Stickbreaking(config)
         elif self.differential:
-            self.algorithm = Differential(config)
+            self.core = Differential(config)
         elif self.linear:
-            self.algorithm = Linear(config)
+            self.core = Linear(config)
         else:
-            self.algorithm = ScaledDotProduct(config)
+            self.core = ScaledDotProduct(config)
 
         # For handling length extrapolation
         self.encoding = ENCODING_REGISTRY[config.encoding](config)
@@ -325,7 +325,7 @@ class ModularAttention(nn.Module):
             )
 
         # Compute attention scores
-        q, k, v, scores = self.algorithm.compute_scores(q, k, v)
+        q, k, v, scores = self.core.compute_scores(q, k, v)
         hist_len = k.size(2)
 
         if self.mta:
@@ -335,12 +335,12 @@ class ModularAttention(nn.Module):
         scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
 
         # Apply masking
-        scores, causal_mask, chunk_attention_mask = self.algorithm.apply_masking(
+        scores, causal_mask, chunk_attention_mask = self.core.apply_masking(
             scores, attention_mask, block_ids, chunk_size, hist_len, self.causal
         )
 
         # Compute the attention weights
-        weights, v = self.algorithm.compute_weights(
+        weights, v = self.core.compute_weights(
             q, k, v, scores, causal_mask, chunk_attention_mask
         )
 
@@ -349,7 +349,7 @@ class ModularAttention(nn.Module):
             weights = self.mta.head_mixing_convolution(weights)
 
         # Get attention output
-        attention_output = self.algorithm.compute_outputs(weights, v)
+        attention_output = self.core.compute_outputs(weights, v)
 
         if self.mta:
             attention_output = self.mta.group_norm(attention_output)
