@@ -124,6 +124,35 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             input_ids=input_ids,
         )
 
+    def _compute_bidirectional_loss(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        embeddings: torch.Tensor,
+        classifier: Optional[nn.Module],
+        input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute bidirectional loss (forward and backward prediction).
+
+        Note: labels are already shifted right (input_ids[..., 1:]) when passed in.
+        """
+        # Forward loss: predict next token (standard causal LM)
+        forward_loss = self._compute_loss(logits, labels, embeddings, classifier, input_ids)
+
+        # Backward loss: predict previous token
+        # For backward prediction, we want logits[1:] to predict input_ids[:-1]
+        backward_labels = input_ids[..., :-1].contiguous()
+        backward_loss = self.criterion(
+            logits=logits[..., 1:, :].contiguous(),
+            embeddings=embeddings,
+            classifier=classifier,
+            labels=backward_labels,
+            input_ids=input_ids,
+        )
+
+        # Combine losses (equal weighting by default)
+        return (forward_loss + backward_loss) / 2
+
     def prepare_inputs_for_generation(
         self,
         input_ids: torch.LongTensor,
@@ -182,13 +211,22 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            main_loss = self._compute_loss(
-                logits=logits,
-                labels=labels,
-                embeddings=outputs.last_hidden_state,
-                classifier=classifier,
-                input_ids=input_ids,
-            )
+            if self.config.bidirectional:
+                main_loss = self._compute_bidirectional_loss(
+                    logits=logits,
+                    labels=labels,
+                    embeddings=outputs.last_hidden_state,
+                    classifier=classifier,
+                    input_ids=input_ids,
+                )
+            else:
+                main_loss = self._compute_loss(
+                    logits=logits,
+                    labels=labels,
+                    embeddings=outputs.last_hidden_state,
+                    classifier=classifier,
+                    input_ids=input_ids,
+                )
             loss = outputs.losses.add_loss("main", main_loss)
 
         # We omit auxiliary losses during validation and inference

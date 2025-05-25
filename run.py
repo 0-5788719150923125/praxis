@@ -217,6 +217,7 @@ config = PraxisConfig(
     debug=debug,
     seed=seed,
     meta=meta,
+    bidirectional=bidirectional,
 )
 
 # Misc hyperparameters

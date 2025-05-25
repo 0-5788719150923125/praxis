@@ -117,3 +117,4 @@ class PraxisConfig(PretrainedConfig):
         self.debug = debug
         self.meta = meta
         self.causal = False
+        self.bidirectional = kwargs.get("bidirectional", False)

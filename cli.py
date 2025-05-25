@@ -373,6 +373,12 @@ architecture_group.add_argument(
     default=False,
     help="Scale the output of each layer by the inverse square root of its depth",
 )
+architecture_group.add_argument(
+    "--bidirectional",
+    action="store_true", 
+    default=False,
+    help="Enable bidirectional language modeling (forward and backward prediction)",
+)
 # optimization
 optimization_group.add_argument(
     "--optimizer",
