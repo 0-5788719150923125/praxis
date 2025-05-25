@@ -109,6 +109,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         else:
             self.head = None
 
+        # Initialize separate backward head if requested
+        if config.bidirectional and config.encoder_type is None:
+            self.backward_head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
+        else:
+            self.backward_head = None
+
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
@@ -140,6 +146,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         embeddings: torch.Tensor,
         classifier: Optional[nn.Module],
         input_ids: torch.Tensor,
+        backward_logits: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute bidirectional loss (forward and backward prediction).
 
@@ -153,18 +160,36 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Backward loss: predict previous token
         # For backward prediction, we want logits[1:] to predict input_ids[:-1]
         backward_labels = input_ids[..., :-1].contiguous()
-        backward_loss = self.criterion(
-            logits=logits[..., 1:, :].contiguous(),
-            embeddings=embeddings,
-            classifier=classifier,
-            labels=backward_labels,
-            input_ids=input_ids,
-        )
+
+        # Use separate backward logits if available, otherwise use the same logits
+        if backward_logits is not None:
+            # Use the separate backward head's logits
+            backward_classifier = (
+                self.backward_head.classifier
+                if hasattr(self.backward_head, "classifier")
+                else None
+            )
+            backward_loss = self.criterion(
+                logits=backward_logits[..., 1:, :].contiguous(),
+                embeddings=embeddings,
+                classifier=backward_classifier,
+                labels=backward_labels,
+                input_ids=input_ids,
+            )
+        else:
+            # Use the same logits as forward (original behavior)
+            backward_loss = self.criterion(
+                logits=logits[..., 1:, :].contiguous(),
+                embeddings=embeddings,
+                classifier=classifier,
+                labels=backward_labels,
+                input_ids=input_ids,
+            )
 
         # Weighted combination based on forward_weight
         forward_weight = self.config.forward_weight
         backward_weight = 1.0 - forward_weight
-        
+
         return forward_weight * forward_loss + backward_weight * backward_loss
 
     def prepare_inputs_for_generation(
@@ -211,6 +236,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return_dict=return_dict,
         )
 
+        backward_logits = None
         if self.encoder:
             logits = self.encoder.decode(
                 outputs.last_hidden_state,
@@ -223,6 +249,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             logits = self.head(outputs.last_hidden_state)
             classifier = self.head.classifier
 
+            # Compute backward logits if we have a separate backward head
+            if self.backward_head is not None:
+                backward_logits = self.backward_head(outputs.last_hidden_state)
+
         loss = 0
         if labels is not None:
             if self.config.bidirectional:
@@ -232,6 +262,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     embeddings=outputs.last_hidden_state,
                     classifier=classifier,
                     input_ids=input_ids,
+                    backward_logits=backward_logits,
                 )
             else:
                 main_loss = self._compute_loss(
