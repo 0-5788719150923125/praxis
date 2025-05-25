@@ -113,7 +113,7 @@ hardware_group.add_argument(
     help="Device to use",
 )
 hardware_group.add_argument(
-    "--host_name",
+    "--host-name",
     type=str,
     default="localhost",
     help="Serve the local API at this CNAME",
@@ -125,97 +125,97 @@ hardware_group.add_argument(
     help="Serve the local API at this port",
 )
 hardware_group.add_argument(
-    "--batch_size",
+    "--batch-size",
     type=int,
     default=1,
     help="Batch size to use for training",
 )
 hardware_group.add_argument(
-    "--checkpoint_every",
+    "--checkpoint-every",
     type=int,
     default=None,
     help="Apply gradient checkpointing every X layers",
 )
 # storage
 persistence_group.add_argument(
-    "--cache_dir",
+    "--cache-dir",
     type=str,
     default="data",
     help="Paths to a directory where artifacts will be saved",
 )
 # architecture
 architecture_group.add_argument(
-    "--encoder_type",
+    "--encoder-type",
     type=str,
     choices=list(ENCODER_REGISTRY.keys()),
     default=None,
     help="Encoder module to use",
 )
 architecture_group.add_argument(
-    "--decoder_type",
+    "--decoder-type",
     type=str,
     choices=list(DECODER_REGISTRY.keys()),
     default="sequential",
     help="How to process layers in the decoder",
 )
 architecture_group.add_argument(
-    "--block_type",
+    "--block-type",
     type=str,
     choices=BLOCK_REGISTRY.keys(),
     default="transformer",
     help="The type of block to use for every intermediate decoder layer",
 )
 architecture_group.add_argument(
-    "--expert_type",
+    "--expert-type",
     type=str,
     choices=EXPERT_REGISTRY.keys(),
     default="glu",
     help="The module to use for feedforward networks",
 )
 architecture_group.add_argument(
-    "--attention_type",
+    "--attention-type",
     type=str,
     choices=ATTENTION_REGISTRY.keys(),
     default="standard",
     help="The base attention implementation to use",
 )
 architecture_group.add_argument(
-    "--encoding_type",
+    "--encoding-type",
     type=str,
     choices=ENCODING_REGISTRY.keys(),
     default="rope",
     help="The positional encoding to use for sequence length extrapolation",
 )
 architecture_group.add_argument(
-    "--controller_type",
+    "--controller-type",
     type=str,
     choices=CONTROLLER_REGISTRY.keys(),
     default="base",
     help="Various methods used to route inputs through experts in the decoder",
 )
 architecture_group.add_argument(
-    "--router_type",
+    "--router-type",
     type=str,
     choices=ROUTER_REGISTRY.keys(),
     default=None,
     help="How to route tokens at every layer",
 )
 architecture_group.add_argument(
-    "--residual_type",
+    "--residual-type",
     type=str,
     choices=RESIDUAL_REGISTRY.keys(),
     default="standard",
     help="The style of residual connection to use",
 )
 architecture_group.add_argument(
-    "--compression_type",
+    "--compression-type",
     type=str,
     choices=COMPRESSION_REGISTRY.keys(),
     default="none",
     help="The type of sequence compression to use",
 )
 architecture_group.add_argument(
-    "--sorting_type",
+    "--sorting-type",
     type=str,
     choices=SORTING_REGISTRY.keys(),
     default="none",
@@ -229,26 +229,26 @@ architecture_group.add_argument(
     help="The primary activation function to use",
 )
 architecture_group.add_argument(
-    "--head_type",
+    "--head-type",
     type=str,
     choices=HEAD_REGISTRY.keys(),
     default="forward",
     help="The type of language modeling head to use",
 )
 architecture_group.add_argument(
-    "--target_batch_size",
+    "--target-batch-size",
     type=int,
     default=256,
     help="The actual batch size to use, including accumulation steps",
 )
 architecture_group.add_argument(
-    "--block_size",
+    "--block-size",
     type=int,
     default=512,
     help="The base sequence length to train with",
 )
 architecture_group.add_argument(
-    "--vocab_size",
+    "--vocab-size",
     type=int,
     choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
     default=16384,
@@ -261,19 +261,19 @@ architecture_group.add_argument(
     help="The max number of experts to route through",
 )
 architecture_group.add_argument(
-    "--num_experts",
+    "--num-experts",
     type=int,
     default=False,
     help="Number of experts to host (defaults to depth)",
 )
 architecture_group.add_argument(
-    "--hidden_size",
+    "--hidden-size",
     type=int,
     default=256,
     help="The size of the model's hidden dimensions",
 )
 architecture_group.add_argument(
-    "--embed_size",
+    "--embed-size",
     type=int,
     default=192,
     help="The size of the model's embedding dimension (if applicable)",
@@ -285,7 +285,7 @@ architecture_group.add_argument(
     help="The percentage of neurons to drop-out during training",
 )
 architecture_group.add_argument(
-    "--num_heads",
+    "--num-heads",
     type=lambda x: (
         x
         if ":" in x
@@ -302,13 +302,13 @@ architecture_group.add_argument(
     help="The ratio of heads to queries per-head. (example: '4:2' is equal to 3 heads, with 2 queries per head)",
 )
 architecture_group.add_argument(
-    "--k_heads",
+    "--k-heads",
     type=int,
     default=None,
     help="A sparse MoE, controlling the number of heads to sample. Should be smaller than num_heads to enable.",
 )
 architecture_group.add_argument(
-    "--kv_rank",
+    "--kv-rank",
     type=int,
     default=None,
     help="Set this value to factorize key/value projections, making them low-rank. A value of 1 is lowest.",
@@ -379,6 +379,12 @@ architecture_group.add_argument(
     default=False,
     help="Enable bidirectional language modeling (forward and backward prediction)",
 )
+architecture_group.add_argument(
+    "--tie-weights",
+    action="store_true",
+    default=False,
+    help="Tie embedding and output projection weights to reduce parameters",
+)
 # optimization
 optimization_group.add_argument(
     "--optimizer",
@@ -388,7 +394,7 @@ optimization_group.add_argument(
     help="The optimizer profile to use",
 )
 optimization_group.add_argument(
-    "--loss_func",
+    "--loss-func",
     type=str,
     choices=LOSS_REGISTRY.keys(),
     default="cross_entropy",
@@ -420,13 +426,13 @@ optimization_group.add_argument(
     help="Wrap the optimizer in Lookahead",
 )
 optimization_group.add_argument(
-    "--fixed_schedule",
+    "--fixed-schedule",
     action="store_true",
     default=False,
     help="Use a fixed (constant) learning rate schedule",
 )
 optimization_group.add_argument(
-    "--schedule_free",
+    "--schedule-free",
     action="store_true",
     default=False,
     help="Use the Schedule-Free optimizer wrapper",
@@ -439,14 +445,14 @@ networking_group.add_argument(
     help="Connect your node to the Hivemind swarm",
 )
 networking_group.add_argument(
-    "--initial_peers",
+    "--initial-peers",
     nargs="*",
     default=[],
     help="Provide a list of Hivemind bootstrap peers",
 )
 # data
 data_group.add_argument(
-    "--data_path",
+    "--data-path",
     type=str,
     nargs="+",
     default=None,
@@ -471,7 +477,7 @@ data_group.add_argument(
     help="Supplement training with chat data from https://src.eco",
 )
 data_group.add_argument(
-    "--no_source",
+    "--no-source",
     action="store_true",
     default=False,
     help="Disable training on the model's own source code",
@@ -497,13 +503,13 @@ other_group.add_argument(
     help="Log metrics to Weights and Biases (https://wandb.ai)",
 )
 other_group.add_argument(
-    "--wandb_run_name",
+    "--wandb-run-name",
     type=str,
     default=None,
     help="Custom name for the W&B run (default: auto-generated)",
 )
 other_group.add_argument(
-    "--no_dashboard",
+    "--no-dashboard",
     action="store_true",
     default=False,
     help="Disable the terminal dashboard",
@@ -521,13 +527,13 @@ other_group.add_argument(
     help="Use fewer resources (3 layers, smaller datasets, etc), always start from a new model (i.e. force '--reset'), and never conflict/remove existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
 )
 other_group.add_argument(
-    "--eval_every",
+    "--eval-every",
     type=int,
     default=None,
     help="Run partial evaluation every N validation intervals",
 )
 other_group.add_argument(
-    "--eval_tasks",
+    "--eval-tasks",
     type=str,
     default="helm|hellaswag|2|1,lighteval|glue:cola|2|1,lighteval|coqa|2|1",
     help="Run a subset of evaluation tests after each validation step. This can be slow.",

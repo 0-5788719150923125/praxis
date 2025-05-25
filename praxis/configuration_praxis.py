@@ -118,3 +118,4 @@ class PraxisConfig(PretrainedConfig):
         self.meta = meta
         self.causal = False
         self.bidirectional = kwargs.get("bidirectional", False)
+        self.tie_word_embeddings = kwargs.get("tie_weights", False)

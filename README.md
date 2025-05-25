@@ -75,7 +75,7 @@ We recommend you use a `batch_size` of at least 16, if possible. We have impleme
 We also recommend using an Nvidia GPU.
 
 ```sh
-python run.py --batch_size 16 --device cuda
+python run.py --batch-size 16 --device cuda
 ```
 
 ## constraints

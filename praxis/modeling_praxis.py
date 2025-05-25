@@ -100,12 +100,21 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Initialize the language modeling head based on head_type
         if config.encoder_type is None:
-            self.head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
+            if config.tie_word_embeddings:
+                # Use tied head and get embedding weight reference
+                self.head = HEAD_REGISTRY["tied"](config)
+                # Weight will be tied after model initialization
+            else:
+                self.head = HEAD_REGISTRY.get(config.head_type, "forward")(config)
         else:
             self.head = None
 
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
+
+        # Tie weights if requested
+        if config.tie_word_embeddings and self.head is not None:
+            self.tie_weights()
 
     def _compute_loss(
         self,
@@ -137,7 +146,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         Note: labels are already shifted right (input_ids[..., 1:]) when passed in.
         """
         # Forward loss: predict next token (standard causal LM)
-        forward_loss = self._compute_loss(logits, labels, embeddings, classifier, input_ids)
+        forward_loss = self._compute_loss(
+            logits, labels, embeddings, classifier, input_ids
+        )
 
         # Backward loss: predict previous token
         # For backward prediction, we want logits[1:] to predict input_ids[:-1]
@@ -240,6 +251,34 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    def get_input_embeddings(self) -> nn.Module:
+        """Get the input embeddings module."""
+        if hasattr(self, "embeds"):
+            # For projected embeddings, get the actual embedding layer
+            if hasattr(self.embeds, "tokens"):
+                return self.embeds.tokens
+            return self.embeds
+        return None
+
+    def get_output_embeddings(self) -> nn.Module:
+        """Get the output embeddings (lm_head) module."""
+        if self.head is not None:
+            if hasattr(self.head, "lm_head"):
+                return self.head.lm_head
+            return self.head
+        return None
+
+    def tie_weights(self) -> None:
+        """Tie the input and output embeddings weights."""
+        if self.config.tie_word_embeddings and self.head is not None:
+            input_embeddings = self.get_input_embeddings()
+            if input_embeddings is not None and hasattr(self.head, "embedding_weight"):
+                # For TiedHead, set the embedding weight reference
+                self.head.embedding_weight = input_embeddings.weight
+            elif input_embeddings is not None and hasattr(self.head, "lm_head"):
+                # For regular heads, tie the weights directly
+                self.head.lm_head.weight = input_embeddings.weight
 
 
 @dataclass

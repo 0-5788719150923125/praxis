@@ -218,6 +218,7 @@ config = PraxisConfig(
     seed=seed,
     meta=meta,
     bidirectional=bidirectional,
+    tie_weights=tie_weights,
 )
 
 # Misc hyperparameters
