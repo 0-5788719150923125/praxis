@@ -23,13 +23,13 @@ parser.add_argument(
     help="The type of tokenizer to train",
 )
 parser.add_argument(
-    "--num_examples",
+    "--num-examples",
     type=int,
     default=5_000_000,
     help="The number of examples to train",
 )
 parser.add_argument(
-    "--vocab_size",
+    "--vocab-size",
     type=int,
     choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
     default=16384,
@@ -51,8 +51,8 @@ special_tokens = {
     "pad_token": "[PAD]",
     "bos_token": "[BOS]",
     "eos_token": "[EOS]",
-    # "mask_token": "[MASK]",
     "sep_token": "[SEP]",
+    # "mask_token": "[MASK]",
 }
 additional_special_tokens = []
 
