@@ -885,7 +885,20 @@ class InterleaveDataManager:
         return {"batch": batch, "rewards": rewards}
     
     def _get_reward_for_range(self, start: int, end: int) -> float:
-        """Get the reward for a token range, handling sequence boundaries properly."""
+        """Get the reward for a token range, handling sequence boundaries properly.
+        
+        This implements sequence-level reward assignment where:
+        - If a chunk is entirely within one sequence, it gets that sequence's full reward
+        - If a chunk spans multiple sequences, it gets a weighted average
+        - This ensures that long sequences split across batches are rewarded consistently
+        
+        Args:
+            start: Start index in current token stream
+            end: End index in current token stream
+            
+        Returns:
+            The reward value for this range
+        """
         # Adjust indices to account for stream offset
         abs_start = self.current_stream_offset + start
         abs_end = self.current_stream_offset + end
@@ -907,12 +920,14 @@ class InterleaveDataManager:
         
         # If we have overlapping sequences, return weighted average
         if overlapping_rewards:
-            # If a single sequence fully contains this range, just return its reward
+            # COMMON CASE: If a single sequence fully contains this chunk, 
+            # give it the full reward (most chunks will be fully within one sequence)
             for seq_start, seq_end, reward in self.sequence_boundaries:
                 if seq_start <= abs_start and seq_end >= abs_end:
                     return reward
             
-            # Otherwise, return weighted average
+            # EDGE CASE: Chunk spans multiple sequences (rare)
+            # Use weighted average based on token overlap
             total_weight = sum(overlap_weights)
             if total_weight > 0:
                 weighted_reward = sum(r * w for r, w in zip(overlapping_rewards, overlap_weights))

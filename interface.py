@@ -67,12 +67,7 @@ class LogCapture:
                 return
 
         self.log_buffer.write(data)
-        # Force immediate logging for [RL] messages
-        if "[RL]" in data:
-            # Force flush and add to dashboard immediately
-            self.dashboard.add_log(data.rstrip())
-        else:
-            self.dashboard.add_log(data)
+        self.dashboard.add_log(data.rstrip())
 
     def flush(self):
         self.log_buffer.flush()
@@ -260,9 +255,7 @@ class TerminalDashboard:
             # Strip ANSI codes and split the message into lines
             stripped_message = self._strip_ansi(message)
             # Don't strip lines - preserve them as-is, but filter empty ones
-            new_lines = [
-                line for line in stripped_message.splitlines() if line
-            ]
+            new_lines = [line for line in stripped_message.splitlines() if line]
             # Handle single line messages without newlines
             if not new_lines and stripped_message.strip():
                 new_lines = [stripped_message.strip()]
