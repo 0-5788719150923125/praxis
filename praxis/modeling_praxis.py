@@ -14,7 +14,7 @@ from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, Praxi
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
-from praxis.reinforcement import RLPolicy
+from praxis.policies.reinforce import REINFORCE
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.utils import create_block_ids
 
@@ -122,7 +122,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Initialize RL policy if requested
         self.policy = None
         if getattr(config, "reinforce", False):
-            self.policy = RLPolicy(config)
+            self.policy = REINFORCE(config)
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -244,14 +244,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         )
 
         # Apply RL policy if enabled
-        rl_loss = None
         hidden_states = outputs.last_hidden_state
         if self.policy is not None:
             hidden_states, rl_loss = self.policy(
                 hidden_states, rewards=rewards, mask=attention_mask
             )
-            if rl_loss is not None:
-                outputs.losses.add_loss("rl_policy", rl_loss)
+            outputs.losses.add_loss("rl_policy", rl_loss)
 
         backward_logits = None
         if self.encoder:
