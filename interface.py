@@ -67,14 +67,19 @@ class LogCapture:
                 return
 
         self.log_buffer.write(data)
-        self.dashboard.add_log(data)
+        # Force immediate logging for [RL] messages
+        if "[RL]" in data:
+            # Force flush and add to dashboard immediately
+            self.dashboard.add_log(data.rstrip())
+        else:
+            self.dashboard.add_log(data)
 
     def flush(self):
         self.log_buffer.flush()
 
 
 class TerminalDashboard:
-    def __init__(self, seed, max_data_points=1000, max_log_lines=100):
+    def __init__(self, seed, max_data_points=1000, max_log_lines=200):
         self.seed = seed
         self.term = blessed.Terminal()
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -254,9 +259,13 @@ class TerminalDashboard:
         with self.lock:
             # Strip ANSI codes and split the message into lines
             stripped_message = self._strip_ansi(message)
+            # Don't strip lines - preserve them as-is, but filter empty ones
             new_lines = [
-                line.strip() for line in stripped_message.splitlines() if line.strip()
+                line for line in stripped_message.splitlines() if line
             ]
+            # Handle single line messages without newlines
+            if not new_lines and stripped_message.strip():
+                new_lines = [stripped_message.strip()]
             self.log_buffer.extend(new_lines)
 
     def _strip_ansi(self, text):

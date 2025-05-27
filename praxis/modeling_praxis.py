@@ -14,6 +14,7 @@ from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, Praxi
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
+from praxis.reinforcement import RLPolicy
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.utils import create_block_ids
 
@@ -117,6 +118,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         self.criterion = get_loss_function(config.loss_func, config.vocab_size)
         self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
+
+        # Initialize RL policy if requested
+        self.policy = None
+        if getattr(config, "reinforce", False):
+            self.policy = RLPolicy(config)
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -225,6 +231,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        rewards: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         outputs = super().forward(
@@ -236,22 +243,32 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return_dict=return_dict,
         )
 
+        # Apply RL policy if enabled
+        rl_loss = None
+        hidden_states = outputs.last_hidden_state
+        if self.policy is not None:
+            hidden_states, rl_loss = self.policy(
+                hidden_states, rewards=rewards, mask=attention_mask
+            )
+            if rl_loss is not None:
+                outputs.losses.add_loss("rl_policy", rl_loss)
+
         backward_logits = None
         if self.encoder:
             logits = self.encoder.decode(
-                outputs.last_hidden_state,
+                hidden_states,
                 outputs.h_encoder,
                 input_ids,
                 outputs.patch_lengths,
             )
             classifier = None
         else:
-            logits = self.head(outputs.last_hidden_state)
+            logits = self.head(hidden_states)
             classifier = self.head.classifier
 
             # Compute backward logits if we have a separate backward head
             if self.backward_head is not None:
-                backward_logits = self.backward_head(outputs.last_hidden_state)
+                backward_logits = self.backward_head(hidden_states)
 
         loss = 0
         if labels is not None:
@@ -259,7 +276,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 main_loss = self._compute_bidirectional_loss(
                     logits=logits,
                     labels=labels,
-                    embeddings=outputs.last_hidden_state,
+                    embeddings=hidden_states,
                     classifier=classifier,
                     input_ids=input_ids,
                     backward_logits=backward_logits,
@@ -268,7 +285,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 main_loss = self._compute_loss(
                     logits=logits,
                     labels=labels,
-                    embeddings=outputs.last_hidden_state,
+                    embeddings=hidden_states,
                     classifier=classifier,
                     input_ids=input_ids,
                 )

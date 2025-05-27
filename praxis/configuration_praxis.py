@@ -120,3 +120,5 @@ class PraxisConfig(PretrainedConfig):
         self.bidirectional = kwargs.get("bidirectional", False)
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
         self.tie_word_embeddings = kwargs.get("tie_weights", False)
+        self.reinforce = kwargs.get("reinforce", False)
+        self.rl_weight = kwargs.get("rl_weight", 0.1)

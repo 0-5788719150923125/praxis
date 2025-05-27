@@ -482,6 +482,12 @@ data_group.add_argument(
     default=False,
     help="Disable training on the model's own source code",
 )
+data_group.add_argument(
+    "--reinforce",
+    action="store_true",
+    default=False,
+    help="Enable reinforcement learning for chain-of-thought operations using INTELLECT-2-RL-Dataset",
+)
 # other
 other_group.add_argument(
     "--seed",

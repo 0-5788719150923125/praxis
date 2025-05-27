@@ -1,7 +1,9 @@
 import os
 import random
 import re
+import sys
 import time
+from collections import defaultdict
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
@@ -10,6 +12,100 @@ from datasets import load_dataset
 from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
+
+
+class RLLogger:
+    """Centralized logging for RL training metrics."""
+    
+    def __init__(self):
+        self.stats = defaultdict(lambda: defaultdict(int))
+        self.batch_count = 0
+        self.last_log_batch = 0
+        self.log_interval = 50  # Log every N batches
+        
+    def log_batch(self, rewards, source="unknown"):
+        """Log statistics for a batch of rewards."""
+        self.batch_count += 1
+        
+        if isinstance(rewards, torch.Tensor):
+            rewards = rewards.tolist()
+        
+        # Update statistics
+        self.stats["total"]["sequences"] += len(rewards)
+        non_zero = [r for r in rewards if r > 0]
+        self.stats["total"]["rl_sequences"] += len(non_zero)
+        
+        if non_zero:
+            self.stats["rewards"]["count"] += len(non_zero)
+            self.stats["rewards"]["sum"] += sum(non_zero)
+            if "min" not in self.stats["rewards"]:
+                self.stats["rewards"]["min"] = min(non_zero)
+            else:
+                self.stats["rewards"]["min"] = min(self.stats["rewards"]["min"], min(non_zero))
+            
+            if "max" not in self.stats["rewards"]:
+                self.stats["rewards"]["max"] = max(non_zero)
+            else:
+                self.stats["rewards"]["max"] = max(self.stats["rewards"]["max"], max(non_zero))
+            
+            # Track reward distribution
+            for r in non_zero:
+                bucket = f"{int(r * 10) / 10:.1f}"
+                self.stats["distribution"][bucket] += 1
+        
+        # Log periodically
+        if self.batch_count - self.last_log_batch >= self.log_interval:
+            self._print_summary()
+            self.last_log_batch = self.batch_count
+    
+    def log_dataset_sample(self, dataset_name, has_reward):
+        """Log when a dataset is sampled."""
+        self.stats["dataset_samples"][dataset_name] += 1
+        if has_reward:
+            self.stats["dataset_rl_samples"][dataset_name] += 1
+    
+    def log_reward_found(self, reward, dataset_name):
+        """Log when a reward is found during sequence creation."""
+        self.stats["rewards_by_dataset"][dataset_name] += 1
+        if "reward_values" not in self.stats:
+            self.stats["reward_values"] = defaultdict(list)
+        self.stats["reward_values"][dataset_name].append(reward)
+    
+    def _print_summary(self):
+        """Print a summary of RL statistics."""
+        total_seq = self.stats["total"]["sequences"]
+        rl_seq = self.stats["total"]["rl_sequences"]
+        
+        if total_seq == 0:
+            return
+            
+        print(f"\n[RL Stats] After {self.batch_count} batches:")
+        print(f"  Total sequences: {total_seq:,}")
+        print(f"  RL sequences: {rl_seq:,} ({100.0 * rl_seq / total_seq:.1f}%)")
+        
+        if self.stats["rewards"]["count"] > 0:
+            avg_reward = self.stats["rewards"]["sum"] / self.stats["rewards"]["count"]
+            print(f"  Rewards: avg={avg_reward:.3f}, min={self.stats['rewards']['min']:.3f}, max={self.stats['rewards']['max']:.3f}")
+            
+            # Show reward distribution
+            if self.stats["distribution"]:
+                print("  Distribution:")
+                for bucket in sorted(self.stats["distribution"].keys()):
+                    count = self.stats["distribution"][bucket]
+                    pct = 100.0 * count / self.stats["rewards"]["count"]
+                    print(f"    [{bucket}]: {count:4d} ({pct:5.1f}%)")
+        
+        # Show dataset sampling
+        if self.stats["dataset_samples"]:
+            print("  Dataset sampling:")
+            for dataset, count in self.stats["dataset_samples"].items():
+                rl_count = self.stats["dataset_rl_samples"].get(dataset, 0)
+                print(f"    {dataset}: {count:,} samples, {rl_count:,} with rewards")
+        
+        print()
+
+# Global RL logger instance
+_rl_logger = RLLogger()
 
 
 class DataFormat(Enum):
@@ -21,6 +117,7 @@ class DataFormat(Enum):
     SMOLTALK = "smoltalk"
     SODA = "soda"
     WIKI = "wiki"
+    RL = "rl"
 
 
 HUGGINGFACE_DATASETS = {
@@ -141,6 +238,13 @@ HUGGINGFACE_DATASETS = {
         keys=["text"],
         format=DataFormat.SIMPLE,
     ),
+    "intellect-rl": dict(
+        path="PrimeIntellect/INTELLECT-2-RL-Dataset",
+        split="train",
+        keys=["prompt", "verification_info", "solve_rate_qwen_r1_distill_7b"],
+        format=DataFormat.RL,
+        streaming=True,
+    ),
 }
 
 DEFAULT_WEIGHT = 1.0
@@ -176,6 +280,9 @@ DATASET_COLLECTIONS = dict(
     },
     redpajama={
         "redpajama": DEFAULT_WEIGHT,
+    },
+    rl={
+        "intellect-rl": DEFAULT_WEIGHT,
     },
 )
 
@@ -401,6 +508,64 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
+def format_rl(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> Dict[str, Any]:
+    """
+    Format RL dataset for chain-of-thought training.
+
+    The format includes:
+    - prompt: The mathematical problem
+    - verification_info: JSON with ground truth answer
+    - solve_rate: Performance score (0-1) used as reward signal
+    
+    Returns a dict with 'text' and 'reward' keys.
+    """
+    assert len(keys) == 3, "RL format requires exactly 3 keys"
+
+    prompt = document.get(keys[0], "")
+    verification_info = document.get(keys[1], "{}")
+    solve_rate = document.get(keys[2], 0.0)
+
+    # Log every Nth document for monitoring
+    if not hasattr(format_rl, "_doc_count"):
+        format_rl._doc_count = 0
+        format_rl._doc_log_interval = 100
+    
+    format_rl._doc_count += 1
+    
+    # Log first few documents and then periodically
+    if format_rl._doc_count <= 5 or format_rl._doc_count % format_rl._doc_log_interval == 0:
+        print(f"[RL Dataset] Document {format_rl._doc_count} - solve_rate: {solve_rate:.3f}")
+
+    # Parse the ground truth from verification_info
+    import json
+
+    try:
+        verification_data = json.loads(verification_info)
+        ground_truth = verification_data.get("ground_truth", "")
+    except:
+        ground_truth = ""
+
+    # Create a chain-of-thought style conversation
+    # The assistant should generate reasoning steps before the answer
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a mathematical problem solver. Solve the problem step by step.",
+        },
+        {"role": "user", "content": prompt},
+        {
+            "role": "assistant",
+            "content": f"Let me solve this step by step.\n\n[Chain of thought reasoning would go here]\n\nTherefore, the answer is: {ground_truth}",
+        },
+    ]
+
+    # Apply chat template WITHOUT embedding rewards
+    text = tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    
+    # Return both text and reward separately
+    return {"text": text, "reward": solve_rate}
+
+
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Formats a single SODA example using the tokenizer's chat template."""
     speakers = document[keys[0]]
@@ -488,6 +653,7 @@ FORMAT_HANDLERS = {
     DataFormat.SMOLTALK: format_smoltalk,
     DataFormat.SODA: format_soda,
     DataFormat.WIKI: format_wiki,
+    DataFormat.RL: format_rl,
 }
 
 
@@ -501,8 +667,10 @@ def get_datamodules(
     tokenizer,
     hparams,
     data_path,
+    reinforce: bool = False,
     *args,
 ):
+    print(f"[RL] get_datamodules called with reinforce={reinforce}")
 
     # An important warning
     if gun and seed and not dev:
@@ -512,7 +680,7 @@ def get_datamodules(
         time.sleep(5)
 
     train_data = []
-    config = get_dataset_configs(dev, pile, phi)
+    config = get_dataset_configs(dev, pile, phi, reinforce)
     for c in config["primary"]:
         # load configs for huggingface datasets
         train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
@@ -559,6 +727,7 @@ def get_datamodules(
         hparams["oversample_chance"],
         hparams["supersample_chance"],
         hparams["hypersample_chance"],
+        reinforce=reinforce,
     )
 
     return train_dataloader
@@ -618,7 +787,7 @@ def add_collection(config, collection_name, target_key):
     return config
 
 
-def get_dataset_configs(dev: bool, pile: bool, phi: bool):
+def get_dataset_configs(dev: bool, pile: bool, phi: bool, reinforce: bool = False):
     config = {"primary": [], "validation": []}
     if pile:
         config = add_collection(config, "pile", "primary")
@@ -630,28 +799,42 @@ def get_dataset_configs(dev: bool, pile: bool, phi: bool):
         if dev:
             config["primary"] = []
             config = add_collection(config, "dev", "primary")
+            # Add RL datasets even in dev mode if reinforce is enabled
+            if reinforce:
+                config = add_collection(config, "rl", "primary")
         else:
+            if reinforce:
+                config = add_collection(config, "rl", "primary")
             config = add_collection(config, "redpajama", "validation")
     print("training on:")
     [
         print(f"dataset: {entry['path']}, weight: {entry['weight']}")
         for entry in config["primary"]
     ]
+    
+    # Debug: print reinforce status
+    if reinforce:
+        print(f"[RL] Reinforce enabled, {len([e for e in config['primary'] if 'RL' in e.get('path', '')])} RL datasets in config")
+    
     return config
 
 
 class InterleaveDataManager:
     def __init__(
-        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000
+        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000, reinforce=False
     ):
         self.samplers = samplers
         self.weights = weights
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.text_cache_size = text_cache_size
+        self.reinforce = reinforce
         self.token_stream = torch.tensor(
             [], dtype=torch.long
         )  # Single continuous stream
+        # Track sequences and their boundaries
+        self.sequence_boundaries = []  # List of (start_idx, end_idx, reward) tuples
+        self.current_stream_offset = 0  # Track position in token stream
 
     def get_batch(
         self,
@@ -659,7 +842,7 @@ class InterleaveDataManager:
         oversample: bool = False,
         supersample: bool = False,
         hypersample: bool = False,
-    ) -> List[torch.Tensor]:
+    ) -> Dict[str, Any]:
         sequence_length = self.block_size
         current_batch_size = batch_size
 
@@ -683,38 +866,132 @@ class InterleaveDataManager:
 
         # Extract batch
         batch = []
+        rewards = [] if self.reinforce else None
+        
         for i in range(current_batch_size):
             start = i * sequence_length
             end = start + sequence_length
             batch.append(self.token_stream[start:end])
+            
+            # Find the reward for this sequence chunk if reinforce is enabled
+            if self.reinforce:
+                sequence_reward = self._get_reward_for_range(start, end)
+                rewards.append(sequence_reward)
 
-        # Remove used tokens from the stream
+        # Remove used tokens from the stream and update boundaries
         self.token_stream = self.token_stream[tokens_needed:]
+        self._update_boundaries_after_removal(tokens_needed)
 
-        return batch
+        return {"batch": batch, "rewards": rewards}
+    
+    def _get_reward_for_range(self, start: int, end: int) -> float:
+        """Get the reward for a token range, handling sequence boundaries properly."""
+        # Adjust indices to account for stream offset
+        abs_start = self.current_stream_offset + start
+        abs_end = self.current_stream_offset + end
+        
+        # Find all sequences that overlap with this range
+        overlapping_rewards = []
+        overlap_weights = []
+        
+        for seq_start, seq_end, reward in self.sequence_boundaries:
+            # Calculate overlap
+            overlap_start = max(abs_start, seq_start)
+            overlap_end = min(abs_end, seq_end)
+            
+            if overlap_start < overlap_end:
+                # This sequence overlaps with our range
+                overlap_size = overlap_end - overlap_start
+                overlapping_rewards.append(reward)
+                overlap_weights.append(overlap_size)
+        
+        # If we have overlapping sequences, return weighted average
+        if overlapping_rewards:
+            # If a single sequence fully contains this range, just return its reward
+            for seq_start, seq_end, reward in self.sequence_boundaries:
+                if seq_start <= abs_start and seq_end >= abs_end:
+                    return reward
+            
+            # Otherwise, return weighted average
+            total_weight = sum(overlap_weights)
+            if total_weight > 0:
+                weighted_reward = sum(r * w for r, w in zip(overlapping_rewards, overlap_weights))
+                return weighted_reward / total_weight
+        
+        # No overlap found, return 0
+        return 0.0
+    
+    def _update_boundaries_after_removal(self, tokens_removed: int):
+        """Update sequence boundaries after removing tokens from the stream."""
+        self.current_stream_offset += tokens_removed
+        
+        # Remove boundaries that are now completely before the current stream
+        self.sequence_boundaries = [
+            (start, end, reward) 
+            for start, end, reward in self.sequence_boundaries 
+            if end > self.current_stream_offset
+        ]
 
-    def _create_interleaved_sequence(self) -> str:
-        """Create a single interleaved sequence from multiple samplers"""
-        sequence = ""
-        while len(sequence) < self.text_cache_size:
+    def _extend_token_stream(self):
+        """Add more tokens to our stream when needed, tracking sequence boundaries."""
+        sequences_to_add = []
+        total_text = ""
+        
+        # Collect sequences until we have enough text
+        while len(total_text) < self.text_cache_size:
             # Pick a sampler based on weights
             sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
-            # Use a separator token between sequences
-            sequence += new_sequences[0] + self.tokenizer.eos_token + "\n"
-        return sequence
-
-    def _extend_token_stream(self):
-        """Add more tokens to our stream when needed"""
-        interleaved = self._create_interleaved_sequence()
+            text = new_sequences[0]
+            
+            # Track dataset sampling
+            dataset_name = getattr(sampler, 'dataset_path', 'unknown')
+            
+            # Get reward for this sequence if applicable
+            reward = 0.0
+            has_reward = False
+            if self.reinforce and hasattr(sampler, 'reward_cache'):
+                import hashlib
+                text_hash = hashlib.md5(text.encode()).hexdigest()
+                reward = sampler.reward_cache.get(text_hash, 0.0)
+                has_reward = reward > 0
+                
+                if has_reward:
+                    _rl_logger.log_reward_found(reward, dataset_name)
+            
+            _rl_logger.log_dataset_sample(dataset_name, has_reward)
+            
+            # Add separator
+            text_with_sep = text + self.tokenizer.eos_token + "\n"
+            sequences_to_add.append((len(total_text), len(total_text) + len(text_with_sep), reward))
+            total_text += text_with_sep
+        
+        # Tokenize the entire text at once
         tokens = self.tokenizer(
-            text=interleaved,
-            padding=False,  # No padding needed since we're building a stream
+            text=total_text,
+            padding=False,
             return_tensors="pt",
-        )["input_ids"].squeeze(
-            0
-        )  # Get flat token sequence
+        )["input_ids"].squeeze(0)
+        
+        # Convert character positions to token positions
+        # This is approximate but should work well enough
+        chars_per_token = len(total_text) / len(tokens) if len(tokens) > 0 else 1.0
+        current_pos = self.current_stream_offset + len(self.token_stream)
+        
+        for char_start, char_end, reward in sequences_to_add:
+            # Estimate token positions based on character positions
+            token_start = current_pos + int(char_start / chars_per_token)
+            token_end = current_pos + int(char_end / chars_per_token)
+            
+            # Ensure we have at least one token per sequence
+            if token_end <= token_start:
+                token_end = token_start + 1
+                
+            # Store the boundary information
+            self.sequence_boundaries.append((token_start, token_end, reward))
+        
+        # Add tokens to stream
         self.token_stream = torch.cat([self.token_stream, tokens])
 
 
@@ -752,6 +1029,10 @@ class HuggingfaceDataset(PraxisSampler):
             else FORMAT_HANDLERS[self.format]
         )
         self.dataset_path = config.get("path", "HuggingFaceFW/fineweb")
+
+        # Debug log RL datasets
+        if self.format == DataFormat.RL:
+            print(f"[RL] Initializing RL dataset: {self.dataset_path}")
         dataset_args = dict(
             path=self.dataset_path,
             split=config.get("split", "train"),
@@ -770,12 +1051,28 @@ class HuggingfaceDataset(PraxisSampler):
         # Initialize the count for this dataset path if not exists
         if self.dataset_path not in HuggingfaceDataset.counts:
             HuggingfaceDataset.counts[self.dataset_path] = 0
+            
+        # Storage for rewards when using RL format
+        self.reward_cache = {}
 
     def fill_sequence_cache(self):
         try:
             document = next(self.dataset_iterator)
             formatted = self._format_document(document)
-            self.sequence_cache.append(formatted)
+            
+            # Handle RL format which returns dict
+            if self.format == DataFormat.RL and isinstance(formatted, dict):
+                text = formatted["text"]
+                reward = formatted["reward"]
+                # Store reward indexed by text hash
+                import hashlib
+                text_hash = hashlib.md5(text.encode()).hexdigest()
+                self.reward_cache[text_hash] = reward
+                self.sequence_cache.append(text)
+                
+            else:
+                # Regular format, just text
+                self.sequence_cache.append(formatted)
         except StopIteration:
             HuggingfaceDataset.counts[self.dataset_path] += 1
             print(
@@ -1006,14 +1303,20 @@ class WeightedIterableDataset(IterableDataset):
         oversample_chance: float = 0,
         supersample_chance: float = 0,
         hypersample_chance: float = 0,
+        reinforce: bool = False,
     ):
         self.data_manager = InterleaveDataManager(
-            datasets, weights, tokenizer, block_size
+            datasets, weights, tokenizer, block_size, reinforce=reinforce
         )
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
         self.supersample_chance = supersample_chance
         self.hypersample_chance = hypersample_chance
+        self.reinforce = reinforce
+        self.tokenizer = tokenizer  # Store tokenizer for reward extraction
+
+        # Debug log
+        print(f"[RL] WeightedIterableDataset initialized with reinforce={reinforce}")
 
     def __iter__(self):
         while True:
@@ -1021,10 +1324,31 @@ class WeightedIterableDataset(IterableDataset):
             supersample = random.random() < self.supersample_chance
             hypersample = random.random() < self.hypersample_chance
 
-            batch = self.data_manager.get_batch(
+            result = self.data_manager.get_batch(
                 self.batch_size, oversample, supersample, hypersample
             )
-            yield torch.stack(batch)
+
+            # Extract batch and rewards
+            batch = result["batch"]
+            rewards = result.get("rewards")
+
+            # Stack batch tensors
+            batch_tensor = torch.stack(batch)
+
+            # Handle rewards if reinforce is enabled
+            if self.reinforce and rewards:
+                # Convert rewards to tensor
+                reward_tensor = torch.tensor(rewards, dtype=torch.float32)
+                
+                # Log batch statistics
+                _rl_logger.log_batch(reward_tensor)
+                
+                # Return dict format with rewards
+                yield {"input_ids": batch_tensor, "rewards": reward_tensor}
+            else:
+                # No reinforcement learning, return regular tensor
+                yield batch_tensor
+
 
 
 class PraxisDataModule(LightningDataModule):
@@ -1038,8 +1362,10 @@ class PraxisDataModule(LightningDataModule):
         oversample_chance: float = 0,
         supersample_chance: float = 0,
         hypersample_chance: float = 0,
+        reinforce: bool = False,
     ):
         super().__init__()
+        self.reinforce = reinforce
         self.train_datasets = self.create_datasets(
             train_datasets,
             tokenizer,
@@ -1068,6 +1394,10 @@ class PraxisDataModule(LightningDataModule):
         # Get weights and normalize them while preserving relative magnitudes
         raw_weights = [dataset.weight for dataset in datasets]
         weights = [w / sum(raw_weights) for w in raw_weights]
+
+        # Debug log
+        print(f"[RL] Creating WeightedIterableDataset with reinforce={self.reinforce}")
+
         return WeightedIterableDataset(
             datasets,
             weights,
@@ -1077,6 +1407,7 @@ class PraxisDataModule(LightningDataModule):
             oversample_chance,
             supersample_chance,
             hypersample_chance,
+            reinforce=self.reinforce,
         )
 
     def train_dataloader(self):

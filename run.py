@@ -219,6 +219,7 @@ config = PraxisConfig(
     meta=meta,
     bidirectional=bidirectional,
     tie_weights=tie_weights,
+    reinforce=reinforce,
 )
 
 # Misc hyperparameters
@@ -318,27 +319,50 @@ class PraxisTrainer(LightningModule):
 
         current_time = datetime.now()
 
-        labels = batch[..., 1:].contiguous()
-        outputs = self.model(input_ids=batch, labels=labels)
+        # Handle RL batch format
+        if isinstance(batch, dict) and 'input_ids' in batch:
+            input_ids = batch['input_ids']
+            rewards = batch.get('rewards', None)
+        else:
+            input_ids = batch
+            rewards = None
+
+        labels = input_ids[..., 1:].contiguous()
+        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards)
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
-        batch_size, num_tokens = batch.shape
+        batch_size, num_tokens = input_ids.shape
         self.num_tokens += batch_size * num_tokens
 
         step_time = current_time - self.last_train_step_time
         self.train_step_ema = self._update_ema(self.train_step_ema, step_time)
         self.last_train_step_time = current_time
 
+        # Prepare metrics dict
+        metrics = {
+            "loss": loss,
+            "batch": int(batch_idx),
+            "learning_rate": self.scheduler.get_last_lr()[0],
+            "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
+            "avg_step_time": self.train_step_ema,
+            "softmax_collapse": softmax_collapse,
+        }
+        
+        # Add RL-specific metrics if available
+        if rewards is not None:
+            non_zero_rewards = (rewards > 0).sum().item()
+            if non_zero_rewards > 0:
+                metrics["rl_reward_mean"] = rewards[rewards > 0].mean()
+                metrics["rl_reward_max"] = rewards.max()
+                metrics["rl_sequences_pct"] = 100.0 * non_zero_rewards / len(rewards)
+                
+                # Extract RL loss if available
+                if hasattr(outputs, 'rl_loss') and outputs.rl_loss is not None:
+                    metrics["rl_loss"] = outputs.rl_loss
+
         self.log_dict(
-            {
-                "loss": loss,
-                "batch": int(batch_idx),
-                "learning_rate": self.scheduler.get_last_lr()[0],
-                "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
-                "avg_step_time": self.train_step_ema,
-                "softmax_collapse": softmax_collapse,
-            },
+            metrics,
             on_step=True,
             on_epoch=False,
             logger=True,
@@ -351,8 +375,16 @@ class PraxisTrainer(LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        labels = batch[..., 1:].contiguous()
-        outputs = self.model(input_ids=batch, labels=labels)
+        # Handle RL batch format
+        if isinstance(batch, dict) and 'input_ids' in batch:
+            input_ids = batch['input_ids']
+            rewards = batch.get('rewards', None)
+        else:
+            input_ids = batch
+            rewards = None
+
+        labels = input_ids[..., 1:].contiguous()
+        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards)
 
         stats = {}
 
@@ -360,7 +392,7 @@ class PraxisTrainer(LightningModule):
         stats["val_loss"] = loss
 
         if byte_latent:
-            stats["val_bits_per_byte"] = self._compute_bits_per_byte(batch, loss)
+            stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
             stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :], labels)
 
@@ -369,7 +401,7 @@ class PraxisTrainer(LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
-            batch_size=batch.size(0),
+            batch_size=input_ids.size(0),
             prog_bar=True,
             sync_dist=False,  # Don't sync across distributed processes
         )
@@ -570,7 +602,11 @@ class TerminalInterface(Callback):
         if not quiet:
             self._generate_text(lm, batch_idx, self.interval)
 
-        batch_size, _ = batch.shape
+        # Handle both tensor and dict batch formats
+        if isinstance(batch, dict) and 'input_ids' in batch:
+            batch_size, _ = batch['input_ids'].shape
+        else:
+            batch_size, _ = batch.shape
         swarm_info = lm.model.get_metrics()
         local_experts = swarm_info["experts"].get("local", 0)
         remote_experts = swarm_info["experts"].get("remote", 0)
@@ -1284,7 +1320,7 @@ if local_rank == 0:
 # Load datasets
 use_source_code = not no_source
 datamodule = get_datamodules(
-    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path
+    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path, reinforce
 )
 
 # create the optimizer
