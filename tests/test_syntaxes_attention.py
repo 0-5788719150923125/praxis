@@ -77,7 +77,7 @@ class TestSyntaxesAttention:
         if syntaxes_config.compression_method == "learnable_interpolation":
             assert hasattr(attention, 'interpolation_proj')
             assert hasattr(attention, 'compressed_pos_emb')
-            assert hasattr(attention, 'expansion_proj')
+            # expansion_proj was removed as we now use full-to-compressed attention
 
     def test_forward_pass_shape_consistency(self, syntaxes_config, batch_seq_dims):
         """Test that forward pass maintains input/output shape consistency."""
@@ -553,7 +553,7 @@ class TestSyntaxesAttention:
         # Check compression-specific parameters if applicable
         if base_config.compression_method == "learnable_interpolation":
             # Only interpolation_proj is used in the forward pass
-            # expansion_proj is initialized but not used in current implementation
+            # Note: expansion_proj was removed as we now use full-to-compressed attention
             compression_params = ['interpolation_proj.weight']
             for param_name in compression_params:
                 if param_name in grad_info:
