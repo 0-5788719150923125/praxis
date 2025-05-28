@@ -90,6 +90,7 @@ class PraxisConfig(PretrainedConfig):
         self.epsilon = epsilon
         self.vocab_size = vocab_size
         self.max_length = max_length
+        self.max_position_embeddings = max_length  # For syntaxes attention
         self.activation = activation
         self.block_type = block
         self.expert = expert
@@ -120,6 +121,8 @@ class PraxisConfig(PretrainedConfig):
         self.bidirectional = kwargs.get("bidirectional", False)
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
         self.tie_word_embeddings = kwargs.get("tie_weights", False)
-        self.rl_type = kwargs.get("rl_type", None)  # "reinforce", "grpo", "ppo", or None
+        self.rl_type = kwargs.get(
+            "rl_type", None
+        )  # "reinforce", "grpo", "ppo", or None
         self.rl_weight = kwargs.get("rl_weight", 0.1)
         self.grpo_group_size = kwargs.get("grpo_group_size", 8)  # For GRPO sampling
