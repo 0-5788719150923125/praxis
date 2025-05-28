@@ -20,23 +20,24 @@ class TestSyntaxesAttention:
         return PraxisConfig(
             hidden_size=64,  # Much smaller
             num_heads=4,     # Fewer heads
-            syntaxes_num_selected=16,  # Much smaller
+            syntaxes_query_compression_ratio=4,  # Default compression
+            syntaxes_window_size=32,  # Small window for testing
             max_length=128,  # Much smaller
             dropout=0.0,     # No dropout for deterministic tests
         )
 
     @pytest.fixture(params=[
-        # (num_selected,) - reduced test cases
+        # (compression_ratio,) - reduced test cases
+        (2,),
+        (4,),
         (8,),
-        (16,),
-        (32,),
     ])
     def syntaxes_config(self, base_config, request) -> PraxisConfig:
         """Parametrized configuration for different syntaxes methods."""
-        num_selected, = request.param
+        compression_ratio, = request.param
         
         config = base_config
-        config.syntaxes_num_selected = num_selected
+        config.syntaxes_query_compression_ratio = compression_ratio
         
         return config
 
@@ -54,7 +55,8 @@ class TestSyntaxesAttention:
         
         assert attention.hidden_size == syntaxes_config.hidden_size
         assert attention.num_heads == syntaxes_config.num_heads
-        assert attention.num_selected == syntaxes_config.syntaxes_num_selected
+        assert attention.query_compression_ratio == getattr(syntaxes_config, 'syntaxes_query_compression_ratio', 4)
+        assert attention.window_size == getattr(syntaxes_config, 'syntaxes_window_size', 128)
         
         # Check that parameters are properly initialized
         assert hasattr(attention, 'q_proj')
@@ -144,57 +146,57 @@ class TestSyntaxesAttention:
         assert len(non_zero_grads) > 0, "All gradients are effectively zero"
 
     def test_window_size_effects(self, base_config):
-        """Test that different window sizes produce different outputs."""
+        """Test that different compression ratios produce different outputs."""
         torch.manual_seed(42)  # For reproducible results
         
         batch_size, seq_len = 2, 64  # Much smaller
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
         
-        # Test with small window
-        config_small = base_config
-        config_small.syntaxes_num_selected = 8
-        attention_small = SyntaxesAttention(config_small)
+        # Test with high compression
+        config_high = base_config
+        config_high.syntaxes_query_compression_ratio = 8
+        attention_high = SyntaxesAttention(config_high)
         
-        # Test with larger window
-        config_large = base_config
-        config_large.syntaxes_num_selected = 32
-        attention_large = SyntaxesAttention(config_large)
+        # Test with low compression
+        config_low = base_config
+        config_low.syntaxes_query_compression_ratio = 2
+        attention_low = SyntaxesAttention(config_low)
         
         with torch.no_grad():
-            output_small, _, _ = attention_small(inputs=inputs)
-            output_large, _, _ = attention_large(inputs=inputs)
+            output_high, _, _ = attention_high(inputs=inputs)
+            output_low, _, _ = attention_low(inputs=inputs)
         
-        # Outputs should be different between window sizes
-        assert not torch.allclose(output_small, output_large, atol=1e-3)
+        # Outputs should be different between compression ratios
+        assert not torch.allclose(output_high, output_low, atol=1e-3)
 
     def test_different_num_selected(self, base_config):
-        """Test that different num_selected values produce different outputs."""
+        """Test that different compression ratios produce different outputs."""
         torch.manual_seed(42)
         
         batch_size, seq_len = 2, 64  # Much smaller
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
         
-        num_selected_values = [8, 16]  # Fewer values
+        compression_ratios = [2, 4]  # Fewer values
         outputs = {}
         
-        for num_selected in num_selected_values:
+        for ratio in compression_ratios:
             config = base_config
-            config.syntaxes_num_selected = num_selected
+            config.syntaxes_query_compression_ratio = ratio
             
             attention = SyntaxesAttention(config)
             
             with torch.no_grad():
                 output, _, _ = attention(inputs=inputs)
             
-            outputs[num_selected] = output
+            outputs[ratio] = output
         
-        # Outputs should be different between different num_selected values
+        # Outputs should be different between different compression ratios
         values = list(outputs.keys())
         for i in range(len(values)):
             for j in range(i + 1, len(values)):
                 val1, val2 = values[i], values[j]
                 diff = torch.abs(outputs[val1] - outputs[val2]).mean()
-                assert diff > 1e-4, f"Outputs too similar between num_selected={val1} and {val2}: {diff}"
+                assert diff > 1e-4, f"Outputs too similar between compression_ratio={val1} and {val2}: {diff}"
 
     @pytest.mark.parametrize("seq_len", [32, 64])  # Much smaller
     def test_different_sequence_lengths(self, base_config, seq_len):
@@ -238,19 +240,26 @@ class TestSyntaxesAttention:
     def test_memory_complexity_reduction(self, base_config):
         """Test theoretical memory complexity reduction."""
         seq_len = 128  # Much smaller
-        num_selected = base_config.syntaxes_num_selected
+        compression_ratio = base_config.syntaxes_query_compression_ratio
+        window_size = base_config.syntaxes_window_size
         num_heads = base_config.num_heads
         batch_size = 2  # Smaller batch
         
+        compressed_seq_len = seq_len // compression_ratio
+        
         # Memory for attention scores
-        syntaxes_memory = seq_len * num_selected * num_heads * batch_size
+        # Syntaxes: compressed queries attend to window_size keys
+        syntaxes_memory = compressed_seq_len * window_size * num_heads * batch_size
+        # Vanilla: all queries attend to all seq_len keys
         vanilla_memory = seq_len ** 2 * num_heads * batch_size
         
         reduction_factor = vanilla_memory / syntaxes_memory
-        expected_reduction = seq_len / num_selected
+        # Expected reduction: (seq_len * seq_len) / (compressed_seq_len * window_size)
+        expected_reduction = (seq_len * seq_len) / (compressed_seq_len * window_size)
         
+        # Allow small numerical error
         assert abs(reduction_factor - expected_reduction) < 1e-6
-        assert reduction_factor > 4, f"Memory reduction too small: {reduction_factor:.1f}x"
+        assert reduction_factor > 1, f"No memory reduction: {reduction_factor:.1f}x"
 
     def test_kv_caching_not_implemented(self, base_config):
         """Test that KV caching raises NotImplementedError."""
@@ -327,12 +336,12 @@ class TestSyntaxesAttention:
 
     def test_edge_cases(self, base_config):
         """Test edge cases and boundary conditions."""
-        # Test when num_selected > seq_len
+        # Test when compression_ratio > seq_len
         config = base_config
-        config.syntaxes_num_selected = 32
+        config.syntaxes_query_compression_ratio = 32
         attention = SyntaxesAttention(config)
         
-        batch_size, seq_len = 2, 16  # seq_len < num_selected
+        batch_size, seq_len = 2, 16  # seq_len < compression_ratio
         inputs = torch.randn(batch_size, seq_len, config.hidden_size)
         
         with torch.no_grad():

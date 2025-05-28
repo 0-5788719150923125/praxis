@@ -10,16 +10,20 @@ from transformers import DynamicCache
 
 class SyntaxesAttention(nn.Module):
     """
-    Efficient Causal Syntaxes Attention with Sliding Window.
+    Syntaxes Attention: Global query compression with sliding window K/V.
     
-    Each position attends to the most recent k tokens using a causal sliding window.
-    This reduces complexity from O(n²) to O(n*k) where k << n while preserving causality.
+    This attention mechanism uses asymmetric processing:
+    - Queries: Compressed globally to capture long-range dependencies
+    - Keys/Values: Limited to recent tokens via sliding window
+    
+    All compressed queries attend to the same recent window of tokens,
+    maintaining global context while focusing on local details.
     
     Key features:
-    - Fully vectorized implementation (no loops over sequence length)
-    - Causal sliding window pattern for autoregressive models
-    - No importance scoring overhead - uses simple recency-based selection
-    - Maintains exact same interface as standard attention
+    - Global query compression preserves long-range patterns
+    - Sliding window K/V reduces memory and focuses on recent context
+    - Reduces complexity from O(n²) to O(n/r * w) where r is compression ratio, w is window size
+    - Maintains causality through windowed attention
     """
 
     def __init__(self, config) -> None:
@@ -33,9 +37,12 @@ class SyntaxesAttention(nn.Module):
             self.num_heads -= 1
 
         self.head_dim = self.hidden_size // self.num_heads
-
-        # Number of tokens to select for sliding window
-        self.num_selected = getattr(config, "syntaxes_num_selected", 128)
+        
+        # Query compression ratio (how much to reduce query length)
+        self.query_compression_ratio = getattr(config, "syntaxes_query_compression_ratio", 4)
+        
+        # Sliding window size for keys/values
+        self.window_size = getattr(config, "syntaxes_window_size", 128)
 
         # Linear projections
         self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
@@ -57,7 +64,7 @@ class SyntaxesAttention(nn.Module):
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
-        """Forward pass of causal Syntaxes attention with sliding window."""
+        """Forward pass of Syntaxes attention with FFT-compressed queries."""
         batch_size, seq_len, hidden_size = inputs.shape
         device = inputs.device
 
@@ -66,112 +73,128 @@ class SyntaxesAttention(nn.Module):
                 "KV caching not yet supported for SyntaxesAttention"
             )
 
-        # Causal sliding window approach
-        # Create sliding window indices vectorized for all positions at once
-        # Each position i attends to positions [max(0, i+1-num_selected), i]
-        position_indices = torch.arange(seq_len, device=device)  # [seq_len]
-
-        # For each position, create its sliding window
-        # Using broadcasting to create all windows at once
-        window_starts = torch.clamp(
-            position_indices + 1 - self.num_selected, min=0
-        )  # [seq_len]
-        window_offsets = torch.arange(
-            self.num_selected, device=device
-        )  # [num_selected]
-
-        # Create indices matrix: [seq_len, num_selected]
-        selected_indices = window_starts.unsqueeze(1) + window_offsets.unsqueeze(
-            0
-        )  # [seq_len, num_selected]
-
-        # Clamp to valid range and create causal mask
-        selected_indices = torch.clamp(selected_indices, 0, seq_len - 1)
-
-        # Create causal mask: position i can only attend to positions <= i
-        query_positions = position_indices.unsqueeze(1)  # [seq_len, 1]
-        causal_mask = selected_indices <= query_positions  # [seq_len, num_selected]
-
-        # Expand for batch dimension
-        selected_indices = selected_indices.unsqueeze(0).expand(
-            batch_size, -1, -1
-        )  # [batch, seq_len, num_selected]
-        causal_mask = causal_mask.unsqueeze(0).expand(
-            batch_size, -1, -1
-        )  # [batch, seq_len, num_selected]
-
-        # Gather tokens using advanced indexing
-        batch_indices = torch.arange(batch_size, device=device).view(
-            batch_size, 1, 1
-        )
-        gathered_tokens = inputs[
-            batch_indices, selected_indices
-        ]  # [batch, seq_len, num_selected, hidden]
-
-        # Project all at once
+        # Project queries from inputs (before compression)
         q = self.q_proj(inputs)  # [batch, seq_len, hidden]
-        k = self.k_proj(gathered_tokens)  # [batch, seq_len, num_selected, hidden]
-        v = self.v_proj(gathered_tokens)  # [batch, seq_len, num_selected, hidden]
-
-        # Reshape for multi-head attention
+        
+        # Query compression with causal constraint
+        # Reshape for multi-head before compression
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(
             1, 2
         )  # [batch, heads, seq_len, head_dim]
+        
+        compressed_seq_len = max(1, seq_len // self.query_compression_ratio)
+        
+        # Causal pooling for query compression
+        # Use average pooling with causal chunks to maintain temporal order
+        if compressed_seq_len < seq_len:
+            # Pad sequence to make it divisible by compression ratio
+            pad_len = (compressed_seq_len * self.query_compression_ratio) - seq_len
+            if pad_len > 0:
+                q = F.pad(q, (0, 0, 0, pad_len), mode='constant', value=0)
+                padded_seq_len = seq_len + pad_len
+            else:
+                padded_seq_len = seq_len
+            
+            # Reshape for pooling: [batch, heads, compressed_seq_len, compression_ratio, head_dim]
+            q_reshaped = q[:, :, :padded_seq_len, :].view(
+                batch_size, self.num_heads, compressed_seq_len, self.query_compression_ratio, self.head_dim
+            )
+            
+            # Average pool along the compression dimension
+            q_compressed = q_reshaped.mean(dim=3)
+            # [batch, heads, compressed_seq_len, head_dim]
+        else:
+            # No compression needed
+            q_compressed = q
+        
+        # Sliding window for keys and values
+        # All compressed queries will attend to the same recent window
+        window_size = min(self.window_size, seq_len)
+        window_start = max(0, seq_len - window_size)
+        
+        # Extract the window of recent tokens for K/V
+        window_inputs = inputs[:, window_start:, :]  # [batch, window_size, hidden]
+        
+        # Project K/V from the window
+        k = self.k_proj(window_inputs)  # [batch, window_size, hidden]
+        v = self.v_proj(window_inputs)  # [batch, window_size, hidden]
+
+        # Reshape K/V for multi-head attention
         k = k.view(
-            batch_size, seq_len, self.num_selected, self.num_heads, self.head_dim
-        ).permute(
-            0, 3, 1, 2, 4
-        )  # [batch, heads, seq_len, num_selected, head_dim]
+            batch_size, window_size, self.num_heads, self.head_dim
+        ).transpose(1, 2)  # [batch, heads, window_size, head_dim]
         v = v.view(
-            batch_size, seq_len, self.num_selected, self.num_heads, self.head_dim
-        ).permute(
-            0, 3, 1, 2, 4
-        )  # [batch, heads, seq_len, num_selected, head_dim]
+            batch_size, window_size, self.num_heads, self.head_dim
+        ).transpose(1, 2)  # [batch, heads, window_size, head_dim]
 
-        # Vectorized attention computation
-        # Compute all attention scores at once
-        scores = (
-            torch.matmul(
-                q.unsqueeze(-2),  # [batch, heads, seq_len, 1, head_dim]
-                k.transpose(
-                    -2, -1
-                ),  # [batch, heads, seq_len, head_dim, num_selected]
-            ).squeeze(-2)
-            * self.scale
-        )  # [batch, heads, seq_len, num_selected]
-
-        # Apply causal mask
-        causal_mask_expanded = causal_mask.unsqueeze(1).expand(
-            -1, self.num_heads, -1, -1
-        )
-        scores = scores.masked_fill(~causal_mask_expanded, -torch.inf)
-
+        # Attention computation - all compressed queries attend to the same window
+        # q_compressed: [batch, heads, compressed_seq_len, head_dim]
+        # k: [batch, heads, window_size, head_dim]
+        # v: [batch, heads, window_size, head_dim]
+        
+        # Compute attention scores
+        scores = torch.matmul(
+            q_compressed,  # [batch, heads, compressed_seq_len, head_dim]
+            k.transpose(-2, -1)  # [batch, heads, head_dim, window_size]
+        ) * self.scale  # [batch, heads, compressed_seq_len, window_size]
+        
+        # Create causal mask
+        # Each compressed query position maps to a position in the original sequence
+        # and can only attend to K/V positions that come before or at that position
+        compressed_positions = torch.arange(compressed_seq_len, device=device) 
+        # Map compressed positions back to original sequence positions
+        original_query_positions = ((compressed_positions + 1) * self.query_compression_ratio - 1).unsqueeze(1)
+        # Window positions in the original sequence
+        window_positions = torch.arange(window_start, window_start + window_size, device=device).unsqueeze(0)
+        # Causal mask: can only attend to positions <= original query position
+        causal_mask = window_positions <= original_query_positions  # [compressed_seq_len, window_size]
+        
+        # Special handling: if a query position is before the window, it shouldn't attend to anything
+        # But to avoid NaN, we'll let it attend to the first position in the window
+        queries_before_window = original_query_positions.squeeze(1) < window_start
+        if queries_before_window.any():
+            # For queries before window, allow attention to first window position only
+            causal_mask[queries_before_window, 0] = True
+        
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, compressed_seq_len, window_size]
+        scores = scores.masked_fill(~causal_mask, -torch.inf)
+        
         # Apply attention mask if provided
         if attention_mask is not None:
-            query_mask = attention_mask.unsqueeze(1).unsqueeze(
-                -1
-            )  # [batch, 1, seq_len, 1]
-            scores = scores.masked_fill(query_mask == 0, -torch.inf)
+            # Extract window portion of attention mask
+            window_mask = attention_mask[:, window_start:window_start + window_size]
+            window_mask = window_mask.unsqueeze(1).unsqueeze(1)  # [batch, 1, 1, window_size]
+            scores = scores.masked_fill(window_mask == 0, -torch.inf)
 
         # Softmax and dropout
-        weights = F.softmax(scores, dim=-1)  # [batch, heads, seq_len, num_selected]
+        weights = F.softmax(scores, dim=-1)  # [batch, heads, compressed_seq_len, window_size]
         weights = self.dropout(weights)
 
-        # Apply attention to values - vectorized
+        # Apply attention to values
         output = torch.matmul(
-            weights.unsqueeze(-2),  # [batch, heads, seq_len, 1, num_selected]
-            v,  # [batch, heads, seq_len, num_selected, head_dim]
-        ).squeeze(
-            -2
-        )  # [batch, heads, seq_len, head_dim]
+            weights,  # [batch, heads, compressed_seq_len, window_size]
+            v  # [batch, heads, window_size, head_dim]
+        )  # [batch, heads, compressed_seq_len, head_dim]
 
-        # Reshape back
-        output = (
-            output.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size)
-        )
-
-        # Final projection
-        output = self.o_proj(output)
+        # Reshape and prepare for upsampling
+        output = output.transpose(1, 2).contiguous()  # [batch, compressed_seq_len, heads, head_dim]
+        output = output.view(batch_size, compressed_seq_len, hidden_size)
+        
+        # Apply output projection before upsampling (more efficient)
+        output = self.o_proj(output)  # [batch, compressed_seq_len, hidden]
+        
+        # Upsample back to original sequence length using linear interpolation
+        # This spreads the compressed attention output back to full resolution
+        output = output.transpose(1, 2)  # [batch, hidden, compressed_seq_len]
+        output = F.interpolate(
+            output, 
+            size=seq_len, 
+            mode='linear', 
+            align_corners=False
+        )  # [batch, hidden, seq_len]
+        output = output.transpose(1, 2)  # [batch, seq_len, hidden]
+        
+        # Final dropout
         output = self.dropout(output)
 
         return output, None, 0

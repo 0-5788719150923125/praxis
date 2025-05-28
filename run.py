@@ -925,8 +925,8 @@ class TerminalInterface(Callback):
             self.text,
             dict(
                 max_new_tokens=max_new_tokens,
-                temperature=0.3,
-                repetition_penalty=1.1,
+                temperature=0.4,
+                repetition_penalty=1.15,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
                 use_cache=False,
