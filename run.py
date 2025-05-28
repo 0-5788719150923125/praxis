@@ -6,6 +6,70 @@ import sys
 sys.dont_write_bytecode = True
 
 
+def get_memory_info(target_device=None):
+    """Get current RAM and VRAM usage information."""
+    memory_info = {}
+
+    try:
+        # Get RAM information
+        import psutil
+
+        ram = psutil.virtual_memory()
+        memory_info["ram_used"] = f"{ram.used / (1024**3):.1f}GB"
+        memory_info["ram_total"] = f"{ram.total / (1024**3):.1f}GB"
+        memory_info["ram_percent"] = f"{ram.percent:.1f}%"
+    except ImportError:
+        memory_info["ram_used"] = "N/A"
+        memory_info["ram_total"] = "N/A"
+        memory_info["ram_percent"] = "N/A"
+
+    try:
+        # Get VRAM information if CUDA is available
+        import torch
+
+        if torch.cuda.is_available():
+            # If target_device is specified (e.g., "cuda:1"), extract the device index
+            if target_device and target_device.startswith("cuda:"):
+                target_gpu_idx = int(target_device.split(":")[1])
+                if target_gpu_idx < torch.cuda.device_count():
+                    allocated = torch.cuda.memory_allocated(target_gpu_idx) / (1024**3)
+                    reserved = torch.cuda.memory_reserved(target_gpu_idx) / (1024**3)
+                    total = torch.cuda.get_device_properties(
+                        target_gpu_idx
+                    ).total_memory / (1024**3)
+
+                    memory_info[f"gpu{target_gpu_idx}_used"] = f"{allocated:.1f}GB"
+                    memory_info[f"gpu{target_gpu_idx}_reserved"] = f"{reserved:.1f}GB"
+                    memory_info[f"gpu{target_gpu_idx}_total"] = f"{total:.1f}GB"
+                    memory_info[f"gpu{target_gpu_idx}_percent"] = (
+                        f"{(reserved/total)*100:.1f}%"
+                    )
+                    # Also add allocated percentage for debugging
+                    memory_info[f"gpu{target_gpu_idx}_alloc_percent"] = (
+                        f"{(allocated/total)*100:.1f}%"
+                    )
+                else:
+                    memory_info["gpu_status"] = f"Invalid device {target_device}"
+            else:
+                # Default behavior: check all GPUs
+                for i in range(torch.cuda.device_count()):
+                    device_name = f"cuda:{i}"
+                    allocated = torch.cuda.memory_allocated(i) / (1024**3)
+                    reserved = torch.cuda.memory_reserved(i) / (1024**3)
+                    total = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+
+                    memory_info[f"gpu{i}_used"] = f"{allocated:.1f}GB"
+                    memory_info[f"gpu{i}_reserved"] = f"{reserved:.1f}GB"
+                    memory_info[f"gpu{i}_total"] = f"{total:.1f}GB"
+                    memory_info[f"gpu{i}_percent"] = f"{(reserved/total)*100:.1f}%"
+        else:
+            memory_info["gpu_status"] = "No CUDA"
+    except Exception:
+        memory_info["gpu_status"] = "N/A"
+
+    return memory_info
+
+
 # Ensures that orphaned threads and libp2p daemons are killed when this script dies
 def sigint_handler(signum, frame):
     print("\nCtrl+C detected. Killing all spawned processes.")
@@ -686,7 +750,7 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
-    def __init__(self, use_dashboard=False, url=None, progress_bar=None):
+    def __init__(self, use_dashboard=False, url=None, progress_bar=None, device=None):
         super().__init__()
         self.alpha = 1e-2
         self.ema_loss = 0
@@ -698,6 +762,7 @@ class TerminalInterface(Callback):
         self.url = url
         self.dashboard = use_dashboard
         self.progress_bar = progress_bar
+        self.device = device
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
@@ -808,6 +873,34 @@ class TerminalInterface(Callback):
                 self.dashboard.update_memory(data["memory_churn"])
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
+
+            # Update the info panel with device and memory information
+            memory_info = get_memory_info(self.device)
+            info_dict = {
+                "device": self.device,
+                "ram": f"{memory_info.get('ram_percent', 'N/A')}",
+            }
+
+            # Add GPU memory info if available
+            # Extract GPU index from device string (e.g., "cuda:1" -> 1)
+            if self.device and self.device.startswith("cuda:"):
+                gpu_idx = int(self.device.split(":")[1])
+                gpu_percent_key = f"gpu{gpu_idx}_percent"
+                gpu_reserved_key = f"gpu{gpu_idx}_reserved"
+                gpu_total_key = f"gpu{gpu_idx}_total"
+                if gpu_percent_key in memory_info:
+                    info_dict["vram"] = f"{memory_info[gpu_percent_key]}"
+                    # Add detailed memory info
+                    if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+                        info_dict["vram_gb"] = (
+                            f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                        )
+                elif "gpu_status" in memory_info:
+                    info_dict["vram"] = memory_info["gpu_status"]
+                else:
+                    info_dict["vram"] = "0%"
+
+            self.dashboard.update_info(info_dict)
 
     def on_save_checkpoint(self, trainer, lm, checkpoint):
         super().on_save_checkpoint(trainer, lm, checkpoint)
@@ -1584,7 +1677,9 @@ if local_rank == 0:
         train_params["callbacks"].append(progress_bar)
     train_params["callbacks"].append(checkpoint_callback)
     train_params["callbacks"].append(
-        TerminalInterface(use_dashboard, api_server.get_api_addr(), progress_bar)
+        TerminalInterface(
+            use_dashboard, api_server.get_api_addr(), progress_bar, device
+        )
     )
 
 train_params["callbacks"].append(

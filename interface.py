@@ -106,6 +106,7 @@ class TerminalDashboard:
         self.accuracy = None
         self.num_tokens = 0
         self.game_of_life = None
+        self.info_dict = {}
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -249,6 +250,11 @@ class TerminalDashboard:
     def update_url(self, url):
         with self.lock:
             self.url = url
+
+    def update_info(self, info_dict):
+        """Update the key/value pairs to display in the info panel."""
+        with self.lock:
+            self.info_dict = {**self.info_dict, **info_dict}
 
     def add_log(self, message):
         with self.lock:
@@ -413,11 +419,18 @@ class TerminalDashboard:
         frame = []
         frame.append("╔" + "═" * half_width + "╦" + "═" * right_width + "╗")
 
+        # Split the lower-left panel into two parts
+        lower_left_quarter_width = half_width // 2
+        lower_right_quarter_width = half_width - lower_left_quarter_width
+
         with self.lock:
             train_chart = self._draw_chart(
                 self.train_losses, right_width, (height // 2) - 1
             )
-            sim_chart = self._draw_simulation(half_width, (height // 2) - 1)
+            sim_chart = self._draw_simulation(
+                lower_left_quarter_width, (height // 2) - 1
+            )
+            info_chart = self._draw_info(lower_right_quarter_width, (height // 2) - 1)
 
         # Wrap the entire status text
         status_lines = self._wrap_text(self.status_text, half_width)
@@ -470,16 +483,44 @@ class TerminalDashboard:
             elif i == (height // 2):
                 if random.random() < 0.1:
                     self.sign = -1 * self.sign
-                left_content = f" ATTENTION: {self.sign:+.1f}"
-                left_content = left_content.ljust(half_width)[:half_width]
+                # Split the left section into two parts
+                attention_label = f" ATTENTION: {self.sign:+.1f}"
+                info_label = " INFO"
+                attention_content = attention_label.ljust(lower_left_quarter_width)[
+                    :lower_left_quarter_width
+                ]
+                info_content = info_label.ljust(lower_right_quarter_width)[
+                    :lower_right_quarter_width
+                ]
+                left_content = attention_content + "║" + info_content
                 right_content = " LOG".ljust(right_width)[:right_width]
             elif i == (height // 2) + 1:
-                left_content = "─" * half_width
+                # Split the separator line for the lower left panel
+                left_content = (
+                    "─" * lower_left_quarter_width
+                    + "╫"
+                    + "─" * lower_right_quarter_width
+                )
                 right_content = "─" * right_width
             elif i > (height // 2) + 1:
                 chart_index = i - (height // 2) - 2
+                # Left side split into two parts
+                sim_content = " " * lower_left_quarter_width
+                info_content = " " * lower_right_quarter_width
                 if chart_index < len(sim_chart):
-                    left_content = sim_chart[chart_index]
+                    sim_content = sim_chart[chart_index]
+                if chart_index < len(info_chart):
+                    info_content = info_chart[chart_index]
+
+                # Ensure both parts are exactly the right width (same as header approach)
+                sim_content = sim_content.ljust(lower_left_quarter_width)[
+                    :lower_left_quarter_width
+                ]
+                info_content = info_content.ljust(lower_right_quarter_width)[
+                    :lower_right_quarter_width
+                ]
+                left_content = sim_content + "║" + info_content
+
                 log_index = i - (height // 2) - 2
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
@@ -563,6 +604,31 @@ class TerminalDashboard:
         lines = self.game_of_life.to_ascii()
         # Minimal single-space padding for alignment
         return [" " + line + " " for line in lines]
+
+    def _draw_info(self, width, height):
+        """Draw the info panel with key/value pairs."""
+        lines = []
+
+        # Get key/value pairs from info_dict
+        items = list(self.info_dict.items())
+
+        # Format each key/value pair
+        for i in range(height):
+            if i < len(items):
+                key, value = items[i]
+                # Truncate key and value to fit
+                max_key_len = width // 3
+                max_val_len = width - max_key_len - 3  # -3 for ": " and padding
+
+                key_str = str(key)[:max_key_len]
+                val_str = str(value)[:max_val_len]
+
+                line = f" {key_str}: {val_str}"
+                lines.append(line.ljust(width)[:width])
+            else:
+                lines.append(" " * width)
+
+        return lines
 
     def _run_dashboard(self):
         try:
@@ -748,6 +814,15 @@ if __name__ == "__main__":
             dashboard.update_batch(i)
             dashboard.update_step(i)
             dashboard.update_rate(0.5)
+
+            # Test the info panel with sample data including memory
+            info_dict = {
+                "device": "cuda:0",
+                "ram": "45.6%",
+                "vram": "65.8%",
+                "lr": f"{0.001 * (1 - i/100):.4f}",
+            }
+            dashboard.update_info(info_dict)
 
             # Add some test logs
             dashboard.logger.info(f"Processing chunk {i}")
