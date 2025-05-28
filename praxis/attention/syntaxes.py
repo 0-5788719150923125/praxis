@@ -10,26 +10,16 @@ from transformers import DynamicCache
 
 class SyntaxesAttention(nn.Module):
     """
-    Syntaxes attention with hierarchical compression based on importance sorting.
-
-    This implementation follows the original author's insight about sorting being crucial
-    for creating meaningful compressed representations. The key ideas are:
-
-    1. **Importance Sorting**: Tokens are sorted by their importance scores (norm or learned),
-       creating a natural hierarchy where early compressed slots capture the most important
-       patterns and later slots capture progressively less important details.
-
-    2. **Hierarchical Compression**: Instead of arbitrary compression, sorting creates a
-       frequency-like decomposition similar to Fourier/wavelet transforms, where compressed
-       tokens represent different "frequency bands" or importance tiers.
-
-    3. **Full-to-Compressed Attention**: Unlike the original implementation that lost
-       information during expansion, we now compute attention from all positions (queries)
-       to the compressed representation (keys/values), preserving full sequence information
-       while benefiting from the compressed attention patterns.
-
-    This approach prevents model collapse by maintaining information flow while still
-    reducing computational complexity from O(n²) to O(n*k) where k << n.
+    Efficient Causal Syntaxes Attention with Sliding Window.
+    
+    Each position attends to the most recent k tokens using a causal sliding window.
+    This reduces complexity from O(n²) to O(n*k) where k << n while preserving causality.
+    
+    Key features:
+    - Fully vectorized implementation (no loops over sequence length)
+    - Causal sliding window pattern for autoregressive models
+    - No importance scoring overhead - uses simple recency-based selection
+    - Maintains exact same interface as standard attention
     """
 
     def __init__(self, config) -> None:
@@ -43,24 +33,11 @@ class SyntaxesAttention(nn.Module):
             self.num_heads -= 1
 
         self.head_dim = self.hidden_size // self.num_heads
-        self.causal = getattr(config, "causal", True)
 
-        # Syntaxes specific parameters
-        # Use a less aggressive compression ratio by default
-        self.compression_size = getattr(
-            config, "compression_size", 128
-        )  # Target compressed size
-        self.compression_method = getattr(
-            config, "compression_method", "learnable_interpolation"
-        )  # learnable_interpolation, linear_interpolation, pooling
-        self.scoring_method = getattr(
-            config, "scoring_method", "norm"
-        )  # norm or learned (for backwards compat)
-        self.selection_method = getattr(
-            config, "selection_method", "interpolation"
-        )  # interpolation, sliding_window, top_k
+        # Number of tokens to select for sliding window
+        self.num_selected = getattr(config, "syntaxes_num_selected", 128)
 
-        # Linear projections for Q, K, V
+        # Linear projections
         self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
         self.v_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
@@ -69,184 +46,8 @@ class SyntaxesAttention(nn.Module):
         # Dropout for regularization
         self.dropout = nn.Dropout(getattr(config, "dropout", 0.1))
 
-        # Learned scoring function (alternative to norm-based)
-        if self.scoring_method == "learned":
-            self.score_proj = nn.Linear(self.hidden_size, 1, bias=False)
-
-        # Learnable interpolation components
-        if self.compression_method == "learnable_interpolation":
-            # Learnable interpolation weights - maps from seq_len positions to compression_size positions
-            self.interpolation_proj = nn.Linear(
-                self.hidden_size, self.compression_size, bias=False
-            )
-            # Position embeddings for the compressed sequence
-            self.compressed_pos_emb = nn.Parameter(
-                torch.randn(1, self.compression_size, self.hidden_size) * 0.02
-            )
-
         # Scaling factor
         self.scale = 1.0 / math.sqrt(self.head_dim)
-
-    def _compute_token_scores(self, x: Tensor) -> Tensor:
-        """Compute importance scores for each token."""
-        if self.scoring_method == "norm":
-            # Use L2 norm as importance score
-            scores = torch.norm(x, dim=-1)
-            # Add small epsilon to avoid division by zero
-            scores = scores / (scores.mean(dim=-1, keepdim=True) + 1e-6)
-        elif self.scoring_method == "learned":
-            # Use learned scoring function
-            scores = self.score_proj(x).squeeze(-1)
-            # Normalize scores to prevent collapse
-            scores = torch.tanh(scores)
-        else:
-            raise ValueError(f"Unknown scoring method: {self.scoring_method}")
-
-        return scores
-
-    def _sort_by_importance(self, x: Tensor, scores: Tensor) -> Tuple[Tensor, Tensor]:
-        """Sort tokens by importance scores (descending)."""
-        # Sort scores and get indices
-        sorted_scores, sort_indices = torch.sort(scores, dim=-1, descending=True)
-
-        # Use torch.gather for efficient gathering
-        batch_size, seq_len, hidden_size = x.shape
-        sort_indices_expanded = sort_indices.unsqueeze(-1).expand(-1, -1, hidden_size)
-        sorted_x = torch.gather(x, dim=1, index=sort_indices_expanded)
-
-        return sorted_x, sort_indices
-
-    def _compress_sequence(self, x: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
-        """Compress input sequence to smaller representation with sorting."""
-        batch_size, seq_len, hidden_size = x.shape
-        k = min(self.compression_size, seq_len)
-
-        if self.selection_method == "interpolation":
-            # DO NOT sort for interpolation - it destroys positional information!
-            # Apply interpolation directly on original sequence
-            compressed, _ = self._interpolate_sequence(x, k)
-            return compressed, None
-
-        # For other methods, compute importance scores for sorting
-        scores = self._compute_token_scores(x)
-
-        if self.selection_method == "top_k":
-            # Get top-k tokens (already sorted by importance)
-            sorted_x, sort_indices = self._sort_by_importance(x, scores)
-            selected_tokens = sorted_x[:, :k, :]
-            selected_indices = sort_indices[:, :k]
-            return selected_tokens, selected_indices
-        elif self.selection_method == "sliding_window":
-            # For sliding window, still sort within the window
-            start_idx = max(0, seq_len - k)
-
-            # Get tokens in window
-            window_tokens = x[:, start_idx:, :]
-            window_scores = scores[:, start_idx:]
-
-            # Sort within window
-            sorted_window, local_sort_indices = self._sort_by_importance(
-                window_tokens, window_scores
-            )
-
-            # Map back to global indices efficiently
-            selected_indices = local_sort_indices + start_idx
-
-            return sorted_window, selected_indices
-        else:
-            raise ValueError(f"Unknown selection method: {self.selection_method}")
-
-    def _interpolate_sequence(
-        self, x: Tensor, target_length: int
-    ) -> Tuple[Tensor, None]:
-        """Interpolate sequence to target length using different methods."""
-        batch_size, seq_len, hidden_size = x.shape
-
-        if self.compression_method == "learnable_interpolation":
-            # Use learnable interpolation weights
-            # Project each token to compression_size interpolation weights
-            interp_weights = self.interpolation_proj(
-                x
-            )  # [batch, seq_len, compression_size]
-
-            # If target_length is different from compression_size, we need to adjust
-            if target_length < self.compression_size:
-                # Use only the first target_length dimensions
-                interp_weights = interp_weights[:, :, :target_length]
-            elif target_length > self.compression_size:
-                # Pad with zeros instead of interpolating for efficiency
-                pad_size = target_length - self.compression_size
-                padding = torch.zeros(batch_size, seq_len, pad_size, device=x.device)
-                interp_weights = torch.cat([interp_weights, padding], dim=-1)
-
-            # Apply temperature scaling to prevent collapse
-            temperature = 0.5  # Lower temperature = sharper attention
-            interp_weights = interp_weights / temperature
-
-            # Normalize over sequence dimension with log-softmax for stability
-            log_weights = F.log_softmax(interp_weights, dim=1)
-            interp_weights = torch.exp(log_weights)
-
-            # Weighted sum using einsum for efficiency
-            compressed = torch.einsum("bsk,bsh->bkh", interp_weights, x)
-
-            # Layer normalize the compressed representation to prevent collapse
-            compressed = F.layer_norm(compressed, [hidden_size])
-
-            # Add learned positional embeddings for compressed sequence
-            if target_length <= self.compression_size:
-                compressed = compressed + self.compressed_pos_emb[:, :target_length, :]
-            else:
-                # Repeat and interpolate positional embeddings
-                repeat_factor = (
-                    target_length + self.compression_size - 1
-                ) // self.compression_size
-                pos_emb_repeated = self.compressed_pos_emb.repeat(1, repeat_factor, 1)
-                compressed = compressed + pos_emb_repeated[:, :target_length, :]
-
-            return compressed, None
-
-        elif self.compression_method == "linear_interpolation":
-            # Simple linear interpolation between positions
-            if target_length >= seq_len:
-                # If target is larger, just return original (this shouldn't happen in compression)
-                return x[:, :target_length], None
-
-            # Vectorized interpolation
-            indices = torch.linspace(0, seq_len - 1, target_length, device=x.device)
-            floor_indices = indices.floor().long()
-            ceil_indices = torch.clamp(indices.ceil().long(), max=seq_len - 1)
-            weights = indices - floor_indices.float()
-
-            # Gather all floor and ceil values at once
-            batch_indices = torch.arange(batch_size, device=x.device).unsqueeze(1)
-            floor_vals = x[
-                batch_indices, floor_indices.unsqueeze(0)
-            ]  # [batch, target_length, hidden]
-            ceil_vals = x[
-                batch_indices, ceil_indices.unsqueeze(0)
-            ]  # [batch, target_length, hidden]
-
-            # Vectorized interpolation
-            weights = weights.unsqueeze(0).unsqueeze(-1)  # [1, target_length, 1]
-            compressed = floor_vals * (1 - weights) + ceil_vals * weights
-
-            return compressed, None
-
-        elif self.compression_method == "pooling":
-            # Use adaptive pooling to compress sequence
-            # Reshape for pooling: [batch * hidden, 1, seq_len]
-            x_reshaped = x.transpose(1, 2).contiguous()  # [batch, hidden, seq_len]
-            pooled = F.adaptive_avg_pool1d(
-                x_reshaped, target_length
-            )  # [batch, hidden, target_length]
-            compressed = pooled.transpose(
-                1, 2
-            ).contiguous()  # [batch, target_length, hidden]
-            return compressed, None
-
-        else:
-            raise ValueError(f"Unknown compression method: {self.compression_method}")
 
     def forward(
         self,
@@ -256,112 +57,121 @@ class SyntaxesAttention(nn.Module):
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
-        """Forward pass of soft sparse attention with hierarchical compression."""
+        """Forward pass of causal Syntaxes attention with sliding window."""
         batch_size, seq_len, hidden_size = inputs.shape
+        device = inputs.device
 
         if past_key_values is not None:
             raise NotImplementedError(
                 "KV caching not yet supported for SyntaxesAttention"
             )
 
-        # Step 1: Compress the input sequence (now with sorting)
-        compressed_tokens, selected_indices = self._compress_sequence(inputs)
-        k = compressed_tokens.size(1)
+        # Causal sliding window approach
+        # Create sliding window indices vectorized for all positions at once
+        # Each position i attends to positions [max(0, i+1-num_selected), i]
+        position_indices = torch.arange(seq_len, device=device)  # [seq_len]
 
-        # Step 2: Compute queries from full sequence, keys/values from compressed
-        # This allows every position to attend to the compressed representation
-        q_full = self.q_proj(inputs)  # [batch_size, seq_len, hidden_size]
-        k_compressed = self.k_proj(compressed_tokens)  # [batch_size, k, hidden_size]
-        v_compressed = self.v_proj(compressed_tokens)  # [batch_size, k, hidden_size]
+        # For each position, create its sliding window
+        # Using broadcasting to create all windows at once
+        window_starts = torch.clamp(
+            position_indices + 1 - self.num_selected, min=0
+        )  # [seq_len]
+        window_offsets = torch.arange(
+            self.num_selected, device=device
+        )  # [num_selected]
+
+        # Create indices matrix: [seq_len, num_selected]
+        selected_indices = window_starts.unsqueeze(1) + window_offsets.unsqueeze(
+            0
+        )  # [seq_len, num_selected]
+
+        # Clamp to valid range and create causal mask
+        selected_indices = torch.clamp(selected_indices, 0, seq_len - 1)
+
+        # Create causal mask: position i can only attend to positions <= i
+        query_positions = position_indices.unsqueeze(1)  # [seq_len, 1]
+        causal_mask = selected_indices <= query_positions  # [seq_len, num_selected]
+
+        # Expand for batch dimension
+        selected_indices = selected_indices.unsqueeze(0).expand(
+            batch_size, -1, -1
+        )  # [batch, seq_len, num_selected]
+        causal_mask = causal_mask.unsqueeze(0).expand(
+            batch_size, -1, -1
+        )  # [batch, seq_len, num_selected]
+
+        # Gather tokens using advanced indexing
+        batch_indices = torch.arange(batch_size, device=device).view(
+            batch_size, 1, 1
+        )
+        gathered_tokens = inputs[
+            batch_indices, selected_indices
+        ]  # [batch, seq_len, num_selected, hidden]
+
+        # Project all at once
+        q = self.q_proj(inputs)  # [batch, seq_len, hidden]
+        k = self.k_proj(gathered_tokens)  # [batch, seq_len, num_selected, hidden]
+        v = self.v_proj(gathered_tokens)  # [batch, seq_len, num_selected, hidden]
 
         # Reshape for multi-head attention
-        q_full = q_full.view(
-            batch_size, seq_len, self.num_heads, self.head_dim
-        ).transpose(1, 2)
-        k_compressed = k_compressed.view(
-            batch_size, k, self.num_heads, self.head_dim
-        ).transpose(1, 2)
-        v_compressed = v_compressed.view(
-            batch_size, k, self.num_heads, self.head_dim
-        ).transpose(1, 2)
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(
+            1, 2
+        )  # [batch, heads, seq_len, head_dim]
+        k = k.view(
+            batch_size, seq_len, self.num_selected, self.num_heads, self.head_dim
+        ).permute(
+            0, 3, 1, 2, 4
+        )  # [batch, heads, seq_len, num_selected, head_dim]
+        v = v.view(
+            batch_size, seq_len, self.num_selected, self.num_heads, self.head_dim
+        ).permute(
+            0, 3, 1, 2, 4
+        )  # [batch, heads, seq_len, num_selected, head_dim]
 
-        # Compute attention scores: full queries attend to compressed keys
-        # Shape: [batch_size, num_heads, seq_len, k]
-        scores = torch.matmul(q_full, k_compressed.transpose(-2, -1)) * self.scale
+        # Vectorized attention computation
+        # Compute all attention scores at once
+        scores = (
+            torch.matmul(
+                q.unsqueeze(-2),  # [batch, heads, seq_len, 1, head_dim]
+                k.transpose(
+                    -2, -1
+                ),  # [batch, heads, seq_len, head_dim, num_selected]
+            ).squeeze(-2)
+            * self.scale
+        )  # [batch, heads, seq_len, num_selected]
 
-        # Apply causal mask if needed
-        if self.causal:
-            # Create a mask where each position can only attend to compressed tokens
-            # that represent earlier positions in the original sequence
-            if (
-                selected_indices is not None
-                and self.selection_method != "interpolation"
-            ):
-                # For top-k and sliding window, use actual position indices
-                # Expand dimensions for broadcasting
-                query_positions = torch.arange(seq_len, device=inputs.device).view(
-                    1, 1, seq_len, 1
-                )
-                key_positions = selected_indices.unsqueeze(1).unsqueeze(
-                    2
-                )  # [batch, 1, 1, k]
-
-                # Can attend if query position >= key position
-                causal_mask = query_positions >= key_positions
-                scores = scores.masked_fill(~causal_mask, -1e9)
-            else:
-                # For interpolation, vectorized causal masking
-                # Each query position can attend to compressed tokens up to its relative position
-                query_positions = torch.arange(
-                    seq_len, device=inputs.device, dtype=torch.float32
-                )
-                # Calculate how many compressed tokens each position can attend to
-                allowed_compressed = torch.minimum(
-                    torch.tensor(k, device=inputs.device),
-                    ((query_positions + 1) / seq_len * k).long() + 1,
-                )
-
-                # Create mask using broadcasting
-                compressed_positions = torch.arange(k, device=inputs.device).unsqueeze(
-                    0
-                )
-                mask = compressed_positions >= allowed_compressed.unsqueeze(1)
-                mask = (
-                    mask.unsqueeze(0)
-                    .unsqueeze(0)
-                    .expand(batch_size, self.num_heads, -1, -1)
-                )
-                scores = scores.masked_fill(mask, -1e9)
+        # Apply causal mask
+        causal_mask_expanded = causal_mask.unsqueeze(1).expand(
+            -1, self.num_heads, -1, -1
+        )
+        scores = scores.masked_fill(~causal_mask_expanded, -torch.inf)
 
         # Apply attention mask if provided
         if attention_mask is not None:
-            # Attention mask shape: [batch, seq_len]
-            # Scores shape: [batch, num_heads, seq_len, k]
-            # We need to mask query positions, not key positions
             query_mask = attention_mask.unsqueeze(1).unsqueeze(
                 -1
             )  # [batch, 1, seq_len, 1]
-            scores = scores.masked_fill(query_mask == 0, -1e9)
+            scores = scores.masked_fill(query_mask == 0, -torch.inf)
 
-        # Compute attention weights and output
-        weights = F.softmax(scores, dim=-1)  # [batch, num_heads, seq_len, k]
+        # Softmax and dropout
+        weights = F.softmax(scores, dim=-1)  # [batch, heads, seq_len, num_selected]
+        weights = self.dropout(weights)
 
-        # Each position in the full sequence attends to compressed values
-        attention_output = torch.matmul(
-            weights, v_compressed
-        )  # [batch, num_heads, seq_len, head_dim]
+        # Apply attention to values - vectorized
+        output = torch.matmul(
+            weights.unsqueeze(-2),  # [batch, heads, seq_len, 1, num_selected]
+            v,  # [batch, heads, seq_len, num_selected, head_dim]
+        ).squeeze(
+            -2
+        )  # [batch, heads, seq_len, head_dim]
 
         # Reshape back
-        attention_output = (
-            attention_output.transpose(1, 2)
-            .contiguous()
-            .view(batch_size, seq_len, hidden_size)
+        output = (
+            output.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size)
         )
 
-        # Final output projection
-        output = self.o_proj(attention_output)
-
-        # Apply dropout for regularization
+        # Final projection
+        output = self.o_proj(output)
         output = self.dropout(output)
 
         return output, None, 0
