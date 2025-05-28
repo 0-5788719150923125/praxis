@@ -375,7 +375,7 @@ architecture_group.add_argument(
 )
 architecture_group.add_argument(
     "--bidirectional",
-    action="store_true", 
+    action="store_true",
     default=False,
     help="Enable bidirectional language modeling (forward and backward prediction)",
 )
@@ -483,10 +483,13 @@ data_group.add_argument(
     help="Disable training on the model's own source code",
 )
 data_group.add_argument(
-    "--reinforce",
-    action="store_true",
-    default=False,
-    help="Enable reinforcement learning for chain-of-thought operations using INTELLECT-2-RL-Dataset",
+    "--rl-type",
+    type=str,
+    default=None,
+    choices=["reinforce", "grpo", "ppo"],
+    help="Enable reinforcement learning with specified algorithm. "
+    "Note: Current GRPO implementation uses static dataset rewards (not true RL). "
+    "True RL with generation will be added in a future update.",
 )
 # other
 other_group.add_argument(

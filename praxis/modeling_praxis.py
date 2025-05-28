@@ -14,7 +14,7 @@ from praxis import DECODER_REGISTRY, EMBEDDING_REGISTRY, ENCODER_REGISTRY, Praxi
 from praxis.containers import LossContainer
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import get_loss_function
-from praxis.policies.reinforce import REINFORCE
+from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.strategies import STRATEGIES_REGISTRY
 from praxis.utils import create_block_ids
 
@@ -121,8 +121,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # Initialize RL policy if requested
         self.policy = None
-        if getattr(config, "reinforce", False):
-            self.policy = REINFORCE(config)
+        rl_type = getattr(config, "rl_type", None)
+        if rl_type and rl_type in RL_POLICIES_REGISTRY:
+            self.policy = RL_POLICIES_REGISTRY[rl_type](config)
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -243,13 +244,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             return_dict=return_dict,
         )
 
-        # Apply RL policy if enabled
+        # Get hidden states before computing logits
         hidden_states = outputs.last_hidden_state
-        if self.policy is not None:
-            hidden_states, rl_loss = self.policy(
-                hidden_states, rewards=rewards, mask=attention_mask
-            )
-            outputs.losses.add_loss("rl_policy", rl_loss)
 
         backward_logits = None
         if self.encoder:
@@ -267,6 +263,33 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             # Compute backward logits if we have a separate backward head
             if self.backward_head is not None:
                 backward_logits = self.backward_head(hidden_states)
+        
+        # Apply RL policy if enabled
+        if self.policy is not None and rewards is not None and labels is not None:
+            # Different RL algorithms need different inputs
+            rl_type = getattr(self.config, "rl_type", None)
+            
+            if rl_type == "grpo":
+                # GRPO needs logits and labels for proper loss computation
+                # For now, we'll need to compute reference logits in the training loop
+                _, rl_losses = self.policy(
+                    hidden_states, 
+                    logits=logits,
+                    labels=labels,
+                    rewards=rewards, 
+                    ref_logits=None,  # TODO: Add reference model support
+                    mask=attention_mask
+                )
+                if rl_losses is not None:
+                    for key, value in rl_losses.items():
+                        outputs.losses.add_loss(f"rl_{key}", value)
+            else:
+                # REINFORCE and other methods
+                hidden_states, rl_loss = self.policy(
+                    hidden_states, rewards=rewards, mask=attention_mask
+                )
+                if rl_loss is not None:
+                    outputs.losses.add_loss("rl_policy", rl_loss)
 
         loss = 0
         if labels is not None:

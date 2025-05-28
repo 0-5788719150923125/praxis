@@ -219,7 +219,7 @@ config = PraxisConfig(
     meta=meta,
     bidirectional=bidirectional,
     tie_weights=tie_weights,
-    reinforce=reinforce,
+    rl_type=rl_type,
 )
 
 # Misc hyperparameters
@@ -319,10 +319,29 @@ class PraxisTrainer(LightningModule):
 
         current_time = datetime.now()
 
+        # Only log interesting batch events
+        if isinstance(batch, dict) and batch.get("needs_generation", False):
+            rewards_debug = batch.get("rewards", torch.tensor([]))
+            generation_flags = (rewards_debug == -1).sum().item()
+            print(
+                f"[RL] Training step {batch_idx}: Processing generation batch with {generation_flags} sequences"
+            )
+
         # Handle RL batch format
-        if isinstance(batch, dict) and 'input_ids' in batch:
-            input_ids = batch['input_ids']
-            rewards = batch.get('rewards', None)
+        if isinstance(batch, dict) and "input_ids" in batch:
+            input_ids = batch["input_ids"]
+            rewards = batch.get("rewards", None)
+
+            # Check if this batch needs generation for RL
+            if batch.get("needs_generation", False) and rewards is not None:
+                print(f"[RL] Generating responses for batch {batch_idx}...")
+                # This is a proper RL batch - generate responses
+                input_ids, rewards = self._generate_and_evaluate_rl_batch(
+                    input_ids, batch.get("metadata", [])
+                )
+                # If generation failed, skip this batch
+                if input_ids is None:
+                    return torch.tensor(0.0, requires_grad=True)
         else:
             input_ids = batch
             rewards = None
@@ -348,7 +367,7 @@ class PraxisTrainer(LightningModule):
             "avg_step_time": self.train_step_ema,
             "softmax_collapse": softmax_collapse,
         }
-        
+
         # Add RL-specific metrics if available
         if rewards is not None:
             non_zero_rewards = (rewards > 0).sum().item()
@@ -356,9 +375,9 @@ class PraxisTrainer(LightningModule):
                 metrics["rl_reward_mean"] = rewards[rewards > 0].mean()
                 metrics["rl_reward_max"] = rewards.max()
                 metrics["rl_sequences_pct"] = 100.0 * non_zero_rewards / len(rewards)
-                
+
                 # Extract RL loss if available
-                if hasattr(outputs, 'rl_loss') and outputs.rl_loss is not None:
+                if hasattr(outputs, "rl_loss") and outputs.rl_loss is not None:
                     metrics["rl_loss"] = outputs.rl_loss
 
         self.log_dict(
@@ -373,12 +392,140 @@ class PraxisTrainer(LightningModule):
 
         return loss
 
+    def _generate_and_evaluate_rl_batch(self, prompt_ids, metadata):
+        """
+        Generate responses for RL prompts and evaluate them.
+
+        Returns:
+            input_ids: New batch with generated responses
+            rewards: Computed rewards for each response
+        """
+        import re
+
+        batch_size = prompt_ids.shape[0]
+        device = prompt_ids.device
+
+        # Get GRPO group size
+        group_size = getattr(self.model.config, "grpo_group_size", 8)
+
+        all_input_ids = []
+        all_rewards = []
+
+        # Generate multiple responses per prompt
+        with torch.no_grad():
+            for i in range(batch_size):
+                prompt = prompt_ids[i : i + 1]
+                ground_truth = (
+                    metadata[i].get("ground_truth", "") if i < len(metadata) else ""
+                )
+
+                # Generate group_size responses
+                prompt_rewards = []
+                prompt_sequences = []
+
+                for _ in range(group_size):
+                    # Generate response
+                    generated = self.model.generate(
+                        prompt,
+                        max_new_tokens=256,
+                        temperature=0.7,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                    )
+
+                    # Decode to extract answer
+                    generated_text = self.tokenizer.decode(
+                        generated[0, prompt.shape[1] :], skip_special_tokens=True
+                    )
+
+                    # Evaluate response
+                    reward = self._evaluate_math_response(generated_text, ground_truth)
+
+                    prompt_rewards.append(reward)
+                    prompt_sequences.append(generated[0])
+
+                # Add all sequences and rewards for this prompt
+                all_input_ids.extend(prompt_sequences)
+                all_rewards.extend(prompt_rewards)
+
+        # Stack into batch
+        if all_input_ids:
+            # Pad sequences to same length
+            max_len = max(seq.shape[0] for seq in all_input_ids)
+            padded_sequences = []
+
+            for seq in all_input_ids:
+                if seq.shape[0] < max_len:
+                    padding = torch.full(
+                        (max_len - seq.shape[0],),
+                        self.tokenizer.pad_token_id,
+                        dtype=seq.dtype,
+                        device=seq.device,
+                    )
+                    seq = torch.cat([seq, padding])
+                padded_sequences.append(seq)
+
+            input_ids = torch.stack(padded_sequences)
+            rewards = torch.tensor(all_rewards, dtype=torch.float32, device=device)
+
+            # Log generation results
+            successful = (rewards > 0).sum().item()
+            print(
+                f"[RL Generation] Generated {len(all_rewards)} responses, {successful} correct"
+            )
+
+            return input_ids, rewards
+        else:
+            return None, None
+
+    def _evaluate_math_response(self, response, ground_truth):
+        """Evaluate if the response contains the correct answer."""
+        # Extract number from response
+        patterns = [
+            r"answer\s*(?:is|=|:)?\s*([+-]?\d*\.?\d+)",
+            r"=\s*([+-]?\d*\.?\d+)",
+            r"([+-]?\d*\.?\d+)\s*$",
+        ]
+
+        response = response.lower().strip()
+        extracted = None
+
+        for pattern in patterns:
+            match = re.search(pattern, response)
+            if match:
+                try:
+                    extracted = float(match.group(1))
+                    break
+                except:
+                    continue
+
+        if extracted is None:
+            return 0.0
+
+        # Check if correct
+        try:
+            true_answer = float(ground_truth)
+            if abs(extracted - true_answer) < 1e-6:
+                return 1.0
+            # Partial credit for being close
+            elif abs(true_answer) > 0:
+                rel_error = abs(extracted - true_answer) / abs(true_answer)
+                if rel_error < 0.1:
+                    return 0.5
+                elif rel_error < 0.5:
+                    return 0.2
+        except:
+            pass
+
+        return 0.1  # Small reward for extracting any number
+
     def validation_step(self, batch, batch_idx):
 
         # Handle RL batch format
-        if isinstance(batch, dict) and 'input_ids' in batch:
-            input_ids = batch['input_ids']
-            rewards = batch.get('rewards', None)
+        if isinstance(batch, dict) and "input_ids" in batch:
+            input_ids = batch["input_ids"]
+            rewards = batch.get("rewards", None)
         else:
             input_ids = batch
             rewards = None
@@ -603,8 +750,8 @@ class TerminalInterface(Callback):
             self._generate_text(lm, batch_idx, self.interval)
 
         # Handle both tensor and dict batch formats
-        if isinstance(batch, dict) and 'input_ids' in batch:
-            batch_size, _ = batch['input_ids'].shape
+        if isinstance(batch, dict) and "input_ids" in batch:
+            batch_size, _ = batch["input_ids"].shape
         else:
             batch_size, _ = batch.shape
         swarm_info = lm.model.get_metrics()
@@ -1320,7 +1467,7 @@ if local_rank == 0:
 # Load datasets
 use_source_code = not no_source
 datamodule = get_datamodules(
-    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path, reinforce
+    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path, rl_type
 )
 
 # create the optimizer

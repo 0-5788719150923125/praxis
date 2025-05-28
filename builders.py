@@ -5,7 +5,7 @@ import sys
 import time
 from collections import defaultdict
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 from datasets import load_dataset
@@ -32,26 +32,33 @@ class RLLogger:
         
         # Update statistics
         self.stats["total"]["sequences"] += len(rewards)
-        non_zero = [r for r in rewards if r > 0]
+        non_zero = [r for r in rewards if r != 0]  # Include both positive rewards and -1 generation flags
         self.stats["total"]["rl_sequences"] += len(non_zero)
         
-        if non_zero:
-            self.stats["rewards"]["count"] += len(non_zero)
-            self.stats["rewards"]["sum"] += sum(non_zero)
+        # Handle positive rewards separately for statistics (exclude -1 generation flags)
+        positive_rewards = [r for r in rewards if r > 0]
+        if positive_rewards:
+            self.stats["rewards"]["count"] += len(positive_rewards)
+            self.stats["rewards"]["sum"] += sum(positive_rewards)
             if "min" not in self.stats["rewards"]:
-                self.stats["rewards"]["min"] = min(non_zero)
+                self.stats["rewards"]["min"] = min(positive_rewards)
             else:
-                self.stats["rewards"]["min"] = min(self.stats["rewards"]["min"], min(non_zero))
+                self.stats["rewards"]["min"] = min(self.stats["rewards"]["min"], min(positive_rewards))
             
             if "max" not in self.stats["rewards"]:
-                self.stats["rewards"]["max"] = max(non_zero)
+                self.stats["rewards"]["max"] = max(positive_rewards)
             else:
-                self.stats["rewards"]["max"] = max(self.stats["rewards"]["max"], max(non_zero))
+                self.stats["rewards"]["max"] = max(self.stats["rewards"]["max"], max(positive_rewards))
             
-            # Track reward distribution
-            for r in non_zero:
+            # Track reward distribution for positive rewards only
+            for r in positive_rewards:
                 bucket = f"{int(r * 10) / 10:.1f}"
                 self.stats["distribution"][bucket] += 1
+        
+        # Count generation flags separately
+        generation_flags = [r for r in rewards if r == -1]
+        if generation_flags:
+            self.stats["generation_flags"]["count"] += len(generation_flags)
         
         # Log periodically
         if self.batch_count - self.last_log_batch >= self.log_interval:
@@ -82,6 +89,11 @@ class RLLogger:
         print(f"\n[RL Stats] After {self.batch_count} batches:")
         print(f"  Total sequences: {total_seq:,}")
         print(f"  RL sequences: {rl_seq:,} ({100.0 * rl_seq / total_seq:.1f}%)")
+        
+        # Show generation flags
+        gen_flags = self.stats["generation_flags"].get("count", 0)
+        if gen_flags > 0:
+            print(f"  Generation flags: {gen_flags:,} sequences awaiting generation")
         
         if self.stats["rewards"]["count"] > 0:
             avg_reward = self.stats["rewards"]["sum"] / self.stats["rewards"]["count"]
@@ -244,6 +256,9 @@ HUGGINGFACE_DATASETS = {
         keys=["prompt", "verification_info", "solve_rate_qwen_r1_distill_7b"],
         format=DataFormat.RL,
         streaming=True,
+        mix_simple_math=True,  # Mix in simple problems for untrained models
+        # DEBUG: Enable to see what we're loading
+        trust_remote_code=False,
     ),
 }
 
@@ -510,14 +525,12 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
 
 def format_rl(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> Dict[str, Any]:
     """
-    Format RL dataset for chain-of-thought training.
+    Format RL dataset for generation-based reinforcement learning.
 
-    The format includes:
-    - prompt: The mathematical problem
-    - verification_info: JSON with ground truth answer
-    - solve_rate: Performance score (0-1) used as reward signal
+    For proper RL, we format the prompt for generation and store metadata
+    for evaluation. The actual response will be generated during training.
     
-    Returns a dict with 'text' and 'reward' keys.
+    Returns a dict with special formatting for RL.
     """
     assert len(keys) == 3, "RL format requires exactly 3 keys"
 
@@ -525,45 +538,33 @@ def format_rl(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -
     verification_info = document.get(keys[1], "{}")
     solve_rate = document.get(keys[2], 0.0)
 
-    # Log every Nth document for monitoring
-    if not hasattr(format_rl, "_doc_count"):
-        format_rl._doc_count = 0
-        format_rl._doc_log_interval = 100
-    
-    format_rl._doc_count += 1
-    
-    # Log first few documents and then periodically
-    if format_rl._doc_count <= 5 or format_rl._doc_count % format_rl._doc_log_interval == 0:
-        print(f"[RL Dataset] Document {format_rl._doc_count} - solve_rate: {solve_rate:.3f}")
-
     # Parse the ground truth from verification_info
     import json
-
     try:
         verification_data = json.loads(verification_info)
         ground_truth = verification_data.get("ground_truth", "")
     except:
         ground_truth = ""
 
-    # Create a chain-of-thought style conversation
-    # The assistant should generate reasoning steps before the answer
+    # Format just the prompt (no answer) with generation prompt
     messages = [
-        {
-            "role": "system",
-            "content": "You are a mathematical problem solver. Solve the problem step by step.",
-        },
-        {"role": "user", "content": prompt},
-        {
-            "role": "assistant",
-            "content": f"Let me solve this step by step.\n\n[Chain of thought reasoning would go here]\n\nTherefore, the answer is: {ground_truth}",
-        },
+        {"role": "user", "content": prompt}
     ]
-
-    # Apply chat template WITHOUT embedding rewards
-    text = tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
     
-    # Return both text and reward separately
-    return {"text": text, "reward": solve_rate}
+    # Apply chat template with generation prompt
+    prompt_text = tokenizer.apply_chat_template(
+        messages, 
+        tokenize=False,
+        add_generation_prompt=True  # Adds the assistant prefix
+    )
+    
+    # Return special format for RL - ALWAYS use -1 for generation
+    return {
+        "text": prompt_text,
+        "reward": -1.0,  # Special flag indicating this needs generation
+        "ground_truth": ground_truth,
+        "original_difficulty": solve_rate
+    }
 
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
@@ -667,10 +668,10 @@ def get_datamodules(
     tokenizer,
     hparams,
     data_path,
-    reinforce: bool = False,
+    rl_type: Optional[str] = None,
     *args,
 ):
-    print(f"[RL] get_datamodules called with reinforce={reinforce}")
+    print(f"[RL] get_datamodules called with rl_type={rl_type}")
 
     # An important warning
     if gun and seed and not dev:
@@ -680,7 +681,7 @@ def get_datamodules(
         time.sleep(5)
 
     train_data = []
-    config = get_dataset_configs(dev, pile, phi, reinforce)
+    config = get_dataset_configs(dev, pile, phi, rl_type)
     for c in config["primary"]:
         # load configs for huggingface datasets
         train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
@@ -727,7 +728,7 @@ def get_datamodules(
         hparams["oversample_chance"],
         hparams["supersample_chance"],
         hparams["hypersample_chance"],
-        reinforce=reinforce,
+        rl_type=rl_type,
     )
 
     return train_dataloader
@@ -787,7 +788,7 @@ def add_collection(config, collection_name, target_key):
     return config
 
 
-def get_dataset_configs(dev: bool, pile: bool, phi: bool, reinforce: bool = False):
+def get_dataset_configs(dev: bool, pile: bool, phi: bool, rl_type: Optional[str] = None):
     config = {"primary": [], "validation": []}
     if pile:
         config = add_collection(config, "pile", "primary")
@@ -799,11 +800,11 @@ def get_dataset_configs(dev: bool, pile: bool, phi: bool, reinforce: bool = Fals
         if dev:
             config["primary"] = []
             config = add_collection(config, "dev", "primary")
-            # Add RL datasets even in dev mode if reinforce is enabled
-            if reinforce:
+            # Add RL datasets even in dev mode if RL is enabled
+            if rl_type:
                 config = add_collection(config, "rl", "primary")
         else:
-            if reinforce:
+            if rl_type:
                 config = add_collection(config, "rl", "primary")
             config = add_collection(config, "redpajama", "validation")
     print("training on:")
@@ -812,28 +813,28 @@ def get_dataset_configs(dev: bool, pile: bool, phi: bool, reinforce: bool = Fals
         for entry in config["primary"]
     ]
     
-    # Debug: print reinforce status
-    if reinforce:
-        print(f"[RL] Reinforce enabled, {len([e for e in config['primary'] if 'RL' in e.get('path', '')])} RL datasets in config")
+    # Debug: print RL status
+    if rl_type:
+        print(f"[RL] RL enabled with algorithm '{rl_type}', {len([e for e in config['primary'] if 'RL' in e.get('path', '')])} RL datasets in config")
     
     return config
 
 
 class InterleaveDataManager:
     def __init__(
-        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000, reinforce=False
+        self, samplers, weights, tokenizer, block_size, text_cache_size=100_000, rl_type=None
     ):
         self.samplers = samplers
         self.weights = weights
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.text_cache_size = text_cache_size
-        self.reinforce = reinforce
+        self.rl_type = rl_type
         self.token_stream = torch.tensor(
             [], dtype=torch.long
         )  # Single continuous stream
         # Track sequences and their boundaries
-        self.sequence_boundaries = []  # List of (start_idx, end_idx, reward) tuples
+        self.sequence_boundaries = []  # List of (start_idx, end_idx, reward, metadata) tuples
         self.current_stream_offset = 0  # Track position in token stream
 
     def get_batch(
@@ -866,30 +867,33 @@ class InterleaveDataManager:
 
         # Extract batch
         batch = []
-        rewards = [] if self.reinforce else None
+        rewards = [] if self.rl_type else None
+        metadata = [] if self.rl_type else None
         
         for i in range(current_batch_size):
             start = i * sequence_length
             end = start + sequence_length
             batch.append(self.token_stream[start:end])
             
-            # Find the reward for this sequence chunk if reinforce is enabled
-            if self.reinforce:
-                sequence_reward = self._get_reward_for_range(start, end)
+            # Find the reward and metadata for this sequence chunk if RL is enabled
+            if self.rl_type:
+                sequence_reward, sequence_metadata = self._get_reward_and_metadata_for_range(start, end)
                 rewards.append(sequence_reward)
+                if metadata is not None:
+                    metadata.append(sequence_metadata)
 
         # Remove used tokens from the stream and update boundaries
         self.token_stream = self.token_stream[tokens_needed:]
         self._update_boundaries_after_removal(tokens_needed)
 
-        return {"batch": batch, "rewards": rewards}
+        return {"batch": batch, "rewards": rewards, "metadata": metadata}
     
-    def _get_reward_for_range(self, start: int, end: int) -> float:
-        """Get the reward for a token range, handling sequence boundaries properly.
+    def _get_reward_and_metadata_for_range(self, start: int, end: int) -> Tuple[float, Dict[str, Any]]:
+        """Get the reward and metadata for a token range, handling sequence boundaries properly.
         
         This implements sequence-level reward assignment where:
-        - If a chunk is entirely within one sequence, it gets that sequence's full reward
-        - If a chunk spans multiple sequences, it gets a weighted average
+        - If a chunk is entirely within one sequence, it gets that sequence's full reward and metadata
+        - If a chunk spans multiple sequences, it gets a weighted average reward and metadata from the dominant sequence
         - This ensures that long sequences split across batches are rewarded consistently
         
         Args:
@@ -897,17 +901,16 @@ class InterleaveDataManager:
             end: End index in current token stream
             
         Returns:
-            The reward value for this range
+            Tuple of (reward value, metadata dict) for this range
         """
         # Adjust indices to account for stream offset
         abs_start = self.current_stream_offset + start
         abs_end = self.current_stream_offset + end
         
         # Find all sequences that overlap with this range
-        overlapping_rewards = []
-        overlap_weights = []
+        overlapping_data = []  # List of (reward, metadata, weight) tuples
         
-        for seq_start, seq_end, reward in self.sequence_boundaries:
+        for seq_start, seq_end, reward, metadata in self.sequence_boundaries:
             # Calculate overlap
             overlap_start = max(abs_start, seq_start)
             overlap_end = min(abs_end, seq_end)
@@ -915,26 +918,28 @@ class InterleaveDataManager:
             if overlap_start < overlap_end:
                 # This sequence overlaps with our range
                 overlap_size = overlap_end - overlap_start
-                overlapping_rewards.append(reward)
-                overlap_weights.append(overlap_size)
+                overlapping_data.append((reward, metadata, overlap_size))
         
-        # If we have overlapping sequences, return weighted average
-        if overlapping_rewards:
+        # If we have overlapping sequences, return weighted average reward and dominant metadata
+        if overlapping_data:
             # COMMON CASE: If a single sequence fully contains this chunk, 
-            # give it the full reward (most chunks will be fully within one sequence)
-            for seq_start, seq_end, reward in self.sequence_boundaries:
+            # give it the full reward and metadata (most chunks will be fully within one sequence)
+            for seq_start, seq_end, reward, metadata in self.sequence_boundaries:
                 if seq_start <= abs_start and seq_end >= abs_end:
-                    return reward
+                    return reward, metadata
             
             # EDGE CASE: Chunk spans multiple sequences (rare)
-            # Use weighted average based on token overlap
-            total_weight = sum(overlap_weights)
+            # Use weighted average for reward, metadata from dominant sequence
+            total_weight = sum(weight for _, _, weight in overlapping_data)
             if total_weight > 0:
-                weighted_reward = sum(r * w for r, w in zip(overlapping_rewards, overlap_weights))
-                return weighted_reward / total_weight
+                # Weighted average reward
+                weighted_reward = sum(r * w for r, _, w in overlapping_data) / total_weight
+                # Metadata from the sequence with most overlap
+                dominant_metadata = max(overlapping_data, key=lambda x: x[2])[1]
+                return weighted_reward, dominant_metadata
         
-        # No overlap found, return 0
-        return 0.0
+        # No overlap found, return defaults
+        return 0.0, {}
     
     def _update_boundaries_after_removal(self, tokens_removed: int):
         """Update sequence boundaries after removing tokens from the stream."""
@@ -942,8 +947,8 @@ class InterleaveDataManager:
         
         # Remove boundaries that are now completely before the current stream
         self.sequence_boundaries = [
-            (start, end, reward) 
-            for start, end, reward in self.sequence_boundaries 
+            (start, end, reward, metadata) 
+            for start, end, reward, metadata in self.sequence_boundaries 
             if end > self.current_stream_offset
         ]
 
@@ -963,23 +968,43 @@ class InterleaveDataManager:
             # Track dataset sampling
             dataset_name = getattr(sampler, 'dataset_path', 'unknown')
             
-            # Get reward for this sequence if applicable
+            # Get reward and metadata for this sequence if applicable
             reward = 0.0
+            metadata = {}
             has_reward = False
-            if self.reinforce and hasattr(sampler, 'reward_cache'):
+            
+            if self.rl_type and hasattr(sampler, 'reward_cache'):
                 import hashlib
                 text_hash = hashlib.md5(text.encode()).hexdigest()
-                reward = sampler.reward_cache.get(text_hash, 0.0)
-                has_reward = reward > 0
+                cache_data = sampler.reward_cache.get(text_hash, None)
                 
-                if has_reward:
-                    _rl_logger.log_reward_found(reward, dataset_name)
+                if cache_data is None:
+                    reward = 0.0
+                    metadata = {}
+                elif isinstance(cache_data, dict):
+                    reward = cache_data.get("reward", 0.0)
+                    metadata = cache_data  # Store the full metadata
+                else:
+                    # Legacy format
+                    reward = cache_data if isinstance(cache_data, (int, float)) else 0.0
+                    metadata = {"reward": reward}
+                
+                # Only log interesting reward events
+                if reward == -1:
+                    print(f"[RL] Found generation sequence from {dataset_name}")
+                elif reward > 0:
+                    print(f"[RL] Found static reward {reward} from {dataset_name}")
+                
+                has_reward = reward != 0  # Any non-zero reward (including -1 generation flag)
+                
+                if has_reward and reward != -1:
+                    _rl_logger.log_reward_found(reward, dataset_name)  # Only log static rewards
             
             _rl_logger.log_dataset_sample(dataset_name, has_reward)
             
             # Add separator
             text_with_sep = text + self.tokenizer.eos_token + "\n"
-            sequences_to_add.append((len(total_text), len(total_text) + len(text_with_sep), reward))
+            sequences_to_add.append((len(total_text), len(total_text) + len(text_with_sep), reward, metadata))
             total_text += text_with_sep
         
         # Tokenize the entire text at once
@@ -994,7 +1019,7 @@ class InterleaveDataManager:
         chars_per_token = len(total_text) / len(tokens) if len(tokens) > 0 else 1.0
         current_pos = self.current_stream_offset + len(self.token_stream)
         
-        for char_start, char_end, reward in sequences_to_add:
+        for char_start, char_end, reward, metadata in sequences_to_add:
             # Estimate token positions based on character positions
             token_start = current_pos + int(char_start / chars_per_token)
             token_end = current_pos + int(char_end / chars_per_token)
@@ -1003,8 +1028,8 @@ class InterleaveDataManager:
             if token_end <= token_start:
                 token_end = token_start + 1
                 
-            # Store the boundary information
-            self.sequence_boundaries.append((token_start, token_end, reward))
+            # Store the boundary information with metadata
+            self.sequence_boundaries.append((token_start, token_end, reward, metadata))
         
         # Add tokens to stream
         self.token_stream = torch.cat([self.token_stream, tokens])
@@ -1069,22 +1094,47 @@ class HuggingfaceDataset(PraxisSampler):
             
         # Storage for rewards when using RL format
         self.reward_cache = {}
+        
+        # Mix simple math for RL datasets
+        self.mix_simple_math = config.get("mix_simple_math", False)
+        if self.mix_simple_math:
+            from praxis.datasets.simple_math import SimpleMathDataset
+            self.simple_math = SimpleMathDataset(mix_ratio=0.95)  # 95% simple problems to force generation
 
     def fill_sequence_cache(self):
         try:
-            document = next(self.dataset_iterator)
+            # Mix in simple math problems for RL
+            if self.mix_simple_math and hasattr(self, 'simple_math') and self.simple_math.should_use_simple():
+                # Generate a simple problem
+                simple_problem = self.simple_math.generate()
+                document = self.simple_math.format_for_rl(simple_problem)
+                # Log when we use simple math
+                if not hasattr(self, '_simple_count'):
+                    self._simple_count = 0
+                self._simple_count += 1
+                if self._simple_count % 10 == 1:  # More frequent logging to see if it's working
+                    print(f"[RL] Using simple math #{self._simple_count}: {simple_problem['prompt']} = {simple_problem['ground_truth']}")
+            else:
+                if self.mix_simple_math:
+                    print(f"[RL DEBUG] Not using simple math (should_use={getattr(self, 'simple_math', None) and self.simple_math.should_use_simple() if hasattr(self, 'simple_math') else 'no simple_math'})")
+                document = next(self.dataset_iterator)
+            
             formatted = self._format_document(document)
             
             # Handle RL format which returns dict
             if self.format == DataFormat.RL and isinstance(formatted, dict):
                 text = formatted["text"]
                 reward = formatted["reward"]
-                # Store reward indexed by text hash
+                # Store full metadata for RL
                 import hashlib
                 text_hash = hashlib.md5(text.encode()).hexdigest()
-                self.reward_cache[text_hash] = reward
+                self.reward_cache[text_hash] = {
+                    "reward": reward,
+                    "ground_truth": formatted.get("ground_truth", ""),
+                    "original_difficulty": formatted.get("original_difficulty", 0.0)
+                }
+                # Successfully cached RL reward
                 self.sequence_cache.append(text)
-                
             else:
                 # Regular format, just text
                 self.sequence_cache.append(formatted)
@@ -1318,20 +1368,20 @@ class WeightedIterableDataset(IterableDataset):
         oversample_chance: float = 0,
         supersample_chance: float = 0,
         hypersample_chance: float = 0,
-        reinforce: bool = False,
+        rl_type: Optional[str] = None,
     ):
         self.data_manager = InterleaveDataManager(
-            datasets, weights, tokenizer, block_size, reinforce=reinforce
+            datasets, weights, tokenizer, block_size, rl_type=rl_type
         )
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
         self.supersample_chance = supersample_chance
         self.hypersample_chance = hypersample_chance
-        self.reinforce = reinforce
+        self.rl_type = rl_type
         self.tokenizer = tokenizer  # Store tokenizer for reward extraction
 
         # Debug log
-        print(f"[RL] WeightedIterableDataset initialized with reinforce={reinforce}")
+        print(f"[RL] WeightedIterableDataset initialized with rl_type={rl_type}")
 
     def __iter__(self):
         while True:
@@ -1346,20 +1396,40 @@ class WeightedIterableDataset(IterableDataset):
             # Extract batch and rewards
             batch = result["batch"]
             rewards = result.get("rewards")
+            metadata = result.get("metadata", [])
 
             # Stack batch tensors
             batch_tensor = torch.stack(batch)
 
-            # Handle rewards if reinforce is enabled
-            if self.reinforce and rewards:
+            # Handle rewards if RL is enabled
+            if self.rl_type and rewards:
                 # Convert rewards to tensor
                 reward_tensor = torch.tensor(rewards, dtype=torch.float32)
                 
-                # Log batch statistics
-                _rl_logger.log_batch(reward_tensor)
+                # Check if this batch needs generation (rewards == -1)
+                needs_generation = (reward_tensor == -1).any()
+                generation_count = (reward_tensor == -1).sum().item()
                 
-                # Return dict format with rewards
-                yield {"input_ids": batch_tensor, "rewards": reward_tensor}
+                # Debug batch reward composition
+                if generation_count > 0:
+                    print(f"[RL DEBUG] Batch has {generation_count} generation flags out of {len(reward_tensor)} total")
+                
+                # Only log when we actually have generation flags
+                if needs_generation:
+                    print(f"[RL] Batch ready for generation: {generation_count} sequences need responses")
+                    # Return special format for generation with proper metadata
+                    yield {
+                        "input_ids": batch_tensor, 
+                        "rewards": reward_tensor,
+                        "needs_generation": True,
+                        "metadata": metadata  # Now properly tracked from data manager
+                    }
+                else:
+                    # Log batch statistics
+                    _rl_logger.log_batch(reward_tensor)
+                    
+                    # Return regular RL format
+                    yield {"input_ids": batch_tensor, "rewards": reward_tensor}
             else:
                 # No reinforcement learning, return regular tensor
                 yield batch_tensor
@@ -1377,10 +1447,10 @@ class PraxisDataModule(LightningDataModule):
         oversample_chance: float = 0,
         supersample_chance: float = 0,
         hypersample_chance: float = 0,
-        reinforce: bool = False,
+        rl_type: Optional[str] = None,
     ):
         super().__init__()
-        self.reinforce = reinforce
+        self.rl_type = rl_type
         self.train_datasets = self.create_datasets(
             train_datasets,
             tokenizer,
@@ -1411,7 +1481,7 @@ class PraxisDataModule(LightningDataModule):
         weights = [w / sum(raw_weights) for w in raw_weights]
 
         # Debug log
-        print(f"[RL] Creating WeightedIterableDataset with reinforce={self.reinforce}")
+        print(f"[RL] Creating WeightedIterableDataset with rl_type={self.rl_type}")
 
         return WeightedIterableDataset(
             datasets,
@@ -1422,7 +1492,7 @@ class PraxisDataModule(LightningDataModule):
             oversample_chance,
             supersample_chance,
             hypersample_chance,
-            reinforce=self.reinforce,
+            rl_type=self.rl_type,
         )
 
     def train_dataloader(self):
