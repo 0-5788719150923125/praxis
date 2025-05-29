@@ -48,10 +48,9 @@ def main():
     # Build the complete command
     args = [sys.executable, str(run_script)] + final_args
 
-    print(f"🚀 Running alpha config with overrides:")
-    print(f"   Default: {' '.join(alpha_defaults)}")
+    print(f"Alpha: {' '.join(alpha_defaults)}")
     if user_args:
-        print(f"   User: {' '.join(user_args)}")
+        print(f"User: {' '.join(user_args)}")
 
     # Use os.execv to replace this process entirely
     # This ensures proper signal handling and terminal control
