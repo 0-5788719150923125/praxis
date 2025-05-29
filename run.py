@@ -816,9 +816,9 @@ class TerminalInterface(Callback):
 
         # Handle both tensor and dict batch formats
         if isinstance(batch, dict) and "input_ids" in batch:
-            batch_size, _ = batch["input_ids"].shape
+            batch_size, seq_length = batch["input_ids"].shape
         else:
-            batch_size, _ = batch.shape
+            batch_size, seq_length = batch.shape
         swarm_info = lm.model.get_metrics()
         local_experts = swarm_info["experts"].get("local", 0)
         remote_experts = swarm_info["experts"].get("remote", 0)
@@ -902,12 +902,12 @@ class TerminalInterface(Callback):
 
             info_dict["optimizer"] = optimizer_config["optimizer_name"]
             info_dict["strategy"] = strategy
+            info_dict["vocab_size"] = vocab_size
+            info_dict["block_size"] = seq_length
             info_dict["batch_size"] = batch_size
             info_dict["target_size"] = target_batch_size
             info_dict["depth"] = depth
             info_dict["dimension"] = hidden_size
-            info_dict["block_size"] = block_size
-            info_dict["vocab_size"] = vocab_size
             info_dict["dropout"] = dropout
             info_dict["debug"] = debug
             info_dict["meta"] = meta + ["source" if use_source_code else None]
