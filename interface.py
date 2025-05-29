@@ -51,19 +51,47 @@ class LogCapture:
         self.in_traceback = False
 
     def write(self, data):
-        if "Traceback (most recent call last):" in data:
-            self.in_traceback = True
-            self.error_buffer = [data]
-            return
+        # Check for various error patterns
+        error_patterns = [
+            "Traceback (most recent call last):",
+            "RuntimeError:",
+            "CUDA error:",
+            "CUDA out of memory",
+            "AssertionError:",
+            "ValueError:",
+            "TypeError:",
+            "IndexError:",
+            "KeyError:",
+            "AttributeError:",
+            "ImportError:",
+            "ModuleNotFoundError:",
+            "FileNotFoundError:",
+            "MemoryError:",
+            "OSError:",
+            "IOError:",
+            "Exception:",
+            "Error:",
+            "Segmentation fault",
+            "Bus error",
+        ]
+
+        # Start capturing if we see any error pattern
+        if any(pattern in data for pattern in error_patterns):
+            if not self.in_traceback:
+                self.in_traceback = True
+                self.error_buffer = [data]
+                return
 
         if self.in_traceback:
             self.error_buffer.append(data)
-            if data.strip() and not data.startswith(" "):
+            # End traceback detection on empty line or line that doesn't start with space/tab
+            if data.strip() == "" or (
+                data.strip() and not data.startswith((" ", "\t", "  "))
+            ):
                 self.in_traceback = False
                 full_error = "".join(self.error_buffer)
-                # Store error in dashboard for later
-                self.dashboard.error_message = full_error
-                self.dashboard.stop(error=True)
+                # IMMEDIATELY display error and exit dashboard
+                self.dashboard.crash_with_error(full_error)
                 return
 
         self.log_buffer.write(data)
@@ -83,6 +111,11 @@ class TerminalDashboard:
         self.sign = 1
         self.val_loss = None
         self.status_text = "_initializing"
+
+        # Activity monitoring (for warnings, not force-crash)
+        self.last_activity = time.time()
+        self.warning_timeout = 60  # Warn after 60 seconds of no activity
+        self.last_warning_time = 0  # Track when we last warned
         self.log_buffer = deque(maxlen=max_log_lines)
         self.batch = 0
         self.step = 0
@@ -170,15 +203,81 @@ class TerminalDashboard:
 
     def start(self):
         self.running = True
+
+        # Set up signal handlers to catch crashes
+        self._setup_signal_handlers()
+
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
         Thread(target=self._run_dashboard).start()
+
+    def _setup_signal_handlers(self):
+        """Set up signal handlers to catch crashes and display errors immediately."""
+
+        def crash_handler(signum, frame):
+            # Generate a stack trace from the crash point
+            import traceback
+
+            stack_trace = "".join(traceback.format_stack(frame))
+            error_text = (
+                f"Process crashed with signal {signum}\n\nStack trace:\n{stack_trace}"
+            )
+            self.crash_with_error(error_text)
+
+        # Handle various crash signals
+        try:
+            signal.signal(signal.SIGSEGV, crash_handler)  # Segmentation fault
+            signal.signal(signal.SIGFPE, crash_handler)  # Floating point exception
+            signal.signal(signal.SIGILL, crash_handler)  # Illegal instruction
+            signal.signal(signal.SIGABRT, crash_handler)  # Abort signal
+        except (OSError, ValueError):
+            # Some signals may not be available on all platforms
+            pass
+
+        # Handle Ctrl+C gracefully
+        def keyboard_interrupt_handler(signum, frame):
+            self.stop()
+            print("\n🛑 Training interrupted by user", file=sys.stderr)
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 
     def stop(self, error=False):
         self.running = False
         self.error_exit = error
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
+
+    def crash_with_error(self, error_text):
+        """Immediately crash the dashboard and display the error."""
+        # Restore original stdout/stderr first
+        sys.stdout = self.original_stdout
+        sys.stderr = self.original_stderr
+
+        # Force stop the dashboard
+        self.running = False
+        self.error_exit = True
+
+        # Clear the terminal and show the error immediately
+        print(self.term.clear + self.term.normal, end="", file=sys.stderr)
+        print(
+            "🚨 TRAINING CRASHED - Dashboard terminated to show error:", file=sys.stderr
+        )
+        print("=" * 80, file=sys.stderr)
+        print(error_text, file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+
+        # Store for potential later use
+        self.error_message = error_text
+
+        # Exit immediately - don't wait for dashboard thread
+        import os
+
+        os._exit(1)
+
+    def _mark_activity(self):
+        """Mark that we've received activity from the training process."""
+        self.last_activity = time.time()
 
     def update_seed(self, seed):
         with self.lock:
@@ -200,6 +299,10 @@ class TerminalDashboard:
         with self.lock:
             self.status_text = status
 
+    def update_status_internal(self, status):
+        """Internal status update (no lock needed - caller handles locking)."""
+        self.status_text = status
+
     def update_params(self, total_params):
         with self.lock:
             reduced = int(total_params / 10**6)
@@ -208,6 +311,7 @@ class TerminalDashboard:
 
     def update_loss(self, train_loss):
         with self.lock:
+            self._mark_activity()
             self.train_losses.append(train_loss) if train_loss is not None else None
 
     def update_val(self, val_loss):
@@ -228,10 +332,12 @@ class TerminalDashboard:
 
     def update_step(self, step):
         with self.lock:
+            self._mark_activity()
             self.step = step
 
     def update_batch(self, batch):
         with self.lock:
+            self._mark_activity()
             self.batch = batch
 
     def update_rate(self, seconds):
@@ -635,14 +741,32 @@ class TerminalDashboard:
             with self.managed_terminal():
                 while self.running:
                     try:
+                        # Check for long periods of inactivity (warn but don't crash)
+                        current_time = time.time()
+                        inactive_time = current_time - self.last_activity
+
+                        if (
+                            inactive_time > self.warning_timeout
+                            and current_time - self.last_warning_time > 300
+                        ):  # Warn max once per 5 minutes
+                            # Instead of adding to log (which breaks display), just update status
+                            # This avoids the dashboard rendering issues entirely
+                            # with self.lock:
+                            #     self.update_status_internal(f"No activity for {int(inactive_time)}s (inference/eval?)")
+                            self.last_warning_time = current_time
+
                         new_frame = self._create_frame()
                         if not self._check_border_alignment(new_frame):
                             self.previous_frame = None
                         self._update_screen(new_frame)
                         time.sleep(0.1)
                     except Exception as e:
-                        self.add_log(f"Dashboard error: {str(e)}")
-                        time.sleep(1)
+                        # Don't just log dashboard errors - they might indicate a deeper problem
+                        error_msg = f"Dashboard rendering error: {str(e)}"
+                        self.add_log(error_msg)
+                        # If we get repeated dashboard errors, something is seriously wrong
+                        self.crash_with_error(f"Dashboard crashed with: {error_msg}")
+                        return
         finally:
             # After exiting fullscreen mode, print any stored error
             if self.error_message:

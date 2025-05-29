@@ -1795,8 +1795,27 @@ if eval_tasks:
     train_params["callbacks"].append(PeriodicEvaluation())
 
 trainer = Trainer(**train_params)
-trainer.fit(
-    train_model,
-    datamodule,
-    ckpt_path=ckpt_path,
-)
+
+# Wrap training in exception handler to catch crashes and display them immediately
+try:
+    trainer.fit(
+        train_model,
+        datamodule,
+        ckpt_path=ckpt_path,
+    )
+except Exception as e:
+    # If we have a dashboard running, force crash it to show the error
+    progress_bar = globals().get('progress_bar')
+    if progress_bar and hasattr(progress_bar, 'dashboard') and progress_bar.dashboard:
+        import traceback
+        error_text = traceback.format_exc()
+        progress_bar.dashboard.crash_with_error(error_text)
+    else:
+        # No dashboard, just re-raise the exception normally
+        raise
+except KeyboardInterrupt:
+    # Handle Ctrl+C gracefully
+    if progress_bar and hasattr(progress_bar, 'dashboard') and progress_bar.dashboard:
+        progress_bar.dashboard.stop()
+    print("\n🛑 Training interrupted by user", file=sys.stderr)
+    sys.exit(0)
