@@ -47,53 +47,11 @@ class LogCapture:
     def __init__(self, dashboard):
         self.dashboard = dashboard
         self.log_buffer = io.StringIO()
-        self.error_buffer = []
-        self.in_traceback = False
 
     def write(self, data):
-        # Check for various error patterns
-        error_patterns = [
-            "Traceback (most recent call last):",
-            "RuntimeError:",
-            "CUDA error:",
-            "CUDA out of memory",
-            "AssertionError:",
-            "ValueError:",
-            "TypeError:",
-            "IndexError:",
-            "KeyError:",
-            "AttributeError:",
-            "ImportError:",
-            "ModuleNotFoundError:",
-            "FileNotFoundError:",
-            "MemoryError:",
-            "OSError:",
-            "IOError:",
-            "Exception:",
-            "Error:",
-            "Segmentation fault",
-            "Bus error",
-        ]
-
-        # Start capturing if we see any error pattern
-        if any(pattern in data for pattern in error_patterns):
-            if not self.in_traceback:
-                self.in_traceback = True
-                self.error_buffer = [data]
-                return
-
-        if self.in_traceback:
-            self.error_buffer.append(data)
-            # End traceback detection on empty line or line that doesn't start with space/tab
-            if data.strip() == "" or (
-                data.strip() and not data.startswith((" ", "\t", "  "))
-            ):
-                self.in_traceback = False
-                full_error = "".join(self.error_buffer)
-                # IMMEDIATELY display error and exit dashboard
-                self.dashboard.crash_with_error(full_error)
-                return
-
+        # Simply log everything to the LOG panel
+        # The dashboard will only crash if the process itself crashes
+        # (handled by signal handlers and exception hooks)
         self.log_buffer.write(data)
         self.dashboard.add_log(data.rstrip())
 
@@ -174,9 +132,18 @@ class TerminalDashboard:
         sys.exit(0)
 
     def _cleanup(self):
-        self.stop()
-        # if not self.error_exit:
-        #     self._reset_terminal()
+        # Only cleanup if we haven't already done so
+        if self.running:
+            self.stop()
+        # Always try to reset terminal on cleanup
+        try:
+            if hasattr(self, 'original_stderr'):
+                print(self.term.exit_fullscreen, end="", file=self.original_stderr)
+                print(self.term.normal, end="", file=self.original_stderr)
+                print(self.term.visible_cursor, end="", file=self.original_stderr)
+                self.original_stderr.flush()
+        except:
+            pass  # Ignore errors during cleanup
 
     def _reset_terminal(self):
         print(
@@ -207,8 +174,20 @@ class TerminalDashboard:
         # Set up signal handlers to catch crashes
         self._setup_signal_handlers()
 
+        # Capture stdout and stderr
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
+
+        # Force unbuffered output for better error capture
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(line_buffering=True)
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(line_buffering=True)
+
+        # Set environment variables to help with CUDA error reporting
+        # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  # Make CUDA errors appear immediately
+        # os.environ['TORCH_SHOW_CPP_STACKTRACES'] = '1'  # Show C++ stack traces
+
         Thread(target=self._run_dashboard).start()
 
     def _setup_signal_handlers(self):
@@ -242,11 +221,44 @@ class TerminalDashboard:
 
         signal.signal(signal.SIGINT, keyboard_interrupt_handler)
 
+        # Set up global exception handler for uncaught exceptions
+        def exception_handler(exc_type, exc_value, exc_traceback):
+            if exc_type == KeyboardInterrupt:
+                # Handle Ctrl+C gracefully
+                self.stop()
+                print("\n🛑 Training interrupted by user", file=sys.stderr)
+                sys.exit(0)
+            else:
+                # Format the exception - this is a real crash
+                import traceback
+
+                error_lines = traceback.format_exception(
+                    exc_type, exc_value, exc_traceback
+                )
+                error_text = "".join(error_lines)
+                
+                # Also capture recent log output for context
+                recent_logs = ""
+                if hasattr(self, 'log_buffer') and self.log_buffer:
+                    recent_logs = "\n\nRecent log output:\n" + "-" * 40 + "\n"
+                    recent_logs += "\n".join(list(self.log_buffer)[-20:])  # Last 20 lines
+                    
+                self.crash_with_error(error_text + recent_logs)
+
+        sys.excepthook = exception_handler
+
     def stop(self, error=False):
         self.running = False
         self.error_exit = error
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
+        
+        # Reset terminal to normal mode if not already done
+        if not error:
+            print(self.term.exit_fullscreen, end="", file=self.original_stderr)
+            print(self.term.normal, end="", file=self.original_stderr)
+            print(self.term.visible_cursor, end="", file=self.original_stderr)
+            self.original_stderr.flush()
 
     def crash_with_error(self, error_text):
         """Immediately crash the dashboard and display the error."""
@@ -258,17 +270,38 @@ class TerminalDashboard:
         self.running = False
         self.error_exit = True
 
-        # Clear the terminal and show the error immediately
-        print(self.term.clear + self.term.normal, end="", file=sys.stderr)
+        # CRITICAL: Exit fullscreen mode and reset terminal BEFORE showing error
+        # This ensures the terminal is back in normal scrollable mode
+        print(self.term.exit_fullscreen, end="", file=sys.stderr)
+        print(self.term.normal, end="", file=sys.stderr)
+        print(self.term.clear, end="", file=sys.stderr)
+        print(self.term.home, end="", file=sys.stderr)
+        print(self.term.visible_cursor, end="", file=sys.stderr)
+        sys.stderr.flush()
+        
+        # Small delay to ensure terminal mode switch completes
+        import time
+        time.sleep(0.1)
+        
+        # Now show the error in normal terminal mode where scrolling works
         print(
             "🚨 TRAINING CRASHED - Dashboard terminated to show error:", file=sys.stderr
         )
         print("=" * 80, file=sys.stderr)
+
+        # Make sure we have some error text to display
+        if not error_text or error_text.strip() == "":
+            error_text = "Unknown error occurred (no error message captured)"
+
         print(error_text, file=sys.stderr)
         print("=" * 80, file=sys.stderr)
 
+
         # Store for potential later use
         self.error_message = error_text
+
+        # Flush to ensure output is visible
+        sys.stderr.flush()
 
         # Exit immediately - don't wait for dashboard thread
         import os
