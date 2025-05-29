@@ -90,7 +90,6 @@ class PraxisConfig(PretrainedConfig):
         self.epsilon = epsilon
         self.vocab_size = vocab_size
         self.max_length = max_length
-        self.max_position_embeddings = max_length  # For syntaxes attention
         self.activation = activation
         self.block_type = block
         self.expert = expert

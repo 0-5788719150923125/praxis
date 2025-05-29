@@ -7,10 +7,12 @@ import torch.nn.functional as F
 from torch import Tensor
 from transformers import DynamicCache
 
+from praxis.encoding import ENCODING_REGISTRY
 
-class SyntaxesAttention(nn.Module):
+
+class SyntaxisAttention(nn.Module):
     """
-    Syntaxes Attention: Global query compression with sliding window K/V.
+    Syntaxis Attention: Global query compression with sliding window K/V.
     
     This attention mechanism uses asymmetric processing:
     - Queries: Compressed globally to capture long-range dependencies
@@ -39,10 +41,10 @@ class SyntaxesAttention(nn.Module):
         self.head_dim = self.hidden_size // self.num_heads
         
         # Query compression ratio (how much to reduce query length)
-        self.query_compression_ratio = getattr(config, "syntaxes_query_compression_ratio", 4)
+        self.query_compression_ratio = getattr(config, "syntaxis_query_compression_ratio", 4)
         
         # Sliding window size for keys/values
-        self.window_size = getattr(config, "syntaxes_window_size", 128)
+        self.window_size = getattr(config, "syntaxis_window_size", 128)
 
         # Linear projections
         self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
@@ -55,6 +57,15 @@ class SyntaxesAttention(nn.Module):
 
         # Scaling factor
         self.scale = 1.0 / math.sqrt(self.head_dim)
+        
+        # Create a modified config for the encoding that reflects the actual number of heads
+        encoding_config = type(config)(**vars(config))
+        encoding_config.num_heads = self.num_heads
+        # Keep num_queries as 1 to maintain the same total query heads
+        encoding_config.num_queries = 1
+        
+        # Positional encoding
+        self.encoding = ENCODING_REGISTRY[config.encoding](encoding_config)
 
     def forward(
         self,
@@ -63,24 +74,32 @@ class SyntaxesAttention(nn.Module):
         past_key_values: Optional[Union[Tensor, DynamicCache]] = None,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
+        offset: int = 0,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
-        """Forward pass of Syntaxes attention with FFT-compressed queries."""
+        """Forward pass of Syntaxis attention with compressed queries and positional encoding."""
         batch_size, seq_len, hidden_size = inputs.shape
         device = inputs.device
 
         if past_key_values is not None:
             raise NotImplementedError(
-                "KV caching not yet supported for SyntaxesAttention"
+                "KV caching not yet supported for SyntaxisAttention"
             )
 
         # Project queries from inputs (before compression)
         q = self.q_proj(inputs)  # [batch, seq_len, hidden]
         
-        # Query compression with causal constraint
-        # Reshape for multi-head before compression
+        # Reshape queries for multi-head attention
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(
             1, 2
         )  # [batch, heads, seq_len, head_dim]
+        
+        # Apply positional encoding to queries before compression
+        # Create dummy k, v with same shape for the encoding API
+        k_dummy = torch.zeros_like(q)
+        v_dummy = torch.zeros_like(q)
+        q, _, _ = self.encoding.before_scores(
+            q, k_dummy, v_dummy, offset=offset, block_ids=block_ids
+        )
         
         compressed_seq_len = max(1, seq_len // self.query_compression_ratio)
         
@@ -96,8 +115,9 @@ class SyntaxesAttention(nn.Module):
                 padded_seq_len = seq_len
             
             # Reshape for pooling: [batch, heads, compressed_seq_len, compression_ratio, head_dim]
+            # Note: q already has shape [batch, heads, seq_len, head_dim]
             q_reshaped = q[:, :, :padded_seq_len, :].view(
-                batch_size, self.num_heads, compressed_seq_len, self.query_compression_ratio, self.head_dim
+                batch_size, q.size(1), compressed_seq_len, self.query_compression_ratio, self.head_dim
             )
             
             # Average pool along the compression dimension
@@ -126,6 +146,13 @@ class SyntaxesAttention(nn.Module):
         v = v.view(
             batch_size, window_size, self.num_heads, self.head_dim
         ).transpose(1, 2)  # [batch, heads, window_size, head_dim]
+        
+        # Apply positional encoding to K/V with window offset
+        # The window starts at position window_start, so we add that to the offset
+        window_offset = offset + window_start
+        k, v, _ = self.encoding.before_scores(
+            k, k, v, offset=window_offset, block_ids=block_ids
+        )
 
         # Attention computation - all compressed queries attend to the same window
         # q_compressed: [batch, heads, compressed_seq_len, head_dim]
@@ -137,6 +164,9 @@ class SyntaxesAttention(nn.Module):
             q_compressed,  # [batch, heads, compressed_seq_len, head_dim]
             k.transpose(-2, -1)  # [batch, heads, head_dim, window_size]
         ) * self.scale  # [batch, heads, compressed_seq_len, window_size]
+        
+        # Apply positional encoding to scores
+        scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
         
         # Create causal mask
         # Each compressed query position maps to a position in the original sequence
@@ -178,7 +208,7 @@ class SyntaxesAttention(nn.Module):
 
         # Reshape and prepare for upsampling
         output = output.transpose(1, 2).contiguous()  # [batch, compressed_seq_len, heads, head_dim]
-        output = output.view(batch_size, compressed_seq_len, hidden_size)
+        output = output.view(batch_size, compressed_seq_len, self.hidden_size)
         
         # Apply output projection before upsampling (more efficient)
         output = self.o_proj(output)  # [batch, compressed_seq_len, hidden]
