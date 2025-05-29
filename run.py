@@ -900,6 +900,18 @@ class TerminalInterface(Callback):
                 else:
                     info_dict["vram"] = "0%"
 
+            info_dict["optimizer"] = optimizer_config["optimizer_name"]
+            info_dict["strategy"] = strategy
+            info_dict["batch_size"] = batch_size
+            info_dict["target_size"] = target_batch_size
+            info_dict["depth"] = depth
+            info_dict["dimension"] = hidden_size
+            info_dict["block_size"] = block_size
+            info_dict["vocab_size"] = vocab_size
+            info_dict["dropout"] = dropout
+            info_dict["debug"] = debug
+            info_dict["meta"] = meta + ["source" if use_source_code else None]
+
             self.dashboard.update_info(info_dict)
 
     def on_save_checkpoint(self, trainer, lm, checkpoint):
