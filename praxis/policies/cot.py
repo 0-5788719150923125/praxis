@@ -40,6 +40,7 @@ class ChainOfThought(nn.Module):
         self.min_reasoning_length = 50  # Minimum tokens for reasoning
         
         # Pattern detection for CoT structure - using correct tags from dataset
+        self.wrapper_patterns = ["<thinking>", "</thinking>", "<output>", "</output>"]
         self.thinking_patterns = [
             "<initial_analysis>", "</initial_analysis>",
             "<conscious_thought>", "</conscious_thought>"
@@ -48,6 +49,7 @@ class ChainOfThought(nn.Module):
         self.reflection_patterns = ["<reflection>", "</reflection>"]
         self.feeling_patterns = ["<feeling>", "</feeling>"]
         self.improvement_patterns = ["<self_improvement>", "</self_improvement>"]
+        self.subcomponent_patterns = ["<subcomponent_analysis>", "</subcomponent_analysis>"]
         
         # Optional: Simple MLP to predict reasoning quality
         self.quality_head = nn.Sequential(
@@ -101,17 +103,15 @@ class ChainOfThought(nn.Module):
         token_weights = torch.ones(logits_batch_size, logits_seq_len, device=device)
         
         if token_ids is not None:
-            # Apply higher weights to reasoning sections
-            # This is a simplified version - in practice, you'd decode and check patterns
-            # For now, we'll use positional heuristics
-            
-            # Assume reasoning happens in the first 70% of sequence
-            reasoning_end = int(logits_seq_len * 0.7)
-            token_weights[:, :reasoning_end] = self.reasoning_weight
-            
-            # Optional: Detect structured reasoning
-            # This would require decoding tokens which is expensive
-            # So we'll estimate quality from hidden states instead
+            # Try to detect actual <thinking> sections for more precise weighting
+            thinking_weights = self._detect_thinking_sections(token_ids, logits_seq_len, device)
+            if thinking_weights is not None:
+                token_weights = thinking_weights
+            else:
+                # Fallback to positional heuristics if token detection fails
+                # Assume reasoning happens in the first 70% of sequence
+                reasoning_end = int(logits_seq_len * 0.7)
+                token_weights[:, :reasoning_end] = self.reasoning_weight
             
         # Compute reasoning quality score
         if attention_mask is not None:
@@ -194,6 +194,35 @@ class ChainOfThought(nn.Module):
         
         return hidden_states, losses
 
+    def _detect_thinking_sections(self, token_ids, seq_len, device):
+        """
+        Detect <thinking> sections in token sequences for precise weighting.
+        
+        Args:
+            token_ids: Token IDs [batch_size, original_seq_len]
+            seq_len: Target sequence length (usually original - 1 due to shifting)
+            device: Device for tensor operations
+            
+        Returns:
+            Token weights [batch_size, seq_len] or None if detection fails
+        """
+        try:
+            from transformers import AutoTokenizer
+            
+            # This is expensive but more accurate than heuristics
+            # In production, you might want to cache this or use token IDs directly
+            batch_size = token_ids.shape[0]
+            weights = torch.ones(batch_size, seq_len, device=device)
+            
+            # We need access to the tokenizer to decode
+            # For now, return None to fall back to heuristics
+            # TODO: Pass tokenizer from training loop if needed for precise detection
+            return None
+            
+        except Exception:
+            # Fall back to heuristics if tokenizer access fails
+            return None
+
 
 class ChainOfThoughtREINFORCE(nn.Module):
     """
@@ -236,20 +265,29 @@ class ChainOfThoughtREINFORCE(nn.Module):
         reward = 0.0
         
         # Check for structured reasoning using correct dataset tags
+        has_thinking = "<thinking>" in generated_text and "</thinking>" in generated_text
+        has_output = "<output>" in generated_text and "</output>" in generated_text
         has_initial_analysis = "<initial_analysis>" in generated_text and "</initial_analysis>" in generated_text
         has_conscious_thought = "<conscious_thought>" in generated_text and "</conscious_thought>" in generated_text
         has_steps = "<step_by_step>" in generated_text and "</step_by_step>" in generated_text
+        has_subcomponent = "<subcomponent_analysis>" in generated_text and "</subcomponent_analysis>" in generated_text
         has_reflection = "<reflection>" in generated_text and "</reflection>" in generated_text
         has_feeling = "<feeling>" in generated_text and "</feeling>" in generated_text
         has_improvement = "<self_improvement>" in generated_text and "</self_improvement>" in generated_text
         
         # Reward presence of thinking patterns
+        if has_thinking:
+            reward += 0.3  # Major structural element
+        if has_output:
+            reward += 0.1  # Proper output formatting
         if has_initial_analysis:
             reward += 0.2
         if has_conscious_thought:
             reward += 0.2
         if has_steps:
-            reward += 0.3
+            reward += 0.3  # Step-by-step reasoning is very valuable
+        if has_subcomponent:
+            reward += 0.2  # NEW: Reward subcomponent analysis
         if has_reflection:
             reward += 0.2
         if has_feeling:

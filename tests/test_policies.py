@@ -321,16 +321,22 @@ class TestChainOfThoughtREINFORCE:
         """Test reasoning reward computation."""
         policy = ChainOfThoughtREINFORCE(config)
         
-        # Test text with reasoning patterns
+        # Test text with reasoning patterns including new subcomponent_analysis tag
         good_text = """
+        <thinking>
         <initial_analysis>This is a math problem.</initial_analysis>
         <conscious_thought>I need to think step by step.</conscious_thought>
         <step_by_step>
         Step 1: Identify the variables
         Step 2: Apply the formula
         </step_by_step>
+        <subcomponent_analysis>
+        Key components: variables, formula, calculation
+        </subcomponent_analysis>
         <reflection>This approach seems correct.</reflection>
-        The answer is 42.
+        <feeling>Confident about this solution.</feeling>
+        </thinking>
+        <output>The answer is 42.</output>
         """
         
         bad_text = "The answer is 42."
@@ -340,6 +346,11 @@ class TestChainOfThoughtREINFORCE:
         
         assert good_reward > bad_reward
         assert good_reward > 0  # Should get rewards for structure
+        
+        # Test that new subcomponent_analysis tag gives rewards
+        subcomponent_text = "<subcomponent_analysis>Analysis here</subcomponent_analysis>"
+        subcomponent_reward = policy.compute_reasoning_rewards(subcomponent_text, "test")
+        assert subcomponent_reward > 0  # Should get reward for subcomponent analysis
         
     def test_forward_with_generated_texts(self, config, sample_data):
         """Test forward pass with generated texts for reward computation."""
