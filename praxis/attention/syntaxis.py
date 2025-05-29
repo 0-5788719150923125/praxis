@@ -103,29 +103,59 @@ class SyntaxisAttention(nn.Module):
         
         compressed_seq_len = max(1, seq_len // self.query_compression_ratio)
         
-        # Causal pooling for query compression
-        # Use average pooling with causal chunks to maintain temporal order
-        if compressed_seq_len < seq_len:
-            # Pad sequence to make it divisible by compression ratio
-            pad_len = (compressed_seq_len * self.query_compression_ratio) - seq_len
-            if pad_len > 0:
-                q = F.pad(q, (0, 0, 0, pad_len), mode='constant', value=0)
-                padded_seq_len = seq_len + pad_len
-            else:
-                padded_seq_len = seq_len
-            
-            # Reshape for pooling: [batch, heads, compressed_seq_len, compression_ratio, head_dim]
-            # Note: q already has shape [batch, heads, seq_len, head_dim]
-            q_reshaped = q[:, :, :padded_seq_len, :].view(
-                batch_size, q.size(1), compressed_seq_len, self.query_compression_ratio, self.head_dim
-            )
-            
-            # Average pool along the compression dimension
-            q_compressed = q_reshaped.mean(dim=3)
-            # [batch, heads, compressed_seq_len, head_dim]
-        else:
-            # No compression needed
+        # Handle single token generation (common during inference)
+        if seq_len == 1:
+            # During generation, we often have single tokens - skip compression
             q_compressed = q
+        else:
+            
+            # Causal pooling for query compression
+            # Use average pooling with causal chunks to maintain temporal order
+            if compressed_seq_len < seq_len:
+                # Pad sequence to make it divisible by compression ratio
+                pad_len = (compressed_seq_len * self.query_compression_ratio) - seq_len
+                if pad_len > 0:
+                    q = F.pad(q, (0, 0, 0, pad_len), mode='constant', value=0)
+                    padded_seq_len = seq_len + pad_len
+                else:
+                    padded_seq_len = seq_len
+                
+                # Verify tensor dimensions before view operation
+                expected_elements = batch_size * q.size(1) * compressed_seq_len * self.query_compression_ratio * self.head_dim
+                actual_elements = q[:, :, :padded_seq_len, :].numel()
+                
+                if expected_elements != actual_elements:
+                    # Dimension mismatch - fall back to mean pooling for compression
+                    # Average pool the sequence to get compressed_seq_len tokens
+                    pooled_q = q[:, :, :seq_len, :].view(batch_size, q.size(1), seq_len, self.head_dim)
+                    # Reshape to group tokens for averaging
+                    if seq_len > compressed_seq_len:
+                        # Group tokens and average
+                        tokens_per_group = seq_len // compressed_seq_len
+                        extra_tokens = seq_len % compressed_seq_len
+                        
+                        if extra_tokens == 0:
+                            # Perfect division
+                            grouped = pooled_q.view(batch_size, q.size(1), compressed_seq_len, tokens_per_group, self.head_dim)
+                            q_compressed = grouped.mean(dim=3)
+                        else:
+                            # Handle remainder by simple truncation to compressed_seq_len
+                            q_compressed = pooled_q[:, :, :compressed_seq_len, :]
+                    else:
+                        q_compressed = pooled_q
+                else:
+                    # Reshape for pooling: [batch, heads, compressed_seq_len, compression_ratio, head_dim]
+                    # Note: q already has shape [batch, heads, seq_len, head_dim]
+                    q_reshaped = q[:, :, :padded_seq_len, :].view(
+                        batch_size, q.size(1), compressed_seq_len, self.query_compression_ratio, self.head_dim
+                    )
+                    
+                    # Average pool along the compression dimension
+                    q_compressed = q_reshaped.mean(dim=3)
+                    # [batch, heads, compressed_seq_len, head_dim]
+            else:
+                # No compression needed
+                q_compressed = q
         
         # Sliding window for keys and values
         # All compressed queries will attend to the same recent window
@@ -215,14 +245,24 @@ class SyntaxisAttention(nn.Module):
         
         # Upsample back to original sequence length using linear interpolation
         # This spreads the compressed attention output back to full resolution
-        output = output.transpose(1, 2)  # [batch, hidden, compressed_seq_len]
-        output = F.interpolate(
-            output, 
-            size=seq_len, 
-            mode='linear', 
-            align_corners=False
-        )  # [batch, hidden, seq_len]
-        output = output.transpose(1, 2)  # [batch, seq_len, hidden]
+        if compressed_seq_len != seq_len:
+            if seq_len == 1:
+                # For single token generation, just reshape to match expected output
+                output = output.view(batch_size, 1, self.hidden_size)
+            elif compressed_seq_len == 1:
+                # Compressed to single token but need multiple - repeat it
+                output = output.expand(batch_size, seq_len, self.hidden_size)
+            else:
+                # Normal interpolation for other cases
+                output = output.transpose(1, 2)  # [batch, hidden, compressed_seq_len]
+                output = F.interpolate(
+                    output, 
+                    size=seq_len, 
+                    mode='linear', 
+                    align_corners=False
+                )  # [batch, hidden, seq_len]
+                output = output.transpose(1, 2)  # [batch, seq_len, hidden]
+        # If compressed_seq_len == seq_len, no upsampling needed
         
         # Final dropout
         output = self.dropout(output)
