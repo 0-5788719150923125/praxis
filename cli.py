@@ -21,6 +21,7 @@ from praxis import (
     HEAD_REGISTRY,
     LOSS_REGISTRY,
     RESIDUAL_REGISTRY,
+    RL_POLICIES_REGISTRY,
     ROUTER_REGISTRY,
     SORTING_REGISTRY,
     STRATEGIES_REGISTRY,
@@ -375,7 +376,7 @@ architecture_group.add_argument(
 )
 architecture_group.add_argument(
     "--bidirectional",
-    action="store_true", 
+    action="store_true",
     default=False,
     help="Enable bidirectional language modeling (forward and backward prediction)",
 )
@@ -481,6 +482,15 @@ data_group.add_argument(
     action="store_true",
     default=False,
     help="Disable training on the model's own source code",
+)
+data_group.add_argument(
+    "--rl-type",
+    type=str,
+    default=None,
+    choices=RL_POLICIES_REGISTRY.keys(),
+    help="Enable reinforcement learning with specified algorithm. "
+    "Note: Current GRPO implementation uses static dataset rewards (not true RL). "
+    "True RL with generation will be added in a future update.",
 )
 # other
 other_group.add_argument(

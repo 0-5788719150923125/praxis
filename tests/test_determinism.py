@@ -395,8 +395,16 @@ def test_interleave_data_manager_determinism():
     batch_2 = manager_2.get_batch(batch_size=2)
 
     # Check that batches are identical
-    for i in range(len(batch_1)):
-        torch.testing.assert_close(batch_1[i], batch_2[i])
+    # Handle new dictionary format
+    assert isinstance(batch_1, dict) and isinstance(batch_2, dict)
+    assert "batch" in batch_1 and "batch" in batch_2
+    
+    batch_tensors_1 = batch_1["batch"]
+    batch_tensors_2 = batch_2["batch"]
+    
+    assert len(batch_tensors_1) == len(batch_tensors_2)
+    for i in range(len(batch_tensors_1)):
+        torch.testing.assert_close(batch_tensors_1[i], batch_tensors_2[i])
 
     # Test different sampling modes
     batch_3 = manager_1.get_batch(batch_size=4, oversample=True)
@@ -408,8 +416,12 @@ def test_interleave_data_manager_determinism():
     batch_4 = manager_2.get_batch(batch_size=4, oversample=True)
 
     # Check that batches are identical
-    for i in range(len(batch_3)):
-        torch.testing.assert_close(batch_3[i], batch_4[i])
+    batch_tensors_3 = batch_3["batch"]
+    batch_tensors_4 = batch_4["batch"]
+    
+    assert len(batch_tensors_3) == len(batch_tensors_4)
+    for i in range(len(batch_tensors_3)):
+        torch.testing.assert_close(batch_tensors_3[i], batch_tensors_4[i])
 
 
 def test_text_formatter_determinism():

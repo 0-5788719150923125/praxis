@@ -6,6 +6,70 @@ import sys
 sys.dont_write_bytecode = True
 
 
+def get_memory_info(target_device=None):
+    """Get current RAM and VRAM usage information."""
+    memory_info = {}
+
+    try:
+        # Get RAM information
+        import psutil
+
+        ram = psutil.virtual_memory()
+        memory_info["ram_used"] = f"{ram.used / (1024**3):.1f}GB"
+        memory_info["ram_total"] = f"{ram.total / (1024**3):.1f}GB"
+        memory_info["ram_percent"] = f"{ram.percent:.1f}%"
+    except ImportError:
+        memory_info["ram_used"] = "N/A"
+        memory_info["ram_total"] = "N/A"
+        memory_info["ram_percent"] = "N/A"
+
+    try:
+        # Get VRAM information if CUDA is available
+        import torch
+
+        if torch.cuda.is_available():
+            # If target_device is specified (e.g., "cuda:1"), extract the device index
+            if target_device and target_device.startswith("cuda:"):
+                target_gpu_idx = int(target_device.split(":")[1])
+                if target_gpu_idx < torch.cuda.device_count():
+                    allocated = torch.cuda.memory_allocated(target_gpu_idx) / (1024**3)
+                    reserved = torch.cuda.memory_reserved(target_gpu_idx) / (1024**3)
+                    total = torch.cuda.get_device_properties(
+                        target_gpu_idx
+                    ).total_memory / (1024**3)
+
+                    memory_info[f"gpu{target_gpu_idx}_used"] = f"{allocated:.1f}GB"
+                    memory_info[f"gpu{target_gpu_idx}_reserved"] = f"{reserved:.1f}GB"
+                    memory_info[f"gpu{target_gpu_idx}_total"] = f"{total:.1f}GB"
+                    memory_info[f"gpu{target_gpu_idx}_percent"] = (
+                        f"{(reserved/total)*100:.1f}%"
+                    )
+                    # Also add allocated percentage for debugging
+                    memory_info[f"gpu{target_gpu_idx}_alloc_percent"] = (
+                        f"{(allocated/total)*100:.1f}%"
+                    )
+                else:
+                    memory_info["gpu_status"] = f"Invalid device {target_device}"
+            else:
+                # Default behavior: check all GPUs
+                for i in range(torch.cuda.device_count()):
+                    device_name = f"cuda:{i}"
+                    allocated = torch.cuda.memory_allocated(i) / (1024**3)
+                    reserved = torch.cuda.memory_reserved(i) / (1024**3)
+                    total = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+
+                    memory_info[f"gpu{i}_used"] = f"{allocated:.1f}GB"
+                    memory_info[f"gpu{i}_reserved"] = f"{reserved:.1f}GB"
+                    memory_info[f"gpu{i}_total"] = f"{total:.1f}GB"
+                    memory_info[f"gpu{i}_percent"] = f"{(reserved/total)*100:.1f}%"
+        else:
+            memory_info["gpu_status"] = "No CUDA"
+    except Exception:
+        memory_info["gpu_status"] = "N/A"
+
+    return memory_info
+
+
 # Ensures that orphaned threads and libp2p daemons are killed when this script dies
 def sigint_handler(signum, frame):
     print("\nCtrl+C detected. Killing all spawned processes.")
@@ -219,6 +283,7 @@ config = PraxisConfig(
     meta=meta,
     bidirectional=bidirectional,
     tie_weights=tie_weights,
+    rl_type=rl_type,
 )
 
 # Misc hyperparameters
@@ -318,27 +383,69 @@ class PraxisTrainer(LightningModule):
 
         current_time = datetime.now()
 
-        labels = batch[..., 1:].contiguous()
-        outputs = self.model(input_ids=batch, labels=labels)
+        # Only log interesting batch events
+        if isinstance(batch, dict) and batch.get("needs_generation", False):
+            rewards_debug = batch.get("rewards", torch.tensor([]))
+            generation_flags = (rewards_debug == -1).sum().item()
+            print(
+                f"[RL] Training step {batch_idx}: Processing generation batch with {generation_flags} sequences"
+            )
+
+        # Handle RL batch format
+        if isinstance(batch, dict) and "input_ids" in batch:
+            input_ids = batch["input_ids"]
+            rewards = batch.get("rewards", None)
+
+            # Check if this batch needs generation for RL
+            if batch.get("needs_generation", False) and rewards is not None:
+                print(f"[RL] Generating responses for batch {batch_idx}...")
+                # This is a proper RL batch - generate responses
+                input_ids, rewards = self._generate_and_evaluate_rl_batch(
+                    input_ids, batch.get("metadata", [])
+                )
+                # If generation failed, skip this batch
+                if input_ids is None:
+                    return torch.tensor(0.0, requires_grad=True)
+        else:
+            input_ids = batch
+            rewards = None
+
+        labels = input_ids[..., 1:].contiguous()
+        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards)
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
-        batch_size, num_tokens = batch.shape
+        batch_size, num_tokens = input_ids.shape
         self.num_tokens += batch_size * num_tokens
 
         step_time = current_time - self.last_train_step_time
         self.train_step_ema = self._update_ema(self.train_step_ema, step_time)
         self.last_train_step_time = current_time
 
+        # Prepare metrics dict
+        metrics = {
+            "loss": loss,
+            "batch": int(batch_idx),
+            "learning_rate": self.scheduler.get_last_lr()[0],
+            "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
+            "avg_step_time": self.train_step_ema,
+            "softmax_collapse": softmax_collapse,
+        }
+
+        # Add RL-specific metrics if available
+        if rewards is not None:
+            non_zero_rewards = (rewards > 0).sum().item()
+            if non_zero_rewards > 0:
+                metrics["rl_reward_mean"] = rewards[rewards > 0].mean()
+                metrics["rl_reward_max"] = rewards.max()
+                metrics["rl_sequences_pct"] = 100.0 * non_zero_rewards / len(rewards)
+
+                # Extract RL loss if available
+                if hasattr(outputs, "rl_loss") and outputs.rl_loss is not None:
+                    metrics["rl_loss"] = outputs.rl_loss
+
         self.log_dict(
-            {
-                "loss": loss,
-                "batch": int(batch_idx),
-                "learning_rate": self.scheduler.get_last_lr()[0],
-                "num_tokens": self.num_tokens / 1_000_000_000,  # convert to billions
-                "avg_step_time": self.train_step_ema,
-                "softmax_collapse": softmax_collapse,
-            },
+            metrics,
             on_step=True,
             on_epoch=False,
             logger=True,
@@ -349,10 +456,146 @@ class PraxisTrainer(LightningModule):
 
         return loss
 
+    def _generate_and_evaluate_rl_batch(self, prompt_ids, metadata):
+        """
+        Generate responses for RL prompts and evaluate them.
+
+        Returns:
+            input_ids: New batch with generated responses
+            rewards: Computed rewards for each response
+        """
+        import re
+
+        batch_size = prompt_ids.shape[0]
+        device = prompt_ids.device
+
+        # Get GRPO group size
+        group_size = getattr(self.model.config, "grpo_group_size", 8)
+
+        all_input_ids = []
+        all_rewards = []
+
+        # Generate multiple responses per prompt
+        with torch.no_grad():
+            for i in range(batch_size):
+                prompt = prompt_ids[i : i + 1]
+                ground_truth = (
+                    metadata[i].get("ground_truth", "") if i < len(metadata) else ""
+                )
+
+                # Generate group_size responses
+                prompt_rewards = []
+                prompt_sequences = []
+
+                for _ in range(group_size):
+                    # Generate response
+                    generated = self.model.generate(
+                        prompt,
+                        max_new_tokens=256,
+                        temperature=0.7,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                    )
+
+                    # Decode to extract answer
+                    generated_text = self.tokenizer.decode(
+                        generated[0, prompt.shape[1] :], skip_special_tokens=True
+                    )
+
+                    # Evaluate response
+                    reward = self._evaluate_math_response(generated_text, ground_truth)
+
+                    prompt_rewards.append(reward)
+                    prompt_sequences.append(generated[0])
+
+                # Add all sequences and rewards for this prompt
+                all_input_ids.extend(prompt_sequences)
+                all_rewards.extend(prompt_rewards)
+
+        # Stack into batch
+        if all_input_ids:
+            # Pad sequences to same length
+            max_len = max(seq.shape[0] for seq in all_input_ids)
+            padded_sequences = []
+
+            for seq in all_input_ids:
+                if seq.shape[0] < max_len:
+                    padding = torch.full(
+                        (max_len - seq.shape[0],),
+                        self.tokenizer.pad_token_id,
+                        dtype=seq.dtype,
+                        device=seq.device,
+                    )
+                    seq = torch.cat([seq, padding])
+                padded_sequences.append(seq)
+
+            input_ids = torch.stack(padded_sequences)
+            rewards = torch.tensor(all_rewards, dtype=torch.float32, device=device)
+
+            # Log generation results
+            successful = (rewards > 0).sum().item()
+            print(
+                f"[RL Generation] Generated {len(all_rewards)} responses, {successful} correct"
+            )
+
+            return input_ids, rewards
+        else:
+            return None, None
+
+    def _evaluate_math_response(self, response, ground_truth):
+        """Evaluate if the response contains the correct answer."""
+        # Extract number from response
+        patterns = [
+            r"answer\s*(?:is|=|:)?\s*([+-]?\d*\.?\d+)",
+            r"=\s*([+-]?\d*\.?\d+)",
+            r"([+-]?\d*\.?\d+)\s*$",
+        ]
+
+        response = response.lower().strip()
+        extracted = None
+
+        for pattern in patterns:
+            match = re.search(pattern, response)
+            if match:
+                try:
+                    extracted = float(match.group(1))
+                    break
+                except:
+                    continue
+
+        if extracted is None:
+            return 0.0
+
+        # Check if correct
+        try:
+            true_answer = float(ground_truth)
+            if abs(extracted - true_answer) < 1e-6:
+                return 1.0
+            # Partial credit for being close
+            elif abs(true_answer) > 0:
+                rel_error = abs(extracted - true_answer) / abs(true_answer)
+                if rel_error < 0.1:
+                    return 0.5
+                elif rel_error < 0.5:
+                    return 0.2
+        except:
+            pass
+
+        return 0.1  # Small reward for extracting any number
+
     def validation_step(self, batch, batch_idx):
 
-        labels = batch[..., 1:].contiguous()
-        outputs = self.model(input_ids=batch, labels=labels)
+        # Handle RL batch format
+        if isinstance(batch, dict) and "input_ids" in batch:
+            input_ids = batch["input_ids"]
+            rewards = batch.get("rewards", None)
+        else:
+            input_ids = batch
+            rewards = None
+
+        labels = input_ids[..., 1:].contiguous()
+        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards)
 
         stats = {}
 
@@ -360,7 +603,7 @@ class PraxisTrainer(LightningModule):
         stats["val_loss"] = loss
 
         if byte_latent:
-            stats["val_bits_per_byte"] = self._compute_bits_per_byte(batch, loss)
+            stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
             stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :], labels)
 
@@ -369,7 +612,7 @@ class PraxisTrainer(LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
-            batch_size=batch.size(0),
+            batch_size=input_ids.size(0),
             prog_bar=True,
             sync_dist=False,  # Don't sync across distributed processes
         )
@@ -396,6 +639,99 @@ class PraxisTrainer(LightningModule):
     def on_load_checkpoint(self, checkpoint):
         super().on_load_checkpoint(checkpoint)
         self.num_tokens = checkpoint.get("num_tokens", 0)
+        
+        # Handle optimizer state when model architecture changes
+        self._handle_optimizer_state_mismatch(checkpoint)
+
+    def load_state_dict(self, state_dict, strict=True):
+        """
+        Custom state dict loading that handles missing weights gracefully.
+        
+        When loading checkpoints after model architecture changes, missing weights
+        will be initialized to their default values rather than causing errors.
+        """
+        if strict:
+            # First try strict loading
+            try:
+                return super().load_state_dict(state_dict, strict=True)
+            except RuntimeError as e:
+                if "Missing key(s) in state_dict" in str(e):
+                    print(f"⚠️  Strict loading failed due to missing keys: {e}")
+                    print("🔧 Switching to non-strict loading - missing weights will be randomly initialized")
+                    strict = False
+                else:
+                    # Re-raise if it's not a missing keys error
+                    raise
+        
+        if not strict:
+            # Get current model state dict for comparison
+            current_state = self.state_dict()
+            
+            # Load with strict=False to ignore missing keys
+            missing_keys, unexpected_keys = super().load_state_dict(state_dict, strict=False)
+            
+            if missing_keys:
+                print(f"🆕 Missing keys (will use random initialization): {len(missing_keys)} keys")
+                for key in missing_keys[:5]:  # Show first 5
+                    print(f"   - {key}")
+                if len(missing_keys) > 5:
+                    print(f"   ... and {len(missing_keys) - 5} more")
+            
+            if unexpected_keys:
+                print(f"🗑️  Unexpected keys (ignored): {len(unexpected_keys)} keys")
+                for key in unexpected_keys[:5]:  # Show first 5
+                    print(f"   - {key}")
+                if len(unexpected_keys) > 5:
+                    print(f"   ... and {len(unexpected_keys) - 5} more")
+            
+            return missing_keys, unexpected_keys
+
+    def _handle_optimizer_state_mismatch(self, checkpoint):
+        """
+        Handle optimizer state when model parameters have changed.
+        
+        When the model architecture changes (new parameters added/removed),
+        the optimizer state becomes incompatible. This method cleans up
+        the optimizer state to prevent loading errors.
+        """
+        if "optimizer_states" not in checkpoint:
+            return
+            
+        # Get current model parameter count
+        current_params = set()
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                current_params.add(name)
+        
+        # Check if we need to modify optimizer states
+        optimizer_states = checkpoint.get("optimizer_states", [])
+        
+        for opt_idx, opt_state in enumerate(optimizer_states):
+            if not opt_state:
+                continue
+                
+            # Check parameter groups in optimizer state
+            try:
+                param_groups = opt_state.get("param_groups", [])
+                state = opt_state.get("state", {})
+                
+                # Count parameters in optimizer vs current model
+                opt_param_count = sum(len(group.get("params", [])) for group in param_groups)
+                current_param_count = len(current_params)
+                
+                if opt_param_count != current_param_count:
+                    print(f"🔧 Optimizer {opt_idx} parameter count mismatch:")
+                    print(f"   - Checkpoint: {opt_param_count} parameters")
+                    print(f"   - Current model: {current_param_count} parameters")
+                    print(f"   - Clearing optimizer state to prevent errors")
+                    
+                    # Clear the optimizer state - it will reinitialize with new parameters
+                    checkpoint["optimizer_states"][opt_idx] = {}
+                    
+            except (KeyError, TypeError) as e:
+                print(f"⚠️  Could not analyze optimizer {opt_idx} state: {e}")
+                print(f"   - Clearing optimizer state to be safe")
+                checkpoint["optimizer_states"][opt_idx] = {}
 
     def _update_ema(self, ema, new_value):
         if ema is None:
@@ -507,7 +843,7 @@ class TerminalInterface(Callback):
     A single pane of glass containing charts and information.
     """
 
-    def __init__(self, use_dashboard=False, url=None, progress_bar=None):
+    def __init__(self, use_dashboard=False, url=None, progress_bar=None, device=None):
         super().__init__()
         self.alpha = 1e-2
         self.ema_loss = 0
@@ -519,6 +855,7 @@ class TerminalInterface(Callback):
         self.url = url
         self.dashboard = use_dashboard
         self.progress_bar = progress_bar
+        self.device = device
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
@@ -570,7 +907,11 @@ class TerminalInterface(Callback):
         if not quiet:
             self._generate_text(lm, batch_idx, self.interval)
 
-        batch_size, _ = batch.shape
+        # Handle both tensor and dict batch formats
+        if isinstance(batch, dict) and "input_ids" in batch:
+            batch_size, seq_length = batch["input_ids"].shape
+        else:
+            batch_size, seq_length = batch.shape
         swarm_info = lm.model.get_metrics()
         local_experts = swarm_info["experts"].get("local", 0)
         remote_experts = swarm_info["experts"].get("remote", 0)
@@ -626,6 +967,47 @@ class TerminalInterface(Callback):
             if "acc0" in data:
                 self.dashboard.update_accuracy(data["acc0"], data["acc1"])
 
+            # Update the info panel with device and memory information
+            memory_info = get_memory_info(self.device)
+            info_dict = {
+                "device": self.device,
+                "ram": f"{memory_info.get('ram_percent', 'N/A')}",
+            }
+
+            # Add GPU memory info if available
+            # Extract GPU index from device string (e.g., "cuda:1" -> 1)
+            if self.device and self.device.startswith("cuda:"):
+                gpu_idx = int(self.device.split(":")[1])
+                gpu_percent_key = f"gpu{gpu_idx}_percent"
+                gpu_reserved_key = f"gpu{gpu_idx}_reserved"
+                gpu_total_key = f"gpu{gpu_idx}_total"
+                if gpu_percent_key in memory_info:
+                    info_dict["vram"] = f"{memory_info[gpu_percent_key]}"
+                    # Add detailed memory info
+                    if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+                        info_dict["vram_gb"] = (
+                            f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                        )
+                elif "gpu_status" in memory_info:
+                    info_dict["vram"] = memory_info["gpu_status"]
+                else:
+                    info_dict["vram"] = "0%"
+
+            info_dict["optimizer"] = optimizer_config["optimizer_name"]
+            info_dict["strategy"] = strategy
+            info_dict["policy"] = rl_type
+            info_dict["vocab_size"] = vocab_size
+            info_dict["block_size"] = seq_length
+            info_dict["batch_size"] = batch_size
+            info_dict["target_size"] = target_batch_size
+            info_dict["depth"] = depth
+            info_dict["dimension"] = hidden_size
+            info_dict["dropout"] = dropout
+            info_dict["debug"] = debug
+            info_dict["meta"] = meta + ["source" if use_source_code else None]
+
+            self.dashboard.update_info(info_dict)
+
     def on_save_checkpoint(self, trainer, lm, checkpoint):
         super().on_save_checkpoint(trainer, lm, checkpoint)
         checkpoint["start_time"] = self.start_time
@@ -649,8 +1031,8 @@ class TerminalInterface(Callback):
             self.text,
             dict(
                 max_new_tokens=max_new_tokens,
-                temperature=0.3,
-                repetition_penalty=1.1,
+                temperature=0.4,
+                repetition_penalty=1.15,
                 skip_special_tokens=False,
                 truncate_to=self.max_length,
                 use_cache=False,
@@ -1284,7 +1666,7 @@ if local_rank == 0:
 # Load datasets
 use_source_code = not no_source
 datamodule = get_datamodules(
-    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path
+    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path, rl_type
 )
 
 # create the optimizer
@@ -1401,7 +1783,9 @@ if local_rank == 0:
         train_params["callbacks"].append(progress_bar)
     train_params["callbacks"].append(checkpoint_callback)
     train_params["callbacks"].append(
-        TerminalInterface(use_dashboard, api_server.get_api_addr(), progress_bar)
+        TerminalInterface(
+            use_dashboard, api_server.get_api_addr(), progress_bar, device
+        )
     )
 
 train_params["callbacks"].append(
@@ -1411,8 +1795,29 @@ if eval_tasks:
     train_params["callbacks"].append(PeriodicEvaluation())
 
 trainer = Trainer(**train_params)
-trainer.fit(
-    train_model,
-    datamodule,
-    ckpt_path=ckpt_path,
-)
+
+# Wrap training in exception handler to catch crashes and display them immediately
+try:
+    trainer.fit(
+        train_model,
+        datamodule,
+        ckpt_path=ckpt_path,
+    )
+except Exception as e:
+    # If we have a dashboard running, force crash it to show the error
+    progress_bar = globals().get('progress_bar')
+    if progress_bar and hasattr(progress_bar, 'dashboard') and progress_bar.dashboard:
+        import traceback
+        error_text = traceback.format_exc()
+        progress_bar.dashboard.crash_with_error(error_text)
+    else:
+        # No dashboard, just re-raise the exception normally
+        raise
+except KeyboardInterrupt:
+    # Handle Ctrl+C gracefully
+    if progress_bar and hasattr(progress_bar, 'dashboard') and progress_bar.dashboard:
+        progress_bar.dashboard.stop()
+        # Dashboard already prints the interruption message
+    else:
+        print("\n🛑 Training interrupted by user", file=sys.stderr)
+    sys.exit(0)

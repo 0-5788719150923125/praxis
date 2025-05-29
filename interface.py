@@ -47,34 +47,20 @@ class LogCapture:
     def __init__(self, dashboard):
         self.dashboard = dashboard
         self.log_buffer = io.StringIO()
-        self.error_buffer = []
-        self.in_traceback = False
 
     def write(self, data):
-        if "Traceback (most recent call last):" in data:
-            self.in_traceback = True
-            self.error_buffer = [data]
-            return
-
-        if self.in_traceback:
-            self.error_buffer.append(data)
-            if data.strip() and not data.startswith(" "):
-                self.in_traceback = False
-                full_error = "".join(self.error_buffer)
-                # Store error in dashboard for later
-                self.dashboard.error_message = full_error
-                self.dashboard.stop(error=True)
-                return
-
+        # Simply log everything to the LOG panel
+        # The dashboard will only crash if the process itself crashes
+        # (handled by signal handlers and exception hooks)
         self.log_buffer.write(data)
-        self.dashboard.add_log(data)
+        self.dashboard.add_log(data.rstrip())
 
     def flush(self):
         self.log_buffer.flush()
 
 
 class TerminalDashboard:
-    def __init__(self, seed, max_data_points=1000, max_log_lines=100):
+    def __init__(self, seed, max_data_points=1000, max_log_lines=200):
         self.seed = seed
         self.term = blessed.Terminal()
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -83,6 +69,15 @@ class TerminalDashboard:
         self.sign = 1
         self.val_loss = None
         self.status_text = "_initializing"
+
+        # Save terminal state for proper restoration
+        self.saved_terminal_state = None
+        self.terminal_restored = False
+
+        # Activity monitoring (for warnings, not force-crash)
+        self.last_activity = time.time()
+        self.warning_timeout = 60  # Warn after 60 seconds of no activity
+        self.last_warning_time = 0  # Track when we last warned
         self.log_buffer = deque(maxlen=max_log_lines)
         self.batch = 0
         self.step = 0
@@ -106,6 +101,7 @@ class TerminalDashboard:
         self.accuracy = None
         self.num_tokens = 0
         self.game_of_life = None
+        self.info_dict = {}
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -140,19 +136,51 @@ class TerminalDashboard:
         sys.exit(0)
 
     def _cleanup(self):
-        self.stop()
-        # if not self.error_exit:
-        #     self._reset_terminal()
+        # Only cleanup if we haven't already done so
+        if self.running:
+            self.stop()
+        # Always try to restore terminal on cleanup
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
 
-    def _reset_terminal(self):
-        print(
-            self.term.normal
-            + self.term.clear
-            + self.term.home
-            + self.term.visible_cursor,
-            end="",
-        )
-        sys.stdout.flush()
+    def _restore_terminal(self):
+        """Fully restore terminal to its original state."""
+        try:
+            # First exit fullscreen and restore cursor
+            if hasattr(self, "original_stderr"):
+                # Exit fullscreen mode (this restores the original terminal content)
+                print(self.term.exit_fullscreen, end="", file=self.original_stderr)
+                # Reset all terminal attributes
+                print(self.term.normal, end="", file=self.original_stderr)
+                # Make cursor visible
+                print(self.term.visible_cursor, end="", file=self.original_stderr)
+                # Don't clear or home - this preserves terminal history!
+                # Just ensure we're on a new line for clean output
+                print("", file=self.original_stderr)
+                self.original_stderr.flush()
+
+            # Restore saved terminal settings if available
+            if self.saved_terminal_state is not None:
+                try:
+                    import termios
+
+                    if hasattr(sys.stdin, "fileno"):
+                        termios.tcsetattr(
+                            sys.stdin.fileno(),
+                            termios.TCSANOW,
+                            self.saved_terminal_state,
+                        )
+                except:
+                    pass
+
+        except Exception:
+            # If anything fails, at least try to make the terminal usable
+            try:
+                sys.stderr.write("\033[0m\033[?25h\n")  # Reset and show cursor
+                sys.stderr.flush()
+            except:
+                pass
 
     def _get_terminal_size(self):
         return shutil.get_terminal_size()
@@ -163,21 +191,175 @@ class TerminalDashboard:
             with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
                 yield
         finally:
-            pass
-            # if not self.error_exit:  # Only reset if not error exit
-            #     self._reset_terminal()
+            # Ensure terminal is restored when exiting the context
+            if not self.terminal_restored and not self.error_exit:
+                self._restore_terminal()
+                self.terminal_restored = True
 
     def start(self):
         self.running = True
+
+        # Save terminal state before modifying it
+        try:
+            # Save current terminal settings
+            import termios
+            import tty
+
+            if hasattr(sys.stdin, "fileno"):
+                try:
+                    self.saved_terminal_state = termios.tcgetattr(sys.stdin.fileno())
+                except:
+                    self.saved_terminal_state = None
+        except ImportError:
+            self.saved_terminal_state = None
+
+        # Set up signal handlers to catch crashes
+        self._setup_signal_handlers()
+
+        # Capture stdout and stderr
         sys.stdout = self.log_capture
         sys.stderr = self.log_capture
+
+        # Force unbuffered output for better error capture
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(line_buffering=True)
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(line_buffering=True)
+
+        # Set environment variables to help with CUDA error reporting
+        # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  # Make CUDA errors appear immediately
+        # os.environ['TORCH_SHOW_CPP_STACKTRACES'] = '1'  # Show C++ stack traces
+
         Thread(target=self._run_dashboard).start()
+
+    def _setup_signal_handlers(self):
+        """Set up signal handlers to catch crashes and display errors immediately."""
+
+        def crash_handler(signum, frame):
+            # Generate a stack trace from the crash point
+            import traceback
+
+            stack_trace = "".join(traceback.format_stack(frame))
+            error_text = (
+                f"Process crashed with signal {signum}\n\nStack trace:\n{stack_trace}"
+            )
+            self.crash_with_error(error_text)
+
+        # Handle various crash signals
+        try:
+            signal.signal(signal.SIGSEGV, crash_handler)  # Segmentation fault
+            signal.signal(signal.SIGFPE, crash_handler)  # Floating point exception
+            signal.signal(signal.SIGILL, crash_handler)  # Illegal instruction
+            signal.signal(signal.SIGABRT, crash_handler)  # Abort signal
+        except (OSError, ValueError):
+            # Some signals may not be available on all platforms
+            pass
+
+        # Handle Ctrl+C gracefully
+        def keyboard_interrupt_handler(signum, frame):
+            # Ensure terminal is restored before exiting
+            if not self.terminal_restored:
+                self._restore_terminal()
+                self.terminal_restored = True
+            self.stop()
+            print("\n🛑 Training interrupted by user", file=sys.stderr)
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, keyboard_interrupt_handler)
+
+        # Set up global exception handler for uncaught exceptions
+        def exception_handler(exc_type, exc_value, exc_traceback):
+            if exc_type == KeyboardInterrupt:
+                # Handle Ctrl+C gracefully
+                if not self.terminal_restored:
+                    self._restore_terminal()
+                    self.terminal_restored = True
+                self.stop()
+                print("\n🛑 Training interrupted by user", file=sys.stderr)
+                sys.exit(0)
+            else:
+                # Format the exception - this is a real crash
+                import traceback
+
+                error_lines = traceback.format_exception(
+                    exc_type, exc_value, exc_traceback
+                )
+                error_text = "".join(error_lines)
+
+                # Also capture recent log output for context
+                recent_logs = ""
+                if hasattr(self, "log_buffer") and self.log_buffer:
+                    recent_logs = "\n\nRecent log output:\n" + "-" * 40 + "\n"
+                    recent_logs += "\n".join(
+                        list(self.log_buffer)[-20:]
+                    )  # Last 20 lines
+
+                self.crash_with_error(error_text + recent_logs)
+
+        sys.excepthook = exception_handler
 
     def stop(self, error=False):
         self.running = False
         self.error_exit = error
+
+        # Restore stdout/stderr first
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
+
+        # Perform full terminal restoration if not already done
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
+
+    def crash_with_error(self, error_text):
+        """Immediately crash the dashboard and display the error."""
+        # Restore original stdout/stderr first
+        sys.stdout = self.original_stdout
+        sys.stderr = self.original_stderr
+
+        # Force stop the dashboard
+        self.running = False
+        self.error_exit = True
+
+        # CRITICAL: Restore terminal properly
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
+
+        # Small delay to ensure terminal mode switch completes
+        import time
+
+        time.sleep(0.1)
+
+        # Now show the error in normal terminal mode where scrolling works
+        # Add some newlines to separate from any dashboard artifacts
+        print("\n\n", file=sys.stderr)
+        print(
+            "🚨 TRAINING CRASHED - Dashboard terminated to show error:", file=sys.stderr
+        )
+        print("=" * 80, file=sys.stderr)
+
+        # Make sure we have some error text to display
+        if not error_text or error_text.strip() == "":
+            error_text = "Unknown error occurred (no error message captured)"
+
+        print(error_text, file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+
+        # Store for potential later use
+        self.error_message = error_text
+
+        # Flush to ensure output is visible
+        sys.stderr.flush()
+
+        # Exit immediately - don't wait for dashboard thread
+        import os
+
+        os._exit(1)
+
+    def _mark_activity(self):
+        """Mark that we've received activity from the training process."""
+        self.last_activity = time.time()
 
     def update_seed(self, seed):
         with self.lock:
@@ -199,6 +381,10 @@ class TerminalDashboard:
         with self.lock:
             self.status_text = status
 
+    def update_status_internal(self, status):
+        """Internal status update (no lock needed - caller handles locking)."""
+        self.status_text = status
+
     def update_params(self, total_params):
         with self.lock:
             reduced = int(total_params / 10**6)
@@ -207,6 +393,7 @@ class TerminalDashboard:
 
     def update_loss(self, train_loss):
         with self.lock:
+            self._mark_activity()
             self.train_losses.append(train_loss) if train_loss is not None else None
 
     def update_val(self, val_loss):
@@ -227,10 +414,12 @@ class TerminalDashboard:
 
     def update_step(self, step):
         with self.lock:
+            self._mark_activity()
             self.step = step
 
     def update_batch(self, batch):
         with self.lock:
+            self._mark_activity()
             self.batch = batch
 
     def update_rate(self, seconds):
@@ -250,13 +439,20 @@ class TerminalDashboard:
         with self.lock:
             self.url = url
 
+    def update_info(self, info_dict):
+        """Update the key/value pairs to display in the info panel."""
+        with self.lock:
+            self.info_dict = {**self.info_dict, **info_dict}
+
     def add_log(self, message):
         with self.lock:
             # Strip ANSI codes and split the message into lines
             stripped_message = self._strip_ansi(message)
-            new_lines = [
-                line.strip() for line in stripped_message.splitlines() if line.strip()
-            ]
+            # Don't strip lines - preserve them as-is, but filter empty ones
+            new_lines = [line for line in stripped_message.splitlines() if line]
+            # Handle single line messages without newlines
+            if not new_lines and stripped_message.strip():
+                new_lines = [stripped_message.strip()]
             self.log_buffer.extend(new_lines)
 
     def _strip_ansi(self, text):
@@ -411,11 +607,18 @@ class TerminalDashboard:
         frame = []
         frame.append("╔" + "═" * half_width + "╦" + "═" * right_width + "╗")
 
+        # Split the lower-left panel into two parts
+        lower_left_quarter_width = half_width // 2
+        lower_right_quarter_width = half_width - lower_left_quarter_width
+
         with self.lock:
             train_chart = self._draw_chart(
                 self.train_losses, right_width, (height // 2) - 1
             )
-            sim_chart = self._draw_simulation(half_width, (height // 2) - 1)
+            sim_chart = self._draw_simulation(
+                lower_left_quarter_width, (height // 2) - 1
+            )
+            info_chart = self._draw_info(lower_right_quarter_width, (height // 2) - 1)
 
         # Wrap the entire status text
         status_lines = self._wrap_text(self.status_text, half_width)
@@ -468,16 +671,44 @@ class TerminalDashboard:
             elif i == (height // 2):
                 if random.random() < 0.1:
                     self.sign = -1 * self.sign
-                left_content = f" ATTENTION: {self.sign:+.1f}"
-                left_content = left_content.ljust(half_width)[:half_width]
+                # Split the left section into two parts
+                attention_label = f" ATTENTION: {self.sign:+.1f}"
+                info_label = " INFO"
+                attention_content = attention_label.ljust(lower_left_quarter_width)[
+                    :lower_left_quarter_width
+                ]
+                info_content = info_label.ljust(lower_right_quarter_width)[
+                    :lower_right_quarter_width
+                ]
+                left_content = attention_content + "║" + info_content
                 right_content = " LOG".ljust(right_width)[:right_width]
             elif i == (height // 2) + 1:
-                left_content = "─" * half_width
+                # Split the separator line for the lower left panel
+                left_content = (
+                    "─" * lower_left_quarter_width
+                    + "╫"
+                    + "─" * lower_right_quarter_width
+                )
                 right_content = "─" * right_width
             elif i > (height // 2) + 1:
                 chart_index = i - (height // 2) - 2
+                # Left side split into two parts
+                sim_content = " " * lower_left_quarter_width
+                info_content = " " * lower_right_quarter_width
                 if chart_index < len(sim_chart):
-                    left_content = sim_chart[chart_index]
+                    sim_content = sim_chart[chart_index]
+                if chart_index < len(info_chart):
+                    info_content = info_chart[chart_index]
+
+                # Ensure both parts are exactly the right width (same as header approach)
+                sim_content = sim_content.ljust(lower_left_quarter_width)[
+                    :lower_left_quarter_width
+                ]
+                info_content = info_content.ljust(lower_right_quarter_width)[
+                    :lower_right_quarter_width
+                ]
+                left_content = sim_content + "║" + info_content
+
                 log_index = i - (height // 2) - 2
                 if log_index < len(log_lines):
                     right_content = log_lines[log_index]
@@ -562,19 +793,62 @@ class TerminalDashboard:
         # Minimal single-space padding for alignment
         return [" " + line + " " for line in lines]
 
+    def _draw_info(self, width, height):
+        """Draw the info panel with key/value pairs."""
+        lines = []
+
+        # Get key/value pairs from info_dict
+        items = list(self.info_dict.items())
+
+        # Format each key/value pair
+        for i in range(height):
+            if i < len(items):
+                key, value = items[i]
+                # Truncate key and value to fit
+                max_key_len = width // 3
+                max_val_len = width - max_key_len - 3  # -3 for ": " and padding
+
+                key_str = str(key)[:max_key_len]
+                val_str = str(value)[:max_val_len]
+
+                line = f" {key_str}: {val_str}"
+                lines.append(line.ljust(width)[:width])
+            else:
+                lines.append(" " * width)
+
+        return lines
+
     def _run_dashboard(self):
         try:
             with self.managed_terminal():
                 while self.running:
                     try:
+                        # Check for long periods of inactivity (warn but don't crash)
+                        current_time = time.time()
+                        inactive_time = current_time - self.last_activity
+
+                        if (
+                            inactive_time > self.warning_timeout
+                            and current_time - self.last_warning_time > 300
+                        ):  # Warn max once per 5 minutes
+                            # Instead of adding to log (which breaks display), just update status
+                            # This avoids the dashboard rendering issues entirely
+                            # with self.lock:
+                            #     self.update_status_internal(f"No activity for {int(inactive_time)}s (inference/eval?)")
+                            self.last_warning_time = current_time
+
                         new_frame = self._create_frame()
                         if not self._check_border_alignment(new_frame):
                             self.previous_frame = None
                         self._update_screen(new_frame)
                         time.sleep(0.1)
                     except Exception as e:
-                        self.add_log(f"Dashboard error: {str(e)}")
-                        time.sleep(1)
+                        # Don't just log dashboard errors - they might indicate a deeper problem
+                        error_msg = f"Dashboard rendering error: {str(e)}"
+                        self.add_log(error_msg)
+                        # If we get repeated dashboard errors, something is seriously wrong
+                        self.crash_with_error(f"Dashboard crashed with: {error_msg}")
+                        return
         finally:
             # After exiting fullscreen mode, print any stored error
             if self.error_message:
@@ -746,6 +1020,15 @@ if __name__ == "__main__":
             dashboard.update_batch(i)
             dashboard.update_step(i)
             dashboard.update_rate(0.5)
+
+            # Test the info panel with sample data including memory
+            info_dict = {
+                "device": "cuda:0",
+                "ram": "45.6%",
+                "vram": "65.8%",
+                "lr": f"{0.001 * (1 - i/100):.4f}",
+            }
+            dashboard.update_info(info_dict)
 
             # Add some test logs
             dashboard.logger.info(f"Processing chunk {i}")

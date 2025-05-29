@@ -120,3 +120,8 @@ class PraxisConfig(PretrainedConfig):
         self.bidirectional = kwargs.get("bidirectional", False)
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
         self.tie_word_embeddings = kwargs.get("tie_weights", False)
+        self.rl_type = kwargs.get(
+            "rl_type", None
+        )  # "reinforce", "grpo", "ppo", or None
+        self.rl_weight = kwargs.get("rl_weight", 0.1)
+        self.grpo_group_size = kwargs.get("grpo_group_size", 8)  # For GRPO sampling

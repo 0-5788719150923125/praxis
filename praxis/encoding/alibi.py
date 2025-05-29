@@ -86,7 +86,7 @@ class ALiBi(NoPE):
         Returns:
             Modified attention scores with ALiBi biases applied
         """
-        batch_size, num_heads, seq_len, _ = scores.shape
+        batch_size, num_heads, query_len, key_len = scores.shape
         device = scores.device
 
         if block_ids is not None and block_ids.size(1) != 1:
@@ -105,11 +105,18 @@ class ALiBi(NoPE):
             pos_diff = positions.unsqueeze(-1) - positions.unsqueeze(-2)
             pos_diff = pos_diff * valid_mask  # Zero out cross-sequence differences
         else:
-            # Original continuous position handling
-            positions = torch.arange(seq_len, dtype=torch.float32, device=device)
-            positions = positions.unsqueeze(0).expand(batch_size, seq_len)
-            positions = positions + offset
-            pos_diff = positions.unsqueeze(-1) - positions.unsqueeze(-2)
+            # Handle asymmetric attention (different query and key lengths)
+            query_positions = torch.arange(query_len, dtype=torch.float32, device=device)
+            key_positions = torch.arange(key_len, dtype=torch.float32, device=device)
+            
+            query_positions = query_positions.unsqueeze(0).expand(batch_size, query_len)
+            key_positions = key_positions.unsqueeze(0).expand(batch_size, key_len)
+            
+            query_positions = query_positions + offset
+            key_positions = key_positions + offset
+            
+            # Compute position differences: [batch, query_len, key_len]
+            pos_diff = query_positions.unsqueeze(-1) - key_positions.unsqueeze(-2)
 
         # Apply ALiBi slopes
         slopes = self.compute_slopes(num_heads, device)
