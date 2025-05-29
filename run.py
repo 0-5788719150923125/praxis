@@ -902,6 +902,7 @@ class TerminalInterface(Callback):
 
             info_dict["optimizer"] = optimizer_config["optimizer_name"]
             info_dict["strategy"] = strategy
+            info_dict["policy"] = rl_type
             info_dict["vocab_size"] = vocab_size
             info_dict["block_size"] = seq_length
             info_dict["batch_size"] = batch_size

@@ -265,11 +265,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 backward_logits = self.backward_head(hidden_states)
         
         # Apply RL policy if enabled
-        if self.policy is not None and rewards is not None and labels is not None:
+        if self.policy is not None:
             # Different RL algorithms need different inputs
             rl_type = getattr(self.config, "rl_type", None)
             
-            if rl_type == "grpo":
+            if rl_type == "grpo" and rewards is not None and labels is not None:
                 # GRPO needs logits and labels for proper loss computation
                 # For now, we'll need to compute reference logits in the training loop
                 _, rl_losses = self.policy(
@@ -283,7 +283,33 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 if rl_losses is not None:
                     for key, value in rl_losses.items():
                         outputs.losses.add_loss(f"rl_{key}", value)
-            else:
+            elif rl_type == "cot" and labels is not None:
+                # Basic CoT uses supervised learning with weighted loss
+                # Note: Pass shifted logits to match labels
+                _, cot_losses = self.policy(
+                    hidden_states,
+                    logits=logits[..., :-1, :].contiguous(),
+                    labels=labels,
+                    attention_mask=attention_mask,
+                    token_ids=input_ids  # For pattern detection
+                )
+                if cot_losses is not None:
+                    for key, value in cot_losses.items():
+                        outputs.losses.add_loss(f"cot_{key}", value)
+            elif rl_type == "cot-reinforce" and labels is not None:
+                # CoT with REINFORCE - can work with or without rewards
+                _, cot_rl_losses = self.policy(
+                    hidden_states,
+                    logits=logits[..., :-1, :].contiguous(),
+                    labels=labels,
+                    rewards=rewards,
+                    attention_mask=attention_mask,
+                    # Note: generated_texts and ground_truths would be passed from training loop
+                )
+                if cot_rl_losses is not None:
+                    for key, value in cot_rl_losses.items():
+                        outputs.losses.add_loss(f"cot_rl_{key}", value)
+            elif rewards is not None and labels is not None:
                 # REINFORCE and other methods
                 hidden_states, rl_loss = self.policy(
                     hidden_states, rewards=rewards, mask=attention_mask

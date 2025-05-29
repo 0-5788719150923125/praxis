@@ -21,6 +21,7 @@ from praxis import (
     HEAD_REGISTRY,
     LOSS_REGISTRY,
     RESIDUAL_REGISTRY,
+    RL_POLICIES_REGISTRY,
     ROUTER_REGISTRY,
     SORTING_REGISTRY,
     STRATEGIES_REGISTRY,
@@ -486,7 +487,7 @@ data_group.add_argument(
     "--rl-type",
     type=str,
     default=None,
-    choices=["reinforce", "grpo", "ppo"],
+    choices=RL_POLICIES_REGISTRY.keys(),
     help="Enable reinforcement learning with specified algorithm. "
     "Note: Current GRPO implementation uses static dataset rewards (not true RL). "
     "True RL with generation will be added in a future update.",
