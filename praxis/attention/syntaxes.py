@@ -255,12 +255,12 @@ class SyntaxesAttention(nn.Module):
         
         # Direct vectorized assignment: replace the recent context with attention output
         # Simply assign the compressed output to the corresponding context positions
-        if context_start < seq_len and compressed_seq_len > 0:
-            # Calculate how much of the context we can actually fill
-            available_context = min(context_size, seq_len - context_start)
-            output_length = min(compressed_seq_len, available_context)
-            
-            # Direct assignment - each compressed output token goes to one position in the context
+        # Calculate how much of the context we can actually fill
+        available_context = min(context_size, seq_len - context_start)
+        output_length = min(compressed_seq_len, available_context)
+        
+        # Direct assignment - each compressed output token goes to one position in the context
+        if output_length > 0:
             result[:, context_start:context_start + output_length, :] = output[:, :output_length, :]
 
         # Final dropout
