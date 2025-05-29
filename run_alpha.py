@@ -32,7 +32,7 @@ def main():
         "--vocab-size",
         "4096",
         "--attention-type",
-        "syntaxis",
+        "syntaxes",
         "--strategy",
         "weighted",
         "--tie-weights",

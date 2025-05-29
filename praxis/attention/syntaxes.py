@@ -10,9 +10,9 @@ from transformers import DynamicCache
 from praxis.encoding import ENCODING_REGISTRY
 
 
-class SyntaxisAttention(nn.Module):
+class SyntaxesAttention(nn.Module):
     """
-    Syntaxis Attention: Global query compression with sliding window K/V.
+    Syntaxes Attention: Global query compression with sliding window K/V.
 
     This attention mechanism uses asymmetric processing:
     - Queries: Compressed globally to capture long-range dependencies
@@ -42,11 +42,11 @@ class SyntaxisAttention(nn.Module):
 
         # Query compression ratio (how much to reduce query length)
         self.query_compression_ratio = getattr(
-            config, "syntaxis_query_compression_ratio", 4
+            config, "syntaxes_query_compression_ratio", 4
         )
 
         # Sliding window size for keys/values
-        self.window_size = getattr(config, "syntaxis_window_size", 128)
+        self.window_size = getattr(config, "syntaxes_window_size", 128)
 
         # Linear projections
         self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
@@ -78,13 +78,13 @@ class SyntaxisAttention(nn.Module):
         current_depth: int = 0,
         offset: int = 0,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
-        """Forward pass of Syntaxis attention with compressed queries and positional encoding."""
+        """Forward pass of Syntaxes attention with compressed queries and positional encoding."""
         batch_size, seq_len, hidden_size = inputs.shape
         device = inputs.device
 
         if past_key_values is not None:
             raise NotImplementedError(
-                "KV caching not yet supported for SyntaxisAttention"
+                "KV caching not yet supported for SyntaxesAttention"
             )
 
         # Project queries from inputs (before compression)

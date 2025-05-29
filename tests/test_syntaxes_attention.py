@@ -7,22 +7,22 @@ import torch
 import torch.nn as nn
 
 from praxis import PraxisConfig
-from praxis.attention.syntaxis import SyntaxisAttention
+from praxis.attention.syntaxes import SyntaxesAttention
 from praxis.attention.components import VanillaMHA
 
 
-class TestSyntaxisAttention:
-    """Fast test suite for Syntaxis attention mechanism."""
+class TestSyntaxesAttention:
+    """Fast test suite for Syntaxes attention mechanism."""
 
     @pytest.fixture
     def base_config(self) -> PraxisConfig:
-        """Base configuration for syntaxis attention - optimized for fast testing."""
+        """Base configuration for syntaxes attention - optimized for fast testing."""
         return PraxisConfig(
             hidden_size=64,  # Much smaller
             num_heads=4,     # Fewer heads
             num_queries=1,   # Standard MHA (not MQA)
-            syntaxis_query_compression_ratio=4,  # Default compression
-            syntaxis_window_size=32,  # Small window for testing
+            syntaxes_query_compression_ratio=4,  # Default compression
+            syntaxes_window_size=32,  # Small window for testing
             max_length=128,  # Much smaller
             dropout=0.0,     # No dropout for deterministic tests
             encoding="nope",  # No positional encoding for basic tests
@@ -34,12 +34,12 @@ class TestSyntaxisAttention:
         (4,),
         (8,),
     ])
-    def syntaxis_config(self, base_config, request) -> PraxisConfig:
-        """Parametrized configuration for different syntaxis methods."""
+    def syntaxes_config(self, base_config, request) -> PraxisConfig:
+        """Parametrized configuration for different syntaxes methods."""
         compression_ratio, = request.param
         
         config = base_config
-        config.syntaxis_query_compression_ratio = compression_ratio
+        config.syntaxes_query_compression_ratio = compression_ratio
         
         return config
 
@@ -51,14 +51,14 @@ class TestSyntaxisAttention:
         """Different batch size and sequence length combinations."""
         return request.param
 
-    def test_initialization(self, syntaxis_config):
-        """Test that SyntaxisAttention initializes correctly with different configs."""
-        attention = SyntaxisAttention(syntaxis_config)
+    def test_initialization(self, syntaxes_config):
+        """Test that SyntaxesAttention initializes correctly with different configs."""
+        attention = SyntaxesAttention(syntaxes_config)
         
-        assert attention.hidden_size == syntaxis_config.hidden_size
-        assert attention.num_heads == syntaxis_config.num_heads
-        assert attention.query_compression_ratio == getattr(syntaxis_config, 'syntaxis_query_compression_ratio', 4)
-        assert attention.window_size == getattr(syntaxis_config, 'syntaxis_window_size', 128)
+        assert attention.hidden_size == syntaxes_config.hidden_size
+        assert attention.num_heads == syntaxes_config.num_heads
+        assert attention.query_compression_ratio == getattr(syntaxes_config, 'syntaxes_query_compression_ratio', 4)
+        assert attention.window_size == getattr(syntaxes_config, 'syntaxes_window_size', 128)
         
         # Check that parameters are properly initialized
         assert hasattr(attention, 'q_proj')
@@ -67,12 +67,12 @@ class TestSyntaxisAttention:
         assert hasattr(attention, 'o_proj')
         assert hasattr(attention, 'encoding')
 
-    def test_forward_pass_shape_consistency(self, syntaxis_config, batch_seq_dims):
+    def test_forward_pass_shape_consistency(self, syntaxes_config, batch_seq_dims):
         """Test that forward pass maintains input/output shape consistency."""
         batch_size, seq_len = batch_seq_dims
-        attention = SyntaxisAttention(syntaxis_config)
+        attention = SyntaxesAttention(syntaxes_config)
         
-        inputs = torch.randn(batch_size, seq_len, syntaxis_config.hidden_size)
+        inputs = torch.randn(batch_size, seq_len, syntaxes_config.hidden_size)
         
         with torch.no_grad():
             output, past_kv, aux_loss = attention(inputs=inputs)
@@ -82,12 +82,12 @@ class TestSyntaxisAttention:
         assert aux_loss == 0  # Currently no auxiliary loss
         assert past_kv is None  # KV caching not implemented
 
-    def test_forward_pass_with_attention_mask(self, syntaxis_config):
+    def test_forward_pass_with_attention_mask(self, syntaxes_config):
         """Test forward pass with attention mask."""
         batch_size, seq_len = 4, 64  # Smaller
-        attention = SyntaxisAttention(syntaxis_config)
+        attention = SyntaxesAttention(syntaxes_config)
         
-        inputs = torch.randn(batch_size, seq_len, syntaxis_config.hidden_size)
+        inputs = torch.randn(batch_size, seq_len, syntaxes_config.hidden_size)
         attention_mask = torch.ones(batch_size, seq_len)
         
         with torch.no_grad():
@@ -100,7 +100,7 @@ class TestSyntaxisAttention:
 
     def test_causal_sliding_window(self, base_config):
         """Test that causal sliding window works correctly."""
-        attention = SyntaxisAttention(base_config)
+        attention = SyntaxesAttention(base_config)
         
         batch_size, seq_len = 2, 64
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
@@ -118,13 +118,13 @@ class TestSyntaxisAttention:
         # Outputs should be different for different inputs
         assert not torch.allclose(output, different_output, atol=1e-5)
 
-    def test_gradient_flow(self, syntaxis_config):
+    def test_gradient_flow(self, syntaxes_config):
         """Test that gradients flow properly through the attention mechanism."""
-        attention = SyntaxisAttention(syntaxis_config)
+        attention = SyntaxesAttention(syntaxes_config)
         batch_size, seq_len = 2, 64  # Smaller
         
         inputs = torch.randn(
-            batch_size, seq_len, syntaxis_config.hidden_size, 
+            batch_size, seq_len, syntaxes_config.hidden_size, 
             requires_grad=True
         )
         
@@ -157,13 +157,13 @@ class TestSyntaxisAttention:
         
         # Test with high compression
         config_high = base_config
-        config_high.syntaxis_query_compression_ratio = 8
-        attention_high = SyntaxisAttention(config_high)
+        config_high.syntaxes_query_compression_ratio = 8
+        attention_high = SyntaxesAttention(config_high)
         
         # Test with low compression
         config_low = base_config
-        config_low.syntaxis_query_compression_ratio = 2
-        attention_low = SyntaxisAttention(config_low)
+        config_low.syntaxes_query_compression_ratio = 2
+        attention_low = SyntaxesAttention(config_low)
         
         with torch.no_grad():
             output_high, _, _ = attention_high(inputs=inputs)
@@ -184,9 +184,9 @@ class TestSyntaxisAttention:
         
         for ratio in compression_ratios:
             config = base_config
-            config.syntaxis_query_compression_ratio = ratio
+            config.syntaxes_query_compression_ratio = ratio
             
-            attention = SyntaxisAttention(config)
+            attention = SyntaxesAttention(config)
             
             with torch.no_grad():
                 output, _, _ = attention(inputs=inputs)
@@ -204,7 +204,7 @@ class TestSyntaxisAttention:
     @pytest.mark.parametrize("seq_len", [32, 64])  # Much smaller
     def test_different_sequence_lengths(self, base_config, seq_len):
         """Test that the attention works with different sequence lengths."""
-        attention = SyntaxisAttention(base_config)
+        attention = SyntaxesAttention(base_config)
         batch_size = 2  # Smaller batch
         
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
@@ -219,15 +219,15 @@ class TestSyntaxisAttention:
         batch_size, seq_len = 2, 128  # Much smaller
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
         
-        # Syntaxis attention
-        syntaxis_attention = SyntaxisAttention(base_config)
+        # Syntaxes attention
+        syntaxes_attention = SyntaxesAttention(base_config)
         
         # Vanilla attention
         vanilla_attention = VanillaMHA(base_config)
         
         # Just test they both work, skip timing for speed
         with torch.no_grad():
-            syntaxis_output, _, _ = syntaxis_attention(inputs=inputs)
+            syntaxes_output, _, _ = syntaxes_attention(inputs=inputs)
             vanilla_result = vanilla_attention(inputs)  # Check what VanillaMHA returns
             
             # Handle different return types
@@ -237,26 +237,26 @@ class TestSyntaxisAttention:
                 vanilla_output = vanilla_result
         
         # Check outputs have correct shape
-        assert syntaxis_output.shape == inputs.shape
+        assert syntaxes_output.shape == inputs.shape
         assert vanilla_output.shape == inputs.shape
 
     def test_memory_complexity_reduction(self, base_config):
         """Test theoretical memory complexity reduction."""
         seq_len = 128  # Much smaller
-        compression_ratio = base_config.syntaxis_query_compression_ratio
-        window_size = base_config.syntaxis_window_size
+        compression_ratio = base_config.syntaxes_query_compression_ratio
+        window_size = base_config.syntaxes_window_size
         num_heads = base_config.num_heads
         batch_size = 2  # Smaller batch
         
         compressed_seq_len = seq_len // compression_ratio
         
         # Memory for attention scores
-        # Syntaxis: compressed queries attend to window_size keys
-        syntaxis_memory = compressed_seq_len * window_size * num_heads * batch_size
+        # Syntaxes: compressed queries attend to window_size keys
+        syntaxes_memory = compressed_seq_len * window_size * num_heads * batch_size
         # Vanilla: all queries attend to all seq_len keys
         vanilla_memory = seq_len ** 2 * num_heads * batch_size
         
-        reduction_factor = vanilla_memory / syntaxis_memory
+        reduction_factor = vanilla_memory / syntaxes_memory
         # Expected reduction: (seq_len * seq_len) / (compressed_seq_len * window_size)
         expected_reduction = (seq_len * seq_len) / (compressed_seq_len * window_size)
         
@@ -266,7 +266,7 @@ class TestSyntaxisAttention:
 
     def test_kv_caching_not_implemented(self, base_config):
         """Test that KV caching raises NotImplementedError."""
-        attention = SyntaxisAttention(base_config)
+        attention = SyntaxesAttention(base_config)
         batch_size, seq_len = 2, 64
         
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
@@ -281,7 +281,7 @@ class TestSyntaxisAttention:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         
-        attention = SyntaxisAttention(base_config).to(device)
+        attention = SyntaxesAttention(base_config).to(device)
         batch_size, seq_len = 2, 64
         
         inputs = torch.randn(
@@ -302,13 +302,13 @@ class TestSyntaxisAttention:
         
         # First run
         torch.manual_seed(42)
-        attention1 = SyntaxisAttention(base_config)
+        attention1 = SyntaxesAttention(base_config)
         with torch.no_grad():
             output1, _, _ = attention1(inputs=inputs)
         
         # Second run with same seed
         torch.manual_seed(42)
-        attention2 = SyntaxisAttention(base_config)
+        attention2 = SyntaxesAttention(base_config)
         with torch.no_grad():
             output2, _, _ = attention2(inputs=inputs)
         
@@ -317,7 +317,7 @@ class TestSyntaxisAttention:
 
     def test_training_mode_vs_eval_mode(self, base_config):
         """Test behavior difference between training and evaluation modes."""
-        attention = SyntaxisAttention(base_config)
+        attention = SyntaxesAttention(base_config)
         batch_size, seq_len = 2, 64  # Smaller
         inputs = torch.randn(batch_size, seq_len, base_config.hidden_size)
         
@@ -341,8 +341,8 @@ class TestSyntaxisAttention:
         """Test edge cases and boundary conditions."""
         # Test when compression_ratio > seq_len
         config = base_config
-        config.syntaxis_query_compression_ratio = 32
-        attention = SyntaxisAttention(config)
+        config.syntaxes_query_compression_ratio = 32
+        attention = SyntaxesAttention(config)
         
         batch_size, seq_len = 2, 16  # seq_len < compression_ratio
         inputs = torch.randn(batch_size, seq_len, config.hidden_size)
