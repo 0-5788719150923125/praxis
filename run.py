@@ -1817,5 +1817,7 @@ except KeyboardInterrupt:
     # Handle Ctrl+C gracefully
     if progress_bar and hasattr(progress_bar, 'dashboard') and progress_bar.dashboard:
         progress_bar.dashboard.stop()
-    print("\n🛑 Training interrupted by user", file=sys.stderr)
+        # Dashboard already prints the interruption message
+    else:
+        print("\n🛑 Training interrupted by user", file=sys.stderr)
     sys.exit(0)

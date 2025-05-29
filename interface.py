@@ -70,6 +70,10 @@ class TerminalDashboard:
         self.val_loss = None
         self.status_text = "_initializing"
 
+        # Save terminal state for proper restoration
+        self.saved_terminal_state = None
+        self.terminal_restored = False
+
         # Activity monitoring (for warnings, not force-crash)
         self.last_activity = time.time()
         self.warning_timeout = 60  # Warn after 60 seconds of no activity
@@ -135,25 +139,48 @@ class TerminalDashboard:
         # Only cleanup if we haven't already done so
         if self.running:
             self.stop()
-        # Always try to reset terminal on cleanup
-        try:
-            if hasattr(self, 'original_stderr'):
-                print(self.term.exit_fullscreen, end="", file=self.original_stderr)
-                print(self.term.normal, end="", file=self.original_stderr)
-                print(self.term.visible_cursor, end="", file=self.original_stderr)
-                self.original_stderr.flush()
-        except:
-            pass  # Ignore errors during cleanup
+        # Always try to restore terminal on cleanup
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
 
-    def _reset_terminal(self):
-        print(
-            self.term.normal
-            + self.term.clear
-            + self.term.home
-            + self.term.visible_cursor,
-            end="",
-        )
-        sys.stdout.flush()
+    def _restore_terminal(self):
+        """Fully restore terminal to its original state."""
+        try:
+            # First exit fullscreen and restore cursor
+            if hasattr(self, "original_stderr"):
+                # Exit fullscreen mode (this restores the original terminal content)
+                print(self.term.exit_fullscreen, end="", file=self.original_stderr)
+                # Reset all terminal attributes
+                print(self.term.normal, end="", file=self.original_stderr)
+                # Make cursor visible
+                print(self.term.visible_cursor, end="", file=self.original_stderr)
+                # Don't clear or home - this preserves terminal history!
+                # Just ensure we're on a new line for clean output
+                print("", file=self.original_stderr)
+                self.original_stderr.flush()
+
+            # Restore saved terminal settings if available
+            if self.saved_terminal_state is not None:
+                try:
+                    import termios
+
+                    if hasattr(sys.stdin, "fileno"):
+                        termios.tcsetattr(
+                            sys.stdin.fileno(),
+                            termios.TCSANOW,
+                            self.saved_terminal_state,
+                        )
+                except:
+                    pass
+
+        except Exception:
+            # If anything fails, at least try to make the terminal usable
+            try:
+                sys.stderr.write("\033[0m\033[?25h\n")  # Reset and show cursor
+                sys.stderr.flush()
+            except:
+                pass
 
     def _get_terminal_size(self):
         return shutil.get_terminal_size()
@@ -164,12 +191,27 @@ class TerminalDashboard:
             with self.term.fullscreen(), self.term.cbreak(), self.term.hidden_cursor():
                 yield
         finally:
-            pass
-            # if not self.error_exit:  # Only reset if not error exit
-            #     self._reset_terminal()
+            # Ensure terminal is restored when exiting the context
+            if not self.terminal_restored and not self.error_exit:
+                self._restore_terminal()
+                self.terminal_restored = True
 
     def start(self):
         self.running = True
+
+        # Save terminal state before modifying it
+        try:
+            # Save current terminal settings
+            import termios
+            import tty
+
+            if hasattr(sys.stdin, "fileno"):
+                try:
+                    self.saved_terminal_state = termios.tcgetattr(sys.stdin.fileno())
+                except:
+                    self.saved_terminal_state = None
+        except ImportError:
+            self.saved_terminal_state = None
 
         # Set up signal handlers to catch crashes
         self._setup_signal_handlers()
@@ -215,6 +257,10 @@ class TerminalDashboard:
 
         # Handle Ctrl+C gracefully
         def keyboard_interrupt_handler(signum, frame):
+            # Ensure terminal is restored before exiting
+            if not self.terminal_restored:
+                self._restore_terminal()
+                self.terminal_restored = True
             self.stop()
             print("\n🛑 Training interrupted by user", file=sys.stderr)
             sys.exit(0)
@@ -225,6 +271,9 @@ class TerminalDashboard:
         def exception_handler(exc_type, exc_value, exc_traceback):
             if exc_type == KeyboardInterrupt:
                 # Handle Ctrl+C gracefully
+                if not self.terminal_restored:
+                    self._restore_terminal()
+                    self.terminal_restored = True
                 self.stop()
                 print("\n🛑 Training interrupted by user", file=sys.stderr)
                 sys.exit(0)
@@ -236,13 +285,15 @@ class TerminalDashboard:
                     exc_type, exc_value, exc_traceback
                 )
                 error_text = "".join(error_lines)
-                
+
                 # Also capture recent log output for context
                 recent_logs = ""
-                if hasattr(self, 'log_buffer') and self.log_buffer:
+                if hasattr(self, "log_buffer") and self.log_buffer:
                     recent_logs = "\n\nRecent log output:\n" + "-" * 40 + "\n"
-                    recent_logs += "\n".join(list(self.log_buffer)[-20:])  # Last 20 lines
-                    
+                    recent_logs += "\n".join(
+                        list(self.log_buffer)[-20:]
+                    )  # Last 20 lines
+
                 self.crash_with_error(error_text + recent_logs)
 
         sys.excepthook = exception_handler
@@ -250,15 +301,15 @@ class TerminalDashboard:
     def stop(self, error=False):
         self.running = False
         self.error_exit = error
+
+        # Restore stdout/stderr first
         sys.stdout = self.original_stdout
         sys.stderr = self.original_stderr
-        
-        # Reset terminal to normal mode if not already done
-        if not error:
-            print(self.term.exit_fullscreen, end="", file=self.original_stderr)
-            print(self.term.normal, end="", file=self.original_stderr)
-            print(self.term.visible_cursor, end="", file=self.original_stderr)
-            self.original_stderr.flush()
+
+        # Perform full terminal restoration if not already done
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
 
     def crash_with_error(self, error_text):
         """Immediately crash the dashboard and display the error."""
@@ -270,20 +321,19 @@ class TerminalDashboard:
         self.running = False
         self.error_exit = True
 
-        # CRITICAL: Exit fullscreen mode and reset terminal BEFORE showing error
-        # This ensures the terminal is back in normal scrollable mode
-        print(self.term.exit_fullscreen, end="", file=sys.stderr)
-        print(self.term.normal, end="", file=sys.stderr)
-        print(self.term.clear, end="", file=sys.stderr)
-        print(self.term.home, end="", file=sys.stderr)
-        print(self.term.visible_cursor, end="", file=sys.stderr)
-        sys.stderr.flush()
-        
+        # CRITICAL: Restore terminal properly
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
+
         # Small delay to ensure terminal mode switch completes
         import time
+
         time.sleep(0.1)
-        
+
         # Now show the error in normal terminal mode where scrolling works
+        # Add some newlines to separate from any dashboard artifacts
+        print("\n\n", file=sys.stderr)
         print(
             "🚨 TRAINING CRASHED - Dashboard terminated to show error:", file=sys.stderr
         )
@@ -295,7 +345,6 @@ class TerminalDashboard:
 
         print(error_text, file=sys.stderr)
         print("=" * 80, file=sys.stderr)
-
 
         # Store for potential later use
         self.error_message = error_text
