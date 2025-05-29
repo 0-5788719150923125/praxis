@@ -31,6 +31,8 @@ def main():
         "3",
         "--vocab-size",
         "4096",
+        "--attention-type",
+        "syntaxis",
         "--strategy",
         "weighted",
         "--tie-weights",
