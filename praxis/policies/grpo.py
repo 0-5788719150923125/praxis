@@ -244,9 +244,13 @@ class GRPO(nn.Module):
             ref_log_probs = F.log_softmax(shift_ref_logits_flat, dim=-1)
             ref_token_log_probs = ref_log_probs.gather(1, gather_labels.unsqueeze(1)).squeeze(1)
             
+            # Apply mask to reference token log probs too
+            ref_token_log_probs = ref_token_log_probs * shift_mask_flat
+            
             # Unbiased KL estimator: π_ref/π_θ - log(π_ref/π_θ) - 1
-            # Compute log ratio only for valid tokens
-            log_ratio = ref_token_log_probs - token_log_probs
+            # Compute log ratio using flat tensors first
+            token_log_probs_flat = token_log_probs.view(-1)
+            log_ratio = ref_token_log_probs - token_log_probs_flat
             
             # Apply mask and clamp to prevent numerical issues
             log_ratio = log_ratio * shift_mask_flat
