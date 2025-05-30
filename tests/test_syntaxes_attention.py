@@ -21,25 +21,24 @@ class TestSyntaxesAttention:
             hidden_size=64,  # Much smaller
             num_heads=4,     # Fewer heads
             num_queries=1,   # Standard MHA (not MQA)
-            syntaxes_query_compression_ratio=4,  # Default compression
-            syntaxes_window_size=32,  # Small window for testing
+            syntaxes_context_size=32,  # Small context for testing
             max_length=128,  # Much smaller
             dropout=0.0,     # No dropout for deterministic tests
             encoding="nope",  # No positional encoding for basic tests
         )
 
     @pytest.fixture(params=[
-        # (compression_ratio,) - reduced test cases
-        (2,),
-        (4,),
-        (8,),
+        # (context_size,) - reduced test cases
+        (16,),
+        (32,),
+        (64,),
     ])
     def syntaxes_config(self, base_config, request) -> PraxisConfig:
         """Parametrized configuration for different syntaxes methods."""
-        compression_ratio, = request.param
+        context_size, = request.param
         
         config = base_config
-        config.syntaxes_query_compression_ratio = compression_ratio
+        config.syntaxes_context_size = context_size
         
         return config
 
@@ -57,8 +56,7 @@ class TestSyntaxesAttention:
         
         assert attention.hidden_size == syntaxes_config.hidden_size
         assert attention.num_heads == syntaxes_config.num_heads
-        assert attention.query_compression_ratio == getattr(syntaxes_config, 'syntaxes_query_compression_ratio', 4)
-        assert attention.window_size == getattr(syntaxes_config, 'syntaxes_window_size', 128)
+        assert attention.context_size == getattr(syntaxes_config, 'syntaxes_context_size', 128)
         
         # Check that parameters are properly initialized
         assert hasattr(attention, 'q_proj')

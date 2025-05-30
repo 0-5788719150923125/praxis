@@ -12,21 +12,21 @@ from praxis.encoding import ENCODING_REGISTRY
 
 class SyntaxesAttention(nn.Module):
     """
-    Syntaxes Attention: Learnable query compression with recent context K/V.
+    Syntaxes Attention: All queries attend to reduced K/V context.
 
     This attention mechanism uses asymmetric processing:
-    - Queries: Compressed using learnable per-head convolutions to capture long-range dependencies
-    - Keys/Values: Limited to recent tokens via tail attention
+    - Queries: All positions in the sequence generate queries
+    - Keys/Values: Limited to recent tokens for memory efficiency
 
-    All compressed queries attend to the same recent context of tokens,
-    maintaining global context while focusing on local details.
+    Every query position attends to the same reduced context,
+    focusing computation on the most relevant recent information.
 
     Key features:
-    - Learnable query compression with per-head Conv1d preserves important patterns
-    - Recent context K/V reduces memory and focuses on latest tokens
-    - Residual-like reconstruction preserves distant tokens while updating recent context
-    - Reduces complexity from O(n²) to O(n/r * c) where r is compression ratio, c is context size
-    - Maintains causality through recency-focused attention
+    - Full query coverage preserves all positional information
+    - Reduced K/V context focuses on recent tokens
+    - Simple and efficient - no compression/reconstruction needed
+    - Reduces complexity from O(n²) to O(n * c) where c is context size
+    - Maintains causality through recent context attention
     """
 
     def __init__(self, config) -> None:
@@ -40,11 +40,6 @@ class SyntaxesAttention(nn.Module):
             self.num_heads -= 1
 
         self.head_dim = self.hidden_size // self.num_heads
-
-        # Query compression ratio (how much to reduce query length)
-        self.query_compression_ratio = getattr(
-            config, "syntaxes_query_compression_ratio", 4
-        )
 
         # Recent context size for keys/values
         self.context_size = getattr(config, "syntaxes_context_size", 128)
@@ -60,17 +55,6 @@ class SyntaxesAttention(nn.Module):
 
         # Scaling factor
         self.scale = 1.0 / math.sqrt(self.head_dim)
-
-        # Learnable query compression using grouped convolution
-        # Each head gets its own compression kernel
-        self.query_compressor = nn.Conv1d(
-            in_channels=self.num_heads * self.head_dim,
-            out_channels=self.num_heads * self.head_dim,
-            kernel_size=self.query_compression_ratio,
-            stride=self.query_compression_ratio,
-            padding=0,
-            groups=self.num_heads,  # Separate compression per head
-        )
 
         # Create a modified config for the encoding that reflects the actual number of heads
         encoding_config = type(config)(**vars(config))
@@ -90,7 +74,7 @@ class SyntaxesAttention(nn.Module):
         current_depth: int = 0,
         offset: int = 0,
     ) -> Tuple[Tensor, Optional[Union[Tensor, DynamicCache]], Union[int, float]]:
-        """Forward pass of Syntaxes attention with compressed queries and positional encoding."""
+        """Forward pass of Syntaxes attention - all queries attend to recent context K/V."""
         batch_size, seq_len, hidden_size = inputs.shape
         device = inputs.device
 
@@ -99,7 +83,7 @@ class SyntaxesAttention(nn.Module):
                 "KV caching not yet supported for SyntaxesAttention"
             )
 
-        # Project queries from inputs (before compression)
+        # Project ALL queries from ALL inputs
         q = self.q_proj(inputs)  # [batch, seq_len, hidden]
 
         # Reshape queries for multi-head attention
@@ -107,47 +91,7 @@ class SyntaxesAttention(nn.Module):
             1, 2
         )  # [batch, heads, seq_len, head_dim]
 
-        # Apply positional encoding to queries before compression
-        # Create dummy k, v with same shape for the encoding API
-        k_dummy = torch.zeros_like(q)
-        v_dummy = torch.zeros_like(q)
-        q, _, _ = self.encoding.before_scores(
-            q, k_dummy, v_dummy, offset=offset, block_ids=block_ids
-        )
-
-        # Learnable query compression
-        # Reshape q for Conv1d: [batch, heads * head_dim, seq_len]
-        q_for_conv = q.transpose(1, 2).contiguous()  # [batch, seq_len, heads, head_dim]
-        q_for_conv = q_for_conv.view(
-            batch_size, seq_len, self.num_heads * self.head_dim
-        )
-        q_for_conv = q_for_conv.transpose(1, 2)  # [batch, heads * head_dim, seq_len]
-
-        # Pad if necessary to ensure we can compress the full sequence
-        remainder = seq_len % self.query_compression_ratio
-        if remainder != 0:
-            pad_len = self.query_compression_ratio - remainder
-            q_for_conv = F.pad(q_for_conv, (0, pad_len), mode="constant", value=0)
-
-        # Apply learnable compression
-        q_compressed_conv = self.query_compressor(
-            q_for_conv
-        )  # [batch, heads * head_dim, compressed_seq_len]
-        compressed_seq_len = q_compressed_conv.size(2)
-
-        # Reshape back to multi-head format
-        q_compressed = q_compressed_conv.transpose(
-            1, 2
-        )  # [batch, compressed_seq_len, heads * head_dim]
-        q_compressed = q_compressed.view(
-            batch_size, compressed_seq_len, self.num_heads, self.head_dim
-        )
-        q_compressed = q_compressed.transpose(
-            1, 2
-        )  # [batch, heads, compressed_seq_len, head_dim]
-
         # Recent context for keys and values
-        # All compressed queries will attend to the same recent context
         context_size = min(self.context_size, seq_len)
         context_start = max(0, seq_len - context_size)
 
@@ -166,57 +110,53 @@ class SyntaxesAttention(nn.Module):
             1, 2
         )  # [batch, heads, context_size, head_dim]
 
-        # Apply positional encoding to K/V with context offset
-        # The context starts at position context_start, so we add that to the offset
+        # Apply positional encoding
         context_offset = offset + context_start
+        q, _, _ = self.encoding.before_scores(
+            q, q, q, offset=offset, block_ids=block_ids
+        )
         k, v, _ = self.encoding.before_scores(
             k, k, v, offset=context_offset, block_ids=block_ids
         )
 
-        # Attention computation - all compressed queries attend to the same recent context
-        # q_compressed: [batch, heads, compressed_seq_len, head_dim]
+        # Attention computation - ALL queries attend to the same recent context
+        # q: [batch, heads, seq_len, head_dim]
         # k: [batch, heads, context_size, head_dim]
         # v: [batch, heads, context_size, head_dim]
 
         # Compute attention scores
         scores = (
             torch.matmul(
-                q_compressed,  # [batch, heads, compressed_seq_len, head_dim]
+                q,  # [batch, heads, seq_len, head_dim]
                 k.transpose(-2, -1),  # [batch, heads, head_dim, context_size]
             )
             * self.scale
-        )  # [batch, heads, compressed_seq_len, context_size]
+        )  # [batch, heads, seq_len, context_size]
 
         # Apply positional encoding to scores
         scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
 
-        # Create causal mask
-        # Each compressed query position maps to a position in the original sequence
-        # and can only attend to K/V positions that come before or at that position
-        compressed_positions = torch.arange(compressed_seq_len, device=device)
-        # Map compressed positions back to original sequence positions
-        original_query_positions = (
-            (compressed_positions + 1) * self.query_compression_ratio - 1
-        ).unsqueeze(1)
-        # Context positions in the original sequence
+        # Create causal mask - each query can only attend to context positions <= its own position
+        query_positions = torch.arange(seq_len, device=device).unsqueeze(1)  # [seq_len, 1]
         context_positions = torch.arange(
             context_start, context_start + context_size, device=device
-        ).unsqueeze(0)
-        # Causal mask: can only attend to positions <= original query position
+        ).unsqueeze(0)  # [1, context_size]
+        
+        # Causal mask: can only attend to positions <= query position
         causal_mask = (
-            context_positions <= original_query_positions
-        )  # [compressed_seq_len, context_size]
-
-        # Special handling: if a query position is before the context, it shouldn't attend to anything
-        # But to avoid NaN, we'll let it attend to the first position in the context
-        queries_before_context = original_query_positions.squeeze(1) < context_start
+            context_positions <= query_positions
+        )  # [seq_len, context_size]
+        
+        # Special handling: queries before the context window need at least one valid attention target
+        # to avoid NaN. We'll let them attend to the first position in the context.
+        queries_before_context = query_positions.squeeze(1) < context_start
         if queries_before_context.any():
-            # For queries before context, allow attention to first context position only
+            # Allow these queries to attend to the first context position
             causal_mask[queries_before_context, 0] = True
 
         causal_mask = causal_mask.unsqueeze(0).unsqueeze(
             0
-        )  # [1, 1, compressed_seq_len, context_size]
+        )  # [1, 1, seq_len, context_size]
         scores = scores.masked_fill(~causal_mask, -torch.inf)
 
         # Apply attention mask if provided
@@ -231,39 +171,25 @@ class SyntaxesAttention(nn.Module):
         # Softmax and dropout
         weights = F.softmax(
             scores, dim=-1
-        )  # [batch, heads, compressed_seq_len, context_size]
+        )  # [batch, heads, seq_len, context_size]
         weights = self.dropout(weights)
 
         # Apply attention to values
         output = torch.matmul(
-            weights,  # [batch, heads, compressed_seq_len, context_size]
+            weights,  # [batch, heads, seq_len, context_size]
             v,  # [batch, heads, context_size, head_dim]
-        )  # [batch, heads, compressed_seq_len, head_dim]
+        )  # [batch, heads, seq_len, head_dim]
 
-        # Reshape and prepare for upsampling
+        # Reshape output
         output = output.transpose(
             1, 2
-        ).contiguous()  # [batch, compressed_seq_len, heads, head_dim]
-        output = output.view(batch_size, compressed_seq_len, self.hidden_size)
+        ).contiguous()  # [batch, seq_len, heads, head_dim]
+        output = output.view(batch_size, seq_len, self.hidden_size)
 
-        # Apply output projection before reconstruction
-        output = self.o_proj(output)  # [batch, compressed_seq_len, hidden]
-
-        # Residual-like reconstruction: start with original inputs and replace the recent context
-        # This preserves older tokens while updating only the recent context
-        result = inputs.clone()  # [batch, seq_len, hidden]
-        
-        # Direct vectorized assignment: replace the recent context with attention output
-        # Simply assign the compressed output to the corresponding context positions
-        # Calculate how much of the context we can actually fill
-        available_context = min(context_size, seq_len - context_start)
-        output_length = min(compressed_seq_len, available_context)
-        
-        # Direct assignment - each compressed output token goes to one position in the context
-        if output_length > 0:
-            result[:, context_start:context_start + output_length, :] = output[:, :output_length, :]
+        # Apply output projection
+        output = self.o_proj(output)  # [batch, seq_len, hidden]
 
         # Final dropout
-        result = self.dropout(result)
+        output = self.dropout(output)
 
-        return result, None, 0
+        return output, None, 0
