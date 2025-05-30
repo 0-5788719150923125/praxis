@@ -13,6 +13,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Import COT tags from builders
+try:
+    from builders import COT_TAGS
+except ImportError:
+    # Fallback for when builders is not in path (e.g., during testing)
+    COT_TAGS = None
+
 
 class ChainOfThought(nn.Module):
     """
