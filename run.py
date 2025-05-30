@@ -395,6 +395,7 @@ class PraxisTrainer(LightningModule):
         if isinstance(batch, dict) and "input_ids" in batch:
             input_ids = batch["input_ids"]
             rewards = batch.get("rewards", None)
+            token_weights = batch.get("token_weights", None)
 
             # Check if this batch needs generation for RL
             if batch.get("needs_generation", False) and rewards is not None:
@@ -409,9 +410,10 @@ class PraxisTrainer(LightningModule):
         else:
             input_ids = batch
             rewards = None
+            token_weights = None
 
         labels = input_ids[..., 1:].contiguous()
-        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards)
+        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards, token_weights=token_weights)
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
@@ -593,9 +595,10 @@ class PraxisTrainer(LightningModule):
         else:
             input_ids = batch
             rewards = None
+            token_weights = None
 
         labels = input_ids[..., 1:].contiguous()
-        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards)
+        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards, token_weights=token_weights)
 
         stats = {}
 

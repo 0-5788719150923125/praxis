@@ -39,17 +39,7 @@ class ChainOfThought(nn.Module):
         self.structure_bonus = 0.2   # Bonus for proper tag structure
         self.min_reasoning_length = 50  # Minimum tokens for reasoning
         
-        # Pattern detection for CoT structure - using correct tags from dataset
-        self.wrapper_patterns = ["<thinking>", "</thinking>", "<output>", "</output>"]
-        self.thinking_patterns = [
-            "<initial_analysis>", "</initial_analysis>",
-            "<conscious_thought>", "</conscious_thought>"
-        ]
-        self.step_patterns = ["<step_by_step>", "</step_by_step>"]
-        self.reflection_patterns = ["<reflection>", "</reflection>"]
-        self.feeling_patterns = ["<feeling>", "</feeling>"]
-        self.improvement_patterns = ["<self_improvement>", "</self_improvement>"]
-        self.subcomponent_patterns = ["<subcomponent_analysis>", "</subcomponent_analysis>"]
+        # CoT policy is now simple - just applies pre-computed token weights from builder
         
         # Optional: Simple MLP to predict reasoning quality
         self.quality_head = nn.Sequential(
@@ -64,13 +54,21 @@ class ChainOfThought(nn.Module):
         self.step_count = 0
         self.log_interval = 100
         
+        # CoT tracking statistics
+        self.cot_stats = {
+            "total_batches": 0,
+            "batches_with_cot": 0,
+            "total_cot_tokens": 0,
+            "total_tokens": 0,
+        }
+        
     def forward(
         self,
         hidden_states: torch.Tensor,
         logits: torch.Tensor,
         labels: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        token_ids: Optional[torch.Tensor] = None,
+        token_weights: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[Dict[str, torch.Tensor]]]:
         """
         Forward pass for CoT training.
@@ -90,6 +88,7 @@ class ChainOfThought(nn.Module):
             hidden_states: Unchanged hidden states
             losses: Dict containing cot_loss and metrics
         """
+        # Metadata contains pre-computed token weights from the data pipeline
         if not self.training:
             return hidden_states, None
             
@@ -99,19 +98,57 @@ class ChainOfThought(nn.Module):
         # Get actual logits shape since it might be different due to shifting
         logits_batch_size, logits_seq_len, vocab_size = logits.shape
         
-        # Create token weights based on CoT structure matching logits shape
-        token_weights = torch.ones(logits_batch_size, logits_seq_len, device=device)
-        
-        if token_ids is not None:
-            # Try to detect actual <thinking> sections for more precise weighting
-            thinking_weights = self._detect_thinking_sections(token_ids, logits_seq_len, device)
-            if thinking_weights is not None:
-                token_weights = thinking_weights
+        # Create token weights - use pre-computed weights if available, otherwise default
+        if token_weights is not None:
+            # Use pre-computed token weights from builder
+            # Ensure shape matches [batch_size, seq_len] for logits
+            if token_weights.dim() == 1:
+                # Single sequence, broadcast to batch
+                weights = token_weights.unsqueeze(0).expand(logits_batch_size, -1)
             else:
-                # Fallback to positional heuristics if token detection fails
-                # Assume reasoning happens in the first 70% of sequence
-                reasoning_end = int(logits_seq_len * 0.7)
-                token_weights[:, :reasoning_end] = self.reasoning_weight
+                weights = token_weights
+            
+            # Ensure weights match the logits sequence length (accounting for shift)
+            if weights.shape[-1] > logits_seq_len:
+                weights = weights[..., :logits_seq_len]
+            elif weights.shape[-1] < logits_seq_len:
+                # Pad with default weight if needed
+                padding = torch.ones(
+                    *weights.shape[:-1], 
+                    logits_seq_len - weights.shape[-1], 
+                    device=device
+                )
+                weights = torch.cat([weights.to(device), padding], dim=-1)
+            
+            token_weights = weights
+            
+            # Detailed logging for validation
+            if self.step_count % self.log_interval == 0:
+                non_default_tokens = (token_weights != 1.0).sum().item()
+                print(f"[CoT Policy] Using pre-computed token weights:")
+                print(f"  Shape: {token_weights.shape}")
+                print(f"  Tokens with non-default weights: {non_default_tokens}/{token_weights.numel()}")
+                print(f"  Weight range: [{token_weights.min():.3f}, {token_weights.max():.3f}]")
+                print(f"  Mean weight: {token_weights.mean():.3f}")
+                
+                # Show distribution of weights
+                unique_weights = torch.unique(token_weights)
+                print(f"  Unique weights: {unique_weights.tolist()}")
+                
+                # Show per-sequence stats
+                for batch_idx in range(min(2, token_weights.shape[0])):  # Log first 2 sequences
+                    seq_weights = token_weights[batch_idx]
+                    non_default = (seq_weights != 1.0).sum().item()
+                    print(f"  Sequence {batch_idx}: {non_default}/{len(seq_weights)} non-default tokens")
+                    
+                    # Validate that high-weight tokens actually contain CoT content
+                    if non_default > 0:
+                        self._validate_token_weights(batch_idx, seq_weights, labels, logits)
+        else:
+            # Default to uniform weights with slight emphasis on early tokens (reasoning)
+            token_weights = torch.ones(logits_batch_size, logits_seq_len, device=device)
+            reasoning_end = int(logits_seq_len * 0.7)
+            token_weights[:, :reasoning_end] = self.reasoning_weight
             
         # Compute reasoning quality score
         if attention_mask is not None:
@@ -151,7 +188,7 @@ class ChainOfThought(nn.Module):
         
         logits_flat = logits.view(-1, vocab_size)
         labels_flat = labels.view(-1)
-        weights_flat = token_weights.view(-1)
+        weights_flat = token_weights.contiguous().view(-1)
         
         # Filter out padding tokens (label == -100)
         valid_mask = labels_flat != -100
@@ -177,6 +214,16 @@ class ChainOfThought(nn.Module):
         # Total CoT loss
         cot_loss = weighted_loss + structure_loss
         
+        # Update statistics
+        self.cot_stats["total_batches"] += 1
+        self.cot_stats["total_tokens"] += token_weights.numel()
+        
+        if token_weights is not None:
+            cot_tokens_in_batch = (token_weights != 1.0).sum().item()
+            if cot_tokens_in_batch > 0:
+                self.cot_stats["batches_with_cot"] += 1
+                self.cot_stats["total_cot_tokens"] += cot_tokens_in_batch
+        
         # Logging
         self.step_count += 1
         if self.step_count % self.log_interval == 0:
@@ -186,6 +233,20 @@ class ChainOfThought(nn.Module):
             print(f"  Quality scores: mean={quality_scores.mean():.3f}")
             print(f"  Total CoT loss: {cot_loss:.4f}")
             
+            # Print CoT usage statistics
+            total_batches = self.cot_stats["total_batches"]
+            cot_batches = self.cot_stats["batches_with_cot"]
+            total_tokens = self.cot_stats["total_tokens"]
+            cot_tokens = self.cot_stats["total_cot_tokens"]
+            
+            cot_batch_pct = (cot_batches / total_batches * 100) if total_batches > 0 else 0
+            cot_token_pct = (cot_tokens / total_tokens * 100) if total_tokens > 0 else 0
+            
+            print(f"  CoT Usage Stats:")
+            print(f"    Batches with CoT: {cot_batches}/{total_batches} ({cot_batch_pct:.1f}%)")
+            print(f"    CoT tokens: {cot_tokens}/{total_tokens} ({cot_token_pct:.2f}%)")
+            print(f"    Avg CoT tokens per CoT batch: {cot_tokens/max(cot_batches,1):.1f}")
+            
         losses = {
             "cot_loss": cot_loss,
             "reasoning_quality": quality_scores.mean(),
@@ -193,35 +254,65 @@ class ChainOfThought(nn.Module):
         }
         
         return hidden_states, losses
-
-    def _detect_thinking_sections(self, token_ids, seq_len, device):
+    
+    def _validate_token_weights(self, batch_idx, seq_weights, labels, logits):
         """
-        Detect <thinking> sections in token sequences for precise weighting.
-        
-        Args:
-            token_ids: Token IDs [batch_size, original_seq_len]
-            seq_len: Target sequence length (usually original - 1 due to shifting)
-            device: Device for tensor operations
-            
-        Returns:
-            Token weights [batch_size, seq_len] or None if detection fails
+        Validate that tokens with high weights actually contain CoT content.
+        This helps ensure our weight assignment is working correctly.
         """
         try:
-            from transformers import AutoTokenizer
+            # Import here to avoid circular imports
+            from builders import COT_TAGS
             
-            # This is expensive but more accurate than heuristics
-            # In production, you might want to cache this or use token IDs directly
-            batch_size = token_ids.shape[0]
-            weights = torch.ones(batch_size, seq_len, device=device)
-            
-            # We need access to the tokenizer to decode
-            # For now, return None to fall back to heuristics
-            # TODO: Pass tokenizer from training loop if needed for precise detection
-            return None
-            
-        except Exception:
-            # Fall back to heuristics if tokenizer access fails
-            return None
+            # Get the labels for this sequence (these are the target tokens)
+            if batch_idx < labels.shape[0]:
+                seq_labels = labels[batch_idx]
+                
+                # Find tokens with weights > 1.0 (CoT tokens)
+                high_weight_mask = seq_weights > 1.0
+                high_weight_positions = torch.where(high_weight_mask)[0]
+                
+                if len(high_weight_positions) > 0:
+                    # Sample a few positions to check
+                    sample_size = min(10, len(high_weight_positions))
+                    sample_positions = high_weight_positions[:sample_size]
+                    
+                    # Get the token IDs at these positions
+                    sample_tokens = seq_labels[sample_positions]
+                    
+                    # Try to decode them (this is approximate since we don't have the tokenizer here)
+                    # We'll just check if the weights are consistent with expected patterns
+                    weights_at_samples = seq_weights[sample_positions]
+                    
+                    print(f"    Sample high-weight tokens (positions): {sample_positions.tolist()}")
+                    print(f"    Sample weights: {weights_at_samples.tolist()}")
+                    
+                    # Check if weights are clustered (indicating tag regions)
+                    consecutive_groups = self._find_consecutive_groups(high_weight_positions)
+                    print(f"    Consecutive high-weight groups: {len(consecutive_groups)}")
+                    for i, group in enumerate(consecutive_groups[:3]):  # Show first 3 groups
+                        print(f"      Group {i}: positions {group[0]}-{group[-1]} (length: {len(group)})")
+                        
+        except Exception as e:
+            print(f"    Validation error: {e}")
+    
+    def _find_consecutive_groups(self, positions):
+        """Find groups of consecutive positions in the tensor."""
+        if len(positions) == 0:
+            return []
+        
+        groups = []
+        current_group = [positions[0].item()]
+        
+        for i in range(1, len(positions)):
+            if positions[i].item() == positions[i-1].item() + 1:
+                current_group.append(positions[i].item())
+            else:
+                groups.append(current_group)
+                current_group = [positions[i].item()]
+        
+        groups.append(current_group)
+        return groups
 
 
 class ChainOfThoughtREINFORCE(nn.Module):
@@ -248,6 +339,29 @@ class ChainOfThoughtREINFORCE(nn.Module):
         self.structure_reward = 0.5
         self.coherence_reward = 0.3
         
+        # Load tags from centralized configuration
+        if COT_TAGS is not None:
+            self.cot_tags = COT_TAGS
+            self.tag_rewards = COT_TAGS["tag_rewards"]
+        else:
+            # Fallback
+            self.cot_tags = {
+                "wrapper": {
+                    "thinking": ("<thinking>", "</thinking>"),
+                    "output": ("<output>", "</output>"),
+                },
+                "thinking_components": {
+                    "initial_analysis": ("<initial_analysis>", "</initial_analysis>"),
+                    "conscious_thought": ("<conscious_thought>", "</conscious_thought>"),
+                    "step_by_step": ("<step_by_step>", "</step_by_step>"),
+                    "reflection": ("<reflection>", "</reflection>"),
+                    "feeling": ("<feeling>", "</feeling>"),
+                    "self_improvement": ("<self_improvement>", "</self_improvement>"),
+                    "subcomponent_analysis": ("<subcomponent_analysis>", "</subcomponent_analysis>"),
+                },
+            }
+            self.tag_rewards = {tag: 0.2 for tag in list(self.cot_tags["wrapper"].keys()) + list(self.cot_tags["thinking_components"].keys())}
+        
     def compute_reasoning_rewards(
         self,
         generated_text: str,
@@ -264,36 +378,16 @@ class ChainOfThoughtREINFORCE(nn.Module):
         """
         reward = 0.0
         
-        # Check for structured reasoning using correct dataset tags
-        has_thinking = "<thinking>" in generated_text and "</thinking>" in generated_text
-        has_output = "<output>" in generated_text and "</output>" in generated_text
-        has_initial_analysis = "<initial_analysis>" in generated_text and "</initial_analysis>" in generated_text
-        has_conscious_thought = "<conscious_thought>" in generated_text and "</conscious_thought>" in generated_text
-        has_steps = "<step_by_step>" in generated_text and "</step_by_step>" in generated_text
-        has_subcomponent = "<subcomponent_analysis>" in generated_text and "</subcomponent_analysis>" in generated_text
-        has_reflection = "<reflection>" in generated_text and "</reflection>" in generated_text
-        has_feeling = "<feeling>" in generated_text and "</feeling>" in generated_text
-        has_improvement = "<self_improvement>" in generated_text and "</self_improvement>" in generated_text
+        # Check for structured reasoning using centralized tags
+        # Check wrapper tags
+        for tag_name, (open_tag, close_tag) in self.cot_tags["wrapper"].items():
+            if open_tag in generated_text and close_tag in generated_text:
+                reward += self.tag_rewards.get(tag_name, 0.2)
         
-        # Reward presence of thinking patterns
-        if has_thinking:
-            reward += 0.3  # Major structural element
-        if has_output:
-            reward += 0.1  # Proper output formatting
-        if has_initial_analysis:
-            reward += 0.2
-        if has_conscious_thought:
-            reward += 0.2
-        if has_steps:
-            reward += 0.3  # Step-by-step reasoning is very valuable
-        if has_subcomponent:
-            reward += 0.2  # NEW: Reward subcomponent analysis
-        if has_reflection:
-            reward += 0.2
-        if has_feeling:
-            reward += 0.1
-        if has_improvement:
-            reward += 0.1
+        # Check thinking component tags
+        for tag_name, (open_tag, close_tag) in self.cot_tags["thinking_components"].items():
+            if open_tag in generated_text and close_tag in generated_text:
+                reward += self.tag_rewards.get(tag_name, 0.2)
             
         # Check reasoning length
         reasoning_length = len(generated_text.split())

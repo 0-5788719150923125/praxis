@@ -116,14 +116,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         else:
             self.backward_head = None
 
-        self.criterion = get_loss_function(config.loss_func, config.vocab_size)
-        self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
-
         # Initialize RL policy if requested
         self.policy = None
         rl_type = getattr(config, "rl_type", None)
         if rl_type and rl_type in RL_POLICIES_REGISTRY:
             self.policy = RL_POLICIES_REGISTRY[rl_type](config)
+
+        self.criterion = get_loss_function(config.loss_func, config.vocab_size)
+        self.strategy = STRATEGIES_REGISTRY.get(config.strategy, "naive")()
 
         # Tie weights if requested
         if config.tie_word_embeddings and self.head is not None:
@@ -233,6 +233,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         rewards: Optional[torch.FloatTensor] = None,
+        token_weights: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         outputs = super().forward(
@@ -263,22 +264,22 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             # Compute backward logits if we have a separate backward head
             if self.backward_head is not None:
                 backward_logits = self.backward_head(hidden_states)
-        
+
         # Apply RL policy if enabled
         if self.policy is not None:
             # Different RL algorithms need different inputs
             rl_type = getattr(self.config, "rl_type", None)
-            
+
             if rl_type == "grpo" and rewards is not None and labels is not None:
                 # GRPO needs logits and labels for proper loss computation
                 # For now, we'll need to compute reference logits in the training loop
                 _, rl_losses = self.policy(
-                    hidden_states, 
+                    hidden_states,
                     logits=logits,
                     labels=labels,
-                    rewards=rewards, 
+                    rewards=rewards,
                     ref_logits=None,  # TODO: Add reference model support
-                    mask=attention_mask
+                    mask=attention_mask,
                 )
                 if rl_losses is not None:
                     for key, value in rl_losses.items():
@@ -291,7 +292,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     logits=logits[..., :-1, :].contiguous(),
                     labels=labels,
                     attention_mask=attention_mask,
-                    token_ids=input_ids  # For pattern detection
+                    token_weights=token_weights,  # Pre-computed token weights from builder
                 )
                 if cot_losses is not None:
                     for key, value in cot_losses.items():

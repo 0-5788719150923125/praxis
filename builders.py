@@ -322,6 +322,47 @@ DATASET_COLLECTIONS = dict(
     },
 )
 
+# Chain of Thought tag definitions
+COT_TAGS = {
+    "wrapper": {
+        "thinking": ("<thinking>", "</thinking>"),
+        "output": ("<output>", "</output>"),
+    },
+    "thinking_components": {
+        "initial_analysis": ("<initial_analysis>", "</initial_analysis>"),
+        "conscious_thought": ("<conscious_thought>", "</conscious_thought>"),
+        "step_by_step": ("<step_by_step>", "</step_by_step>"),
+        "reflection": ("<reflection>", "</reflection>"),
+        "feeling": ("<feeling>", "</feeling>"),
+        "self_improvement": ("<self_improvement>", "</self_improvement>"),
+        "subcomponent_analysis": ("<subcomponent_analysis>", "</subcomponent_analysis>"),
+    },
+    # Tag weights for training
+    "tag_weights": {
+        "thinking": 1.5,
+        "output": 1.0,
+        "initial_analysis": 1.3,
+        "conscious_thought": 1.3,
+        "step_by_step": 1.6,  # Highest weight for step-by-step reasoning
+        "reflection": 1.3,
+        "feeling": 1.1,
+        "self_improvement": 1.2,
+        "subcomponent_analysis": 1.4,
+    },
+    # Reward values for REINFORCE
+    "tag_rewards": {
+        "thinking": 0.3,
+        "output": 0.1,
+        "initial_analysis": 0.2,
+        "conscious_thought": 0.2,
+        "step_by_step": 0.3,
+        "reflection": 0.2,
+        "feeling": 0.1,
+        "self_improvement": 0.1,
+        "subcomponent_analysis": 0.2,
+    },
+}
+
 
 def text_formatter(text):
     """
@@ -546,12 +587,14 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
 
 def format_cot(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict[str, Any]:
     """
     Format Chain of Thought dataset for training using chat templates.
 
     Uses the tokenizer's chat template to properly format the conversation
     with user prompt and assistant response (containing thinking tags).
+    
+    Returns a dict with text and metadata for token-level reward computation.
     """
     assert len(keys) >= 2, "CoT format requires at least 2 keys (prompt, response)"
 
@@ -573,7 +616,24 @@ def format_cot(
     if tokenizer.eos_token and not formatted_text.endswith(tokenizer.eos_token):
         formatted_text += tokenizer.eos_token
 
-    return formatted_text
+    # Detect which CoT tags are present in the response
+    tags_present = []
+    for tag_type in ["wrapper", "thinking_components"]:
+        for tag_name, (open_tag, close_tag) in COT_TAGS[tag_type].items():
+            if open_tag in response and close_tag in response:
+                tags_present.append(tag_name)
+
+    # Return dict format similar to format_rl for metadata pipeline
+    return {
+        "text": formatted_text,
+        "reward": 0.0,  # Sequence-level reward (not used for CoT)
+        "cot_metadata": {
+            "tags_present": tags_present,
+            "category": category,
+            "topic": topic,
+            "has_cot": len(tags_present) > 0
+        }
+    }
 
 
 def format_rl(
@@ -943,6 +1003,7 @@ class InterleaveDataManager:
         batch = []
         rewards = [] if self.rl_type else None
         metadata = [] if self.rl_type else None
+        token_weights = [] if self.rl_type and self.rl_type == "cot" else None
 
         for i in range(current_batch_size):
             start = i * sequence_length
@@ -957,12 +1018,39 @@ class InterleaveDataManager:
                 rewards.append(sequence_reward)
                 if metadata is not None:
                     metadata.append(sequence_metadata)
+                    
+                # Extract token weights for CoT
+                if token_weights is not None and sequence_metadata.get("token_weights") is not None:
+                    weights = sequence_metadata["token_weights"]
+                    # Ensure it's a tensor and matches the sequence length
+                    if isinstance(weights, torch.Tensor):
+                        original_length = weights.shape[0]
+                        if weights.shape[0] > sequence_length:
+                            weights = weights[:sequence_length]
+                            print(f"[Builder] Truncating token weights from {original_length} to {sequence_length}")
+                        elif weights.shape[0] < sequence_length:
+                            padding = torch.ones(sequence_length - weights.shape[0])
+                            weights = torch.cat([weights, padding])
+                            print(f"[Builder] Padding token weights from {original_length} to {sequence_length}")
+                        
+                        # Log when we're adding CoT weights to a batch
+                        non_default = (weights != 1.0).sum().item()
+                        if non_default > 0:
+                            print(f"[Builder] Adding CoT weights to batch: {non_default}/{len(weights)} non-default tokens")
+                        
+                        token_weights.append(weights)
+                    else:
+                        # Default weights if no token weights available
+                        token_weights.append(torch.ones(sequence_length))
+                elif token_weights is not None:
+                    # Default weights for non-CoT sequences
+                    token_weights.append(torch.ones(sequence_length))
 
         # Remove used tokens from the stream and update boundaries
         self.token_stream = self.token_stream[tokens_needed:]
         self._update_boundaries_after_removal(tokens_needed)
 
-        return {"batch": batch, "rewards": rewards, "metadata": metadata}
+        return {"batch": batch, "rewards": rewards, "metadata": metadata, "token_weights": token_weights}
 
     def _get_reward_and_metadata_for_range(
         self, start: int, end: int
@@ -1122,11 +1210,140 @@ class InterleaveDataManager:
             if token_end <= token_start:
                 token_end = token_start + 1
 
+            # For CoT sequences, compute token-level rewards/weights
+            if metadata.get("cot_metadata") is not None:
+                # Extract the sequence text
+                sequence_text = total_text[char_start:char_end]
+                # Compute token-level weights for this sequence
+                token_weights = self._compute_cot_token_weights(
+                    sequence_text, 
+                    token_start - current_pos,  # Local start position
+                    token_end - current_pos,    # Local end position
+                    tokens,
+                    metadata["cot_metadata"]
+                )
+                metadata["token_weights"] = token_weights
+                
+                # Validation logging
+                if metadata["cot_metadata"].get("has_cot", False):
+                    non_default = (token_weights != 1.0).sum().item()
+                    print(f"[Builder] CoT sequence detected:")
+                    print(f"  Text length: {len(sequence_text)} chars")
+                    print(f"  Token range: [{token_start - current_pos}, {token_end - current_pos})")
+                    print(f"  Tags present: {metadata['cot_metadata']['tags_present']}")
+                    print(f"  Non-default weights: {non_default}/{len(token_weights)}")
+                    print(f"  Weight range: [{token_weights.min():.3f}, {token_weights.max():.3f}]")
+                    
+                    # Check for potential splitting issues
+                    thinking_start = sequence_text.find("<thinking>")
+                    thinking_end = sequence_text.find("</thinking>")
+                    if thinking_start != -1 and thinking_end == -1:
+                        print(f"  ⚠️  WARNING: <thinking> tag opened but not closed - sequence may be split")
+                    elif thinking_start == -1 and thinking_end != -1:
+                        print(f"  ⚠️  WARNING: </thinking> tag found but no opening - sequence may be split")
+                    
+                    # Show first few chars for context
+                    preview = sequence_text[:100].replace('\n', '\\n')
+                    print(f"  Preview: {preview}...")
+
             # Store the boundary information with metadata
             self.sequence_boundaries.append((token_start, token_end, reward, metadata))
 
         # Add tokens to stream
         self.token_stream = torch.cat([self.token_stream, tokens])
+
+    def _compute_cot_token_weights(self, text, local_start, local_end, tokens, cot_metadata):
+        """
+        Compute token-level weights for CoT sequences based on tag positions.
+        
+        Returns a tensor of weights for each token in the sequence.
+        """
+        seq_length = local_end - local_start
+        token_weights = torch.ones(seq_length)
+        
+        # If no CoT tags present, return default weights
+        if not cot_metadata.get("has_cot", False):
+            return token_weights
+        
+        # Extract just the tokens for this sequence
+        seq_tokens = tokens[local_start:local_end]
+        
+        # Decode tokens to get exact character positions
+        # We need to map tag regions to token positions
+        char_to_token = {}
+        current_char = 0
+        
+        for i, token_id in enumerate(seq_tokens):
+            # Decode single token to get its text
+            token_text = self.tokenizer.decode([token_id.item()], skip_special_tokens=False)
+            char_to_token[current_char] = i
+            current_char += len(token_text)
+        
+        # Find tag regions in the text and map to tokens
+        regions_found = []
+        incomplete_tags = []
+        
+        for tag_type in ["wrapper", "thinking_components"]:
+            for tag_name, (open_tag, close_tag) in COT_TAGS[tag_type].items():
+                if tag_name in cot_metadata.get("tags_present", []):
+                    weight = COT_TAGS["tag_weights"].get(tag_name, 1.0)
+                    
+                    # Find all occurrences of this tag pair
+                    start_pos = 0
+                    while True:
+                        open_pos = text.find(open_tag, start_pos)
+                        if open_pos == -1:
+                            break
+                        close_pos = text.find(close_tag, open_pos + len(open_tag))
+                        
+                        if close_pos == -1:
+                            # Handle incomplete tag (split sequence) - apply weight from open tag to end
+                            print(f"[Builder] Incomplete {tag_name} tag detected - applying weight to end of sequence")
+                            token_start = 0
+                            for char_pos, token_pos in sorted(char_to_token.items()):
+                                if char_pos <= open_pos:
+                                    token_start = token_pos
+                            token_weights[token_start:] = weight
+                            incomplete_tags.append(tag_name)
+                            break
+                        else:
+                            # Complete tag pair found
+                            # Map character positions to token positions
+                            token_start = 0
+                            token_end = seq_length - 1
+                            
+                            for char_pos, token_pos in sorted(char_to_token.items()):
+                                if char_pos <= open_pos:
+                                    token_start = token_pos
+                                if char_pos <= close_pos + len(close_tag):
+                                    token_end = min(token_pos + 1, seq_length)
+                            
+                            # Apply weight to tokens in this region
+                            token_weights[token_start:token_end] = weight
+                            regions_found.append((tag_name, token_start, token_end))
+                        
+                        start_pos = close_pos + len(close_tag) if close_pos != -1 else len(text)
+                
+                # Also check for orphaned closing tags (from split sequences)
+                close_pos = text.find(close_tag)
+                if close_pos != -1 and text.find(open_tag) == -1:
+                    print(f"[Builder] Orphaned closing {tag_name} tag detected - applying weight from start")
+                    token_end = seq_length - 1
+                    for char_pos, token_pos in sorted(char_to_token.items()):
+                        if char_pos <= close_pos + len(close_tag):
+                            token_end = min(token_pos + 1, seq_length)
+                    token_weights[:token_end] = weight
+                    incomplete_tags.append(f"{tag_name}_orphaned")
+        
+        # Log findings
+        if regions_found or incomplete_tags:
+            print(f"[Builder] Token weight mapping for sequence:")
+            for tag_name, start, end in regions_found:
+                print(f"  Complete {tag_name}: tokens [{start}:{end}] = {COT_TAGS['tag_weights'][tag_name]}")
+            for tag in incomplete_tags:
+                print(f"  Incomplete/orphaned: {tag}")
+        
+        return token_weights
 
 
 class PraxisSampler:
@@ -1228,20 +1445,32 @@ class HuggingfaceDataset(PraxisSampler):
 
             formatted = self._format_document(document)
 
-            # Handle RL format which returns dict
-            if self.format == DataFormat.RL and isinstance(formatted, dict):
+            # Handle formats that return dicts (RL and CoT)
+            if isinstance(formatted, dict):
                 text = formatted["text"]
-                reward = formatted["reward"]
-                # Store full metadata for RL
+                
+                # Store metadata in reward cache
                 import hashlib
-
                 text_hash = hashlib.md5(text.encode()).hexdigest()
-                self.reward_cache[text_hash] = {
-                    "reward": reward,
-                    "ground_truth": formatted.get("ground_truth", ""),
-                    "original_difficulty": formatted.get("original_difficulty", 0.0),
-                }
-                # Successfully cached RL reward
+                
+                if self.format == DataFormat.RL:
+                    # RL format with reward and ground truth
+                    reward = formatted["reward"]
+                    self.reward_cache[text_hash] = {
+                        "reward": reward,
+                        "ground_truth": formatted.get("ground_truth", ""),
+                        "original_difficulty": formatted.get("original_difficulty", 0.0),
+                    }
+                elif self.format == DataFormat.COT:
+                    # CoT format with tag metadata
+                    self.reward_cache[text_hash] = {
+                        "reward": formatted.get("reward", 0.0),
+                        "cot_metadata": formatted.get("cot_metadata", {}),
+                    }
+                else:
+                    # Generic dict format
+                    self.reward_cache[text_hash] = formatted
+                
                 self.sequence_cache.append(text)
             else:
                 # Regular format, just text
@@ -1505,6 +1734,7 @@ class WeightedIterableDataset(IterableDataset):
             batch = result["batch"]
             rewards = result.get("rewards")
             metadata = result.get("metadata", [])
+            token_weights = result.get("token_weights")
 
             # Stack batch tensors
             batch_tensor = torch.stack(batch)
@@ -1530,18 +1760,24 @@ class WeightedIterableDataset(IterableDataset):
                         f"[RL] Batch ready for generation: {generation_count} sequences need responses"
                     )
                     # Return special format for generation with proper metadata
-                    yield {
+                    result_dict = {
                         "input_ids": batch_tensor,
                         "rewards": reward_tensor,
                         "needs_generation": True,
                         "metadata": metadata,  # Now properly tracked from data manager
                     }
+                    if token_weights is not None:
+                        result_dict["token_weights"] = torch.stack(token_weights)
+                    yield result_dict
                 else:
                     # Log batch statistics
                     _rl_logger.log_batch(reward_tensor)
 
                     # Return regular RL format
-                    yield {"input_ids": batch_tensor, "rewards": reward_tensor}
+                    result_dict = {"input_ids": batch_tensor, "rewards": reward_tensor}
+                    if token_weights is not None:
+                        result_dict["token_weights"] = torch.stack(token_weights)
+                    yield result_dict
             else:
                 # No reinforcement learning, return regular tensor
                 yield batch_tensor
