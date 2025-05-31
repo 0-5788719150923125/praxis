@@ -377,6 +377,10 @@ def text_formatter(text):
     2. Start of next line is a capital letter (possibly preceded by quotes)
     3. Start of next line is NOT a list marker, indentation, or code-like content
 
+    Special handling for tags:
+    - Tags should "squeeze" their content (no double newlines between tags and content)
+    - Pattern: <tag>\n becomes <tag> and \n</tag> becomes </tag>
+
     Args:
         text (str): The input text to reformat
 
@@ -420,6 +424,22 @@ def text_formatter(text):
         lambda m: "\n\n" if int(m.group(1)) >= 2 else "\n" * (int(m.group(1)) + 1),
         reformatted_text,
     )
+
+    # Handle tag squeezing AFTER paragraph formatting: remove blank lines between tags and content
+    # Tags remain on their own lines, but extra spacing is removed
+
+    # Remove blank lines after opening tags: <tag>\n\ncontent becomes <tag>\ncontent
+    tag_squeeze_pattern = r"(<[^/>]+>)\n\n+"  # Opening tag followed by blank lines
+    reformatted_text = re.sub(tag_squeeze_pattern, r"\1\n", reformatted_text)
+
+    # Remove blank lines before closing tags: content\n\n</tag> becomes content\n</tag>
+    tag_squeeze_pattern_close = r"\n\n+(</[^>]+>)"  # Blank lines before closing tag
+    reformatted_text = re.sub(tag_squeeze_pattern_close, r"\n\1", reformatted_text)
+
+    # Ensure closing tags are followed by double newlines when there's content after them
+    # </tag>\ncontent becomes </tag>\n\ncontent (but preserve existing double newlines)
+    tag_after_pattern = r"(</[^>]+>)\n(?!\n|</|$)"  # Closing tag followed by single newline and content (not another tag or end)
+    reformatted_text = re.sub(tag_after_pattern, r"\1\n\n", reformatted_text)
 
     return reformatted_text
 
@@ -601,8 +621,8 @@ def format_cot(
     """
     assert len(keys) >= 2, "CoT format requires at least 2 keys (prompt, response)"
 
-    prompt = document.get(keys[0], "")
-    response = document.get(keys[1], "")
+    prompt = text_formatter(document.get(keys[0], ""))
+    response = text_formatter(document.get(keys[1], ""))
     category = document.get(keys[2], "unknown") if len(keys) > 2 else "unknown"
     topic = document.get(keys[3], "unknown") if len(keys) > 3 else "unknown"
 
@@ -652,7 +672,7 @@ def format_rl(
     """
     assert len(keys) == 3, "RL format requires exactly 3 keys"
 
-    prompt = document.get(keys[0], "")
+    prompt = text_formatter(document.get(keys[0], ""))
     verification_info = document.get(keys[1], "{}")
     solve_rate = document.get(keys[2], 0.0)
 

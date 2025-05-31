@@ -124,6 +124,24 @@ TEST_CASES = [
         '"This is a test."\n\nBut this is also a test.',
         "Paragraph following a quote test",
     ),
+    # Case 21: Tag squeezing - remove blank lines between tags and content
+    (
+        "<thinking>\n\nThis is my thought process.\nI need to analyze this problem.\n\n</thinking>",
+        "<thinking>\nThis is my thought process.\n\nI need to analyze this problem.\n</thinking>",
+        "Tag squeezing test",
+    ),
+    # Case 22: Multiple tag squeezing with different tags
+    (
+        "<output>\n\nThis is the final answer.\nIt should be formatted properly.\n\n</output>\n\n<step_by_step>\n\nStep 1: Identify the problem\nStep 2: Solve it\n\n</step_by_step>",
+        "<output>\nThis is the final answer.\n\nIt should be formatted properly.\n</output>\n\n<step_by_step>\nStep 1: Identify the problem\n\nStep 2: Solve it\n</step_by_step>",
+        "Multiple tag squeezing test",
+    ),
+    # Case 23: Nested tags should be handled correctly
+    (
+        "<thinking>\n\nI need to think about this.\n\n<step_by_step>\n\nStep 1: First step\nStep 2: Second step\n\n</step_by_step>\n\nNow I have my answer.\n\n</thinking>",
+        "<thinking>\nI need to think about this.\n\n<step_by_step>\nStep 1: First step\n\nStep 2: Second step\n</step_by_step>\n\nNow I have my answer.\n</thinking>",
+        "Nested tag squeezing test",
+    ),
 ]
 
 
