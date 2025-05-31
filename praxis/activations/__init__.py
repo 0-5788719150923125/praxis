@@ -9,6 +9,7 @@ from praxis.activations.sin import Sine
 from praxis.activations.sin_cos import SineCosine
 from praxis.activations.sinlu import SinLU
 from praxis.activations.snake import Snake
+from praxis.activations.sugar import SUGAR
 
 ACTIVATION_MAP = dict(
     jagged_sin=JaggedSine,
@@ -20,6 +21,7 @@ ACTIVATION_MAP = dict(
     sin_cos=SineCosine,
     sinlu=SinLU,
     snake=Snake,
+    sugar=SUGAR,
 )
 
 for k, v in ACTIVATION_MAP.items():
