@@ -386,12 +386,17 @@ class PraxisTrainer(LightningModule):
         input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
             batch, batch_idx, is_training=True
         )
-        
+
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
 
         labels = input_ids[..., 1:].contiguous()
-        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards, token_weights=token_weights)
+        outputs = self.model(
+            input_ids=input_ids,
+            labels=labels,
+            rewards=rewards,
+            token_weights=token_weights,
+        )
         loss = outputs.loss
         softmax_collapse = self._compute_softmax_collapse(outputs.logits)
 
@@ -567,57 +572,68 @@ class PraxisTrainer(LightningModule):
     def _handle_batch_format(self, batch, batch_idx, is_training=True):
         """
         Handle batch format and RL generation for both training and validation.
-        
+
         This method unifies the batch processing logic for both training and validation steps,
         ensuring consistent handling of RL generation, CoT token weights, and other batch formats.
-        
+
         Returns:
             input_ids, rewards, token_weights, should_skip
         """
         step_type = "Training" if is_training else "Validation"
-        
+
         # Handle RL/CoT batch format (dict with input_ids, rewards, token_weights, etc.)
         if isinstance(batch, dict) and "input_ids" in batch:
             input_ids = batch["input_ids"]
             rewards = batch.get("rewards", None)
             token_weights = batch.get("token_weights", None)
-            
+
             # Log interesting batch events (only for generation batches to avoid spam)
             if batch.get("needs_generation", False):
                 rewards_debug = batch.get("rewards", torch.tensor([]))
                 generation_flags = (rewards_debug == -1).sum().item()
-                print(f"[RL] {step_type} step {batch_idx}: Processing generation batch with {generation_flags} sequences")
-            
+                print(
+                    f"[RL] {step_type} step {batch_idx}: Processing generation batch with {generation_flags} sequences"
+                )
+
             # Check if this batch needs generation for RL
             if batch.get("needs_generation", False) and rewards is not None:
-                print(f"[RL] {step_type} - Generating responses for batch {batch_idx}...")
+                print(
+                    f"[RL] {step_type} - Generating responses for batch {batch_idx}..."
+                )
                 # This is a proper RL batch - generate responses
                 input_ids, rewards = self._generate_and_evaluate_rl_batch(
                     input_ids, batch.get("metadata", [])
                 )
                 if input_ids is None:
                     # Generation failed, skip this batch
-                    print(f"[RL] {step_type} - Generation failed for batch {batch_idx}, skipping...")
+                    print(
+                        f"[RL] {step_type} - Generation failed for batch {batch_idx}, skipping..."
+                    )
                     return None, None, None, True
-                    
+
         else:
             # Regular batch format (just tensor of input_ids)
             input_ids = batch
             rewards = None
             token_weights = None
-            
+
         return input_ids, rewards, token_weights, False
 
     def validation_step(self, batch, batch_idx):
         input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
             batch, batch_idx, is_training=False
         )
-        
+
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
 
         labels = input_ids[..., 1:].contiguous()
-        outputs = self.model(input_ids=input_ids, labels=labels, rewards=rewards, token_weights=token_weights)
+        outputs = self.model(
+            input_ids=input_ids,
+            labels=labels,
+            rewards=rewards,
+            token_weights=token_weights,
+        )
 
         stats = {}
 
@@ -934,8 +950,9 @@ class TerminalInterface(Callback):
             info_dict["dropout"] = dropout
             info_dict["debug"] = debug
             info_dict["meta"] = [
-                "src" if use_source_code else None,
-                "dev" if dev else None,
+                item
+                for item, condition in [("src", use_source_code), ("dev", dev)]
+                if condition
             ] + meta
 
             self.dashboard.update_info(info_dict)

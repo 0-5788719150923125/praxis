@@ -11,7 +11,7 @@ class LossContainer:
         Args:
             **initial_losses: Key-value pairs of initial losses to add.
         """
-        self.loss_dict = {"main": 0.0}
+        self.loss_dict = {"main": torch.tensor(0.0)}
         for key, value in initial_losses.items():
             self.add_loss(key, value)
 
@@ -22,19 +22,17 @@ class LossContainer:
         return list(self.loss_dict.values())
 
     def add_loss(self, key: str = "main", loss: Union[Tensor, float, int] = 0):
-        # Handle scalar and tensor types
+        # Convert all loss values to tensors for consistency
         if isinstance(loss, (int, float)):
-            if loss == 0:
-                return 0
+            loss_value = torch.tensor(loss, dtype=torch.float32)
         elif isinstance(loss, Tensor):
-            if loss.item() == 0:
-                return 0
+            loss_value = loss
         else:
-            return 0
+            loss_value = torch.tensor(0.0, dtype=torch.float32)
 
         if key not in self.loss_dict:
-            self.loss_dict[key] = 0
-        self.loss_dict[key] = self.loss_dict[key] + loss
+            self.loss_dict[key] = torch.tensor(0.0, dtype=torch.float32)
+        self.loss_dict[key] = self.loss_dict[key] + loss_value
         return self.loss_dict[key]
 
     def add_loss_container(self, other_container: "LossContainer"):

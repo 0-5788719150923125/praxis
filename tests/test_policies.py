@@ -290,9 +290,9 @@ class TestChainOfThought:
 
         assert output_hidden.shape == hidden_states.shape
         if losses is not None:  # May be None if no valid tokens
-            assert "cot_loss" in losses
+            assert "cot_reward" in losses
             assert "reasoning_quality" in losses
-            assert "weighted_loss" in losses
+            assert "structure_reward" in losses
 
     def test_quality_head(self, config, sample_data):
         """Test quality head computation."""
