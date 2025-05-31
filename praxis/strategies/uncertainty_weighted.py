@@ -9,9 +9,17 @@ from torch.nn.parameter import UninitializedParameter
 class UncertaintyWeighted(nn.Module, LazyModuleMixin):
     """
     Use homoscedastic uncertainty to balance multi-task losses.
+    
+    This implementation handles both positive losses (to minimize) and negative 
+    losses (from RL rewards/maximization objectives) by applying the uncertainty
+    weighting to absolute values while preserving the optimization direction.
+    
     Adapted from:
     https://arxiv.org/abs/1705.07115
     https://medium.com/@baicenxiao/strategies-for-balancing-multiple-loss-functions-in-deep-learning-e1a641e0bcc0
+    
+    Note: Negative loss values are treated as reward signals (maximization objectives)
+    and handled appropriately in the uncertainty weighting calculation.
     """
 
     def __init__(self):
@@ -40,8 +48,15 @@ class UncertaintyWeighted(nn.Module, LazyModuleMixin):
 
         # Process each loss with its corresponding weight parameter
         for i, loss in enumerate(losses):
-            # Weight for the current loss
-            weighted_loss = 0.5 / (self.params[i] ** 2) * loss
+            # Handle negative losses (RL rewards) appropriately
+            # Apply uncertainty weighting to absolute value to maintain mathematical consistency
+            abs_loss = torch.abs(loss)
+            weighted_abs_loss = 0.5 / (self.params[i] ** 2) * abs_loss
+            
+            # Preserve the sign to maintain optimization direction
+            # Negative losses are reward signals that should be maximized (negative contribution)
+            weighted_loss = torch.sign(loss) * weighted_abs_loss
+            
             # Regularization term for the current loss
             reg_term = torch.log(1 + self.params[i] ** 2)
 

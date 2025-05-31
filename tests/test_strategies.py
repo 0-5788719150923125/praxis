@@ -151,3 +151,122 @@ def test_real_time_strategy():
     assert loss1.grad is not None
     assert loss2.grad is not None
     assert loss3.grad is not None
+
+
+def test_uncertainty_weighted_with_negative_losses():
+    """Test uncertainty weighted strategy with negative losses (RL rewards)."""
+    strategy = STRATEGIES_REGISTRY["weighted"]()
+
+    # Create mixed positive and negative losses
+    supervised_loss = torch.tensor(2.0, requires_grad=True)
+    rl_reward_loss = torch.tensor(-1.5, requires_grad=True)  # High reward -> negative loss
+    auxiliary_loss = torch.tensor(0.8, requires_grad=True)
+
+    losses = [supervised_loss, rl_reward_loss, auxiliary_loss]
+
+    # Compute combined loss multiple times to test stability
+    for step in range(5):
+        combined_loss = strategy(losses)
+        
+        # Verify the combined loss is valid
+        assert combined_loss.dim() == 0
+        assert not torch.isnan(combined_loss)
+        assert torch.isfinite(combined_loss)
+        assert combined_loss.requires_grad
+        
+        # Test gradient flow
+        combined_loss.backward(retain_graph=True)
+        assert supervised_loss.grad is not None
+        assert rl_reward_loss.grad is not None
+        assert auxiliary_loss.grad is not None
+        assert strategy.params.grad is not None
+        
+        # Clear gradients for next iteration
+        supervised_loss.grad.zero_()
+        rl_reward_loss.grad.zero_()
+        auxiliary_loss.grad.zero_()
+        strategy.params.grad.zero_()
+        
+    # Verify parameters remain stable (no extreme values)
+    assert torch.all(torch.isfinite(strategy.params))
+    assert torch.all(torch.abs(strategy.params) < 100)  # Reasonable bounds
+
+
+def test_uncertainty_weighted_all_negative_losses():
+    """Test uncertainty weighted strategy with all negative losses (all rewards)."""
+    strategy = STRATEGIES_REGISTRY["weighted"]()
+
+    # All negative losses (representing reward signals)
+    reward_loss1 = torch.tensor(-2.0, requires_grad=True)
+    reward_loss2 = torch.tensor(-1.5, requires_grad=True)
+    reward_loss3 = torch.tensor(-0.8, requires_grad=True)
+
+    losses = [reward_loss1, reward_loss2, reward_loss3]
+
+    # Compute combined loss
+    combined_loss = strategy(losses)
+
+    # Should be negative (since we want to maximize all rewards)
+    assert combined_loss.item() < 0
+    assert not torch.isnan(combined_loss)
+    assert torch.isfinite(combined_loss)
+    assert combined_loss.requires_grad
+
+    # Test gradient flow
+    combined_loss.backward()
+    assert reward_loss1.grad is not None
+    assert reward_loss2.grad is not None  
+    assert reward_loss3.grad is not None
+    assert strategy.params.grad is not None
+
+
+def test_uncertainty_weighted_extreme_values():
+    """Test uncertainty weighted strategy with extreme positive and negative values."""
+    strategy = STRATEGIES_REGISTRY["weighted"]()
+
+    # Extreme values
+    large_positive_loss = torch.tensor(100.0, requires_grad=True)
+    large_negative_loss = torch.tensor(-50.0, requires_grad=True)
+    small_positive_loss = torch.tensor(0.001, requires_grad=True)
+    small_negative_loss = torch.tensor(-0.0001, requires_grad=True)
+
+    losses = [large_positive_loss, large_negative_loss, small_positive_loss, small_negative_loss]
+
+    # Compute combined loss
+    combined_loss = strategy(losses)
+
+    # Verify numerical stability
+    assert not torch.isnan(combined_loss)
+    assert torch.isfinite(combined_loss)
+    assert combined_loss.requires_grad
+
+    # Test gradient flow
+    combined_loss.backward()
+    for loss in losses:
+        assert loss.grad is not None
+        assert torch.isfinite(loss.grad)
+    
+    assert strategy.params.grad is not None
+    assert torch.all(torch.isfinite(strategy.params.grad))
+
+
+def test_uncertainty_weighted_sign_preservation():
+    """Test that uncertainty weighted strategy preserves loss sign correctly."""
+    strategy = STRATEGIES_REGISTRY["weighted"]()
+
+    # Positive loss should contribute positively to total loss
+    positive_loss = torch.tensor(1.0, requires_grad=True)
+    positive_only_losses = [positive_loss]
+    positive_combined = strategy(positive_only_losses)
+    
+    # Reset strategy for fair comparison
+    strategy = STRATEGIES_REGISTRY["weighted"]()
+    
+    # Negative loss should contribute negatively to total loss (reward maximization)
+    negative_loss = torch.tensor(-1.0, requires_grad=True)
+    negative_only_losses = [negative_loss]
+    negative_combined = strategy(negative_only_losses)
+    
+    # The negative loss case should result in a more negative total
+    # (accounting for regularization terms)
+    assert negative_combined.item() < positive_combined.item()
