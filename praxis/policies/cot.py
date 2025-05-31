@@ -264,9 +264,16 @@ class ChainOfThought(nn.Module):
         token_stats = getattr(self, "_last_token_stats", None)
 
         print(f"\n[CoT Policy] Step {step_data['step']}:")
-        print(
-            f"  Loss: {step_data['cot_loss']:.4f} | Quality: {step_data['quality_mean']:.3f} | Structure bonus: {step_data['structure_bonus']:.4f}"
-        )
+        
+        # Be clear about what each value represents  
+        cot_total = step_data['cot_loss']
+        structure_bonus = step_data['structure_bonus']
+        quality = step_data['quality_mean']
+        
+        if cot_total >= 0:
+            print(f"  Total: {cot_total:.4f} (loss) | Structure reward: +{structure_bonus:.4f} | Quality: {quality:.3f}")
+        else:
+            print(f"  Total: {cot_total:.4f} (net reward) | Structure reward: +{structure_bonus:.4f} | Quality: {quality:.3f}")
         print(f"  CoT usage: {cot_batch_pct:.1f}% batches, {cot_token_pct:.1f}% tokens")
 
         if token_stats:
@@ -281,6 +288,5 @@ class ChainOfThought(nn.Module):
         # Store reward stats for reward exploitation monitoring
         if hasattr(self, "_last_rewards"):
             rewards = self._last_rewards
-            print(
-                f"  RL Rewards: mean={rewards.mean():.3f}, range=[{rewards.min():.3f}, {rewards.max():.3f}]"
-            )
+            # Show actual reward values (positive = good performance)
+            print(f"  RL Rewards (positive=good): mean={rewards.mean():.3f}, range=[{rewards.min():.3f}, {rewards.max():.3f}]")
