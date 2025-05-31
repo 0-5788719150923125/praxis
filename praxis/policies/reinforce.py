@@ -110,24 +110,8 @@ class REINFORCE(nn.Module):
             with torch.no_grad():
                 self.baseline.data = 0.99 * self.baseline.data + 0.01 * rewards.mean()
 
-            # Logging
+            # Store rewards for consolidated logging (done by CoT policy)
+            # No separate logging here - too verbose
             self.step_count += 1
-            if self.step_count % self.log_interval == 0:
-                with torch.no_grad():
-                    mean_reward = rewards.mean().item()
-                    mean_value = values.mean().item()
-                    mean_advantage = advantages.mean().item()
-                    print(f"\n[RL Policy] Step {self.step_count}:")
-                    print(
-                        f"  Rewards: mean={mean_reward:.3f}, min={rewards.min():.3f}, max={rewards.max():.3f}"
-                    )
-                    print(
-                        f"  Values: mean={mean_value:.3f}, min={values.min():.3f}, max={values.max():.3f}"
-                    )
-                    print(f"  Advantages: mean={mean_advantage:.3f}")
-                    print(f"  Baseline: {self.baseline.item():.3f}")
-                    print(
-                        f"  Losses: policy={policy_loss:.4f}, value={value_loss:.4f}, total={rl_loss:.4f}"
-                    )
 
         return policy_hidden_states, rl_loss
