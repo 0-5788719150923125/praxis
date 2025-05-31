@@ -295,21 +295,8 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     token_weights=token_weights,  # Pre-computed token weights from builder
                 )
                 if cot_losses is not None:
-                    for key, value in cot_losses.items():
-                        outputs.losses.add_loss(f"cot_{key}", value)
-            elif rl_type == "cot-reinforce" and labels is not None:
-                # CoT with REINFORCE - can work with or without rewards
-                _, cot_rl_losses = self.policy(
-                    hidden_states,
-                    logits=logits[..., :-1, :].contiguous(),
-                    labels=labels,
-                    rewards=rewards,
-                    attention_mask=attention_mask,
-                    # Note: generated_texts and ground_truths would be passed from training loop
-                )
-                if cot_rl_losses is not None:
-                    for key, value in cot_rl_losses.items():
-                        outputs.losses.add_loss(f"cot_rl_{key}", value)
+                    # Add CoT losses directly using LossContainer integration
+                    outputs.losses.add_loss_container(cot_losses)
             elif rewards is not None and labels is not None:
                 # REINFORCE and other methods
                 hidden_states, rl_loss = self.policy(

@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from praxis.containers import LossContainer
+
 # Import COT tags from builders
 try:
     from builders import COT_TAGS
@@ -72,7 +74,7 @@ class ChainOfThought(nn.Module):
         labels: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         token_weights: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Optional[Dict[str, torch.Tensor]]]:
+    ) -> Tuple[torch.Tensor, Optional[LossContainer]]:
         """
         Forward pass for CoT training.
 
@@ -89,22 +91,17 @@ class ChainOfThought(nn.Module):
 
         Returns:
             hidden_states: Unchanged hidden states
-            losses: Dict containing cot_loss and metrics
+            losses: LossContainer containing cot_loss and metrics
         """
-        # Metadata contains pre-computed token weights from the data pipeline
-        if not self.training:
-            return hidden_states, None
+        # Initialize an empty loss container
+        losses = LossContainer(
+            cot_reward=0, reasoning_quality=0, structure_reward=0, weighting_reward=0
+        )
 
         # Early return if no CoT examples in this batch
-        if token_weights is None:
-            return hidden_states, {
-                "cot_reward": 0,
-                "reasoning_quality": 0,
-                "structure_reward": 0,
-                "weighting_reward": 0,
-            }
+        if not self.training or token_weights is None:
+            return hidden_states, losses
 
-        batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
 
         # Get actual logits shape since it might be different due to shifting
@@ -158,9 +155,6 @@ class ChainOfThought(nn.Module):
         # Reward based on how much the model uses CoT structure
         cot_token_ratio = (token_weights != 1.0).float().mean()
         weighting_reward = torch.tensor(0.1, device=device) * cot_token_ratio
-        # Ensure weighting_reward is always a tensor (convert scalar results)
-        if not isinstance(weighting_reward, torch.Tensor):
-            weighting_reward = torch.tensor(weighting_reward, device=device)
 
         # Total CoT reward (negative because we want to maximize rewards)
         cot_reward = -(structure_reward + weighting_reward)
@@ -188,12 +182,11 @@ class ChainOfThought(nn.Module):
         if self.step_count % self.log_interval == 0:
             self._log_consolidated_stats()
 
-        losses = {
-            "cot_reward": cot_reward,  # Negative value (reward)
-            "reasoning_quality": quality_scores.mean(),
-            "structure_reward": structure_reward,
-            "weighting_reward": weighting_reward,
-        }
+        # Update all losses
+        losses.add_loss("cot_reward", cot_reward)  # Negative value (reward)
+        losses.add_loss("reasoning_quality", quality_scores.mean())
+        losses.add_loss("structure_reward", structure_reward)
+        losses.add_loss("weighting_reward", weighting_reward)
 
         return hidden_states, losses
 
