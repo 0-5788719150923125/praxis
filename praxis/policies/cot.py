@@ -43,9 +43,6 @@ class ChainOfThought(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
 
-        # CoT-specific parameters (keeping them local as requested)
-        self.structure_bonus = 0.2  # Bonus for proper tag structure
-
         # Optional: Simple MLP to predict reasoning quality
         self.quality_head = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size // 2),
@@ -93,19 +90,16 @@ class ChainOfThought(nn.Module):
             hidden_states: Unchanged hidden states
             losses: LossContainer containing cot_loss and metrics
         """
+        # Get actual logits shape since it might be different due to shifting
+        _, logits_seq_len, _ = logits.shape
+        device = hidden_states.device
+
         # Initialize an empty loss container
-        losses = LossContainer(
-            cot_reward=0, reasoning_quality=0, structure_reward=0, weighting_reward=0
-        )
+        losses = LossContainer(cot_reward=0)
 
         # Early return if no CoT examples in this batch
         if not self.training or token_weights is None:
             return hidden_states, losses
-
-        device = hidden_states.device
-
-        # Get actual logits shape since it might be different due to shifting
-        _, logits_seq_len, _ = logits.shape
 
         weights = token_weights
 
@@ -146,18 +140,9 @@ class ChainOfThought(nn.Module):
 
         quality_scores = self.quality_head(pooled_hidden).squeeze(-1)
 
-        # Structure reward based on quality scores (confidence in reasoning)
-        structure_reward = (
-            torch.tensor(self.structure_bonus, device=device) * quality_scores.mean()
-        )
-
-        # Token weighting reward - incentivize using reasoning tokens appropriately
-        # Reward based on how much the model uses CoT structure
-        cot_token_ratio = (token_weights != 1.0).float().mean()
-        weighting_reward = torch.tensor(0.1, device=device) * cot_token_ratio
-
-        # Total CoT reward (negative because we want to maximize rewards)
-        cot_reward = -(structure_reward + weighting_reward)
+        # Simple reward based on reasoning quality (confidence in reasoning)
+        # Negative because we want to maximize quality (reward signal)
+        cot_reward = -quality_scores.mean()
 
         # Update statistics
         self.cot_stats["total_batches"] += 1
@@ -172,8 +157,6 @@ class ChainOfThought(nn.Module):
         self.step_count += 1
         self._last_step_data = {
             "step": self.step_count,
-            "structure_reward": structure_reward.item(),
-            "weighting_reward": weighting_reward,
             "quality_mean": quality_scores.mean().item(),
             "cot_reward": cot_reward.item(),
         }
@@ -182,11 +165,8 @@ class ChainOfThought(nn.Module):
         if self.step_count % self.log_interval == 0:
             self._log_consolidated_stats()
 
-        # Update all losses
-        losses.add_loss("cot_reward", cot_reward)  # Negative value (reward)
-        losses.add_loss("reasoning_quality", quality_scores.mean())
-        losses.add_loss("structure_reward", structure_reward)
-        losses.add_loss("weighting_reward", weighting_reward)
+        # Add the single CoT loss (reward signal)
+        losses.add_loss("cot_reward", cot_reward)  # Negative value (reward to maximize)
 
         return hidden_states, losses
 
@@ -210,13 +190,9 @@ class ChainOfThought(nn.Module):
 
         # Show reward components clearly
         cot_reward = step_data["cot_reward"]
-        structure_reward = step_data["structure_reward"]
-        weighting_reward = step_data["weighting_reward"]
         quality = step_data["quality_mean"]
 
-        print(
-            f"  CoT reward: {cot_reward:.4f} (structure: +{structure_reward:.4f}, weighting: +{weighting_reward:.4f})"
-        )
+        print(f"  CoT reward: {cot_reward:.4f} (quality-based)")
         print(f"  Quality: {quality:.3f}")
         print(f"  CoT usage: {cot_batch_pct:.1f}% batches, {cot_token_pct:.1f}% tokens")
 
