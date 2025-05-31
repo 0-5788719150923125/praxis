@@ -9,7 +9,7 @@ from torch import device as torch_device
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class PraxisCompressiveMemory(nn.Module):
+class CompressiveMemory(nn.Module):
     """
     This module implements a simplified version of Infini-Attention, which can offer
     substantial VRAM savings at longer sequence lengths.

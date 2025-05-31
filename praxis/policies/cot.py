@@ -95,7 +95,7 @@ class ChainOfThought(nn.Module):
         device = hidden_states.device
 
         # Initialize an empty loss container
-        losses = LossContainer(cot_reward=0)
+        losses = LossContainer(cot_reward=0, quality_loss=0)
 
         # Early return if no CoT examples in this batch
         if not self.training or token_weights is None:
@@ -117,6 +117,90 @@ class ChainOfThought(nn.Module):
 
         token_weights = weights
 
+        # Compute reasoning quality score on full sequence
+        # Apply quality head to each position, then pool the quality scores
+        batch_size, seq_len, hidden_size = hidden_states.shape
+
+        # Trim hidden states to match logits sequence length if needed
+        if seq_len > logits_seq_len:
+            hidden_states = hidden_states[:, :logits_seq_len, :]
+            seq_len = logits_seq_len
+
+        # Reshape to apply quality head to all positions
+        flat_hidden = hidden_states.reshape(-1, hidden_size)  # [batch*seq, hidden]
+        position_qualities = self.quality_head(flat_hidden)  # [batch*seq, 1]
+        position_qualities = position_qualities.view(
+            batch_size, seq_len
+        )  # [batch, seq]
+
+        # Pool quality scores with attention mask
+        if attention_mask is not None:
+            # Trim attention mask to match sequence length
+            if attention_mask.shape[1] > seq_len:
+                attention_mask = attention_mask[:, :seq_len]
+            masked_qualities = position_qualities * attention_mask
+            quality_scores = masked_qualities.sum(dim=1) / attention_mask.sum(
+                dim=1
+            ).clamp(min=1)
+        else:
+            quality_scores = position_qualities.mean(dim=1)
+
+        # Update statistics
+        self.cot_stats["total_batches"] += 1
+        self.cot_stats["total_tokens"] += token_weights.numel()
+
+        cot_tokens_in_batch = (token_weights != 1.0).sum().item()
+        if cot_tokens_in_batch > 0:
+            self.cot_stats["batches_with_cot"] += 1
+            self.cot_stats["total_cot_tokens"] += cot_tokens_in_batch
+
+        # CoT reward: reward actual usage of CoT tokens (encourage CoT usage)
+        total_tokens = token_weights.numel()
+        cot_usage_ratio = (
+            cot_tokens_in_batch / total_tokens if total_tokens > 0 else 0.0
+        )
+        cot_reward = -torch.tensor(
+            cot_usage_ratio, device=device
+        )  # Negative for reward signal
+
+        # Self-modeling: quality head predicts logits confidence (inverse entropy)
+        # High quality reasoning should correlate with confident predictions
+
+        # Compute normalized entropy of logits at each position as target
+        # Lower entropy = higher confidence = higher quality
+        logits_flat = logits.view(-1, logits.shape[-1])  # [batch*seq, vocab]
+        log_probs = F.log_softmax(logits_flat, dim=-1)
+        probs = F.softmax(logits_flat, dim=-1)
+        entropy = -(probs * log_probs).sum(dim=-1)  # [batch*seq]
+
+        # Normalize entropy to [0,1] range (0=very confident, 1=very uncertain)
+        max_entropy = torch.log(
+            torch.tensor(logits.shape[-1], dtype=torch.float, device=device)
+        )
+        normalized_entropy = entropy / max_entropy
+
+        # Convert to confidence: 1 - normalized_entropy (1=confident, 0=uncertain)
+        confidence_targets = 1.0 - normalized_entropy
+        confidence_targets = confidence_targets.view(batch_size, logits_seq_len)
+
+        # Apply attention mask to targets
+        if attention_mask is not None:
+            confidence_targets = confidence_targets * attention_mask
+
+        # MSE loss between quality predictions and confidence targets
+        position_qualities_flat = position_qualities.view(-1)  # [batch*seq]
+        confidence_targets_flat = confidence_targets.view(-1)  # [batch*seq]
+
+        if attention_mask is not None:
+            mask_flat = attention_mask.view(-1)
+            valid_positions = mask_flat > 0
+            quality_loss = F.mse_loss(
+                position_qualities_flat[valid_positions],
+                confidence_targets_flat[valid_positions],
+            )
+        else:
+            quality_loss = F.mse_loss(position_qualities_flat, confidence_targets_flat)
+
         # Store token weight stats for consolidated logging
         self._last_token_stats = {
             "non_default_tokens": (token_weights != 1.0).sum().item(),
@@ -128,45 +212,27 @@ class ChainOfThought(nn.Module):
             "mean_weight": token_weights.mean().item(),
         }
 
-        # Compute reasoning quality score
-        if attention_mask is not None:
-            # Pool hidden states for quality estimation
-            mask_expanded = attention_mask.unsqueeze(-1).expand_as(hidden_states)
-            sum_hidden = (hidden_states * mask_expanded).sum(dim=1)
-            count = attention_mask.sum(dim=1, keepdim=True).clamp(min=1)
-            pooled_hidden = sum_hidden / count
-        else:
-            pooled_hidden = hidden_states.mean(dim=1)
-
-        quality_scores = self.quality_head(pooled_hidden).squeeze(-1)
-
-        # Simple reward based on reasoning quality (confidence in reasoning)
-        # Negative because we want to maximize quality (reward signal)
-        cot_reward = -quality_scores.mean()
-
-        # Update statistics
-        self.cot_stats["total_batches"] += 1
-        self.cot_stats["total_tokens"] += token_weights.numel()
-
-        cot_tokens_in_batch = (token_weights != 1.0).sum().item()
-        if cot_tokens_in_batch > 0:
-            self.cot_stats["batches_with_cot"] += 1
-            self.cot_stats["total_cot_tokens"] += cot_tokens_in_batch
-
         # Store current step data for consolidated logging
         self.step_count += 1
         self._last_step_data = {
             "step": self.step_count,
             "quality_mean": quality_scores.mean().item(),
+            "quality_loss": quality_loss.item(),
             "cot_reward": cot_reward.item(),
+            "cot_usage_ratio": cot_usage_ratio,
         }
 
         # Consolidated logging - only log here
         if self.step_count % self.log_interval == 0:
             self._log_consolidated_stats()
 
-        # Add the single CoT loss (reward signal)
-        losses.add_loss("cot_reward", cot_reward)  # Negative value (reward to maximize)
+        # Add both losses
+        losses.add_loss(
+            "cot_reward", cot_reward
+        )  # Reward for CoT usage (negative = reward)
+        losses.add_loss(
+            "quality_loss", quality_loss
+        )  # Loss for quality improvement (positive = error)
 
         return hidden_states, losses
 
@@ -188,12 +254,14 @@ class ChainOfThought(nn.Module):
 
         print(f"\n[CoT Policy] Step {step_data['step']}:")
 
-        # Show reward components clearly
+        # Show both reward and loss components
         cot_reward = step_data["cot_reward"]
+        quality_loss = step_data["quality_loss"]
         quality = step_data["quality_mean"]
+        usage_ratio = step_data["cot_usage_ratio"]
 
-        print(f"  CoT reward: {cot_reward:.4f} (quality-based)")
-        print(f"  Quality: {quality:.3f}")
+        print(f"  CoT reward: {cot_reward:.4f} (usage-based, usage={usage_ratio:.3f})")
+        print(f"  Quality loss: {quality_loss:.4f} (quality={quality:.3f})")
         print(f"  CoT usage: {cot_batch_pct:.1f}% batches, {cot_token_pct:.1f}% tokens")
 
         if token_stats:
@@ -203,12 +271,4 @@ class ChainOfThought(nn.Module):
             mean_w = token_stats["mean_weight"]
             print(
                 f"  Token weights: {non_default}/{total} CoT tokens, range=[{min_w:.2f}, {max_w:.2f}], mean={mean_w:.2f}"
-            )
-
-        # Store reward stats for reward exploitation monitoring
-        if hasattr(self, "_last_rewards"):
-            rewards = self._last_rewards
-            # Show actual reward values (positive = good performance)
-            print(
-                f"  RL Rewards (positive=good): mean={rewards.mean():.3f}, range=[{rewards.min():.3f}, {rewards.max():.3f}]"
             )

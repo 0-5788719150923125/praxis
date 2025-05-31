@@ -14,7 +14,7 @@ from praxis.attention.components import (
     UniversalAttentionGate,
 )
 from praxis.attention.core import Differential, Linear, ScaledDotProduct, Stickbreaking
-from praxis.attention.memory import PraxisCompressiveMemory
+from praxis.attention.memory import CompressiveMemory
 from praxis.attention.mla import MLAKeyValue, MLAQuery
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.projections import LinearKeyValue, LinearQuery, LowRankKeyValue
@@ -122,11 +122,11 @@ class ModularAttention(nn.Module):
                 value_head_dim=self.head_dim,
             )
 
-        self.memory: Union[PraxisCompressiveMemory, bool] = config.memory
+        self.memory: Union[CompressiveMemory, bool] = config.memory
         self.chunk_size: int = 0
         if self.memory:
             self.chunk_size = 256
-            self.memory = PraxisCompressiveMemory(config)
+            self.memory = CompressiveMemory(config)
 
         # The core attention mechanism
         if self.stickbreaking:
