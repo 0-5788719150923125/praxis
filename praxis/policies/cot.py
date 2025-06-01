@@ -133,7 +133,7 @@ class ChainOfThought(nn.Module):
             batch_size, seq_len
         )  # [batch, seq]
 
-        # Pool quality scores with attention mask
+        # Pool quality scores with attention mask (for logging only)
         if attention_mask is not None:
             # Trim attention mask to match sequence length
             if attention_mask.shape[1] > seq_len:
@@ -168,7 +168,11 @@ class ChainOfThought(nn.Module):
 
         # Compute normalized entropy of logits at each position as target
         # Lower entropy = higher confidence = higher quality
-        logits_flat = logits.view(-1, logits.shape[-1])  # [batch*seq, vocab]
+        # CRITICAL: Detach to prevent gradients from flowing back to main model logits
+        logits_detached = logits.detach()
+        logits_flat = logits_detached.view(
+            -1, logits_detached.shape[-1]
+        )  # [batch*seq, vocab]
         log_probs = F.log_softmax(logits_flat, dim=-1)
         probs = F.softmax(logits_flat, dim=-1)
         entropy = -(probs * log_probs).sum(dim=-1)  # [batch*seq]
@@ -187,19 +191,18 @@ class ChainOfThought(nn.Module):
         if attention_mask is not None:
             confidence_targets = confidence_targets * attention_mask
 
-        # MSE loss between quality predictions and confidence targets
-        position_qualities_flat = position_qualities.view(-1)  # [batch*seq]
-        confidence_targets_flat = confidence_targets.view(-1)  # [batch*seq]
-
+        # MSE loss between position_qualities and confidence_targets
+        # Use the position-level predictions directly - no redundant pooling/expanding
         if attention_mask is not None:
+            # Apply mask and compute MSE only on valid positions
             mask_flat = attention_mask.view(-1)
             valid_positions = mask_flat > 0
             quality_loss = F.mse_loss(
-                position_qualities_flat[valid_positions],
-                confidence_targets_flat[valid_positions],
+                position_qualities.view(-1)[valid_positions],
+                confidence_targets.view(-1)[valid_positions],
             )
         else:
-            quality_loss = F.mse_loss(position_qualities_flat, confidence_targets_flat)
+            quality_loss = F.mse_loss(position_qualities, confidence_targets)
 
         # Store token weight stats for consolidated logging
         self._last_token_stats = {
