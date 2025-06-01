@@ -95,7 +95,7 @@ class ChainOfThought(nn.Module):
         device = hidden_states.device
 
         # Initialize an empty loss container
-        losses = LossContainer(cot_reward=0, quality_loss=0)
+        losses = LossContainer(cot_usage_loss=0, quality_loss=0)
 
         # Early return if no CoT examples in this batch
         if not self.training or token_weights is None:
@@ -154,14 +154,15 @@ class ChainOfThought(nn.Module):
             self.cot_stats["batches_with_cot"] += 1
             self.cot_stats["total_cot_tokens"] += cot_tokens_in_batch
 
-        # CoT reward: reward actual usage of CoT tokens (encourage CoT usage)
+        # CoT usage loss: minimize when CoT is used more (encourage CoT usage)
         total_tokens = token_weights.numel()
         cot_usage_ratio = (
             cot_tokens_in_batch / total_tokens if total_tokens > 0 else 0.0
         )
-        cot_reward = -torch.tensor(
-            cot_usage_ratio, device=device
-        )  # Negative for reward signal
+        # Convert to positive loss: high usage = low loss, low usage = high loss
+        cot_usage_loss = torch.tensor(
+            1.0 - cot_usage_ratio, device=device
+        )  # Positive loss that decreases with more CoT usage
 
         # Self-modeling: quality head predicts logits confidence (inverse entropy)
         # High quality reasoning should correlate with confident predictions
@@ -192,7 +193,6 @@ class ChainOfThought(nn.Module):
             confidence_targets = confidence_targets * attention_mask
 
         # MSE loss between position_qualities and confidence_targets
-        # Use the position-level predictions directly - no redundant pooling/expanding
         if attention_mask is not None:
             # Apply mask and compute MSE only on valid positions
             mask_flat = attention_mask.view(-1)
@@ -221,7 +221,7 @@ class ChainOfThought(nn.Module):
             "step": self.step_count,
             "quality_mean": quality_scores.mean().item(),
             "quality_loss": quality_loss.item(),
-            "cot_reward": cot_reward.item(),
+            "cot_usage_loss": cot_usage_loss.item(),
             "cot_usage_ratio": cot_usage_ratio,
         }
 
@@ -231,8 +231,8 @@ class ChainOfThought(nn.Module):
 
         # Add both losses
         losses.add_loss(
-            "cot_reward", cot_reward
-        )  # Reward for CoT usage (negative = reward)
+            "cot_usage_loss", cot_usage_loss
+        )  # Loss for CoT usage (positive loss, decreases with more usage)
         losses.add_loss(
             "quality_loss", quality_loss
         )  # Loss for quality improvement (positive = error)
@@ -257,13 +257,15 @@ class ChainOfThought(nn.Module):
 
         print(f"\n[CoT Policy] Step {step_data['step']}:")
 
-        # Show both reward and loss components
-        cot_reward = step_data["cot_reward"]
+        # Show both loss components
+        cot_usage_loss = step_data["cot_usage_loss"]
         quality_loss = step_data["quality_loss"]
         quality = step_data["quality_mean"]
         usage_ratio = step_data["cot_usage_ratio"]
 
-        print(f"  CoT reward: {cot_reward:.4f} (usage-based, usage={usage_ratio:.3f})")
+        print(
+            f"  CoT usage loss: {cot_usage_loss:.4f} (usage-based, usage={usage_ratio:.3f})"
+        )
         print(f"  Quality loss: {quality_loss:.4f} (quality={quality:.3f})")
         print(f"  CoT usage: {cot_batch_pct:.1f}% batches, {cot_token_pct:.1f}% tokens")
 
