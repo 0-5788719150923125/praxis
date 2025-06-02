@@ -55,7 +55,7 @@ TEST_CASES = [
     # Case 9: Mixed cases
     (
         "Regular paragraph.\nNew paragraph starts here.\n- List item 1\n- List item 2\nAnother paragraph after list.\ndef code():\n    return True\nFinal paragraph.",
-        "Regular paragraph.\n\nNew paragraph starts here.\n\n- List item 1\n- List item 2\n\nAnother paragraph after list.\ndef code():\n    return True\n\nFinal paragraph.",
+        "Regular paragraph.\n\nNew paragraph starts here.\n\n- List item 1\n- List item 2\nAnother paragraph after list.\ndef code():\n    return True\nFinal paragraph.",
         "Mixed content test",
     ),
     # Case 10: List with capitalized items (should not convert)
@@ -133,14 +133,62 @@ TEST_CASES = [
     # Case 22: Multiple tag squeezing with different tags
     (
         "<output>\n\nThis is the final answer.\nIt should be formatted properly.\n\n</output>\n\n<step_by_step>\n\nStep 1: Identify the problem\nStep 2: Solve it\n\n</step_by_step>",
-        "<output>\nThis is the final answer.\n\nIt should be formatted properly.\n</output>\n\n<step_by_step>\nStep 1: Identify the problem\n\nStep 2: Solve it\n</step_by_step>",
+        "<output>\nThis is the final answer.\n\nIt should be formatted properly.\n</output>\n\n<step_by_step>\nStep 1: Identify the problem\nStep 2: Solve it\n</step_by_step>",
         "Multiple tag squeezing test",
     ),
     # Case 23: Nested tags should be handled correctly
     (
         "<thinking>\n\nI need to think about this.\n\n<step_by_step>\n\nStep 1: First step\nStep 2: Second step\n\n</step_by_step>\n\nNow I have my answer.\n\n</thinking>",
-        "<thinking>\nI need to think about this.\n\n<step_by_step>\nStep 1: First step\n\nStep 2: Second step\n</step_by_step>\n\nNow I have my answer.\n</thinking>",
+        "<thinking>\nI need to think about this.\n\n<step_by_step>\nStep 1: First step\nStep 2: Second step\n</step_by_step>\n\nNow I have my answer.\n</thinking>",
         "Nested tag squeezing test",
+    ),
+    # Case 24: Structured data with colons should not get paragraph breaks
+    (
+        "Feeling: Good\nEmotional Response: Satisfied\nConfidence: High",
+        "Feeling: Good\nEmotional Response: Satisfied\nConfidence: High",
+        "Structured data with colons test",
+    ),
+    # Case 25: Mixed structured data and paragraphs
+    (
+        "Here is some introduction text. This explains the concept.\nName: John Doe\nAge: 30\nStatus: Active\nThis is a concluding paragraph. It wraps up the discussion.",
+        "Here is some introduction text. This explains the concept.\n\nName: John Doe\nAge: 30\nStatus: Active\nThis is a concluding paragraph. It wraps up the discussion.",
+        "Mixed structured data and paragraphs test",
+    ),
+    # Case 26: Numbers and scores should not get paragraph breaks
+    (
+        "Final results are in. Here are the scores.\nPlayer 1: 95\nPlayer 2: 87\nGame Mode: Tournament\nThe competition was fierce! Everyone played well.",
+        "Final results are in. Here are the scores.\n\nPlayer 1: 95\nPlayer 2: 87\nGame Mode: Tournament\nThe competition was fierce! Everyone played well.",
+        "Numbers and scores test",
+    ),
+    # Case 27: Lines ending without sentence punctuation should stay together
+    (
+        "Configuration Settings\nDatabase Host: localhost\nPort Number: 5432\nUsername: admin\nConnection Timeout: 30\nThese settings are important for the application.",
+        "Configuration Settings\nDatabase Host: localhost\nPort Number: 5432\nUsername: admin\nConnection Timeout: 30\nThese settings are important for the application.",
+        "Configuration without punctuation test",
+    ),
+    # Case 28: Consecutive tags should be squished together
+    (
+        "<conscious_thought>\nI am writing a test.\n</conscious_thought>\n<step_by_step>\n(the steps)\n</step_by_step>",
+        "<conscious_thought>\nI am writing a test.\n</conscious_thought>\n<step_by_step>\n(the steps)\n</step_by_step>",
+        "Consecutive tags squishing test",
+    ),
+    # Case 29: Multiple consecutive tags should all stay together
+    (
+        "<thinking>\nFirst thought\n</thinking>\n<analysis>\nAnalysis here\n</analysis>\n<conclusion>\nFinal thought\n</conclusion>",
+        "<thinking>\nFirst thought\n</thinking>\n<analysis>\nAnalysis here\n</analysis>\n<conclusion>\nFinal thought\n</conclusion>",
+        "Multiple consecutive tags test",
+    ),
+    # Case 30: Tags followed by regular content should get proper spacing
+    (
+        "<conscious_thought>\nI am thinking.\n</conscious_thought>\n<step_by_step>\nStep 1: Do this\n</step_by_step>\nThis is regular content after tags.",
+        "<conscious_thought>\nI am thinking.\n</conscious_thought>\n<step_by_step>\nStep 1: Do this\n</step_by_step>\n\nThis is regular content after tags.",
+        "Tags followed by content test",
+    ),
+    # Case 31: Mixed tags and structured data
+    (
+        "<analysis>\nFeeling: Good\nConfidence: High\n</analysis>\n<next_steps>\nAction: Review data\nDeadline: Tomorrow\n</next_steps>\nThe analysis is complete. We can proceed.",
+        "<analysis>\nFeeling: Good\nConfidence: High\n</analysis>\n<next_steps>\nAction: Review data\nDeadline: Tomorrow\n</next_steps>\n\nThe analysis is complete. We can proceed.",
+        "Mixed tags and structured data test",
     ),
 ]
 

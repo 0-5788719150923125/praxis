@@ -256,8 +256,8 @@ class TestChainOfThought:
         assert policy.config == config
         assert policy.hidden_size == config.hidden_size
         assert hasattr(policy, "quality_head")
-        assert hasattr(policy, "reasoning_weight")
-        assert hasattr(policy, "structure_bonus")
+        assert hasattr(policy, "step_count")
+        assert hasattr(policy, "cot_stats")
 
     def test_forward_without_training(self, config, sample_data):
         """Test forward pass in eval mode."""
@@ -290,9 +290,8 @@ class TestChainOfThought:
 
         assert output_hidden.shape == hidden_states.shape
         if losses is not None:  # May be None if no valid tokens
-            assert "cot_reward" in losses
-            assert "reasoning_quality" in losses
-            assert "structure_reward" in losses
+            assert "cot_usage_loss" in losses
+            assert "quality_loss" in losses
 
     def test_quality_head(self, config, sample_data):
         """Test quality head computation."""

@@ -41,3 +41,7 @@ class LossContainer:
             if key not in self.loss_dict:
                 self.loss_dict[key] = 0
             self.loss_dict[key] = self.loss_dict[key] + value
+
+    def __contains__(self, key: str) -> bool:
+        """Check if a loss key exists in this container."""
+        return key in self.loss_dict

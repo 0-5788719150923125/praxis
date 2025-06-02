@@ -241,22 +241,19 @@ class TestSyntaxesAttention:
     def test_memory_complexity_reduction(self, base_config):
         """Test theoretical memory complexity reduction."""
         seq_len = 128  # Much smaller
-        compression_ratio = base_config.syntaxes_query_compression_ratio
-        window_size = base_config.syntaxes_window_size
+        context_size = base_config.syntaxes_context_size
         num_heads = base_config.num_heads
         batch_size = 2  # Smaller batch
         
-        compressed_seq_len = seq_len // compression_ratio
-        
         # Memory for attention scores
-        # Syntaxes: compressed queries attend to window_size keys
-        syntaxes_memory = compressed_seq_len * window_size * num_heads * batch_size
+        # Syntaxes: all queries attend to context_size keys (recent context)
+        syntaxes_memory = seq_len * context_size * num_heads * batch_size
         # Vanilla: all queries attend to all seq_len keys
         vanilla_memory = seq_len ** 2 * num_heads * batch_size
         
         reduction_factor = vanilla_memory / syntaxes_memory
-        # Expected reduction: (seq_len * seq_len) / (compressed_seq_len * window_size)
-        expected_reduction = (seq_len * seq_len) / (compressed_seq_len * window_size)
+        # Expected reduction: (seq_len * seq_len) / (seq_len * context_size) = seq_len / context_size
+        expected_reduction = seq_len / context_size
         
         # Allow small numerical error
         assert abs(reduction_factor - expected_reduction) < 1e-6

@@ -94,11 +94,15 @@ class ChainOfThought(nn.Module):
         _, logits_seq_len, _ = logits.shape
         device = hidden_states.device
 
+        # Early return if not training
+        if not self.training:
+            return hidden_states, None
+
         # Initialize an empty loss container
         losses = LossContainer(cot_usage_loss=0, quality_loss=0)
 
         # Early return if no CoT examples in this batch
-        if not self.training or token_weights is None:
+        if token_weights is None:
             return hidden_states, losses
 
         weights = token_weights

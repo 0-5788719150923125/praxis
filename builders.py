@@ -406,11 +406,16 @@ def text_formatter(text):
 
     # Define the pattern for paragraph boundaries
     # Look for:
-    # 1. One of these characters at the end: letter, number, common punctuation, quote, parenthesis
+    # 1. Lines ending with sentence-ending punctuation (., !, ?) - these are likely complete thoughts
     # 2. Followed by a single newline
     # 3. NOT followed by indentation, list markers, or code keywords
     # 4. Followed by an optional quotation mark and then an uppercase letter
-    pattern = r'([a-zA-Z0-9.,;:!?"\')])(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"\']*[A-Z])'
+    # 
+    # EXCLUDE lines ending with:
+    # - Colons (:) - these are typically labels or keys
+    # - Commas, semicolons - these are mid-sentence
+    # - Letters/numbers without punctuation - these might be labels
+    pattern = r'([.!?][\"\']*[)\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"\']*[A-Z])'
 
     # Replace with the same characters but with double newline
     replacement = r"\1\n\n\3"
@@ -438,7 +443,8 @@ def text_formatter(text):
 
     # Ensure closing tags are followed by double newlines when there's content after them
     # </tag>\ncontent becomes </tag>\n\ncontent (but preserve existing double newlines)
-    tag_after_pattern = r"(</[^>]+>)\n(?!\n|</|$)"  # Closing tag followed by single newline and content (not another tag or end)
+    # BUT: Keep consecutive tags together (don't add space between </tag> and <tag>)
+    tag_after_pattern = r"(</[^>]+>)\n(?!\n|<|$)"  # Closing tag followed by single newline and content (not another tag or end)
     reformatted_text = re.sub(tag_after_pattern, r"\1\n\n", reformatted_text)
 
     return reformatted_text
