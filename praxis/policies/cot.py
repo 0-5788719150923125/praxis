@@ -173,11 +173,8 @@ class ChainOfThought(nn.Module):
 
         # Compute normalized entropy of logits at each position as target
         # Lower entropy = higher confidence = higher quality
-        # CRITICAL: Detach to prevent gradients from flowing back to main model logits
-        logits_detached = logits.detach()
-        logits_flat = logits_detached.view(
-            -1, logits_detached.shape[-1]
-        )  # [batch*seq, vocab]
+        # Allow gradients to flow back to improve main model predictions
+        logits_flat = logits.view(-1, logits.shape[-1])  # [batch*seq, vocab]
         log_probs = F.log_softmax(logits_flat, dim=-1)
         probs = F.softmax(logits_flat, dim=-1)
         entropy = -(probs * log_probs).sum(dim=-1)  # [batch*seq]

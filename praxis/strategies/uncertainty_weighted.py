@@ -22,10 +22,11 @@ class UncertaintyWeighted(nn.Module, LazyModuleMixin):
     and handled appropriately in the uncertainty weighting calculation.
     """
 
-    def __init__(self):
+    def __init__(self, clamped: bool = False):
         super().__init__()
         # Use UninitializedParameter as a placeholder until first forward pass
         self.params = UninitializedParameter(requires_grad=True)
+        self.clamped = clamped
 
     def reset_parameters(self, num_params):
         # Initialize the parameters with the correct shape
@@ -48,10 +49,17 @@ class UncertaintyWeighted(nn.Module, LazyModuleMixin):
 
         # Process each loss with its corresponding weight parameter
         for i, loss in enumerate(losses):
-            # Apply uncertainty weighting
-            weighted_loss = 0.5 / (self.params[i] ** 2) * loss
+            if self.clamped:
+                # Clamp parameters to prevent exponential scaling instability
+                # This prevents the 1/sigma^2 term from exploding when sigma becomes very small
+                param = torch.clamp(self.params[i], min=0.1, max=10.0)
+            else:
+                param = self.params[i]
 
-            # Regularization term for the current loss
+            # Apply uncertainty weighting with clamped parameters
+            weighted_loss = 0.5 / (param**2) * loss
+
+            # Regularization term for the current loss (use original param for gradient flow)
             reg_term = torch.log(1 + self.params[i] ** 2)
 
             # Add to total loss
