@@ -70,16 +70,12 @@ class SequentialDecoder(BaseDecoder):
             if next_expert_idx is None:
                 break
 
-            current_route = self.controller.update_route(
-                hidden_states, current_route, current_depth, next_expert_idx
-            )
-
             expert = ordered_experts[next_expert_idx]
 
             layer_state = (
                 current_state[next_expert_idx] if current_state is not None else None
             )
-            hidden_states, past_key_values, layer_state, decoder_loss = create_forward(
+            hidden_states, past_key_values, layer_state, decoder_loss, exit_signal = create_forward(
                 expert,
                 self.controller,
                 self.manager,
@@ -91,8 +87,31 @@ class SequentialDecoder(BaseDecoder):
                 block_ids,
                 should_checkpoint(self.training, current_depth, self.checkpoint_every),
             )
-            # Handle expert decoder loss (which is scalar/tensor, not LossContainer)
-            losses.add_loss("decoder", decoder_loss)
+
+            # Update route immediately after expert execution
+            current_route = self.controller.update_route(
+                hidden_states, current_route, current_depth, next_expert_idx
+            )
+
+            # Handle expert decoder loss (can be scalar/tensor or LossContainer)
+            if isinstance(decoder_loss, LossContainer):
+                losses.add_loss_container(decoder_loss)
+            else:
+                losses.add_loss("decoder", decoder_loss)
+            
+            # Check for Taxus early exit signal (passed directly, not through LossContainer)
+            if exit_signal is not None:
+                # Debug: Show exit signal during inference and training
+                if hasattr(self, 'config') and getattr(self.config, 'debug', False):
+                    mode = "training" if self.training else "inference"
+                    print(f"DEBUG: Decoder got exit_signal at depth {current_depth} ({mode}): {exit_signal}")
+                
+                if exit_signal:
+                    # Early exit signaled - stop decoding
+                    if hasattr(self, 'config') and getattr(self.config, 'debug', False):
+                        mode = "training" if self.training else "inference"
+                        print(f"DEBUG: Early exit at depth {current_depth} ({mode})!")
+                    break
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             block_ids = self.compressor.reduce_block_ids(block_ids)
             hidden_states = self.post_layer(hidden_states, current_depth)

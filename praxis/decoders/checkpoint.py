@@ -18,7 +18,7 @@ def create_forward(
     current_depth: int,
     block_ids: Optional[Tensor],
     should_checkpoint: bool = False,
-) -> Optional[Tuple[Tensor, Any, Any, Tensor]]:
+) -> Optional[Tuple[Tensor, Any, Any, Tensor, Optional[bool]]]:
     """
     Create and execute a forward pass function for an expert module with optional checkpointing.
 
@@ -40,6 +40,7 @@ def create_forward(
             - Updated past key values
             - Updated layer state
             - Auxiliary loss
+            - Early exit signal
     """
 
     def custom_forward(
@@ -49,7 +50,7 @@ def create_forward(
         current_state: Optional[Any],
         current_depth: int,
         block_ids: Optional[Tensor],
-    ) -> Tuple[Tensor, Any, Any, Tensor]:
+    ) -> Tuple[Tensor, Any, Any, Tensor, Optional[bool]]:
         """
         Custom forward function that can be used with gradient checkpointing.
 
@@ -67,13 +68,14 @@ def create_forward(
                 - Updated past key values
                 - Updated layer state
                 - Auxiliary loss
+                - Early exit signal
         """
         # Add positional context to both hidden states and attention mask
         hidden_states, attention_mask = controller.add_context(
             hidden_states, attention_mask, current_depth
         )
         # Forward pass
-        states, layer_kv, state_update, aux_loss = expert(
+        states, layer_kv, state_update, aux_loss, exit_signal = expert(
             hidden_states,
             attention_mask,
             past_key_values,
@@ -84,7 +86,7 @@ def create_forward(
         # Remove context from both hidden states and attention mask
         states, attention_mask = controller.remove_context(states, attention_mask)
 
-        return states, layer_kv, state_update, aux_loss
+        return states, layer_kv, state_update, aux_loss, exit_signal
 
     try:
         if should_checkpoint:

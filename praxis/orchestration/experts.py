@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from praxis.containers.loss import LossContainer
 from praxis.routers import ROUTER_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -47,7 +48,13 @@ class LocalExpert(nn.Module):
         current_state: Optional[Tensor],
         current_depth: int,
         block_ids: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
+    ) -> Tuple[
+        Tensor,
+        Optional[Tensor],
+        Optional[Tensor],
+        Union[float, LossContainer],
+        Optional[bool],
+    ]:
         """
         Forward pass through local expert.
 
@@ -83,7 +90,13 @@ class LocalExpert(nn.Module):
         past_key_values: Optional[Tensor],
         current_depth: int,
         block_ids: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], float]:
+    ) -> Tuple[
+        Tensor,
+        Optional[Tensor],
+        Optional[Tensor],
+        Union[float, "LossContainer"],
+        Optional[bool],
+    ]:
         """
         Forward pass implementation for local experts.
 
@@ -100,9 +113,12 @@ class LocalExpert(nn.Module):
                 - Hidden states tensor
                 - Updated key/value cache
                 - Updated state tensor
-                - Auxiliary loss value
+                - Auxiliary loss value or LossContainer
+                - Early exit signal (True if should exit, None if no signal)
         """
-        aux_losses: List[float] = []
+
+        exit_signal = None
+
         if self.router and isinstance(self.router, nn.Module):
             hidden_states, layer_kv, state_update, aux_loss = self.router(
                 self.block,
@@ -113,7 +129,31 @@ class LocalExpert(nn.Module):
                 current_depth,
                 block_ids,
             )
-            aux_losses.append(aux_loss)
+
+            # Extract exit signal from Taxus router if present
+            if isinstance(aux_loss, LossContainer) and "taxus_should_exit" in aux_loss:
+                exit_signal_value = aux_loss.get_loss("taxus_should_exit")
+
+                if self.training:
+                    # During training, use stochastic exit based on the learned probability
+                    # This allows the model to learn from the consequences of its exit decisions
+                    exit_prob = exit_signal_value.item()
+                    exit_signal = torch.rand(1).item() < exit_prob
+                else:
+                    # During inference, use deterministic threshold
+                    exit_signal = exit_signal_value.item() > 0.5
+
+                # Debug: Show exit signal extraction
+                if (
+                    getattr(self.router, "debug", False)
+                    and not self.training
+                    and hasattr(inputs, "shape")
+                    and inputs.shape[0] == 1
+                ):
+                    print(
+                        f"DEBUG: LocalExpert depth {current_depth}: exit_signal_value={exit_signal_value.item():.3f}, exit_signal={exit_signal}"
+                    )
+
         elif isinstance(self.block, nn.Module):
             hidden_states, layer_kv, state_update, aux_loss = self.block(
                 inputs,
@@ -123,11 +163,10 @@ class LocalExpert(nn.Module):
                 current_depth,
                 block_ids,
             )
-            aux_losses.append(aux_loss)
         else:
             raise ValueError("Neither router nor block is a valid module")
 
-        return hidden_states, layer_kv, state_update, sum(aux_losses)
+        return hidden_states, layer_kv, state_update, aux_loss, exit_signal
 
 
 class RemoteExpert(LocalExpert):

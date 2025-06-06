@@ -93,10 +93,20 @@ class ParallelDecoder(BaseDecoder):
 
         for i, result in enumerate(results):
             if result is not None:
-                hidden_update, pkv, layer_state, aux_loss = result
+                # Handle both old (4-tuple) and new (5-tuple with exit signal) formats
+                if len(result) == 5:
+                    hidden_update, pkv, layer_state, aux_loss, exit_signal = result
+                    # Note: ParallelDecoder doesn't support early exit, so we ignore exit_signal
+                else:
+                    hidden_update, pkv, layer_state, aux_loss = result
 
                 new_states.append(layer_state)
-                losses.add_loss("decoder", aux_loss)
+                
+                # Handle different loss types
+                if isinstance(aux_loss, LossContainer):
+                    losses.add_loss_container(aux_loss)
+                else:
+                    losses.add_loss("decoder", aux_loss)
 
                 hidden_update = self.post_layer(hidden_update, i)
 
