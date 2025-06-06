@@ -32,7 +32,7 @@ class Taxus(nn.Module):
         temperature: float = 1.0,
         entropy_weight: float = 0.01,
         usage_weight: float = 0.1,
-        budget_weight: float = 0.1,
+        budget_weight: float = 1.0,  # Increased from 0.1 for stronger budget pressure
         computational_budget: Optional[float] = None,
         *args: Any,
         **kwargs: Any,
@@ -61,6 +61,18 @@ class Taxus(nn.Module):
                 for _ in range(self.depth)
             ]
         )
+
+        # Initialize exit gates with strong bias towards target depth
+        target_layer = int(self.target_depth_ratio * self.depth)
+        for i, gate in enumerate(self.exit_gates):
+            if i >= self.min_exit_layer:
+                with torch.no_grad():
+                    # Strong bias to exit near target layer
+                    distance_from_target = abs(i - target_layer) / self.depth
+                    # Stronger bias: range from -2 to +2
+                    exit_bias = 2.0 * (1.0 - 2.0 * distance_from_target)
+                    gate[-1].bias[0] = -exit_bias  # Continue logit
+                    gate[-1].bias[1] = exit_bias  # Exit logit
 
         # Layer costs - learnable parameters that increase with depth
         # Use linear growth to avoid exponential instability
@@ -174,12 +186,24 @@ class Taxus(nn.Module):
         # 1. Entropy regularization (encourage decisive exits)
         entropy = -(exit_probs * torch.log(exit_probs + 1e-8)).sum(dim=-1).mean()
         # Penalize low entropy (indecisive exits) - keep positive
-        losses.add_loss("taxus_entropy", self.entropy_weight * torch.clamp(-entropy, 0, 10))
+        losses.add_loss(
+            "taxus_entropy", self.entropy_weight * torch.clamp(-entropy, 0, 10)
+        )
 
         # 2. Usage regularization (penalize deviation from target depth)
         current_depth_ratio = (current_depth + 1) / self.depth
-        usage_deviation = (current_depth_ratio - self.target_depth_ratio) ** 2
-        losses.add_loss("taxus_usage", self.usage_weight * usage_deviation)
+
+        # Asymmetric loss: penalize continuing past target more than exiting before
+        if current_depth_ratio > self.target_depth_ratio:
+            # Past target - strong penalty for continuing
+            usage_deviation = 2.0 * (current_depth_ratio - self.target_depth_ratio) ** 2
+        else:
+            # Before target - mild penalty for early exit
+            usage_deviation = 0.5 * (current_depth_ratio - self.target_depth_ratio) ** 2
+
+        # Scale by whether we're exiting or continuing
+        usage_loss = usage_deviation * (1 - should_exit).mean()
+        losses.add_loss("taxus_usage", self.usage_weight * usage_loss)
 
         # 3. Confidence-based loss (bounded)
         confidence_loss = confidence.mean() * current_depth_ratio
@@ -192,14 +216,42 @@ class Taxus(nn.Module):
         # 5. Early exit incentive (reformulated as positive loss)
         # Penalize continuing at later depths instead of rewarding early exits
         continue_penalty = (1 - should_exit).mean() * current_depth_ratio
-        losses.add_loss("taxus_continue_penalty", 0.1 * continue_penalty)
+        losses.add_loss("taxus_continue_penalty", 0.5 * continue_penalty)
 
-        # 6. Budget constraint loss (only during training, bounded)
+        # 5b. Target depth encouragement
+        # Reward exits near the target depth
+        target_layer = int(self.target_depth_ratio * self.depth)
+        distance_from_target = abs(current_depth - target_layer) / self.depth
+        target_bonus = should_exit.mean() * (1 - distance_from_target)
+        # Convert reward to penalty (lower is better)
+        losses.add_loss("taxus_target_bonus", 0.5 * (1 - target_bonus))
+
+        # 6. Budget constraint loss - bidirectional pressure
         if self.training and self.computational_budget is not None:
-            # Accumulate total cost up to this layer
-            total_cost_so_far = sum(self.layer_costs[: current_depth + 1])
-            budget_violation = F.relu(total_cost_so_far - self.computational_budget)
-            losses.add_loss("taxus_budget", self.budget_weight * torch.clamp(budget_violation, 0, 2))
+            # Expected cost if we exit at this layer
+            # We pay for all layers up to current, weighted by exit probability
+            expected_cost = (
+                sum(self.layer_costs[: current_depth + 1]) * should_exit.mean()
+            )
+
+            # Expected remaining cost if we continue
+            if current_depth < self.depth - 1:
+                continue_prob = (1 - should_exit).mean()
+                # Assume we'll use remaining budget efficiently
+                remaining_layers = self.depth - current_depth - 1
+                expected_remaining = continue_prob * sum(
+                    self.layer_costs[current_depth + 1 :]
+                )
+                total_expected_cost = expected_cost + expected_remaining
+            else:
+                total_expected_cost = sum(self.layer_costs)  # Last layer, must use all
+
+            # Bidirectional loss: penalize both over and under-utilization
+            budget_diff = total_expected_cost - self.computational_budget
+            budget_loss = torch.abs(budget_diff) + 0.1 * torch.square(budget_diff)
+            losses.add_loss(
+                "taxus_budget", self.budget_weight * torch.clamp(budget_loss, 0, 2)
+            )
 
         # Add exit signal to loss container BEFORE any early returns
         avg_exit_prob = exit_probs[:, 1].mean()

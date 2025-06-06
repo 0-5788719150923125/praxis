@@ -82,9 +82,9 @@ def create_taxus_with_dynamic_budget(
     defaults = {
         "target_depth_ratio": target_depth_ratio,
         "temperature": 0.3,
-        "entropy_weight": 0.05,
-        "usage_weight": 0.3,
-        "budget_weight": 0.5,
+        "entropy_weight": 0.1,      # Increased for more decisive exits
+        "usage_weight": 1.0,        # Strong pressure to match target depth
+        "budget_weight": 1.0,       # Strong budget enforcement
         "computational_budget": computational_budget,
     }
     
