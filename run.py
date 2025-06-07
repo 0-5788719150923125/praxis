@@ -238,6 +238,7 @@ config = PraxisConfig(
     embed_size=embed_size,
     num_heads=int(num_heads.split(":")[0]),
     num_queries=int(num_heads.split(":")[1]),
+    head_size=head_size,
     k_heads=k_heads,
     kv_rank=kv_rank,
     dropout=dropout,
