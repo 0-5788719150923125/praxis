@@ -34,7 +34,7 @@ def main():
         "--attention-type",
         "standard",
         "--strategy",
-        "weighted",
+        "naive",
         "--tie-weights",
         "--schedule-free",
     ]
@@ -47,10 +47,6 @@ def main():
 
     # Build the complete command
     args = [sys.executable, str(run_script)] + final_args
-
-    print(f"Default args: {' '.join(alpha_defaults)}")
-    if user_args:
-        print(f"User args: {' '.join(user_args)}")
 
     # Use os.execv to replace this process entirely
     # This ensures proper signal handling and terminal control
