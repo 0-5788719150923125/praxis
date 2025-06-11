@@ -303,6 +303,12 @@ architecture_group.add_argument(
     help="The ratio of heads to queries per-head. (example: '4:2' is equal to 3 heads, with 2 queries per head)",
 )
 architecture_group.add_argument(
+    "--head-size",
+    type=int,
+    default=None,
+    help="Specify the inner head dimension",
+)
+architecture_group.add_argument(
     "--k-heads",
     type=int,
     default=None,

@@ -59,7 +59,9 @@ class ModularAttention(nn.Module):
         self.kv_rank: Optional[int] = config.kv_rank
 
         self.factor: int = 2 if self.differential else 1
-        self.head_dim: int = hidden_size // self.num_heads // self.factor
+        self.head_dim: int = (
+            getattr(config, "head_size") or hidden_size // self.num_heads // self.factor
+        )
         setattr(config, "head_size", self.head_dim)
 
         # MLA-specific dimensions

@@ -318,7 +318,7 @@ DATASET_COLLECTIONS = dict(
         "intellect-rl": DEFAULT_WEIGHT,
     },
     cot={
-        "chain-of-thought": DEFAULT_WEIGHT,
+        "chain-of-thought": DEFAULT_WEIGHT * 0.1,
     },
 )
 
@@ -410,12 +410,12 @@ def text_formatter(text):
     # 2. Followed by a single newline
     # 3. NOT followed by indentation, list markers, or code keywords
     # 4. Followed by an optional quotation mark and then an uppercase letter
-    # 
+    #
     # EXCLUDE lines ending with:
     # - Colons (:) - these are typically labels or keys
     # - Commas, semicolons - these are mid-sentence
     # - Letters/numbers without punctuation - these might be labels
-    pattern = r'([.!?][\"\']*[)\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"\']*[A-Z])'
+    pattern = r"([.!?][\"\']*[)\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"\']*[A-Z])"
 
     # Replace with the same characters but with double newline
     replacement = r"\1\n\n\3"
