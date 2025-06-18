@@ -31,9 +31,6 @@ MOD_LAYOUT: Dict[str, Callable[[ConfigType], List[float]]] = {
         lower_bound=0.125,
         steepness=2.0,
     ),
-    "skip_3": lambda config: generate_alternating_values(
-        size=depth, interval=2, capacity=0.125
-    ),
     "skip_2": lambda config: generate_alternating_values(
         size=depth, interval=2, capacity=0.125
     ),
