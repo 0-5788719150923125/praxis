@@ -107,13 +107,15 @@ print(response.status_code)
 print(response.json())
 ```
 
-## local web chat (coming soon!)
+## local web chat
 
 Chat and swarm management interface is available here:
 
 ```
 http://localhost:2100
 ```
+
+![Praxis Chat](./static/chat.png)
 
 ## mobile app
 
