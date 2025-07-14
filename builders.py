@@ -292,13 +292,13 @@ DATASET_COLLECTIONS = dict(
     phi={
         "fineweb": 0.5,
         "textbooks": 0.002,
-        "soda": 0.01,
+        "soda": 0.03,
         "cosmopedia-v2": 0.01,
         "natural-instructions": 0.05,
         "github-code": 0.01,
         "smoltalk": 0.01,
-        "tinystories": 0.05,
-        "persona-chat": 0.005,
+        "tinystories": 0.02,
+        "persona-chat": 0.01,
         # "wikipedia": 0.001,
         # "legal": 0.001,
     },
@@ -400,7 +400,7 @@ def text_formatter(text):
 
     # Special case for lines ending with triple backticks
     # This specifically handles code block endings
-    backtick_pattern = r"(```)\n(?![ \t]|[-*•+] |[0-9]+[\.\)] )([\"\']*[A-Z])"
+    backtick_pattern = r"(```)\n(?![ \t]|[-*•+] |[0-9]+[.\)] )([\"\'" "'']*[A-Z])"
     backtick_replacement = r"\1\n\n\2"
     text = re.sub(backtick_pattern, backtick_replacement, text)
 
@@ -415,7 +415,11 @@ def text_formatter(text):
     # - Colons (:) - these are typically labels or keys
     # - Commas, semicolons - these are mid-sentence
     # - Letters/numbers without punctuation - these might be labels
-    pattern = r"([.!?][\"\']*[)\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[\.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"\']*[A-Z])"
+    pattern = (
+        r"([.!?][\"\'"
+        "'']*[)\\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"'"
+        "'']*[A-Z])"
+    )
 
     # Replace with the same characters but with double newline
     replacement = r"\1\n\n\3"
@@ -526,9 +530,9 @@ def format_conversation(
     assert len(keys) == 3, "Conversation format requires exactly 3 keys"
 
     messages = [
-        {"role": "system", "content": document.get(keys[0], "")},
-        {"role": "user", "content": document.get(keys[1], "")},
-        {"role": "assistant", "content": document.get(keys[2], "")},
+        {"role": "system", "content": text_formatter(document.get(keys[0], ""))},
+        {"role": "user", "content": text_formatter(document.get(keys[1], ""))},
+        {"role": "assistant", "content": text_formatter(document.get(keys[2], ""))},
     ]
 
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
@@ -565,7 +569,7 @@ def format_personachat(
     }
 
     # Build messages list
-    messages = [{"role": "system", "content": system_message.strip()}]
+    messages = [{"role": "system", "content": text_formatter(system_message.strip())}]
 
     for i, utterance in enumerate(conversation):
         if ": " in utterance:
@@ -576,7 +580,7 @@ def format_personachat(
             role = "user" if i % 2 == 0 else "assistant"
             text = utterance
 
-        messages.append({"role": role, "content": text.strip()})
+        messages.append({"role": role, "content": text_formatter(text.strip())})
 
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
@@ -592,10 +596,15 @@ def format_smoltalk(
     # Get messages array
     messages = document.get(keys[0], [])
 
-    # Filter out any empty messages
-    filtered_messages = [
-        message for message in messages if message.get("content", "").strip()
-    ]
+    # Filter out any empty messages and apply text formatting
+    filtered_messages = []
+    for message in messages:
+        content = message.get("content", "").strip()
+        if content:
+            # Apply text_formatter to the content
+            formatted_message = message.copy()
+            formatted_message["content"] = text_formatter(content)
+            filtered_messages.append(formatted_message)
 
     return tokenizer.apply_chat_template(filtered_messages, tokenize=False) + "\n"
 
@@ -759,7 +768,7 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     # Add conversation turns
     for speaker, message in zip(speakers, dialogue):
         role = speaker_roles[speaker]
-        messages.append({"role": role, "content": message})
+        messages.append({"role": role, "content": text_formatter(message)})
 
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 

@@ -190,6 +190,57 @@ TEST_CASES = [
         "<analysis>\nFeeling: Good\nConfidence: High\n</analysis>\n<next_steps>\nAction: Review data\nDeadline: Tomorrow\n</next_steps>\n\nThe analysis is complete. We can proceed.",
         "Mixed tags and structured data test",
     ),
+    # Case 32: Curly quotes after sentence (double quotes)
+    (
+        'This is a regular sentence.\n"This starts with curly left double quote."',
+        'This is a regular sentence.\n\n"This starts with curly left double quote."',
+        "Curly left double quote after sentence test",
+    ),
+    # Case 33: Curly quotes after sentence (single quotes)
+    (
+        "This is a regular sentence.\n'This starts with curly left single quote.'",
+        "This is a regular sentence.\n\n'This starts with curly left single quote.'",
+        "Curly left single quote after sentence test",
+    ),
+    # Case 34: Curly quotes at end of sentence
+    (
+        'He said "this is with curly quotes."\nNext paragraph should have double newline.',
+        'He said "this is with curly quotes."\n\nNext paragraph should have double newline.',
+        "Curly right double quote at end test",
+    ),
+    # Case 35: Curly single quotes at end
+    (
+        "He said 'this is with curly single quotes.'\nNext paragraph here.",
+        "He said 'this is with curly single quotes.'\n\nNext paragraph here.",
+        "Curly right single quote at end test",
+    ),
+    # Case 36: Mixed curly and straight quotes
+    (
+        """First with straight quotes.
+"Second with curly quotes."
+'Third with straight single.'
+'Fourth with curly single.'""",
+        """First with straight quotes.
+
+"Second with curly quotes."
+
+'Third with straight single.'
+
+'Fourth with curly single.'""",
+        "Mixed quote types test",
+    ),
+    # Case 37: Curly quotes after code blocks
+    (
+        '```\ncode block\n```\n"Text starting with curly quote after code."',
+        '```\ncode block\n```\n\n"Text starting with curly quote after code."',
+        "Curly quote after code block test",
+    ),
+    # Case 38: Curly quotes with parentheses/brackets
+    (
+        'End of quote.")\nNext paragraph starts here.',
+        'End of quote.")\n\nNext paragraph starts here.',
+        "Curly quote with closing parenthesis test",
+    ),
 ]
 
 
