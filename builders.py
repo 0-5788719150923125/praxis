@@ -721,19 +721,32 @@ def format_rl(
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Formats a single SODA example using the tokenizer's chat template."""
-    speakers = document[keys[0]]
+    # Example: ["Veda", "Priest", "Veda", "Priest", "Veda", "Priest"]
+    turns = document[keys[0]]
+
+    # Example: "Veda thought about going to church because she was interested in the religion..."
     narrative = document[keys[1]]
+
+    # Example: "Veda was interested in going to church. Veda thought about going to church."
     literal = document[keys[2]]
+
+    # Example: ["Hi, Father. I'm Veda. I'm new to the area...", "Of course, Veda. Our church is based on..."]
     dialogue = document[keys[3]]
+
+    # Example: "PersonX thought about going to church"
     head = document[keys[4]]
+
+    # Example: "xNeed" (relationship type between cause and effect)
     relation = document[keys[5]]
+
+    # Example: "to be interested in going to church"
     tail = document[keys[6]]
 
     # Create person mapping first
     person_mapping = create_person_mapping(document)
 
     # Get speaker roles
-    unique_speakers = list(dict.fromkeys(speakers))  # preserve order, remove duplicates
+    unique_speakers = list(dict.fromkeys(turns))  # preserve order, remove duplicates
     speaker_roles = {}
 
     # Always map first two speakers to user/assistant
@@ -750,23 +763,29 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     system_content = ""
 
     # Add role mappings to system context
+    # Example output: "user: Veda\nassistant: Priest\n"
     for speaker, role in speaker_roles.items():
         system_content += f"{role}: {speaker}\n"
 
     # Add knowledge structure
+    # Example: "cause: Veda thought about going to church"
     system_content += f"cause: {replace_person_references(head, person_mapping)}\n"
+    # Example: "relation: Need" (removes the 'x' prefix)
     system_content += f"relation: {relation[1:]}\n"
+    # Example: "effect: to be interested in going to church"
     system_content += f"effect: {replace_person_references(tail, person_mapping)}\n"
 
     # Add context from literal and narrative
+    # Example: "context: Veda thought about going to church because she was interested..."
     system_content += f"context: {narrative}\n"
+    # Example: "thought: (Veda was interested in going to church. Veda thought about...)"
     system_content += f"thought: ({literal})\n"
 
     # Create messages array
     messages = [{"role": "system", "content": system_content}]
 
     # Add conversation turns
-    for speaker, message in zip(speakers, dialogue):
+    for speaker, message in zip(turns, dialogue):
         role = speaker_roles[speaker]
         messages.append({"role": role, "content": text_formatter(message)})
 
