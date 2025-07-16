@@ -241,6 +241,42 @@ TEST_CASES = [
         'End of quote.")\n\nNext paragraph starts here.',
         "Curly quote with closing parenthesis test",
     ),
+    # Case 39: Paragraphs ending with colon should get double newlines
+    (
+        "Here are the main points:\nThis is the first point about something important.",
+        "Here are the main points:\n\nThis is the first point about something important.",
+        "Paragraph ending with colon test",
+    ),
+    # Case 40: Multiple paragraphs ending with colons
+    (
+        "Introduction to the topic:\nThis covers basic concepts and ideas.\nAdvanced techniques:\nThese require more experience and knowledge.",
+        "Introduction to the topic:\n\nThis covers basic concepts and ideas.\n\nAdvanced techniques:\n\nThese require more experience and knowledge.",
+        "Multiple paragraphs ending with colons test",
+    ),
+    # Case 41: Paragraph ending with colon followed by structured data (should be treated differently)
+    (
+        "The configuration values are:\nHost: localhost\nPort: 8080\nThis completes the setup process.",
+        "The configuration values are:\nHost: localhost\nPort: 8080\nThis completes the setup process.",
+        "Colon followed by structured data test",
+    ),
+    # Case 42: Question ending with colon (narrative context)
+    (
+        "The question we need to ask ourselves is this:\nHow can we improve the system for everyone?",
+        "The question we need to ask ourselves is this:\n\nHow can we improve the system for everyone?",
+        "Question ending with colon test",
+    ),
+    # Case 43: Statement ending with colon followed by explanation
+    (
+        "The reason is simple:\nWe need better communication between teams.",
+        "The reason is simple:\n\nWe need better communication between teams.",
+        "Statement ending with colon followed by explanation test",
+    ),
+    # Case 44: Colon with quotes around it
+    (
+        'She said: "This is important."\nThe next paragraph continues the thought.',
+        'She said: "This is important."\n\nThe next paragraph continues the thought.',
+        "Colon with quotes test",
+    ),
 ]
 
 

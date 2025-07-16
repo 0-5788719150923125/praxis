@@ -292,13 +292,13 @@ DATASET_COLLECTIONS = dict(
     phi={
         "fineweb": 0.5,
         "textbooks": 0.002,
-        "soda": 0.03,
+        "soda": 0.25,
         "cosmopedia-v2": 0.01,
-        "natural-instructions": 0.05,
+        "natural-instructions": 0.1,
         "github-code": 0.01,
         "smoltalk": 0.01,
-        "tinystories": 0.02,
-        "persona-chat": 0.01,
+        "tinystories": 0.01,
+        "persona-chat": 0.1,
         # "wikipedia": 0.001,
         # "legal": 0.001,
     },
@@ -410,22 +410,25 @@ def text_formatter(text):
     # 2. Followed by a single newline
     # 3. NOT followed by indentation, list markers, or code keywords
     # 4. Followed by an optional quotation mark and then an uppercase letter
-    #
-    # EXCLUDE lines ending with:
-    # - Colons (:) - these are typically labels or keys
-    # - Commas, semicolons - these are mid-sentence
-    # - Letters/numbers without punctuation - these might be labels
-    pattern = (
+    pattern_basic = (
         r"([.!?][\"\'"
-        "'']*[)\\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[.\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"'"
+        "'']*[)\\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[.\\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"'"
+        "'']*[A-Z])"
+    )
+
+    # Separate pattern for colons: Include them but exclude structured data patterns (word: value)
+    pattern_colon = (
+        r"(:[\"\'"
+        "'']*[)\\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[.\\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await |[A-Za-z][^:\n]*: )([\"'"
         "'']*[A-Z])"
     )
 
     # Replace with the same characters but with double newline
     replacement = r"\1\n\n\3"
 
-    # Perform the replacement
-    reformatted_text = re.sub(pattern, replacement, text)
+    # Perform the replacements - first basic punctuation, then colons
+    reformatted_text = re.sub(pattern_basic, replacement, text)
+    reformatted_text = re.sub(pattern_colon, replacement, reformatted_text)
 
     # Restore original multiple newlines, but collapse 3+ newlines to 2
     reformatted_text = re.sub(
@@ -549,23 +552,31 @@ def format_personachat(
 
     # Include personas in system message
     system_message = ""
+
+    # Random corruption encourages partial context
+    corruption_chance = 0.5
+
     if user_personas:
-        system_message += "".join(
-            f"- {p.strip()}\n" for p in user_personas if p.strip()
-        )
+        system_message += "user:"
+        for p in user_personas:
+            if p.strip() or random.random() < corruption_chance:
+                continue
+            system_message += f"\n- {p.strip()}"
     if assistant_personas:
-        system_message += "".join(
-            f"- {p.strip()}\n" for p in assistant_personas if p.strip()
-        )
+        system_message += "assistant:"
+        for p in assistant_personas:
+            if p.strip() or random.random() < corruption_chance:
+                continue
+            system_message += f"\n- {p.strip()}"
 
     # Map speaker labels to ChatML roles
     speaker_map = {
         "A": "user",
-        "B": "assistant",
-        "USER 1": "user",
         "USER1": "user",
-        "USER 2": "assistant",
+        "USER 1": "user",
+        "B": "assistant",
         "USER2": "assistant",
+        "USER 2": "assistant",
     }
 
     # Build messages list
@@ -759,27 +770,28 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     for speaker in unique_speakers[2:]:
         speaker_roles[speaker] = "other"
 
-    # Create system message content
+    # Create system message content with optional corruption
     system_content = ""
 
-    # Add role mappings to system context
-    # Example output: "user: Veda\nassistant: Priest\n"
+    # Random corruption encourages partial system context prompts
+    corruption_chance = 0.5
+
+    # Always add role mappings
     for speaker, role in speaker_roles.items():
-        system_content += f"{role}: {speaker}\n"
+        if random.random() < corruption_chance:
+            system_content += f"{role}: {speaker}\n"
 
-    # Add knowledge structure
-    # Example: "cause: Veda thought about going to church"
-    system_content += f"cause: {replace_person_references(head, person_mapping)}\n"
-    # Example: "relation: Need" (removes the 'x' prefix)
-    system_content += f"relation: {relation[1:]}\n"
-    # Example: "effect: to be interested in going to church"
-    system_content += f"effect: {replace_person_references(tail, person_mapping)}\n"
-
-    # Add context from literal and narrative
-    # Example: "context: Veda thought about going to church because she was interested..."
-    system_content += f"context: {narrative}\n"
-    # Example: "thought: (Veda was interested in going to church. Veda thought about...)"
-    system_content += f"thought: ({literal})\n"
+    # Randomly include each context element (50% chance each)
+    if random.random() < corruption_chance:
+        system_content += f"cause: {replace_person_references(head, person_mapping)}\n"
+    if random.random() < corruption_chance:
+        system_content += f"relation: {relation[1:]}\n"
+    if random.random() < corruption_chance:
+        system_content += f"effect: {replace_person_references(tail, person_mapping)}\n"
+    if random.random() < corruption_chance:
+        system_content += f"context: {narrative}\n"
+    if random.random() < corruption_chance:
+        system_content += f"thought: ({literal})\n"
 
     # Create messages array
     messages = [{"role": "system", "content": system_content}]

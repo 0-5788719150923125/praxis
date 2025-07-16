@@ -576,7 +576,7 @@
             
             // Get system prompt from element or localStorage
             const getSystemPrompt = () => {
-                return systemPromptElement.textContent.trim() || "Write thy wrong.";
+                return systemPromptElement.innerText.trim() || "Write thy wrong.";
             };
             
             // Chat history to maintain conversation context
@@ -590,7 +590,7 @@
                 // Load system prompt
                 const savedSystemPrompt = localStorage.getItem('praxis_system_prompt');
                 if (savedSystemPrompt) {
-                    systemPromptElement.textContent = savedSystemPrompt;
+                    systemPromptElement.innerHTML = savedSystemPrompt;
                     // Update the first system message in chat history
                     if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
                         chatHistory[0].content = savedSystemPrompt;
@@ -1070,24 +1070,35 @@
                 }
             });
             
-            // System prompt editing
-            systemPromptElement.addEventListener('blur', () => {
-                const newPrompt = systemPromptElement.textContent.trim();
-                if (newPrompt) {
-                    localStorage.setItem('praxis_system_prompt', newPrompt);
-                    // Update system prompt in chat history
-                    if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                        chatHistory[0].content = newPrompt;
-                    }
-                    console.log('System prompt updated:', newPrompt);
+            // System prompt editing - real-time updates
+            let systemPromptUpdateTimeout;
+            
+            systemPromptElement.addEventListener('input', () => {
+                const newPrompt = systemPromptElement.innerHTML.trim();
+                const newPromptText = systemPromptElement.innerText.trim();
+                if (newPromptText) {
+                    // Debounce localStorage updates to avoid excessive writes
+                    clearTimeout(systemPromptUpdateTimeout);
+                    systemPromptUpdateTimeout = setTimeout(() => {
+                        localStorage.setItem('praxis_system_prompt', newPrompt);
+                        // Update system prompt in chat history (use innerText for API)
+                        if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
+                            chatHistory[0].content = newPromptText;
+                        }
+                    }, 500); // 500ms debounce
                 }
             });
             
-            // Prevent newlines in system prompt
-            systemPromptElement.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    systemPromptElement.blur();
+            // Keep blur handler for final save (in case input event doesn't fire)
+            systemPromptElement.addEventListener('blur', () => {
+                const newPrompt = systemPromptElement.innerHTML.trim();
+                const newPromptText = systemPromptElement.innerText.trim();
+                if (newPromptText) {
+                    localStorage.setItem('praxis_system_prompt', newPrompt);
+                    // Update system prompt in chat history (use innerText for API)
+                    if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
+                        chatHistory[0].content = newPromptText;
+                    }
                 }
             });
             
