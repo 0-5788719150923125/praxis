@@ -11,6 +11,7 @@ from praxis.encoding import ENCODING_REGISTRY
 from praxis.heads import HEAD_REGISTRY
 from praxis.losses import LOSS_REGISTRY
 from praxis.modeling_praxis import PraxisForCausalLM, PraxisModel
+from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.policies import RL_POLICIES_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY

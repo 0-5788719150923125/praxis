@@ -33,6 +33,7 @@ class PraxisConfig(PretrainedConfig):
         residual_type: str = "standard",
         compression_type: str = "none",
         sorting_type: str = "none",
+        norm_type: str = "rms_norm",
         linear: bool = False,
         differential: bool = False,
         stickbreaking: bool = False,
@@ -99,6 +100,7 @@ class PraxisConfig(PretrainedConfig):
         self.residual_type = residual_type
         self.compression_type = compression_type
         self.sorting_type = sorting_type
+        self.norm_type = norm_type
         self.head_type = kwargs.get("head_type", "forward")
         self.memory = memory
         self.mla = mla

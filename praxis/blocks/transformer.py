@@ -7,6 +7,7 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 
 from praxis.attention import ATTENTION_REGISTRY
+from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.utils import norm_scaling
@@ -24,10 +25,14 @@ class TransformerBlock(nn.Module):
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
         self.attn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
-        self.attn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
+        self.attn_norm = NORMALIZATION_REGISTRY[config.norm_type](
+            config.hidden_size, eps=config.epsilon
+        )
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
         self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
-        self.ffn_norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
+        self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
+            config.hidden_size, eps=config.epsilon
+        )
         self.ffn = EXPERT_REGISTRY[config.expert](config)
         self.use_scaler = config.scaled
 
@@ -66,24 +71,34 @@ class TransformerBlock(nn.Module):
         """
 
         aux_loss = 0
+
         # =========== Attention Block =============
         residual, beta = self.attn_res.connect_width(inputs)
-        attn_input = self.attn_norm(self.attn_res.format_state(residual))
+
+        # Apply pre-normalization (if configured)
+        attn_input = self.attn_norm(self.attn_res.format_state(residual), mode="pre")
         if self.use_scaler:
             attn_input = norm_scaling(attn_input, current_depth)
         attn_output, past_key_values, aux_loss = self.attn(
             attn_input, attention_mask, past_key_values, block_ids, current_depth
         )
+        # Apply post-normalization (if configured)
+        attn_output = self.attn_norm(attn_output, mode="post")
+
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
 
         # =========== FeedForward Block ===========
         residual, beta_ffn = self.ffn_res.connect_width(
             self.ffn_res.format_state(attn_merged)
         )
-        ffn_input = self.ffn_norm(self.ffn_res.format_state(residual))
+
+        # Apply pre-normalization (if configured)
+        ffn_input = self.ffn_norm(self.ffn_res.format_state(residual), mode="pre")
         if self.use_scaler:
             ffn_input = norm_scaling(ffn_input, current_depth)
         ffn_output = self.ffn(ffn_input, current_depth)
+        # Apply post-normalization (if configured)
+        ffn_output = self.ffn_norm(ffn_output, mode="post")
 
         if torch.is_tensor(router_weights):
             # this is a super hack because hivemind

@@ -251,6 +251,7 @@ config = PraxisConfig(
     residual_type=residual_type,
     compression_type=compression_type,
     sorting_type=sorting_type,
+    norm_type=norm_type,
     linear=linear,
     differential=differential,
     stickbreaking=stickbreaking,

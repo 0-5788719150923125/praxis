@@ -20,6 +20,7 @@ from praxis import (
     EXPERT_REGISTRY,
     HEAD_REGISTRY,
     LOSS_REGISTRY,
+    NORMALIZATION_REGISTRY,
     RESIDUAL_REGISTRY,
     RL_POLICIES_REGISTRY,
     ROUTER_REGISTRY,
@@ -228,6 +229,13 @@ architecture_group.add_argument(
     choices=ACTIVATION_REGISTRY.keys(),
     default="mish",
     help="The primary activation function to use",
+)
+architecture_group.add_argument(
+    "--norm-type",
+    type=str,
+    choices=NORMALIZATION_REGISTRY.keys(),
+    default="rms_norm",
+    help="The type of normalization to use",
 )
 architecture_group.add_argument(
     "--head-type",
