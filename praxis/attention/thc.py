@@ -20,50 +20,93 @@ from torch.autograd import Function
 
 class ComplexConv1d(nn.Module):
     """
-    Causal complex convolution implemented with real operations that preserve complex math.
-    
+    Causal complex convolution with asymmetric kernel sizes for specialized temporal modeling.
+
     This implements the full complex convolution:
     (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
-    
+
+    Uses different kernel sizes for real and imaginary parts:
+    - Real part: Short kernel for local semantic patterns
+    - Imaginary part: Longer kernel for temporal dependencies
+
     Uses causal padding to prevent future information leakage.
     """
-    
-    def __init__(self, in_channels, out_channels, kernel_size, causal=True):
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        real_kernel_size=3,
+        imag_kernel_size=9,
+        causal=True,
+    ):
         super().__init__()
-        self.kernel_size = kernel_size
+        self.real_kernel_size = real_kernel_size
+        self.imag_kernel_size = imag_kernel_size
         self.causal = causal
-        
-        # Separate weights for real and imaginary parts (no padding in conv)
-        self.conv_real = nn.Conv1d(in_channels, out_channels, kernel_size, padding=0)
-        self.conv_imag = nn.Conv1d(in_channels, out_channels, kernel_size, padding=0)
-        
+
+        # Separate convolutions with different kernel sizes for specialization
+        self.conv_real = nn.Conv1d(
+            in_channels, out_channels, real_kernel_size, padding=0
+        )
+        self.conv_imag = nn.Conv1d(
+            in_channels, out_channels, imag_kernel_size, padding=0
+        )
+
         # Initialize with small weights for stability
         nn.init.xavier_uniform_(self.conv_real.weight, gain=0.1)
         nn.init.xavier_uniform_(self.conv_imag.weight, gain=0.1)
-    
+
     def forward(self, x_real: Tensor, x_imag: Tensor) -> Tuple[Tensor, Tensor]:
         """
-        Causal complex convolution: (a + bi) conv (c + di) = (a*c - b*d) + (a*d + b*c)i
-        
+        Asymmetric causal complex convolution: (a + bi) conv (c + di) = (a*c - b*d) + (a*d + b*c)i
+
         Args:
             x_real: Real part of input [batch, channels, seq_len]
             x_imag: Imaginary part of input [batch, channels, seq_len]
-            
+
         Returns:
             Tuple of (real_output, imag_output)
         """
         if self.causal:
-            # Apply causal padding: pad left side only to prevent future leakage
-            pad_left = self.kernel_size - 1
-            x_real = F.pad(x_real, (pad_left, 0))
-            x_imag = F.pad(x_imag, (pad_left, 0))
-        
-        # Real part: a*c - b*d (input_real * weight_real - input_imag * weight_imag)
-        real_output = self.conv_real(x_real) - self.conv_imag(x_imag)
-        
-        # Imaginary part: a*d + b*c (input_real * weight_imag + input_imag * weight_real)
-        imag_output = self.conv_real(x_imag) + self.conv_imag(x_real)
-        
+            # Use maximum padding for both inputs to ensure consistent output sizes
+            max_pad = max(self.real_kernel_size - 1, self.imag_kernel_size - 1)
+
+            # Pad both inputs with the same amount
+            x_real_padded = F.pad(x_real, (max_pad, 0))
+            x_imag_padded = F.pad(x_imag, (max_pad, 0))
+        else:
+            x_real_padded = x_real
+            x_imag_padded = x_imag
+
+        # Apply convolutions with specialized kernel sizes
+        # Real convolution: captures local semantic patterns (short kernel)
+        real_conv_on_real = self.conv_real(x_real_padded)
+        real_conv_on_imag = self.conv_real(x_imag_padded)
+
+        # Imaginary convolution: captures temporal dependencies (long kernel)
+        imag_conv_on_real = self.conv_imag(x_real_padded)
+        imag_conv_on_imag = self.conv_imag(x_imag_padded)
+
+        # Since kernel sizes are different, we need to align the outputs
+        # The smaller kernel produces a longer output, so we need to trim it
+        if self.real_kernel_size != self.imag_kernel_size:
+            # Calculate the difference in output lengths
+            diff = abs(self.real_kernel_size - self.imag_kernel_size)
+
+            if self.real_kernel_size < self.imag_kernel_size:
+                # Real convolution produces longer output, trim from the left (causal)
+                real_conv_on_real = real_conv_on_real[..., diff:]
+                real_conv_on_imag = real_conv_on_imag[..., diff:]
+            else:
+                # Imaginary convolution produces longer output, trim from the left (causal)
+                imag_conv_on_real = imag_conv_on_real[..., diff:]
+                imag_conv_on_imag = imag_conv_on_imag[..., diff:]
+
+        # Complex multiplication: (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
+        real_output = real_conv_on_real - imag_conv_on_imag
+        imag_output = real_conv_on_imag + imag_conv_on_real
+
         return real_output, imag_output
 
 
@@ -71,13 +114,13 @@ class TemporalHealthComplex(nn.Module):
     """
     Temporal Health Complex (THC) module that enhances temporal understanding
     between tokens using complex-valued operations.
-    
+
     This module projects input representations to a reduced complex space,
     applies temporal convolutions to learn phase relationships, and projects
     back to the original space with a gated residual connection.
-    
+
     The complex representation encodes:
-    - Real part: Semantic content 
+    - Real part: Semantic content
     - Imaginary part: Temporal dynamics and transition patterns
     """
 
@@ -112,15 +155,15 @@ class TemporalHealthComplex(nn.Module):
         self.complex_conv1 = ComplexConv1d(
             self.d_complex,
             self.d_complex,
-            kernel_size=kernel_size,
+            # kernel_size=kernel_size,
             causal=True,
         )
-        
+
         # Second causal complex convolution for refined temporal understanding
         self.complex_conv2 = ComplexConv1d(
             self.d_complex,
             self.d_complex,
-            kernel_size=kernel_size,
+            # kernel_size=kernel_size,
             causal=True,
         )
 
@@ -166,26 +209,26 @@ class TemporalHealthComplex(nn.Module):
 
         # Project to complex representation
         complex_input = self.to_complex(x)  # [batch, seq_len, d_complex * 2]
-        
+
         # Split into real and imaginary components - this is where the magic happens!
         real_part = complex_input[..., : self.d_complex]  # Semantic content
         imag_part = complex_input[..., self.d_complex :]  # Temporal dynamics
-        
+
         # Transpose for convolution: [batch, d_complex, seq_len]
         real_part = real_part.transpose(1, 2)
         imag_part = imag_part.transpose(1, 2)
-        
+
         # Apply TRUE complex convolutions - this preserves phase relationships!
         # First convolution learns local temporal patterns in complex domain
         conv1_real, conv1_imag = self.complex_conv1(real_part, imag_part)
-        
+
         # Second convolution refines the temporal understanding
         conv2_real, conv2_imag = self.complex_conv2(conv1_real, conv1_imag)
-        
+
         # Combine outputs: residual connection in complex domain
         final_real = conv1_real + conv2_real
         final_imag = conv1_imag + conv2_imag
-        
+
         # Transpose back: [batch, seq_len, d_complex]
         final_real = final_real.transpose(1, 2)
         final_imag = final_imag.transpose(1, 2)
@@ -193,14 +236,16 @@ class TemporalHealthComplex(nn.Module):
         # Complex normalization: normalize magnitude while preserving phase
         magnitude = torch.sqrt(final_real**2 + final_imag**2 + 1e-8)
         normalized_magnitude = self.complex_norm(magnitude)
-        
+
         # Preserve phase relationships - this is crucial for temporal modeling!
         scale_factor = normalized_magnitude / (magnitude + 1e-8)
         normalized_real = final_real * scale_factor
         normalized_imag = final_imag * scale_factor
 
         # Convert back to real representation for the rest of the network
-        output_real = torch.cat([normalized_real, normalized_imag], dim=-1)  # [batch, seq_len, d_complex * 2]
+        output_real = torch.cat(
+            [normalized_real, normalized_imag], dim=-1
+        )  # [batch, seq_len, d_complex * 2]
 
         output = self.to_real(output_real)  # [batch, seq_len, d_model]
         output = self.dropout(output)
@@ -212,10 +257,10 @@ class TemporalHealthComplex(nn.Module):
     def get_complex_representations(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """
         Helper method to extract complex-like representations for analysis.
-        
+
         Args:
             x: Input tensor of shape [batch, seq_len, d_model]
-            
+
         Returns:
             Tuple of (real_part, imag_part) tensors of shape [batch, seq_len, d_complex]
         """
@@ -227,22 +272,22 @@ class TemporalHealthComplex(nn.Module):
     def get_phase_statistics(self, x: Tensor) -> Dict[str, float]:
         """
         Get phase-like statistics for analysis and debugging.
-        
+
         Args:
             x: Input tensor of shape [batch, seq_len, d_model]
-            
+
         Returns:
             Dictionary with phase-like statistics
         """
         real_part, imag_part = self.get_complex_representations(x)
-        
+
         # Compute magnitude and phase-like measures
         magnitude = torch.sqrt(real_part**2 + imag_part**2 + 1e-8)
         phase = torch.atan2(imag_part, real_part + 1e-8)
-        
+
         # Phase differences between adjacent tokens
         phase_diffs = phase[:, 1:] - phase[:, :-1]
-        
+
         return {
             "mean_magnitude": magnitude.mean().item(),
             "magnitude_std": magnitude.std().item(),
@@ -254,5 +299,7 @@ class TemporalHealthComplex(nn.Module):
 
     def extra_repr(self) -> str:
         """String representation for debugging."""
-        return (f"d_model={self.d_model}, d_complex={self.d_complex}, "
-                f"reduction_factor={self.reduction_factor}, kernel_size={self.kernel_size}")
+        return (
+            f"d_model={self.d_model}, d_complex={self.d_complex}, "
+            f"reduction_factor={self.reduction_factor}, kernel_size={self.kernel_size}"
+        )

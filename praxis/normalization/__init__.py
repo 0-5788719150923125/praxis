@@ -9,5 +9,5 @@ NORMALIZATION_REGISTRY: Dict[str, Any] = {
     "layer_norm": LayerNorm,
     "rms_norm": RMSNorm,
     "post_rms_norm": partial(RMSNorm, pre_norm=False, post_norm=True),
-    "sandwich": partial(LayerNorm, pre_norm=True, post_norm=True),
+    # "sandwich": partial(LayerNorm, pre_norm=True, post_norm=True),
 }

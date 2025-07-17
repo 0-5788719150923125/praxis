@@ -12,7 +12,7 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), we are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
 
-In short: it's a multi-modal language model, which can be anything, and do everything.
+In short: Praxis is a robust, open-source language model that can be anything, and do everything. It is a vehicle for ML experiments, and runs on a potato.
 
 ## community
 
@@ -76,7 +76,7 @@ python run.py --help
 
 ## recommendations
 
-We recommend you use a `batch_size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, 16, 64, etc.
+We recommend you use a `batch-size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, 16, 64, etc.
 
 We also recommend using an Nvidia GPU.
 
@@ -168,7 +168,9 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that well-performing hparams are assigned more often
 - build adapters/connectors, allowing people to integrate their nodes with external data sources
 
-## notes, ideas and random things I want to remember
+<details>
+
+<summary>notes, nothing to see here</summary>
 
 - a proper and robust DHT
 - central and persistent relay peers, to act as global bootstrap nodes
@@ -209,7 +211,9 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [The Belief State Transformer](https://arxiv.org/abs/2410.23506)
 - [Inner Thinking Transformer: Leveraging Dynamic Depth Scaling to Foster Adaptive Internal Thinking](https://arxiv.org/abs/2502.13842)
 - [Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach](https://arxiv.org/abs/2502.05171), https://huggingface.co/tomg-group-umd/huginn-0125/blob/main/raven_modeling_minimal.py
+</details>
 
-## won't do
-
+<details>
+<summary>won't do</summary>
 - cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
+</details>
