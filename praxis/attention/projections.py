@@ -67,7 +67,7 @@ class LinearKeyValue(nn.Module):
             + ")"
         )
 
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """
         Forward pass for key and value projections.
 
@@ -77,8 +77,8 @@ class LinearKeyValue(nn.Module):
         Returns:
             Tuple of (key tensor, value tensor)
         """
-        k = self.key(x)
-        v = self.value(x)
+        k = self.key(x[0])
+        v = self.value(x[1])
         return k, v
 
 
@@ -137,7 +137,7 @@ class LowRankKeyValue(nn.Module):
             + ")"
         )
 
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """
         Forward pass for low-rank key and value projections.
 
@@ -147,15 +147,17 @@ class LowRankKeyValue(nn.Module):
         Returns:
             Tuple of (key tensor, value tensor)
         """
-        batch_size, seq_len, _ = x.size()
+        batch_size, seq_len, _ = x[0].size()
 
         # Compute intermediate variables A for K, and V
-        A_k = self.key_a(x).view(batch_size, seq_len, self.num_heads, self.rank)
-        A_v = self.value_a(x).view(batch_size, seq_len, self.num_heads, self.rank)
+        A_k = self.key_a(x[0]).view(batch_size, seq_len, self.num_heads, self.rank)
+        A_v = self.value_a(x[0]).view(batch_size, seq_len, self.num_heads, self.rank)
 
         # Compute intermediate variables B for K, and V
-        B_k = self.key_b(x).view(batch_size, seq_len, self.rank, self.key_head_dim)
-        B_v = self.value_b(x).view(batch_size, seq_len, self.rank, self.value_head_dim)
+        B_k = self.key_b(x[1]).view(batch_size, seq_len, self.rank, self.key_head_dim)
+        B_v = self.value_b(x[1]).view(
+            batch_size, seq_len, self.rank, self.value_head_dim
+        )
 
         # Reshape A_k, A_v
         A_k = A_k.view(batch_size * seq_len, self.num_heads, self.rank)

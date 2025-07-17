@@ -113,7 +113,7 @@ Example request:
 ```py
 import requests
 
-url = "http://localhost:5000/input"
+url = "http://localhost:2100/input"
 payload = {"prompt": "Once upon a time, ", "do_sample": True, "temperature": 0.7}
 
 response = requests.post(url, json=payload)

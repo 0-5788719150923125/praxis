@@ -160,7 +160,18 @@ class ModularAttention(nn.Module):
         )
 
         # Temporal Health Complex module for K/V enhancement
-        self.thc = (
+        self.thc_k = (
+            TemporalHealthComplex(
+                d_model=hidden_size,
+                reduction_factor=8,
+                kernel_size=3,
+                dropout=config.dropout,
+                gate_init="zeros",
+            )
+            if "use_thc" in config.meta
+            else nn.Identity()
+        )
+        self.thc_v = (
             TemporalHealthComplex(
                 d_model=hidden_size,
                 reduction_factor=8,
@@ -207,7 +218,7 @@ class ModularAttention(nn.Module):
         q, aux_loss = self.query(inputs)
 
         # Apply THC to K/V projections
-        k, v = self.key_value(self.thc(inputs))
+        k, v = self.key_value((self.thc_k(inputs), self.thc_v(inputs)))
 
         # Define the views
         q_view = (batch_size, seq_len, self.num_query_heads * self.factor, -1)
