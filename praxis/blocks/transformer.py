@@ -32,7 +32,6 @@ class TransformerBlock(nn.Module):
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
 
         # Temporal Health Complex module (hardcoded for now)
-        use_thc = True
         self.thc = (
             TemporalHealthComplex(
                 d_model=config.hidden_size,
@@ -41,7 +40,7 @@ class TransformerBlock(nn.Module):
                 dropout=config.dropout,
                 gate_init="zeros",
             )
-            if use_thc
+            if "use_thc" in config.meta
             else nn.Identity()
         )
 

@@ -1410,21 +1410,27 @@ checkpoint_callback = TimeBasedCheckpoint(
 model = AutoModelForCausalLM.from_config(config)
 
 # Prepare for launch
-print("model:", truncated_hash)
+print("Model:", truncated_hash)
 plan = str(model.__repr__).splitlines()
 launch_duration = random.uniform(6.7, 7.3)
+acceleration_curve = random.uniform(
+    3.5, 4.5
+)  # Higher = more aggressive start (2=gentle, 4=moderate, 6=very aggressive)
 start_time = time.time()
+print("Staging:")
+time.sleep(random.gauss(1.0, 3.0))
 for i, line in enumerate(plan):
     print(line)
     # Rolling down hill: bullet → boulder (normalized to launch_duration seconds total)
     progress = i / len(plan)  # 0 to 1
     # Normalize exponential curve to always sum to launch_duration seconds
-    # Sum of progress^4 from 0 to 1 with n steps ≈ n/5, so scale by (launch_duration * 5)/n
-    delay = (launch_duration * 5.0 / len(plan)) * (progress**4)
+    # Scale factor adjusts based on curve steepness: steeper curves need different normalization
+    scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
+    delay = scale_factor * (progress**acceleration_curve)
     time.sleep(delay)
 elapsed_time = time.time() - start_time
-print(f"Loaded in: {elapsed_time:.1f} seconds.")
-time.sleep(1)
+print(f"Loaded: {elapsed_time:.1f} seconds.")
+time.sleep(2)
 
 
 def initialize_lazy_modules(model, device):
