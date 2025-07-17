@@ -7,6 +7,7 @@ from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 
 from praxis.attention import ATTENTION_REGISTRY
+from praxis.attention.thc import TemporalHealthComplex
 from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
@@ -29,6 +30,21 @@ class TransformerBlock(nn.Module):
             config.hidden_size, eps=config.epsilon
         )
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
+
+        # Temporal Health Complex module (hardcoded for now)
+        use_thc = True
+        self.thc = (
+            TemporalHealthComplex(
+                d_model=config.hidden_size,
+                reduction_factor=8,
+                kernel_size=3,
+                dropout=config.dropout,
+                gate_init="zeros",
+            )
+            if use_thc
+            else nn.Identity()
+        )
+
         self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
         self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](
             config.hidden_size, eps=config.epsilon
@@ -86,6 +102,9 @@ class TransformerBlock(nn.Module):
         attn_output = self.attn_norm(attn_output, mode="post")
 
         attn_merged = self.attn_res.connect_depth(residual, attn_output, beta)
+
+        # =========== Temporal Health Complex Module ===========
+        attn_merged = self.thc(attn_merged)
 
         # =========== FeedForward Block ===========
         residual, beta_ffn = self.ffn_res.connect_width(
