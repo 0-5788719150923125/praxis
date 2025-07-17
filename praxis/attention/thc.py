@@ -20,17 +20,22 @@ from torch.autograd import Function
 
 class ComplexConv1d(nn.Module):
     """
-    Complex convolution implemented with real operations that preserve complex math.
+    Causal complex convolution implemented with real operations that preserve complex math.
     
     This implements the full complex convolution:
     (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
+    
+    Uses causal padding to prevent future information leakage.
     """
     
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0):
+    def __init__(self, in_channels, out_channels, kernel_size, causal=True):
         super().__init__()
-        # Separate weights for real and imaginary parts
-        self.conv_real = nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding)
-        self.conv_imag = nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding)
+        self.kernel_size = kernel_size
+        self.causal = causal
+        
+        # Separate weights for real and imaginary parts (no padding in conv)
+        self.conv_real = nn.Conv1d(in_channels, out_channels, kernel_size, padding=0)
+        self.conv_imag = nn.Conv1d(in_channels, out_channels, kernel_size, padding=0)
         
         # Initialize with small weights for stability
         nn.init.xavier_uniform_(self.conv_real.weight, gain=0.1)
@@ -38,7 +43,7 @@ class ComplexConv1d(nn.Module):
     
     def forward(self, x_real: Tensor, x_imag: Tensor) -> Tuple[Tensor, Tensor]:
         """
-        Complex convolution: (a + bi) conv (c + di) = (a*c - b*d) + (a*d + b*c)i
+        Causal complex convolution: (a + bi) conv (c + di) = (a*c - b*d) + (a*d + b*c)i
         
         Args:
             x_real: Real part of input [batch, channels, seq_len]
@@ -47,6 +52,12 @@ class ComplexConv1d(nn.Module):
         Returns:
             Tuple of (real_output, imag_output)
         """
+        if self.causal:
+            # Apply causal padding: pad left side only to prevent future leakage
+            pad_left = self.kernel_size - 1
+            x_real = F.pad(x_real, (pad_left, 0))
+            x_imag = F.pad(x_imag, (pad_left, 0))
+        
         # Real part: a*c - b*d (input_real * weight_real - input_imag * weight_imag)
         real_output = self.conv_real(x_real) - self.conv_imag(x_imag)
         
@@ -97,20 +108,20 @@ class TemporalHealthComplex(nn.Module):
         # Project to complex domain (reduced dimension for efficiency)
         self.to_complex = nn.Linear(d_model, self.d_complex * 2)
 
-        # True complex convolutions using decomposed real operations
+        # True causal complex convolutions using decomposed real operations
         self.complex_conv1 = ComplexConv1d(
             self.d_complex,
             self.d_complex,
             kernel_size=kernel_size,
-            padding=kernel_size // 2,
+            causal=True,
         )
         
-        # Second complex convolution for refined temporal understanding
+        # Second causal complex convolution for refined temporal understanding
         self.complex_conv2 = ComplexConv1d(
             self.d_complex,
             self.d_complex,
             kernel_size=kernel_size,
-            padding=kernel_size // 2,
+            causal=True,
         )
 
         # Layer norm in complex domain (apply to magnitude)

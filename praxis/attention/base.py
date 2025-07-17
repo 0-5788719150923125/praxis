@@ -19,6 +19,7 @@ from praxis.attention.mla import MLAKeyValue, MLAQuery
 from praxis.attention.pk_attention import ProductKeyAttention
 from praxis.attention.projections import LinearKeyValue, LinearQuery, LowRankKeyValue
 from praxis.attention.sparse_query import SparseQuery
+from praxis.attention.thc import TemporalHealthComplex
 from praxis.dense import DENSE_REGISTRY
 from praxis.encoding import ENCODING_REGISTRY
 
@@ -158,6 +159,19 @@ class ModularAttention(nn.Module):
             self.num_query_heads * self.head_dim, hidden_size, bias=False
         )
 
+        # Temporal Health Complex module for K/V enhancement
+        self.thc = (
+            TemporalHealthComplex(
+                d_model=hidden_size,
+                reduction_factor=8,
+                kernel_size=3,
+                dropout=config.dropout,
+                gate_init="zeros",
+            )
+            if "use_thc" in config.meta
+            else nn.Identity()
+        )
+
     def forward(
         self,
         inputs: Tensor,
@@ -191,7 +205,9 @@ class ModularAttention(nn.Module):
 
         # Initialize QKV projections
         q, aux_loss = self.query(inputs)
-        k, v = self.key_value(inputs)
+
+        # Apply THC to K/V projections
+        k, v = self.key_value(self.thc(inputs))
 
         # Define the views
         q_view = (batch_size, seq_len, self.num_query_heads * self.factor, -1)

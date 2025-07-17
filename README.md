@@ -2,15 +2,19 @@
 
 _Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice._
 
+---
+
 ![Terminal](./static/terminal.webp)
 
-## what we're building
+---
 
-The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), the goal is to build a multi-modal swarm intelligence that is small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and self-modeling of neuron change over time.
+# vision
 
-The short: it's a multi-modal language model framework, which can do everything on a single machine.
+The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), we are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
 
-## join us
+In short: it's a multi-modal language model, which can be anything, and do everything.
+
+## community
 
 - [Discord](https://discord.gg/8ZmHP8CqUX)
 - [The Source](https://src.eco)
