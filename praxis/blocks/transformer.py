@@ -24,12 +24,12 @@ class TransformerBlock(nn.Module):
 
     def __init__(self, config: ConfigType, *args: Any, **kwargs: Any) -> None:
         super().__init__()
+
         self.attn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
         self.attn_norm = NORMALIZATION_REGISTRY[config.norm_type](
             config.hidden_size, eps=config.epsilon
         )
         self.attn = ATTENTION_REGISTRY[config.attention_type](config)
-
 
         self.ffn_res = RESIDUAL_REGISTRY.get(config.residual_type)(config.hidden_size)
         self.ffn_norm = NORMALIZATION_REGISTRY[config.norm_type](

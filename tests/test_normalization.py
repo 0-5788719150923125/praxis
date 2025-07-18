@@ -41,7 +41,7 @@ def test_forward_pass(norm_module):
 
 def test_registry_keys():
     """Test that all expected keys are present in the registry."""
-    expected_keys = {"layer_norm", "rms_norm", "none", "post_rms_norm"}
+    expected_keys = {"layer_norm", "rms_norm", "none", "post_rms_norm", "sandwich"}
     actual_keys = set(NORMALIZATION_REGISTRY.keys())
 
     assert (
@@ -119,6 +119,7 @@ def test_pre_post_norm_flags():
     layer_norm = NORMALIZATION_REGISTRY["layer_norm"](hidden_size)
     rms_norm = NORMALIZATION_REGISTRY["rms_norm"](hidden_size)
     post_rms_norm = NORMALIZATION_REGISTRY["post_rms_norm"](hidden_size)
+    sandwich_norm = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
 
     # Check default flags (pre_norm=True, post_norm=False)
     assert layer_norm.pre_norm == True
@@ -129,6 +130,10 @@ def test_pre_post_norm_flags():
     # Check post-norm configuration (pre_norm=False, post_norm=True)
     assert post_rms_norm.pre_norm == False
     assert post_rms_norm.post_norm == True
+    
+    # Check sandwich configuration (pre_norm=True, post_norm=True)
+    assert sandwich_norm.pre_norm == True
+    assert sandwich_norm.post_norm == True
 
 
 def test_mode_based_forward():
@@ -198,3 +203,40 @@ def test_no_normalization_all_modes():
     assert torch.equal(none_norm(x, mode="both"), x)
     assert torch.equal(none_norm(x, mode="none"), x)
     assert torch.equal(none_norm(x, mode="direct"), x)
+
+
+def test_sandwich_norm_behavior():
+    """Test sandwich normalization (both pre and post norm enabled)."""
+    hidden_size = 64
+    x = torch.randn(10, 20, hidden_size)
+    
+    sandwich_norm = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
+    
+    # Verify flags are set correctly
+    assert sandwich_norm.pre_norm == True
+    assert sandwich_norm.post_norm == True
+    
+    # Test pre mode - should apply normalization (pre_norm=True)
+    pre_output = sandwich_norm(x, mode="pre")
+    assert not torch.equal(pre_output, x)  # Should be normalized
+    
+    # Test post mode - should apply normalization (post_norm=True)
+    post_output = sandwich_norm(x, mode="post")
+    assert not torch.equal(post_output, x)  # Should be normalized
+    
+    # Test both mode - should apply normalization (both flags True)
+    both_output = sandwich_norm(x, mode="both")
+    assert not torch.equal(both_output, x)  # Should be normalized
+    
+    # Test direct mode - should always apply normalization
+    direct_output = sandwich_norm(x, mode="direct")
+    assert not torch.equal(direct_output, x)  # Should be normalized
+    
+    # Test none mode - should always be no-op
+    none_output = sandwich_norm(x, mode="none")
+    assert torch.equal(none_output, x)  # Should be unchanged
+    
+    # Verify it actually normalizes correctly (RMS should be ~1)
+    normalized = sandwich_norm(x, mode="direct")
+    rms = torch.sqrt(torch.mean(normalized**2, dim=-1))
+    assert torch.allclose(rms, torch.ones_like(rms), atol=1e-4)

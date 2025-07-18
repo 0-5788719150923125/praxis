@@ -56,14 +56,13 @@ class PraxisConfig(PretrainedConfig):
         sep_token_id: int = 3,
         seed: int = 42,
         debug: bool = False,
-        meta: List[str] = None,
+        meta: List[str] = [],
         **kwargs,
     ):
         if initial_peers is None:
             initial_peers = []
-        if meta is None:
-            meta = []
-
+        if "use_ubi" in meta:
+            norm_type = "sandwich"  # policy?
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,

@@ -811,7 +811,7 @@ class TerminalInterface(Callback):
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = terminal_output_length
         if self.dashboard:
-            self.dashboard = TerminalDashboard(seed)
+            self.dashboard = TerminalDashboard(seed, truncated_hash)
             try:
                 self.dashboard.start()
                 self.dashboard.update_seed(seed)
@@ -1264,7 +1264,7 @@ class Generator:
 
         generated_tokens = input_ids
 
-        max_attempts = 10
+        max_attempts = 3
         attempts = 0
 
         with self._eval_mode():
