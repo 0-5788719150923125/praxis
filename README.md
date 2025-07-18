@@ -14,11 +14,6 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, mo
 
 In short: Praxis is a robust, open-source language model that can be anything, and do everything. It is a vehicle for ML experiments, and runs on a potato.
 
-## community
-
-- [Discord](https://discord.gg/8ZmHP8CqUX)
-- [The Source](https://src.eco)
-
 <details>
 
 <summary>features</summary>
@@ -226,6 +221,15 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 <summary>won't do</summary>
 
 - cryptocurrency
+
+</details>
+
+<details open>
+
+<summary>community</summary>
+
+- [Discord](https://discord.gg/8ZmHP8CqUX)
+- [The Source](https://src.eco)
 
 </details>
 
