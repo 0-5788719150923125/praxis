@@ -1,3 +1,4 @@
+from itertools import product
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import torch
@@ -12,7 +13,7 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 class SequentialDecoder(BaseDecoder):
     def __init__(self, config: ConfigType) -> None:
-        self.steps = 2 if "use_rt" in config.meta else 1
+        self.steps = 2 if "use_reason" in config.meta else 1
         super().__init__(config)
 
     def forward(
@@ -55,86 +56,78 @@ class SequentialDecoder(BaseDecoder):
             sequential_experts.copy()
         )
 
-        for step in range(self.steps):
-            for current_depth in range(self.depth):
-                hidden_states, controller_state, controller_loss, next_expert_idx = (
-                    self.controller.get_next_expert(
-                        hidden_states,
-                        controller_state,
-                        sequential_experts,
-                        ordered_experts,
-                        current_route,
-                        current_depth,
-                    )
-                )
-
-                losses.add_loss_container(controller_loss)
-                if next_expert_idx is None:
-                    break
-
-                expert = ordered_experts[next_expert_idx]
-
-                layer_state = (
-                    current_state[next_expert_idx]
-                    if current_state is not None
-                    else None
-                )
-                (
+        for reason_step, current_depth in product(range(self.steps), range(self.depth)):
+            hidden_states, controller_state, controller_loss, next_expert_idx = (
+                self.controller.get_next_expert(
                     hidden_states,
-                    past_key_values,
-                    layer_state,
-                    decoder_loss,
-                    exit_signal,
-                ) = create_forward(
-                    expert,
-                    self.controller,
-                    self.manager,
-                    hidden_states,
-                    attention_mask,
-                    past_key_values,
-                    layer_state,
+                    controller_state,
+                    sequential_experts,
+                    ordered_experts,
+                    current_route,
                     current_depth,
-                    block_ids,
-                    should_checkpoint(
-                        self.training, current_depth, self.checkpoint_every
-                    ),
                 )
+            )
 
-                # Update route immediately after expert execution
-                current_route = self.controller.update_route(
-                    hidden_states, current_route, current_depth, next_expert_idx
-                )
+            losses.add_loss_container(controller_loss)
 
-                # Handle expert decoder loss (can be scalar/tensor or LossContainer)
-                if isinstance(decoder_loss, LossContainer):
-                    losses.add_loss_container(decoder_loss)
-                else:
-                    losses.add_loss("decoder", decoder_loss)
+            if next_expert_idx is None:
+                break
 
-                # Check for Taxus early exit signal (passed directly, not through LossContainer)
-                if exit_signal is not None:
-                    # Debug: Show exit signal during inference and training
+            expert = ordered_experts[next_expert_idx]
+
+            layer_state = (
+                current_state[next_expert_idx] if current_state is not None else None
+            )
+            (
+                hidden_states,
+                past_key_values,
+                layer_state,
+                decoder_loss,
+                exit_signal,
+            ) = create_forward(
+                expert,
+                self.controller,
+                self.manager,
+                hidden_states,
+                attention_mask,
+                past_key_values,
+                layer_state,
+                current_depth,
+                block_ids,
+                should_checkpoint(self.training, current_depth, self.checkpoint_every),
+            )
+
+            # Update route immediately after expert execution
+            current_route = self.controller.update_route(
+                hidden_states, current_route, current_depth, next_expert_idx
+            )
+
+            # Handle expert decoder loss (can be scalar/tensor or LossContainer)
+            if isinstance(decoder_loss, LossContainer):
+                losses.add_loss_container(decoder_loss)
+            else:
+                losses.add_loss("decoder", decoder_loss)
+
+            # Check for Taxus early exit signal (passed directly, not through LossContainer)
+            if exit_signal is not None:
+                # Debug: Show exit signal during inference and training
+                if hasattr(self, "config") and getattr(self.config, "debug", False):
+                    mode = "training" if self.training else "inference"
+                    print(
+                        f"DEBUG: Decoder got exit_signal at depth {current_depth} ({mode}): {exit_signal}"
+                    )
+
+                if exit_signal:
+                    # Early exit signaled - stop decoding
                     if hasattr(self, "config") and getattr(self.config, "debug", False):
                         mode = "training" if self.training else "inference"
-                        print(
-                            f"DEBUG: Decoder got exit_signal at depth {current_depth} ({mode}): {exit_signal}"
-                        )
-
-                    if exit_signal:
-                        # Early exit signaled - stop decoding
-                        if hasattr(self, "config") and getattr(
-                            self.config, "debug", False
-                        ):
-                            mode = "training" if self.training else "inference"
-                            print(
-                                f"DEBUG: Early exit at depth {current_depth} ({mode})!"
-                            )
-                        break
-                hidden_states = self.compressor.reduce_sequence(hidden_states)
-                block_ids = self.compressor.reduce_block_ids(block_ids)
-                hidden_states = self.post_layer(hidden_states, current_depth)
-                if current_state is not None:
-                    current_state[next_expert_idx] = layer_state
+                        print(f"DEBUG: Early exit at depth {current_depth} ({mode})!")
+                    break
+            hidden_states = self.compressor.reduce_sequence(hidden_states)
+            block_ids = self.compressor.reduce_block_ids(block_ids)
+            hidden_states = self.post_layer(hidden_states, current_depth)
+            if current_state is not None:
+                current_state[next_expert_idx] = layer_state
 
         hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)
 

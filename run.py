@@ -1410,14 +1410,13 @@ checkpoint_callback = TimeBasedCheckpoint(
 model = AutoModelForCausalLM.from_config(config)
 
 # Prepare for launch
-print("Model:", truncated_hash)
 plan = str(model.__repr__).splitlines()
 launch_duration = random.uniform(6.7, 7.3)
 acceleration_curve = random.uniform(
     3.5, 4.5
 )  # Higher = more aggressive start (2=gentle, 4=moderate, 6=very aggressive)
 start_time = time.time()
-print("Staging:")
+print(f"Staging: {truncated_hash}")
 time.sleep(random.gauss(1.0, 3.0))
 for i, line in enumerate(plan):
     print(line)
@@ -1429,7 +1428,7 @@ for i, line in enumerate(plan):
     delay = scale_factor * (progress**acceleration_curve)
     time.sleep(delay)
 elapsed_time = time.time() - start_time
-print(f"Loaded: {elapsed_time:.1f} seconds.")
+print(f"Loaded: {truncated_hash} in {elapsed_time:.3f} seconds.")
 time.sleep(2)
 
 
