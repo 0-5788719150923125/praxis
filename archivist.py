@@ -104,7 +104,7 @@ class ProgressFileWrapper:
 def save_project() -> None:
     """Create a zip file from the data directory and save it to archive using the model hash as name."""
     data_dir = Path("./data")
-    archive_dir = Path("./archive")
+    archive_dir = Path("./staging")
 
     if not data_dir.exists():
         print(f"Error: Data directory '{data_dir}' does not exist.")
@@ -201,7 +201,6 @@ def _get_key():
 
 def _get_available_projects():
     """Return a list of available projects."""
-    archive_dir = Path("./archive")
 
     if not archive_dir.exists() or not list(archive_dir.glob("*.zip")):
         return []
@@ -279,7 +278,7 @@ def interactive_restore():
 
 def restore_project(project_name: str) -> None:
     """Restore a zip file back to the data directory."""
-    archive_dir = Path("./archive")
+    archive_dir = Path("./staging")
     data_dir = Path("./data")
     zip_path = archive_dir / f"{project_name}.zip"
 
@@ -356,7 +355,7 @@ def restore_project(project_name: str) -> None:
 
 def list_projects() -> None:
     """List all available zip files in the archive folder."""
-    archive_dir = Path("./archive")
+    archive_dir = Path("./staging")
 
     if not archive_dir.exists():
         print("No archive directory found.")

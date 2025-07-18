@@ -1625,7 +1625,7 @@ class MultiDirectoryDataset(PraxisSampler):
             ".venv",
             "venv",
             "__pycache__",
-            "archive",
+            "staging",
             "build",
             "dist",
             "node_modules",
