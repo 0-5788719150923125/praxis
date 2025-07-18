@@ -40,6 +40,7 @@ dependencies = [
     "transformers",
     "wandb",
     "watchdog",
+    "pyyaml",
     "werkzeug",
     "wheel",
     "xformers",

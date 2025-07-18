@@ -27,6 +27,7 @@ from praxis import (
     SORTING_REGISTRY,
     STRATEGIES_REGISTRY,
 )
+from praxis.modules import ModuleLoader
 
 
 def wrap_green(text):
@@ -106,6 +107,18 @@ optimization_group = parser.add_argument_group("optimization")
 networking_group = parser.add_argument_group("networking")
 data_group = parser.add_argument_group("data")
 other_group = parser.add_argument_group("other")
+
+# Initialize module loader and discover modules
+module_loader = ModuleLoader()
+modules = module_loader.discover_modules()
+
+# Load modules that can add CLI arguments (without condition checks yet)
+for module_manifest in modules:
+    module_loader.load_module(module_manifest, verbose=True)
+
+# Let modules add CLI arguments
+for cli_func in module_loader.get_cli_functions():
+    cli_func(parser)
 
 # hardware
 hardware_group.add_argument(
@@ -521,18 +534,6 @@ other_group.add_argument(
     help="Append keywords to a list at 'config.meta'. Used for model development. You probably don't need this.",
 )
 other_group.add_argument(
-    "--wandb",
-    action="store_true",
-    default=False,
-    help="Log metrics to Weights and Biases (https://wandb.ai)",
-)
-other_group.add_argument(
-    "--wandb-run-name",
-    type=str,
-    default=None,
-    help="Custom name for the W&B run (default: auto-generated)",
-)
-other_group.add_argument(
     "--no-dashboard",
     action="store_true",
     default=False,
@@ -577,6 +578,13 @@ other_group.add_argument(
 
 # Destructure CLI arguments
 args = parser.parse_args()
+
+# Now check module conditions based on parsed args
+for module_manifest in modules:
+    module_loader.load_module(module_manifest, args, verbose=True)
+
+# Use the same module loader for consistency
+module_loader_with_conditions = module_loader
 
 
 def apply_defaults_and_parse(defaults_dict):
@@ -820,3 +828,7 @@ def log_command(exclude_from_hash=["--reset", "--debug"]):
         f.write(truncated_hash)
 
     return full_command, args_hash, truncated_hash
+
+
+# Export the module loader for use in run.py
+__all__ = ['module_loader_with_conditions', 'args']
