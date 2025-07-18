@@ -235,5 +235,5 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ## limitations
 
-- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some singular, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.
 - You will quickly run into rate limits with the Huggingface Datasets API. This is because anonymous users tend to be bots, and are subjected to severe restrictions. To alleviate this problem, you can install [huggingface-cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli), and authenticate with a real user account. Praxis will use this user automatically.
+- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some singular, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.
