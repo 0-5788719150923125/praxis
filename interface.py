@@ -660,7 +660,7 @@ class TerminalDashboard:
                 right_content = self._truncate_to_width(text, right_width)
                 right_content = right_content.ljust(right_width)
                 left_content = self._truncate_to_width(
-                    f"HOST: {self.arg_hash}", half_width
+                    f" HOST: {self.arg_hash}", half_width
                 )
                 left_content = left_content.ljust(half_width)
             elif i == 1:
