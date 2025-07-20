@@ -61,7 +61,7 @@ OPTIMIZER_PROFILES = {
     ),
     "MARS": dict(
         optimizer_name="MARS",
-        mars_type="soap",
+        mars_type="shampoo",
         lr=0.000333,
         gamma=0.025,
         optimize_1d=True,

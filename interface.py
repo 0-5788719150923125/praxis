@@ -60,7 +60,9 @@ class LogCapture:
 
 
 class TerminalDashboard:
-    def __init__(self, seed, max_data_points=1000, max_log_lines=200):
+    def __init__(
+        self, seed, arg_hash="000000", max_data_points=1000, max_log_lines=200
+    ):
         self.seed = seed
         self.term = blessed.Terminal()
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -102,6 +104,8 @@ class TerminalDashboard:
         self.num_tokens = 0
         self.game_of_life = None
         self.info_dict = {}
+
+        self.arg_hash = arg_hash
 
         # Set up logging
         self.logger = logging.getLogger()
@@ -655,7 +659,9 @@ class TerminalDashboard:
                 # Truncate before padding
                 right_content = self._truncate_to_width(text, right_width)
                 right_content = right_content.ljust(right_width)
-                left_content = self._truncate_to_width(f" HOST", half_width)
+                left_content = self._truncate_to_width(
+                    f" HOST: {self.arg_hash}", half_width
+                )
                 left_content = left_content.ljust(half_width)
             elif i == 1:
                 left_content = "─" * half_width
@@ -672,7 +678,7 @@ class TerminalDashboard:
                 if random.random() < 0.1:
                     self.sign = -1 * self.sign
                 # Split the left section into two parts
-                attention_label = f" ATTENTION: {self.sign:+.1f}"
+                attention_label = f" ATTENTION MAP: {self.sign:+.1f}"
                 info_label = " INFO"
                 attention_content = attention_label.ljust(lower_left_quarter_width)[
                     :lower_left_quarter_width
@@ -765,18 +771,18 @@ class TerminalDashboard:
             # while still including historical context
             num_points = min(1000, len(data))
             all_data = list(data)[-num_points:]
-            
+
             if len(all_data) <= width:
                 # If we have fewer points than display width, just use them all
                 plot_data = all_data
             else:
                 # Create logarithmic sampling: more samples from recent data
                 plot_data = []
-                
+
                 # We'll use a power function to distribute sample indices
                 # Higher power = more bias towards recent data
                 power = 2.0  # Adjust this to control the bias (1.0 = linear, higher = more recent bias)
-                
+
                 for i in range(width):
                     # Map display position to data index using power function
                     # i/width goes from 0 to 1, we transform it to sample more from the end
@@ -785,16 +791,16 @@ class TerminalDashboard:
                     biased_pos = pow(normalized_pos, power)
                     # Map to data index
                     data_idx = int(biased_pos * (len(all_data) - 1))
-                    
+
                     # For smoother visualization, average a small window around this point
                     window_size = max(1, len(all_data) // width)
                     start_idx = max(0, data_idx - window_size // 2)
                     end_idx = min(len(all_data), start_idx + window_size)
-                    
+
                     window_data = all_data[start_idx:end_idx]
                     if window_data:
                         plot_data.append(sum(window_data) / len(window_data))
-            
+
             # Add slight smoothing to make trends more visible
             if len(plot_data) > 3:
                 smoothed_data = []
@@ -804,7 +810,7 @@ class TerminalDashboard:
                     end = min(len(plot_data), i + 2)
                     smoothed_data.append(sum(plot_data[start:end]) / (end - start))
                 plot_data = smoothed_data
-            
+
             chart = asciichartpy.plot(
                 plot_data,
                 {
@@ -840,26 +846,114 @@ class TerminalDashboard:
         """Draw the info panel with key/value pairs."""
         lines = []
 
-        # Get key/value pairs from info_dict
-        items = list(self.info_dict.items())
+        # Process items to handle lists that need multiple lines
+        display_items = []
+        for key, value in self.info_dict.items():
+            if isinstance(value, list):
+                # Convert list to string representation
+                val_str = str(value)
+                max_key_len = width // 3
+                max_val_len = width - max_key_len - 3  # -3 for ": " and padding
 
-        # Format each key/value pair
+                # If the list representation is too long, wrap it intelligently
+                if len(val_str) > max_val_len:
+                    # Smart wrapping that respects list structure
+                    wrapped_parts = self._wrap_list_string(val_str, max_val_len)
+                    # First line with key
+                    display_items.append((key, wrapped_parts[0]))
+                    # Continuation lines with empty key
+                    for part in wrapped_parts[1:]:
+                        display_items.append(("", part))
+                else:
+                    display_items.append((key, val_str))
+            else:
+                display_items.append((key, value))
+
+        # Format each display item
         for i in range(height):
-            if i < len(items):
-                key, value = items[i]
-                # Truncate key and value to fit
+            if i < len(display_items):
+                key, value = display_items[i]
+                # Truncate key to fit
                 max_key_len = width // 3
                 max_val_len = width - max_key_len - 3  # -3 for ": " and padding
 
                 key_str = str(key)[:max_key_len]
                 val_str = str(value)[:max_val_len]
 
-                line = f" {key_str}: {val_str}"
+                if key:  # Normal line with key
+                    line = f" {key_str}: {val_str}"
+                else:  # Continuation line
+                    line = f" {' ' * max_key_len}  {val_str}"
+
                 lines.append(line.ljust(width)[:width])
             else:
                 lines.append(" " * width)
 
         return lines
+
+    def _wrap_list_string(self, list_str, max_width):
+        """Wrap a list string representation intelligently, breaking on commas and spaces."""
+        if len(list_str) <= max_width:
+            return [list_str]
+
+        wrapped = []
+        current_line = ""
+
+        # Try to break on commas followed by spaces
+        i = 0
+        while i < len(list_str):
+            char = list_str[i]
+            current_line += char
+
+            # Check if we've reached the line limit
+            if len(current_line) >= max_width:
+                # Look for the last comma or space to break on
+                break_point = -1
+
+                # First try to find a comma followed by space
+                for j in range(len(current_line) - 1, -1, -1):
+                    if (
+                        j > 0
+                        and current_line[j - 1] == ","
+                        and j < len(current_line)
+                        and current_line[j] == " "
+                    ):
+                        break_point = j
+                        break
+
+                # If no comma+space found, try just comma
+                if break_point == -1:
+                    for j in range(len(current_line) - 1, -1, -1):
+                        if current_line[j] == ",":
+                            break_point = j + 1  # Keep comma on current line
+                            break
+
+                # If no comma found, try space (but not within quotes)
+                if break_point == -1:
+                    in_quotes = False
+                    for j in range(len(current_line) - 1, -1, -1):
+                        if current_line[j] in ['"', "'"]:
+                            in_quotes = not in_quotes
+                        elif current_line[j] == " " and not in_quotes:
+                            break_point = j + 1  # Keep space on current line
+                            break
+
+                # If we found a break point, use it
+                if break_point > 0:
+                    wrapped.append(current_line[:break_point])
+                    current_line = current_line[break_point:]
+                else:
+                    # No good break point found, just break at max width
+                    wrapped.append(current_line)
+                    current_line = ""
+
+            i += 1
+
+        # Add any remaining content
+        if current_line:
+            wrapped.append(current_line)
+
+        return wrapped
 
     def _run_dashboard(self):
         try:

@@ -9,7 +9,7 @@ class MLAQuery(nn.Module):
     """
     Multi-head Latent Attention query projection with compression.
     Based on DeepSeek-V2: https://arxiv.org/abs/2405.04434
-    
+
     Note: The DeepSeek-V2 implementation includes additional features not present here:
     - Two-stage projections with intermediate RMSNorm (q_a_proj -> norm -> q_b_proj)
     - Different terminology (uses "LoRA rank" instead of "compression dim")
@@ -86,7 +86,7 @@ class MLAKeyValue(nn.Module):
     """
     Multi-head Latent Attention key-value compression.
     Based on DeepSeek-V2: https://arxiv.org/abs/2405.04434
-    
+
     Note: The DeepSeek-V2 implementation includes additional features not present here:
     - Two-stage projections with intermediate RMSNorm (kv_a_proj -> norm -> kv_b_proj)
     - Explicit Multi-Query Attention (MQA) support in projections
@@ -127,7 +127,7 @@ class MLAKeyValue(nn.Module):
             self.hidden_size, self.rope_head_dim, bias=False
         )
 
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
         """
         Forward pass for MLA key-value compression.
 
@@ -138,17 +138,17 @@ class MLAKeyValue(nn.Module):
             Tuple of (key tensor, value tensor)
         """
         # Joint compression for keys and values
-        c_kv = self.down_kv(x)  # [B, S, kv_compression_dim]
+        c_kv = self.down_kv(x[0])  # [B, S, kv_compression_dim]
 
         # Up-project to get keys and values
         k_c = self.up_k(c_kv)  # [B, S, num_heads * head_dim]
         v = self.up_v(c_kv)  # [B, S, num_heads * head_dim]
 
         # Generate shared RoPE key
-        k_r = self.rope_k(x)  # [B, S, rope_head_dim]
+        k_r = self.rope_k(x[0])  # [B, S, rope_head_dim]
 
         # Combine compressed keys with RoPE keys
-        batch_size, seq_len = x.shape[:2]
+        batch_size, seq_len = x[0].shape[:2]
 
         # Reshape compressed keys
         k_c = k_c.view(batch_size, seq_len, self.num_heads, self.head_dim)

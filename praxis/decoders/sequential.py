@@ -1,3 +1,4 @@
+from itertools import product
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import torch
@@ -12,6 +13,7 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 class SequentialDecoder(BaseDecoder):
     def __init__(self, config: ConfigType) -> None:
+        self.steps = 2 if "use_reason" in config.meta else 1
         super().__init__(config)
 
     def forward(
@@ -46,15 +48,15 @@ class SequentialDecoder(BaseDecoder):
 
         _, seq_len, _ = hidden_states.shape
 
+        current_route: List[int] = []
+
         controller_state = None
         sequential_experts: List[nn.Module] = list(self.locals) + list(self.remotes)
         ordered_experts: List[nn.Module] = self.controller.sort_experts(
             sequential_experts.copy()
         )
-        current_route: List[int] = []
 
-        for i in range(self.depth):
-            current_depth = i
+        for reason_step, current_depth in product(range(self.steps), range(self.depth)):
             hidden_states, controller_state, controller_loss, next_expert_idx = (
                 self.controller.get_next_expert(
                     hidden_states,
@@ -67,6 +69,7 @@ class SequentialDecoder(BaseDecoder):
             )
 
             losses.add_loss_container(controller_loss)
+
             if next_expert_idx is None:
                 break
 
@@ -75,7 +78,13 @@ class SequentialDecoder(BaseDecoder):
             layer_state = (
                 current_state[next_expert_idx] if current_state is not None else None
             )
-            hidden_states, past_key_values, layer_state, decoder_loss, exit_signal = create_forward(
+            (
+                hidden_states,
+                past_key_values,
+                layer_state,
+                decoder_loss,
+                exit_signal,
+            ) = create_forward(
                 expert,
                 self.controller,
                 self.manager,
@@ -98,17 +107,19 @@ class SequentialDecoder(BaseDecoder):
                 losses.add_loss_container(decoder_loss)
             else:
                 losses.add_loss("decoder", decoder_loss)
-            
+
             # Check for Taxus early exit signal (passed directly, not through LossContainer)
             if exit_signal is not None:
                 # Debug: Show exit signal during inference and training
-                if hasattr(self, 'config') and getattr(self.config, 'debug', False):
+                if hasattr(self, "config") and getattr(self.config, "debug", False):
                     mode = "training" if self.training else "inference"
-                    print(f"DEBUG: Decoder got exit_signal at depth {current_depth} ({mode}): {exit_signal}")
-                
+                    print(
+                        f"DEBUG: Decoder got exit_signal at depth {current_depth} ({mode}): {exit_signal}"
+                    )
+
                 if exit_signal:
                     # Early exit signaled - stop decoding
-                    if hasattr(self, 'config') and getattr(self.config, 'debug', False):
+                    if hasattr(self, "config") and getattr(self.config, "debug", False):
                         mode = "training" if self.training else "inference"
                         print(f"DEBUG: Early exit at depth {current_depth} ({mode})!")
                     break

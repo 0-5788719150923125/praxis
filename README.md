@@ -2,18 +2,21 @@
 
 _Praxis is the process by which a theory, lesson, or skill is enacted, embodied, realized, applied, or put into practice._
 
+---
+
 ![Terminal](./static/terminal.webp)
 
-## what we're building
+---
 
-The Praxis architecture is an ever-evolving, peer-to-peer, flexible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into the core of our ecosystem, the goal is to build a multi-modal swarm intelligence that is small and simple, easy to parallelize, fault-tolerant, and performant at a scale of hundreds/thousands of self-hosted peers. We will achieve this via a sparse mixture of experts, user-curated multipath routing, symbolic decision-making and weighted self-modeling of network components.
+## description
 
-## join us
+The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), we are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
 
-- [Discord](https://discord.gg/8ZmHP8CqUX)
-- [The Source](https://src.eco)
+In short: Praxis is a robust, open-source language model that can be anything, do everything.
 
-## features
+<details>
+
+<summary>features</summary>
 
 - A [Mixture of Depths](https://arxiv.org/abs/2404.02258) allows us to route just a subset of all tokens in a sequence through a layer, and to remote peers - reducing the time required for remote computation. All other tokens bypass the layer via a residual connection.
 - We implement [Multihead Latent Attention](https://arxiv.org/abs/2405.04434), originally discovered by DeepSeek-V2.
@@ -29,6 +32,12 @@ The Praxis architecture is an ever-evolving, peer-to-peer, flexible and decentra
 - We implement an optional [Byte Latent Tokenizer](https://github.com/facebookresearch/blt), which allows us to represent tokens as patches of byte-sequences, instead of discrete tokens. This way, we can remove the tokenizer - and represent data in much more interesting ways, within the latent space.
 - We support [Hyper-Connections](https://arxiv.org/abs/2409.19606), which are an alternative to residual connections.
 - There's also a mobile app, and a remote controller, called "Axis". We used [Godot](https://godotengine.org/) for that.
+
+</details>
+
+<details>
+
+<summary>installation, configuration, and usage</summary>
 
 ## install
 
@@ -70,7 +79,7 @@ python run.py --help
 
 ## recommendations
 
-We recommend you use a `batch_size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, 16, 64, etc.
+We recommend you use a `batch-size` of at least 16, if possible. We have implemented an oversampling mechanism, which periodically multiplies your sequence length, and scales quadratically with batch sizes of 1, 4, 16, 64, etc.
 
 We also recommend using an Nvidia GPU.
 
@@ -78,10 +87,11 @@ We also recommend using an Nvidia GPU.
 python run.py --batch-size 16 --device cuda
 ```
 
-## constraints
+</details>
 
-- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some singular, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.
-- You will quickly run into rate limits with the Huggingface Datasets API. This is because anonymous users tend to be bots, and are subjected to severe restrictions. To alleviate this problem, you can install [huggingface-cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli), and authenticate with a real user account. Praxis will use this user automatically.
+<details>
+
+<summary>showcase</summary>
 
 ## do inference
 
@@ -98,7 +108,7 @@ Example request:
 ```py
 import requests
 
-url = "http://localhost:5000/input"
+url = "http://localhost:2100/input"
 payload = {"prompt": "Once upon a time, ", "do_sample": True, "temperature": 0.7}
 
 response = requests.post(url, json=payload)
@@ -152,7 +162,11 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 # --> The quick brown fox jumped over a lazy dog.
 ```
 
-## goals
+</details>
+
+<details>
+
+<summary>notes, goals, and observations</summary>
 
 - a global swarm
 - [self-modeling](https://arxiv.org/abs/2407.10188) makes peers less-complex, and easier to model (for other AI)
@@ -161,9 +175,6 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - cascade-style token routing (ping -> pang -> pong -> ping) via a Mixture of Depths; cyclical graph computation
 - treat every peer as an experiment in hyperparameter search; publish results to the DHT, and ensure that well-performing hparams are assigned more often
 - build adapters/connectors, allowing people to integrate their nodes with external data sources
-
-## notes, ideas and random things I want to remember
-
 - a proper and robust DHT
 - central and persistent relay peers, to act as global bootstrap nodes
 - helix, octopi, pyramids
@@ -203,7 +214,26 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 - [The Belief State Transformer](https://arxiv.org/abs/2410.23506)
 - [Inner Thinking Transformer: Leveraging Dynamic Depth Scaling to Foster Adaptive Internal Thinking](https://arxiv.org/abs/2502.13842)
 - [Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach](https://arxiv.org/abs/2502.05171), https://huggingface.co/tomg-group-umd/huginn-0125/blob/main/raven_modeling_minimal.py
+</details>
 
-## won't do
+<details open>
 
-- cryptocurrency ([donations](https://www.patreon.com/fold) are appreciated, though!)
+<summary>won't do</summary>
+
+- cryptocurrency
+
+</details>
+
+<details open>
+
+<summary>community</summary>
+
+- [Discord](https://discord.gg/8ZmHP8CqUX)
+- [The Source](https://src.eco)
+
+</details>
+
+## limitations
+
+- You will quickly run into rate limits with the Huggingface Datasets API. This is because anonymous users tend to be bots, and are subjected to severe restrictions. To alleviate this problem, you can install [huggingface-cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli), and authenticate with a real user account. Praxis will use this user automatically.
+- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some singular, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.
