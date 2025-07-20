@@ -1515,7 +1515,7 @@ if not reset and not dev:
     if os.path.exists(symlink):
         print(f"resuming from symbolic path: {symlink}")
         ckpt_path = symlink
-    elif os.path.exists(true_link):
+    elif true_link is not None and os.path.exists(true_link):
         print(f"resuming from true path: {true_link}")
         ckpt_path = true_link
 
