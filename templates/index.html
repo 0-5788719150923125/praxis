@@ -21,6 +21,19 @@
             --shadow: rgba(0, 0, 0, 0.05);
         }
 
+        [data-theme="dark"] {
+            --primary: #4caf50;
+            --primary-light: #80e27e;
+            --primary-dark: #087f23;
+            --background: #121212;
+            --text: #e0e0e0;
+            --light-text: #b0b0b0;
+            --user-message-bg: #e8f5e9;
+            --assistant-message-bg: #ffffff;
+            --border: #333333;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -92,6 +105,33 @@
             background-color: rgba(0, 0, 0, 0.05);
         }
 
+        [data-theme="dark"] .settings-button:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .theme-toggle-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--light-text);
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+            margin-right: 8px;
+        }
+
+        .theme-toggle-button:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+
+        [data-theme="dark"] .theme-toggle-button:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
         .settings-modal {
             position: fixed;
             top: 0;
@@ -114,12 +154,18 @@
         }
 
         .modal-content {
-            background-color: white;
+            background-color: var(--background);
             padding: 30px;
             border-radius: 8px;
             width: 90%;
             max-width: 500px;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        [data-theme="dark"] .modal-content {
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
         }
 
         .modal-header {
@@ -131,6 +177,7 @@
         .modal-title {
             font-size: 18px;
             font-weight: 600;
+            color: var(--text);
         }
 
         .close-button {
@@ -139,6 +186,10 @@
             cursor: pointer;
             font-size: 20px;
             color: var(--light-text);
+        }
+
+        .close-button:hover {
+            color: var(--text);
         }
 
         .form-group {
@@ -150,6 +201,7 @@
             margin-bottom: 8px;
             font-weight: 500;
             font-size: 14px;
+            color: var(--text);
         }
 
         .form-group input {
@@ -158,6 +210,13 @@
             border: 1px solid var(--border);
             border-radius: 4px;
             font-size: 14px;
+            background-color: var(--assistant-message-bg);
+            color: #333333;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary);
         }
 
         .save-button {
@@ -220,17 +279,14 @@
             font-weight: 600;
         }
 
-        .user .message-header {
-            color: var(--primary-dark);
-        }
-
-        .assistant .message-header {
-            color: var(--primary);
+        .message-header {
+            color: #333333; /* Static dark text for headers on light message backgrounds */
         }
 
         .message-content {
             word-wrap: break-word;
             white-space: pre-wrap;
+            color: #333333; /* Static dark text for readability on white/light backgrounds */
         }
 
         .reroll-button {
@@ -364,6 +420,10 @@
             border-radius: 8px;
         }
 
+        [data-theme="dark"] .system-message {
+            color: #b0b0b0; /* Lighter text for visibility on dark background */
+        }
+
         .system-message:hover {
             background-color: rgba(0, 0, 0, 0.02);
             box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05);
@@ -431,13 +491,21 @@
                 <div class="logo-icon">P</div>
                 Chat
             </div>
-            <button class="settings-button" id="settings-button">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                    <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
-                    <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
-                </svg>
-                Settings
-            </button>
+            <div style="display: flex; align-items: center;">
+                <button class="theme-toggle-button" id="theme-toggle">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" id="theme-icon">
+                        <!-- Moon icon (default for light mode) -->
+                        <path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>
+                    </svg>
+                </button>
+                <button class="settings-button" id="settings-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+                        <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+                    </svg>
+                    Settings
+                </button>
+            </div>
         </header>
 
         <div class="chat-container" id="chat-container">
@@ -472,7 +540,7 @@
                 <input type="text" id="api-url" placeholder="Enter API URL" value="">
             </div>
             
-            <h4 style="margin-top: 20px; margin-bottom: 15px; font-weight: 500;">Generation Parameters</h4>
+            <h4 style="margin-top: 20px; margin-bottom: 15px; font-weight: 500; color: var(--text);">Generation Parameters</h4>
             
             <div class="form-group">
                 <label for="max-tokens">Max New Tokens (50-1000)</label>
@@ -498,7 +566,7 @@
                 </label>
             </div>
             
-            <h4 style="margin-top: 20px; margin-bottom: 15px; font-weight: 500;">Developer Options</h4>
+            <h4 style="margin-top: 20px; margin-bottom: 15px; font-weight: 500; color: var(--text);">Developer Options</h4>
             
             <div class="form-group">
                 <label for="debug-logging">
@@ -546,6 +614,8 @@
             const saveSettingsButton = document.getElementById('save-settings');
             const apiUrlInput = document.getElementById('api-url');
             const systemPromptElement = document.getElementById('system-prompt');
+            const themeToggleButton = document.getElementById('theme-toggle');
+            const themeIcon = document.getElementById('theme-icon');
             
             // Generation parameter inputs
             const maxTokensInput = document.getElementById('max-tokens');
@@ -570,6 +640,36 @@
             // Debug logging flag
             let debugLogging = false;
             
+            // Theme management
+            let currentTheme = 'light';
+            
+            // Theme switching functions
+            const sunIcon = `<path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/>`;
+            
+            const moonIcon = `<path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>`;
+            
+            const setTheme = (theme) => {
+                currentTheme = theme;
+                if (theme === 'dark') {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                    themeIcon.innerHTML = sunIcon; // Show sun when it's dark (to switch to light)
+                } else {
+                    document.documentElement.removeAttribute('data-theme');
+                    themeIcon.innerHTML = moonIcon; // Show moon when it's light (to switch to dark)
+                }
+                localStorage.setItem('praxis_theme', theme);
+            };
+            
+            const toggleTheme = () => {
+                setTheme(currentTheme === 'light' ? 'dark' : 'light');
+            };
+            
+            // Load saved theme
+            const loadTheme = () => {
+                const savedTheme = localStorage.getItem('praxis_theme') || 'light';
+                setTheme(savedTheme);
+            };
+            
             // Debug info
             console.log(`Default API URL: ${apiUrl}`);
             console.log(`Window location: ${window.location.href}`);
@@ -587,6 +687,9 @@
             
             // Load saved settings from localStorage
             const loadSettings = () => {
+                // Load theme
+                loadTheme();
+                
                 // Load system prompt
                 const savedSystemPrompt = localStorage.getItem('praxis_system_prompt');
                 if (savedSystemPrompt) {
@@ -1053,6 +1156,7 @@
             
             messageInput.addEventListener('input', autoResizeTextarea);
             
+            themeToggleButton.addEventListener('click', toggleTheme);
             settingsButton.addEventListener('click', openModal);
             closeModalButton.addEventListener('click', closeModal);
             saveSettingsButton.addEventListener('click', () => {

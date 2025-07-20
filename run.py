@@ -950,6 +950,8 @@ class TerminalInterface(Callback):
             info_dict["vocab_size"] = vocab_size
             info_dict["block_size"] = seq_length
             info_dict["batch_size"] = batch_size
+            info_dict["num_heads"] = int(num_heads.split(":")[0])
+            info_dict["num_queries"] = int(num_heads.split(":")[1])
             info_dict["target_size"] = target_batch_size
             info_dict["depth"] = depth
             info_dict["dimension"] = hidden_size

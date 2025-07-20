@@ -671,11 +671,29 @@ def apply_defaults_and_parse(defaults_dict):
         # Log the original command with computed hash
         script_name = os.path.basename(original_command[0])
         args_list = original_command[1:]
-        full_command = f"python {script_name} {' '.join(args_list)}"
+        displayed_command = f"python {script_name} {' '.join(args_list)}"
+        
+        # If this is run_alpha.py, also construct the full equivalent run.py command
+        log_entry_command = displayed_command
+        if script_name == "run_alpha.py":
+            # Reconstruct the equivalent run.py command with all the applied defaults
+            full_args = []
+            for key, value in vars(args).items():
+                # Convert back to command line format
+                arg_name = f"--{key.replace('_', '-')}"
+                if isinstance(value, bool):
+                    if value:  # Only add flag if it's True
+                        full_args.append(arg_name)
+                elif value is not None:
+                    full_args.append(arg_name)
+                    full_args.append(str(value))
+            
+            full_run_command = f"python run.py {' '.join(full_args)}"
+            log_entry_command = f'"{displayed_command}" | "{full_run_command}"'
         
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         truncated_hash = effective_hash[:9]
-        new_entry = f'{timestamp} | {truncated_hash} | "{full_command}"\n'
+        new_entry = f'{timestamp} | {truncated_hash} | {log_entry_command}\n'
         
         # Write to history.log
         log_file = "history.log"
@@ -694,7 +712,7 @@ def apply_defaults_and_parse(defaults_dict):
         with open(hash_file_path, "w") as f:
             f.write(truncated_hash)
         
-        return full_command, effective_hash, truncated_hash
+        return displayed_command, effective_hash, truncated_hash
     
     # Replace log_command function
     log_command = custom_log_command

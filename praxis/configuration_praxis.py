@@ -62,7 +62,7 @@ class PraxisConfig(PretrainedConfig):
         if initial_peers is None:
             initial_peers = []
         if "use_reason" in meta:
-            norm_type = "sandwich"
+            assert norm_type == "sandwich"
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
