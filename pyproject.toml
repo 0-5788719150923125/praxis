@@ -14,7 +14,7 @@ dependencies = [
     "asciichartpy",
     "attrs",
     "blessed",
-    "bytelatent @ git+https://github.com/facebookresearch/blt@6ffeb66b534e8af62692383fdc49d2c22148ea4a#egg=bytelatent",
+    # "bytelatent @ git+https://github.com/facebookresearch/blt@6ffeb66b534e8af62692383fdc49d2c22148ea4a#egg=bytelatent",
     # "blt @ file:///home/crow/repos/blt",
     "cmake",
     "datasets",
@@ -24,7 +24,7 @@ dependencies = [
     "flask-socketio",
     "hivemind",
     "isort",
-    "lighteval[math]",
+    # "lighteval[math]",
     "lightning",
     "lsprotocol",
     "matplotlib",
@@ -32,19 +32,30 @@ dependencies = [
     "cut-cross-entropy @ git+https://github.com/apple/ml-cross-entropy",
     "networkx",
     "pygls",
+    "psutil",
     "pytest",
-    "pytorch_optimizer",
+    "pytorch_optimizer==3.5.1",
     "setuptools",
     "torch",
     "torcheval",
     "transformers",
-    "wandb",
     "watchdog",
     "pyyaml",
     "werkzeug",
     "wheel",
     "xformers",
+    "zstandard",
 ]
 
 [tool.setuptools]
 packages = ["praxis"]
+
+[tool.pytest.ini_options]
+addopts = """
+    --ignore=tests/test_encoders.py
+    --ignore=tests/test_tokenizers.py
+    --deselect=tests/test_modeling.py::test_praxis_model_with_encoder_init
+    --deselect=tests/test_modeling.py::test_praxis_causal_lm_with_encoder_init
+    --deselect=tests/test_modeling.py::test_praxis_model_with_encoder_forward
+    --deselect=tests/test_modeling.py::test_praxis_causal_lm_with_encoder_forward
+""" # Both failing until sentencepiece supports Python 3.13

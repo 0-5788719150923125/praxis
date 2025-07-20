@@ -2,9 +2,10 @@
 
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import yaml
 
@@ -15,6 +16,7 @@ class ModuleLoader:
     def __init__(self, staging_dir: str = "./staging"):
         self.staging_dir = Path(staging_dir)
         self.loaded_modules = {}
+        self.installed_dependencies: Set[str] = set()  # Track installed packages
         self.integration_registry = {
             'cli': [],
             'loggers': {},
@@ -70,6 +72,12 @@ class ModuleLoader:
                 print(f"[Modules] ✓ {module_name} activated (conditions now met)")
             return True
         
+        # Check and install dependencies if needed
+        if not self._check_and_install_dependencies(manifest):
+            if verbose:
+                print(f"[Modules] Skipping {module_name} (missing dependencies)")
+            return False
+        
         try:
             # Load module
             init_file = module_path / "__init__.py"
@@ -113,6 +121,52 @@ class ModuleLoader:
             except Exception:
                 return False
         return True
+    
+    def _check_and_install_dependencies(self, manifest: Dict) -> bool:
+        """Check and automatically install module dependencies."""
+        dependencies = manifest.get('dependencies', {}).get('python', [])
+        if not dependencies:
+            return True
+        
+        module_name = manifest.get('name', 'unknown')
+        missing_deps = []
+        
+        # Check which dependencies are missing
+        for dep in dependencies:
+            # Extract package name (handle cases like 'package>=1.0.0')
+            pkg_name = dep.split('>=')[0].split('==')[0].split('<')[0].split('>')[0].strip()
+            if pkg_name in self.installed_dependencies:
+                continue
+                
+            try:
+                __import__(pkg_name.replace('-', '_'))
+                self.installed_dependencies.add(pkg_name)
+            except ImportError:
+                missing_deps.append(dep)
+        
+        if not missing_deps:
+            return True
+        
+        print(f"[Modules] Module '{module_name}' requires: {', '.join(missing_deps)}")
+        
+        # Auto-install missing dependencies
+        try:
+            print(f"[Modules] Installing: {', '.join(missing_deps)}")
+            subprocess.check_call([
+                sys.executable, '-m', 'pip', 'install', '--quiet'
+            ] + missing_deps)
+            
+            # Mark as installed
+            for dep in missing_deps:
+                pkg_name = dep.split('>=')[0].split('==')[0].split('<')[0].split('>')[0].strip()
+                self.installed_dependencies.add(pkg_name)
+            
+            print(f"[Modules] ✓ Successfully installed dependencies for {module_name}")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            print(f"[Modules] ✗ Failed to install dependencies: {e}")
+            return False
     
     def _register_integrations(self, manifest: Dict, module: Any) -> List[str]:
         """Register module's integration points."""

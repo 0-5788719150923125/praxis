@@ -169,7 +169,6 @@ from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from eval import evaluate_model, get_all_task_metrics
 from optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
@@ -727,6 +726,11 @@ class PeriodicEvaluation(Callback):
     def _run_evaluation_suites(self):
 
         if eval_every is None or self.counter % eval_every != 0:
+            return
+
+        try:
+            from eval import evaluate_model, get_all_task_metrics
+        except:
             return
 
         metrics = evaluate_model(
@@ -1466,7 +1470,9 @@ print(f"optimizer: {optimizer_config['optimizer_name']}")
 
 # File cleanup
 if reset:
-    directories = ["lightning"] + module_loader_with_conditions.get_cleanup_directories()
+    directories = [
+        "lightning"
+    ] + module_loader_with_conditions.get_cleanup_directories()
     for directory in directories:
         shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
@@ -1513,20 +1519,18 @@ if not reset and not dev:
         print(f"resuming from true path: {true_link}")
         ckpt_path = true_link
 
+
 # Initialize loggers through module system
 class ArgsWrapper:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-args_obj = ArgsWrapper(wandb=wandb, wandb_run_name=globals().get('wandb_run_name'))
+
+args_obj = ArgsWrapper(wandb=wandb, wandb_run_name=globals().get("wandb_run_name"))
 
 logger = module_loader_with_conditions.create_logger(
-    cache_dir, 
-    ckpt_path, 
-    truncated_hash,
-    wandb_enabled=wandb,
-    args=args_obj
+    cache_dir, ckpt_path, truncated_hash, wandb_enabled=wandb, args=args_obj
 )
 
 if logger:
@@ -1667,8 +1671,8 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
-if eval_tasks:
-    train_params["callbacks"].append(PeriodicEvaluation())
+# if eval_tasks:
+#     train_params["callbacks"].append(PeriodicEvaluation())
 
 trainer = Trainer(**train_params)
 

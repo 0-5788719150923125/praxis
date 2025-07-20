@@ -223,16 +223,16 @@ HUGGINGFACE_DATASETS = {
         keys=["title", "text"],
         format=DataFormat.WIKI,
     ),
-    "redpajama": dict(
-        path="togethercomputer/RedPajama-Data-V2",
-        name="sample-10B",
-        snapshots=["2023-14"],
-        keys=["raw_content"],
-        format=DataFormat.SIMPLE,
-    ),
+    # "redpajama": dict(
+    #     path="togethercomputer/RedPajama-Data-V2",
+    #     name="sample-10B",
+    #     snapshots=["2023-14"],
+    #     keys=["raw_content"],
+    #     format=DataFormat.SIMPLE,
+    # ),
     "slimpajama": dict(
         path="cerebras/SlimPajama-627B",
-        name="default",
+        # name="default",
         keys=["text"],
         format=DataFormat.SIMPLE,
     ),
@@ -295,7 +295,7 @@ DATASET_COLLECTIONS = dict(
         "soda": 0.25,
         "cosmopedia-v2": 0.01,
         "natural-instructions": 0.1,
-        "github-code": 0.01,
+        # "github-code": 0.01,
         "smoltalk": 0.01,
         "tinystories": 0.01,
         "persona-chat": 0.1,
@@ -311,8 +311,8 @@ DATASET_COLLECTIONS = dict(
     dev={
         "textbooks": DEFAULT_WEIGHT,
     },
-    redpajama={
-        "redpajama": DEFAULT_WEIGHT,
+    slimpajama={
+        "slimpajama": DEFAULT_WEIGHT,
     },
     rl={
         "intellect-rl": DEFAULT_WEIGHT,
@@ -999,7 +999,7 @@ def get_dataset_configs(
                     config = add_collection(config, "cot", "primary")
                 else:
                     config = add_collection(config, "rl", "primary")
-            config = add_collection(config, "redpajama", "validation")
+            config = add_collection(config, "slimpajama", "validation")
     print("training on:")
     [
         print(f"dataset: {entry['path']}, weight: {entry['weight']}")

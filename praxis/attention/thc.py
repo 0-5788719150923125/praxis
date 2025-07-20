@@ -180,6 +180,15 @@ class TemporalHealthComplex(nn.Module):
         # Initialize gate based on strategy
         self._init_gate(gate_init)
 
+    def __repr__(self) -> str:
+        """
+        String representation of the encoder module.
+
+        Returns:
+            String representation
+        """
+        return f"{self.__class__.__name__}()"
+
     def _init_gate(self, init_type: str) -> None:
         """Initialize the gate weights."""
         if init_type == "zeros":
