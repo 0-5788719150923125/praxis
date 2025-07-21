@@ -1,3 +1,4 @@
+import math
 from itertools import product
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
@@ -13,7 +14,13 @@ ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 class SequentialDecoder(BaseDecoder):
     def __init__(self, config: ConfigType) -> None:
-        self.steps = 2 if "use_reason" in config.meta else 1
+        # Heuristically determine reasoning steps based on depth and num_experts
+        if "use_reason" in config.meta:
+            # Calculate how many "cycles" through the expert pool we make
+            # Each complete cycle is considered a reasoning step
+            self.steps = max(1, math.ceil(config.depth / config.num_experts))
+        else:
+            self.steps = 1
         super().__init__(config)
 
     def forward(
@@ -56,7 +63,13 @@ class SequentialDecoder(BaseDecoder):
             sequential_experts.copy()
         )
 
-        for reason_step, current_depth in product(range(self.steps), range(self.depth)):
+        for total_calls, (reason_step, current_depth) in enumerate(
+            product(range(self.steps), range(self.depth))
+        ):
+            # Enforce depth budget - exit if we've made enough expert calls
+            if total_calls >= self.depth:
+                break
+
             hidden_states, controller_state, controller_loss, next_expert_idx = (
                 self.controller.get_next_expert(
                     hidden_states,
@@ -75,8 +88,14 @@ class SequentialDecoder(BaseDecoder):
 
             expert = ordered_experts[next_expert_idx]
 
+            # Handle current_state access with modulo for multiple reasoning steps
+            state_idx = (
+                next_expert_idx % len(ordered_experts)
+                if current_state is not None
+                else None
+            )
             layer_state = (
-                current_state[next_expert_idx] if current_state is not None else None
+                current_state[state_idx] if current_state is not None else None
             )
             (
                 hidden_states,
@@ -127,7 +146,8 @@ class SequentialDecoder(BaseDecoder):
             block_ids = self.compressor.reduce_block_ids(block_ids)
             hidden_states = self.post_layer(hidden_states, current_depth)
             if current_state is not None:
-                current_state[next_expert_idx] = layer_state
+                # Use the same state index for updating
+                current_state[state_idx] = layer_state
 
         hidden_states = self.compressor.expand_sequence(hidden_states, seq_len)
 

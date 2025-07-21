@@ -34,9 +34,6 @@ class BaseDecoder(nn.Module):
         self.depth = config.depth
         self.checkpoint_every = config.checkpoint_every
         self.num_experts = config.num_experts
-        assert (
-            self.num_experts >= self.depth
-        ), "`num_experts` should be at least as large as `depth`."
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)

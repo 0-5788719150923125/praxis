@@ -45,7 +45,7 @@ class PraxisConfig(PretrainedConfig):
         scaled: bool = False,
         mla: bool = False,
         hivemind: bool = False,
-        initial_peers: List[str] = None,
+        initial_peers: List[str] = [],
         checkpoint_every: int = 0,
         loss_func: str = "cross_entropy",
         strategy: str = "naive",
@@ -59,10 +59,7 @@ class PraxisConfig(PretrainedConfig):
         meta: List[str] = [],
         **kwargs,
     ):
-        if initial_peers is None:
-            initial_peers = []
-        if "use_reason" in meta:
-            assert norm_type == "sandwich"
+
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,

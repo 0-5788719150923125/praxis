@@ -111,5 +111,6 @@ class LayerShuffle(BaseController):
         """
 
         loss_container = LossContainer()
-        next_expert_idx = current_depth
-        return hidden_states, controller_state, loss_container, current_depth
+        # Use modulo to wrap around when depth exceeds number of experts
+        next_expert_idx = current_depth % len(ordered_experts)
+        return hidden_states, controller_state, loss_container, next_expert_idx
