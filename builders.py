@@ -13,6 +13,217 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
+DEFAULT_WEIGHT = 1.0
+
+SRC_WEIGHT = 0.1
+DIR_WEIGHT = 2.0
+GUN_WEIGHT = 0.01
+
+DATASET_COLLECTIONS = dict(
+    base={
+        "fineweb-edu-350bt": DEFAULT_WEIGHT,
+    },
+    phi={
+        "fineweb": 0.5,
+        "textbooks": 0.002,
+        "soda": 0.25,
+        "cosmopedia-v2": 0.01,
+        "natural-instructions": 0.1,
+        "smoltalk": 0.01,
+        "tinystories": 0.01,
+        "persona-chat": 0.1,
+        "nextcoder": 0.01,
+        # "github-code": 0.01,
+        # "wikipedia": 0.001,
+        # "legal": 0.001,
+    },
+    pile={
+        "minipile-train": DEFAULT_WEIGHT,
+    },
+    validation={
+        "minipile-validation": DEFAULT_WEIGHT,
+    },
+    dev={
+        "textbooks": DEFAULT_WEIGHT,
+    },
+    slimpajama={
+        "slimpajama": DEFAULT_WEIGHT,
+    },
+    rl={
+        "intellect-rl": DEFAULT_WEIGHT,
+    },
+    cot={
+        "chain-of-thought": DEFAULT_WEIGHT * 0.1,
+    },
+)
+
+
+class DataFormat(Enum):
+    SIMPLE = "simple"
+    INSTRUCTION = "instruction"
+    CONVERSATION = "conversation"
+    PERSONACHAT = "persona_chat"
+    CUSTOM = "custom"
+    SMOLTALK = "smoltalk"
+    SODA = "soda"
+    WIKI = "wiki"
+    RL = "rl"
+    COT = "cot"
+
+
+HUGGINGFACE_DATASETS = {
+    "minipile-train": dict(
+        path="JeanKaddour/minipile",
+        split="train",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        streaming=False,
+    ),
+    "minipile-validation": dict(
+        path="JeanKaddour/minipile",
+        split="validation",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+        streaming=False,
+    ),
+    "textbooks": dict(
+        path="open-phi/textbooks",
+        keys=["markdown"],
+        format=DataFormat.SIMPLE,
+    ),
+    "cosmopedia-v2": dict(
+        path="HuggingFaceTB/smollm-corpus",
+        name="cosmopedia-v2",
+        keys=["prompt", "text"],
+        format=DataFormat.INSTRUCTION,
+    ),
+    "natural-instructions": dict(
+        path="Muennighoff/natural-instructions",
+        name="default",
+        keys=["definition", "inputs", "targets"],
+        format=DataFormat.CONVERSATION,
+    ),
+    "persona-chat": dict(
+        path="google/Synthetic-Persona-Chat",
+        keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
+        format=DataFormat.PERSONACHAT,
+    ),
+    "smoltalk": dict(
+        path="HuggingFaceTB/smoltalk",
+        name="all",
+        keys=["messages"],
+        format=DataFormat.SMOLTALK,
+    ),
+    "soda": dict(
+        path="allenai/soda",
+        keys=[
+            "speakers",
+            "narrative",
+            "literal",
+            "dialogue",
+            "head",
+            "relation",
+            "tail",
+        ],
+        format=DataFormat.SODA,
+    ),
+    "github-code": dict(
+        path="codeparrot/github-code",
+        name="all-all",
+        keys=["code"],
+        format=DataFormat.SIMPLE,
+        trust_remote_code=True,
+    ),
+    "tinystories": dict(
+        path="roneneldan/TinyStories",
+        name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "legal": dict(
+        path="pile-of-law/pile-of-law",
+        name="all",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "wikipedia": dict(
+        path="wikimedia/wikipedia",
+        name="20231101.en",
+        keys=["title", "text"],
+        format=DataFormat.WIKI,
+    ),
+    # "redpajama": dict(
+    #     path="togethercomputer/RedPajama-Data-V2",
+    #     name="sample-10B",
+    #     snapshots=["2023-14"],
+    #     keys=["raw_content"],
+    #     format=DataFormat.SIMPLE,
+    # ),
+    # "slimpajama": dict(
+    #     path="cerebras/SlimPajama-627B",
+    #     # name="default",
+    #     keys=["text"],
+    #     format=DataFormat.SIMPLE,
+    # ),
+    "validation": dict(
+        path="allenai/c4",
+        name="en",
+        split="validation",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "fineweb-edu-10bt": dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-10BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "fineweb-edu-100bt": dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-100BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "fineweb-edu-350bt": dict(
+        path="HuggingFaceFW/fineweb-edu",
+        name="sample-350BT",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "fineweb": dict(
+        path="HuggingFaceFW/fineweb",
+        name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "intellect-rl": dict(
+        path="PrimeIntellect/INTELLECT-2-RL-Dataset",
+        split="train",
+        keys=["prompt", "verification_info", "solve_rate_qwen_r1_distill_7b"],
+        format=DataFormat.RL,
+        streaming=True,
+        mix_simple_math=True,  # Mix in simple problems for untrained models
+        # DEBUG: Enable to see what we're loading
+        trust_remote_code=False,
+    ),
+    "chain-of-thought": dict(
+        path="isaiahbjork/chain-of-thought",
+        split="train",
+        keys=["prompt", "response", "category", "topic"],
+        format=DataFormat.COT,
+        streaming=True,
+        trust_remote_code=False,
+    ),
+    "nextcoder": dict(
+        path="microsoft/NextCoderDataset",
+        split="train",
+        keys=["prompt", "completion"],
+        format=DataFormat.INSTRUCTION,
+        streaming=True,
+        trust_remote_code=False,
+    ),
+}
+
 
 class RLLogger:
     """Centralized logging for RL training metrics."""
@@ -127,201 +338,6 @@ class RLLogger:
 
 # Global RL logger instance
 _rl_logger = RLLogger()
-
-
-class DataFormat(Enum):
-    SIMPLE = "simple"
-    INSTRUCTION = "instruction"
-    CONVERSATION = "conversation"
-    PERSONACHAT = "persona_chat"
-    CUSTOM = "custom"
-    SMOLTALK = "smoltalk"
-    SODA = "soda"
-    WIKI = "wiki"
-    RL = "rl"
-    COT = "cot"
-
-
-HUGGINGFACE_DATASETS = {
-    "minipile-train": dict(
-        path="JeanKaddour/minipile",
-        split="train",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-        streaming=False,
-    ),
-    "minipile-validation": dict(
-        path="JeanKaddour/minipile",
-        split="validation",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-        streaming=False,
-    ),
-    "textbooks": dict(
-        path="open-phi/textbooks",
-        keys=["markdown"],
-        format=DataFormat.SIMPLE,
-    ),
-    "cosmopedia-v2": dict(
-        path="HuggingFaceTB/smollm-corpus",
-        name="cosmopedia-v2",
-        keys=["prompt", "text"],
-        format=DataFormat.INSTRUCTION,
-    ),
-    "natural-instructions": dict(
-        path="Muennighoff/natural-instructions",
-        name="default",
-        keys=["definition", "inputs", "targets"],
-        format=DataFormat.CONVERSATION,
-    ),
-    "persona-chat": dict(
-        path="google/Synthetic-Persona-Chat",
-        keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
-        format=DataFormat.PERSONACHAT,
-    ),
-    "smoltalk": dict(
-        path="HuggingFaceTB/smoltalk",
-        name="all",
-        keys=["messages"],
-        format=DataFormat.SMOLTALK,
-    ),
-    "soda": dict(
-        path="allenai/soda",
-        keys=[
-            "speakers",
-            "narrative",
-            "literal",
-            "dialogue",
-            "head",
-            "relation",
-            "tail",
-        ],
-        format=DataFormat.SODA,
-    ),
-    "github-code": dict(
-        path="codeparrot/github-code",
-        name="all-all",
-        keys=["code"],
-        format=DataFormat.SIMPLE,
-        trust_remote_code=True,
-    ),
-    "tinystories": dict(
-        path="roneneldan/TinyStories",
-        name="default",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "legal": dict(
-        path="pile-of-law/pile-of-law",
-        name="all",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "wikipedia": dict(
-        path="wikimedia/wikipedia",
-        name="20231101.en",
-        keys=["title", "text"],
-        format=DataFormat.WIKI,
-    ),
-    # "redpajama": dict(
-    #     path="togethercomputer/RedPajama-Data-V2",
-    #     name="sample-10B",
-    #     snapshots=["2023-14"],
-    #     keys=["raw_content"],
-    #     format=DataFormat.SIMPLE,
-    # ),
-    "slimpajama": dict(
-        path="cerebras/SlimPajama-627B",
-        # name="default",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "fineweb-edu-10bt": dict(
-        path="HuggingFaceFW/fineweb-edu",
-        name="sample-10BT",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "fineweb-edu-100bt": dict(
-        path="HuggingFaceFW/fineweb-edu",
-        name="sample-100BT",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "fineweb-edu-350bt": dict(
-        path="HuggingFaceFW/fineweb-edu",
-        name="sample-350BT",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "fineweb": dict(
-        path="HuggingFaceFW/fineweb",
-        name="default",
-        keys=["text"],
-        format=DataFormat.SIMPLE,
-    ),
-    "intellect-rl": dict(
-        path="PrimeIntellect/INTELLECT-2-RL-Dataset",
-        split="train",
-        keys=["prompt", "verification_info", "solve_rate_qwen_r1_distill_7b"],
-        format=DataFormat.RL,
-        streaming=True,
-        mix_simple_math=True,  # Mix in simple problems for untrained models
-        # DEBUG: Enable to see what we're loading
-        trust_remote_code=False,
-    ),
-    "chain-of-thought": dict(
-        path="isaiahbjork/chain-of-thought",
-        split="train",
-        keys=["prompt", "response", "category", "topic"],
-        format=DataFormat.COT,
-        streaming=True,
-        trust_remote_code=False,
-    ),
-}
-
-DEFAULT_WEIGHT = 1.0
-
-SRC_WEIGHT = 0.1
-DIR_WEIGHT = 2.0
-GUN_WEIGHT = 0.01
-
-DATASET_COLLECTIONS = dict(
-    base={
-        "fineweb-edu-350bt": DEFAULT_WEIGHT,
-    },
-    phi={
-        "fineweb": 0.5,
-        "textbooks": 0.002,
-        "soda": 0.25,
-        "cosmopedia-v2": 0.01,
-        "natural-instructions": 0.1,
-        # "github-code": 0.01,
-        "smoltalk": 0.01,
-        "tinystories": 0.01,
-        "persona-chat": 0.1,
-        # "wikipedia": 0.001,
-        # "legal": 0.001,
-    },
-    pile={
-        "minipile-train": DEFAULT_WEIGHT,
-    },
-    validation={
-        "minipile-validation": DEFAULT_WEIGHT,
-    },
-    dev={
-        "textbooks": DEFAULT_WEIGHT,
-    },
-    slimpajama={
-        "slimpajama": DEFAULT_WEIGHT,
-    },
-    rl={
-        "intellect-rl": DEFAULT_WEIGHT,
-    },
-    cot={
-        "chain-of-thought": DEFAULT_WEIGHT * 0.1,
-    },
-)
 
 # Chain of Thought tag definitions
 COT_TAGS = {
@@ -1000,7 +1016,7 @@ def get_dataset_configs(
                     config = add_collection(config, "cot", "primary")
                 else:
                     config = add_collection(config, "rl", "primary")
-            config = add_collection(config, "slimpajama", "validation")
+            config = add_collection(config, "validation", "validation")
     print("training on:")
     [
         print(f"dataset: {entry['path']}, weight: {entry['weight']}")
