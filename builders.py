@@ -33,6 +33,7 @@ DATASET_COLLECTIONS = dict(
         "tinystories": 0.01,
         "persona-chat": 0.1,
         "nextcoder": 0.01,
+        # "nextcoder-conversational": 0.01,
         # "github-code": 0.01,
         # "wikipedia": 0.001,
         # "legal": 0.001,
@@ -64,7 +65,7 @@ class DataFormat(Enum):
     CONVERSATION = "conversation"
     PERSONACHAT = "persona_chat"
     CUSTOM = "custom"
-    SMOLTALK = "smoltalk"
+    MESSAGES = "messages"
     SODA = "soda"
     WIKI = "wiki"
     RL = "rl"
@@ -112,7 +113,7 @@ HUGGINGFACE_DATASETS = {
         path="HuggingFaceTB/smoltalk",
         name="all",
         keys=["messages"],
-        format=DataFormat.SMOLTALK,
+        format=DataFormat.MESSAGES,
     ),
     "soda": dict(
         path="allenai/soda",
@@ -222,6 +223,16 @@ HUGGINGFACE_DATASETS = {
         streaming=True,
         trust_remote_code=False,
     ),
+    # DISABLED: NextCoder-Conversational dataset is malformed on HuggingFace
+    # It contains only metadata fields instead of actual message data
+    # "nextcoder-conversational": dict(
+    #     path="microsoft/NextCoderDataset-Conversational",
+    #     split="train",
+    #     keys=["messages"],
+    #     format=DataFormat.MESSAGES,
+    #     streaming=True,
+    #     trust_remote_code=False,
+    # ),
 }
 
 
@@ -613,13 +624,13 @@ def format_personachat(
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
-def format_smoltalk(
+def format_messages(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format Smoltalk-style message arrays using the tokenizer's chat template."""
+    """Format message arrays using the tokenizer's chat template."""
     assert (
         len(keys) == 1 and keys[0] == "messages"
-    ), "Smoltalk format requires 'messages' key"
+    ), "Messages format requires 'messages' key"
 
     # Get messages array
     messages = document.get(keys[0], [])
@@ -851,7 +862,7 @@ FORMAT_HANDLERS = {
     DataFormat.INSTRUCTION: format_instruction,
     DataFormat.CONVERSATION: format_conversation,
     DataFormat.PERSONACHAT: format_personachat,
-    DataFormat.SMOLTALK: format_smoltalk,
+    DataFormat.MESSAGES: format_messages,
     DataFormat.SODA: format_soda,
     DataFormat.WIKI: format_wiki,
     DataFormat.RL: format_rl,
