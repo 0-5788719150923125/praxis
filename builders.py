@@ -26,14 +26,15 @@ DATASET_COLLECTIONS = dict(
     phi={
         "fineweb": 0.5,
         "textbooks": 0.002,
-        "soda": 0.25,
-        "cosmopedia-v2": 0.01,
-        "natural-instructions": 0.1,
-        "smoltalk": 0.01,
         "tinystories": 0.01,
-        "persona-chat": 0.1,
+        "persona-chat": 0.05,
+        "soda": 0.25,
+        "wildchat": 0.05,
+        "natural-instructions": 0.2,
+        "cosmopedia-v2": 0.05,
+        "smoltalk": 0.05,
         "nextcoder": 0.01,
-        # "nextcoder-conversational": 0.01,
+        "nextcoder-conversational": 0.05,
         # "github-code": 0.01,
         # "wikipedia": 0.001,
         # "legal": 0.001,
@@ -115,6 +116,11 @@ HUGGINGFACE_DATASETS = {
         keys=["messages"],
         format=DataFormat.MESSAGES,
     ),
+    "nextcoder-conversational": dict(
+        path="microsoft/NextCoderDataset-Conversational",
+        keys=["messages"],
+        format=DataFormat.MESSAGES,
+    ),
     "soda": dict(
         path="allenai/soda",
         keys=[
@@ -127,6 +133,11 @@ HUGGINGFACE_DATASETS = {
             "tail",
         ],
         format=DataFormat.SODA,
+    ),
+    "wildchat": dict(
+        path="allenai/WildChat",
+        keys=["conversation"],
+        format=DataFormat.MESSAGES,
     ),
     "github-code": dict(
         path="codeparrot/github-code",
@@ -628,9 +639,7 @@ def format_messages(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
     """Format message arrays using the tokenizer's chat template."""
-    assert (
-        len(keys) == 1 and keys[0] == "messages"
-    ), "Messages format requires 'messages' key"
+    assert len(keys) == 1, "'keys' should have a length of 1"
 
     # Get messages array
     messages = document.get(keys[0], [])
@@ -1028,11 +1037,13 @@ def get_dataset_configs(
                 else:
                     config = add_collection(config, "rl", "primary")
             config = add_collection(config, "validation", "validation")
-    print("training on:")
-    [
-        print(f"dataset: {entry['path']}, weight: {entry['weight']}")
-        for entry in config["primary"]
-    ]
+
+    for stage in ["primary", "validation"]:
+        print(f"\n{stage} datasets:")
+        [
+            print(f"- {entry['path']}, weight: {entry['weight']}")
+            for entry in config[stage]
+        ]
 
     # Debug: print RL status
     if rl_type:
@@ -1494,6 +1505,51 @@ class PraxisSampler:
         return [self.sequence_cache.pop(0) for _ in range(count)]
 
 
+def load_dataset_smart(dataset_args: Dict) -> Any:
+    """
+    Load a dataset, handling cases where metadata files interfere.
+
+    Some datasets (e.g., microsoft/NextCoderDataset-Conversational) have
+    state.json or other metadata that gets loaded instead of the actual data.
+    This function detects and fixes that by adding data_files="*.arrow".
+
+    Args:
+        dataset_args: Arguments to pass to load_dataset
+
+    Returns:
+        The loaded dataset
+    """
+    # First try normal loading
+    dataset = load_dataset(**dataset_args)
+
+    # Check if we got metadata instead of real data
+    # This is a simple heuristic: real data won't have '_data_files' as a column
+    needs_fix = False
+
+    if hasattr(dataset, "column_names"):
+        # Single dataset
+        if "_data_files" in dataset.column_names:
+            needs_fix = True
+    elif hasattr(dataset, "keys"):
+        # DatasetDict - check first split
+        for split in dataset:
+            if (
+                hasattr(dataset[split], "column_names")
+                and "_data_files" in dataset[split].column_names
+            ):
+                needs_fix = True
+                break
+
+    if needs_fix:
+        # Reload with data_files to skip metadata
+        print(f"Note: Fixing metadata issue for {dataset_args.get('path', 'dataset')}")
+        fixed_args = dataset_args.copy()
+        fixed_args["data_files"] = "*.arrow"
+        return load_dataset(**fixed_args)
+
+    return dataset
+
+
 class HuggingfaceDataset(PraxisSampler):
     counts = {}
 
@@ -1523,7 +1579,7 @@ class HuggingfaceDataset(PraxisSampler):
         )
         if "name" in config:
             dataset_args["name"] = config["name"]
-        self.dataset = load_dataset(**dataset_args)
+        self.dataset = load_dataset_smart(dataset_args)
         shuffle_args = {"seed": seed}
         if dataset_args["streaming"]:
             shuffle_args["buffer_size"] = 1000
