@@ -35,6 +35,7 @@ DATASET_COLLECTIONS = dict(
         "smoltalk": 0.05,
         "nextcoder": 0.01,
         "nextcoder-conversational": 0.05,
+        "hermes-3-dataset": 0.1,
         # "github-code": 0.01,
         # "wikipedia": 0.001,
         # "legal": 0.001,
@@ -116,6 +117,12 @@ HUGGINGFACE_DATASETS = {
         keys=["messages"],
         format=DataFormat.MESSAGES,
     ),
+    "nextcoder": dict(
+        path="microsoft/NextCoderDataset",
+        split="train",
+        keys=["prompt", "completion"],
+        format=DataFormat.INSTRUCTION,
+    ),
     "nextcoder-conversational": dict(
         path="microsoft/NextCoderDataset-Conversational",
         keys=["messages"],
@@ -133,6 +140,11 @@ HUGGINGFACE_DATASETS = {
             "tail",
         ],
         format=DataFormat.SODA,
+    ),
+    "hermes-3-dataset": dict(
+        path="NousResearch/Hermes-3-Dataset",
+        keys=["conversations"],
+        format=DataFormat.MESSAGES,
     ),
     "wildchat": dict(
         path="allenai/WildChat",
@@ -226,24 +238,6 @@ HUGGINGFACE_DATASETS = {
         streaming=True,
         trust_remote_code=False,
     ),
-    "nextcoder": dict(
-        path="microsoft/NextCoderDataset",
-        split="train",
-        keys=["prompt", "completion"],
-        format=DataFormat.INSTRUCTION,
-        streaming=True,
-        trust_remote_code=False,
-    ),
-    # DISABLED: NextCoder-Conversational dataset is malformed on HuggingFace
-    # It contains only metadata fields instead of actual message data
-    # "nextcoder-conversational": dict(
-    #     path="microsoft/NextCoderDataset-Conversational",
-    #     split="train",
-    #     keys=["messages"],
-    #     format=DataFormat.MESSAGES,
-    #     streaming=True,
-    #     trust_remote_code=False,
-    # ),
 }
 
 
@@ -647,6 +641,12 @@ def format_messages(
     # Filter out any empty messages and apply text formatting
     filtered_messages = []
     for message in messages:
+        # We just hardcode the processing of NousResearch/Hermes-3-Dataset here
+        if message.get("from"):
+            KEY_MAP = {"human": "user", "gpt": "assistant"}
+            message["role"] = KEY_MAP.get(message["from"])
+        if message.get("value"):
+            message["content"] = message["value"]
         content = message.get("content", "").strip()
         if content:
             # Apply text_formatter to the content
