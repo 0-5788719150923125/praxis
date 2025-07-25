@@ -677,8 +677,9 @@ class TerminalDashboard:
             elif i == (height // 2):
                 if random.random() < 0.1:
                     self.sign = -1 * self.sign
+                value = "+" if self.sign == 1 else "-"
                 # Split the left section into two parts
-                attention_label = f" ATTENTION MAP: {self.sign:+.1f}"
+                attention_label = f" CORRELATION: {value}"
                 info_label = " INFO"
                 attention_content = attention_label.ljust(lower_left_quarter_width)[
                     :lower_left_quarter_width
