@@ -469,19 +469,6 @@
                 padding: 12px 16px;
             }
         }
-
-        /* Live reload notification */
-        .live-reload-indicator {
-            position: fixed;
-            bottom: 10px;
-            left: 10px;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 12px;
-            z-index: 100;
-        }
     </style>
 </head>
 <body>
@@ -579,8 +566,6 @@
         </div>
     </div>
 
-    <div class="live-reload-indicator" id="live-reload-indicator">Live Reload Active</div>
-
     <!-- Socket.IO for live reload -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <script>
@@ -589,7 +574,6 @@
         
         socket.on('connect', () => {
             console.log('Live reload connected');
-            document.getElementById('live-reload-indicator').style.display = 'block';
         });
         
         socket.on('reload', () => {
@@ -599,7 +583,6 @@
         
         socket.on('disconnect', () => {
             console.log('Live reload disconnected');
-            document.getElementById('live-reload-indicator').style.display = 'none';
         });
         
         // Chat application logic
