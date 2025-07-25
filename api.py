@@ -238,17 +238,28 @@ def extract_assistant_reply(generated_text, tokenizer):
     # Skip past the start token AND the "assistant" role identifier
     start_index += len(assistant_start)
 
-    # Find the end token after the start_index
-    end_index = generated_text.find(tokenizer.eos_token, start_index)
+    # Find the end token after the start_index - check for both EOS and SEP tokens
+    eos_index = generated_text.find(tokenizer.eos_token, start_index)
+    sep_index = generated_text.find(tokenizer.sep_token, start_index)
+
+    # Use whichever comes first (and exists)
+    end_index = -1
+    if eos_index != -1 and sep_index != -1:
+        end_index = min(eos_index, sep_index)
+    elif eos_index != -1:
+        end_index = eos_index
+    elif sep_index != -1:
+        end_index = sep_index
+
     if end_index == -1:
-        # If the end token is not found, return everything after the start token
+        # If no end token is found, return everything after the start token
         assistant_reply = generated_text[start_index:].strip()
     else:
         assistant_reply = generated_text[start_index:end_index].strip()
-    
+
     # Remove any remaining BOS token that might appear at the beginning of the response
     if assistant_reply.startswith(tokenizer.bos_token):
-        assistant_reply = assistant_reply[len(tokenizer.bos_token):].strip()
+        assistant_reply = assistant_reply[len(tokenizer.bos_token) :].strip()
 
     return assistant_reply
 
@@ -299,7 +310,10 @@ def generate():
                 tokenizer = app.config["tokenizer"]
                 prompt = format_messages_to_chatml(messages, tokenizer)
                 is_chatml = True
-                kwargs["stop_strings"] = [tokenizer.eos_token]
+                kwargs["eos_token_id"] = [
+                    tokenizer.eos_token_id,
+                    tokenizer.sep_token_id,
+                ]
                 kwargs["skip_special_tokens"] = False
                 del kwargs["messages"]
             except ValueError as ve:
