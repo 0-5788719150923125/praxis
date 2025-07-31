@@ -105,6 +105,7 @@ class APIServer:
         host="localhost",
         port=2100,
         tokenizer=None,
+        module_loader=None,
     ):
         self.generator = generator
         self.server_thread = None
@@ -117,6 +118,7 @@ class APIServer:
         self.port = port
         self.parent_pid = os.getppid()
         self.tokenizer = tokenizer
+        self.module_loader = module_loader
         self.template_watcher = TemplateWatcher()
 
     def _is_port_in_use(self, port):
@@ -181,6 +183,7 @@ class APIServer:
         with app.app_context():
             app.config["generator"] = self.generator
             app.config["tokenizer"] = self.tokenizer
+            app.config["module_loader"] = self.module_loader
 
             # Signal that the server will start
             self.started.set()
@@ -295,15 +298,38 @@ def generate():
     return final_response, 200
 
 
-# @app.before_request
-# def log_request_info():
-#     """Log all incoming requests for debugging"""
-#     print(f"\n{'='*60}")
-#     print(f"[DEBUG] Incoming request: {request.method} {request.path}")
-#     print(f"[DEBUG] Full URL: {request.url}")
-#     print(f"[DEBUG] Host: {request.host}")
-#     print(f"[DEBUG] Headers: {dict(request.headers)}")
-#     print(f"{'='*60}\n")
+@app.before_request
+def apply_request_middleware():
+    """Apply request middleware from loaded modules."""
+    module_loader = app.config.get("module_loader")
+    if module_loader:
+        # Get all middleware functions
+        middleware_funcs = module_loader.get_request_middleware()
+        for middleware_func in middleware_funcs:
+            try:
+                # Call middleware with request object
+                # Middleware can modify request headers or add response headers
+                middleware_func(request)
+            except Exception as e:
+                print(f"Error in request middleware: {e}")
+
+
+@app.after_request
+def apply_response_middleware(response):
+    """Apply response middleware from loaded modules."""
+    module_loader = app.config.get("module_loader")
+    if module_loader:
+        # Get all middleware functions
+        middleware_funcs = module_loader.get_request_middleware()
+        for middleware_func in middleware_funcs:
+            try:
+                # Call middleware with request and response objects
+                # Middleware can modify response headers
+                middleware_func(request, response)
+            except Exception as e:
+                # If middleware only takes request, that's fine
+                pass
+    return response
 
 
 @app.route("/<path:filename>", methods=["GET", "POST", "OPTIONS", "HEAD"])

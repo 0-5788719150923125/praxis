@@ -11,6 +11,8 @@ integrations:
     function: "add_cli_args"
   api_server_hooks:
     function: "api_server_hook"
+  request_middleware:
+    function: "request_middleware"
   lifecycle:
     init: "initialize"
     cleanup: "cleanup"

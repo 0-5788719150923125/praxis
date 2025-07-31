@@ -24,7 +24,8 @@ class ModuleLoader:
             'lifecycle': {'init': [], 'cleanup': []},
             'cleanup_dirs': [],  # Directories to clean on reset
             'logger_providers': [],  # Functions that provide loggers
-            'api_server_hooks': []  # Functions called when API server starts
+            'api_server_hooks': [],  # Functions called when API server starts
+            'request_middleware': []  # Functions that modify request/response headers
         }
     
     def discover_modules(self) -> List[Dict]:
@@ -239,6 +240,14 @@ class ModuleLoader:
                 self.integration_registry['api_server_hooks'].append(hook_func)
                 registered.append('API server hook')
         
+        # Request middleware integration
+        if 'request_middleware' in integrations:
+            middleware_config = integrations['request_middleware']
+            if hasattr(module, middleware_config['function']):
+                middleware_func = getattr(module, middleware_config['function'])
+                self.integration_registry['request_middleware'].append(middleware_func)
+                registered.append('request middleware')
+        
         return registered
     
     def get_cli_functions(self) -> List:
@@ -284,6 +293,10 @@ class ModuleLoader:
     def get_api_server_hooks(self) -> List:
         """Get all API server hook functions."""
         return self.integration_registry['api_server_hooks']
+    
+    def get_request_middleware(self) -> List:
+        """Get all request middleware functions."""
+        return self.integration_registry['request_middleware']
     
     def create_logger(self, cache_dir, ckpt_path=None, truncated_hash=None, **kwargs):
         """Create logger using loaded modules."""

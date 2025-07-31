@@ -330,6 +330,14 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     return {}
 
 
+def request_middleware(request, response=None):
+    """Middleware to add ngrok bypass headers."""
+    if response is not None:
+        # This is the after_request phase - add the bypass header
+        response.headers['ngrok-skip-browser-warning'] = 'true'
+    # In before_request phase (response=None), we don't need to do anything
+    
+
 def cleanup():
     """Cleanup ngrok resources."""
     global _tunnel

@@ -1617,7 +1617,7 @@ if logger:
 generator = Generator(model, tokenizer)
 
 if local_rank == 0:
-    api_server = APIServer(generator, host_name, port, tokenizer)
+    api_server = APIServer(generator, host_name, port, tokenizer, module_loader_with_conditions)
     api_server.start()
 
     # Initialize any API server hooks from loaded modules
