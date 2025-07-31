@@ -1011,8 +1011,9 @@
                     }
                     
                     // Prepare the request with full chat history and generation parameters
+                    const historyLength = 23
                     const requestBody = {
-                        messages: chatHistory.slice(-10),
+                        messages: chatHistory.slice(-historyLength),
                         // Use saved generation parameters
                         ...generationParams
                     };
