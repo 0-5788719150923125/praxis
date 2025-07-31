@@ -104,12 +104,32 @@ class NgrokTunnel:
         import secrets
         import string
         
-        # Generate a secure random webhook secret
-        alphabet = string.ascii_letters + string.digits
-        self.webhook_secret = ''.join(secrets.choice(alphabet) for _ in range(32))
+        # Generate webhook secret (deterministic if seed provided)
+        secret_seed = os.getenv("NGROK_SECRET_SEED")
+        if secret_seed:
+            # Use deterministic generation with seed
+            import hashlib
+            import base64
+            
+            # Create a hash from the seed and take first 32 chars (base64 safe)
+            hash_bytes = hashlib.sha256(secret_seed.encode()).digest()
+            self.webhook_secret = base64.urlsafe_b64encode(hash_bytes)[:32].decode()
+            print(f"🔑 Using deterministic secret from seed")
+        else:
+            # Use secure random generation
+            alphabet = string.ascii_letters + string.digits
+            self.webhook_secret = ''.join(secrets.choice(alphabet) for _ in range(32))
+            print(f"🎲 Using random secret")
         
         # Create session with auth token
         self.session = await ngrok.SessionBuilder().authtoken(self.auth_token).connect()
+        
+        # Try to use a hardcoded static domain (you can set this in .env)
+        static_domain = os.getenv("NGROK_STATIC_DOMAIN")
+        if static_domain:
+            print(f"🔍 Found static domain in environment: {static_domain}")
+        else:
+            print("ℹ️  No static domain configured, using random URL")
         
         # Traffic policy: check authorization first, then rewrite if authorized
         traffic_policy = {
@@ -173,11 +193,19 @@ class NgrokTunnel:
         # Create HTTP listener with traffic policy (must be JSON string)
         import json
         traffic_policy_json = json.dumps(traffic_policy)
-        self.listener = await self.session.http_endpoint().traffic_policy(traffic_policy_json).listen()
+        
+        # Build the listener with optional domain
+        listener_builder = self.session.http_endpoint().traffic_policy(traffic_policy_json)
+        if static_domain:
+            listener_builder = listener_builder.domain(static_domain)
+            print(f"🌐 Using static domain: {static_domain}")
+        
+        self.listener = await listener_builder.listen()
         self.public_url = self.listener.url()
         
         # Forward traffic to local server
         await self.listener.forward(f"http://{self.host}:{self.port}")
+    
     
     def stop(self):
         """Stop the ngrok tunnel."""
