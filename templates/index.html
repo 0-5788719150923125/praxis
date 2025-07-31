@@ -609,8 +609,23 @@
             const doSampleInput = document.getElementById('do-sample');
             const debugLoggingInput = document.getElementById('debug-logging');
             
-            // Default API URL is the current server
-            let apiUrl = window.location.origin + '/input/';
+            // Default API URL is the current server, preserving any path prefix
+            let pathPrefix = window.location.pathname;
+            
+            // Remove trailing slash from pathname if present
+            if (pathPrefix.endsWith('/') && pathPrefix !== '/') {
+                pathPrefix = pathPrefix.slice(0, -1);
+            }
+            
+            // If we're at root, don't add any prefix
+            if (pathPrefix === '/') {
+                pathPrefix = '';
+            }
+            
+            // Construct API URL - note that pathPrefix already includes leading /
+            let apiUrl = window.location.origin + pathPrefix + '/input/';
+            console.log('Constructed API URL:', apiUrl, 'from pathname:', window.location.pathname);
+            console.log('Path prefix:', pathPrefix);
             
             // Default generation parameters
             let generationParams = {
@@ -687,8 +702,16 @@
                 // Load API URL
                 const savedApiUrl = localStorage.getItem('praxis_api_url');
                 if (savedApiUrl) {
-                    apiUrl = savedApiUrl;
-                    apiUrlInput.value = savedApiUrl;
+                    // Check if we're on ngrok with a secret path
+                    if (window.location.hostname.includes('ngrok') && pathPrefix !== '') {
+                        // Use the dynamically constructed URL for ngrok with secret
+                        apiUrlInput.value = apiUrl;
+                        console.log('Using dynamic ngrok URL instead of saved URL');
+                    } else {
+                        // Use saved URL for normal cases
+                        apiUrl = savedApiUrl;
+                        apiUrlInput.value = savedApiUrl;
+                    }
                 } else {
                     apiUrlInput.value = apiUrl;
                 }
@@ -1054,6 +1077,8 @@
                     if (!formattedUrl.endsWith('/')) {
                         formattedUrl = formattedUrl + '/';
                     }
+                    
+                    console.log('Final formatted URL being fetched:', formattedUrl);
                     
                     // Send request to API with timeout
                     const fetchPromise = fetch(formattedUrl, {

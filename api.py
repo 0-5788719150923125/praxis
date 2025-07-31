@@ -204,67 +204,8 @@ def home():
     return render_template("index.html")
 
 
-@app.route("/<path:filename>")
-def serve_static(filename):
-    if filename != "input/":  # Exclude the API route
-        return send_from_directory(app.static_folder, filename)
-
-
-def format_messages_to_chatml(messages, tokenizer):
-    """Format a list of message objects using the tokenizer's chat template."""
-    # Validate message roles
-    for message in messages:
-        role = message.get("role", "").strip()
-        if role not in {"system", "user", "assistant"}:
-            raise ValueError(f"Invalid role: {role}")
-
-    # Apply the chat template and add assistant generation prompt
-    return tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-
-
-def extract_assistant_reply(generated_text, tokenizer):
-    """Extract the assistant's reply from the generated text."""
-    # Find the pattern that marks the start of the assistant's response
-    assistant_start = f"{tokenizer.bos_token}assistant"
-
-    # Find the last occurrence of the assistant's start token
-    start_index = generated_text.rfind(assistant_start)
-    if start_index == -1:
-        # If the start token is not found, return the whole text
-        return generated_text.strip()
-
-    # Skip past the start token AND the "assistant" role identifier
-    start_index += len(assistant_start)
-
-    # Find the end token after the start_index - check for both EOS and SEP tokens
-    eos_index = generated_text.find(tokenizer.eos_token, start_index)
-    sep_index = generated_text.find(tokenizer.sep_token, start_index)
-
-    # Use whichever comes first (and exists)
-    end_index = -1
-    if eos_index != -1 and sep_index != -1:
-        end_index = min(eos_index, sep_index)
-    elif eos_index != -1:
-        end_index = eos_index
-    elif sep_index != -1:
-        end_index = sep_index
-
-    if end_index == -1:
-        # If no end token is found, return everything after the start token
-        assistant_reply = generated_text[start_index:].strip()
-    else:
-        assistant_reply = generated_text[start_index:end_index].strip()
-
-    # Remove any remaining BOS token that might appear at the beginning of the response
-    if assistant_reply.startswith(tokenizer.bos_token):
-        assistant_reply = assistant_reply[len(tokenizer.bos_token) :].strip()
-
-    return assistant_reply
-
-
 @app.route("/input/", methods=["GET", "POST", "OPTIONS"])
+@app.route("/input", methods=["GET", "POST", "OPTIONS"])
 def generate():
     # Handle CORS preflight request
     if request.method == "OPTIONS":
@@ -352,3 +293,87 @@ def generate():
     final_response = jsonify(response)
     final_response.headers.add("Access-Control-Allow-Origin", "*")
     return final_response, 200
+
+
+# @app.before_request
+# def log_request_info():
+#     """Log all incoming requests for debugging"""
+#     print(f"\n{'='*60}")
+#     print(f"[DEBUG] Incoming request: {request.method} {request.path}")
+#     print(f"[DEBUG] Full URL: {request.url}")
+#     print(f"[DEBUG] Host: {request.host}")
+#     print(f"[DEBUG] Headers: {dict(request.headers)}")
+#     print(f"{'='*60}\n")
+
+
+@app.route("/<path:filename>", methods=["GET", "POST", "OPTIONS", "HEAD"])
+def serve_static(filename):
+    # Debug log
+    print(f"[DEBUG] serve_static called with: {filename}, method: {request.method}")
+
+    # If this is a POST to input, redirect to the actual input handler
+    if filename in ["input", "input/"] and request.method in ["POST", "OPTIONS"]:
+        print(f"[DEBUG] Redirecting {request.method} request to /input/ handler")
+        return generate()
+
+    # Otherwise, serve static files only for GET/HEAD
+    if request.method not in ["GET", "HEAD"]:
+        from flask import abort
+
+        abort(405)
+
+    return send_from_directory(app.static_folder, filename)
+
+
+def format_messages_to_chatml(messages, tokenizer):
+    """Format a list of message objects using the tokenizer's chat template."""
+    # Validate message roles
+    for message in messages:
+        role = message.get("role", "").strip()
+        if role not in {"system", "user", "assistant"}:
+            raise ValueError(f"Invalid role: {role}")
+
+    # Apply the chat template and add assistant generation prompt
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+
+
+def extract_assistant_reply(generated_text, tokenizer):
+    """Extract the assistant's reply from the generated text."""
+    # Find the pattern that marks the start of the assistant's response
+    assistant_start = f"{tokenizer.bos_token}assistant"
+
+    # Find the last occurrence of the assistant's start token
+    start_index = generated_text.rfind(assistant_start)
+    if start_index == -1:
+        # If the start token is not found, return the whole text
+        return generated_text.strip()
+
+    # Skip past the start token AND the "assistant" role identifier
+    start_index += len(assistant_start)
+
+    # Find the end token after the start_index - check for both EOS and SEP tokens
+    eos_index = generated_text.find(tokenizer.eos_token, start_index)
+    sep_index = generated_text.find(tokenizer.sep_token, start_index)
+
+    # Use whichever comes first (and exists)
+    end_index = -1
+    if eos_index != -1 and sep_index != -1:
+        end_index = min(eos_index, sep_index)
+    elif eos_index != -1:
+        end_index = eos_index
+    elif sep_index != -1:
+        end_index = sep_index
+
+    if end_index == -1:
+        # If no end token is found, return everything after the start token
+        assistant_reply = generated_text[start_index:].strip()
+    else:
+        assistant_reply = generated_text[start_index:end_index].strip()
+
+    # Remove any remaining BOS token that might appear at the beginning of the response
+    if assistant_reply.startswith(tokenizer.bos_token):
+        assistant_reply = assistant_reply[len(tokenizer.bos_token) :].strip()
+
+    return assistant_reply

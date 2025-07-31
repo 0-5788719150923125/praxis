@@ -31,25 +31,20 @@ def add_cli_args(parser):
         default=None,
         help="Ngrok auth token (can also be set via NGROK_AUTHTOKEN env var)",
     )
-    networking_group.add_argument(
-        "--ngrok-domain",
-        type=str,
-        default=None,
-        help="Custom ngrok domain (e.g., my-app.ngrok-free.app). If not specified, will auto-detect your reserved domains.",
-    )
 
 
 class NgrokTunnel:
     """Manages ngrok tunnel for the API server using the Python SDK."""
     
-    def __init__(self, host="localhost", port=5000, auth_token=None, domain=None):
+    def __init__(self, host="localhost", port=5000, auth_token=None):
         self.host = host
         self.port = port
         self.auth_token = auth_token or os.getenv("NGROK_AUTHTOKEN")
-        self.domain = domain
         self.listener = None
         self.session = None
         self.public_url = None
+        self.webhook_secret = None
+        self.error = None
         self._loop = None
         self._thread = None
         
@@ -73,9 +68,15 @@ class NgrokTunnel:
                 time.sleep(0.5)
                 wait_time += 0.5
             
-            return self.public_url is not None
+            if self.public_url is not None:
+                return True
+            else:
+                if self.error:
+                    print(f"❌ NGROK ERROR: {self.error}")
+                return False
                 
         except Exception as e:
+            print(f"❌ NGROK ERROR: {e}")
             return False
     
     def _run_ngrok_async(self):
@@ -89,9 +90,10 @@ class NgrokTunnel:
         try:
             # Run the async tunnel setup
             self._loop.run_until_complete(self._setup_tunnel())
-        except Exception:
-            # Silently fail - error handling is done at the higher level
-            pass
+        except Exception as e:
+            # Store error for main thread to see
+            self.error = str(e)
+            print(f"❌ NGROK ERROR: {e}")
         finally:
             if self._loop and not self._loop.is_closed():
                 self._loop.close()
@@ -99,46 +101,83 @@ class NgrokTunnel:
     async def _setup_tunnel(self):
         """Set up the ngrok tunnel asynchronously."""
         import ngrok
+        import secrets
+        import string
+        
+        # Generate a secure random webhook secret
+        alphabet = string.ascii_letters + string.digits
+        self.webhook_secret = ''.join(secrets.choice(alphabet) for _ in range(32))
         
         # Create session with auth token
         self.session = await ngrok.SessionBuilder().authtoken(self.auth_token).connect()
         
-        # Create HTTP endpoint with optional domain
-        endpoint_builder = self.session.http_endpoint()
+        # Traffic policy: check authorization first, then rewrite if authorized
+        traffic_policy = {
+            "inbound": [
+                {
+                    "expressions": [f"!req.url.path.startsWith('/{self.webhook_secret}')"],
+                    "actions": [
+                        {
+                            "type": "deny",
+                            "config": {
+                                "status_code": 401
+                            }
+                        }
+                    ]
+                },
+                {
+                    "expressions": [f"req.url.path == '/{self.webhook_secret}'"],
+                    "actions": [
+                        {
+                            "type": "url-rewrite",
+                            "config": {
+                                "from": f"/{self.webhook_secret}",
+                                "to": "/"
+                            }
+                        },
+                        {
+                            "type": "add-headers",
+                            "config": {
+                                "headers": {
+                                    "X-Forwarded-Host": f"{self.host}:{self.port}",
+                                    "X-Original-Host": "req.host"
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "expressions": [f"req.url.path.startsWith('/{self.webhook_secret}/')"],
+                    "actions": [
+                        {
+                            "type": "url-rewrite",
+                            "config": {
+                                "from": f"/{self.webhook_secret}(.*)",
+                                "to": "$1"
+                            }
+                        },
+                        {
+                            "type": "add-headers",
+                            "config": {
+                                "headers": {
+                                    "X-Forwarded-Host": f"{self.host}:{self.port}",
+                                    "X-Original-Host": "req.host"
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
         
-        if self.domain:
-            # Use specified domain
-            endpoint_builder = endpoint_builder.domain(self.domain)
-        else:
-            # Try to auto-detect reserved domains
-            try:
-                domains = await self._get_reserved_domains()
-                if domains:
-                    # Use the first available domain
-                    endpoint_builder = endpoint_builder.domain(domains[0])
-                    print(f"🎯 Using reserved domain: {domains[0]}")
-                else:
-                    print("💡 No reserved domains found, using ephemeral URL")
-            except Exception:
-                # Fall back to ephemeral URL if domain detection fails
-                print("💡 Using ephemeral URL (domain detection failed)")
-        
-        # Create HTTP listener
-        self.listener = await endpoint_builder.listen()
+        # Create HTTP listener with traffic policy (must be JSON string)
+        import json
+        traffic_policy_json = json.dumps(traffic_policy)
+        self.listener = await self.session.http_endpoint().traffic_policy(traffic_policy_json).listen()
         self.public_url = self.listener.url()
         
         # Forward traffic to local server
         await self.listener.forward(f"http://{self.host}:{self.port}")
-    
-    async def _get_reserved_domains(self):
-        """Get list of reserved domains for this account."""
-        try:
-            import ngrok
-            # List reserved domains through the session
-            domains = await self.session.reserved_domains().list()
-            return [domain.domain for domain in domains if domain.domain]
-        except Exception:
-            return []
     
     def stop(self):
         """Stop the ngrok tunnel."""
@@ -191,24 +230,30 @@ def api_server_hook(host, port):
     except ImportError:
         pass
     
-    # Get auth token and domain from global args or environment
+    # Get auth token from global args or environment
     auth_token = None
-    domain = None
     try:
         from cli import get_cli_args
         args = get_cli_args()
         auth_token = getattr(args, 'ngrok_auth_token', None) or os.getenv("NGROK_AUTHTOKEN")
-        domain = getattr(args, 'ngrok_domain', None)
     except:
         auth_token = os.getenv("NGROK_AUTHTOKEN")
     
     print(f"🚀 Starting ngrok tunnel for {host}:{port}")
-    _tunnel = NgrokTunnel(host, port, auth_token, domain)
+    _tunnel = NgrokTunnel(host, port, auth_token)
     success = _tunnel.start()
     
     if success:
-        print(f"🌐 Ngrok tunnel active: {_tunnel.get_public_url()}")
+        base_url = _tunnel.get_public_url()
+        protected_url = f"{base_url}/{_tunnel.webhook_secret}"
+        
+        print(f"🌐 Ngrok tunnel active: {base_url}")
+        print(f"🔐 Protected URL: {protected_url}")
         print(f"📡 Local server: http://{host}:{port}")
+        print(f"ℹ️  URL rewriting:")
+        print(f"     /{_tunnel.webhook_secret} -> /")
+        print(f"     /{_tunnel.webhook_secret}/input/ -> /input/")
+        print(f"🛡️  All other requests blocked with 401")
     else:
         print("\n❌ NGROK ERROR: Failed to establish tunnel")
         import sys
@@ -251,13 +296,8 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
         import sys
         sys.exit(1)
     
-    # Check for custom domain (optional)
-    domain = getattr(args, 'ngrok_domain', None) or os.getenv("NGROK_DOMAIN")
-    if domain:
-        print(f"🎯 Will use custom domain: {domain}")
-    else:
-        print("🔍 Will auto-detect reserved domains")
-    
+    print("🔐 Will auto-generate secret with complete URL protection")
+    print(f"ℹ️  URLs will use format: /SECRET instead of /webhook/SECRET")
     print("✅ Ngrok ready")
     return {}
 
