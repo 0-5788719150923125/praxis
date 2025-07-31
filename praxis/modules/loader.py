@@ -23,7 +23,8 @@ class ModuleLoader:
             'datasets': {},
             'lifecycle': {'init': [], 'cleanup': []},
             'cleanup_dirs': [],  # Directories to clean on reset
-            'logger_providers': []  # Functions that provide loggers
+            'logger_providers': [],  # Functions that provide loggers
+            'api_server_hooks': []  # Functions called when API server starts
         }
     
     def discover_modules(self) -> List[Dict]:
@@ -230,6 +231,14 @@ class ModuleLoader:
                 self.integration_registry['logger_providers'].append(provider_func)
                 registered.append('logger provider')
         
+        # API server hooks integration
+        if 'api_server_hooks' in integrations:
+            hook_config = integrations['api_server_hooks']
+            if hasattr(module, hook_config['function']):
+                hook_func = getattr(module, hook_config['function'])
+                self.integration_registry['api_server_hooks'].append(hook_func)
+                registered.append('API server hook')
+        
         return registered
     
     def get_cli_functions(self) -> List:
@@ -271,6 +280,10 @@ class ModuleLoader:
     def get_logger_providers(self) -> List:
         """Get all logger provider functions."""
         return self.integration_registry['logger_providers']
+    
+    def get_api_server_hooks(self) -> List:
+        """Get all API server hook functions."""
+        return self.integration_registry['api_server_hooks']
     
     def create_logger(self, cache_dir, ckpt_path=None, truncated_hash=None, **kwargs):
         """Create logger using loaded modules."""

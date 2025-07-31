@@ -61,7 +61,6 @@ dataset = load_dataset(
     name="sample-350BT",
     split="train",
     streaming=True,
-    trust_remote_code=True,
     cache_dir="data/datasets",
 ).shuffle(
     seed=42,
@@ -104,8 +103,9 @@ trained_tokenizer.add_special_tokens(
     {**special_tokens, "additional_special_tokens": additional_special_tokens}
 )
 
-# Define a ChatML template
-# https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/chat-markup-language
+# Define a ChatML template with tool support
+# https://huggingface.co/docs/transformers/en/conversations
+# https://huggingface.co/docs/transformers/en/chat_extras
 chat_template = """{% for message in messages %}
 {% if message['role'] == 'system' %}
 {{ bos_token }}system
@@ -113,12 +113,29 @@ chat_template = """{% for message in messages %}
 {% elif message['role'] == 'user' %}
 {{ bos_token }}user
 {{ message['content'] }}
+{% elif message['role'] == 'tool' %}
+{{ bos_token }}tool
+{{ message['content'] }}
 {% elif message['role'] == 'assistant' %}
 {{ bos_token }}assistant
+{% if message.tool_calls is defined %}
+{% for tool_call in message.tool_calls %}
+<tool_call>
+{"name": "{{ tool_call.function.name }}", "arguments": {{ tool_call.function.arguments | tojson }}}
+</tool_call>
+{% endfor %}
+{% endif %}
 {{ message['content'] }}
 {% endif %}
 {{ sep_token }}
 {% endfor %}
+{% if tools is defined and tools %}
+{{ bos_token }}tools
+{% for tool in tools %}
+{{ tool | tojson }}
+{% endfor %}
+{{ sep_token }}
+{% endif %}
 {% if add_generation_prompt %}
 {{ bos_token }}assistant
 {% endif %}"""
@@ -140,6 +157,46 @@ print(
             {"role": "user", "content": "Hello, how are you?"},
             {"role": "assistant", "content": "I'm doing well, thank you!"},
         ],
+        tokenize=False,
+    )
+)
+
+# Demonstrate tool usage with real tools from praxis/tools
+from praxis.tools import call_tool, get_tools_json_schema
+
+print("\nSample message with tool support using real tools:")
+tools = get_tools_json_schema()
+
+# Test the calculate_sum function
+result = call_tool("calculate_sum", {"a": 25, "b": 17})
+
+print(
+    trained_tokenizer.apply_chat_template(
+        [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant with access to tools.",
+            },
+            {"role": "user", "content": "What is 25 + 17?"},
+            {
+                "role": "assistant",
+                "content": "I'll calculate that for you.",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "calculate_sum",
+                            "arguments": {"a": 25, "b": 17},
+                        }
+                    }
+                ],
+            },
+            {"role": "tool", "content": str(result)},
+            {
+                "role": "assistant",
+                "content": f"The sum of 25 and 17 is {result}.",
+            },
+        ],
+        tools=tools,
         tokenize=False,
     )
 )

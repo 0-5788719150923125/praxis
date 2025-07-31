@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -197,6 +199,7 @@ MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 
 # Transform CLI args into global variables
 globals().update(vars(get_cli_args()))
+
 (_, args_hash, truncated_hash) = log_command()
 
 # Set seeds for reproducibility
@@ -1200,6 +1203,11 @@ class Generator:
         self.tokenizer = tokenizer
         self.request_queue = Queue()
         self.results = {}
+        from praxis.tools import call_tool, get_tools_json_schema
+
+        self.tools = get_tools_json_schema()
+        self.call_tool = call_tool
+        print(f"Loaded {len(self.tools)} tools for function calling")
 
     @contextlib.contextmanager
     def _eval_mode(self):
@@ -1235,7 +1243,7 @@ class Generator:
 
     def _process_single_request(self, request: GenerationRequest):
         """
-        Process a single generation request.
+        Process a single generation request, automatically handling tool calls if detected.
         """
         input_ids = self.tokenizer.encode(request.prompt, return_tensors="pt")
 
@@ -1305,7 +1313,70 @@ class Generator:
                 # Return the original text
                 return_text = request.prompt
 
-            return return_text
+        # Check if the generated text contains a tool call
+        tool_call = self._parse_tool_call(return_text)
+
+        if tool_call and self.tools and self.call_tool:
+            # Execute the tool
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("arguments", {})
+
+            try:
+                tool_result = self.call_tool(tool_name, tool_args)
+
+                # Build chat messages for the follow-up generation
+                # Parse the original prompt as chat template if possible
+                messages = [
+                    {"role": "user", "content": request.prompt},
+                    {
+                        "role": "assistant",
+                        "content": return_text,
+                        "tool_calls": [
+                            {"function": {"name": tool_name, "arguments": tool_args}}
+                        ],
+                    },
+                    {"role": "tool", "content": str(tool_result)},
+                ]
+
+                # Generate final response with tool result
+                final_prompt = self.tokenizer.apply_chat_template(
+                    messages,
+                    tools=self.tools,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+
+                # Create a new request for the final response
+                final_request = GenerationRequest(
+                    id=request.id + "_final", prompt=final_prompt, kwargs=request.kwargs
+                )
+
+                print(f"Called tool: {tool_name}")
+
+                # Recursively process (but tool calls won't nest due to the prompt structure)
+                return self._process_single_request(final_request)
+
+            except Exception as e:
+                print(f"Error calling tool {tool_name}: {e}")
+                return return_text
+
+        return return_text
+
+    def _parse_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
+        """Parse tool call from generated text."""
+
+        # Look for tool call pattern
+        tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
+        match = re.search(tool_pattern, text, re.DOTALL)
+
+        if match:
+            try:
+                tool_data = json.loads(match.group(1))
+                return tool_data
+            except json.JSONDecodeError:
+                pass
+
+        return None
 
     def fulfill_requests(self, max_requests: int = None) -> int:
         """
@@ -1531,6 +1602,11 @@ class ArgsWrapper:
 
 args_obj = ArgsWrapper(wandb=wandb, wandb_run_name=globals().get("wandb_run_name"))
 
+# Initialize loaded modules with proper parameters
+module_loader_with_conditions.run_init_hooks(
+    get_cli_args(), cache_dir, ckpt_path, truncated_hash
+)
+
 logger = module_loader_with_conditions.create_logger(
     cache_dir, ckpt_path, truncated_hash, wandb_enabled=wandb, args=args_obj
 )
@@ -1543,6 +1619,10 @@ generator = Generator(model, tokenizer)
 if local_rank == 0:
     api_server = APIServer(generator, host_name, port, tokenizer)
     api_server.start()
+
+    # Initialize any API server hooks from loaded modules
+    for hook_func in module_loader_with_conditions.get_api_server_hooks():
+        hook_func(host_name, port)
 
 
 # Load datasets
@@ -1686,6 +1766,9 @@ try:
         ckpt_path=ckpt_path,
     )
 except Exception as e:
+    # Run module cleanup hooks
+    module_loader_with_conditions.run_cleanup_hooks()
+
     # If we have a dashboard running, force crash it to show the error
     progress_bar = globals().get("progress_bar")
     if progress_bar and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
@@ -1697,6 +1780,9 @@ except Exception as e:
         # No dashboard, just re-raise the exception normally
         raise
 except KeyboardInterrupt:
+    # Run module cleanup hooks
+    module_loader_with_conditions.run_cleanup_hooks()
+
     # Handle Ctrl+C gracefully
     if progress_bar and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
         progress_bar.dashboard.stop()

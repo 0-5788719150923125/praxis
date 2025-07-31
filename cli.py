@@ -590,89 +590,99 @@ module_loader_with_conditions = module_loader
 def apply_defaults_and_parse(defaults_dict):
     """
     Apply custom default values to the parser and re-parse arguments.
-    
+
     This allows scripts to override defaults while maintaining full CLI compatibility.
     The logged command will show the actual script used, but the hash will be computed
     from the effective configuration for consistency.
-    
+
     Args:
         defaults_dict: Dictionary mapping argument names (with underscores) to default values
-        
+
     Returns:
         tuple: (parsed_args, hash_computed_from_effective_config)
     """
     global args
-    
+
     # Store original command for logging
     original_command = sys.argv[:]
-    
+
     # Apply custom defaults to parser
     for action in parser._actions:
-        if hasattr(action, 'dest') and action.dest in defaults_dict:
+        if hasattr(action, "dest") and action.dest in defaults_dict:
             action.default = defaults_dict[action.dest]
-    
+
     # Re-parse arguments with new defaults
     args = parser.parse_args()
-    
+
+    # Re-evaluate module conditions with new args
+    for module_manifest in modules:
+        module_loader.load_module(module_manifest, args, verbose=False)
+
     # Build equivalent command for hash computation
     equivalent_args = []
-    
+
     # Convert defaults to CLI format for hash computation
     for arg_name, value in defaults_dict.items():
-        cli_arg = '--' + arg_name.replace('_', '-')
+        cli_arg = "--" + arg_name.replace("_", "-")
         if isinstance(value, bool):
             if value:  # Only add flag if it's True
                 equivalent_args.append(cli_arg)
         else:
             equivalent_args.extend([cli_arg, str(value)])
-    
+
     # Get user-provided arguments
     user_args = sys.argv[1:]
     user_arg_names = set()
     i = 0
     while i < len(user_args):
-        if user_args[i].startswith('--'):
+        if user_args[i].startswith("--"):
             user_arg_names.add(user_args[i])
-            if i + 1 < len(user_args) and not user_args[i + 1].startswith('-'):
+            if i + 1 < len(user_args) and not user_args[i + 1].startswith("-"):
                 i += 2
             else:
                 i += 1
         else:
             i += 1
-    
+
     # Filter out defaults that user has overridden
     filtered_defaults = []
     i = 0
     while i < len(equivalent_args):
         if equivalent_args[i] not in user_arg_names:
             filtered_defaults.append(equivalent_args[i])
-            if i + 1 < len(equivalent_args) and not equivalent_args[i + 1].startswith('-'):
+            if i + 1 < len(equivalent_args) and not equivalent_args[i + 1].startswith(
+                "-"
+            ):
                 filtered_defaults.append(equivalent_args[i + 1])
                 i += 2
             else:
                 i += 1
         else:
-            if i + 1 < len(equivalent_args) and not equivalent_args[i + 1].startswith('-'):
+            if i + 1 < len(equivalent_args) and not equivalent_args[i + 1].startswith(
+                "-"
+            ):
                 i += 2
             else:
                 i += 1
-    
+
     # Combine for hash computation
     hash_args = filtered_defaults + user_args
-    
+
     # Compute hash from effective configuration
     effective_hash = _compute_args_hash(hash_args)
-    
+
     # Set up custom logging that shows original command but uses computed hash
     global log_command
     original_log_command = log_command
-    
-    def custom_log_command(exclude_from_hash=["--reset", "--debug"]):
+
+    def custom_log_command(
+        exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb"]
+    ):
         # Log the original command with computed hash
         script_name = os.path.basename(original_command[0])
         args_list = original_command[1:]
         displayed_command = f"python {script_name} {' '.join(args_list)}"
-        
+
         # If this is run_alpha.py, also construct the full equivalent run.py command
         log_entry_command = displayed_command
         if script_name == "run_alpha.py":
@@ -687,36 +697,36 @@ def apply_defaults_and_parse(defaults_dict):
                 elif value is not None:
                     full_args.append(arg_name)
                     full_args.append(str(value))
-            
+
             full_run_command = f"python run.py {' '.join(full_args)}"
             log_entry_command = f'"{displayed_command}" | "{full_run_command}"'
-        
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         truncated_hash = effective_hash[:9]
-        new_entry = f'{timestamp} | {truncated_hash} | {log_entry_command}\n'
-        
+        new_entry = f"{timestamp} | {truncated_hash} | {log_entry_command}\n"
+
         # Write to history.log
         log_file = "history.log"
         existing_content = ""
         if os.path.exists(log_file):
             with open(log_file, "r") as f:
                 existing_content = f.read()
-        
+
         with open(log_file, "w") as f:
             f.write(new_entry + existing_content)
-        
+
         # Save hash to MODEL_HASH.txt
         hash_file_dir = os.path.join("data", "praxis")
         hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
         os.makedirs(hash_file_dir, exist_ok=True)
         with open(hash_file_path, "w") as f:
             f.write(truncated_hash)
-        
+
         return displayed_command, effective_hash, truncated_hash
-    
+
     # Replace log_command function
     log_command = custom_log_command
-    
+
     return args, effective_hash
 
 
@@ -740,7 +750,7 @@ def _compute_args_hash(args_list, exclude_from_hash=["--reset", "--debug"]):
             if pos_arg_name not in exclude_from_hash:
                 arg_dict[pos_arg_name] = args_list[i]
             i += 1
-    
+
     sorted_args = dict(sorted(arg_dict.items()))
     args_json = json.dumps(sorted_args, sort_keys=True)
     hash_object = hashlib.sha256(args_json.encode())
@@ -849,4 +859,4 @@ def log_command(exclude_from_hash=["--reset", "--debug"]):
 
 
 # Export the module loader for use in run.py
-__all__ = ['module_loader_with_conditions', 'args']
+__all__ = ["module_loader_with_conditions", "args"]

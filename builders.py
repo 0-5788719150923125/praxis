@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import re
@@ -17,6 +18,7 @@ DEFAULT_WEIGHT = 1.0
 
 SRC_WEIGHT = 0.1
 DIR_WEIGHT = 2.0
+TOOLS_WEIGHT = 0.1
 GUN_WEIGHT = 0.01
 
 DATASET_COLLECTIONS = dict(
@@ -72,6 +74,7 @@ class DataFormat(Enum):
     WIKI = "wiki"
     RL = "rl"
     COT = "cot"
+    TOOL_CALLING = "tool_calling"
 
 
 HUGGINGFACE_DATASETS = {
@@ -671,6 +674,67 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
+def format_tool_calling(
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+) -> str:
+    """
+    Format synthetic tool-calling examples for training.
+    Generates math problems that require the calculate_sum tool.
+    """
+
+    # Generate random math problem
+    a = random.randint(1, 100_000_000)
+    b = random.randint(1, 100_000_000)
+    result = a + b
+
+    # Vary the problem phrasing
+    problem_templates = [
+        f"What is {a} + {b}?",
+        f"Calculate {a} plus {b}",
+        f"Can you add {a} and {b} for me?",
+        f"I need to know the sum of {a} and {b}",
+        f"What's the result of {a} + {b}?",
+        f"Please compute {a} + {b}",
+        f"Help me add {a} to {b}",
+        f"Find the sum of {a} and {b}",
+    ]
+
+    user_prompt = random.choice(problem_templates)
+
+    # Assistant's response with tool call
+    assistant_templates = [
+        "I'll calculate that for you.",
+        "Let me compute the sum.",
+        "I'll add those numbers.",
+        "Let me calculate that sum for you.",
+        "I'll help you with that calculation.",
+    ]
+
+    assistant_intro = random.choice(assistant_templates)
+
+    # Build the conversation with tool usage
+    messages = [
+        {"role": "user", "content": user_prompt},
+        {
+            "role": "assistant",
+            "content": f"{assistant_intro}\n<tool_call>\n{json.dumps({'name': 'calculate_sum', 'arguments': {'a': a, 'b': b}}, indent=2)}\n</tool_call>",
+            "tool_calls": [
+                {"function": {"name": "calculate_sum", "arguments": {"a": a, "b": b}}}
+            ],
+        },
+        {"role": "tool", "content": str(float(result))},
+        {"role": "assistant", "content": f"The sum of {a} and {b} is {result}."},
+    ]
+
+    # Get available tools (we'll include both for variety)
+    from praxis.tools import get_tools_json_schema
+
+    tools = get_tools_json_schema()
+
+    # Apply chat template with tools
+    return tokenizer.apply_chat_template(messages, tools=tools, tokenize=False) + "\n"
+
+
 def format_cot(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict[str, Any]:
@@ -876,6 +940,7 @@ FORMAT_HANDLERS = {
     DataFormat.WIKI: format_wiki,
     DataFormat.RL: format_rl,
     DataFormat.COT: format_cot,
+    DataFormat.TOOL_CALLING: format_tool_calling,
 }
 
 
@@ -906,6 +971,11 @@ def get_datamodules(
     for c in config["primary"]:
         # load configs for huggingface datasets
         train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
+
+    # Add synthetic tool-calling dataset if phi is enabled
+    if phi:
+        train_data.append(get_dataset("synthetic-tool-calling", tokenizer, seed))
+        print("[CMD] Initialized SyntheticToolCallingDataset.")
 
     if not pile:
         if source:
@@ -996,6 +1066,10 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
     elif format == "gun":
         dataset = GunChatDataset(tokenizer)
         dataset.weight = GUN_WEIGHT
+        return dataset
+    elif format == "synthetic-tool-calling":
+        dataset = SyntheticToolCallingDataset(tokenizer, seed, {})
+        dataset.weight = TOOLS_WEIGHT
         return dataset
 
 
@@ -1548,6 +1622,22 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
         return load_dataset(**fixed_args)
 
     return dataset
+
+
+class SyntheticToolCallingDataset(PraxisSampler):
+    """Generates synthetic tool-calling examples for training."""
+
+    def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
+        super().__init__(tokenizer)
+        self.tokenizer = tokenizer
+        self.format_handler = format_tool_calling
+        self.dataset_path = "synthetic-tool-calling"
+
+    def fill_sequence_cache(self):
+        # Generate a synthetic document (empty since we generate everything in the formatter)
+        document = {}
+        formatted = self.format_handler(document, [], self.tokenizer)
+        self.sequence_cache.append(formatted)
 
 
 class HuggingfaceDataset(PraxisSampler):
