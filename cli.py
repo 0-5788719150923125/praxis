@@ -7,7 +7,7 @@ import random
 import sys
 from datetime import datetime
 
-from optimizers import OPTIMIZER_PROFILES
+from praxis.optimizers import OPTIMIZER_PROFILES
 from praxis import (
     ACTIVATION_REGISTRY,
     ATTENTION_REGISTRY,

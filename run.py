@@ -171,7 +171,7 @@ from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from optimizers import get_optimizer, get_optimizer_profile
+from praxis.optimizers import get_optimizer, get_optimizer_profile
 
 ignored_warnings = [
     ".*Checkpoint directory.*exists and is not empty*",
@@ -290,6 +290,20 @@ config = PraxisConfig(
     rl_type=rl_type,
 )
 
+# Add optimizer configuration after config is created
+optimizer_config, disable_schedule = get_optimizer_profile(
+    optimizer, any([fixed_schedule, schedule_free])
+)
+
+# Store optimizer settings in config for decoders that need it (e.g., MonoForward)
+config.optimizer_config = optimizer_config
+config.optimizer_wrappers = {
+    "trac": trac,
+    "ortho": ortho,
+    "lookahead": lookahead,
+    "schedule_free": schedule_free,
+}
+
 # Misc hyperparameters
 hparams = dict(
     batch_size=batch_size,
@@ -326,10 +340,7 @@ train_params = dict(
     callbacks=[],
 )
 
-# Optimizer configuration
-optimizer_config, disable_schedule = get_optimizer_profile(
-    optimizer, any([fixed_schedule, schedule_free])
-)
+# Optimizer configuration already done above
 
 # Configure the learning rate scheduler
 if disable_schedule:

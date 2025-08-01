@@ -1,9 +1,10 @@
 """LayerWithOptimizer: A module wrapper that includes its own optimizer for immediate updates."""
 
-from typing import Dict, Any, Optional, Callable, Tuple
+from typing import Dict, Any, Optional, Callable, Tuple, Type
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim import Optimizer
 
 
 class LayerWithOptimizer(nn.Module):
@@ -23,7 +24,7 @@ class LayerWithOptimizer(nn.Module):
     def __init__(
         self,
         layer: nn.Module,
-        optimizer_class: type = torch.optim.Adam,
+        optimizer_class: Type[Optimizer] = torch.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
         loss_fn: Optional[Callable] = None,
         projection_layer: Optional[nn.Module] = None,
@@ -33,7 +34,7 @@ class LayerWithOptimizer(nn.Module):
         
         Args:
             layer: The actual layer/module to wrap
-            optimizer_class: Optimizer class to use (default: Adam)
+            optimizer_class: Optimizer class to use (any torch.optim.Optimizer subclass)
             optimizer_kwargs: Keyword arguments for optimizer
             loss_fn: Optional custom loss function. If None, uses cross entropy
             projection_layer: Optional projection for computing predictions
@@ -188,4 +189,19 @@ class LayerWithOptimizer(nn.Module):
             self.optimizer.load_state_dict(optimizer_state)
         
         self.update_count = update_count
+    
+    def __repr__(self):
+        """Custom representation showing optimizer info."""
+        optimizer_name = type(self.optimizer).__name__
+        optimizer_lr = self.optimizer.param_groups[0]['lr'] if self.optimizer.param_groups else 'N/A'
+        
+        # Build the representation
+        lines = [f"{self.__class__.__name__}("]
+        lines.append(f"  optimizer={optimizer_name}(lr={optimizer_lr}),")
+        lines.append(f"  (layer): {repr(self.layer)},")
+        if self.projection is not None:
+            lines.append(f"  (projection): {repr(self.projection)}")
+        lines.append(")")
+        
+        return "\n".join(lines)
     
