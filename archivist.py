@@ -202,6 +202,8 @@ def _get_key():
 def _get_available_projects():
     """Return a list of available projects."""
 
+    archive_dir = Path("./staging")
+
     if not archive_dir.exists() or not list(archive_dir.glob("*.zip")):
         return []
 
