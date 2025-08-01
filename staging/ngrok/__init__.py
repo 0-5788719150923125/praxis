@@ -247,6 +247,17 @@ def api_server_hook(host, port):
     """Hook function called when API server starts."""
     global _tunnel
 
+    # Check if ngrok is actually enabled
+    try:
+        from cli import get_cli_args
+        args = get_cli_args()
+        if not getattr(args, "ngrok", False):
+            # Ngrok not enabled, don't start tunnel
+            return
+    except:
+        # If we can't get args, don't start tunnel
+        return
+
     if _tunnel is not None:
         print("⚠️  Ngrok tunnel already running")
         return
@@ -259,17 +270,10 @@ def api_server_hook(host, port):
     except ImportError:
         pass
 
-    # Get auth token from global args or environment
-    auth_token = None
-    try:
-        from cli import get_cli_args
-
-        args = get_cli_args()
-        auth_token = getattr(args, "ngrok_auth_token", None) or os.getenv(
-            "NGROK_AUTHTOKEN"
-        )
-    except:
-        auth_token = os.getenv("NGROK_AUTHTOKEN")
+    # Get auth token from args or environment
+    auth_token = getattr(args, "ngrok_auth_token", None) or os.getenv(
+        "NGROK_AUTHTOKEN"
+    )
 
     print(f"🚀 Starting ngrok tunnel for {host}:{port}")
     _tunnel = NgrokTunnel(host, port, auth_token)

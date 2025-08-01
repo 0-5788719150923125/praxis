@@ -29,7 +29,7 @@ class RoPE(NoPE):
         """
         super().__init__(config)
         self.inv_freq: Optional[torch.Tensor] = None
-        self.theta: float = 1000.0
+        self.theta: float = 10000.0
         self._cached_cos: Optional[torch.Tensor] = None
         self._cached_sin: Optional[torch.Tensor] = None
         self._cached_seq_length: Optional[int] = None
