@@ -958,7 +958,7 @@ class TerminalInterface(Callback):
             info_dict["target_size"] = target_batch_size
             info_dict["depth"] = depth
             info_dict["hidden_size"] = hidden_size
-            info_dict["embed_size"] = hidden_size
+            info_dict["embed_size"] = embed_size
             info_dict["dropout"] = dropout
             info_dict["debug"] = debug
             info_dict["meta"] = [
