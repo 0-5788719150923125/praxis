@@ -320,24 +320,19 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if labels is not None:
             # Check if decoder handled training internally
             if "_layer_wise_complete" in outputs.losses:
-                # Decoder handled layer-wise training, but we still need to train embeddings/head
-                # Since decoder outputs are detached, compute a fresh forward for embeddings
-                if self.training:
-                    # Get fresh embeddings (with gradients)
-                    fresh_embeds = self.embeds(input_ids)
-                    
-                    # Simple projection for embedding training
-                    # Use a lightweight loss - just train embeddings to be useful
-                    embedding_logits = self.head(fresh_embeds)
-                    
-                    main_loss = self._compute_loss(
-                        logits=embedding_logits,
-                        labels=labels,
-                        embeddings=fresh_embeds,
-                        classifier=self.head.classifier if hasattr(self.head, 'classifier') else None,
-                        input_ids=input_ids,
-                    )
-                    loss = outputs.losses.add_loss("embedding_head", main_loss)
+                # MonoForward handled layer-wise training internally
+                # But we still need a differentiable loss for the main optimizer
+                # Compute a simple loss on the goodness scores for gradient flow
+                logits = hidden_states  # These are goodness scores from MonoForward
+                classifier = None
+                main_loss = self._compute_loss(
+                    logits=logits,
+                    labels=labels,
+                    embeddings=hidden_states,
+                    classifier=classifier,
+                    input_ids=input_ids,
+                )
+                loss = outputs.losses.add_loss("main", main_loss)
             elif hidden_states.size(-1) == self.config.vocab_size:
                 # Decoder returned vocab-sized output (e.g., goodness scores)
                 # Use these directly as logits for loss computation
@@ -368,7 +363,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     classifier=classifier,
                     input_ids=input_ids,
                 )
-            loss = outputs.losses.add_loss("main", main_loss)
+                loss = outputs.losses.add_loss("main", main_loss)
 
         # We omit auxiliary losses during validation and inference
         if self.training and labels is not None:

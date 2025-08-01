@@ -120,7 +120,9 @@ class MonoForwardDecoder(SequentialDecoder):
                 )
                 optimizer_class = type(base_optimizer)
 
-            return optimizer_class, optimizer_config
+            # Remove optimizer_name from kwargs as it's not a valid parameter
+            optimizer_kwargs = {k: v for k, v in optimizer_config.items() if k != "optimizer_name"}
+            return optimizer_class, optimizer_kwargs
         else:
             # Fallback to default
             print("MonoForwardDecoder: No optimizer config provided, using Adam")
@@ -143,17 +145,19 @@ class MonoForwardDecoder(SequentialDecoder):
     ]:
         """
         Forward pass using LayerWithOptimizer for true O(1) memory.
+        
+        Always returns accumulated goodness scores for consistency between
+        training and inference.
         """
         _, seq_len, _ = hidden_states.shape
 
-        # For inference, prepare goodness accumulator
-        if not self.training:
-            total_goodness = torch.zeros(
-                hidden_states.size(0),
-                seq_len,
-                self.config.vocab_size,
-                device=hidden_states.device,
-            )
+        # Always accumulate goodness scores
+        total_goodness = torch.zeros(
+            hidden_states.size(0),
+            seq_len,
+            self.config.vocab_size,
+            device=hidden_states.device,
+        )
 
         current_route: List[int] = []
         controller_state = None
@@ -215,14 +219,18 @@ class MonoForwardDecoder(SequentialDecoder):
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             hidden_states = self.post_layer(hidden_states, layer_idx)
 
-            # For inference, accumulate goodness
-            if not self.training:
-                with torch.no_grad():
-                    # Compute goodness for this layer
-                    goodness = wrapped_layer.projection(hidden_states)
+            # Always accumulate goodness for this layer
+            # Compute goodness for this layer
+            goodness = wrapped_layer.projection(hidden_states)
 
-                    # Accumulate all layers' goodness
-                    min_len = min(goodness.size(1), total_goodness.size(1))
+            # Accumulate all layers' goodness
+            min_len = min(goodness.size(1), total_goodness.size(1))
+            if self.training:
+                # During training, accumulate with gradients for the final loss
+                total_goodness[:, :min_len] = total_goodness[:, :min_len] + goodness[:, :min_len]
+            else:
+                # During inference, no gradients needed
+                with torch.no_grad():
                     total_goodness[:, :min_len] += goodness[:, :min_len]
 
             # Update route
@@ -236,19 +244,12 @@ class MonoForwardDecoder(SequentialDecoder):
         self.controller.post_forward(hidden_states, current_route)
         hidden_states = self.order(hidden_states)
 
-        # Return appropriate output
-        if self.training:
-            # During training, we need to provide a path for embedding/head training
-            # Since all our hidden states are detached, we'll signal that a separate
-            # forward pass is needed for embeddings/head
-            losses.add_loss("_layer_wise_complete", 0.0)
+        # Add marker to signal layer-wise training is complete
+        if self.training and labels is not None:
+            losses.add_loss("_layer_wise_complete", torch.tensor(0.0, requires_grad=True))
 
-            # Return the final detached hidden states
-            # The model will need to do a separate forward for embeddings/head
-            return hidden_states, past_key_values, current_state, losses
-        else:
-            # During inference, return goodness scores for classification
-            return total_goodness, past_key_values, current_state, losses
+        # Always return accumulated goodness scores
+        return total_goodness, past_key_values, current_state, losses
 
     def parameters(self, recurse: bool = True):
         """Override to exclude layer parameters (they have their own optimizers)."""

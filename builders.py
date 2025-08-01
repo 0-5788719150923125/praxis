@@ -15,9 +15,8 @@ from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
 DEFAULT_WEIGHT = 1.0
-
-SRC_WEIGHT = 0.1
-DIR_WEIGHT = 2.0
+SRC_WEIGHT = 0.2
+DIR_WEIGHT = 1.0
 TOOLS_WEIGHT = 0.1
 GUN_WEIGHT = 0.01
 
@@ -29,13 +28,13 @@ DATASET_COLLECTIONS = dict(
         "fineweb": 0.5,
         "textbooks": 0.002,
         "tinystories": 0.01,
-        "persona-chat": 0.05,
+        "persona-chat": 0.1,
         "soda": 0.25,
-        "wildchat": 0.05,
+        "wildchat": 0.1,
         "natural-instructions": 0.2,
-        "cosmopedia-v2": 0.05,
-        "smoltalk": 0.05,
-        "nextcoder": 0.01,
+        "cosmopedia-v2": 0.1,
+        "smoltalk": 0.1,
+        "nextcoder": 0.02,
         "nextcoder-conversational": 0.05,
         "hermes-3-dataset": 0.1,
         # "github-code": 0.01,
