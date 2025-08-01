@@ -409,6 +409,31 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             elif input_embeddings is not None and hasattr(self.head, "lm_head"):
                 # For regular heads, tie the weights directly
                 self.head.lm_head.weight = input_embeddings.weight
+    
+    def state_dict(self, *args, **kwargs):
+        """Override to ensure only tensors are in the state dict for HuggingFace compatibility."""
+        # Use destination argument to control what gets included
+        destination = kwargs.get('destination', {})
+        prefix = kwargs.get('prefix', '')
+        keep_vars = kwargs.get('keep_vars', False)
+        
+        # Get state dict with standard PyTorch behavior
+        state = super().state_dict(*args, **kwargs)
+        
+        # Filter to only include tensors and parameters
+        filtered_state = {}
+        for key, value in state.items():
+            # Skip any _extra_state keys from get_extra_state()
+            if '_extra_state' in key:
+                continue
+            # Skip any optimizer-related keys
+            if 'optimizer' in key.lower():
+                continue
+            # Only include actual tensors
+            if isinstance(value, (torch.Tensor, torch.nn.Parameter)):
+                filtered_state[key] = value
+        
+        return filtered_state
 
 
 @dataclass

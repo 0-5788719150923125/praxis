@@ -165,30 +165,31 @@ class LayerWithOptimizer(nn.Module):
         return output, loss
     
     def state_dict(self, *args, **kwargs):
-        """
-        Override to include optimizer state in checkpoint.
-        """
+        """Override to exclude optimizer state from main state dict."""
+        # Get the normal state dict
         state = super().state_dict(*args, **kwargs)
-        state['_optimizer_state_dict'] = self.optimizer.state_dict()
-        state['_update_count'] = self.update_count
+        
+        # Remove optimizer state and update count if they somehow got included
+        keys_to_remove = []
+        for key in state:
+            if 'optimizer' in key or key.endswith('update_count'):
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            state.pop(key, None)
+        
         return state
     
-    def load_state_dict(self, state_dict, strict=True):
-        """
-        Override to load optimizer state from checkpoint.
-        """
-        # Extract our custom entries
-        optimizer_state = state_dict.pop('_optimizer_state_dict', None)
-        update_count = state_dict.pop('_update_count', 0)
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                             missing_keys, unexpected_keys, error_msgs):
+        """Override to handle optimizer state loading separately."""
+        # Load the normal state dict
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict,
+                                     missing_keys, unexpected_keys, error_msgs)
         
-        # Load the regular state
-        super().load_state_dict(state_dict, strict=strict)
-        
-        # Load optimizer state if available
-        if optimizer_state is not None:
-            self.optimizer.load_state_dict(optimizer_state)
-        
-        self.update_count = update_count
+        # Note: Optimizer state will need to be loaded separately
+        # This is intentional to maintain HuggingFace compatibility
+    
     
     def __repr__(self):
         """Custom representation showing optimizer info."""
