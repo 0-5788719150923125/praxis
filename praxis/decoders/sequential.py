@@ -31,6 +31,7 @@ class SequentialDecoder(BaseDecoder):
         current_state: Optional[List[Any]] = None,
         block_ids: Optional[Tensor] = None,
         losses: LossContainer = None,
+        labels: Optional[Tensor] = None,
     ) -> Tuple[
         Tensor, Optional[Union[List[Any], Dict[str, Any]]], Optional[List[Any]], Tensor
     ]:
@@ -44,6 +45,7 @@ class SequentialDecoder(BaseDecoder):
             current_state: Optional current layer states
             block_ids: Optional block identification tensor
             losses: A storage class for auxiliary losses
+            labels: Optional labels tensor for supervised learning
 
         Returns:
             Tuple containing:

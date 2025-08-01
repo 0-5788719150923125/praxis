@@ -31,6 +31,7 @@ class PraxisModel(PreTrainedModel):
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
+        
 
     def forward(
         self,
@@ -40,6 +41,7 @@ class PraxisModel(PreTrainedModel):
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        labels: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
         losses = LossContainer()
@@ -62,6 +64,7 @@ class PraxisModel(PreTrainedModel):
             current_state,
             block_ids,
             losses,
+            labels,
         )
 
         return PraxisModelOutput(
@@ -243,13 +246,21 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             past_key_values=past_key_values,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            labels=labels,
         )
 
         # Get hidden states before computing logits
         hidden_states = outputs.last_hidden_state
 
         backward_logits = None
-        if self.encoder:
+
+        # Check if decoder returned goodness scores (already in vocab space)
+        if hidden_states.size(-1) == self.config.vocab_size:
+            # Decoder returned goodness scores - use directly as logits
+            logits = hidden_states
+            classifier = None
+            backward_logits = None
+        elif self.encoder:
             logits = self.encoder.decode(
                 hidden_states,
                 outputs.h_encoder,
@@ -307,7 +318,40 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            if self.config.bidirectional:
+            # Check if decoder handled training internally
+            if "_layer_wise_complete" in outputs.losses:
+                # Decoder handled layer-wise training, but we still need to train embeddings/head
+                # Since decoder outputs are detached, compute a fresh forward for embeddings
+                if self.training:
+                    # Get fresh embeddings (with gradients)
+                    fresh_embeds = self.embeds(input_ids)
+                    
+                    # Simple projection for embedding training
+                    # Use a lightweight loss - just train embeddings to be useful
+                    embedding_logits = self.head(fresh_embeds)
+                    
+                    main_loss = self._compute_loss(
+                        logits=embedding_logits,
+                        labels=labels,
+                        embeddings=fresh_embeds,
+                        classifier=self.head.classifier if hasattr(self.head, 'classifier') else None,
+                        input_ids=input_ids,
+                    )
+                    loss = outputs.losses.add_loss("embedding_head", main_loss)
+            elif hidden_states.size(-1) == self.config.vocab_size:
+                # Decoder returned vocab-sized output (e.g., goodness scores)
+                # Use these directly as logits for loss computation
+                logits = hidden_states
+                classifier = None
+                main_loss = self._compute_loss(
+                    logits=logits,
+                    labels=labels,
+                    embeddings=hidden_states,
+                    classifier=classifier,
+                    input_ids=input_ids,
+                )
+                loss = outputs.losses.add_loss("main", main_loss)
+            elif self.config.bidirectional:
                 main_loss = self._compute_bidirectional_loss(
                     logits=logits,
                     labels=labels,
@@ -328,7 +372,12 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         # We omit auxiliary losses during validation and inference
         if self.training and labels is not None:
-            loss = self.strategy(outputs.losses.get_loss_values())
+            if loss == 0 and len(outputs.losses.get_loss_values()) > 0:
+                # For any decoder that adds layer-wise losses, we need special handling
+                loss = self.strategy(outputs.losses.get_loss_values())
+            else:
+                # If we already have a loss from the main path, use it
+                pass
 
         return CausalLMOutputWithPast(
             loss=loss,
