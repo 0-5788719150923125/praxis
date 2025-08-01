@@ -334,8 +334,6 @@ def apply_response_middleware(response):
 
 @app.route("/<path:filename>", methods=["GET", "POST", "OPTIONS", "HEAD"])
 def serve_static(filename):
-    # Debug log
-    print(f"[DEBUG] serve_static called with: {filename}, method: {request.method}")
 
     # If this is a POST to input, redirect to the actual input handler
     if filename in ["input", "input/"] and request.method in ["POST", "OPTIONS"]:
