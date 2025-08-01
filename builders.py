@@ -1798,6 +1798,7 @@ class MultiDirectoryDataset(PraxisSampler):
             ".git",
             ".venv",
             "venv",
+            "data",
             "__pycache__",
             "staging",
             "build",
