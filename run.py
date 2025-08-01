@@ -957,7 +957,8 @@ class TerminalInterface(Callback):
             info_dict["num_queries"] = int(num_heads.split(":")[1])
             info_dict["target_size"] = target_batch_size
             info_dict["depth"] = depth
-            info_dict["dimension"] = hidden_size
+            info_dict["hidden_size"] = hidden_size
+            info_dict["embed_size"] = hidden_size
             info_dict["dropout"] = dropout
             info_dict["debug"] = debug
             info_dict["meta"] = [
@@ -1617,7 +1618,9 @@ if logger:
 generator = Generator(model, tokenizer)
 
 if local_rank == 0:
-    api_server = APIServer(generator, host_name, port, tokenizer, module_loader_with_conditions)
+    api_server = APIServer(
+        generator, host_name, port, tokenizer, module_loader_with_conditions
+    )
     api_server.start()
 
     # Initialize any API server hooks from loaded modules
