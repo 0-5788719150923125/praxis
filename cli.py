@@ -7,7 +7,6 @@ import random
 import sys
 from datetime import datetime
 
-from praxis.optimizers import OPTIMIZER_PROFILES
 from praxis import (
     ACTIVATION_REGISTRY,
     ATTENTION_REGISTRY,
@@ -28,6 +27,7 @@ from praxis import (
     STRATEGIES_REGISTRY,
 )
 from praxis.modules import ModuleLoader
+from praxis.optimizers import OPTIMIZER_PROFILES
 
 
 def wrap_green(text):
@@ -676,7 +676,7 @@ def apply_defaults_and_parse(defaults_dict):
     original_log_command = log_command
 
     def custom_log_command(
-        exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb"]
+        exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"]
     ):
         # Log the original command with computed hash
         script_name = os.path.basename(original_command[0])
@@ -730,7 +730,10 @@ def apply_defaults_and_parse(defaults_dict):
     return args, effective_hash
 
 
-def _compute_args_hash(args_list, exclude_from_hash=["--reset", "--debug"]):
+def _compute_args_hash(
+    args_list,
+    exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"],
+):
     """Compute hash from argument list (internal helper)."""
     arg_dict = {}
     i = 0
@@ -761,7 +764,9 @@ def get_cli_args():
     return args
 
 
-def log_command(exclude_from_hash=["--reset", "--debug"]):
+def log_command(
+    exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"]
+):
     """
     Logs the current command line execution to history.log in the root directory.
     New commands are added to the top of the file.
