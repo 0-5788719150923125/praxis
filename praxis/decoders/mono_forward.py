@@ -36,20 +36,24 @@ class MonoForwardDecoder(SequentialDecoder):
         # Replace each layer with LayerWithOptimizer wrapper
         wrapped_layers = nn.ModuleList()
         num_layers = len(self.locals)
-        
+
         # Use smaller vocabulary for internal projections to reduce parameters
         # Only the final layer uses full vocabulary size
-        internal_vocab_size = min(512, config.vocab_size)  # Smaller for efficiency
+        internal_vocab_size = config.vocab_size // 4  # Smaller for efficiency
 
         for i, layer in enumerate(self.locals):
             # Every layer needs a projection for local training
             if i == num_layers - 1:  # Last layer
                 # Final layer uses full vocabulary for output
-                projection = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+                projection = nn.Linear(
+                    config.hidden_size, config.vocab_size, bias=False
+                )
             else:
                 # Earlier layers use smaller vocabulary for efficiency
-                projection = nn.Linear(config.hidden_size, internal_vocab_size, bias=False)
-            
+                projection = nn.Linear(
+                    config.hidden_size, internal_vocab_size, bias=False
+                )
+
             # Initialize projection weights
             nn.init.normal_(projection.weight, std=(2.0 / config.hidden_size) ** 0.5)
 
@@ -131,7 +135,9 @@ class MonoForwardDecoder(SequentialDecoder):
                 optimizer_class = type(base_optimizer)
 
             # Remove optimizer_name from kwargs as it's not a valid parameter
-            optimizer_kwargs = {k: v for k, v in optimizer_config.items() if k != "optimizer_name"}
+            optimizer_kwargs = {
+                k: v for k, v in optimizer_config.items() if k != "optimizer_name"
+            }
             return optimizer_class, optimizer_kwargs
         else:
             # Fallback to default
@@ -155,7 +161,7 @@ class MonoForwardDecoder(SequentialDecoder):
     ]:
         """
         Forward pass using LayerWithOptimizer for true O(1) memory.
-        
+
         Always returns accumulated goodness scores for consistency between
         training and inference.
         """
@@ -230,7 +236,10 @@ class MonoForwardDecoder(SequentialDecoder):
             hidden_states = self.post_layer(hidden_states, layer_idx)
 
             # BP prediction mode: only use final layer's projection for output
-            if layer_idx == self.num_experts - 1 and wrapped_layer.projection is not None:
+            if (
+                layer_idx == self.num_experts - 1
+                and wrapped_layer.projection is not None
+            ):
                 # Only the final layer contributes to output in BP mode
                 goodness = wrapped_layer.projection(hidden_states)
                 min_len = min(goodness.size(1), total_goodness.size(1))

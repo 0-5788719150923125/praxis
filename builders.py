@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
 DEFAULT_WEIGHT = 1.0
-SRC_WEIGHT = 0.2
+SRC_WEIGHT = 0.5
 DIR_WEIGHT = 1.0
 TOOLS_WEIGHT = 0.1
 GUN_WEIGHT = 0.01
