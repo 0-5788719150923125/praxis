@@ -31,14 +31,13 @@ DATASET_COLLECTIONS = dict(
         "persona-chat": 0.1,
         "soda": 0.25,
         "wildchat": 0.1,
-        "natural-instructions": 0.2,
-        "cosmopedia-v2": 0.1,
+        "natural-instructions": 0.5,
+        "cosmopedia-v2": 0.25,
         "smoltalk": 0.1,
-        "nextcoder": 0.02,
-        "nextcoder-conversational": 0.05,
+        "nextcoder": 0.05,
+        "nextcoder-conversational": 0.1,
         "hermes-3-dataset": 0.1,
-        # "github-code": 0.01,
-        # "wikipedia": 0.001,
+        "wikipedia": 0.01,
         # "legal": 0.001,
     },
     pile={
@@ -965,10 +964,12 @@ def get_datamodules(
         )
         time.sleep(5)
 
+    print("Training datasets:")
     train_data = []
     config = get_dataset_configs(dev, pile, phi, rl_type)
     for c in config["primary"]:
         # load configs for huggingface datasets
+        print(dict(path=c["path"], weight=c["weight"]))
         train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
 
     # Add synthetic tool-calling dataset if phi is enabled
@@ -1002,9 +1003,12 @@ def get_datamodules(
             # load configs for training on live chat data from https://src.eco
             train_data.append(get_dataset("gun", tokenizer, seed))
 
+    print("Validation data:")
+
     validation_data = []
     if len(config["validation"]) > 0:
         for c in config["validation"]:
+            print(dict(path=c["path"], weight=c["weight"]))
             validation_data.append(
                 get_dataset("huggingface", tokenizer, seed, c, *args)
             )
@@ -1110,13 +1114,6 @@ def get_dataset_configs(
                 else:
                     config = add_collection(config, "rl", "primary")
             config = add_collection(config, "validation", "validation")
-
-    for stage in ["primary", "validation"]:
-        print(f"\n{stage} datasets:")
-        [
-            print(f"- {entry['path']}, weight: {entry['weight']}")
-            for entry in config[stage]
-        ]
 
     # Debug: print RL status
     if rl_type:
@@ -1592,6 +1589,7 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
     Returns:
         The loaded dataset
     """
+
     # First try normal loading
     dataset = load_dataset(**dataset_args)
 
