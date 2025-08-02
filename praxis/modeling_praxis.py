@@ -31,7 +31,6 @@ class PraxisModel(PreTrainedModel):
         else:
             self.embeds = EMBEDDING_REGISTRY[config.block_type](config)
         self.decoder = DECODER_REGISTRY.get(config.decoder_type)(config)
-        
 
     def forward(
         self,
@@ -252,23 +251,23 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Get hidden states before computing logits
         hidden_states = outputs.last_hidden_state
 
+        classifier = None
         backward_logits = None
 
-        # Check if decoder returned goodness scores (already in vocab space)
-        if hidden_states.size(-1) == self.config.vocab_size:
-            # Decoder returned goodness scores - use directly as logits
-            logits = hidden_states
-            classifier = None
-            backward_logits = None
-        elif self.encoder:
+        logits = hidden_states
+
+        if self.encoder:
+            """Needs encoding:"""
+
             logits = self.encoder.decode(
                 hidden_states,
                 outputs.h_encoder,
                 input_ids,
                 outputs.patch_lengths,
             )
-            classifier = None
-        else:
+        elif hidden_states.size(-1) != self.config.vocab_size:
+            """Needs projection/classification:"""
+
             logits = self.head(hidden_states)
             classifier = self.head.classifier
 
@@ -318,35 +317,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            # Check if decoder handled training internally
-            if "_layer_wise_complete" in outputs.losses:
-                # MonoForward handled layer-wise training internally
-                # But we still need a differentiable loss for the main optimizer
-                # Compute a simple loss on the goodness scores for gradient flow
-                logits = hidden_states  # These are goodness scores from MonoForward
-                classifier = None
-                main_loss = self._compute_loss(
-                    logits=logits,
-                    labels=labels,
-                    embeddings=hidden_states,
-                    classifier=classifier,
-                    input_ids=input_ids,
-                )
-                loss = outputs.losses.add_loss("main", main_loss)
-            elif hidden_states.size(-1) == self.config.vocab_size:
-                # Decoder returned vocab-sized output (e.g., goodness scores)
-                # Use these directly as logits for loss computation
-                logits = hidden_states
-                classifier = None
-                main_loss = self._compute_loss(
-                    logits=logits,
-                    labels=labels,
-                    embeddings=hidden_states,
-                    classifier=classifier,
-                    input_ids=input_ids,
-                )
-                loss = outputs.losses.add_loss("main", main_loss)
-            elif self.config.bidirectional:
+            if self.config.bidirectional:
                 main_loss = self._compute_bidirectional_loss(
                     logits=logits,
                     labels=labels,
@@ -409,30 +380,30 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             elif input_embeddings is not None and hasattr(self.head, "lm_head"):
                 # For regular heads, tie the weights directly
                 self.head.lm_head.weight = input_embeddings.weight
-    
+
     def state_dict(self, *args, **kwargs):
         """Override to ensure only tensors are in the state dict for HuggingFace compatibility."""
         # Use destination argument to control what gets included
-        destination = kwargs.get('destination', {})
-        prefix = kwargs.get('prefix', '')
-        keep_vars = kwargs.get('keep_vars', False)
-        
+        destination = kwargs.get("destination", {})
+        prefix = kwargs.get("prefix", "")
+        keep_vars = kwargs.get("keep_vars", False)
+
         # Get state dict with standard PyTorch behavior
         state = super().state_dict(*args, **kwargs)
-        
+
         # Filter to only include tensors and parameters
         filtered_state = {}
         for key, value in state.items():
             # Skip any _extra_state keys from get_extra_state()
-            if '_extra_state' in key:
+            if "_extra_state" in key:
                 continue
             # Skip any optimizer-related keys
-            if 'optimizer' in key.lower():
+            if "optimizer" in key.lower():
                 continue
             # Only include actual tensors
             if isinstance(value, (torch.Tensor, torch.nn.Parameter)):
                 filtered_state[key] = value
-        
+
         return filtered_state
 
 

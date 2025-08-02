@@ -123,17 +123,27 @@ class LayerWithOptimizer(nn.Module):
             if logits.dim() == 3 and labels.dim() == 2:
                 # Typical case: [batch, seq, vocab] vs [batch, seq]
                 batch_size, seq_len = labels.shape
+                vocab_size = logits.size(-1)
+                
                 if logits.size(1) > seq_len:
                     logits = logits[:, :seq_len, :]
                 elif logits.size(1) < seq_len:
                     labels = labels[:, :logits.size(1)]
                 
                 # Flatten for loss computation
-                logits_flat = logits.reshape(-1, logits.size(-1))
+                logits_flat = logits.reshape(-1, vocab_size)
                 labels_flat = labels.reshape(-1)
+                
+                # If using reduced vocabulary, map labels to valid range
+                if vocab_size < labels_flat.max().item() + 1:
+                    labels_flat = labels_flat % vocab_size
             else:
                 logits_flat = logits
                 labels_flat = labels
+                # Handle reduced vocabulary for other shapes too
+                vocab_size = logits.size(-1)
+                if vocab_size < labels_flat.max().item() + 1:
+                    labels_flat = labels_flat % vocab_size
             
             # Compute loss
             loss = self.loss_fn(logits_flat, labels_flat, ignore_index=-100)
