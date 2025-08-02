@@ -115,12 +115,9 @@ class LayerWithOptimizer(nn.Module):
         loss = None
         
         # If training and labels provided, compute loss and update immediately
-        if self.training and labels is not None:
+        if self.training and labels is not None and self.projection is not None:
             # Compute predictions
-            if self.projection is not None:
-                logits = self.projection(hidden_output)
-            else:
-                logits = hidden_output
+            logits = self.projection(hidden_output)
             
             # Ensure shapes match for loss computation
             if logits.dim() == 3 and labels.dim() == 2:

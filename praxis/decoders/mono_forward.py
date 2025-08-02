@@ -35,13 +35,16 @@ class MonoForwardDecoder(SequentialDecoder):
 
         # Replace each layer with LayerWithOptimizer wrapper
         wrapped_layers = nn.ModuleList()
+        num_layers = len(self.locals)
 
         for i, layer in enumerate(self.locals):
-            # Create goodness projection for this layer using nn.Linear
-            projection = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
-            # Initialize similar to the paper (optional - could use default Kaiming)
-            nn.init.normal_(projection.weight, std=(2.0 / config.hidden_size) ** 0.5)
+            # Only add projection to the final layer
+            projection = None
+            if i == num_layers - 1:  # Last layer
+                # Create goodness projection for this layer using nn.Linear
+                projection = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+                # Initialize similar to the paper (optional - could use default Kaiming)
+                nn.init.normal_(projection.weight, std=(2.0 / config.hidden_size) ** 0.5)
 
             # Get optimizer configuration from config or use defaults
             optimizer_class, optimizer_kwargs = self._get_optimizer_config()
@@ -219,19 +222,20 @@ class MonoForwardDecoder(SequentialDecoder):
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             hidden_states = self.post_layer(hidden_states, layer_idx)
 
-            # Always accumulate goodness for this layer
-            # Compute goodness for this layer
-            goodness = wrapped_layer.projection(hidden_states)
+            # Only accumulate goodness if this layer has a projection
+            if wrapped_layer.projection is not None:
+                # Compute goodness for this layer
+                goodness = wrapped_layer.projection(hidden_states)
 
-            # Accumulate all layers' goodness
-            min_len = min(goodness.size(1), total_goodness.size(1))
-            if self.training:
-                # During training, accumulate with gradients for the final loss
-                total_goodness[:, :min_len] = total_goodness[:, :min_len] + goodness[:, :min_len]
-            else:
-                # During inference, no gradients needed
-                with torch.no_grad():
-                    total_goodness[:, :min_len] += goodness[:, :min_len]
+                # Accumulate all layers' goodness
+                min_len = min(goodness.size(1), total_goodness.size(1))
+                if self.training:
+                    # During training, accumulate with gradients for the final loss
+                    total_goodness[:, :min_len] = total_goodness[:, :min_len] + goodness[:, :min_len]
+                else:
+                    # During inference, no gradients needed
+                    with torch.no_grad():
+                        total_goodness[:, :min_len] += goodness[:, :min_len]
 
             # Update route
             current_route = self.controller.update_route(
