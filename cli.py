@@ -29,6 +29,10 @@ from praxis import (
 from praxis.modules import ModuleLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
 
+# Define the default list of arguments to exclude from hash computation
+# These are typically runtime/debugging flags that don't affect model architecture
+DEFAULT_EXCLUDE_FROM_HASH = ["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"]
+
 
 def wrap_green(text):
     return f"\033[92m{text}\033[00m"
@@ -675,9 +679,10 @@ def apply_defaults_and_parse(defaults_dict):
     global log_command
     original_log_command = log_command
 
-    def custom_log_command(
-        exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"]
-    ):
+    def custom_log_command(exclude_from_hash=None):
+        if exclude_from_hash is None:
+            exclude_from_hash = DEFAULT_EXCLUDE_FROM_HASH
+        
         # Log the original command with computed hash
         script_name = os.path.basename(original_command[0])
         args_list = original_command[1:]
@@ -730,11 +735,10 @@ def apply_defaults_and_parse(defaults_dict):
     return args, effective_hash
 
 
-def _compute_args_hash(
-    args_list,
-    exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"],
-):
+def _compute_args_hash(args_list, exclude_from_hash=None):
     """Compute hash from argument list (internal helper)."""
+    if exclude_from_hash is None:
+        exclude_from_hash = DEFAULT_EXCLUDE_FROM_HASH
     arg_dict = {}
     i = 0
     while i < len(args_list):
@@ -764,9 +768,7 @@ def get_cli_args():
     return args
 
 
-def log_command(
-    exclude_from_hash=["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"]
-):
+def log_command(exclude_from_hash=None):
     """
     Logs the current command line execution to history.log in the root directory.
     New commands are added to the top of the file.
@@ -775,13 +777,14 @@ def log_command(
     Args:
         exclude_from_hash (list, optional): List of argument names to exclude from hashing.
             Example: ['--verbose', '--log-level', '--output']
+            Defaults to DEFAULT_EXCLUDE_FROM_HASH if None.
 
     Returns:
         tuple: (full_command, args_hash)
     """
-    # Default to empty list if None
+    # Use default exclude list if None provided
     if exclude_from_hash is None:
-        exclude_from_hash = []
+        exclude_from_hash = DEFAULT_EXCLUDE_FROM_HASH
 
     # Construct the command
     script_name = os.path.basename(sys.argv[0])
