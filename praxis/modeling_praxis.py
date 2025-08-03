@@ -169,31 +169,29 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Backward loss: predict previous token
         # For backward prediction, we want logits[1:] to predict input_ids[:-1]
         backward_labels = input_ids[..., :-1].contiguous()
-
-        # Use separate backward logits if available, otherwise use the same logits
+        
+        # Select appropriate logits and classifier for backward prediction
         if backward_logits is not None:
-            # Use the separate backward head's logits
-            backward_classifier = (
+            # Use separate backward head
+            back_logits = backward_logits[..., 1:, :].contiguous()
+            back_classifier = (
                 self.backward_head.classifier
                 if hasattr(self.backward_head, "classifier")
                 else None
             )
-            backward_loss = self.criterion(
-                logits=backward_logits[..., 1:, :].contiguous(),
-                embeddings=embeddings,
-                classifier=backward_classifier,
-                labels=backward_labels,
-                input_ids=input_ids,
-            )
         else:
-            # Use the same logits as forward (original behavior)
-            backward_loss = self.criterion(
-                logits=logits[..., 1:, :].contiguous(),
-                embeddings=embeddings,
-                classifier=classifier,
-                labels=backward_labels,
-                input_ids=input_ids,
-            )
+            # Reuse forward head
+            back_logits = logits[..., 1:, :].contiguous()
+            back_classifier = classifier
+        
+        # Compute backward loss
+        backward_loss = self.criterion(
+            logits=back_logits,
+            embeddings=embeddings,
+            classifier=back_classifier,
+            labels=backward_labels,
+            input_ids=input_ids,
+        )
 
         # Weighted combination based on forward_weight
         forward_weight = self.config.forward_weight
@@ -334,7 +332,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     classifier=classifier,
                     input_ids=input_ids,
                 )
-                loss = outputs.losses.add_loss("main", main_loss)
+            loss = outputs.losses.add_loss("main", main_loss)
 
         # We omit auxiliary losses during validation and inference
         if self.training and labels is not None:

@@ -37,22 +37,15 @@ class MonoForwardDecoder(SequentialDecoder):
         wrapped_layers = nn.ModuleList()
         num_layers = len(self.locals)
 
-        # Use smaller vocabulary for internal projections to reduce parameters
-        # Only the final layer uses full vocabulary size
-        internal_vocab_size = config.vocab_size // 4  # Smaller for efficiency
+        # Use smaller vocabulary for ALL internal projections
+        # Since the main LM head handles final projection, all layers can use reduced size
+        internal_vocab_size = config.vocab_size // 4  # Uniform reduced size for efficiency
 
         for i, layer in enumerate(self.locals):
-            # Every layer needs a projection for local training
-            if i == num_layers - 1:  # Last layer
-                # Final layer uses full vocabulary for output
-                projection = nn.Linear(
-                    config.hidden_size, config.vocab_size, bias=False
-                )
-            else:
-                # Earlier layers use smaller vocabulary for efficiency
-                projection = nn.Linear(
-                    config.hidden_size, internal_vocab_size, bias=False
-                )
+            # Every layer uses the same reduced vocabulary for local training
+            projection = nn.Linear(
+                config.hidden_size, internal_vocab_size, bias=False
+            )
 
             # Initialize projection weights
             nn.init.normal_(projection.weight, std=(2.0 / config.hidden_size) ** 0.5)
@@ -162,18 +155,10 @@ class MonoForwardDecoder(SequentialDecoder):
         """
         Forward pass using LayerWithOptimizer for true O(1) memory.
 
-        Always returns accumulated goodness scores for consistency between
-        training and inference.
+        Returns hidden states to be projected by the main model's LM head,
+        enabling weight tying and gradient flow to embeddings.
         """
         _, seq_len, _ = hidden_states.shape
-
-        # Always accumulate goodness scores
-        total_goodness = torch.zeros(
-            hidden_states.size(0),
-            seq_len,
-            self.config.vocab_size,
-            device=hidden_states.device,
-        )
 
         current_route: List[int] = []
         controller_state = None
@@ -235,16 +220,6 @@ class MonoForwardDecoder(SequentialDecoder):
             hidden_states = self.compressor.reduce_sequence(hidden_states)
             hidden_states = self.post_layer(hidden_states, layer_idx)
 
-            # BP prediction mode: only use final layer's projection for output
-            if (
-                layer_idx == self.num_experts - 1
-                and wrapped_layer.projection is not None
-            ):
-                # Only the final layer contributes to output in BP mode
-                goodness = wrapped_layer.projection(hidden_states)
-                min_len = min(goodness.size(1), total_goodness.size(1))
-                total_goodness[:, :min_len] = goodness[:, :min_len]
-
             # Update route
             current_route = self.controller.update_route(
                 hidden_states, current_route, layer_idx, next_expert_idx
@@ -256,9 +231,13 @@ class MonoForwardDecoder(SequentialDecoder):
         self.controller.post_forward(hidden_states, current_route)
         hidden_states = self.order(hidden_states)
 
-        # Return the final goodness scores as logits
-        # This makes MonoForward compatible with standard loss computation
-        return total_goodness, past_key_values, current_state, losses
+        # Enable gradient flow for the LM head
+        # This allows gradients to flow through tied weights to embeddings
+        if self.training:
+            hidden_states = hidden_states.detach().requires_grad_(True)
+
+        # Return hidden states - let the main model handle projection via LM head
+        return hidden_states, past_key_values, current_state, losses
 
     def parameters(self, recurse: bool = True):
         """Override to exclude layer parameters (they have their own optimizers)."""
