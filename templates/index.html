@@ -28,10 +28,12 @@
             --background: #121212;
             --text: #e0e0e0;
             --light-text: #b0b0b0;
-            --user-message-bg: #e8f5e9;
-            --assistant-message-bg: #ffffff;
+            --user-message-bg: #18453B;
+            --assistant-message-bg: #1e1e1e;
             --border: #333333;
             --shadow: rgba(0, 0, 0, 0.3);
+            --input-bg: #1e1e1e;
+            --input-text: #e0e0e0;
         }
 
         * {
@@ -264,8 +266,8 @@
             border: 1px solid var(--border);
             border-radius: 4px;
             font-size: 14px;
-            background-color: var(--assistant-message-bg);
-            color: #333333;
+            background-color: var(--input-bg, var(--assistant-message-bg));
+            color: var(--input-text, #333333);
         }
 
         .form-group input:focus {
@@ -332,15 +334,46 @@
             font-size: 14px;
             font-weight: 600;
         }
-
-        .message-header {
-            color: #333333; /* Static dark text for headers on light message backgrounds */
+        
+        /* Light theme header colors */
+        .message.user .message-header {
+            color: #1a5a1a;
+        }
+        
+        .message.assistant .message-header {
+            color: #333333;
+        }
+        
+        /* Dark theme header colors */
+        [data-theme="dark"] .message.user .message-header {
+            color: #a8d5a8;
+        }
+        
+        [data-theme="dark"] .message.assistant .message-header {
+            color: #b0b0b0;
         }
 
         .message-content {
             word-wrap: break-word;
             white-space: pre-wrap;
-            color: #333333; /* Static dark text for readability on white/light backgrounds */
+        }
+        
+        /* Light theme message text colors */
+        .message.user .message-content {
+            color: #1a1a1a;
+        }
+        
+        .message.assistant .message-content {
+            color: #333333;
+        }
+        
+        /* Dark theme message text colors */
+        [data-theme="dark"] .message.user .message-content {
+            color: #ffffff;
+        }
+        
+        [data-theme="dark"] .message.assistant .message-content {
+            color: #e0e0e0;
         }
 
         .reroll-button {
@@ -411,9 +444,8 @@
             display: flex;
             gap: 10px;
             align-items: center;
-            border-top: 1px solid var(--border);
-            padding: 15px 20px;
-            padding-bottom: calc(15px + env(safe-area-inset-bottom));
+            padding: 15px 20px 25px 20px;
+            padding-bottom: calc(25px + env(safe-area-inset-bottom));
             background-color: var(--background);
             z-index: 10;
         }
@@ -431,8 +463,8 @@
             transition: border-color 0.2s;
             font-family: inherit;
             -webkit-appearance: none;
-            background-color: var(--background);
-            color: var(--text);
+            background-color: var(--input-bg, var(--background));
+            color: var(--input-text, var(--text));
         }
 
         .message-input:focus {
@@ -514,8 +546,8 @@
             }
 
             .input-container {
-                padding: 10px 15px;
-                padding-bottom: calc(10px + env(safe-area-inset-bottom));
+                padding: 10px 15px 20px 15px;
+                padding-bottom: calc(20px + env(safe-area-inset-bottom));
             }
 
             .send-button {
@@ -725,12 +757,42 @@
             
             const toggleTheme = () => {
                 setTheme(currentTheme === 'light' ? 'dark' : 'light');
+                
+                // Update all message headers when theme changes
+                const messages = chatContainer.querySelectorAll('.message');
+                messages.forEach(message => {
+                    const header = message.querySelector('.message-header');
+                    if (header) {
+                        const isUser = message.classList.contains('user');
+                        const isDarkMode = currentTheme === 'dark';
+                        if (isDarkMode) {
+                            header.textContent = isUser ? 'Me' : 'You';
+                        } else {
+                            header.textContent = isUser ? 'You' : 'Me';
+                        }
+                    }
+                });
             };
             
             // Load saved theme
             const loadTheme = () => {
                 const savedTheme = localStorage.getItem('praxis_theme') || 'light';
                 setTheme(savedTheme);
+                
+                // Update existing message headers based on loaded theme
+                const messages = chatContainer.querySelectorAll('.message');
+                messages.forEach(message => {
+                    const header = message.querySelector('.message-header');
+                    if (header) {
+                        const isUser = message.classList.contains('user');
+                        const isDarkMode = savedTheme === 'dark';
+                        if (isDarkMode) {
+                            header.textContent = isUser ? 'Me' : 'You';
+                        } else {
+                            header.textContent = isUser ? 'You' : 'Me';
+                        }
+                    }
+                });
             };
             
             // Debug info
@@ -945,7 +1007,13 @@
                 
                 const headerDiv = document.createElement('div');
                 headerDiv.className = 'message-header';
-                headerDiv.textContent = isUser ? 'You' : 'Me';
+                // Swap labels in dark mode
+                const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+                if (isDarkMode) {
+                    headerDiv.textContent = isUser ? 'Me' : 'You';
+                } else {
+                    headerDiv.textContent = isUser ? 'You' : 'Me';
+                }
                 
                 const contentDiv = document.createElement('div');
                 contentDiv.className = 'message-content';
