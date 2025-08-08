@@ -27,6 +27,13 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # Set up SocketIO for live reload
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
+# Add ngrok bypass header to all responses
+@app.after_request
+def add_ngrok_header(response):
+    """Add header to bypass ngrok browser warning"""
+    response.headers['ngrok-skip-browser-warning'] = 'true'
+    return response
+
 # Get all template files for monitoring
 templates_to_watch = glob.glob("templates/*.*")
 static_to_watch = glob.glob("static/*.*")

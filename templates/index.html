@@ -289,6 +289,23 @@
         .save-button:hover {
             background-color: var(--primary-dark);
         }
+        
+        .save-confirmation {
+            display: none;
+            margin-top: 15px;
+            padding: 12px;
+            background-color: var(--primary-light);
+            color: white;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        .save-confirmation.show {
+            display: block;
+        }
 
         .chat-container {
             overflow-y: auto;
@@ -659,6 +676,7 @@
             </div>
             
             <button class="save-button" id="save-settings">Save Settings</button>
+            <div class="save-confirmation" id="save-confirmation">Settings saved! Refreshing...</div>
         </div>
     </div>
 
@@ -722,6 +740,9 @@
             let apiUrl = window.location.origin + pathPrefix + '/input/';
             console.log('Constructed API URL:', apiUrl, 'from pathname:', window.location.pathname);
             console.log('Path prefix:', pathPrefix);
+            
+            // Set the default URL in the input field immediately
+            apiUrlInput.value = apiUrl;
             
             // Default generation parameters
             let generationParams = {
@@ -868,14 +889,6 @@
                     debugLoggingInput.checked = true;
                 }
                 
-                // Set up parameter input event listeners
-                temperatureInput.addEventListener('input', () => {
-                    temperatureValue.textContent = temperatureInput.value;
-                });
-                
-                repetitionPenaltyInput.addEventListener('input', () => {
-                    repetitionPenaltyValue.textContent = repetitionPenaltyInput.value;
-                });
             };
             
             // Test API connectivity
@@ -949,24 +962,37 @@
                     if (connectionTest.success) {
                         apiUrl = newApiUrl;
                         localStorage.setItem('praxis_api_url', newApiUrl);
-                        alert('Connection successful! Settings saved. The page will refresh now.');
-                        closeModal();
                         
-                        // Force page refresh to ensure clean state with new API
-                        setTimeout(() => window.location.reload(), 500);
+                        // Show confirmation message
+                        const confirmationDiv = document.getElementById('save-confirmation');
+                        confirmationDiv.textContent = 'Connection successful! Settings saved. Refreshing...';
+                        confirmationDiv.classList.add('show');
+                        
+                        // Refresh after showing message
+                        setTimeout(() => window.location.reload(), 2000);
                     } else {
                         const proceed = confirm(`Warning: ${connectionTest.message}\n\nDo you want to save the API URL anyway?`);
                         if (proceed) {
                             apiUrl = newApiUrl;
                             localStorage.setItem('praxis_api_url', newApiUrl);
-                            closeModal();
                             
-                            // Force page refresh to ensure clean state with new API
-                            setTimeout(() => window.location.reload(), 500);
+                            // Show confirmation message
+                            const confirmationDiv = document.getElementById('save-confirmation');
+                            confirmationDiv.textContent = 'Settings saved! Refreshing...';
+                            confirmationDiv.classList.add('show');
+                            
+                            // Refresh after showing message
+                            setTimeout(() => window.location.reload(), 2000);
                         } else {
                             // Save only the generation parameters without refreshing
-                            alert('Generation parameters saved. API URL remains unchanged.');
-                            closeModal();
+                            const confirmationDiv = document.getElementById('save-confirmation');
+                            confirmationDiv.textContent = 'Generation parameters saved. API URL unchanged.';
+                            confirmationDiv.classList.add('show');
+                            
+                            // Hide message after 2 seconds
+                            setTimeout(() => {
+                                confirmationDiv.classList.remove('show');
+                            }, 2000);
                         }
                     }
                 } else {
@@ -984,8 +1010,15 @@
                     debugLogging = debugLoggingInput.checked;
                     localStorage.setItem('praxis_debug_logging', debugLogging.toString());
                     
-                    alert('Generation parameters saved.');
-                    closeModal();
+                    // Show confirmation message
+                    const confirmationDiv = document.getElementById('save-confirmation');
+                    confirmationDiv.textContent = 'Generation parameters saved!';
+                    confirmationDiv.classList.add('show');
+                    
+                    // Hide message after 2 seconds
+                    setTimeout(() => {
+                        confirmationDiv.classList.remove('show');
+                    }, 2000);
                 }
             };
             
@@ -1309,8 +1342,27 @@
                 // Call the async function properly in the event handler
                 saveSettings().catch(err => {
                     console.error('Error in save settings:', err);
-                    alert('There was an error saving settings. See console for details.');
+                    // Show error message
+                    const confirmationDiv = document.getElementById('save-confirmation');
+                    confirmationDiv.textContent = 'Error saving settings. Check console.';
+                    confirmationDiv.style.backgroundColor = '#d32f2f';
+                    confirmationDiv.classList.add('show');
+                    
+                    // Hide after 3 seconds
+                    setTimeout(() => {
+                        confirmationDiv.classList.remove('show');
+                        confirmationDiv.style.backgroundColor = '';
+                    }, 3000);
                 });
+            });
+            
+            // Set up parameter input event listeners for sliders
+            temperatureInput.addEventListener('input', () => {
+                temperatureValue.textContent = temperatureInput.value;
+            });
+            
+            repetitionPenaltyInput.addEventListener('input', () => {
+                repetitionPenaltyValue.textContent = repetitionPenaltyInput.value;
             });
             
             // Click outside modal to close
