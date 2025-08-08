@@ -57,9 +57,9 @@
             grid-template-rows: auto 1fr auto;
             height: 100vh;
             height: 100dvh;
-            max-width: 1200px;
+            max-width: 900px;
             margin: 0 auto;
-            padding: 0;
+            padding: 0 60px;
             overflow: hidden;
         }
 
@@ -67,7 +67,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 15px 20px;
+            padding: 15px 0;
             border-bottom: 1px solid var(--border);
             background-color: var(--background);
             z-index: 10;
@@ -110,23 +110,33 @@
             cursor: text;
             padding: 4px 8px;
             border-radius: 4px;
-            transition: background-color 0.2s;
+            transition: background-color 0.2s, max-width 0.2s;
             outline: none;
-            max-width: 300px;
-            white-space: nowrap;
+            flex: 1;
+            max-width: 600px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
             overflow: hidden;
             text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            line-height: 1.4;
         }
         
         .system-prompt-header:hover {
             background-color: rgba(0, 0, 0, 0.02);
+            max-width: 800px;
         }
         
         .system-prompt-header:focus {
             background-color: rgba(0, 0, 0, 0.03);
             box-shadow: 0 0 0 1px var(--border);
-            white-space: normal;
+            white-space: pre-wrap;
             overflow: visible;
+            max-width: 800px;
+            -webkit-line-clamp: unset;
+            display: block;
         }
         
         [data-theme="dark"] .system-prompt-header:hover {
@@ -309,7 +319,7 @@
 
         .chat-container {
             overflow-y: auto;
-            padding: 20px;
+            padding: 20px 0;
             display: flex;
             flex-direction: column;
             -webkit-overflow-scrolling: touch;
@@ -318,7 +328,7 @@
 
         .message {
             margin-bottom: 20px;
-            max-width: 85%;
+            max-width: 75%;
             padding: 16px 20px;
             border-radius: 12px;
             box-shadow: 0 1px 2px var(--shadow);
@@ -461,7 +471,7 @@
             display: flex;
             gap: 10px;
             align-items: center;
-            padding: 15px 20px 25px 20px;
+            padding: 15px 0 25px 0;
             padding-bottom: calc(25px + env(safe-area-inset-bottom));
             background-color: var(--background);
             z-index: 10;
@@ -529,8 +539,12 @@
 
         /* Responsive adjustments */
         @media (max-width: 768px) {
+            .app-container {
+                padding: 0 20px;
+            }
+            
             .header {
-                padding: 10px 15px;
+                padding: 10px 0;
             }
             
             .logo {
@@ -545,11 +559,17 @@
             
             .system-prompt-header {
                 font-size: 12px;
-                max-width: 150px;
+                max-width: 200px;
+                -webkit-line-clamp: 1;
+            }
+            
+            .system-prompt-header:focus {
+                max-width: 300px;
+                -webkit-line-clamp: unset;
             }
 
             .chat-container {
-                padding: 15px;
+                padding: 15px 0;
                 padding-bottom: 30px; /* Extra space at bottom for last message visibility */
             }
 
@@ -563,7 +583,7 @@
             }
 
             .input-container {
-                padding: 10px 15px 20px 15px;
+                padding: 10px 0 20px 0;
                 padding-bottom: calc(20px + env(safe-area-inset-bottom));
             }
 
@@ -738,8 +758,6 @@
             
             // Construct API URL - note that pathPrefix already includes leading /
             let apiUrl = window.location.origin + pathPrefix + '/input/';
-            console.log('Constructed API URL:', apiUrl, 'from pathname:', window.location.pathname);
-            console.log('Path prefix:', pathPrefix);
             
             // Set the default URL in the input field immediately
             apiUrlInput.value = apiUrl;
@@ -816,9 +834,6 @@
                 });
             };
             
-            // Debug info
-            console.log(`Default API URL: ${apiUrl}`);
-            console.log(`Window location: ${window.location.href}`);
             
             // Get system prompt from element or localStorage
             const getSystemPrompt = () => {
@@ -840,9 +855,9 @@
                 const savedSystemPrompt = localStorage.getItem('praxis_system_prompt');
                 if (savedSystemPrompt) {
                     systemPromptElement.innerHTML = savedSystemPrompt;
-                    // Update the first system message in chat history
+                    // Update the first system message in chat history (use text content, not HTML)
                     if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                        chatHistory[0].content = savedSystemPrompt;
+                        chatHistory[0].content = systemPromptElement.innerText.trim() || "Write thy wrong.";
                     }
                 }
                 
@@ -1377,30 +1392,28 @@
             
             systemPromptElement.addEventListener('input', () => {
                 const newPrompt = systemPromptElement.innerHTML.trim();
-                const newPromptText = systemPromptElement.innerText.trim();
-                if (newPromptText) {
-                    // Debounce localStorage updates to avoid excessive writes
-                    clearTimeout(systemPromptUpdateTimeout);
-                    systemPromptUpdateTimeout = setTimeout(() => {
-                        localStorage.setItem('praxis_system_prompt', newPrompt);
-                        // Update system prompt in chat history (use innerText for API)
-                        if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                            chatHistory[0].content = newPromptText;
-                        }
-                    }, 500); // 500ms debounce
-                }
-            });
-            
-            // Keep blur handler for final save (in case input event doesn't fire)
-            systemPromptElement.addEventListener('blur', () => {
-                const newPrompt = systemPromptElement.innerHTML.trim();
-                const newPromptText = systemPromptElement.innerText.trim();
-                if (newPromptText) {
+                const newPromptText = systemPromptElement.innerText.trim() || "Write thy wrong.";
+                
+                // Debounce localStorage updates to avoid excessive writes
+                clearTimeout(systemPromptUpdateTimeout);
+                systemPromptUpdateTimeout = setTimeout(() => {
                     localStorage.setItem('praxis_system_prompt', newPrompt);
                     // Update system prompt in chat history (use innerText for API)
                     if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
                         chatHistory[0].content = newPromptText;
                     }
+                }, 500); // 500ms debounce
+            });
+            
+            // Keep blur handler for final save (in case input event doesn't fire)
+            systemPromptElement.addEventListener('blur', () => {
+                const newPrompt = systemPromptElement.innerHTML.trim();
+                const newPromptText = systemPromptElement.innerText.trim() || "Write thy wrong.";
+                
+                localStorage.setItem('praxis_system_prompt', newPrompt);
+                // Update system prompt in chat history (use innerText for API)
+                if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
+                    chatHistory[0].content = newPromptText;
                 }
             });
             
@@ -1469,13 +1482,6 @@
                 });
             }
             
-            // When a message is sent, always scroll to bottom
-            const originalAddMessage = addMessage;
-            addMessage = (content, isUser) => {
-                originalAddMessage(content, isUser);
-                // Extra scroll after message is added
-                setTimeout(scrollToBottom, 50);
-            };
             
             // Initialize
             loadSettings();
