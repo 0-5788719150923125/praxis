@@ -736,6 +736,10 @@
             overflow: auto;
             white-space: pre;
             position: relative;  /* Added for absolute positioning of status */
+            display: flex;
+            flex-direction: column;
+            align-items: center;  /* Center horizontally */
+            justify-content: flex-start;  /* Align to top */
         }
         
         .dashboard-wrapper {
@@ -751,11 +755,16 @@
             padding: 8px;
             border-radius: var(--radius-small);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-            display: block; /* Changed from inline-block */
-            background-color: #0d0d0d !important; /* Force consistent background */
-            font-family: monospace;
+            display: inline-block;  /* inline-block to fit content width */
+            font-family: 'Courier New', Courier, 'Lucida Console', monospace;  /* Use most compatible monospace font */
             font-size: 10px;
-            line-height: 1.0;
+            line-height: 1.2;  /* Slightly increase line height for better mobile rendering */
+            letter-spacing: 0;  /* Reset letter spacing */
+            font-variant-ligatures: none;  /* Disable ligatures that might cause misalignment */
+            -webkit-font-smoothing: none;  /* Disable antialiasing for sharper monospace */
+            -moz-osx-font-smoothing: auto;
+            text-rendering: optimizeSpeed;  /* Force simple text rendering */
+            font-feature-settings: "liga" 0, "calt" 0;  /* Disable all font features */
         }
         
         /* Mobile-specific adjustments */
@@ -770,9 +779,20 @@
             .dashboard-frame {
                 padding: 4px;
                 font-size: 8px;
-                display: block;
+                display: inline-block;  /* Keep inline-block on mobile too */
                 overflow: visible; /* No clipping */
-                max-width: 100%; /* Prevent horizontal overflow */
+                /* Force absolutely consistent character width on mobile */
+                font-family: monospace, 'Courier', 'Courier New' !important;
+                font-weight: normal !important;
+                font-style: normal !important;
+                text-transform: none !important;
+                word-spacing: 0 !important;
+                letter-spacing: 0 !important;
+                line-height: 1.0 !important;  /* Tighter line height on mobile */
+                -webkit-text-size-adjust: 100%;  /* Prevent iOS font size adjustments */
+                -webkit-font-smoothing: none !important;
+                text-rendering: optimizeLegibility !important;  /* Better character spacing */
+                font-variant-numeric: tabular-nums !important;  /* Force monospace numbers */
             }
             
             /* Ensure terminal content scrolls properly on mobile */
@@ -788,6 +808,10 @@
             padding: 0;
             background-color: transparent !important;  /* Ensure no background color inheritance */
             color: inherit !important;  /* Inherit color from parent */
+            font-family: inherit;  /* Inherit monospace font from parent */
+            font-size: inherit;
+            line-height: inherit;
+            letter-spacing: inherit;
         }
         
         .terminal-line {
@@ -886,7 +910,7 @@
             </div>
             
             <div class="input-container">
-                <textarea class="message-input" id="message-input" placeholder="Shoot:" rows="1"></textarea>
+                <textarea class="message-input" id="message-input" placeholder="> Shoot" rows="1"></textarea>
             </div>
         </div>
         
@@ -1839,6 +1863,86 @@
             // Store dashboard scale outside to make it accessible
             let dashboardScale = null;
             let currentTab = 'chat'; // Track current tab
+            let currentFrameContainer = null; // Store reference to current frame
+            let currentWrapperDiv = null; // Store reference to current wrapper
+            
+            // Function to recalculate dashboard scale (for orientation changes)
+            function recalculateDashboardScale() {
+                if (!currentFrameContainer || !currentWrapperDiv || currentTab !== 'terminal') {
+                    return;
+                }
+                
+                // Reset scale
+                dashboardScale = null;
+                
+                // Get natural dimensions (remove any existing transform first)
+                currentFrameContainer.style.transform = 'none';
+                const naturalWidth = currentFrameContainer.scrollWidth;
+                const naturalHeight = currentFrameContainer.scrollHeight;
+                
+                // Lock the frame to its natural size
+                currentFrameContainer.style.width = naturalWidth + 'px';
+                currentFrameContainer.style.height = naturalHeight + 'px';
+                currentFrameContainer.style.maxWidth = naturalWidth + 'px';
+                currentFrameContainer.style.overflow = 'hidden';
+                
+                // Calculate scale based on current viewport
+                const containerWidth = terminalDisplay.clientWidth;
+                const containerHeight = terminalDisplay.clientHeight || window.innerHeight * 0.6;
+                const padding = 20;
+                
+                // Calculate scale to fit within BOTH width and height constraints
+                const widthScale = (containerWidth - padding) / naturalWidth;
+                const heightScale = (containerHeight - padding) / naturalHeight;
+                
+                // Use the smaller scale to maintain aspect ratio
+                dashboardScale = Math.min(widthScale, heightScale);
+                
+                // On mobile, cap scale at 1.0 for portrait, allow larger for landscape
+                const isMobile = window.innerWidth <= 768 || window.innerHeight <= 768;
+                const isLandscape = window.innerWidth > window.innerHeight;
+                
+                if (isMobile && !isLandscape && dashboardScale > 1) {
+                    dashboardScale = 1;
+                } else if (isMobile && isLandscape && dashboardScale > 1.5) {
+                    dashboardScale = 1.5; // Allow some scaling up in landscape
+                }
+                
+                // Apply scale transform
+                currentFrameContainer.style.transform = `scale(${dashboardScale})`;
+                currentFrameContainer.style.transformOrigin = 'top left';
+                
+                // Set wrapper dimensions
+                const scaledHeight = naturalHeight * dashboardScale;
+                const scaledWidth = naturalWidth * dashboardScale;
+                
+                currentWrapperDiv.style.width = scaledWidth + 'px';
+                currentWrapperDiv.style.height = scaledHeight + 'px';
+                currentWrapperDiv.style.overflow = 'hidden';
+                
+                // Always center the wrapper
+                currentWrapperDiv.style.margin = '0 auto';
+                currentWrapperDiv.style.display = 'block';
+                
+                terminalDisplay.style.minHeight = (scaledHeight + padding) + 'px';
+            }
+            
+            // Handle orientation changes
+            window.addEventListener('orientationchange', () => {
+                // Wait for the orientation change to complete
+                setTimeout(() => {
+                    recalculateDashboardScale();
+                }, 100);
+            });
+            
+            // Also handle resize events (for desktop browser window resizing)
+            let resizeTimeout;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    recalculateDashboardScale();
+                }, 250);
+            });
             
             // Tab switching functionality
             function switchTab(tabName) {
@@ -1874,6 +1978,10 @@
                         if (terminalConnected) {
                             startTerminalCapture();
                         }
+                        // Recalculate scale after switching tabs
+                        setTimeout(() => {
+                            recalculateDashboardScale();
+                        }, 200);
                     }, 100);
                 }
             }
@@ -1947,15 +2055,58 @@
                         wrapperDiv.style.position = 'relative';
                         wrapperDiv.style.overflow = 'hidden'; // Critical for clipping
                         wrapperDiv.style.backgroundColor = '#0d0d0d'; // Match dashboard bg
+                        wrapperDiv.style.display = 'block';
+                        wrapperDiv.style.margin = '0 auto'; // Center by default
                         
                         // Create the frame container
                         const frameContainer = document.createElement('div');
                         frameContainer.className = 'dashboard-frame';
                         
+                        // Check if mobile - consider EITHER dimension being mobile-sized
+                        // This ensures character replacement happens in landscape too
+                        const isMobile = window.innerWidth <= 768 || window.innerHeight <= 768 || 
+                                        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                        
                         // Add each line
                         data.frame.forEach(line => {
                             const lineDiv = document.createElement('div');
                             lineDiv.className = 'dashboard-line';
+                            
+                            // On mobile, replace Unicode box drawing and block characters with ASCII
+                            if (isMobile) {
+                                // Replace block/square characters that render as double-width
+                                line = line.replace(/[█▓▒░]/g, '#')  // Full blocks -> hash
+                                          .replace(/[▀▄]/g, '=')  // Half blocks -> equals
+                                          .replace(/[▌▐]/g, '|')  // Left/right half blocks -> pipe
+                                          .replace(/[■□▪▫]/g, '#')  // Square blocks -> hash
+                                          .replace(/[◼◻◾◽]/g, '#')  // Other squares -> hash
+                                          .replace(/[▬▭▮▯]/g, '#')  // Rectangle blocks -> hash
+                                          // Horizontal line characters used in charts
+                                          .replace(/[═]/g, '=')  // Double horizontal line
+                                          .replace(/[─━]/g, '-')  // Single horizontal lines
+                                          .replace(/[╌╍┄┅┈┉]/g, '-')  // Dashed lines
+                                          .replace(/[⎯⎼⎽]/g, '-')  // Other horizontal lines
+                                          .replace(/[▁▂▃▄▅▆▇]/g, '_')  // Bottom blocks for charts
+                                          .replace(/[⌐¬]/g, '-')  // Corner lines
+                                          .replace(/[·•◦]/g, '*')  // Bullet points
+                                          .replace(/[◯○]/g, 'o')  // Circles
+                                          .replace(/[●◉]/g, '*')  // Filled circles
+                                          // Vertical lines
+                                          .replace(/[║]/g, '|')  // Double vertical
+                                          .replace(/[┃│|]/g, '|')  // Single vertical lines
+                                          .replace(/[╎╏┆┇┊┋]/g, '|')  // Dashed vertical
+                                          // Box-drawing corners and junctions
+                                          .replace(/[┏┌┍┎╔╒╓╭]/g, '+')  // Top-left corners
+                                          .replace(/[┓┐┑┒╗╕╖╮]/g, '+')  // Top-right corners
+                                          .replace(/[┗└┕┖╚╘╙╰]/g, '+')  // Bottom-left corners
+                                          .replace(/[┛┘┙┚╝╛╜╯]/g, '+')  // Bottom-right corners
+                                          .replace(/[┣├┝┞┟┠┡┢╟╞╠]/g, '+')  // Left T-junctions
+                                          .replace(/[┫┤┥┦┧┨┩┪╢╡╣]/g, '+')  // Right T-junctions
+                                          .replace(/[┳┬┭┮┯┰┱┲╦╤╥]/g, '+')  // Top T-junctions
+                                          .replace(/[┻┴┵┶┷┸┹┺╩╧╨]/g, '+')  // Bottom T-junctions
+                                          .replace(/[╋┼┽┾┿╀╁╂╬╪╫]/g, '+');  // Cross junctions
+                            }
+                            
                             lineDiv.textContent = line;
                             frameContainer.appendChild(lineDiv);
                         });
@@ -1964,49 +2115,81 @@
                         wrapperDiv.appendChild(frameContainer);
                         terminalDisplay.appendChild(wrapperDiv);
                         
+                        // Store references for orientation changes
+                        currentFrameContainer = frameContainer;
+                        currentWrapperDiv = wrapperDiv;
+                        
                         // Calculate scale only once
                         if (dashboardScale === null) {
                             requestAnimationFrame(() => {
-                                const frameWidth = frameContainer.scrollWidth;
-                                const frameHeight = frameContainer.scrollHeight;
+                                // Get natural dimensions
+                                const naturalWidth = frameContainer.scrollWidth;
+                                const naturalHeight = frameContainer.scrollHeight;
+                                
+                                // Lock the frame to its natural size
+                                frameContainer.style.width = naturalWidth + 'px';
+                                frameContainer.style.height = naturalHeight + 'px';
+                                frameContainer.style.maxWidth = naturalWidth + 'px';
+                                frameContainer.style.overflow = 'hidden';
+                                
+                                // Calculate scale based on container constraints
                                 const containerWidth = terminalDisplay.clientWidth;
-                                
+                                const containerHeight = terminalDisplay.clientHeight || window.innerHeight * 0.6;
                                 const padding = 20;
-                                const targetWidth = containerWidth - padding;
                                 
-                                if (frameWidth > targetWidth) {
-                                    dashboardScale = targetWidth / frameWidth;
-                                    
-                                    // Apply scale to the frame
-                                    frameContainer.style.transform = `scale(${dashboardScale})`;
-                                    frameContainer.style.transformOrigin = 'top left';
-                                    
-                                    // CRITICAL: Set wrapper dimensions to match scaled size
-                                    const scaledHeight = frameHeight * dashboardScale;
-                                    const scaledWidth = frameWidth * dashboardScale;
-                                    
-                                    // Clip at exact scaled dimensions
-                                    wrapperDiv.style.height = scaledHeight + 'px';
-                                    wrapperDiv.style.width = scaledWidth + 'px';
-                                    wrapperDiv.style.maxWidth = '100%';
-                                    
-                                    terminalDisplay.style.minHeight = (scaledHeight + padding) + 'px';
+                                // Calculate scale to fit within BOTH width and height constraints
+                                const widthScale = (containerWidth - padding) / naturalWidth;
+                                const heightScale = (containerHeight - padding) / naturalHeight;
+                                
+                                // Use the smaller scale to maintain aspect ratio
+                                // Also cap at 1.5x to prevent over-enlargement on mobile
+                                dashboardScale = Math.min(widthScale, heightScale, 1.5);
+                                
+                                // Only scale down on mobile, never up beyond original size
+                                if (window.innerWidth <= 768 && dashboardScale > 1) {
+                                    dashboardScale = 1;
                                 }
                                 
+                                // Apply scale transform
+                                frameContainer.style.transform = `scale(${dashboardScale})`;
+                                frameContainer.style.transformOrigin = 'top left';
+                                
+                                // Set wrapper dimensions
+                                const scaledHeight = naturalHeight * dashboardScale;
+                                const scaledWidth = naturalWidth * dashboardScale;
+                                
+                                wrapperDiv.style.width = scaledWidth + 'px';
+                                wrapperDiv.style.height = scaledHeight + 'px';
+                                wrapperDiv.style.overflow = 'hidden';
+                                
+                                // Always center the wrapper
+                                wrapperDiv.style.margin = '0 auto';
+                                wrapperDiv.style.display = 'block';
+                                
+                                terminalDisplay.style.minHeight = (scaledHeight + padding) + 'px';
                                 terminalDisplay.scrollTop = 0;
                             });
-                        } else if (dashboardScale && dashboardScale < 1) {
+                        } else if (dashboardScale) {
+                            // Lock frame to its natural size first
+                            const naturalWidth = frameContainer.scrollWidth;
+                            const naturalHeight = frameContainer.scrollHeight;
+                            
+                            frameContainer.style.width = naturalWidth + 'px';
+                            frameContainer.style.height = naturalHeight + 'px';
+                            frameContainer.style.maxWidth = naturalWidth + 'px';
+                            frameContainer.style.overflow = 'hidden';
+                            
                             // Apply previously calculated scale
                             frameContainer.style.transform = `scale(${dashboardScale})`;
                             frameContainer.style.transformOrigin = 'top left';
                             
                             // Set wrapper dimensions for existing scale
-                            const scaledHeight = frameContainer.scrollHeight * dashboardScale;
-                            const scaledWidth = frameContainer.scrollWidth * dashboardScale;
+                            const scaledHeight = naturalHeight * dashboardScale;
+                            const scaledWidth = naturalWidth * dashboardScale;
                             
-                            wrapperDiv.style.height = scaledHeight + 'px';
                             wrapperDiv.style.width = scaledWidth + 'px';
-                            wrapperDiv.style.maxWidth = '100%';
+                            wrapperDiv.style.height = scaledHeight + 'px';
+                            wrapperDiv.style.overflow = 'hidden';
                             
                             terminalDisplay.style.minHeight = (scaledHeight + 20) + 'px';
                         }
