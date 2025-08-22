@@ -136,33 +136,17 @@ class NgrokTunnel:
         # Traffic policy: check authorization first, then rewrite if authorized
         traffic_policy = {
             "inbound": [
+                # Deny requests that don't start with the secret
                 {
                     "expressions": [
                         f"!req.url.path.startsWith('/{self.webhook_secret}')"
                     ],
                     "actions": [{"type": "deny", "config": {"status_code": 401}}],
                 },
-                {
-                    "expressions": [f"req.url.path == '/{self.webhook_secret}'"],
-                    "actions": [
-                        {
-                            "type": "url-rewrite",
-                            "config": {"from": f"/{self.webhook_secret}", "to": "/"},
-                        },
-                        {
-                            "type": "add-headers",
-                            "config": {
-                                "headers": {
-                                    "X-Forwarded-Host": f"{self.host}:{self.port}",
-                                    "X-Original-Host": "req.host",
-                                }
-                            },
-                        },
-                    ],
-                },
+                # Rewrite all paths with secret prefix (including socket.io)
                 {
                     "expressions": [
-                        f"req.url.path.startsWith('/{self.webhook_secret}/')"
+                        f"req.url.path.startsWith('/{self.webhook_secret}')"
                     ],
                     "actions": [
                         {
@@ -289,6 +273,7 @@ def api_server_hook(host, port):
         print(f"ℹ️  URL rewriting:")
         print(f"     /{_tunnel.webhook_secret} -> /")
         print(f"     /{_tunnel.webhook_secret}/input/ -> /input/")
+        print(f"     /{_tunnel.webhook_secret}/socket.io/* -> /socket.io/* (WebSocket)")
         print(f"🛡️  All other requests blocked with 401")
     else:
         print("\n❌ NGROK ERROR: Failed to establish tunnel")

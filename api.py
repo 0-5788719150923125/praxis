@@ -9,10 +9,19 @@ from threading import Event, Thread
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_cors import CORS
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, emit
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 from werkzeug.serving import make_server
+
+# Import terminal streaming components
+try:
+    import interface  # Import interface for dashboard streaming functions
+    from flask_socketio import Namespace, emit
+    terminal_available = True
+except ImportError as e:
+    terminal_available = False
+    print(f"Terminal streaming not available: {e}")
 
 logger = logging.getLogger("werkzeug")
 logger.setLevel(logging.ERROR)
@@ -127,6 +136,68 @@ class APIServer:
         self.tokenizer = tokenizer
         self.module_loader = module_loader
         self.template_watcher = TemplateWatcher()
+        
+        # Initialize terminal WebSocket namespace if available
+        if terminal_available:
+            # Register socketio for dashboard streaming
+            interface.register_socketio(socketio)
+            
+            # Create a simplified terminal namespace for dashboard streaming
+            class TerminalNamespace(Namespace):
+                """WebSocket namespace for terminal/dashboard interaction."""
+                
+                def on_connect(self):
+                    """Send current dashboard state on connect."""
+                    dashboard = interface.get_active_dashboard("main")
+                    if dashboard and hasattr(dashboard, '_streamer'):
+                        # Get the latest rendered frame
+                        frame = dashboard._streamer.get_current_frame()
+                        if frame:
+                            rendered = dashboard._streamer.renderer.render_frame_for_web(frame)
+                            emit('dashboard_frame', {
+                                'frame': rendered['text'],
+                                'metadata': {
+                                    'width': rendered['width'],
+                                    'height': rendered['height'],
+                                    'scale_factor': rendered['scale_factor']
+                                }
+                            })
+                
+                def on_disconnect(self):
+                    """Handle client disconnection."""
+                    pass
+                
+                def on_start_capture(self, data):
+                    """Connect to existing dashboard."""
+                    dashboard = interface.get_active_dashboard("main")
+                    if dashboard and hasattr(dashboard, '_streamer'):
+                        dashboard._streamer.start()
+                        emit('capture_started', {'status': 'connected_to_existing'})
+                        
+                        # Send current frame if available
+                        frame = dashboard._streamer.get_current_frame()
+                        if frame:
+                            rendered = dashboard._streamer.renderer.render_frame_for_web(frame)
+                            emit('dashboard_frame', {
+                                'frame': rendered['text'],
+                                'metadata': {
+                                    'width': rendered['width'],
+                                    'height': rendered['height'],
+                                    'scale_factor': rendered['scale_factor']
+                                }
+                            })
+                    else:
+                        emit('capture_started', {'status': 'no_dashboard_found'})
+                
+                def on_stop_capture(self):
+                    """Stop dashboard streaming."""
+                    dashboard = interface.get_active_dashboard("main")
+                    if dashboard and hasattr(dashboard, '_streamer'):
+                        dashboard._streamer.stop()
+                    emit('capture_stopped', {'status': 'ok'})
+            
+            # Register the terminal namespace
+            socketio.on_namespace(TerminalNamespace('/terminal'))
 
     def _is_port_in_use(self, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

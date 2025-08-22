@@ -19,6 +19,16 @@
             --assistant-message-bg: #ffffff;
             --border: #d0d0d0;
             --shadow: rgba(0, 0, 0, 0.05);
+            /* Unified border radius variables */
+            --radius-small: 8px;
+            --radius-medium: 12px;
+            --radius-large: 16px;
+            --radius-round: 50%;
+            /* Unified size variables - both icons MUST use these */
+            --icon-size: 32px;
+            --icon-size-mobile: 28px;
+            --icon-font-size: 18px;
+            --icon-font-size-mobile: 16px;
         }
 
         [data-theme="dark"] {
@@ -54,7 +64,7 @@
 
         .app-container {
             display: grid;
-            grid-template-rows: auto 1fr auto;
+            grid-template-rows: auto auto 1fr auto;
             height: 100vh;
             height: 100dvh;
             max-width: 900px;
@@ -67,8 +77,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 15px 0;
-            border-bottom: 1px solid var(--border);
+            padding: 10px 0 5px 0;
             background-color: var(--background);
             z-index: 10;
         }
@@ -84,16 +93,22 @@
         }
 
         .logo-icon {
-            width: 32px;
-            height: 32px;
+            width: var(--icon-size);
+            height: var(--icon-size);
+            min-width: var(--icon-size);
+            min-height: var(--icon-size);
+            max-width: var(--icon-size);
+            max-height: var(--icon-size);
             background-color: var(--primary);
-            border-radius: 8px;
+            border-radius: var(--radius-small);
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
             font-weight: bold;
-            font-size: 18px;
+            font-size: var(--icon-font-size);
+            flex-shrink: 0;
+            flex-grow: 0;
         }
         
         .logo-separator {
@@ -109,7 +124,7 @@
             font-style: italic;
             cursor: text;
             padding: 4px 8px;
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             transition: background-color 0.2s, max-width 0.2s;
             outline: none;
             flex: 1;
@@ -157,7 +172,7 @@
             align-items: center;
             gap: 5px;
             padding: 8px 12px;
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             transition: background-color 0.2s;
         }
 
@@ -179,7 +194,7 @@
             align-items: center;
             gap: 5px;
             padding: 8px 12px;
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             transition: background-color 0.2s;
             margin-right: 8px;
         }
@@ -218,7 +233,7 @@
         .modal-content {
             background-color: var(--background);
             padding: 30px;
-            border-radius: 8px;
+            border-radius: var(--radius-small);
             width: 90%;
             max-width: 500px;
             max-height: 90vh;
@@ -274,7 +289,7 @@
             width: 100%;
             padding: 10px 12px;
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             font-size: 14px;
             background-color: var(--input-bg, var(--assistant-message-bg));
             color: var(--input-text, #333333);
@@ -290,7 +305,7 @@
             color: white;
             border: none;
             padding: 10px 16px;
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             font-weight: 500;
             cursor: pointer;
             transition: background-color 0.2s;
@@ -306,7 +321,7 @@
             padding: 12px;
             background-color: var(--primary-light);
             color: white;
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             text-align: center;
             font-size: 14px;
             font-weight: 500;
@@ -319,7 +334,7 @@
 
         .chat-container {
             overflow-y: auto;
-            padding: 20px 0;
+            padding: 15px 20px 0px 20px;
             display: flex;
             flex-direction: column;
             -webkit-overflow-scrolling: touch;
@@ -329,8 +344,8 @@
         .message {
             margin-bottom: 20px;
             max-width: 75%;
-            padding: 16px 20px;
-            border-radius: 12px;
+            padding: 8px 16px;
+            border-radius: var(--radius-medium);
             box-shadow: 0 1px 2px var(--shadow);
             position: relative;
             animation: fadeIn 0.3s forwards;
@@ -344,22 +359,40 @@
         .message.user {
             align-self: flex-end;
             background-color: var(--user-message-bg);
-            border-bottom-right-radius: 4px;
         }
 
         .message.assistant {
             align-self: flex-start;
             background-color: var(--assistant-message-bg);
-            border-bottom-left-radius: 4px;
             border: 1px solid var(--border);
         }
 
         .message-header {
             display: flex;
             align-items: center;
-            margin-bottom: 8px;
+            gap: 6px;
+            margin-bottom: 4px;
             font-size: 14px;
             font-weight: 600;
+        }
+        
+        .header-name {
+            font-weight: 600;
+        }
+        
+        .thinking-status {
+            font-weight: normal;
+            color: var(--light-text);
+            font-style: italic;
+        }
+        
+        .error-header {
+            color: #cc0000;
+            font-weight: 600;
+        }
+        
+        [data-theme="dark"] .error-header {
+            color: #ff6666;
         }
         
         /* Light theme header colors */
@@ -409,7 +442,7 @@
             right: 10px;
             background: var(--background);
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: var(--radius-small);
             padding: 4px 8px;
             cursor: pointer;
             font-size: 12px;
@@ -434,26 +467,16 @@
             line-height: 1.7;
         }
 
-        .thinking {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--light-text);
-            font-style: italic;
-            margin-bottom: 20px;
-            align-self: flex-start;
-            animation: fadeIn 0.3s forwards;
-        }
-
         .dots {
-            display: flex;
+            display: inline-flex;
             gap: 4px;
+            margin-left: 4px;
         }
 
         .dot {
             width: 8px;
             height: 8px;
-            border-radius: 50%;
+            border-radius: var(--radius-round);
             background-color: var(--primary);
             opacity: 0.7;
         }
@@ -469,66 +492,33 @@
 
         .input-container {
             display: flex;
-            gap: 10px;
-            align-items: center;
-            padding: 15px 0 25px 0;
+            padding: 0 20px 25px 20px;
             padding-bottom: calc(25px + env(safe-area-inset-bottom));
             background-color: var(--background);
             z-index: 10;
         }
 
         .message-input {
-            flex: 1;
+            width: 100%;
             padding: 12px;
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: var(--radius-small);
             font-size: 16px;
             resize: none;
             min-height: 44px;
-            max-height: 100px;
-            overflow-y: auto;
+            max-height: 200px;
+            overflow-y: hidden;
             transition: border-color 0.2s;
             font-family: inherit;
             -webkit-appearance: none;
             background-color: var(--input-bg, var(--background));
             color: var(--input-text, var(--text));
+            line-height: 1.5;
         }
 
         .message-input:focus {
             outline: none;
             border-color: var(--primary);
-        }
-
-        .send-button {
-            background-color: var(--primary);
-            color: white;
-            border: none;
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background-color 0.2s;
-            font-size: 18px;
-            font-weight: bold;
-            flex-shrink: 0;
-            align-self: center;
-        }
-
-        .send-button:hover {
-            background-color: var(--primary-dark);
-        }
-
-        .send-button:disabled {
-            background-color: var(--border);
-            cursor: not-allowed;
-        }
-
-        .send-icon {
-            width: 24px;
-            height: 24px;
         }
 
 
@@ -549,33 +539,44 @@
             
             .logo {
                 font-size: 18px;
+                gap: 8px;
+            }
+            
+            /* Hide "Chat" text and separator on mobile to give more space to system prompt */
+            .logo-text,
+            .logo-separator {
+                display: none;
             }
             
             .logo-icon {
-                width: 28px;
-                height: 28px;
-                font-size: 16px;
+                width: var(--icon-size-mobile);
+                height: var(--icon-size-mobile);
+                font-size: var(--icon-font-size-mobile);
             }
             
             .system-prompt-header {
-                font-size: 12px;
-                max-width: 200px;
-                -webkit-line-clamp: 1;
+                font-size: 11px;
+                max-width: none;
+                flex: 1;
+                -webkit-line-clamp: 2;
+                line-height: 1.3;
+                margin-right: 10px;
             }
             
             .system-prompt-header:focus {
-                max-width: 300px;
+                max-width: none;
                 -webkit-line-clamp: unset;
+                font-size: 12px;
             }
 
             .chat-container {
-                padding: 15px 0;
+                padding: 15px 20px;
                 padding-bottom: 30px; /* Extra space at bottom for last message visibility */
             }
 
             .message {
                 max-width: 85%;
-                padding: 10px 14px;
+                padding: 8px 12px;
             }
             
             .message:last-child {
@@ -583,24 +584,229 @@
             }
 
             .input-container {
-                padding: 10px 0 20px 0;
+                padding: 10px 20px 20px 20px;
                 padding-bottom: calc(20px + env(safe-area-inset-bottom));
             }
-
-            .send-button {
-                width: 28px;
-                height: 28px;
-                font-size: 16px;
+            
+            /* Terminal/Dashboard mobile adjustments */
+            .terminal-container {
+                flex: 1;
+                background-color: var(--background);
+                color: #d4d4d4;
+                font-family: 'Cascadia Code', 'Fira Code', 'Monaco', 'Courier New', monospace;
+                font-size: 10px;
+                line-height: 1.0;
+                padding: 10px;
+                overflow: hidden; /* Changed from 'auto' to 'visible' */
+                white-space: pre;
+                position: relative;
+                min-height: 100%; /* Ensure it fills available space */
             }
+            
+            .dashboard-frame {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                padding: 8px;
+                border-radius: var(--radius-small);
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+                display: inline-block;
+                font-family: monospace;
+                font-size: 10px;
+                line-height: 1.0;
+                width: max-content; /* Ensure frame expands to content */
+                min-width: 100%; /* But at least fill the container */
+            }
+            
+            .dashboard-line {
+                font-size: inherit;
+                white-space: nowrap;
+            }
+            
+            /* Ensure tab content uses full height on mobile */
+            .tab-content.active {
+                min-height: calc(100vh - 120px);
+            }
+
         }
         
         /* When input is focused, add some visual hints */
         .message-input:focus {
             outline: none;
             border-color: var(--primary);
-            box-shadow: 0 0 0 1px var(--primary);
         }
 
+        /* Tab navigation styles */
+        .tab-nav {
+            display: flex;
+            gap: 10px;
+            padding: 5px 20px 10px 20px;
+            border-bottom: 1px solid var(--border);
+            background-color: var(--background);
+            position: relative;
+        }
+        
+        .tab-button {
+            padding: 8px 16px;
+            background: none;
+            border: none;
+            color: var(--light-text);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            border-radius: var(--radius-small);
+            transition: all 0.2s;
+            position: relative;
+        }
+        
+        .tab-button:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+            color: var(--text);
+        }
+        
+        [data-theme="dark"] .tab-button:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .tab-button.active {
+            color: var(--primary-dark);
+            background-color: var(--user-message-bg);
+        }
+        
+        .tab-button.active::after {
+            content: '';
+            position: absolute;
+            bottom: -11px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: var(--primary);
+        }
+        
+        .tab-content {
+            display: none;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto; /* Allow vertical scrolling on the tab itself */
+        }
+        
+        /* Specific fix for terminal tab content */
+        #terminal-content {
+            overflow-y: auto; /* Allow scrolling */
+            -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+        }
+
+        /* Terminal styles */
+        .terminal-container {
+            flex: 1;
+            background-color: var(--background);  /* Match page background */
+            color: #d4d4d4;
+            font-family: 'Cascadia Code', 'Fira Code', 'Monaco', 'Courier New', monospace;
+            font-size: 10px;
+            line-height: 1.0;
+            padding: 10px;
+            overflow: auto;
+            white-space: pre;
+            position: relative;  /* Added for absolute positioning of status */
+        }
+        
+        .dashboard-wrapper {
+            overflow: hidden !important; /* Force clip on mobile */
+            max-width: 100%;
+            position: relative;
+            background-color: #0d0d0d !important; /* Ensure consistent background */
+        }
+
+        .dashboard-frame {
+            background-color: #0d0d0d !important;  /* Force consistent black background */
+            color: #d4d4d4 !important;  /* Force consistent text color */
+            padding: 8px;
+            border-radius: var(--radius-small);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            display: block; /* Changed from inline-block */
+            background-color: #0d0d0d !important; /* Force consistent background */
+            font-family: monospace;
+            font-size: 10px;
+            line-height: 1.0;
+        }
+        
+        /* Mobile-specific adjustments */
+        @media (max-width: 768px) {
+            .terminal-container {
+                font-size: 8px;
+                padding: 5px;
+                min-height: auto; /* Let it grow as needed */
+                overflow: hidden !important; /* Ensure no clipping */
+            }
+            
+            .dashboard-frame {
+                padding: 4px;
+                font-size: 8px;
+                display: block;
+                overflow: visible; /* No clipping */
+                max-width: 100%; /* Prevent horizontal overflow */
+            }
+            
+            /* Ensure terminal content scrolls properly on mobile */
+            #terminal-content {
+                height: calc(100vh - 120px); /* Account for header and tabs */
+                overflow-y: auto;
+            }
+        }
+
+        .dashboard-line {
+            white-space: pre;
+            margin: 0;
+            padding: 0;
+            background-color: transparent !important;  /* Ensure no background color inheritance */
+            color: inherit !important;  /* Inherit color from parent */
+        }
+        
+        .terminal-line {
+            min-height: 1.4em;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: transparent;
+            color: var(--text);
+            padding: 2px 5px;
+        }
+        
+        /* Dark theme adjustments for terminal */
+        [data-theme="dark"] .terminal-container {
+            background-color: var(--background);
+        }
+        
+        .terminal-status {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 12px;
+            color: var(--light-text);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border-radius: var(--radius-small);
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: var(--radius-round);
+            background-color: #666;
+            transition: background-color 0.3s;
+        }
+        
+        .status-indicator.connected {
+            background-color: #18453B;
+            box-shadow: 0 0 4px rgba(24, 69, 59, 0.4);
+        }
+        
         /* Iframe-friendly adjustments */
         @media (max-height: 600px) {
             .modal-content {
@@ -619,7 +825,7 @@
         <header class="header">
             <div class="logo">
                 <div class="logo-icon">P</div>
-                Chat
+                <span class="logo-text">Chat</span>
                 <span class="logo-separator">|</span>
                 <span class="system-prompt-header" id="system-prompt" contenteditable="true" spellcheck="false">Write thy wrong.</span>
             </div>
@@ -639,13 +845,32 @@
                 </button>
             </div>
         </header>
-
-        <div class="chat-container" id="chat-container">
+        
+        <!-- Tab navigation -->
+        <div class="tab-nav">
+            <button class="tab-button active" data-tab="chat" id="chat-tab">Home</button>
+            <button class="tab-button" data-tab="terminal" id="terminal-tab">Terminal</button>
+            <div class="terminal-status">
+                <span class="status-indicator" id="status-indicator"></span>
+                <span id="terminal-status">Disconnected</span>
+            </div>
         </div>
-
-        <div class="input-container">
-            <textarea class="message-input" id="message-input" placeholder="Type your message here..." rows="1"></textarea>
-            <button class="send-button" id="send-button">S</button>
+        
+        <!-- Chat tab content -->
+        <div class="tab-content active" id="chat-content">
+            <div class="chat-container" id="chat-container">
+            </div>
+            
+            <div class="input-container">
+                <textarea class="message-input" id="message-input" placeholder="Type your message here..." rows="1"></textarea>
+            </div>
+        </div>
+        
+        <!-- Terminal tab content -->
+        <div class="tab-content" id="terminal-content">
+            <div class="terminal-container" id="terminal-display">
+                <div class="terminal-line">Terminal ready. Dashboard will connect automatically when available.</div>
+            </div>
         </div>
     </div>
 
@@ -704,7 +929,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <script>
         // Live reload setup
-        const socket = io.connect(window.location.origin + '/live-reload');
+        console.log('Connecting live-reload WebSocket');
+        
+        // Use the same path logic for live-reload
+        const pathname = window.location.pathname;
+        let socketPath = '/socket.io';
+        
+        if (pathname && pathname !== '/') {
+            const cleanPath = pathname.replace(/\/$/, '');
+            socketPath = cleanPath + '/socket.io';
+        }
+        
+        console.log('Live-reload socket path:', socketPath);
+        
+        const socket = io.connect('/live-reload', {
+            path: socketPath
+        });
         
         socket.on('connect', () => {
             console.log('Live reload connected');
@@ -724,7 +964,6 @@
             // DOM elements
             const chatContainer = document.getElementById('chat-container');
             const messageInput = document.getElementById('message-input');
-            const sendButton = document.getElementById('send-button');
             const settingsButton = document.getElementById('settings-button');
             const settingsModal = document.getElementById('settings-modal');
             const closeModalButton = document.getElementById('close-modal');
@@ -733,6 +972,21 @@
             const systemPromptElement = document.getElementById('system-prompt');
             const themeToggleButton = document.getElementById('theme-toggle');
             const themeIcon = document.getElementById('theme-icon');
+            
+            // Tab elements
+            const chatTab = document.getElementById('chat-tab');
+            const terminalTab = document.getElementById('terminal-tab');
+            const chatContent = document.getElementById('chat-content');
+            const terminalContent = document.getElementById('terminal-content');
+            
+            // Terminal elements
+            const terminalDisplay = document.getElementById('terminal-display');
+            const terminalStatus = document.getElementById('terminal-status');
+            const statusIndicator = document.getElementById('status-indicator');
+            
+            // Terminal WebSocket
+            let terminalSocket = null;
+            let terminalConnected = false;
             
             // Generation parameter inputs
             const maxTokensInput = document.getElementById('max-tokens');
@@ -1055,20 +1309,28 @@
                 
                 const headerDiv = document.createElement('div');
                 headerDiv.className = 'message-header';
-                // Swap labels in dark mode
-                const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
-                if (isDarkMode) {
-                    headerDiv.textContent = isUser ? 'Me' : 'You';
+                
+                // Check if content is empty for assistant messages
+                if (!isUser && (!content || content.trim() === '')) {
+                    headerDiv.innerHTML = '<span class="error-header">[ERR]</span>';
+                    // Don't add any content div for empty responses
+                    messageDiv.appendChild(headerDiv);
                 } else {
-                    headerDiv.textContent = isUser ? 'You' : 'Me';
+                    // Swap labels in dark mode
+                    const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+                    if (isDarkMode) {
+                        headerDiv.textContent = isUser ? 'Me' : 'You';
+                    } else {
+                        headerDiv.textContent = isUser ? 'You' : 'Me';
+                    }
+                    
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'message-content';
+                    contentDiv.textContent = content;
+                    
+                    messageDiv.appendChild(headerDiv);
+                    messageDiv.appendChild(contentDiv);
                 }
-                
-                const contentDiv = document.createElement('div');
-                contentDiv.className = 'message-content';
-                contentDiv.textContent = content;
-                
-                messageDiv.appendChild(headerDiv);
-                messageDiv.appendChild(contentDiv);
                 
                 // Add reroll button for assistant messages
                 if (!isUser) {
@@ -1101,18 +1363,44 @@
             
             // Show thinking indicator
             const showThinking = () => {
-                const thinkingDiv = document.createElement('div');
-                thinkingDiv.className = 'thinking';
-                thinkingDiv.id = 'thinking-indicator';
+                // Create a proper assistant message container
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message assistant';
+                messageDiv.id = 'thinking-indicator';
                 
-                thinkingDiv.innerHTML = `
-                    Assistant is thinking
+                // Add header with thinking text
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'message-header';
+                
+                // Use appropriate label based on theme
+                const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+                
+                // Build the header text correctly
+                let headerContent;
+                if (isDarkMode) {
+                    // "You" + " are thinking" (with space)
+                    headerContent = `
+                        <span class="header-name">You</span>
+                        <span class="thinking-status"> are thinking</span>
+                    `;
+                } else {
+                    // "Meandering" as one word
+                    headerContent = `
+                        <span class="header-name">Meandering</span>
+                    `;
+                }
+                
+                // Create header with text and dots all on one line
+                headerDiv.innerHTML = headerContent + `
                     <div class="dots">
                         <div class="dot"></div>
                         <div class="dot"></div>
                         <div class="dot"></div>
                     </div>
                 `;
+                
+                // Only append the header - no content div until we have actual content
+                messageDiv.appendChild(headerDiv);
                 
                 // Add a timer to update the thinking indicator after a minute
                 let thinkingTimeSeconds = 0;
@@ -1125,27 +1413,26 @@
                         const seconds = thinkingTimeSeconds % 60;
                         const timeDisplay = `${minutes}m ${seconds}s`;
                         
-                        const timerElement = document.createElement('div');
+                        const timerElement = document.createElement('span');
                         timerElement.className = 'thinking-timer';
-                        timerElement.textContent = timeDisplay;
+                        timerElement.textContent = ` (${timeDisplay})`;
                         timerElement.style.fontSize = '12px';
-                        timerElement.style.color = '#777';
-                        timerElement.style.marginTop = '5px';
+                        timerElement.style.color = 'var(--light-text)';
                         
                         // Replace previous timer if exists
-                        const existingTimer = thinkingDiv.querySelector('.thinking-timer');
+                        const existingTimer = headerDiv.querySelector('.thinking-timer');
                         if (existingTimer) {
-                            thinkingDiv.replaceChild(timerElement, existingTimer);
+                            existingTimer.textContent = ` (${timeDisplay})`;
                         } else {
-                            thinkingDiv.appendChild(timerElement);
+                            headerDiv.querySelector('.thinking-status').appendChild(timerElement);
                         }
                     }
                 }, 1000);
                 
                 // Store the timer reference so we can clear it later
-                thinkingDiv.dataset.timerId = thinkingTimer;
+                messageDiv.dataset.timerId = thinkingTimer;
                 
-                chatContainer.appendChild(thinkingDiv);
+                chatContainer.appendChild(messageDiv);
                 chatContainer.scrollTop = chatContainer.scrollHeight;
             };
             
@@ -1339,13 +1626,12 @@
             };
             
             // Event listeners
-            sendButton.addEventListener('click', sendMessage);
-            
             messageInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
                 }
+                // Shift+Enter will naturally create a new line
             });
             
             messageInput.addEventListener('input', autoResizeTextarea);
@@ -1482,6 +1768,234 @@
                 });
             }
             
+            
+            // Store dashboard scale outside to make it accessible
+            let dashboardScale = null;
+            let currentTab = 'chat'; // Track current tab
+            
+            // Tab switching functionality
+            function switchTab(tabName) {
+                currentTab = tabName;
+                
+                // Update tab buttons
+                document.querySelectorAll('.tab-button').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+                
+                // Update tab content
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                
+                if (tabName === 'chat') {
+                    chatContent.classList.add('active');
+                    // Update status to show disconnected when not viewing terminal
+                    updateConnectionStatus();
+                } else if (tabName === 'terminal') {
+                    terminalContent.classList.add('active');
+                    // Reset scale when switching to terminal tab
+                    dashboardScale = null;
+                    // Connect to terminal if not connected
+                    if (!terminalConnected) {
+                        connectTerminal();
+                    }
+                    // Update status immediately
+                    updateConnectionStatus();
+                    // Auto-start capture to show existing dashboard
+                    setTimeout(() => {
+                        if (terminalConnected) {
+                            startTerminalCapture();
+                        }
+                    }, 100);
+                }
+            }
+            
+            // Update connection status based on both connection and tab
+            function updateConnectionStatus() {
+                if (currentTab === 'terminal' && terminalConnected) {
+                    terminalStatus.textContent = 'Connected';
+                    statusIndicator.classList.add('connected');
+                } else {
+                    terminalStatus.textContent = 'Disconnected';
+                    statusIndicator.classList.remove('connected');
+                }
+            }
+            
+            // Terminal WebSocket functions
+            function connectTerminal() {
+                if (terminalSocket && terminalSocket.connected) {
+                    return;
+                }
+                
+                // Connect to terminal namespace
+                console.log('Connecting to terminal WebSocket');
+                console.log('Current location:', window.location.href);
+                
+                // When served through ngrok with a secret path, socket.io needs to use that path
+                const pathname = window.location.pathname;
+                let socketPath = '/socket.io';
+                
+                // If we're on a subpath (ngrok), prepend it to the socket.io path
+                if (pathname && pathname !== '/') {
+                    // Remove trailing slash and add /socket.io
+                    const cleanPath = pathname.replace(/\/$/, '');
+                    socketPath = cleanPath + '/socket.io';
+                }
+                
+                console.log('Using socket.io path:', socketPath);
+                
+                terminalSocket = io.connect('/terminal', {
+                    path: socketPath
+                });
+                
+                terminalSocket.on('connect', () => {
+                    console.log('Terminal WebSocket connected');
+                    terminalConnected = true;
+                    updateConnectionStatus();
+                });
+                
+                terminalSocket.on('disconnect', () => {
+                    console.log('Terminal WebSocket disconnected');
+                    terminalConnected = false;
+                    updateConnectionStatus();
+                });
+                
+                terminalSocket.on('connect_error', (error) => {
+                    console.error('Terminal WebSocket connection error:', error);
+                    console.error('Error type:', error.type);
+                    console.error('Error message:', error.message);
+                });
+                
+                terminalSocket.on('terminal_output', (data) => {
+                    appendTerminalOutput(data.data);
+                });
+                
+                terminalSocket.on('dashboard_frame', (data) => {
+                    if (data.frame && Array.isArray(data.frame)) {
+                        terminalDisplay.innerHTML = '';
+                        
+                        // Create a wrapper container for proper scaling and clipping
+                        const wrapperDiv = document.createElement('div');
+                        wrapperDiv.style.position = 'relative';
+                        wrapperDiv.style.overflow = 'hidden'; // Critical for clipping
+                        wrapperDiv.style.backgroundColor = '#0d0d0d'; // Match dashboard bg
+                        
+                        // Create the frame container
+                        const frameContainer = document.createElement('div');
+                        frameContainer.className = 'dashboard-frame';
+                        
+                        // Add each line
+                        data.frame.forEach(line => {
+                            const lineDiv = document.createElement('div');
+                            lineDiv.className = 'dashboard-line';
+                            lineDiv.textContent = line;
+                            frameContainer.appendChild(lineDiv);
+                        });
+                        
+                        // Add frame to wrapper, then wrapper to display
+                        wrapperDiv.appendChild(frameContainer);
+                        terminalDisplay.appendChild(wrapperDiv);
+                        
+                        // Calculate scale only once
+                        if (dashboardScale === null) {
+                            requestAnimationFrame(() => {
+                                const frameWidth = frameContainer.scrollWidth;
+                                const frameHeight = frameContainer.scrollHeight;
+                                const containerWidth = terminalDisplay.clientWidth;
+                                
+                                const padding = 20;
+                                const targetWidth = containerWidth - padding;
+                                
+                                if (frameWidth > targetWidth) {
+                                    dashboardScale = targetWidth / frameWidth;
+                                    
+                                    // Apply scale to the frame
+                                    frameContainer.style.transform = `scale(${dashboardScale})`;
+                                    frameContainer.style.transformOrigin = 'top left';
+                                    
+                                    // CRITICAL: Set wrapper dimensions to match scaled size
+                                    const scaledHeight = frameHeight * dashboardScale;
+                                    const scaledWidth = frameWidth * dashboardScale;
+                                    
+                                    // Clip at exact scaled dimensions
+                                    wrapperDiv.style.height = scaledHeight + 'px';
+                                    wrapperDiv.style.width = scaledWidth + 'px';
+                                    wrapperDiv.style.maxWidth = '100%';
+                                    
+                                    terminalDisplay.style.minHeight = (scaledHeight + padding) + 'px';
+                                }
+                                
+                                terminalDisplay.scrollTop = 0;
+                            });
+                        } else if (dashboardScale && dashboardScale < 1) {
+                            // Apply previously calculated scale
+                            frameContainer.style.transform = `scale(${dashboardScale})`;
+                            frameContainer.style.transformOrigin = 'top left';
+                            
+                            // Set wrapper dimensions for existing scale
+                            const scaledHeight = frameContainer.scrollHeight * dashboardScale;
+                            const scaledWidth = frameContainer.scrollWidth * dashboardScale;
+                            
+                            wrapperDiv.style.height = scaledHeight + 'px';
+                            wrapperDiv.style.width = scaledWidth + 'px';
+                            wrapperDiv.style.maxWidth = '100%';
+                            
+                            terminalDisplay.style.minHeight = (scaledHeight + 20) + 'px';
+                        }
+                    }
+                });
+                
+                terminalSocket.on('terminal_init', (data) => {
+                    if (data.lines) {
+                        terminalDisplay.innerHTML = '';
+                        data.lines.forEach(line => {
+                            appendTerminalOutput(line);
+                        });
+                    }
+                });
+                
+                terminalSocket.on('capture_started', (data) => {
+                    if (data.status === 'connected_to_existing') {
+                        terminalDisplay.innerHTML = ''; // Clear initial message
+                    } else if (data.status === 'no_dashboard_found') {
+                        appendTerminalOutput('No active dashboard found. Start training to see dashboard output.');
+                    }
+                });
+                
+                terminalSocket.on('capture_stopped', () => {
+                    appendTerminalOutput('Dashboard connection stopped.');
+                });
+            }
+            
+            function appendTerminalOutput(text) {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'terminal-line';
+                lineDiv.textContent = text;
+                terminalDisplay.appendChild(lineDiv);
+                
+                // Limit the number of lines
+                while (terminalDisplay.children.length > 1000) {
+                    terminalDisplay.removeChild(terminalDisplay.firstChild);
+                }
+                
+                // Scroll to bottom
+                terminalDisplay.scrollTop = terminalDisplay.scrollHeight;
+            }
+            
+            function startTerminalCapture() {
+                if (terminalSocket && terminalConnected) {
+                    // Connect to existing dashboard, don't spawn new process
+                    terminalSocket.emit('start_capture', {
+                        command: 'connect_existing'
+                    });
+                }
+            }
+            
+            
+            // Tab event listeners
+            chatTab.addEventListener('click', () => switchTab('chat'));
+            terminalTab.addEventListener('click', () => switchTab('terminal'));
             
             // Initialize
             loadSettings();

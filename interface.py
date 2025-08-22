@@ -9,8 +9,10 @@ import shutil
 import signal
 import sys
 import textwrap
+import threading
 import time
 import warnings
+import weakref
 from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -20,6 +22,252 @@ import asciichartpy
 import blessed
 import numpy as np
 import wcwidth
+
+# Global registry for dashboard streaming
+_active_dashboards = weakref.WeakValueDictionary()
+_dashboard_lock = threading.Lock()
+_global_socketio = None
+
+def register_socketio(socketio_instance):
+    """Register the global SocketIO instance for dashboard streaming."""
+    global _global_socketio
+    _global_socketio = socketio_instance
+    print("SocketIO registered for dashboard streaming")
+
+def get_active_dashboard(identifier="main"):
+    """Get the active dashboard instance if available."""
+    return _active_dashboards.get(identifier)
+
+class WebDashboardRenderer:
+    """Renders terminal dashboard frames for web display."""
+    
+    def __init__(self, target_width: int = 200, target_height: int = 50):
+        # Larger default width to accommodate full dashboard
+        self.target_width = target_width
+        self.target_height = target_height
+        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        
+    def strip_ansi(self, text: str) -> str:
+        """Remove ANSI escape sequences."""
+        return self.ansi_escape.sub('', text)
+        
+    def calculate_visual_width(self, text: str) -> int:
+        """Calculate the visual width of text, accounting for Unicode characters."""
+        # Strip ANSI codes first
+        clean_text = self.strip_ansi(text)
+        # Count visual width (simplified - treats all chars as width 1 or 2)
+        width = 0
+        for char in clean_text:
+            if ord(char) > 0x7F:  # Non-ASCII
+                # Simplified: assume wide chars are width 2
+                width += 2 if ord(char) >= 0x1100 else 1
+            else:
+                width += 1
+        return width
+        
+    def extract_dashboard_dimensions(self, frame: list) -> tuple:
+        """Extract the actual dimensions of the dashboard frame."""
+        if not frame:
+            return 0, 0
+            
+        # Find the widest line
+        max_width = 0
+        for line in frame:
+            width = self.calculate_visual_width(line)
+            max_width = max(max_width, width)
+            
+        return max_width, len(frame)
+        
+    def render_frame_for_web(self, frame: list) -> dict:
+        """
+        Render a dashboard frame for web display.
+        Returns a dict with the rendered content and metadata.
+        """
+        if not frame:
+            return {
+                'html': '<div class="terminal-empty">No dashboard output</div>',
+                'text': [],
+                'width': 0,
+                'height': 0
+            }
+            
+        # Get actual dimensions
+        actual_width, actual_height = self.extract_dashboard_dimensions(frame)
+        
+        # Clean and process each line
+        processed_lines = []
+        for line in frame:
+            # Strip ANSI codes for web display
+            clean_line = self.strip_ansi(line)
+            processed_lines.append(clean_line)
+            
+        # Check if we need to scale or crop
+        scale_factor = 1.0
+        if actual_width > self.target_width:
+            scale_factor = self.target_width / actual_width
+            
+        return {
+            'text': processed_lines,
+            'width': actual_width,
+            'height': actual_height,
+            'scale_factor': scale_factor,
+            'needs_scaling': scale_factor < 1.0
+        }
+
+class DashboardFrameBuffer:
+    """Manages a buffer of dashboard frames with proper synchronization."""
+    
+    def __init__(self, max_frames: int = 10):
+        self.frames = []
+        self.max_frames = max_frames
+        self.renderer = WebDashboardRenderer()
+        
+    def add_frame(self, frame: list):
+        """Add a new frame to the buffer."""
+        if len(self.frames) >= self.max_frames:
+            self.frames.pop(0)
+        self.frames.append(frame)
+        
+    def get_latest_frame(self):
+        """Get the most recent frame."""
+        return self.frames[-1] if self.frames else None
+        
+    def get_latest_rendered(self) -> dict:
+        """Get the latest frame rendered for web display."""
+        frame = self.get_latest_frame()
+        if frame:
+            return self.renderer.render_frame_for_web(frame)
+        return None
+        
+    def clear(self):
+        """Clear all frames."""
+        self.frames = []
+
+class DashboardStreamer:
+    """Streams dashboard frames to web clients via SocketIO."""
+    
+    def __init__(self, dashboard):
+        self.dashboard = weakref.ref(dashboard)
+        self.streaming = False
+        self.stream_thread = None
+        self.last_frame = None
+        self.frame_buffer = DashboardFrameBuffer()
+        # Use wider target width for better display
+        self.renderer = WebDashboardRenderer(target_width=200)
+        
+    def start(self):
+        """Start streaming dashboard output."""
+        if self.streaming:
+            return
+            
+        self.streaming = True
+        self.stream_thread = threading.Thread(target=self._stream_loop)
+        self.stream_thread.daemon = True
+        self.stream_thread.start()
+        print("Dashboard streaming started")
+        
+    def stop(self):
+        """Stop streaming dashboard output."""
+        self.streaming = False
+        if self.stream_thread:
+            self.stream_thread.join(timeout=2)
+            self.stream_thread = None
+        print("Dashboard streaming stopped")
+        
+    def get_current_frame(self):
+        """Get the current dashboard frame."""
+        dashboard = self.dashboard()
+        if dashboard and hasattr(dashboard, 'previous_frame'):
+            return dashboard.previous_frame
+        return None
+        
+    def get_buffered_frames(self):
+        """Get all buffered frames."""
+        return list(self.frame_buffer)
+        
+    def _stream_loop(self):
+        """Main streaming loop."""
+        global _global_socketio
+        
+        while self.streaming:
+            try:
+                dashboard = self.dashboard()
+                if not dashboard:
+                    # Dashboard was garbage collected
+                    break
+                    
+                # Get current frame
+                if hasattr(dashboard, 'previous_frame'):
+                    frame = dashboard.previous_frame
+                    
+                    # Check if frame changed
+                    if frame != self.last_frame and frame is not None:
+                        self.last_frame = frame
+                        
+                        # Add to buffer
+                        if hasattr(self.frame_buffer, 'add_frame'):
+                            self.frame_buffer.add_frame(frame)
+                        else:
+                            self.frame_buffer.append(frame)
+                        
+                        # Stream to web clients if socketio is available
+                        if _global_socketio:
+                            try:
+                                # Render frame for web if renderer available
+                                if self.renderer:
+                                    rendered = self.renderer.render_frame_for_web(frame)
+                                    _global_socketio.emit(
+                                        'dashboard_frame',
+                                        {
+                                            'frame': rendered['text'],
+                                            'metadata': {
+                                                'width': rendered['width'],
+                                                'height': rendered['height'],
+                                                'scale_factor': rendered['scale_factor']
+                                            },
+                                            'timestamp': time.time()
+                                        },
+                                        namespace='/terminal'
+                                    )
+                                else:
+                                    # Fallback to raw frame
+                                    _global_socketio.emit(
+                                        'dashboard_frame',
+                                        {
+                                            'frame': frame,
+                                            'timestamp': time.time()
+                                        },
+                                        namespace='/terminal'
+                                    )
+                            except Exception as e:
+                                print(f"Error emitting frame: {e}")
+                
+                # Also capture dashboard state
+                if _global_socketio and dashboard:
+                    state = {
+                        'status': getattr(dashboard, 'status_text', 'Unknown'),
+                        'step': getattr(dashboard, 'step', 0),
+                        'batch': getattr(dashboard, 'batch', 0),
+                        'mode': getattr(dashboard, 'mode', 'unknown'),
+                        'running': getattr(dashboard, 'running', False)
+                    }
+                    
+                    try:
+                        _global_socketio.emit(
+                            'dashboard_state',
+                            state,
+                            namespace='/terminal'
+                        )
+                    except:
+                        pass
+                
+                time.sleep(0.1)  # Match dashboard update rate
+                
+            except Exception as e:
+                print(f"Error in dashboard streaming: {e}")
+                time.sleep(1)
+                
+        print("Dashboard streaming loop ended")
 
 
 class DashboardStreamHandler(logging.StreamHandler):
@@ -128,6 +376,18 @@ class TerminalDashboard:
         self.error_exit = False
         self.error_message = None
         atexit.register(self._cleanup)
+        
+        # Set up dashboard streaming if available
+        try:
+            self._streamer = DashboardStreamer(self)
+            # Register this dashboard globally
+            with _dashboard_lock:
+                _active_dashboards["main"] = self
+                if _global_socketio:
+                    self._streamer.start()
+        except Exception as e:
+            # Silently fail - don't break the dashboard
+            pass
 
     def show_warning(self, message, category, filename, lineno, file=None, line=None):
         warning_message = warnings.formatwarning(
