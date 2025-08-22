@@ -2062,18 +2062,18 @@
                         const frameContainer = document.createElement('div');
                         frameContainer.className = 'dashboard-frame';
                         
-                        // Check if mobile - consider EITHER dimension being mobile-sized
-                        // This ensures character replacement happens in landscape too
-                        const isMobile = window.innerWidth <= 768 || window.innerHeight <= 768 || 
-                                        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                        // Only apply character replacement on actual mobile devices (not just small screens)
+                        // Desktop users with small windows should still see original characters
+                        const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
                         
                         // Add each line
                         data.frame.forEach(line => {
                             const lineDiv = document.createElement('div');
                             lineDiv.className = 'dashboard-line';
                             
-                            // On mobile, replace Unicode box drawing and block characters with ASCII
-                            if (isMobile) {
+                            // On mobile devices only, replace Unicode box drawing and block characters with ASCII
+                            // This fixes character width issues on mobile while preserving desktop appearance
+                            if (isMobileDevice) {
                                 // Replace block/square characters that render as double-width
                                 line = line.replace(/[█▓▒░]/g, '#')  // Full blocks -> hash
                                           .replace(/[▀▄]/g, '=')  // Half blocks -> equals
