@@ -131,7 +131,7 @@
             color: var(--light-text);
             font-style: italic;
             cursor: text;
-            padding: 4px 8px;
+            padding: 4px 8px 4px 0;
             border-radius: var(--radius-small);
             transition: background-color 0.2s, max-width 0.2s;
             outline: none;
@@ -292,8 +292,17 @@
             font-size: 14px;
             color: var(--text);
         }
+        
+        /* Style checkbox labels differently */
+        .form-group label input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+            margin-right: 10px;
+            cursor: pointer;
+            vertical-align: middle;
+        }
 
-        .form-group input {
+        .form-group input:not([type="checkbox"]) {
             width: 100%;
             padding: 10px 12px;
             border: 1px solid var(--border);
@@ -308,8 +317,7 @@
             border-color: var(--primary);
         }
 
-        .save-button {
-            background-color: var(--primary);
+        .save-button, .reset-button {
             color: white;
             border: none;
             padding: 10px 16px;
@@ -318,9 +326,21 @@
             cursor: pointer;
             transition: background-color 0.2s;
         }
+        
+        .save-button {
+            background-color: var(--primary);
+        }
 
         .save-button:hover {
             background-color: var(--primary-dark);
+        }
+        
+        .reset-button {
+            background-color: #d32f2f;
+        }
+        
+        .reset-button:hover {
+            background-color: #b71c1c;
         }
         
         .save-confirmation {
@@ -500,7 +520,7 @@
 
         .input-container {
             display: flex;
-            padding: 0 var(--spacing-lg) var(--spacing-xl) var(--spacing-lg);
+            padding: 0 0 var(--spacing-xl) 0;
             padding-bottom: calc(var(--spacing-xl) + env(safe-area-inset-bottom));
             background-color: var(--background);
             z-index: 10;
@@ -852,7 +872,7 @@
         
         <!-- Tab navigation -->
         <div class="tab-nav">
-            <button class="tab-button active" data-tab="chat" id="chat-tab">Home</button>
+            <button class="tab-button active" data-tab="chat" id="chat-tab">Gym</button>
             <button class="tab-button" data-tab="terminal" id="terminal-tab">Terminal</button>
             <div class="terminal-status">
                 <span class="status-indicator" id="status-indicator"></span>
@@ -866,7 +886,7 @@
             </div>
             
             <div class="input-container">
-                <textarea class="message-input" id="message-input" placeholder="Type your message here..." rows="1"></textarea>
+                <textarea class="message-input" id="message-input" placeholder="Shoot:" rows="1"></textarea>
             </div>
         </div>
         
@@ -920,11 +940,14 @@
             <div class="form-group">
                 <label for="debug-logging">
                     <input type="checkbox" id="debug-logging">
-                    Enable Debug Logging (logs full prompts to console)
+                    Debug Logging
                 </label>
             </div>
             
-            <button class="save-button" id="save-settings">Save Settings</button>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button class="save-button" id="save-settings">Save Settings</button>
+                <button class="reset-button" id="reset-settings">Reset All</button>
+            </div>
             <div class="save-confirmation" id="save-confirmation">Settings saved! Refreshing...</div>
         </div>
     </div>
@@ -1199,13 +1222,33 @@
                     });
                     
                     const response = await Promise.race([fetchPromise, timeoutPromise]);
-                    const result = await response.json();
+                    
+                    // Check if response is OK
+                    if (!response.ok) {
+                        return { success: false, message: `Server returned ${response.status} ${response.statusText}` };
+                    }
+                    
+                    // Try to parse as JSON, but handle non-JSON responses
+                    let result;
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        result = await response.json();
+                    } else {
+                        // If not JSON, just check that we got a response
+                        const text = await response.text();
+                        console.log('Non-JSON response:', text);
+                        result = { message: 'Connected (non-JSON response)' };
+                    }
                     
                     console.log('API connection test result:', result);
                     return { success: true, message: result.message || 'Connected to API server' };
                 } catch (error) {
                     console.error('API connection test failed:', error);
-                    return { success: false, message: 'Failed to connect to API server: ' + error.message };
+                    // Provide a cleaner error message
+                    if (error.message.includes('Failed to fetch')) {
+                        return { success: false, message: 'Could not reach the server. Check if it\'s running.' };
+                    }
+                    return { success: false, message: 'Connection failed: ' + error.message };
                 }
             };
             
@@ -1244,29 +1287,18 @@
                         // Refresh after showing message
                         setTimeout(() => window.location.reload(), 2000);
                     } else {
-                        const proceed = confirm(`Warning: ${connectionTest.message}\n\nDo you want to save the API URL anyway?`);
-                        if (proceed) {
-                            apiUrl = newApiUrl;
-                            localStorage.setItem('praxis_api_url', newApiUrl);
-                            
-                            // Show confirmation message
-                            const confirmationDiv = document.getElementById('save-confirmation');
-                            confirmationDiv.textContent = 'Settings saved! Refreshing...';
-                            confirmationDiv.classList.add('show');
-                            
-                            // Refresh after showing message
-                            setTimeout(() => window.location.reload(), 2000);
-                        } else {
-                            // Save only the generation parameters without refreshing
-                            const confirmationDiv = document.getElementById('save-confirmation');
-                            confirmationDiv.textContent = 'Generation parameters saved. API URL unchanged.';
-                            confirmationDiv.classList.add('show');
-                            
-                            // Hide message after 2 seconds
-                            setTimeout(() => {
-                                confirmationDiv.classList.remove('show');
-                            }, 2000);
-                        }
+                        // Save without showing confirm dialog
+                        console.warn('API connection warning:', connectionTest.message);
+                        apiUrl = newApiUrl;
+                        localStorage.setItem('praxis_api_url', newApiUrl);
+                        
+                        // Show confirmation message with warning note
+                        const confirmationDiv = document.getElementById('save-confirmation');
+                        confirmationDiv.textContent = 'Settings saved (check console for connection details)';
+                        confirmationDiv.classList.add('show');
+                        
+                        // Refresh after showing message
+                        setTimeout(() => window.location.reload(), 2000);
                     }
                 } else {
                     // Save only the generation parameters
@@ -1665,6 +1697,31 @@
                         confirmationDiv.style.backgroundColor = '';
                     }, 3000);
                 });
+            });
+            
+            // Reset button handler
+            const resetButton = document.getElementById('reset-settings');
+            resetButton.addEventListener('click', () => {
+                // Clear all localStorage items for this page
+                const keysToRemove = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    // Remove all praxis-related keys
+                    if (key && (key.startsWith('praxis_') || key === 'theme' || key === 'chatHistory')) {
+                        keysToRemove.push(key);
+                    }
+                }
+                
+                // Remove all collected keys
+                keysToRemove.forEach(key => localStorage.removeItem(key));
+                
+                // Show confirmation and reload
+                const confirmationDiv = document.getElementById('save-confirmation');
+                confirmationDiv.textContent = 'All settings cleared! Refreshing...';
+                confirmationDiv.classList.add('show');
+                
+                // Reload the page after a short delay
+                setTimeout(() => window.location.reload(), 1500);
             });
             
             // Set up parameter input event listeners for sliders
