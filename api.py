@@ -72,6 +72,134 @@ def ping():
     return response
 
 
+@app.route("/api/spec", methods=["GET", "OPTIONS"])
+def get_spec():
+    """Get model specification including hashes and CLI arguments"""
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        return response
+    
+    try:
+        # Import CLI utilities to get configuration
+        from cli import get_cli_args, _compute_args_hash
+        import json
+        import hashlib
+        
+        # Get CLI args
+        args = get_cli_args()
+        
+        # Convert args to dict, filtering out non-serializable items
+        args_dict = {}
+        for key, value in vars(args).items():
+            try:
+                # Test if value is JSON serializable
+                json.dumps(value)
+                args_dict[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable values
+                args_dict[key] = str(value)
+        
+        # Compute the full hash from current args
+        # This gives us the actual full hash
+        import sys
+        full_hash = _compute_args_hash(sys.argv[1:])
+        truncated_hash = full_hash[:9] if full_hash else None
+        
+        # Get the model architecture string
+        model_arch = None
+        try:
+            generator = app.config.get("generator")
+            if generator and hasattr(generator, 'model'):
+                model = generator.model
+                # Get the string representation of the model
+                import io
+                from contextlib import redirect_stdout
+                
+                f = io.StringIO()
+                with redirect_stdout(f):
+                    print(model)
+                model_arch = f.getvalue()
+        except Exception as e:
+            model_arch = f"Error getting model architecture: {str(e)}"
+        
+        # Calculate parameter stats directly here
+        param_stats = {}
+        try:
+            generator = app.config.get("generator")
+            if generator and hasattr(generator, 'model'):
+                model = generator.model
+                # Count the parameters
+                total_params = sum(p.numel() for p in model.parameters())
+                
+                # Get actual config values from the model
+                config = model.config if hasattr(model, 'config') else None
+                if config:
+                    # Get actual values from config
+                    batch_size = args_dict.get('batch_size', 1)
+                    block_size = getattr(config, 'max_position_embeddings', getattr(config, 'block_size', 512))
+                    hidden_size = getattr(config, 'hidden_size', 768)
+                    
+                    # In Praxis, depth is the number of forward passes through experts
+                    # num_experts is the pool of available experts to choose from
+                    # The actual number of layers processed is just depth
+                    depth = getattr(config, 'depth', 3)
+                    num_experts = getattr(config, 'num_experts', 3)
+                    
+                    # Simple activation estimate: batch_size * seq_len * hidden_size * depth
+                    activation_params = batch_size * block_size * hidden_size * depth
+                    
+                    param_stats = {
+                        "total_params": total_params,
+                        "activation_params": activation_params,
+                        "config": {
+                            "batch_size": batch_size,
+                            "block_size": block_size,
+                            "hidden_size": hidden_size,
+                            "depth": depth,
+                            "num_experts": num_experts
+                        }
+                    }
+                else:
+                    param_stats = {"total_params": total_params}
+        except:
+            param_stats = {}
+        
+        # Get metadata from history.log
+        timestamp = None
+        command = None
+        if os.path.exists("history.log"):
+            with open("history.log", "r") as f:
+                first_line = f.readline().strip()
+                if first_line:
+                    parts = first_line.split(" | ")
+                    if len(parts) >= 3:
+                        timestamp = parts[0]
+                        command = parts[2].strip('"')
+        
+        # Return clean data structure
+        spec = {
+            "truncated_hash": truncated_hash,
+            "full_hash": full_hash,
+            "args": args_dict,
+            "model_architecture": model_arch,
+            "param_stats": param_stats,
+            "timestamp": timestamp,
+            "command": command
+        }
+        
+        response = jsonify(spec)
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
+        
+    except Exception as e:
+        error_response = jsonify({"error": str(e)})
+        error_response.headers.add("Access-Control-Allow-Origin", "*")
+        return error_response, 500
+
+
 class TemplateChangeHandler(FileSystemEventHandler):
     """Watch for changes in template files and emit live-reload events"""
 
@@ -122,7 +250,11 @@ class APIServer:
         port=2100,
         tokenizer=None,
         module_loader=None,
+        param_stats=None,
     ):
+        print(f"[DEBUG] APIServer.__init__ called with param_stats: {param_stats is not None}")
+        if param_stats:
+            print(f"[DEBUG] APIServer.__init__ param_stats keys: {list(param_stats.keys())}")
         self.generator = generator
         self.server_thread = None
         self.server = None
@@ -135,8 +267,9 @@ class APIServer:
         self.parent_pid = os.getppid()
         self.tokenizer = tokenizer
         self.module_loader = module_loader
+        self.param_stats = param_stats if param_stats else {}
         self.template_watcher = TemplateWatcher()
-        
+    
         # Initialize terminal WebSocket namespace if available
         if terminal_available:
             # Register socketio for dashboard streaming
@@ -198,6 +331,11 @@ class APIServer:
             
             # Register the terminal namespace
             socketio.on_namespace(TerminalNamespace('/terminal'))
+    
+    def update_param_stats(self, param_stats):
+        """Update the parameter statistics after optimizer creation"""
+        self.param_stats = param_stats
+        print(f"[DEBUG] APIServer.update_param_stats called with stats: {bool(param_stats)}")
 
     def _is_port_in_use(self, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -258,10 +396,22 @@ class APIServer:
             self.server_thread = None
 
     def _run_server(self):
+        print(f"[DEBUG] _run_server starting, self.param_stats exists: {bool(self.param_stats)}")
+        if self.param_stats:
+            print(f"[DEBUG] _run_server self.param_stats keys: {list(self.param_stats.keys())}")
+        
         with app.app_context():
             app.config["generator"] = self.generator
             app.config["tokenizer"] = self.tokenizer
             app.config["module_loader"] = self.module_loader
+            # Store param_stats if available
+            if hasattr(self, 'param_stats') and self.param_stats:
+                app.config["param_stats"] = self.param_stats
+                print(f"[DEBUG] API Server: Stored param_stats in app.config with {len(self.param_stats)} keys")
+                print(f"[DEBUG] API Server: param_stats keys: {list(self.param_stats.keys())}")
+            else:
+                app.config["param_stats"] = {}
+                print(f"[DEBUG] API Server: No param_stats found, storing empty dict")
 
             # Signal that the server will start
             self.started.set()
