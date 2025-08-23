@@ -720,12 +720,19 @@ def apply_defaults_and_parse(defaults_dict):
         with open(log_file, "w") as f:
             f.write(new_entry + existing_content)
 
-        # Save hash to MODEL_HASH.txt
+        # Save both truncated and full hash
         hash_file_dir = os.path.join("data", "praxis")
-        hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
         os.makedirs(hash_file_dir, exist_ok=True)
+        
+        # Save truncated hash for backward compatibility
+        hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
         with open(hash_file_path, "w") as f:
             f.write(truncated_hash)
+        
+        # Save full hash in a separate file
+        full_hash_path = os.path.join(hash_file_dir, "MODEL_HASH_FULL.txt")
+        with open(full_hash_path, "w") as f:
+            f.write(effective_hash)
 
         return displayed_command, effective_hash, truncated_hash
 
@@ -852,16 +859,19 @@ def log_command(exclude_from_hash=None):
     with open(log_file, "w") as f:
         f.write(new_entry + existing_content)
 
-    # Save the truncated hash to MODEL_HASH.txt in data/praxis directory
+    # Save both truncated and full hash to data/praxis directory
     hash_file_dir = os.path.join("data", "praxis")
-    hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
-
-    # Ensure the directory exists
     os.makedirs(hash_file_dir, exist_ok=True)
-
-    # Write just the hash to the file (overwriting any existing content)
+    
+    # Save truncated hash for backward compatibility
+    hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
     with open(hash_file_path, "w") as f:
         f.write(truncated_hash)
+    
+    # Save full hash in a separate file
+    full_hash_path = os.path.join(hash_file_dir, "MODEL_HASH_FULL.txt")
+    with open(full_hash_path, "w") as f:
+        f.write(args_hash)
 
     return full_command, args_hash, truncated_hash
 

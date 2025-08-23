@@ -84,7 +84,7 @@ def get_spec():
     
     try:
         # Import CLI utilities to get configuration
-        from cli import get_cli_args, _compute_args_hash
+        from cli import get_cli_args
         import json
         import hashlib
         
@@ -102,11 +102,34 @@ def get_spec():
                 # Skip non-serializable values
                 args_dict[key] = str(value)
         
-        # Compute the full hash from current args
-        # This gives us the actual full hash
-        import sys
-        full_hash = _compute_args_hash(sys.argv[1:])
-        truncated_hash = full_hash[:9] if full_hash else None
+        # Read the hashes from files for consistency
+        import os
+        hash_file_path = os.path.join("data", "praxis", "MODEL_HASH.txt")
+        full_hash_path = os.path.join("data", "praxis", "MODEL_HASH_FULL.txt")
+        truncated_hash = None
+        full_hash = None
+        
+        # Read truncated hash
+        if os.path.exists(hash_file_path):
+            with open(hash_file_path, "r") as f:
+                truncated_hash = f.read().strip()
+        
+        # Read full hash
+        if os.path.exists(full_hash_path):
+            with open(full_hash_path, "r") as f:
+                full_hash = f.read().strip()
+        
+        # If full hash file doesn't exist but truncated does, generate a placeholder
+        # (for backward compatibility with older runs)
+        if truncated_hash and not full_hash:
+            import hashlib
+            # Use the truncated hash as a seed to generate a consistent full hash
+            full_hash = hashlib.sha256(truncated_hash.encode()).hexdigest()
+        
+        # If neither hash exists, mark as unknown
+        if not truncated_hash:
+            truncated_hash = "unknown"
+            full_hash = "unknown"
         
         # Get the model architecture string
         model_arch = None

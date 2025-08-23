@@ -1002,7 +1002,7 @@
             <div class="tab-buttons">
                 <button class="tab-button active" data-tab="chat" id="chat-tab">Gym</button>
                 <button class="tab-button" data-tab="terminal" id="terminal-tab">Terminal</button>
-                <button class="tab-button" data-tab="spec" id="spec-tab">Architecture</button>
+                <button class="tab-button" data-tab="spec" id="spec-tab">Identity</button>
             </div>
             <div class="terminal-status">
                 <span class="status-indicator" id="status-indicator"></span>
@@ -1134,6 +1134,8 @@
             const PREFIX = "> ";
             const PLACEHOLDER_TEXT = "Shoot";
             messageInput.value = PREFIX + PLACEHOLDER_TEXT;
+            messageInput.style.color = 'var(--light-text)';
+            messageInput.style.fontStyle = 'italic';
             
             // Set cursor position after prefix
             const setCursorAfterPrefix = () => {
@@ -2492,7 +2494,7 @@
                     // Identity section with hashes (moved to top)
                     if (data.full_hash && data.truncated_hash) {
                         html += '<div class="spec-section">';
-                        html += '<div class="spec-title">Identity</div>';
+                        html += '<div class="spec-title">Hashes</div>';
                         
                         const truncLen = data.truncated_hash.length;
                         const truncPart = data.full_hash.substring(0, truncLen);
