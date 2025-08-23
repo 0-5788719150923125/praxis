@@ -964,9 +964,9 @@ class TerminalInterface(Callback):
             info_dict["vocab_size"] = vocab_size
             info_dict["block_size"] = seq_length
             info_dict["batch_size"] = batch_size
+            info_dict["target_size"] = target_batch_size
             info_dict["num_heads"] = int(num_heads.split(":")[0])
             info_dict["num_queries"] = int(num_heads.split(":")[1])
-            info_dict["target_size"] = target_batch_size
             info_dict["depth"] = depth
             info_dict["hidden_size"] = hidden_size
             info_dict["embed_size"] = embed_size
@@ -1633,15 +1633,18 @@ print(f"[DEBUG] Starting param_stats calculation")
 param_stats = {}
 try:
     import torch
+
     print(f"[DEBUG] Torch imported successfully")
-    
+
     # Count model parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     frozen_params = total_params - trainable_params
-    
-    print(f"[DEBUG] Model params - Total: {total_params}, Trainable: {trainable_params}, Frozen: {frozen_params}")
-    
+
+    print(
+        f"[DEBUG] Model params - Total: {total_params}, Trainable: {trainable_params}, Frozen: {frozen_params}"
+    )
+
     # Estimate activation sizes using actual configuration values
     # We have direct access to all these as global variables
     actual_batch_size = batch_size
@@ -1649,24 +1652,36 @@ try:
     actual_hidden_size = hidden_size
     actual_num_layers = n_layer
     actual_num_heads = n_head
-    
-    print(f"[DEBUG] Config - batch_size: {actual_batch_size}, block_size: {actual_block_size}, hidden: {actual_hidden_size}, layers: {actual_num_layers}, heads: {actual_num_heads}")
-    
+
+    print(
+        f"[DEBUG] Config - batch_size: {actual_batch_size}, block_size: {actual_block_size}, hidden: {actual_hidden_size}, layers: {actual_num_layers}, heads: {actual_num_heads}"
+    )
+
     # Hidden states: batch_size * seq_len * hidden_size * num_layers
-    activation_params = actual_batch_size * actual_block_size * actual_hidden_size * actual_num_layers
-    
+    activation_params = (
+        actual_batch_size * actual_block_size * actual_hidden_size * actual_num_layers
+    )
+
     # Add attention scores if using attention
-    if attention_type and attention_type != 'none':
+    if attention_type and attention_type != "none":
         # Attention scores: batch_size * num_heads * seq_len * seq_len * num_layers
-        attention_memory = actual_batch_size * actual_num_heads * actual_block_size * actual_block_size * actual_num_layers
+        attention_memory = (
+            actual_batch_size
+            * actual_num_heads
+            * actual_block_size
+            * actual_block_size
+            * actual_num_layers
+        )
         activation_params += attention_memory
-        print(f"[DEBUG] Attention type: {attention_type}, attention memory: {attention_memory}")
-    
+        print(
+            f"[DEBUG] Attention type: {attention_type}, attention memory: {attention_memory}"
+        )
+
     param_stats = {
         "model": {
             "total": int(total_params),  # Convert to int for JSON serialization
             "trainable": int(trainable_params),
-            "frozen": int(frozen_params)
+            "frozen": int(frozen_params),
         },
         "optimizer_states": 0,  # Will be calculated after optimizer is created
         "activation_estimate": {
@@ -1674,20 +1689,28 @@ try:
             "batch_size": int(actual_batch_size),
             "block_size": int(actual_block_size),
             "hidden_size": int(actual_hidden_size),
-            "num_layers": int(actual_num_layers)
+            "num_layers": int(actual_num_layers),
         },
-        "total_active": int(total_params + activation_params)  # Will add optimizer states later
+        "total_active": int(
+            total_params + activation_params
+        ),  # Will add optimizer states later
     }
     print(f"[DEBUG] param_stats created: {param_stats}")
 except Exception as e:
     print(f"[ERROR] calculating parameter stats: {e}")
     import traceback
+
     traceback.print_exc()
     param_stats = {}
 
 if local_rank == 0:
     api_server = APIServer(
-        generator, host_name, port, tokenizer, module_loader_with_conditions, param_stats
+        generator,
+        host_name,
+        port,
+        tokenizer,
+        module_loader_with_conditions,
+        param_stats,
     )
     print(f"[DEBUG] Created api_server with param_stats: {bool(param_stats)}")
     api_server.start()
@@ -1717,41 +1740,50 @@ optimizer = get_optimizer(
 if local_rank == 0 and param_stats:
     try:
         optimizer_state_params = 0
-        
+
         # Count parameters in main optimizer
         for group in optimizer.param_groups:
-            for p in group['params']:
+            for p in group["params"]:
                 state = optimizer.state.get(p, {})
                 for k, v in state.items():
                     if torch.is_tensor(v):
                         optimizer_state_params += v.numel()
-        
+
         # Also check for layer-wise optimizers in MonoForward decoder
-        if hasattr(model, 'decoder') and hasattr(model.decoder, 'optimizers'):
+        if hasattr(model, "decoder") and hasattr(model.decoder, "optimizers"):
             for opt in model.decoder.optimizers:
                 if opt is not None:
                     for group in opt.param_groups:
-                        for p in group['params']:
+                        for p in group["params"]:
                             state = opt.state.get(p, {})
                             for k, v in state.items():
                                 if torch.is_tensor(v):
                                     optimizer_state_params += v.numel()
-        
+
         # Update param_stats with optimizer info
         param_stats["optimizer_states"] = int(optimizer_state_params)
-        param_stats["total_active"] = int(param_stats["model"]["total"] + optimizer_state_params + param_stats["activation_estimate"]["per_batch"])
-        
-        print(f"[DEBUG] Updated param_stats with optimizer states: {optimizer_state_params}")
-        
+        param_stats["total_active"] = int(
+            param_stats["model"]["total"]
+            + optimizer_state_params
+            + param_stats["activation_estimate"]["per_batch"]
+        )
+
+        print(
+            f"[DEBUG] Updated param_stats with optimizer states: {optimizer_state_params}"
+        )
+
         # Update the API server's param_stats if it exists
-        if 'api_server' in locals() and hasattr(api_server, 'update_param_stats'):
+        if "api_server" in locals() and hasattr(api_server, "update_param_stats"):
             api_server.update_param_stats(param_stats)
             print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
         else:
-            print(f"[DEBUG] api_server not found in locals, cannot update optimizer states")
+            print(
+                f"[DEBUG] api_server not found in locals, cannot update optimizer states"
+            )
     except Exception as e:
         print(f"[ERROR] counting optimizer states: {e}")
         import traceback
+
         traceback.print_exc()
 
 # create the scheduler
