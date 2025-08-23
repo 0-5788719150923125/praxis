@@ -202,6 +202,41 @@ def get_spec():
                         timestamp = parts[0]
                         command = parts[2].strip('"')
         
+        # Get the appropriate git URL based on whether ngrok is active
+        git_url = None
+        
+        # First, check if we're being accessed through ngrok
+        host = request.host.split(":")[0] if ":" in request.host else request.host
+        
+        if host.endswith(".ngrok-free.app") or host.endswith(".ngrok.io"):
+            # This request came through ngrok
+            # Try to read ngrok info from file
+            ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+            if os.path.exists(ngrok_info_path):
+                try:
+                    with open(ngrok_info_path, "r") as f:
+                        lines = f.read().strip().split("\n")
+                        if len(lines) >= 2:
+                            base_url = lines[0]
+                            webhook_secret = lines[1]
+                            # Ensure HTTPS and no port
+                            if "://" in base_url:
+                                base_url = base_url.split("://", 1)[1]
+                            if ":" in base_url and not base_url.startswith("["):
+                                base_url = base_url.split(":")[0]
+                            git_url = f"https://{base_url}/{webhook_secret}/src"
+                except:
+                    pass
+            
+            # Fallback if we couldn't read the file
+            if not git_url:
+                # Ngrok always uses HTTPS without explicit port
+                git_url = f"https://{host}/src"
+        else:
+            # Local URL with port
+            port = request.host.split(":")[1] if ":" in request.host else "80"
+            git_url = f"http://{host}:{port}/src"
+        
         # Return clean data structure
         spec = {
             "truncated_hash": truncated_hash,
@@ -210,7 +245,8 @@ def get_spec():
             "model_architecture": model_arch,
             "param_stats": param_stats,
             "timestamp": timestamp,
-            "command": command
+            "command": command,
+            "git_url": git_url
         }
         
         response = jsonify(spec)
@@ -221,6 +257,80 @@ def get_spec():
         error_response = jsonify({"error": str(e)})
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
+
+
+@app.route("/src/<path:git_path>", methods=["GET", "POST"])
+def git_http_backend(git_path):
+    """
+    Simple Git HTTP backend for read-only access to the repository.
+    Supports git clone and fetch operations.
+    """
+    import subprocess
+    from flask import Response, stream_with_context
+    
+    # Security: Only allow specific git commands for read-only access
+    allowed_services = ["git-upload-pack", "git-receive-pack"]
+    
+    # Parse the service from the path
+    service = request.args.get("service")
+    
+    # Handle info/refs request (git discovery)
+    if git_path == "info/refs" and service:
+        if not service.startswith("git-"):
+            return "Invalid service", 400
+            
+        service_name = service.replace("git-", "")
+        if service not in allowed_services:
+            return "Service not allowed", 403
+        
+        # Only allow upload-pack for read-only access
+        if service != "git-upload-pack":
+            return "Only read access is allowed", 403
+            
+        try:
+            # Run git command to get refs
+            cmd = ["git", "upload-pack", "--stateless-rpc", "--advertise-refs", "."]
+            result = subprocess.run(cmd, capture_output=True, cwd=os.getcwd())
+            
+            # Format response for git HTTP protocol
+            response_data = f"001e# service={service}\n0000" + result.stdout.decode("latin-1")
+            
+            return Response(
+                response_data,
+                content_type=f"application/x-{service}-advertisement",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Access-Control-Allow-Origin": "*"
+                }
+            )
+        except Exception as e:
+            return f"Git error: {str(e)}", 500
+    
+    # Handle git-upload-pack request (actual clone/fetch)
+    elif git_path == "git-upload-pack" and request.method == "POST":
+        try:
+            # Run git upload-pack with the request data
+            cmd = ["git", "upload-pack", "--stateless-rpc", "."]
+            result = subprocess.run(
+                cmd, 
+                input=request.data,
+                capture_output=True,
+                cwd=os.getcwd()
+            )
+            
+            return Response(
+                result.stdout,
+                content_type="application/x-git-upload-pack-result",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Access-Control-Allow-Origin": "*"
+                }
+            )
+        except Exception as e:
+            return f"Git error: {str(e)}", 500
+    
+    # Return 404 for other paths
+    return "Not found", 404
 
 
 class TemplateChangeHandler(FileSystemEventHandler):

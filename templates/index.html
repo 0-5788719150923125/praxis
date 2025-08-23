@@ -2506,6 +2506,16 @@
                         html += '</div>';
                     }
                     
+                    // Checkout section with git clone URL
+                    if (data.git_url) {
+                        html += '<div class="spec-section">';
+                        html += '<div class="spec-title">Checkout</div>';
+                        html += '<div class="spec-code-block">';
+                        html += `<code>git clone ${data.git_url}</code>`;
+                        html += '</div>';
+                        html += '</div>';
+                    }
+                    
                     // Parameter statistics (using only green and white)
                     if (data.param_stats) {
                         html += '<div class="spec-section">';

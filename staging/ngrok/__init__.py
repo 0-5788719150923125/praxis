@@ -275,6 +275,12 @@ def api_server_hook(host, port):
         print(f"     /{_tunnel.webhook_secret}/input/ -> /input/")
         print(f"     /{_tunnel.webhook_secret}/socket.io/* -> /socket.io/* (WebSocket)")
         print(f"🛡️  All other requests blocked with 401")
+        
+        # Save ngrok info to a file for other processes to read
+        ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+        os.makedirs(os.path.dirname(ngrok_info_path), exist_ok=True)
+        with open(ngrok_info_path, "w") as f:
+            f.write(f"{base_url}\n{_tunnel.webhook_secret}")
     else:
         print("\n❌ NGROK ERROR: Failed to establish tunnel")
         import sys
@@ -342,3 +348,11 @@ def cleanup():
     if _tunnel is not None:
         _tunnel.stop()
         _tunnel = None
+        
+        # Remove ngrok info file
+        try:
+            ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+            if os.path.exists(ngrok_info_path):
+                os.remove(ngrok_info_path)
+        except:
+            pass
