@@ -1713,11 +1713,11 @@
                 // Add user message to chat
                 addMessage(message, true);
                 
-                // Reset input and show placeholder
-                messageInput.value = PREFIX + PLACEHOLDER_TEXT;
-                messageInput.style.color = 'var(--light-text)';
-                messageInput.style.fontStyle = 'italic';
-                isShowingPlaceholder = true;
+                // Clear input but keep it ready (no placeholder while focused)
+                messageInput.value = PREFIX;
+                messageInput.style.color = '';
+                messageInput.style.fontStyle = '';
+                isShowingPlaceholder = false;
                 setCursorAfterPrefix();
                 
                 // Send the message
@@ -1883,14 +1883,22 @@
             
             // Maintain prefix on input
             const maintainPrefix = () => {
-                // Hide placeholder on any input
-                if (isShowingPlaceholder) {
-                    hidePlaceholder();
-                    return; // Let the next input event handle the actual input
-                }
-                
+                // Store the actual typed character if placeholder is showing
                 const currentValue = messageInput.value;
                 const cursorPos = messageInput.selectionStart;
+                
+                // Hide placeholder on any input
+                if (isShowingPlaceholder) {
+                    // Extract any new characters typed after the placeholder
+                    const newChars = currentValue.replace(PREFIX + PLACEHOLDER_TEXT, '').replace(PREFIX, '');
+                    hidePlaceholder();
+                    // Re-add the typed characters
+                    if (newChars) {
+                        messageInput.value = PREFIX + newChars;
+                        messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+                    }
+                    return;
+                }
                 
                 // If prefix was deleted or modified, restore it
                 if (!currentValue.startsWith(PREFIX)) {
