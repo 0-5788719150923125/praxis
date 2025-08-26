@@ -503,12 +503,6 @@ data_group.add_argument(
     help="Supplement training with a mix of expert data",
 )
 data_group.add_argument(
-    "--gun",
-    action="store_true",
-    default=False,
-    help="Supplement training with chat data from https://src.eco",
-)
-data_group.add_argument(
     "--no-source",
     action="store_true",
     default=False,

@@ -1,0 +1,9 @@
+{
+  "name": "praxis-gun-module",
+  "version": "1.0.0",
+  "description": "Gun.js adapter for Praxis",
+  "type": "module",
+  "dependencies": {
+    "gun": "^0.2020.1240"
+  }
+}

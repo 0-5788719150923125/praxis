@@ -142,6 +142,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             display: -webkit-box;
+            line-clamp: 2;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
             line-height: 1.4;
@@ -158,6 +159,7 @@
             white-space: pre-wrap;
             overflow: visible;
             max-width: 800px;
+            line-clamp: unset;
             -webkit-line-clamp: unset;
             display: block;
         }
@@ -549,7 +551,6 @@
             overflow-y: hidden;
             transition: border-color 0.2s;
             font-family: inherit;
-            -webkit-appearance: none;
             background-color: var(--input-bg, var(--background));
             color: var(--input-text, var(--text));
             line-height: 1.5;
@@ -637,6 +638,7 @@
                 font-size: 11px;
                 max-width: none;
                 flex: 1;
+                line-clamp: 2;
                 -webkit-line-clamp: 2;
                 line-height: 1.3;
                 margin-right: 10px;
@@ -644,6 +646,7 @@
             
             .system-prompt-header:focus {
                 max-width: none;
+                line-clamp: unset;
                 -webkit-line-clamp: unset;
                 font-size: 12px;
             }

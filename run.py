@@ -1650,8 +1650,8 @@ try:
     actual_batch_size = batch_size
     actual_block_size = block_size
     actual_hidden_size = hidden_size
-    actual_num_layers = n_layer
-    actual_num_heads = n_head
+    actual_num_layers = depth
+    actual_num_heads = num_heads
 
     print(
         f"[DEBUG] Config - batch_size: {actual_batch_size}, block_size: {actual_block_size}, hidden: {actual_hidden_size}, layers: {actual_num_layers}, heads: {actual_num_heads}"
@@ -1663,19 +1663,19 @@ try:
     )
 
     # Add attention scores if using attention
-    if attention_type and attention_type != "none":
-        # Attention scores: batch_size * num_heads * seq_len * seq_len * num_layers
-        attention_memory = (
-            actual_batch_size
-            * actual_num_heads
-            * actual_block_size
-            * actual_block_size
-            * actual_num_layers
-        )
-        activation_params += attention_memory
-        print(
-            f"[DEBUG] Attention type: {attention_type}, attention memory: {attention_memory}"
-        )
+    # if attention_type and attention_type != "none":
+    #     # Attention scores: batch_size * num_heads * seq_len * seq_len * num_layers
+    #     attention_memory = (
+    #         actual_batch_size
+    #         * actual_num_heads
+    #         * actual_block_size
+    #         * actual_block_size
+    #         * actual_num_layers
+    #     )
+    #     activation_params = activation_params + attention_memory
+    #     print(
+    #         f"[DEBUG] Attention type: {attention_type}, attention memory: {attention_memory}"
+    #     )
 
     param_stats = {
         "model": {
@@ -1723,7 +1723,7 @@ if local_rank == 0:
 # Load datasets
 use_source_code = not no_source
 datamodule = get_datamodules(
-    seed, dev, pile, phi, gun, use_source_code, tokenizer, hparams, data_path, rl_type
+    seed, dev, pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
 )
 
 # create the optimizer

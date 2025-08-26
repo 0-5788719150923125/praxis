@@ -18,7 +18,6 @@ DEFAULT_WEIGHT = 1.0
 SRC_WEIGHT = 0.5
 DIR_WEIGHT = 1.0
 TOOLS_WEIGHT = 0.1
-GUN_WEIGHT = 0.01
 
 DATASET_COLLECTIONS = dict(
     base={
@@ -946,7 +945,6 @@ def get_datamodules(
     dev: bool,
     pile: bool,
     phi: bool,
-    gun: bool,
     source: bool,
     tokenizer,
     hparams,
@@ -956,12 +954,6 @@ def get_datamodules(
 ):
     print(f"[RL] get_datamodules called with rl_type={rl_type}")
 
-    # An important warning
-    if gun and seed and not dev:
-        print(
-            "WARNING: GUN chats are never deterministic, and cannot be reproduced when using a `seed`. You should omit the `--gun` argument for experiments."
-        )
-        time.sleep(5)
 
     print("Training datasets:")
     train_data = []
@@ -998,9 +990,17 @@ def get_datamodules(
                     *args,
                 )
             )
-        if gun:
-            # load configs for training on live chat data from https://src.eco
-            train_data.append(get_dataset("gun", tokenizer, seed))
+        # Load any module-provided datasets
+        try:
+            from cli import module_loader_with_conditions
+            available_datasets = module_loader_with_conditions.integration_registry.get('datasets', {})
+            for dataset_name in available_datasets:
+                # Module datasets are loaded when their CLI flag is enabled
+                # The module's conditions check handles this
+                print(f"[Modules] Adding dataset: {dataset_name}")
+                train_data.append(get_dataset(dataset_name, tokenizer, seed))
+        except ImportError:
+            pass  # Module loader not available
 
     print("Validation data:")
 
@@ -1028,6 +1028,20 @@ def get_datamodules(
 
 
 def get_dataset(format, tokenizer, seed, *args, **kwargs):
+    # Check if this is a module-provided dataset
+    try:
+        from cli import module_loader_with_conditions
+        dataset_provider = module_loader_with_conditions.get_dataset(format)
+        if dataset_provider:
+            # Call the provider function with standard arguments
+            dataset = dataset_provider(tokenizer, seed, *args, **kwargs)
+            # Set default weight if not already set
+            if not hasattr(dataset, 'weight'):
+                dataset.weight = 1.0
+            return dataset
+    except ImportError:
+        pass
+    
     if format == "huggingface":
         dataset = HuggingfaceDataset(tokenizer, seed, *args)
         dataset.weight = args[0].get("weight", 1.0)
@@ -1064,10 +1078,6 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
             ],
         )
         dataset.weight = SRC_WEIGHT
-        return dataset
-    elif format == "gun":
-        dataset = GunChatDataset(tokenizer)
-        dataset.weight = GUN_WEIGHT
         return dataset
     elif format == "synthetic-tool-calling":
         dataset = SyntheticToolCallingDataset(tokenizer, seed, {})
@@ -1911,64 +1921,6 @@ class MultiDirectoryDataset(PraxisSampler):
             random.shuffle(self.file_list)
             self.file_iterator = iter(self.file_list)
             self.fill_sequence_cache()
-
-
-class GunChatDataset(PraxisSampler):
-    def __init__(self, tokenizer: PreTrainedTokenizer):
-        super().__init__(tokenizer)
-        from adapters import GunAdapter as Gun
-
-        self.gun = Gun()
-
-    def fill_sequence_cache(self):
-        # Get a list of text samples
-        text_list = self.gun.get_sample(250)
-
-        # Prepare the system prompt with arbitrary descriptions
-        user_description = random.choice(
-            [
-                "The user is interested in technology and gadgets.",
-                "The user loves discussing philosophy and life.",
-                "The user is curious about the latest news.",
-                "The user enjoys learning about history.",
-                "The user is seeking advice on personal development.",
-                "The user is passionate about art and creativity.",
-                "The user is looking for travel recommendations.",
-                "The user is studying computer science.",
-                "The user wants to learn new cooking recipes.",
-                "The user is enthusiastic about sports and fitness.",
-            ]
-        )
-        assistant_description = random.choice(
-            [
-                "The assistant is a knowledgeable and helpful AI.",
-                "The assistant provides clear and concise answers.",
-                "The assistant is friendly and supportive.",
-                "The assistant offers detailed explanations.",
-                "The assistant helps users understand complex topics.",
-                "The assistant is skilled in problem-solving.",
-                "The assistant is patient and understanding.",
-                "The assistant excels in educational guidance.",
-                "The assistant is adept at providing creative ideas.",
-                "The assistant is resourceful and informative.",
-            ]
-        )
-
-        system_prompt = f"{user_description}\n{assistant_description}"
-
-        # Build conversation in ChatML format using the tokenizer's template
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # Add the conversation messages
-        for text in text_list:
-            role = random.choice(["user", "assistant"])
-            messages.append({"role": role, "content": text.strip()})
-
-        # Apply the chat template
-        formatted = tokenizer.apply_chat_template(messages, tokenize=False)
-
-        # Add the conversation to the sequence cache
-        self.sequence_cache.append(formatted)
 
 
 class WeightedIterableDataset(IterableDataset):

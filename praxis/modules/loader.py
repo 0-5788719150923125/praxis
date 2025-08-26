@@ -174,14 +174,23 @@ class ModuleLoader:
         """Register module's integration points."""
         integrations = manifest.get('integrations', {})
         registered = []
+        module_name = manifest['name']
         
-        # CLI integration
+        # Auto-detect common functions if not explicitly configured
+        provides = manifest.get('provides', [])
+        
+        # CLI integration (explicit or auto-detect)
         if 'cli' in integrations:
             cli_config = integrations['cli']
             if hasattr(module, cli_config['function']):
                 cli_func = getattr(module, cli_config['function'])
                 self.integration_registry['cli'].append(cli_func)
                 registered.append('CLI arguments')
+        elif 'cli_args' in provides and hasattr(module, 'add_cli_args'):
+            # Auto-detect CLI function
+            cli_func = getattr(module, 'add_cli_args')
+            self.integration_registry['cli'].append(cli_func)
+            registered.append('CLI arguments')
         
         # Logger integration  
         if 'loggers' in integrations:
@@ -191,15 +200,20 @@ class ModuleLoader:
                 self.integration_registry['loggers'][manifest['name']] = logger_class
                 registered.append('logger class')
                 
-        # Dataset integration
+        # Dataset integration (explicit or auto-detect)
         if 'datasets' in integrations:
             dataset_config = integrations['datasets']
             if hasattr(module, dataset_config['class']):
                 dataset_class = getattr(module, dataset_config['class'])
                 self.integration_registry['datasets'][manifest['name']] = dataset_class
                 registered.append('dataset class')
+        elif 'datasets' in provides and hasattr(module, 'provide_dataset'):
+            # Auto-detect dataset provider function
+            dataset_func = getattr(module, 'provide_dataset')
+            self.integration_registry['datasets'][module_name] = dataset_func
+            registered.append('dataset provider')
             
-        # Lifecycle integration
+        # Lifecycle integration (explicit or auto-detect)
         if 'lifecycle' in integrations:
             lifecycle = integrations['lifecycle']
             lifecycle_hooks = []
@@ -209,6 +223,19 @@ class ModuleLoader:
                 lifecycle_hooks.append('init')
             if 'cleanup' in lifecycle and hasattr(module, lifecycle['cleanup']):
                 cleanup_func = getattr(module, lifecycle['cleanup'])
+                self.integration_registry['lifecycle']['cleanup'].append(cleanup_func)
+                lifecycle_hooks.append('cleanup')
+            if lifecycle_hooks:
+                registered.append(f"lifecycle ({', '.join(lifecycle_hooks)})")
+        elif 'lifecycle' in provides:
+            # Auto-detect lifecycle functions
+            lifecycle_hooks = []
+            if hasattr(module, 'initialize'):
+                init_func = getattr(module, 'initialize')
+                self.integration_registry['lifecycle']['init'].append(init_func)
+                lifecycle_hooks.append('init')
+            if hasattr(module, 'cleanup'):
+                cleanup_func = getattr(module, 'cleanup')
                 self.integration_registry['lifecycle']['cleanup'].append(cleanup_func)
                 lifecycle_hooks.append('cleanup')
             if lifecycle_hooks:
