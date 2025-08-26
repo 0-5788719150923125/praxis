@@ -83,7 +83,7 @@ class MinGRU(nn.Module):
             if prev_hidden is not None and pad_mask.any():
                 prev_hidden = prev_hidden.masked_fill(pad_mask.unsqueeze(-1), 0)
             out = (
-                torch.lerp(prev_hidden, hidden, gate)
+                torch.lerp(prev_hidden.float(), hidden.float(), gate.float()).to(hidden.dtype)
                 if prev_hidden is not None
                 else (hidden * gate)
             )

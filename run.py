@@ -1292,6 +1292,7 @@ class Generator:
 
         max_attempts = 3
         attempts = 0
+        return_text = request.prompt  # Initialize with the prompt as default
 
         with self._eval_mode():
             while attempts < max_attempts:
@@ -1316,14 +1317,20 @@ class Generator:
                     if decoded_new != request.prompt:
                         return_text = decoded_new
                         break
+                    else:
+                        # The decoded text is the same as the prompt, use it anyway
+                        return_text = decoded_new
+                        break
                 else:
                     # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
                     generated_tokens = input_ids
                     combined["max_new_tokens"] += 1
             else:
-                # Return the original text
-                return_text = request.prompt
+                # If we exhausted all attempts, return what we have
+                return_text = self.tokenizer.decode(
+                    generated_tokens[0], skip_special_tokens=skip_special_tokens
+                )
 
         # Check if the generated text contains a tool call
         tool_call = self._parse_tool_call(return_text)
