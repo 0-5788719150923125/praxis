@@ -134,7 +134,7 @@ def get_gun_dataset_class():
         def __init__(self, tokenizer):
             super().__init__(tokenizer)
             self.gun = get_or_create_gun_adapter()
-            self.weight = 1
+            self.weight = 0.1
 
         def fill_sequence_cache(self):
             """Fill the sequence cache with Gun chat data."""

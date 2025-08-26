@@ -1363,7 +1363,7 @@ class Generator:
                     id=request.id + "_final", prompt=final_prompt, kwargs=request.kwargs
                 )
 
-                print(f"Called tool: {tool_name}")
+                print(f"Called tool: {tool_name} with args: {tool_args}")
 
                 # Recursively process (but tool calls won't nest due to the prompt structure)
                 return self._process_single_request(final_request)

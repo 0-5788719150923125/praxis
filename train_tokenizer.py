@@ -167,8 +167,8 @@ from praxis.tools import call_tool, get_tools_json_schema
 print("\nSample message with tool support using real tools:")
 tools = get_tools_json_schema()
 
-# Test the calculate_sum function
-result = call_tool("calculate_sum", {"a": 25, "b": 17})
+# Test the calc function
+result = call_tool("calc", {"values": [25, 17], "op": "add"})
 
 print(
     trained_tokenizer.apply_chat_template(
@@ -184,8 +184,8 @@ print(
                 "tool_calls": [
                     {
                         "function": {
-                            "name": "calculate_sum",
-                            "arguments": {"a": 25, "b": 17},
+                            "name": "calc",
+                            "arguments": {"values": [25, 17], "op": "add"},
                         }
                     }
                 ],
