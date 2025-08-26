@@ -95,11 +95,15 @@ class MinGRU(nn.Module):
             log_values = log_z + log_tilde_h
 
             if prev_hidden is not None:
-                log_values = torch.cat((prev_hidden.log(), log_values), dim=1)
+                # Ensure prev_hidden has the right shape (batch_size, 1, hidden_dim)
+                if prev_hidden.dim() == 2:
+                    prev_hidden = prev_hidden.unsqueeze(1)
+                # Avoid log of zero by adding a small epsilon
+                prev_hidden_safe = prev_hidden.clamp(min=1e-20)
+                log_values = torch.cat((prev_hidden_safe.log(), log_values), dim=1)
                 log_coeffs = F.pad(log_coeffs, (0, 0, 1, 0))
-                # Extend pad_mask for prev_hidden
-                if pad_mask.any():
-                    pad_mask = F.pad(pad_mask, (1, 0), value=False)
+                # Extend pad_mask for prev_hidden - it needs to match the new sequence length
+                pad_mask = F.pad(pad_mask, (1, 0), value=False)
 
             # Use modified scan that respects boundaries
             out = heinsen_associative_scan_log_with_reset(

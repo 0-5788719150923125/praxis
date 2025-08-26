@@ -10,6 +10,7 @@ from praxis.embeddings.projected import ProjectedEmbedding
 # Registry mapping architecture names to embedding classes
 EMBEDDING_REGISTRY: Dict[str, Type[nn.Module]] = {
     "conv": ProjectedEmbedding,
+    "gru": ProjectedEmbedding,
     "min": ProjectedEmbedding,
     "mru": ProjectedEmbedding,
     "nano": ProjectedEmbedding,
