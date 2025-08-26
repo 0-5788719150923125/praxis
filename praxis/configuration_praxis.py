@@ -17,6 +17,7 @@ class PraxisConfig(PretrainedConfig):
         kv_rank: Optional[int] = None,
         depth: int = 2,
         num_experts: int = 2,
+        num_smear: int = 3,
         dropout: float = 0.0,
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
@@ -77,6 +78,7 @@ class PraxisConfig(PretrainedConfig):
         self.kv_rank = kv_rank
         self.depth = depth
         self.num_experts = num_experts
+        self.num_smear = num_smear
         self.attention_type = attention_type
         self.encoder_type = encoder_type
         self.decoder_type = decoder_type

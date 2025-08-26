@@ -236,6 +236,7 @@ else:
 config = PraxisConfig(
     depth=3 if dev else depth,
     num_experts=num_experts if num_experts else (3 if dev else depth),
+    num_smear=num_smear,
     hidden_size=hidden_size,
     embed_size=embed_size,
     num_heads=int(num_heads.split(":")[0]),

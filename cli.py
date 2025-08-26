@@ -293,6 +293,12 @@ architecture_group.add_argument(
     help="Number of experts to host (defaults to depth)",
 )
 architecture_group.add_argument(
+    "--num-smear",
+    type=int,
+    default=3,
+    help="Number of SMEAR expert copies for GRU/recurrent blocks (default: 3)",
+)
+architecture_group.add_argument(
     "--hidden-size",
     type=int,
     default=256,

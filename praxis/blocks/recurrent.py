@@ -25,13 +25,16 @@ class RecurrentBlock(nn.Module):
             config: Model configuration
         """
         super().__init__()
+        # Use num_smear if available, otherwise default to 3
+        num_smear = getattr(config, 'num_smear', 3)
+        
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.experts = SMEAR(
             config,
             experts=nn.ModuleList(
                 [
                     RECURRENT_REGISTRY["min_gru"](config.hidden_size, proj_out=True)
-                    for _ in range(config.num_experts)
+                    for _ in range(num_smear)
                 ]
             ),
         )
