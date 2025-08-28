@@ -2511,7 +2511,7 @@
                         const truncPart = data.full_hash.substring(0, truncLen);
                         const restPart = data.full_hash.substring(truncLen);
                         html += '<div class="spec-hash">';
-                        html += `<span style="color: #4caf50; font-weight: 600;">${truncPart}</span>`;
+                        html += `<a href="#args-title" style="color: #4caf50; font-weight: 600; text-decoration: none;">${truncPart}</a>`;
                         html += `<span style="color: var(--text);">${restPart}</span>`;
                         html += '</div>';
                         html += '</div>';
@@ -2526,7 +2526,20 @@
                         html += '</div>';
                         html += '</div>';
                     }
-                    
+
+                    // Command section (merged CLI args and command info)
+                    if (data.args || data.command || data.timestamp) {
+                        html += '<div class="spec-section">';
+                        html += '<div class="spec-title">Command</div>';
+
+                        // Add command line
+                        if (data.command) {
+                            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
+                        }
+                        
+                        html += '</div>';
+                    }
+
                     // Parameter statistics (using only green and white)
                     if (data.param_stats) {
                         html += '<div class="spec-section">';
@@ -2563,29 +2576,18 @@
                         html += '</div>';
                     }
                     
-                    // Command section (merged CLI args and command info)
-                    if (data.args || data.command || data.timestamp) {
-                        html += '<div class="spec-section">';
-                        html += '<div class="spec-title">Command</div>';
-                        
-                        // Add timestamp first
-                        if (data.timestamp) {
-                            html += `<div class="spec-metadata">Created: ${data.timestamp}</div>`;
-                        }
-                        
-                        // Add command line
-                        if (data.command) {
-                            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
-                        }
+                    html += '<div id="args-title" class="args-title">Arguments</div>';
 
-                        // Add CLI arguments as JSON
-                        if (data.args) {
-                            html += `<pre class="spec-code">${JSON.stringify(data.args, null, 2)}</pre>`;
-                        }
-                        
-                        html += '</div>';
+                    // Add timestamp first
+                    if (data.timestamp) {
+                        html += `<div class="spec-metadata">Created: ${data.timestamp}</div>`;
                     }
-                    
+
+                    // Add CLI arguments as JSON
+                    if (data.args) {
+                        html += `<pre class="spec-code">${JSON.stringify(data.args, null, 2)}</pre>`;
+                    }
+
                     container.innerHTML = html;
                     
                 } catch (error) {

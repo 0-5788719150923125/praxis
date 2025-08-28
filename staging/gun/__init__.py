@@ -14,6 +14,7 @@ from typing import Optional
 
 # Global Gun adapter instance
 _gun_adapter = None
+_gun_enabled = False  # Track if Gun is actually enabled
 
 
 class GunAdapter:
@@ -196,9 +197,13 @@ def get_gun_dataset_class():
 
 def get_or_create_gun_adapter():
     """Get or create the global Gun adapter instance."""
-    global _gun_adapter
+    global _gun_adapter, _gun_enabled
     if _gun_adapter is None:
         _gun_adapter = GunAdapter()
+        # Register cleanup only when Gun is actually created
+        if not _gun_enabled:
+            atexit.register(cleanup)
+            _gun_enabled = True
     return _gun_adapter
 
 
@@ -263,11 +268,11 @@ def provide_dataset(tokenizer, seed, config=None, *args):
 
 def cleanup():
     """Cleanup Gun resources."""
-    global _gun_adapter
+    global _gun_adapter, _gun_enabled
     if _gun_adapter is not None:
         del _gun_adapter
         _gun_adapter = None
+    _gun_enabled = False
 
 
-# Register the termination function to be called at exit
-atexit.register(cleanup)
+# Note: cleanup is registered in get_or_create_gun_adapter() only when Gun is actually used
