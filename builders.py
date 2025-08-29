@@ -16,9 +16,9 @@ from torch.utils.data import DataLoader, IterableDataset
 from transformers import PreTrainedTokenizer
 
 DEFAULT_WEIGHT = 1.0
-SRC_WEIGHT = 0.5
+SRC_WEIGHT = 1.0
 DIR_WEIGHT = 1.0
-TOOLS_WEIGHT = 0.1
+TOOLS_WEIGHT = 1.0
 
 DATASET_COLLECTIONS = dict(
     base={
@@ -72,6 +72,22 @@ class DataFormat(Enum):
     RL = "rl"
     COT = "cot"
     TOOL_CALLING = "tool_calling"
+
+
+# Unified prompts for all data types
+SYSTEM_PROMPT = "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation."
+
+DEVELOPER_PROMPTS = {
+    "continue_text": "Continue or complete the provided text, maintaining style and coherence.",
+    "follow_instruction": "Follow the user's instructions precisely and provide a complete response.",
+    "engage_conversation": "Engage naturally in this conversation, being helpful and appropriate.",
+    "answer_question": "Answer the question accurately based on your knowledge.",
+    "think_step_by_step": "Think step-by-step through this problem before providing your answer.",
+    "use_tools": "Use the available tools when appropriate to help the user.",
+    "write_article": "Write a comprehensive article or explanation on the given topic.",
+    "persona_chat": "Engage in conversation while maintaining the specified personas.",
+    "soda_dialogue": "Continue this dialogue naturally based on the context provided.",
+}
 
 
 HUGGINGFACE_DATASETS = {
@@ -539,19 +555,33 @@ def add_newline_before_lists(text):
 def format_simple(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Just concatenate content with spaces"""
-    return tokenizer.bos_token + "\n" + text_formatter(document.get(keys[0])) + "\n"
+    """Convert raw text to unified format with system/developer prompts."""
+    text = document.get(keys[0], "")
+    if not text:
+        return ""
+
+    # For simple/raw text, we treat it as a direct completion task
+    # The model should learn to continue/complete texts naturally
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["continue_text"]},
+        {"role": "assistant", "content": text_formatter(text)},
+    ]
+
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def format_instruction(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format as instruction/output pairs using the tokenizer's chat template."""
+    """Format as instruction/output pairs with unified system/developer prompts."""
     assert len(keys) == 2, "Instruction format requires exactly 2 keys"
     instruction = text_formatter(document.get(keys[0], ""))
     output = text_formatter(document.get(keys[1], ""))
 
     messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["follow_instruction"]},
         {"role": "user", "content": instruction},
         {"role": "assistant", "content": output},
     ]
@@ -562,11 +592,18 @@ def format_instruction(
 def format_conversation(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format as a conversation using the tokenizer's chat template."""
+    """Format as a conversation with unified system/developer prompts."""
     assert len(keys) == 3, "Conversation format requires exactly 3 keys"
 
+    # Original system message becomes developer message
+    original_system = text_formatter(document.get(keys[0], ""))
+
     messages = [
-        {"role": "system", "content": text_formatter(document.get(keys[0], ""))},
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "developer",
+            "content": original_system or DEVELOPER_PROMPTS["engage_conversation"],
+        },
         {"role": "user", "content": text_formatter(document.get(keys[1], ""))},
         {"role": "assistant", "content": text_formatter(document.get(keys[2], ""))},
     ]
@@ -612,8 +649,14 @@ def format_personachat(
         "USER 2": "assistant",
     }
 
-    # Build messages list
-    messages = [{"role": "system", "content": text_formatter(system_message.strip())}]
+    # Build messages list with unified system and personas as developer message
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "developer",
+            "content": system_message.strip() or DEVELOPER_PROMPTS["persona_chat"],
+        },
+    ]
 
     for i, utterance in enumerate(conversation):
         if ": " in utterance:
@@ -632,14 +675,19 @@ def format_personachat(
 def format_messages(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format message arrays using the tokenizer's chat template."""
+    """Format message arrays with unified system/developer prompts."""
     assert len(keys) == 1, "'keys' should have a length of 1"
 
     # Get messages array
     messages = document.get(keys[0], [])
 
+    # Start with unified system prompt
+    formatted_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # Track if we've seen a system message to convert to developer
+    developer_content = None
+
     # Filter out any empty messages and apply text formatting
-    filtered_messages = []
     for message in messages:
         # We just hardcode the processing of NousResearch/Hermes-3-Dataset here
         if message.get("from"):
@@ -647,24 +695,42 @@ def format_messages(
             message["role"] = KEY_MAP.get(message["from"])
         if message.get("value"):
             message["content"] = message["value"]
+
         content = message.get("content", "").strip()
         if content:
-            # Apply text_formatter to the content
-            formatted_message = message.copy()
-            formatted_message["content"] = text_formatter(content)
-            filtered_messages.append(formatted_message)
+            role = message.get("role", "user")
 
-    return tokenizer.apply_chat_template(filtered_messages, tokenize=False) + "\n"
+            # Convert first system message to developer
+            if role == "system" and developer_content is None:
+                developer_content = text_formatter(content)
+                formatted_messages.append(
+                    {"role": "developer", "content": developer_content}
+                )
+            elif role != "system":  # Skip additional system messages
+                formatted_message = message.copy()
+                formatted_message["content"] = text_formatter(content)
+                formatted_messages.append(formatted_message)
+
+    # Add default developer message if none was found
+    if developer_content is None:
+        formatted_messages.insert(
+            1,
+            {"role": "developer", "content": DEVELOPER_PROMPTS["engage_conversation"]},
+        )
+
+    return tokenizer.apply_chat_template(formatted_messages, tokenize=False) + "\n"
 
 
 def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
-    """Format wiki text."""
+    """Format wiki text with unified system/developer prompts."""
     assert len(keys) == 2, "Wiki format requires exactly 2 keys"
     title = document.get(keys[0], "")
     body = document.get(keys[1], "")
 
     messages = [
-        {"role": "user", "content": title},
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["write_article"]},
+        {"role": "user", "content": f"Write an article about: {title}"},
         {"role": "assistant", "content": body},
     ]
 
@@ -804,8 +870,10 @@ def format_tool_calling(
 
     assistant_intro = random.choice(assistant_templates)
 
-    # Build the conversation with tool usage
+    # Build the conversation with unified system/developer prompts and tool usage
     messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["use_tools"]},
         {"role": "user", "content": user_prompt},
         {
             "role": "assistant",
@@ -850,8 +918,10 @@ def format_cot(
     category = document.get(keys[2], "unknown") if len(keys) > 2 else "unknown"
     topic = document.get(keys[3], "unknown") if len(keys) > 3 else "unknown"
 
-    # Use chat template for proper formatting
+    # Use chat template with unified system/developer prompts
     messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["think_step_by_step"]},
         {"role": "user", "content": prompt},
         {"role": "assistant", "content": response},
     ]
@@ -909,8 +979,12 @@ def format_rl(
     except:
         ground_truth = ""
 
-    # Format just the prompt (no answer) with generation prompt
-    messages = [{"role": "user", "content": prompt}]
+    # Format with unified system/developer prompts for RL
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["answer_question"]},
+        {"role": "user", "content": prompt},
+    ]
 
     # Apply chat template with generation prompt
     prompt_text = tokenizer.apply_chat_template(
@@ -991,8 +1065,14 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     if random.random() < corruption_chance:
         system_content += f"thought: ({literal})\n"
 
-    # Create messages array
-    messages = [{"role": "system", "content": system_content}]
+    # Create messages array with unified system and soda context as developer
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "developer",
+            "content": system_content.strip() or DEVELOPER_PROMPTS["soda_dialogue"],
+        },
+    ]
 
     # Add conversation turns
     for speaker, message in zip(turns, dialogue):
@@ -1097,11 +1177,16 @@ def get_datamodules(
             available_datasets = module_loader_with_conditions.integration_registry.get(
                 "datasets", {}
             )
+            # Process all available module datasets
+            # The modules themselves will check if they're properly initialized
             for dataset_name in available_datasets:
-                # Module datasets are loaded when their CLI flag is enabled
-                # The module's conditions check handles this
-                print(f"[Modules] Adding dataset: {dataset_name}")
-                train_data.append(get_dataset(dataset_name, tokenizer, seed))
+                print(f"[Modules] Checking dataset: {dataset_name}")
+                dataset = get_dataset(dataset_name, tokenizer, seed)
+                if dataset is not None:
+                    print(f"[Modules] Adding dataset: {dataset_name}")
+                    train_data.append(dataset)
+                else:
+                    print(f"[Modules] Skipping dataset: {dataset_name} (not available)")
         except ImportError:
             pass  # Module loader not available
 
@@ -1139,10 +1224,15 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         if dataset_provider:
             # Call the provider function with standard arguments
             dataset = dataset_provider(tokenizer, seed, *args, **kwargs)
-            # Set default weight if not already set
-            if not hasattr(dataset, "weight"):
-                dataset.weight = 1.0
-            return dataset
+            # Check if the provider returned a valid dataset
+            if dataset is not None:
+                # Set default weight if not already set
+                if not hasattr(dataset, "weight"):
+                    dataset.weight = 1.0
+                return dataset
+            else:
+                # Provider returned None (e.g., module not properly initialized)
+                return None
     except ImportError:
         pass
 

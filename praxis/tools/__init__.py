@@ -1,49 +1,24 @@
-from typing import List, Dict, Any, Callable
 import inspect
 import json
 import math
+from typing import Any, Callable, Dict, List
+
 from transformers.utils import get_json_schema
-
-
-def get_current_temperature(location: str, unit: str = "celsius") -> float:
-    """Get the current temperature at a location.
-    
-    Args:
-        location: The location to get the temperature for (e.g., "Paris", "New York")
-        unit: The unit to return the temperature in (choices: ["celsius", "fahrenheit"])
-    
-    Returns:
-        The current temperature as a float
-    """
-    # Simple mock implementation - in real usage, this would call a weather API
-    mock_temps = {
-        "paris": 15.0,
-        "new york": 20.0,
-        "london": 12.0,
-        "tokyo": 18.0,
-    }
-    
-    temp = mock_temps.get(location.lower(), 22.0)
-    
-    if unit.lower() == "fahrenheit":
-        temp = (temp * 9/5) + 32
-    
-    return temp
 
 
 def calc(values: List[float], op: str = "add") -> float:
     """Perform a basic algebraic operation on a list of values.
-    
+
     Args:
         values: List of numbers to perform the operation on
         op: The operation to perform (choices: ["add", "sub", "mul", "div", "sqrt", "exp"])
-    
+
     Returns:
         The result of the operation
     """
     if not values:
         raise ValueError("values list cannot be empty")
-    
+
     if op == "add":
         return sum(values)
     elif op == "sub":
@@ -77,14 +52,13 @@ def calc(values: List[float], op: str = "add") -> float:
 
 # Registry of available tools
 AVAILABLE_TOOLS = [
-    get_current_temperature,
     calc,
 ]
 
 
 def get_tools_json_schema() -> List[Dict[str, Any]]:
     """Get JSON schema for all available tools.
-    
+
     Uses transformers.utils.get_json_schema to automatically generate
     JSON schemas from function signatures and docstrings.
     """
@@ -96,11 +70,11 @@ def get_tools_json_schema() -> List[Dict[str, Any]]:
 def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Any:
     """
     Call a tool by name with the given arguments.
-    
+
     Args:
         tool_name: Name of the tool to call
         arguments: Dictionary of arguments to pass to the tool
-    
+
     Returns:
         The result of the tool call
     """
@@ -110,9 +84,9 @@ def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Any:
         if tool.__name__ == tool_name:
             tool_func = tool
             break
-    
+
     if tool_func is None:
         raise ValueError(f"Tool '{tool_name}' not found")
-    
+
     # Call the tool with arguments
     return tool_func(**arguments)

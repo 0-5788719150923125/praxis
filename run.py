@@ -341,8 +341,6 @@ train_params = dict(
     callbacks=[],
 )
 
-# Optimizer configuration already done above
-
 # Configure the learning rate scheduler
 if disable_schedule:
 

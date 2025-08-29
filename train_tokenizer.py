@@ -103,13 +103,28 @@ trained_tokenizer.add_special_tokens(
     {**special_tokens, "additional_special_tokens": additional_special_tokens}
 )
 
-# Define a ChatML template with tool support
+# Define a ChatML template with tool support and developer role
 # https://huggingface.co/docs/transformers/en/conversations
 # https://huggingface.co/docs/transformers/en/chat_extras
-chat_template = """{% for message in messages %}
+# Tools are now rendered in system/developer blocks for persistence (like Harmony)
+chat_template = """{% if tools is defined and tools %}
+{% set tools_json = tools | tojson %}
+{% endif %}
+{% for message in messages %}
 {% if message['role'] == 'system' %}
 {{ bos_token }}system
 {{ message['content'] }}
+{% if tools_json is defined and loop.first %}
+Available tools:
+{{ tools_json }}
+{% endif %}
+{% elif message['role'] == 'developer' %}
+{{ bos_token }}developer
+{{ message['content'] }}
+{% if tools_json is defined and loop.first and not (messages[0]['role'] == 'system') %}
+Available tools:
+{{ tools_json }}
+{% endif %}
 {% elif message['role'] == 'user' %}
 {{ bos_token }}user
 {{ message['content'] }}
@@ -129,13 +144,6 @@ chat_template = """{% for message in messages %}
 {% endif %}
 {{ sep_token }}
 {% endfor %}
-{% if tools is defined and tools %}
-{{ bos_token }}tools
-{% for tool in tools %}
-{{ tool | tojson }}
-{% endfor %}
-{{ sep_token }}
-{% endif %}
 {% if add_generation_prompt %}
 {{ bos_token }}assistant
 {% endif %}"""
@@ -149,38 +157,41 @@ os.makedirs(archive_path, exist_ok=True)
 trained_tokenizer.save_pretrained(save_path)
 trained_tokenizer.save_pretrained(archive_path)
 
-print(f"A sample ChatML-formatted message:")
-print(
-    trained_tokenizer.apply_chat_template(
-        [
-            {"role": "system", "content": "The assistant is an AI."},
-            {"role": "user", "content": "Hello, how are you?"},
-            {"role": "assistant", "content": "I'm doing well, thank you!"},
-        ],
-        tokenize=False,
-    )
-)
+print(f"\nSample ChatML-formatted messages demonstrating the unified format:")
 
-# Demonstrate tool usage with real tools from praxis/tools
+# Test both regular conversation and tool usage
 from praxis.tools import call_tool, get_tools_json_schema
 
-print("\nSample message with tool support using real tools:")
 tools = get_tools_json_schema()
-
-# Test the calc function
 result = call_tool("calc", {"values": [25, 17], "op": "add"})
 
+# Coherent multi-turn conversation demonstrating all components
 print(
     trained_tokenizer.apply_chat_template(
         [
             {
                 "role": "system",
-                "content": "You are a helpful assistant with access to tools.",
+                "content": "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation.",
             },
-            {"role": "user", "content": "What is 25 + 17?"},
+            {
+                "role": "developer",
+                "content": "Engage in a scientific discussion, using tools when needed for calculations.",
+            },
+            {
+                "role": "user",
+                "content": "I'm studying quantum mechanics. Can you explain superposition?",
+            },
             {
                 "role": "assistant",
-                "content": "I'll calculate that for you.",
+                "content": "Superposition is a fundamental principle where a quantum system exists in multiple states simultaneously until measured. Think of Schrödinger's cat - before observation, it's both alive and dead. When we measure the system, it 'collapses' into one definite state.",
+            },
+            {
+                "role": "user",
+                "content": "Interesting! If I have a quantum computer with 25 qubits, and I add 17 more, how many total qubits would I have?",
+            },
+            {
+                "role": "assistant",
+                "content": "Let me calculate that for you.",
                 "tool_calls": [
                     {
                         "function": {
@@ -193,10 +204,19 @@ print(
             {"role": "tool", "content": str(result)},
             {
                 "role": "assistant",
-                "content": f"The sum of 25 and 17 is {result}.",
+                "content": f"You would have {result} qubits total. With 42 qubits, your quantum computer could theoretically represent 2^42 (about 4.4 trillion) different states simultaneously - that's the power of quantum superposition at scale!",
+            },
+            {
+                "role": "user",
+                "content": "That's incredible computational power!",
+            },
+            {
+                "role": "assistant",
+                "content": "Indeed! To put it in perspective, while a classical 42-bit computer can only be in one of those 4.4 trillion states at any given time, a 42-qubit quantum computer can explore all of them simultaneously through superposition. This is why quantum computers excel at certain problems like cryptography and optimization.",
             },
         ],
         tools=tools,
         tokenize=False,
+        add_generation_prompt=True,
     )
 )

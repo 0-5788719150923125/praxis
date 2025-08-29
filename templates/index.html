@@ -981,7 +981,7 @@
                 <div class="logo-icon">P</div>
                 <span class="logo-text">Chat</span>
                 <span class="logo-separator">|</span>
-                <span class="system-prompt-header" id="system-prompt" contenteditable="true" spellcheck="false">Write thy wrong.</span>
+                <span class="system-prompt-header" id="developer-prompt" contenteditable="true" spellcheck="false">Write thy wrong.</span>
             </div>
             <div style="display: flex; align-items: center;">
                 <button class="theme-toggle-button" id="theme-toggle">
@@ -1171,7 +1171,7 @@
             const closeModalButton = document.getElementById('close-modal');
             const saveSettingsButton = document.getElementById('save-settings');
             const apiUrlInput = document.getElementById('api-url');
-            const systemPromptElement = document.getElementById('system-prompt');
+            const developerPromptElement = document.getElementById('developer-prompt');
             const themeToggleButton = document.getElementById('theme-toggle');
             const themeIcon = document.getElementById('theme-icon');
             
@@ -1296,30 +1296,23 @@
             };
             
             
-            // Get system prompt from element or localStorage
-            const getSystemPrompt = () => {
-                return systemPromptElement.innerText.trim() || "Write thy wrong.";
-            };
+            // Static system prompt (never changes)
+            const SYSTEM_PROMPT = "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation.";
             
-            // Chat history to maintain conversation context
-            let chatHistory = [
-                { role: "system", content: getSystemPrompt() },
-                // { role: "assistant", content: "Hello! I'm your AI assistant. How can I help you today?" }
-            ];
+            // Conversation history - just user/assistant messages
+            let conversationHistory = [];
+            const MAX_HISTORY_LENGTH = 21; // 23 total minus 2 for system/developer
             
             // Load saved settings from localStorage
             const loadSettings = () => {
                 // Load theme
                 loadTheme();
                 
-                // Load system prompt
-                const savedSystemPrompt = localStorage.getItem('praxis_system_prompt');
-                if (savedSystemPrompt) {
-                    systemPromptElement.innerHTML = savedSystemPrompt;
-                    // Update the first system message in chat history (use text content, not HTML)
-                    if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                        chatHistory[0].content = systemPromptElement.innerText.trim() || "Write thy wrong.";
-                    }
+                // Load developer prompt
+                const savedDeveloperPrompt = localStorage.getItem('praxis_developer_prompt');
+                if (savedDeveloperPrompt) {
+                    developerPromptElement.innerHTML = savedDeveloperPrompt;
+                    // No need to update chat history - it's generated dynamically
                 }
                 
                 // Load API URL
@@ -1576,8 +1569,8 @@
                     chatContainer.scrollTop = chatContainer.scrollHeight;
                 });
                 
-                // Add to chat history
-                chatHistory.push({
+                // Add to conversation history (not system/developer messages)
+                conversationHistory.push({
                     role: isUser ? 'user' : 'assistant',
                     content: content
                 });
@@ -1672,11 +1665,11 @@
             
             // Handle reroll button click
             const handleReroll = async () => {
-                // Find the last user message in chat history
+                // Find the last user message in conversation history
                 let lastUserMessage = null;
-                for (let i = chatHistory.length - 1; i >= 0; i--) {
-                    if (chatHistory[i].role === 'user') {
-                        lastUserMessage = chatHistory[i].content;
+                for (let i = conversationHistory.length - 1; i >= 0; i--) {
+                    if (conversationHistory[i].role === 'user') {
+                        lastUserMessage = conversationHistory[i].content;
                         break;
                     }
                 }
@@ -1690,9 +1683,9 @@
                     lastAssistantMessage.remove();
                 }
                 
-                // Remove last assistant message from chat history
-                if (chatHistory[chatHistory.length - 1].role === 'assistant') {
-                    chatHistory.pop();
+                // Remove last assistant message from conversation history
+                if (conversationHistory[conversationHistory.length - 1].role === 'assistant') {
+                    conversationHistory.pop();
                 }
                 
                 // Resend the message
@@ -1733,15 +1726,20 @@
                 showThinking();
                 
                 try {
-                    // Update system prompt in chat history before sending
-                    if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                        chatHistory[0].content = getSystemPrompt();
-                    }
+                    // Build complete message array: system + developer + conversation
+                    const developerPrompt = developerPromptElement.innerText.trim() || "Write thy wrong.";
+                    const staticPrompts = [
+                        { role: "system", content: SYSTEM_PROMPT },
+                        { role: "developer", content: developerPrompt }
+                    ];
                     
-                    // Prepare the request with full chat history and generation parameters
-                    const historyLength = 23
+                    // Combine with truncated conversation history
+                    const truncatedHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+                    const fullMessages = [...staticPrompts, ...truncatedHistory];
+                    
+                    // Prepare the request with full message list and generation parameters
                     const requestBody = {
-                        messages: chatHistory.slice(-historyLength),
+                        messages: fullMessages,
                         // Use saved generation parameters
                         ...generationParams
                     };
@@ -2001,34 +1999,9 @@
                 }
             });
             
-            // System prompt editing - real-time updates
-            let systemPromptUpdateTimeout;
-            
-            systemPromptElement.addEventListener('input', () => {
-                const newPrompt = systemPromptElement.innerHTML.trim();
-                const newPromptText = systemPromptElement.innerText.trim() || "Write thy wrong.";
-                
-                // Debounce localStorage updates to avoid excessive writes
-                clearTimeout(systemPromptUpdateTimeout);
-                systemPromptUpdateTimeout = setTimeout(() => {
-                    localStorage.setItem('praxis_system_prompt', newPrompt);
-                    // Update system prompt in chat history (use innerText for API)
-                    if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                        chatHistory[0].content = newPromptText;
-                    }
-                }, 500); // 500ms debounce
-            });
-            
-            // Keep blur handler for final save (in case input event doesn't fire)
-            systemPromptElement.addEventListener('blur', () => {
-                const newPrompt = systemPromptElement.innerHTML.trim();
-                const newPromptText = systemPromptElement.innerText.trim() || "Write thy wrong.";
-                
-                localStorage.setItem('praxis_system_prompt', newPrompt);
-                // Update system prompt in chat history (use innerText for API)
-                if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
-                    chatHistory[0].content = newPromptText;
-                }
+            // Save developer prompt to localStorage when it changes
+            developerPromptElement.addEventListener('blur', () => {
+                localStorage.setItem('praxis_developer_prompt', developerPromptElement.innerHTML.trim());
             });
             
             // Simple mobile improvements without janky behavior
