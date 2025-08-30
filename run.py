@@ -1341,35 +1341,37 @@ class Generator:
 
             try:
                 tool_result = self.call_tool(tool_name, tool_args)
+                print(f"Called tool: {tool_name} with args: {tool_args}")
+                print(f"Tool result: {tool_result}")
 
-                # Build chat messages for the follow-up generation
-                # Parse the original prompt as chat template if possible
-                messages = [
-                    {"role": "user", "content": request.prompt},
-                    {
-                        "role": "assistant",
-                        "content": return_text,
-                        "tool_calls": [
-                            {"function": {"name": tool_name, "arguments": tool_args}}
-                        ],
-                    },
-                    {"role": "tool", "content": str(tool_result)},
-                ]
-
-                # Generate final response with tool result
-                final_prompt = self.tokenizer.apply_chat_template(
-                    messages,
-                    tools=self.tools,
-                    tokenize=False,
-                    add_generation_prompt=True,
+                # The request.prompt is already a fully formatted chat template
+                # We need to properly append the tool interaction using the tokenizer's format
+                
+                # First, we need to complete the assistant's message with the tool call
+                # The return_text already contains the tool_call tags
+                
+                # Remove the generation prompt from the end if present
+                prompt_without_gen = request.prompt
+                if prompt_without_gen.endswith(f"{self.tokenizer.bos_token}assistant\n"):
+                    prompt_without_gen = prompt_without_gen[:-len(f"{self.tokenizer.bos_token}assistant\n")]
+                
+                # Append the assistant's response (which includes the tool call)
+                # and then the tool result using the tokenizer's special tokens
+                final_prompt = (
+                    prompt_without_gen + 
+                    f"{self.tokenizer.bos_token}assistant\n" +
+                    return_text + 
+                    f"{self.tokenizer.sep_token}\n" +
+                    f"{self.tokenizer.bos_token}tool\n" +
+                    str(tool_result) +
+                    f"{self.tokenizer.sep_token}\n" +
+                    f"{self.tokenizer.bos_token}assistant\n"
                 )
 
                 # Create a new request for the final response
                 final_request = GenerationRequest(
                     id=request.id + "_final", prompt=final_prompt, kwargs=request.kwargs
                 )
-
-                print(f"Called tool: {tool_name} with args: {tool_args}")
 
                 # Recursively process (but tool calls won't nest due to the prompt structure)
                 return self._process_single_request(final_request)
