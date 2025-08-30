@@ -820,6 +820,11 @@ class TerminalInterface(Callback):
         self.dashboard = use_dashboard
         self.progress_bar = progress_bar
         self.device = device
+        # Track inference timing to detect when it's too slow
+        self.inference_time_ema = None
+        self.inference_slowdown_threshold = (
+            10.0  # Reset if inference is 10x slower than training
+        )
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
@@ -964,8 +969,8 @@ class TerminalInterface(Callback):
             info_dict["block_size"] = seq_length
             info_dict["batch_size"] = batch_size
             info_dict["target_size"] = target_batch_size
-            info_dict["num_heads"] = int(num_heads.split(":")[0])
-            info_dict["num_queries"] = int(num_heads.split(":")[1])
+            # info_dict["num_heads"] = int(num_heads.split(":")[0]) # not used by RNNs
+            # info_dict["num_queries"] = int(num_heads.split(":")[1]) # not used by RNNs
             info_dict["depth"] = depth
             info_dict["hidden_size"] = hidden_size
             info_dict["embed_size"] = embed_size
@@ -992,11 +997,31 @@ class TerminalInterface(Callback):
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
 
+        # Check if we should reset based on previous inference times
+        if self.inference_time_ema is not None:
+            trainer = lm.trainer if hasattr(lm, "trainer") else None
+            if trainer and hasattr(trainer, "callback_metrics"):
+                train_step_time = trainer.callback_metrics.get("avg_step_time", None)
+                if train_step_time:
+                    train_step_time = float(train_step_time)
+                    # Reset if inference is much slower than training
+                    if (
+                        self.inference_time_ema
+                        > train_step_time * self.inference_slowdown_threshold
+                    ):
+                        self.text = self.initial_text
+                        self.inference_time_ema = (
+                            None  # Reset timing after context reset
+                        )
+
         max_new_tokens = 1 if not byte_latent else self._biased_randint(1, 7)
 
         # Chance to generate extra tokens
         while random.random() < 0.1:
             max_new_tokens += 1 if not byte_latent else self._biased_randint(1, 7)
+
+        # Time the inference call
+        inference_start = time.time()
 
         request_id = generator.request_generation(
             self.text,
@@ -1016,6 +1041,16 @@ class TerminalInterface(Callback):
             if result is not None:
                 self.text = result
                 break
+
+        # Track inference time
+        inference_time = time.time() - inference_start
+        if self.inference_time_ema is None:
+            self.inference_time_ema = inference_time
+        else:
+            # Use exponential moving average to smooth out timing
+            self.inference_time_ema = (
+                0.9 * self.inference_time_ema + 0.1 * inference_time
+            )
 
         n_gram_size = 13 if byte_latent else 7
         frequency = 50 if byte_latent else 20
@@ -1346,26 +1381,30 @@ class Generator:
 
                 # The request.prompt is already a fully formatted chat template
                 # We need to properly append the tool interaction using the tokenizer's format
-                
+
                 # First, we need to complete the assistant's message with the tool call
                 # The return_text already contains the tool_call tags
-                
+
                 # Remove the generation prompt from the end if present
                 prompt_without_gen = request.prompt
-                if prompt_without_gen.endswith(f"{self.tokenizer.bos_token}assistant\n"):
-                    prompt_without_gen = prompt_without_gen[:-len(f"{self.tokenizer.bos_token}assistant\n")]
-                
+                if prompt_without_gen.endswith(
+                    f"{self.tokenizer.bos_token}assistant\n"
+                ):
+                    prompt_without_gen = prompt_without_gen[
+                        : -len(f"{self.tokenizer.bos_token}assistant\n")
+                    ]
+
                 # Append the assistant's response (which includes the tool call)
                 # and then the tool result using the tokenizer's special tokens
                 final_prompt = (
-                    prompt_without_gen + 
-                    f"{self.tokenizer.bos_token}assistant\n" +
-                    return_text + 
-                    f"{self.tokenizer.sep_token}\n" +
-                    f"{self.tokenizer.bos_token}tool\n" +
-                    str(tool_result) +
-                    f"{self.tokenizer.sep_token}\n" +
-                    f"{self.tokenizer.bos_token}assistant\n"
+                    prompt_without_gen
+                    + f"{self.tokenizer.bos_token}assistant\n"
+                    + return_text
+                    + f"{self.tokenizer.sep_token}\n"
+                    + f"{self.tokenizer.bos_token}tool\n"
+                    + str(tool_result)
+                    + f"{self.tokenizer.sep_token}\n"
+                    + f"{self.tokenizer.bos_token}assistant\n"
                 )
 
                 # Create a new request for the final response

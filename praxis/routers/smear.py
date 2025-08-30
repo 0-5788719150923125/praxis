@@ -47,7 +47,9 @@ class SMEAR(nn.Module):
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
-        self.dropout_rate = getattr(config, "dropout", 0.1)
+        self.dropout_rate = getattr(
+            config, "dropout", 0.1
+        )  # Probability of dropping entire experts
 
         # Get experts from kwargs - required for SMEAR
         self.experts = kwargs.get("experts", None)
@@ -59,13 +61,9 @@ class SMEAR(nn.Module):
 
         self.parameter_names: List[str] = []
 
-        # Router network: simple linear -> softmax
-        self.router = nn.Sequential(
-            nn.Linear(self.hidden_size, self.num_experts),
-            nn.Softmax(dim=-1),
-        )
-
-        self.dropout = nn.Dropout(self.dropout_rate)
+        # Router network with layer normalization as per paper
+        self.router_norm = nn.LayerNorm(self.hidden_size)
+        self.router = nn.Linear(self.hidden_size, self.num_experts)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(num_experts={len(self.experts)})"
@@ -76,7 +74,12 @@ class SMEAR(nn.Module):
         **kwargs,
     ) -> Union[
         Tuple[torch.Tensor, Optional[torch.Tensor], float],  # Direct mode
-        Tuple[torch.Tensor, Optional[Union[torch.Tensor, List, Dict]], Optional[torch.Tensor], float],  # Router mode
+        Tuple[
+            torch.Tensor,
+            Optional[Union[torch.Tensor, List, Dict]],
+            Optional[torch.Tensor],
+            float,
+        ],  # Router mode
     ]:
         """
         Forward pass with SMEAR routing.
@@ -114,8 +117,30 @@ class SMEAR(nn.Module):
         float,
     ]:
         """Router mode forward pass."""
-        # Get routing probabilities
-        routing_probs = self.router(inputs.mean(dim=1))  # [batch_size, num_experts]
+        # Get routing probabilities with proper normalization
+        router_input = inputs.mean(dim=1)  # Average across sequence length
+        router_input = self.router_norm(router_input)  # Layer norm on input
+
+        # Get logits and normalize weight matrix rows
+        logits = self.router(router_input)
+
+        # Normalize rows of weight matrix (as mentioned in paper)
+        with torch.no_grad():
+            self.router.weight.data = F.normalize(self.router.weight.data, dim=1)
+
+        routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
+
+        # Apply expert dropout during training (drop entire experts)
+        if self.training and self.dropout_rate > 0:
+            # Create dropout mask for experts
+            expert_mask = torch.bernoulli(
+                torch.ones_like(routing_probs) * (1 - self.dropout_rate)
+            )
+            routing_probs = routing_probs * expert_mask
+            # Renormalize to ensure probabilities sum to 1
+            routing_probs = routing_probs / (
+                routing_probs.sum(dim=-1, keepdim=True) + 1e-8
+            )
 
         # Merge expert parameters based on routing probabilities
         merged_state_dict = self._merge_expert_parameters(routing_probs)
@@ -206,11 +231,8 @@ class SMEAR(nn.Module):
                         f"Parameter '{param_name}' not found in expert {expert_idx}."
                     )
 
-                # Apply dropout to the parameter
-                param_dropped = self.dropout(param)
-
                 # Weight the parameter by the expert's routing probability
-                weighted_param = param_dropped * expert_weights[expert_idx]
+                weighted_param = param * expert_weights[expert_idx]
 
                 if merged_param is None:
                     merged_param = weighted_param
@@ -243,12 +265,12 @@ class SMEAR(nn.Module):
             else:
                 return None
         return getattr(submodule, parts[-1], None)
-    
+
     def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
         """Check if we're in router mode based on arguments."""
         # Router mode if we have 7 positional args or 'layer' in kwargs
-        return len(args) == 7 or 'layer' in kwargs
-    
+        return len(args) == 7 or "layer" in kwargs
+
     def _parse_router_args(self, args: tuple, kwargs: dict) -> tuple:
         """Parse arguments for router mode."""
         if len(args) == 7:
@@ -257,16 +279,18 @@ class SMEAR(nn.Module):
         else:
             # Keyword arguments
             return (
-                kwargs['layer'],
-                kwargs['inputs'],
-                kwargs.get('attention_mask'),
-                kwargs.get('past_key_values'),
-                kwargs.get('current_state'),
-                kwargs.get('current_depth', 0),
-                kwargs.get('block_ids'),
+                kwargs["layer"],
+                kwargs["inputs"],
+                kwargs.get("attention_mask"),
+                kwargs.get("past_key_values"),
+                kwargs.get("current_state"),
+                kwargs.get("current_depth", 0),
+                kwargs.get("block_ids"),
             )
-    
-    def _parse_direct_args(self, args: tuple, kwargs: dict) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+    def _parse_direct_args(
+        self, args: tuple, kwargs: dict
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Parse arguments for direct mode."""
         if len(args) >= 2:
             # Positional args: (inputs, current_state)
@@ -276,31 +300,53 @@ class SMEAR(nn.Module):
             return args[0], None
         else:
             # Try kwargs
-            inputs = kwargs.get('inputs')
+            inputs = kwargs.get("inputs")
             if inputs is None:
                 raise ValueError(f"No inputs provided. Args: {args}, Kwargs: {kwargs}")
-            return inputs, kwargs.get('current_state')
-    
+            return inputs, kwargs.get("current_state")
+
     def _direct_forward(
         self,
         inputs: torch.Tensor,
         current_state: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
         """Direct mode forward pass for RecurrentBlock usage."""
-        # Get routing probabilities
-        routing_probs = self.router(inputs.mean(dim=1))  # [batch_size, num_experts]
-        
+        # Get routing probabilities with proper normalization
+        router_input = inputs.mean(dim=1)  # Average across sequence length
+        router_input = self.router_norm(router_input)  # Layer norm on input
+
+        # Get logits and normalize weight matrix rows
+        logits = self.router(router_input)
+
+        # Normalize rows of weight matrix (as mentioned in paper)
+        with torch.no_grad():
+            self.router.weight.data = F.normalize(self.router.weight.data, dim=1)
+
+        routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
+
+        # Apply expert dropout during training (drop entire experts)
+        if self.training and self.dropout_rate > 0:
+            # Create dropout mask for experts
+            expert_mask = torch.bernoulli(
+                torch.ones_like(routing_probs) * (1 - self.dropout_rate)
+            )
+            routing_probs = routing_probs * expert_mask
+            # Renormalize to ensure probabilities sum to 1
+            routing_probs = routing_probs / (
+                routing_probs.sum(dim=-1, keepdim=True) + 1e-8
+            )
+
         # Merge expert parameters based on routing probabilities
         merged_state_dict = self._merge_expert_parameters(routing_probs)
-        
+
         # Use the first expert as the base module structure
         base_module = self.experts[0]
-        
+
         # Apply the merged parameters using functional_call
         result = torch.func.functional_call(
             base_module, merged_state_dict, (inputs, current_state), {}
         )
-        
+
         # Handle different return formats
         if isinstance(result, tuple) and len(result) == 3:
             return result
