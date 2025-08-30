@@ -145,6 +145,11 @@ import time
 import traceback
 import uuid
 import warnings
+
+# Suppress protobuf version warnings from hivemind
+warnings.filterwarnings(
+    "ignore", ".*Protobuf gencode version.*is exactly one major version older.*"
+)
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -177,6 +182,7 @@ ignored_warnings = [
     ".*Checkpoint directory.*exists and is not empty*",
     ".*JAX is multithreaded, so this will likely lead to a deadlock*",
     ".*Total length of `list` across ranks is zero.*",
+    ".*Protobuf gencode version.*is exactly one major version older.*",
 ]
 for pattern in ignored_warnings:
     warnings.filterwarnings("ignore", pattern)
