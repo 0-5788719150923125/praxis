@@ -83,7 +83,7 @@ class NeuralController(BaseController):
         self.tool_names = self._get_tool_names()
 
         # Layer embeddings - unique representations for each layer
-        self.layer_embeddings = nn.Parameter(torch.randn(self.depth, self.emb_dim))
+        self.layer_embeddings = nn.Parameter(torch.randn(self.num_experts, self.emb_dim))
 
         # Projection networks
         self.state_projector = nn.Linear(self.hidden_size, self.tool_output_dim)

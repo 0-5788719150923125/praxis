@@ -321,6 +321,9 @@ def test_huggingface_dataset_determinism():
     """Test that HuggingfaceDataset produces deterministic sequences with the same seed."""
     # Create a tokenizer
     tokenizer = AutoTokenizer.from_pretrained("facebook/opt-125m")
+    
+    # Set a simple chat template for testing
+    tokenizer.chat_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
 
     # Choose a small dataset from the available ones
     dataset_config = HUGGINGFACE_DATASETS["minipile-validation"].copy()
@@ -368,6 +371,9 @@ def test_interleave_data_manager_determinism():
     """Test that InterleaveDataManager produces deterministic batches with fixed seeds."""
     # Create a tokenizer
     tokenizer = AutoTokenizer.from_pretrained("facebook/opt-125m")
+    
+    # Set a simple chat template for testing
+    tokenizer.chat_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
 
     # Use a small dataset
     dataset_config = HUGGINGFACE_DATASETS["minipile-validation"].copy()

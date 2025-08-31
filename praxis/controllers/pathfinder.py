@@ -32,7 +32,7 @@ class Pathfinder(BaseController):
                     ),
                     nn.Dropout(config.dropout),
                 )
-                for _ in range(self.depth)
+                for _ in range(self.num_experts)
             ]
         )
 

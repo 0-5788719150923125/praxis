@@ -125,6 +125,34 @@ class ModularAttention(nn.Module):
                 value_head_dim=self.head_dim,
             )
 
+        # Temporal Health Complex module for K/V enhancement
+        self.thc = nn.ModuleDict(
+            {
+                "k": (
+                    TemporalHealthComplex(
+                        d_model=hidden_size,
+                        reduction_factor=8,
+                        kernel_size=3,
+                        dropout=config.dropout,
+                        gate_init="zeros",
+                    )
+                    if "use_thc" in config.meta
+                    else nn.Identity()
+                ),
+                "v": (
+                    TemporalHealthComplex(
+                        d_model=hidden_size,
+                        reduction_factor=8,
+                        kernel_size=3,
+                        dropout=config.dropout,
+                        gate_init="zeros",
+                    )
+                    if "use_thc" in config.meta
+                    else nn.Identity()
+                ),
+            }
+        )
+
         self.memory: Union[CompressiveMemory, bool] = config.memory
         self.chunk_size: int = 0
         if self.memory:
@@ -157,30 +185,6 @@ class ModularAttention(nn.Module):
         # Standard output projection
         self.output = nn.Linear(
             self.num_query_heads * self.head_dim, hidden_size, bias=False
-        )
-
-        # Temporal Health Complex module for K/V enhancement
-        self.thc_k = (
-            TemporalHealthComplex(
-                d_model=hidden_size,
-                reduction_factor=8,
-                kernel_size=3,
-                dropout=config.dropout,
-                gate_init="zeros",
-            )
-            if "use_thc" in config.meta
-            else nn.Identity()
-        )
-        self.thc_v = (
-            TemporalHealthComplex(
-                d_model=hidden_size,
-                reduction_factor=8,
-                kernel_size=3,
-                dropout=config.dropout,
-                gate_init="zeros",
-            )
-            if "use_thc" in config.meta
-            else nn.Identity()
         )
 
     def forward(
@@ -218,7 +222,7 @@ class ModularAttention(nn.Module):
         q, aux_loss = self.query(inputs)
 
         # Apply THC to K/V projections
-        k, v = self.key_value((self.thc_k(inputs), self.thc_v(inputs)))
+        k, v = self.key_value((self.thc["k"](inputs), self.thc["v"](inputs)))
 
         # Define the views
         q_view = (batch_size, seq_len, self.num_query_heads * self.factor, -1)

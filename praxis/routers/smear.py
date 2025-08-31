@@ -62,8 +62,9 @@ class SMEAR(nn.Module):
         self.parameter_names: List[str] = []
 
         # Router network with layer normalization as per paper
+        # Use actual number of experts, not config.num_experts
         self.router_norm = nn.LayerNorm(self.hidden_size)
-        self.router = nn.Linear(self.hidden_size, self.num_experts)
+        self.router = nn.Linear(self.hidden_size, len(self.experts))
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(num_experts={len(self.experts)})"
