@@ -350,6 +350,7 @@ class TerminalDashboard:
         self.memory_churn = None
         self.accuracy = None
         self.num_tokens = 0
+        self.context_tokens = 0  # Track context window size
         self.game_of_life = None
         self.info_dict = {}
 
@@ -694,6 +695,10 @@ class TerminalDashboard:
         with self.lock:
             self.num_tokens = num_tokens
 
+    def update_context_tokens(self, context_tokens):
+        with self.lock:
+            self.context_tokens = context_tokens
+
     def update_expert_count(self, num_local, num_remote):
         with self.lock:
             self.local_experts = num_local
@@ -919,9 +924,10 @@ class TerminalDashboard:
                 # Truncate before padding
                 right_content = self._truncate_to_width(text, right_width)
                 right_content = right_content.ljust(right_width)
-                left_content = self._truncate_to_width(
-                    f" HOST: {self.arg_hash}", half_width
-                )
+                # Build the left content with HASH and CTX
+                ctx_tokens = getattr(self, 'context_tokens', 0)
+                left_text = f" HASH: {self.arg_hash} || CTX: {ctx_tokens}"
+                left_content = self._truncate_to_width(left_text, half_width)
                 left_content = left_content.ljust(half_width)
             elif i == 1:
                 left_content = "─" * half_width

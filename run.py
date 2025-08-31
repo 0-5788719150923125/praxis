@@ -1032,6 +1032,11 @@ class TerminalInterface(Callback):
 
         # Time the inference call
         inference_start = time.time()
+        
+        # Count tokens in the prompt
+        prompt_tokens = len(tokenizer.encode(self.text))
+        if self.dashboard:
+            self.dashboard.update_context_tokens(prompt_tokens)
 
         request_id = generator.request_generation(
             self.text,

@@ -1330,9 +1330,7 @@ def get_dataset_configs(
 class InterleaveDataManager:
     # Dynamic weighting control (hardcoded switch)
     use_dynamic_weights = True  # Set to False to use static weights
-    ema_alpha = (
-        0.9  # EMA smoothing factor (0.2 = 20% new, 80% old for more responsive updates)
-    )
+    ema_alpha = 0.1  # EMA smoothing factor (lower for more conservative updates)
 
     # Class variable to store shared weights across all instances
     # This is needed because DataLoader workers create separate instances
@@ -1378,20 +1376,22 @@ class InterleaveDataManager:
             # Initialize dynamic weights for this instance
             # Each dataset (train/val) maintains its own weights based on its sampler count
             self.dynamic_weights = self.static_weights.copy()
-            
+
             # Only share weights between workers of the same dataset type (train OR val)
             # Check if this is training by looking at the number of samplers
             num_samplers = len(self.samplers)
-            if InterleaveDataManager.shared_weights_initialized and \
-               InterleaveDataManager.shared_weights is not None and \
-               len(InterleaveDataManager.shared_weights) == num_samplers:
+            if (
+                InterleaveDataManager.shared_weights_initialized
+                and InterleaveDataManager.shared_weights is not None
+                and len(InterleaveDataManager.shared_weights) == num_samplers
+            ):
                 # Use shared weights only if they match our sampler count
                 self.dynamic_weights = InterleaveDataManager.shared_weights.copy()
             elif not InterleaveDataManager.shared_weights_initialized:
                 # First instance - initialize shared weights for training
                 InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
                 InterleaveDataManager.shared_weights_initialized = True
-            
+
             # Always use dynamic weights when enabled
             self.weights = self.dynamic_weights
         else:
@@ -1411,8 +1411,9 @@ class InterleaveDataManager:
         # Update weights if using dynamic weighting and they match our sampler count
         if self.use_dynamic_weights:
             # Only use shared weights if they match our sampler count
-            if InterleaveDataManager.shared_weights is not None and \
-               len(InterleaveDataManager.shared_weights) == len(self.samplers):
+            if InterleaveDataManager.shared_weights is not None and len(
+                InterleaveDataManager.shared_weights
+            ) == len(self.samplers):
                 self.weights = InterleaveDataManager.shared_weights
             else:
                 # Use our own dynamic weights (validation or mismatched sampler count)
@@ -1606,7 +1607,11 @@ class InterleaveDataManager:
 
         # Update the shared class variable only if we're the training dataset
         # (validation datasets maintain their own weights)
-        if len(self.samplers) == len(InterleaveDataManager.shared_weights) if InterleaveDataManager.shared_weights else True:
+        if (
+            len(self.samplers) == len(InterleaveDataManager.shared_weights)
+            if InterleaveDataManager.shared_weights
+            else True
+        ):
             InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
 
     def _calculate_target_weights(self):
