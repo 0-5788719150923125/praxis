@@ -819,6 +819,7 @@ class TerminalInterface(Callback):
         self.ema_loss = 0
         self.start_time = datetime.now()
         self.last_time = datetime.now()
+        self.last_logged_weights = None  # Track weights for change detection
         self.initial_text = tokenizer.bos_token
         self.text = self.initial_text
         self.interval = 3
@@ -881,6 +882,9 @@ class TerminalInterface(Callback):
 
         if not quiet:
             self._generate_text(lm, batch_idx, self.interval)
+
+        # Log dynamic weights if they've changed
+        self._log_weight_changes(trainer, batch_idx, batch)
 
         # Handle both tensor and dict batch formats
         if isinstance(batch, dict) and "input_ids" in batch:
@@ -1230,6 +1234,34 @@ class TerminalInterface(Callback):
         time_difference = datetime.now() - original_time
         return time_difference > timedelta(seconds=x_seconds)
 
+    def _log_weight_changes(self, trainer, batch_idx, batch=None):
+        """Log sampler weights if they have changed significantly."""
+
+        # Try to get weights from the batch (functional approach)
+        current_weights = None
+        if batch is not None and isinstance(batch, dict) and "sampler_weights" in batch:
+            current_weights = batch["sampler_weights"]
+
+        if current_weights is not None:
+            # Check if weights have changed - simple comparison
+            should_log = False
+            if self.last_logged_weights is None:
+                should_log = True  # First time
+            else:
+                # Just check if they're different AT ALL
+                # Convert to strings for comparison to avoid floating point issues
+                current_str = [f"{w:.10f}" for w in current_weights]
+                last_str = [f"{w:.10f}" for w in self.last_logged_weights]
+
+                if current_str != last_str:
+                    should_log = True
+
+            if should_log:
+                # Use higher precision to show the gradual changes
+                weights_str = [f"{w:.6f}" for w in current_weights]
+                print(f"[Sampler Weights] Step {batch_idx}: {weights_str}")
+                self.last_logged_weights = list(current_weights)
+
     def _compute_ema_loss(self, current_loss, prev_avg_loss, alpha=0.01):
         if prev_avg_loss is None:
             return current_loss
@@ -1559,7 +1591,7 @@ acceleration_curve = random.uniform(
 )  # Higher = more aggressive start (2=gentle, 4=moderate, 6=very aggressive)
 start_time = time.time()
 print(f"Staging: {truncated_hash}")
-time.sleep(random.gauss(1.0, 3.0))
+time.sleep(max(0, random.gauss(1.0, 3.0)))
 for i, line in enumerate(plan):
     print(line)
     # Rolling down hill: bullet → boulder (normalized to launch_duration seconds total)

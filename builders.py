@@ -1328,6 +1328,17 @@ def get_dataset_configs(
 
 
 class InterleaveDataManager:
+    # Dynamic weighting control (hardcoded switch)
+    use_dynamic_weights = True  # Set to False to use static weights
+    ema_alpha = (
+        0.9  # EMA smoothing factor (0.2 = 20% new, 80% old for more responsive updates)
+    )
+
+    # Class variable to store shared weights across all instances
+    # This is needed because DataLoader workers create separate instances
+    shared_weights = None
+    shared_weights_initialized = False
+
     def __init__(
         self,
         samplers,
@@ -1338,7 +1349,7 @@ class InterleaveDataManager:
         rl_type=None,
     ):
         self.samplers = samplers
-        self.weights = weights
+        self.static_weights = weights.copy()  # Store original weights
         self.tokenizer = tokenizer
         self.block_size = block_size
         self.text_cache_size = text_cache_size
@@ -1352,6 +1363,41 @@ class InterleaveDataManager:
         )  # List of (start_idx, end_idx, reward, metadata) tuples
         self.current_stream_offset = 0  # Track position in token stream
 
+        # Dynamic weighting metrics
+        if self.use_dynamic_weights:
+            self.sampling_count = 0  # Total number of samplings
+            self.sampler_metrics = {}
+            for i, sampler in enumerate(self.samplers):
+                dataset_name = getattr(sampler, "dataset_path", f"sampler_{i}")
+                self.sampler_metrics[i] = {
+                    "name": dataset_name,
+                    "avg_doc_length": None,  # Will be initialized on first sample
+                    "total_samples": 0,  # Total times sampled
+                    "total_tokens": 0,  # Total tokens consumed
+                }
+            # Initialize dynamic weights for this instance
+            # Each dataset (train/val) maintains its own weights based on its sampler count
+            self.dynamic_weights = self.static_weights.copy()
+            
+            # Only share weights between workers of the same dataset type (train OR val)
+            # Check if this is training by looking at the number of samplers
+            num_samplers = len(self.samplers)
+            if InterleaveDataManager.shared_weights_initialized and \
+               InterleaveDataManager.shared_weights is not None and \
+               len(InterleaveDataManager.shared_weights) == num_samplers:
+                # Use shared weights only if they match our sampler count
+                self.dynamic_weights = InterleaveDataManager.shared_weights.copy()
+            elif not InterleaveDataManager.shared_weights_initialized:
+                # First instance - initialize shared weights for training
+                InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
+                InterleaveDataManager.shared_weights_initialized = True
+            
+            # Always use dynamic weights when enabled
+            self.weights = self.dynamic_weights
+        else:
+            # Static weights mode
+            self.weights = weights
+
     def get_batch(
         self,
         batch_size: int,
@@ -1362,6 +1408,15 @@ class InterleaveDataManager:
         sequence_length = self.block_size
         current_batch_size = batch_size
 
+        # Update weights if using dynamic weighting and they match our sampler count
+        if self.use_dynamic_weights:
+            # Only use shared weights if they match our sampler count
+            if InterleaveDataManager.shared_weights is not None and \
+               len(InterleaveDataManager.shared_weights) == len(self.samplers):
+                self.weights = InterleaveDataManager.shared_weights
+            else:
+                # Use our own dynamic weights (validation or mismatched sampler count)
+                self.weights = self.dynamic_weights
         # Check if batch size supports the requested sampling mode
         if hypersample and batch_size >= 64:
             current_batch_size = batch_size // 64
@@ -1440,12 +1495,21 @@ class InterleaveDataManager:
         self.token_stream = self.token_stream[tokens_needed:]
         self._update_boundaries_after_removal(tokens_needed)
 
-        return {
+        # Include current weights in the return value for logging
+        result = {
             "batch": batch,
             "rewards": rewards,
             "metadata": metadata,
             "token_weights": token_weights,
         }
+
+        # Add the current sampler weights if dynamic weighting is enabled
+        if self.use_dynamic_weights:
+            result["sampler_weights"] = (
+                self.weights.copy() if hasattr(self, "weights") else None
+            )
+
+        return result
 
     def _get_reward_and_metadata_for_range(
         self, start: int, end: int
@@ -1504,6 +1568,101 @@ class InterleaveDataManager:
         # No overlap found, return defaults
         return 0.0, {}
 
+    def _update_dynamic_weights_after_sample(self, sampler_idx: int, doc_length: int):
+        """Update metrics and weights with EMA after each sample."""
+        if not self.use_dynamic_weights:
+            return
+
+        metrics = self.sampler_metrics[sampler_idx]
+
+        # Update total counts
+        metrics["total_samples"] += 1
+        metrics["total_tokens"] += doc_length
+
+        # Update average document length with EMA
+        if metrics["avg_doc_length"] is None:
+            metrics["avg_doc_length"] = float(doc_length)
+        else:
+            metrics["avg_doc_length"] = (
+                self.ema_alpha * doc_length
+                + (1 - self.ema_alpha) * metrics["avg_doc_length"]
+            )
+
+        # Calculate target weights based on current metrics
+        target_weights = self._calculate_target_weights()
+
+        # Update dynamic weights with EMA towards target
+        old_weights = self.dynamic_weights.copy()
+        for i in range(len(self.dynamic_weights)):
+            self.dynamic_weights[i] = (
+                self.ema_alpha * target_weights[i]
+                + (1 - self.ema_alpha) * self.dynamic_weights[i]
+            )
+
+        # Normalize to ensure weights sum to 1
+        total = sum(self.dynamic_weights)
+        if total > 0:
+            self.dynamic_weights = [w / total for w in self.dynamic_weights]
+
+        # Update the shared class variable only if we're the training dataset
+        # (validation datasets maintain their own weights)
+        if len(self.samplers) == len(InterleaveDataManager.shared_weights) if InterleaveDataManager.shared_weights else True:
+            InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
+
+    def _calculate_target_weights(self):
+        """Calculate target weights based on current metrics."""
+        if not self.sampler_metrics:
+            return self.static_weights
+
+        # Skip if we don't have enough data yet
+        if all(m["avg_doc_length"] is None for m in self.sampler_metrics.values()):
+            return self.static_weights
+
+        target_weights = []
+
+        # Calculate average document length across all samplers
+        avg_length = sum(
+            m["avg_doc_length"]
+            for m in self.sampler_metrics.values()
+            if m["avg_doc_length"] is not None
+        ) / len(self.sampler_metrics)
+
+        # Calculate target based on balancing token consumption
+        total_tokens = sum(m["total_tokens"] for m in self.sampler_metrics.values())
+        avg_tokens_per_sampler = (
+            total_tokens / len(self.sampler_metrics) if total_tokens > 0 else 1
+        )
+
+        for i in range(len(self.samplers)):
+            metrics = self.sampler_metrics[i]
+
+            # Start with static weight
+            weight = self.static_weights[i]
+
+            if metrics["avg_doc_length"] is not None and metrics["total_samples"] > 0:
+                # Factor 1: Inverse document length (shorter docs get higher weight)
+                length_factor = avg_length / max(metrics["avg_doc_length"], 1.0)
+
+                # Factor 2: Balance token consumption (underrepresented gets boost)
+                if metrics["total_tokens"] > 0:
+                    token_balance_factor = avg_tokens_per_sampler / max(
+                        metrics["total_tokens"], 1.0
+                    )
+                else:
+                    token_balance_factor = 2.0  # Strong boost for never sampled
+
+                # Combine factors - geometric mean for balance
+                weight = weight * (length_factor * token_balance_factor) ** 0.5
+
+            target_weights.append(weight)
+
+        # Normalize weights to sum to 1
+        total = sum(target_weights)
+        if total > 0:
+            return [w / total for w in target_weights]
+        else:
+            return self.static_weights
+
     def _update_boundaries_after_removal(self, tokens_removed: int):
         """Update sequence boundaries after removing tokens from the stream."""
         self.current_stream_offset += tokens_removed
@@ -1522,11 +1681,20 @@ class InterleaveDataManager:
 
         # Collect sequences until we have enough text
         while len(total_text) < self.text_cache_size:
-            # Pick a sampler based on weights
-            sampler = random.choices(self.samplers, weights=self.weights, k=1)[0]
+            # Pick a sampler based on current weights
+            sampler_idx = random.choices(
+                range(len(self.samplers)), weights=self.weights, k=1
+            )[0]
+            sampler = self.samplers[sampler_idx]
             # Get a sequence from that sampler
             new_sequences = sampler.get_sequences(1)
             text = new_sequences[0]
+
+            # Update dynamic weights after each sample
+            if self.use_dynamic_weights:
+                self.sampling_count += 1
+                doc_length = len(text)
+                self._update_dynamic_weights_after_sample(sampler_idx, doc_length)
 
             # Track dataset sampling
             dataset_name = getattr(sampler, "dataset_path", "unknown")
@@ -2158,6 +2326,7 @@ class WeightedIterableDataset(IterableDataset):
             rewards = result.get("rewards")
             metadata = result.get("metadata", [])
             token_weights = result.get("token_weights")
+            sampler_weights = result.get("sampler_weights")  # Get the current weights
 
             # Stack batch tensors
             batch_tensor = torch.stack(batch)
@@ -2191,6 +2360,8 @@ class WeightedIterableDataset(IterableDataset):
                     }
                     if token_weights is not None:
                         result_dict["token_weights"] = torch.stack(token_weights)
+                    if sampler_weights is not None:
+                        result_dict["sampler_weights"] = sampler_weights
                     yield result_dict
                 else:
                     # Log batch statistics
@@ -2200,10 +2371,20 @@ class WeightedIterableDataset(IterableDataset):
                     result_dict = {"input_ids": batch_tensor, "rewards": reward_tensor}
                     if token_weights is not None:
                         result_dict["token_weights"] = torch.stack(token_weights)
+                    if sampler_weights is not None:
+                        result_dict["sampler_weights"] = sampler_weights
                     yield result_dict
             else:
-                # No reinforcement learning, return regular tensor
-                yield batch_tensor
+                # No reinforcement learning
+                # If we have sampler weights, return dict format
+                if sampler_weights is not None:
+                    yield {
+                        "input_ids": batch_tensor,
+                        "sampler_weights": sampler_weights,
+                    }
+                else:
+                    # Return regular tensor for backward compatibility
+                    yield batch_tensor
 
 
 class PraxisDataModule(LightningDataModule):
