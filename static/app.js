@@ -1012,22 +1012,13 @@ async function loadSpec() {
         // Checkout section
         if (data.git_url) {
             html += '<div class="spec-section">';
-            html += '<div class="spec-title">Checkout</div>';
+            html += '<div class="spec-title">Commands</div>';
             html += '<div class="spec-code-block">';
-            html += `<code>git clone ${data.git_url}</code>`;
+            html += 'Clone it from the source:'
+            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">git clone ${data.git_url}</code></div>`;
+            html += `Reproduce the experiment:`
+            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
             html += '</div>';
-            html += '</div>';
-        }
-        
-        // Command section
-        if (data.args || data.command || data.timestamp) {
-            html += '<div class="spec-section">';
-            html += '<div class="spec-title">Command</div>';
-            
-            if (data.command) {
-                html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
-            }
-            
             html += '</div>';
         }
         
