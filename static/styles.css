@@ -554,7 +554,7 @@ body, html {
 
 .tab-button {
     padding: 10px 16px;
-    background: none;
+    background: var(--surface);
     border: none;
     color: var(--light-text);
     cursor: pointer;
@@ -963,8 +963,39 @@ body, html {
 
 /* ==================== Mobile Responsive ==================== */
 @media (max-width: 768px) {
+    body {
+        overflow-x: hidden; /* Prevent buttons from appearing in body */
+        position: relative;
+        z-index: 1;
+        background: var(--background); /* Ensure solid background */
+    }
+    
     .app-container {
         padding: 0 20px;
+        overflow: hidden; /* Prevent any overflow of fading buttons */
+        position: relative;
+        z-index: 2;
+        background: var(--background); /* Ensure solid background to hide buttons */
+    }
+    
+    /* Create solid overlays to hide buttons that escape tab-nav */
+    .app-container::before,
+    .app-container::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 20px; /* Match the padding */
+        background: var(--background);
+        z-index: 5; /* Above the tab-nav content */
+    }
+    
+    .app-container::before {
+        left: 0;
+    }
+    
+    .app-container::after {
+        right: 0;
     }
     
     .header {
@@ -983,16 +1014,95 @@ body, html {
     
     .tab-nav {
         padding: 5px 10px 10px 10px;
+        position: relative;
+        overflow: visible; /* Allow overflow for fade effect */
+        z-index: 0; /* Lower than app-container */
+    }
+    
+    /* Subtle edge indicators */
+    .tab-nav::before,
+    .tab-nav::after {
+        content: '';
+        position: absolute;
+        top: 5px;
+        bottom: 10px;
+        width: 15px;
+        pointer-events: none;
+        z-index: 10;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    
+    .tab-nav::before {
+        left: 0;
+        background: linear-gradient(to right, var(--background), transparent);
+    }
+    
+    .tab-nav::after {
+        right: 0;
+        background: linear-gradient(to left, var(--background), transparent);
+    }
+    
+    .tab-nav.has-scroll-left::before {
+        opacity: 0.6;
+    }
+    
+    .tab-nav.has-scroll-right::after {
+        opacity: 0.6;
     }
     
     .tab-buttons {
+        display: flex;
         gap: 6px;
         max-width: calc(100% - 120px);
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        /* Hide scrollbar */
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        /* Extend the scrollable area into the left margin */
+        padding-left: 40px;
+        padding-right: 20px;
+        margin-left: -40px;
+        position: relative;
+        z-index: 0; /* Ensure buttons stay below parent containers */
+        /* Mask gradient: fade zone is between tab-buttons edge and tab-nav edge */
+        /* Transparent at 0 (tab-nav edge), fade to black by 40px (tab-buttons visible edge) */
+        -webkit-mask-image: linear-gradient(
+            to right,
+            transparent 0px,
+            black 40px,
+            black calc(100% - 20px),
+            transparent 100%
+        );
+        mask-image: linear-gradient(
+            to right,
+            transparent 0px,
+            black 40px,
+            black calc(100% - 20px),
+            transparent 100%
+        );
+    }
+    
+    .tab-buttons::-webkit-scrollbar {
+        display: none;
+    }
+    
+    /* Invisible spacer to allow last button to reach center */
+    .tab-buttons::after {
+        content: '';
+        display: block;
+        flex-shrink: 0;
+        width: 50%;
+        height: 1px;
     }
     
     .tab-button {
         padding: 10px 12px;
         font-size: 13px;
+        flex: 0 0 auto;  /* Prevent buttons from shrinking */
+        white-space: nowrap;  /* Keep text on one line */
     }
     
     .logo-icon {

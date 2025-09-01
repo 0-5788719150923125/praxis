@@ -702,7 +702,20 @@ function switchTab(tabName) {
     document.querySelectorAll('.tab-button').forEach(btn => {
         btn.classList.remove('active');
     });
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    const activeButton = document.querySelector(`[data-tab="${tabName}"]`);
+    activeButton.classList.add('active');
+    
+    // Scroll active tab into view on mobile
+    if (window.innerWidth <= 768) {
+        activeButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        // Update opacity after scroll
+        setTimeout(() => {
+            const tabButtons = document.querySelector('.tab-buttons');
+            if (tabButtons) {
+                tabButtons.dispatchEvent(new Event('scroll'));
+            }
+        }, 300);
+    }
     
     // Update tab content
     document.querySelectorAll('.tab-content').forEach(content => {
@@ -1153,9 +1166,293 @@ async function loadAgents() {
 }
 
 // ==================== Event Listeners Setup ====================
+// ==================== Mobile Tab Carousel ====================
+function setupTabCarousel() {
+    const tabButtons = document.querySelector('.tab-buttons');
+    const tabNav = document.querySelector('.tab-nav');
+    if (!tabButtons || !tabNav || window.innerWidth > 768) return;
+    
+    let scrollEndTimer = null;
+    let isScrolling = false;
+    let userInitiatedScroll = false;
+    
+    function updateTabState() {
+        const buttons = tabButtons.querySelectorAll('.tab-button');
+        const containerRect = tabButtons.getBoundingClientRect();
+        const scrollLeft = tabButtons.scrollLeft;
+        const scrollWidth = tabButtons.scrollWidth;
+        const clientWidth = tabButtons.clientWidth;
+        
+        // Get terminal-status container position for right boundary
+        const terminalStatus = document.querySelector('.terminal-status');
+        const terminalRect = terminalStatus ? terminalStatus.getBoundingClientRect() : null;
+        const rightBoundary = terminalRect ? terminalRect.left - 10 : containerRect.right - 120;
+        
+        // Update scroll indicators
+        if (scrollLeft > 5) {
+            tabNav.classList.add('has-scroll-left');
+        } else {
+            tabNav.classList.remove('has-scroll-left');
+        }
+        
+        if (scrollLeft < scrollWidth - clientWidth - 5) {
+            tabNav.classList.add('has-scroll-right');
+        } else {
+            tabNav.classList.remove('has-scroll-right');
+        }
+        
+        // Apply compression effect as buttons approach right boundary
+        let cumulativeOffset = 0;
+        buttons.forEach((button, index) => {
+            const rect = button.getBoundingClientRect();
+            const buttonLeft = rect.left;
+            const distanceFromRight = rightBoundary - buttonLeft;
+            
+            if (distanceFromRight < 300 && distanceFromRight > -150) {
+                // Even wider compression zone
+                const normalizedDistance = Math.max(0, Math.min(1, (distanceFromRight + 150) / 450));
+                
+                // Extremely aggressive exponential compression
+                const compressionAmount = Math.pow(1 - normalizedDistance, 4);
+                
+                // VERY strong stacking - buttons almost completely overlap
+                const baseCompression = compressionAmount * 200; // Massive base compression
+                const stackingFactor = compressionAmount * (index * index * 2); // Much stronger exponential stacking
+                
+                // Add to cumulative offset for extreme cascading
+                cumulativeOffset += (baseCompression + stackingFactor) * 0.8;
+                
+                // Calculate final position - buttons heavily slide left and stack
+                const translateX = -cumulativeOffset;
+                
+                // Dramatic scale and opacity changes for deck effect
+                const scale = 1 - (compressionAmount * 0.25); // Scale down to 75% when fully compressed
+                const opacity = Math.max(0.2, 1 - (compressionAmount * 0.7)); // Fade to 20% opacity minimum
+                
+                // Z-index creates proper stacking order
+                const zIndex = 100 - index; // Later buttons go under
+                
+                button.style.transform = `translateX(${translateX}px) scale(${scale})`;
+                button.style.opacity = opacity;
+                button.style.zIndex = zIndex;
+                button.style.transition = 'transform 0.1s ease-out, opacity 0.1s ease-out';
+                
+                // Active button should always be visible but still affected
+                if (button.classList.contains('active')) {
+                    button.style.opacity = Math.max(0.85, opacity);
+                    button.style.transform = `translateX(${translateX}px) scale(${Math.max(0.9, scale)})`;
+                    button.style.zIndex = '200'; // Active button always on top
+                }
+            } else {
+                // Reset transformation for buttons outside compression zone
+                button.style.transform = '';
+                button.style.opacity = '';
+                button.style.zIndex = '';
+            }
+        });
+        
+        // Ensure active button is always visible
+        const activeButton = tabButtons.querySelector('.tab-button.active');
+        if (activeButton && scrollLeft === 0) {
+            // On initial load, make sure active button is visible
+            const activeRect = activeButton.getBoundingClientRect();
+            
+            if (activeRect.left < containerRect.left + 30 || 
+                activeRect.right > containerRect.right - 30) {
+                // Active button is in fade zone, scroll it into view
+                activeButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            }
+        }
+    }
+    
+    function snapToNearestButton() {
+        if (isScrolling || !userInitiatedScroll) return;
+        
+        const buttons = tabButtons.querySelectorAll('.tab-button');
+        const containerRect = tabButtons.getBoundingClientRect();
+        // Align to where the first button normally sits (left edge + padding)
+        const snapTarget = containerRect.left + 40; // 40px is the padding-left
+        
+        let closestButton = null;
+        let closestDistance = Infinity;
+        
+        buttons.forEach(button => {
+            const rect = button.getBoundingClientRect();
+            const distance = Math.abs(rect.left - snapTarget);
+            
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestButton = button;
+            }
+        });
+        
+        if (closestButton && closestDistance > 15) {
+            const rect = closestButton.getBoundingClientRect();
+            const offset = rect.left - snapTarget;
+            
+            // Mark that we're doing a programmatic scroll
+            userInitiatedScroll = false;
+            
+            // Use native smooth scrolling
+            tabButtons.scrollBy({
+                left: offset,
+                behavior: 'smooth'
+            });
+        }
+    }
+    
+    // Add smooth scrolling behavior to the container
+    tabButtons.style.scrollBehavior = 'smooth';
+    
+    // Update on scroll
+    tabButtons.addEventListener('scroll', () => {
+        requestAnimationFrame(updateTabState);
+        
+        isScrolling = true;
+        
+        // Clear existing timer
+        if (scrollEndTimer) {
+            clearTimeout(scrollEndTimer);
+        }
+        
+        // Detect when scrolling stops
+        scrollEndTimer = setTimeout(() => {
+            isScrolling = false;
+            // Only snap if this was a user-initiated scroll
+            if (userInitiatedScroll) {
+                snapToNearestButton();
+            }
+        }, 150);
+    });
+    
+    // Add momentum on touch devices
+    let touchStartX = 0;
+    let touchStartTime = 0;
+    let lastTouchX = 0;
+    let lastTouchTime = 0;
+    
+    tabButtons.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartTime = Date.now();
+        lastTouchX = touchStartX;
+        lastTouchTime = touchStartTime;
+        userInitiatedScroll = true; // Mark as user-initiated
+    }, { passive: true });
+    
+    tabButtons.addEventListener('touchmove', (e) => {
+        lastTouchX = e.touches[0].clientX;
+        lastTouchTime = Date.now();
+        userInitiatedScroll = true; // Keep marking as user-initiated
+    }, { passive: true });
+    
+    tabButtons.addEventListener('touchend', () => {
+        const touchEndTime = Date.now();
+        const timeDiff = touchEndTime - lastTouchTime;
+        
+        // If the touch ended very recently after last move, we have momentum
+        if (timeDiff < 50) {
+            const velocity = (lastTouchX - touchStartX) / (touchEndTime - touchStartTime);
+            
+            // Add a small momentum boost in the direction of swipe
+            if (Math.abs(velocity) > 0.3) {
+                const boost = velocity * 100;
+                tabButtons.scrollBy({
+                    left: -boost,
+                    behavior: 'smooth'
+                });
+            }
+        }
+    }, { passive: true });
+    
+    // Also track wheel scrolling as user-initiated
+    tabButtons.addEventListener('wheel', () => {
+        userInitiatedScroll = true;
+    }, { passive: true });
+    
+    // Add mouse drag support for desktop users
+    let isDragging = false;
+    let mouseStartX = 0;
+    let scrollStartX = 0;
+    let mouseLastX = 0;
+    let mouseStartTime = 0;
+    
+    tabButtons.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        mouseStartX = e.clientX;
+        mouseLastX = e.clientX;
+        scrollStartX = tabButtons.scrollLeft;
+        mouseStartTime = Date.now();
+        userInitiatedScroll = true;
+        
+        // Prevent text selection while dragging
+        e.preventDefault();
+        
+        // Change cursor to grabbing
+        tabButtons.style.cursor = 'grabbing';
+        tabButtons.style.userSelect = 'none';
+    });
+    
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        e.preventDefault();
+        const deltaX = e.clientX - mouseStartX;
+        tabButtons.scrollLeft = scrollStartX - deltaX;
+        mouseLastX = e.clientX;
+        userInitiatedScroll = true;
+    });
+    
+    window.addEventListener('mouseup', () => {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        
+        // Reset cursor
+        tabButtons.style.cursor = '';
+        tabButtons.style.userSelect = '';
+        
+        // Calculate velocity for momentum
+        const mouseEndTime = Date.now();
+        const timeDiff = mouseEndTime - mouseStartTime;
+        
+        if (timeDiff > 0 && timeDiff < 200) {
+            const velocity = (mouseLastX - mouseStartX) / timeDiff;
+            
+            // Add momentum boost for quick drags
+            if (Math.abs(velocity) > 0.3) {
+                const boost = velocity * 100;
+                tabButtons.scrollBy({
+                    left: -boost,
+                    behavior: 'smooth'
+                });
+            }
+        }
+    });
+    
+    // Handle mouse leave to cancel dragging if cursor leaves window
+    window.addEventListener('mouseleave', () => {
+        if (isDragging) {
+            isDragging = false;
+            tabButtons.style.cursor = '';
+            tabButtons.style.userSelect = '';
+        }
+    });
+    
+    // Initial update
+    setTimeout(updateTabState, 100);
+    
+    // Check for initial overflow
+    if (tabButtons.scrollWidth > tabButtons.clientWidth) {
+        tabNav.classList.add('has-scroll-right');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Setup live reload
     setupLiveReload();
+    
+    // Setup mobile tab carousel
+    setupTabCarousel();
     
     // Get DOM elements
     const messageInput = document.getElementById('message-input');
