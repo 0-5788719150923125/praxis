@@ -333,6 +333,109 @@ def git_http_backend(git_path):
     return "Not found", 404
 
 
+@app.route("/api/agents", methods=["GET", "OPTIONS"])
+def get_agents():
+    """Get git remotes as peer agents with their online/offline status"""
+    if request.method == "OPTIONS":
+        return handle_cors_preflight()
+    
+    import subprocess
+    import urllib.request
+    import urllib.parse
+    from concurrent.futures import ThreadPoolExecutor
+    import concurrent.futures
+    from praxis.utils import mask_git_url
+    
+    agents = []
+    
+    try:
+        # Get git remotes
+        result = subprocess.run(
+            ["git", "remote", "-v"],
+            capture_output=True,
+            text=True,
+            cwd=os.getcwd()
+        )
+        
+        if result.returncode != 0:
+            return jsonify({"agents": [], "error": "Failed to get git remotes"}), 200
+        
+        # Parse remotes (each remote appears twice - for fetch and push)
+        remotes = {}
+        for line in result.stdout.strip().split('\n'):
+            if line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    name = parts[0]
+                    url = parts[1]
+                    # Only store each remote once
+                    if name not in remotes:
+                        remotes[name] = url
+        
+        def check_remote_status(name, url):
+            """Check if a remote is accessible (online/offline)"""
+            agent = {
+                "name": name,
+                "url": url,
+                "masked_url": mask_git_url(url),  # Add masked URL
+                "status": "offline"
+            }
+            
+            # Try to check if the remote is accessible using git ls-remote
+            # This works for all git URLs (http, https, ssh, git, local paths)
+            try:
+                check_result = subprocess.run(
+                    ["git", "ls-remote", "--heads", url],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    cwd=os.getcwd(),
+                    timeout=3
+                )
+                if check_result.returncode == 0:
+                    agent["status"] = "online"
+                
+            except subprocess.TimeoutExpired:
+                # Timeout means offline
+                pass
+            except Exception:
+                # If any check fails, keep status as offline
+                pass
+            
+            return agent
+        
+        # Check status of each remote in parallel with timeout
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for name, url in remotes.items():
+                future = executor.submit(check_remote_status, name, url)
+                futures.append(future)
+            
+            # Collect results with timeout
+            for future in futures:
+                try:
+                    agent = future.result(timeout=3)
+                    agents.append(agent)
+                except concurrent.futures.TimeoutError:
+                    # If timeout, add as offline
+                    agents.append({
+                        "name": "unknown",
+                        "url": "unknown",
+                        "status": "offline",
+                        "type": "unknown"
+                    })
+        
+        # Sort agents by name
+        agents.sort(key=lambda x: x["name"])
+        
+    except Exception as e:
+        return jsonify({"agents": [], "error": str(e)}), 200
+    
+    response = jsonify({"agents": agents})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    return response
+
+
 class TemplateChangeHandler(FileSystemEventHandler):
     """Watch for changes in template files and emit live-reload events"""
 

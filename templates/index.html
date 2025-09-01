@@ -920,6 +920,182 @@
             color: #e0e0e0;
         }
         
+        /* Agents tab styles */
+        .agents-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: var(--background);
+        }
+        
+        .agents-section {
+            margin-bottom: 30px;
+        }
+        
+        .agents-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 12px;
+        }
+        
+        .agents-table {
+            width: 100%;
+            max-width: 800px;
+            background-color: var(--assistant-message-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px var(--shadow);
+        }
+        
+        .agents-list {
+            padding: 0;
+        }
+        
+        .agent-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            transition: background-color 0.2s;
+        }
+        
+        .agent-row:hover {
+            background-color: rgba(0, 0, 0, 0.03);
+        }
+        
+        [data-theme="dark"] .agent-row:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        
+        .agent-row:last-child {
+            border-bottom: none;
+        }
+        
+        .agent-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .agent-name {
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--text);
+        }
+        
+        .agent-url {
+            font-size: 13px;
+            color: var(--light-text);
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            word-break: break-all;
+        }
+        
+        .agent-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .agent-status.online {
+            background-color: rgba(11, 154, 109, 0.1);  /* Using primary-light with opacity */
+            color: var(--primary-light);
+        }
+        
+        .agent-status.offline {
+            background-color: rgba(102, 102, 102, 0.1);  /* Grey with opacity */
+            color: var(--light-text);
+        }
+        
+        .agent-status.ambiguous {
+            background-color: rgba(255, 203, 5, 0.15);  /* Michigan Maize with opacity */
+            color: #FFCB05;  /* Michigan Maize */
+        }
+        
+        [data-theme="dark"] .agent-status.online {
+            background-color: rgba(11, 154, 109, 0.2);
+            color: var(--primary-light);
+        }
+        
+        [data-theme="dark"] .agent-status.offline {
+            background-color: rgba(176, 176, 176, 0.1);
+            color: var(--light-text);
+        }
+        
+        [data-theme="dark"] .agent-status.ambiguous {
+            background-color: rgba(255, 203, 5, 0.2);  /* Michigan Maize with opacity */
+            color: #FFCB05;  /* Michigan Maize */
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        
+        .status-dot.online {
+            background-color: var(--primary-light);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.offline {
+            background-color: var(--light-text);
+        }
+        
+        .status-dot.ambiguous {
+            background-color: #FFCB05;  /* Michigan Maize */
+            animation: pulse-harsh 1.5s infinite linear;
+        }
+        
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+        
+        @keyframes pulse-harsh {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+        
+        .agents-empty {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--light-text);
+        }
+        
+        .agents-error {
+            padding: 20px;
+            color: #c62828;
+            background-color: #ffebee;
+            border-radius: 8px;
+            margin: 20px;
+        }
+        
+        [data-theme="dark"] .agents-error {
+            color: #ef9a9a;
+            background-color: #b71c1c;
+        }
+        
         .terminal-line {
             min-height: 1.4em;
             white-space: pre-wrap;
@@ -1005,6 +1181,7 @@
             <div class="tab-buttons">
                 <button class="tab-button active" data-tab="chat" id="chat-tab">Gymnasium</button>
                 <button class="tab-button" data-tab="terminal" id="terminal-tab">Terminal</button>
+                <button class="tab-button" data-tab="agents" id="agents-tab">Agents</button>
                 <button class="tab-button" data-tab="spec" id="spec-tab">Identity</button>
             </div>
             <div class="terminal-status">
@@ -1034,6 +1211,13 @@
         <div class="tab-content" id="spec-content">
             <div class="spec-container" id="spec-container">
                 <div style="padding: 20px; color: var(--light-text);">Loading specification...</div>
+            </div>
+        </div>
+        
+        <!-- Agents tab content -->
+        <div class="tab-content" id="agents-content">
+            <div class="agents-container" id="agents-container">
+                <div style="padding: 20px; color: var(--light-text);">Loading agents...</div>
             </div>
         </div>
     </div>
@@ -1179,9 +1363,11 @@
             const chatTab = document.getElementById('chat-tab');
             const terminalTab = document.getElementById('terminal-tab');
             const specTab = document.getElementById('spec-tab');
+            const agentsTab = document.getElementById('agents-tab');
             const chatContent = document.getElementById('chat-content');
             const terminalContent = document.getElementById('terminal-content');
             const specContent = document.getElementById('spec-content');
+            const agentsContent = document.getElementById('agents-content');
             
             // Terminal elements
             const terminalDisplay = document.getElementById('terminal-display');
@@ -2199,6 +2385,14 @@
                     loadSpec();
                     // Update status to show disconnected when not viewing terminal
                     updateConnectionStatus();
+                } else if (tabName === 'agents') {
+                    agentsContent.classList.add('active');
+                    // Load agents data if not already loaded
+                    if (!agentsLoaded) {
+                        loadAgents();
+                    }
+                    // Update status to show disconnected when not viewing terminal
+                    updateConnectionStatus();
                 }
             }
             
@@ -2569,10 +2763,114 @@
                 }
             }
             
+            // Agents tab functionality
+            let agentsLoaded = false;
+            let agentsRefreshInterval = null;
+            
+            async function loadAgents() {
+                const container = document.getElementById('agents-container');
+                
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/agents`);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        container.innerHTML = `<div class="agents-error">Error: ${data.error}</div>`;
+                        return;
+                    }
+                    
+                    if (!data.agents || data.agents.length === 0) {
+                        container.innerHTML = '<div class="agents-empty">No git remotes configured. Add remotes using: git remote add &lt;name&gt; &lt;url&gt;</div>';
+                        return;
+                    }
+                    
+                    // Check for duplicate masked URLs
+                    const maskedUrlCounts = {};
+                    data.agents.forEach(agent => {
+                        const maskedUrl = agent.masked_url || agent.url;
+                        maskedUrlCounts[maskedUrl] = (maskedUrlCounts[maskedUrl] || 0) + 1;
+                    });
+                    
+                    // Build the agents section
+                    let html = '<div class="agents-section">';
+                    html += '<div class="agents-title">Remotes</div>';
+                    html += '<div class="agents-table">';
+                    html += '<div class="agents-list">';
+                    
+                    data.agents.forEach((agent, index) => {
+                        const maskedUrl = agent.masked_url || agent.url;
+                        const isDuplicate = maskedUrlCounts[maskedUrl] > 1;
+                        
+                        let statusClass, statusText;
+                        if (isDuplicate) {
+                            statusClass = 'ambiguous';
+                            statusText = 'Ambiguous';
+                        } else if (agent.status === 'online') {
+                            statusClass = 'online';
+                            statusText = 'Online';
+                        } else {
+                            statusClass = 'offline';
+                            statusText = 'Unknown';
+                        }
+                        
+                        // Generate animation properties for pulsating dots
+                        let animationStyle = '';
+                        if (statusClass === 'online') {
+                            // Random duration and delay for online dots (each unique)
+                            const duration = (1.5 + Math.random() * 2).toFixed(2);
+                            const delay = (Math.random() * 2).toFixed(2);
+                            animationStyle = `style="animation-duration: ${duration}s; animation-delay: ${delay}s;"`;
+                        } else if (statusClass === 'ambiguous') {
+                            // Ambiguous dots pulse in sync (no random delay/duration)
+                            animationStyle = '';
+                        }
+                        
+                        html += `
+                            <div class="agent-row">
+                                <div class="agent-info">
+                                    <div class="agent-name">${agent.name}</div>
+                                    <div class="agent-url">${agent.masked_url || agent.url}</div>
+                                </div>
+                                <div class="agent-status ${statusClass}">
+                                    <span class="status-dot ${statusClass}" ${animationStyle}></span>
+                                    ${statusText}
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    html += '</div>';
+                    html += '</div>';
+                    html += '</div>';
+                    
+                    container.innerHTML = html;
+                    agentsLoaded = true;
+                    
+                } catch (error) {
+                    container.innerHTML = `<div class="agents-error">Failed to load agents: ${error.message}</div>`;
+                }
+            }
+            
             // Tab event listeners
             chatTab.addEventListener('click', () => switchTab('chat'));
             terminalTab.addEventListener('click', () => switchTab('terminal'));
-            specTab.addEventListener('click', () => switchTab('spec'));
+            specTab.addEventListener('click', () => {
+                switchTab('spec');
+                if (!specLoaded) loadSpec();
+            });
+            agentsTab.addEventListener('click', () => {
+                switchTab('agents');
+                if (!agentsLoaded) {
+                    loadAgents();
+                    // Refresh agents status every 30 seconds while tab is active
+                    if (agentsRefreshInterval) clearInterval(agentsRefreshInterval);
+                    agentsRefreshInterval = setInterval(() => {
+                        if (currentTab === 'agents') {
+                            loadAgents();
+                        }
+                    }, 30000);
+                }
+            });
             
             // Initialize
             loadSettings();

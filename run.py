@@ -884,7 +884,7 @@ class TerminalInterface(Callback):
             self._generate_text(lm, batch_idx, self.interval)
 
         # Log dynamic weights if they've changed
-        self._log_weight_changes(trainer, batch_idx, batch)
+        # self._log_weight_changes(trainer, batch_idx, batch)
 
         # Handle both tensor and dict batch formats
         if isinstance(batch, dict) and "input_ids" in batch:
@@ -1032,7 +1032,7 @@ class TerminalInterface(Callback):
 
         # Time the inference call
         inference_start = time.time()
-        
+
         # Count tokens in the prompt
         prompt_tokens = len(tokenizer.encode(self.text))
         if self.dashboard:
