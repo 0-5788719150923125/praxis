@@ -250,6 +250,9 @@ def get_spec():
             # For local, use praxis.git to avoid conflicts with web UI
             git_url = f"http://{host}:{port}/praxis.git"
         
+        # Import mask_git_url function
+        from praxis.utils import mask_git_url
+        
         # Return clean data structure
         spec = {
             "truncated_hash": truncated_hash,
@@ -259,7 +262,8 @@ def get_spec():
             "param_stats": param_stats,
             "timestamp": timestamp,
             "command": command,
-            "git_url": git_url
+            "git_url": git_url,
+            "masked_git_url": mask_git_url(git_url) if git_url else None
         }
         
         response = jsonify(spec)
@@ -376,6 +380,90 @@ def get_agents():
     
     agents = []
     
+    # First, detect local Praxis instances (self agents)
+    try:
+        # Get current port
+        current_port = int(request.environ.get('SERVER_PORT', 2100))
+        
+        # Check if this is a custom port (not in the 2100-2200 range)
+        is_custom_port = current_port < 2100 or current_port >= 2200
+        
+        if is_custom_port:
+            # Only add current instance as self
+            try:
+                # Get our own spec data
+                import json
+                spec_url = f"http://localhost:{current_port}/api/spec"
+                req = urllib.request.Request(spec_url)
+                with urllib.request.urlopen(req, timeout=1) as response:
+                    if response.status == 200:
+                        spec_data = json.loads(response.read())
+                        if spec_data.get('git_url'):
+                            agents.append({
+                                "name": "self",
+                                "url": spec_data['git_url'],
+                                "masked_url": spec_data.get('masked_git_url', mask_git_url(spec_data['git_url'])),
+                                "status": "online",
+                                "commit_hash": spec_data.get('full_hash'),
+                                "short_hash": spec_data.get('truncated_hash')
+                            })
+            except:
+                pass
+        else:
+            # Scan ports 2100-2119 for local instances
+            local_instances = []
+            
+            def check_local_port(port):
+                try:
+                    import json
+                    spec_url = f"http://localhost:{port}/api/spec"
+                    req = urllib.request.Request(spec_url)
+                    with urllib.request.urlopen(req, timeout=0.5) as response:
+                        if response.status == 200:
+                            spec_data = json.loads(response.read())
+                            if spec_data.get('git_url'):
+                                return {
+                                    "port": port,
+                                    "git_url": spec_data['git_url'],
+                                    "masked_url": spec_data.get('masked_git_url', mask_git_url(spec_data['git_url'])),
+                                    "full_hash": spec_data.get('full_hash'),
+                                    "truncated_hash": spec_data.get('truncated_hash')
+                                }
+                except:
+                    pass
+                return None
+            
+            # Check ports concurrently
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = []
+                for port in range(2100, 2120):
+                    future = executor.submit(check_local_port, port)
+                    futures.append(future)
+                
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        result = future.result(timeout=1)
+                        if result:
+                            local_instances.append(result)
+                    except:
+                        pass
+            
+            # Sort by port and create self agents
+            local_instances.sort(key=lambda x: x['port'])
+            for idx, instance in enumerate(local_instances):
+                name = "self" if len(local_instances) == 1 else f"self-{idx}"
+                agents.append({
+                    "name": name,
+                    "url": instance['git_url'],
+                    "masked_url": instance['masked_url'],
+                    "status": "online",
+                    "commit_hash": instance['full_hash'],
+                    "short_hash": instance['truncated_hash']
+                })
+    except Exception as e:
+        # If local detection fails, continue with remote agents
+        print(f"Error detecting local instances: {e}")
+    
     try:
         # Get git remotes
         result = subprocess.run(
@@ -401,26 +489,64 @@ def get_agents():
                         remotes[name] = url
         
         def check_remote_status(name, url):
-            """Check if a remote is accessible (online/offline)"""
+            """Check if a remote is accessible (online/offline) and get its latest commit"""
             agent = {
                 "name": name,
                 "url": url,
                 "masked_url": mask_git_url(url),  # Add masked URL
-                "status": "offline"
+                "status": "offline",
+                "commit_hash": None,
+                "short_hash": None
             }
             
             # Try to check if the remote is accessible using git ls-remote
             # This works for all git URLs (http, https, ssh, git, local paths)
             try:
                 check_result = subprocess.run(
-                    ["git", "ls-remote", "--heads", url],
+                    ["git", "ls-remote", url, "HEAD"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     cwd=os.getcwd(),
-                    timeout=3
+                    timeout=3,
+                    text=True
                 )
                 if check_result.returncode == 0:
-                    agent["status"] = "online"
+                    # Parse the commit hash from ls-remote output
+                    # Format is: <hash>\tHEAD
+                    output = check_result.stdout.strip()
+                    if output:
+                        commit_hash = output.split('\t')[0]
+                        agent["commit_hash"] = commit_hash
+                        agent["short_hash"] = commit_hash[:7] if commit_hash else None
+                    
+                    # Check if this is a Praxis instance by looking for /api/agents endpoint
+                    # Extract base URL if it's an HTTP(S) git URL
+                    is_praxis = False
+                    if url.startswith(('http://', 'https://')):
+                        # Remove .git suffix and path components to get base URL
+                        base_url = url.replace('.git', '').rstrip('/')
+                        # If it looks like a GitHub/GitLab URL, it's not a Praxis instance
+                        if 'github.com' in base_url or 'gitlab.com' in base_url or 'bitbucket.org' in base_url:
+                            agent["status"] = "archived"
+                        else:
+                            # Try to check for Praxis API endpoint
+                            try:
+                                import urllib.request
+                                api_url = f"{base_url}/api/agents"
+                                req = urllib.request.Request(api_url, headers={'User-Agent': 'Praxis-Agent-Check'})
+                                with urllib.request.urlopen(req, timeout=2) as response:
+                                    if response.status == 200:
+                                        is_praxis = True
+                                        agent["status"] = "online"
+                                    else:
+                                        agent["status"] = "archived"
+                            except:
+                                # If API check fails, assume it's just a regular git repo
+                                agent["status"] = "archived"
+                    else:
+                        # For SSH/git protocol URLs, we can't easily check for Praxis
+                        # Mark as archived (regular git repo)
+                        agent["status"] = "archived"
                 
             except subprocess.TimeoutExpired:
                 # Timeout means offline

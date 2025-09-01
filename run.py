@@ -995,6 +995,8 @@ class TerminalInterface(Callback):
             self.dashboard.update_info(info_dict)
 
     def on_save_checkpoint(self, trainer, lm, checkpoint):
+        if dev:
+            return
         super().on_save_checkpoint(trainer, lm, checkpoint)
         checkpoint["start_time"] = self.start_time
 

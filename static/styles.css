@@ -845,6 +845,11 @@ body, html {
     color: var(--primary-light);
 }
 
+.agent-status.archived {
+    background-color: rgba(0, 39, 76, 0.1);
+    color: #00274c;
+}
+
 .agent-status.offline {
     background-color: rgba(102, 102, 102, 0.1);
     color: var(--light-text);
@@ -858,6 +863,11 @@ body, html {
 [data-theme="dark"] .agent-status.online {
     background-color: rgba(11, 154, 109, 0.2);
     color: var(--primary-light);
+}
+
+[data-theme="dark"] .agent-status.archived {
+    background-color: rgba(0, 39, 76, 0.3);
+    color: #5b8fc9;
 }
 
 [data-theme="dark"] .agent-status.offline {
@@ -879,6 +889,10 @@ body, html {
 .status-dot.online {
     background-color: var(--primary-light);
     animation: pulse 2s infinite;
+}
+
+.status-dot.archived {
+    background-color: #00274c;
 }
 
 .status-dot.offline {

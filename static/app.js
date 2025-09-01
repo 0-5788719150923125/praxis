@@ -1098,8 +1098,9 @@ async function loadAgents() {
             return;
         }
         
+        // All agents (including self instances) now come from the backend
         if (!data.agents || data.agents.length === 0) {
-            container.innerHTML = '<div class="agents-empty">No git remotes configured. Add remotes using: git remote add &lt;name&gt; &lt;url&gt;</div>';
+            container.innerHTML = '<div class="agents-empty">No agents found. Add remotes using: git remote add &lt;name&gt; &lt;url&gt;</div>';
             return;
         }
         
@@ -1116,7 +1117,7 @@ async function loadAgents() {
         html += '<div class="agents-table">';
         html += '<div class="agents-list">';
         
-        data.agents.forEach((agent, index) => {
+        data.agents.forEach((agent) => {
             const maskedUrl = agent.masked_url || agent.url;
             const isDuplicate = maskedUrlCounts[maskedUrl] > 1;
             
@@ -1127,6 +1128,9 @@ async function loadAgents() {
             } else if (agent.status === 'online') {
                 statusClass = 'online';
                 statusText = 'Online';
+            } else if (agent.status === 'archived') {
+                statusClass = 'archived';
+                statusText = 'Archived';
             } else {
                 statusClass = 'offline';
                 statusText = 'Unknown';
@@ -1143,7 +1147,7 @@ async function loadAgents() {
                 <div class="agent-row">
                     <div class="agent-info">
                         <div class="agent-name">${agent.name}</div>
-                        <div class="agent-url">${agent.masked_url || agent.url}</div>
+                        <div class="agent-url">${agent.masked_url || agent.url}${agent.short_hash ? ` | ${agent.short_hash}` : ''}</div>
                     </div>
                     <div class="agent-status ${statusClass}">
                         <span class="status-dot ${statusClass}" ${animationStyle}></span>
