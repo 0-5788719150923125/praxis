@@ -1803,6 +1803,7 @@ if local_rank == 0:
         tokenizer,
         module_loader_with_conditions,
         param_stats,
+        seed,
     )
     print(f"[DEBUG] Created api_server with param_stats: {bool(param_stats)}")
     api_server.start()

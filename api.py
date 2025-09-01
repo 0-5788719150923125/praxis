@@ -263,7 +263,8 @@ def get_spec():
             "timestamp": timestamp,
             "command": command,
             "git_url": git_url,
-            "masked_git_url": mask_git_url(git_url) if git_url else None
+            "masked_git_url": mask_git_url(git_url) if git_url else None,
+            "seed": app.config.get("seed")
         }
         
         response = jsonify(spec)
@@ -591,37 +592,44 @@ def get_agents():
 
 
 class TemplateChangeHandler(FileSystemEventHandler):
-    """Watch for changes in template files and emit live-reload events"""
+    """Watch for changes in template and static files and emit live-reload events"""
 
     def on_modified(self, event):
-        if not event.is_directory and event.src_path.startswith(
-            os.path.abspath("templates")
-        ):
-            # print(f"Template change detected: {event.src_path}")
-            # Emit reload event to all connected clients
-            try:
-                socketio.emit("reload", namespace="/live-reload")
-                # print("Sent reload signal to clients")
-            except Exception as e:
-                print(f"Error sending reload signal: {str(e)}")
+        if not event.is_directory:
+            templates_dir = os.path.abspath("templates")
+            static_dir = os.path.abspath("static")
+            
+            # Check if the file is in templates or static directory
+            if (event.src_path.startswith(templates_dir) or 
+                event.src_path.startswith(static_dir)):
+                # print(f"File change detected: {event.src_path}")
+                # Emit reload event to all connected clients
+                try:
+                    socketio.emit("reload", namespace="/live-reload")
+                    # print("Sent reload signal to clients")
+                except Exception as e:
+                    print(f"Error sending reload signal: {str(e)}")
 
 
 class TemplateWatcher:
-    """Simple watcher to log template changes for debugging."""
+    """Simple watcher to log template and static file changes for debugging."""
 
     def __init__(self):
         self.observer = None
         self.template_dir = os.path.abspath("templates")
+        self.static_dir = os.path.abspath("static")
 
     def start(self):
         try:
             self.observer = Observer()
             event_handler = TemplateChangeHandler()
+            # Watch both templates and static directories
             self.observer.schedule(event_handler, self.template_dir, recursive=True)
+            self.observer.schedule(event_handler, self.static_dir, recursive=True)
             self.observer.start()
-            print(f"Watching template directory: {self.template_dir}")
+            print(f"Watching directories: {self.template_dir}, {self.static_dir}")
         except Exception as e:
-            print(f"Error starting template watcher: {str(e)}")
+            print(f"Error starting file watcher: {str(e)}")
 
     def stop(self):
         if self.observer:
@@ -641,6 +649,7 @@ class APIServer:
         tokenizer=None,
         module_loader=None,
         param_stats=None,
+        seed=None,
     ):
         print(f"[DEBUG] APIServer.__init__ called with param_stats: {param_stats is not None}")
         if param_stats:
@@ -655,6 +664,7 @@ class APIServer:
             port += 1
         self.port = port
         self.parent_pid = os.getppid()
+        self.seed = seed
         self.tokenizer = tokenizer
         self.module_loader = module_loader
         self.param_stats = param_stats if param_stats else {}
@@ -794,6 +804,7 @@ class APIServer:
             app.config["generator"] = self.generator
             app.config["tokenizer"] = self.tokenizer
             app.config["module_loader"] = self.module_loader
+            app.config["seed"] = self.seed
             # Store param_stats if available
             if hasattr(self, 'param_stats') and self.param_stats:
                 app.config["param_stats"] = self.param_stats

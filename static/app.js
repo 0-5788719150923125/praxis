@@ -992,6 +992,14 @@ async function loadSpec() {
         const data = await response.json();
         specLoaded = true;
         
+        // Update logo icon with seed value if available
+        if (data.seed) {
+            const logoIcon = document.querySelector('.logo-icon');
+            if (logoIcon) {
+                logoIcon.setAttribute('data-seed', data.seed);
+            }
+        }
+        
         let html = '';
         
         // Identity section with hashes
@@ -1016,6 +1024,10 @@ async function loadSpec() {
             html += '<div class="spec-code-block">';
             html += 'Clone it from the source:'
             html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">git clone ${data.git_url}</code></div>`;
+            html += `Move into the directory:`
+            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">cd praxis</code></div>`;
+                        html += `Install dependencies:`
+            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">pip install -e .</code></div>`;
             html += `Reproduce the experiment:`
             html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
             html += '</div>';
@@ -1448,6 +1460,19 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Setup mobile tab carousel
     setupTabCarousel();
+    
+    // Fetch and display seed value immediately
+    fetch(`${API_BASE_URL}/api/spec`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.seed) {
+                const logoIcon = document.querySelector('.logo-icon');
+                if (logoIcon) {
+                    logoIcon.setAttribute('data-seed', data.seed);
+                }
+            }
+        })
+        .catch(err => console.error('Failed to fetch seed:', err));
     
     // Get DOM elements
     const messageInput = document.getElementById('message-input');
