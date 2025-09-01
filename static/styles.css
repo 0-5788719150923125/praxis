@@ -21,9 +21,9 @@
     --spacing-xl: 1.5rem;
     
     /* Unified border radius variables */
-    --radius-small: 12px;
-    --radius-medium: 12px;
-    --radius-large: 12px;
+    --radius-small: 6px;
+    --radius-medium: 6px;
+    --radius-large: 6px;
     --radius-round: 50%;
     
     /* Unified size variables */
@@ -743,7 +743,7 @@ body, html {
 .spec-code {
     background-color: #f5f5f5;
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-small);
     padding: 16px;
     font-family: 'Cascadia Code', 'Fira Code', monospace;
     font-size: 13px;
@@ -780,7 +780,7 @@ body, html {
     width: 100%;
     max-width: 800px;
     background-color: var(--assistant-message-bg);
-    border-radius: 12px;
+    border-radius: var(--radius-small);
     overflow: hidden;
     box-shadow: 0 2px 10px var(--shadow);
 }
@@ -835,7 +835,7 @@ body, html {
     align-items: center;
     gap: 8px;
     padding: 6px 12px;
-    border-radius: 20px;
+    border-radius: var(--radius-medium);
     font-size: 13px;
     font-weight: 500;
 }
@@ -873,7 +873,7 @@ body, html {
 .status-dot {
     width: 8px;
     height: 8px;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
 }
 
 .status-dot.online {
@@ -900,7 +900,7 @@ body, html {
     padding: 20px;
     color: #c62828;
     background-color: #ffebee;
-    border-radius: 12px;
+    border-radius: var(--radius-small);
     margin: 20px;
 }
 
