@@ -1443,10 +1443,10 @@ class Generator:
                     prompt_without_gen
                     + f"{self.tokenizer.bos_token}assistant\n"
                     + return_text
-                    + f"{self.tokenizer.sep_token}\n"
+                    + f"{self.tokenizer.sep_token}"
                     + f"{self.tokenizer.bos_token}tool\n"
                     + str(tool_result)
-                    + f"{self.tokenizer.sep_token}\n"
+                    + f"{self.tokenizer.sep_token}"
                     + f"{self.tokenizer.bos_token}assistant\n"
                 )
 
