@@ -1503,7 +1503,10 @@ document.addEventListener('DOMContentLoaded', () => {
     
     messageInput.addEventListener('focus', () => {
         hidePlaceholder();
-        setTimeout(setCursorAfterPrefix, 0);
+        // Only set cursor position if the input only contains the prefix (no user text)
+        if (messageInput.value === PREFIX) {
+            setTimeout(setCursorAfterPrefix, 0);
+        }
         ensureLastMessageVisible();
         setTimeout(ensureLastMessageVisible, 350);
         setTimeout(ensureLastMessageVisible, 600);
