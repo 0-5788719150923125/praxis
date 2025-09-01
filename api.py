@@ -27,7 +27,7 @@ logger = logging.getLogger("werkzeug")
 logger.setLevel(logging.ERROR)
 
 app = Flask(__name__)
-app.static_folder = "templates"
+app.static_folder = "static"
 app.debug = True  # Enable debug mode for development
 
 # Enable CORS for all routes

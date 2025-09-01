@@ -1,0 +1,1343 @@
+// Praxis Chat - Main Application JavaScript
+
+// ==================== Global Variables ====================
+let currentTheme = 'light';
+let conversationHistory = [];
+let generationParams = {
+    max_new_tokens: 256,
+    temperature: 0.5,
+    repetition_penalty: 1.2,
+    do_sample: true,
+    use_cache: false
+};
+let debugLogging = false;
+let terminalSocket = null;
+let terminalConnected = false;
+let dashboardScale = null;
+let currentTab = 'chat';
+let currentFrameContainer = null;
+let currentWrapperDiv = null;
+let specLoaded = false;
+let agentsLoaded = false;
+let agentsRefreshInterval = null;
+let isShowingPlaceholder = true;
+
+// ==================== Constants ====================
+const MAX_HISTORY_LENGTH = 21;
+const PREFIX = "> ";
+const PLACEHOLDER_TEXT = "Shoot";
+const SYSTEM_PROMPT = "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation.";
+
+// Theme icons
+const sunIcon = `<path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/>`;
+
+const moonIcon = `<path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>`;
+
+// API configuration
+let pathPrefix = window.location.pathname;
+if (pathPrefix.endsWith('/') && pathPrefix !== '/') {
+    pathPrefix = pathPrefix.slice(0, -1);
+}
+if (pathPrefix === '/') {
+    pathPrefix = '';
+}
+const API_BASE_URL = window.location.origin + pathPrefix;
+let apiUrl = API_BASE_URL + '/input/';
+
+// ==================== Live Reload Setup ====================
+function setupLiveReload() {
+    console.log('Connecting live-reload WebSocket');
+    
+    const pathname = window.location.pathname;
+    let socketPath = '/socket.io';
+    
+    if (pathname && pathname !== '/') {
+        const cleanPath = pathname.replace(/\/$/, '');
+        socketPath = cleanPath + '/socket.io';
+    }
+    
+    console.log('Live-reload socket path:', socketPath);
+    
+    const socket = io.connect('/live-reload', {
+        path: socketPath
+    });
+    
+    socket.on('connect', () => {
+        console.log('Live reload connected');
+    });
+    
+    socket.on('reload', () => {
+        console.log('Template change detected, reloading...');
+        window.location.reload();
+    });
+    
+    socket.on('disconnect', () => {
+        console.log('Live reload disconnected');
+    });
+}
+
+// ==================== Theme Management ====================
+function setTheme(theme) {
+    currentTheme = theme;
+    const themeIcon = document.getElementById('theme-icon');
+    
+    if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        themeIcon.innerHTML = sunIcon;
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+        themeIcon.innerHTML = moonIcon;
+    }
+    localStorage.setItem('praxis_theme', theme);
+}
+
+function toggleTheme() {
+    setTheme(currentTheme === 'light' ? 'dark' : 'light');
+    
+    // Update all message headers when theme changes
+    const chatContainer = document.getElementById('chat-container');
+    const messages = chatContainer.querySelectorAll('.message');
+    messages.forEach(message => {
+        const header = message.querySelector('.message-header');
+        if (header) {
+            const isUser = message.classList.contains('user');
+            const isDarkMode = currentTheme === 'dark';
+            if (isDarkMode) {
+                header.textContent = isUser ? 'Me' : 'You';
+            } else {
+                header.textContent = isUser ? 'You' : 'Me';
+            }
+        }
+    });
+}
+
+function loadTheme() {
+    const savedTheme = localStorage.getItem('praxis_theme') || 'light';
+    setTheme(savedTheme);
+    
+    // Update existing message headers based on loaded theme
+    const chatContainer = document.getElementById('chat-container');
+    const messages = chatContainer.querySelectorAll('.message');
+    messages.forEach(message => {
+        const header = message.querySelector('.message-header');
+        if (header) {
+            const isUser = message.classList.contains('user');
+            const isDarkMode = savedTheme === 'dark';
+            if (isDarkMode) {
+                header.textContent = isUser ? 'Me' : 'You';
+            } else {
+                header.textContent = isUser ? 'You' : 'Me';
+            }
+        }
+    });
+}
+
+// ==================== Settings Management ====================
+function loadSettings() {
+    loadTheme();
+    
+    // Load developer prompt
+    const developerPromptElement = document.getElementById('developer-prompt');
+    const savedDeveloperPrompt = localStorage.getItem('praxis_developer_prompt');
+    if (savedDeveloperPrompt) {
+        developerPromptElement.innerHTML = savedDeveloperPrompt;
+    }
+    
+    // Load API URL
+    const apiUrlInput = document.getElementById('api-url');
+    const savedApiUrl = localStorage.getItem('praxis_api_url');
+    if (savedApiUrl) {
+        if (window.location.hostname.includes('ngrok') && pathPrefix !== '') {
+            apiUrlInput.value = apiUrl;
+            console.log('Using dynamic ngrok URL instead of saved URL');
+        } else {
+            apiUrl = savedApiUrl;
+            apiUrlInput.value = savedApiUrl;
+        }
+    } else {
+        apiUrlInput.value = apiUrl;
+    }
+    
+    // Load generation parameters
+    const savedParams = localStorage.getItem('praxis_gen_params');
+    if (savedParams) {
+        try {
+            const params = JSON.parse(savedParams);
+            generationParams = { ...generationParams, ...params };
+            
+            // Update UI elements
+            document.getElementById('max-tokens').value = generationParams.max_new_tokens;
+            document.getElementById('temperature').value = generationParams.temperature;
+            document.getElementById('temperature-value').textContent = generationParams.temperature;
+            document.getElementById('repetition-penalty').value = generationParams.repetition_penalty;
+            document.getElementById('repetition-penalty-value').textContent = generationParams.repetition_penalty;
+            document.getElementById('do-sample').checked = generationParams.do_sample;
+        } catch (error) {
+            console.error('Error loading saved generation parameters:', error);
+        }
+    }
+    
+    // Load debug logging setting
+    const savedDebugLogging = localStorage.getItem('praxis_debug_logging');
+    if (savedDebugLogging === 'true') {
+        debugLogging = true;
+        document.getElementById('debug-logging').checked = true;
+    }
+}
+
+async function testApiConnection(url) {
+    try {
+        let baseUrl = url;
+        
+        if (baseUrl.endsWith('/input/')) {
+            baseUrl = baseUrl.substring(0, baseUrl.length - 7);
+        }
+        
+        if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+            baseUrl = 'http://' + baseUrl;
+        }
+        
+        if (baseUrl.endsWith('/')) {
+            baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+        }
+        
+        const pingUrl = `${baseUrl}/api/ping`;
+        console.log(`Testing API connection to: ${pingUrl}`);
+        
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Connection test timed out')), 15000)
+        );
+        
+        const fetchPromise = fetch(pingUrl, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'omit'
+        });
+        
+        const response = await Promise.race([fetchPromise, timeoutPromise]);
+        
+        if (!response.ok) {
+            return { success: false, message: `Server returned ${response.status} ${response.statusText}` };
+        }
+        
+        let result;
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            result = await response.json();
+        } else {
+            const text = await response.text();
+            console.log('Non-JSON response:', text);
+            result = { message: 'Connected (non-JSON response)' };
+        }
+        
+        console.log('API connection test result:', result);
+        return { success: true, message: result.message || 'Connected to API server' };
+    } catch (error) {
+        console.error('API connection test failed:', error);
+        if (error.message.includes('Failed to fetch')) {
+            return { success: false, message: 'Could not reach the server. Check if it\'s running.' };
+        }
+        return { success: false, message: 'Connection failed: ' + error.message };
+    }
+}
+
+async function saveSettings() {
+    const apiUrlInput = document.getElementById('api-url');
+    const newApiUrl = apiUrlInput.value.trim();
+    
+    if (newApiUrl) {
+        const connectionTest = await testApiConnection(newApiUrl);
+        
+        // Save generation parameters
+        generationParams = {
+            max_new_tokens: parseInt(document.getElementById('max-tokens').value, 10),
+            temperature: parseFloat(document.getElementById('temperature').value),
+            repetition_penalty: parseFloat(document.getElementById('repetition-penalty').value),
+            do_sample: document.getElementById('do-sample').checked
+        };
+        
+        localStorage.setItem('praxis_gen_params', JSON.stringify(generationParams));
+        
+        // Save debug logging preference
+        debugLogging = document.getElementById('debug-logging').checked;
+        localStorage.setItem('praxis_debug_logging', debugLogging.toString());
+        
+        if (connectionTest.success) {
+            apiUrl = newApiUrl;
+            localStorage.setItem('praxis_api_url', newApiUrl);
+            
+            const confirmationDiv = document.getElementById('save-confirmation');
+            confirmationDiv.textContent = 'Connection successful! Settings saved. Refreshing...';
+            confirmationDiv.classList.add('show');
+            
+            setTimeout(() => window.location.reload(), 2000);
+        } else {
+            console.warn('API connection warning:', connectionTest.message);
+            apiUrl = newApiUrl;
+            localStorage.setItem('praxis_api_url', newApiUrl);
+            
+            const confirmationDiv = document.getElementById('save-confirmation');
+            confirmationDiv.textContent = 'Settings saved (check console for connection details)';
+            confirmationDiv.classList.add('show');
+            
+            setTimeout(() => window.location.reload(), 2000);
+        }
+    } else {
+        // Save only generation parameters
+        generationParams = {
+            max_new_tokens: parseInt(document.getElementById('max-tokens').value, 10),
+            temperature: parseFloat(document.getElementById('temperature').value),
+            repetition_penalty: parseFloat(document.getElementById('repetition-penalty').value),
+            do_sample: document.getElementById('do-sample').checked
+        };
+        
+        localStorage.setItem('praxis_gen_params', JSON.stringify(generationParams));
+        
+        debugLogging = document.getElementById('debug-logging').checked;
+        localStorage.setItem('praxis_debug_logging', debugLogging.toString());
+        
+        const confirmationDiv = document.getElementById('save-confirmation');
+        confirmationDiv.textContent = 'Generation parameters saved!';
+        confirmationDiv.classList.add('show');
+        
+        setTimeout(() => {
+            confirmationDiv.classList.remove('show');
+        }, 2000);
+    }
+}
+
+// ==================== Modal Management ====================
+function openModal() {
+    document.getElementById('settings-modal').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('settings-modal').classList.remove('open');
+}
+
+// ==================== Message Input Management ====================
+function setCursorAfterPrefix() {
+    const messageInput = document.getElementById('message-input');
+    messageInput.setSelectionRange(PREFIX.length, PREFIX.length);
+}
+
+function showPlaceholder() {
+    const messageInput = document.getElementById('message-input');
+    if (messageInput.value === PREFIX) {
+        messageInput.value = PREFIX + PLACEHOLDER_TEXT;
+        messageInput.style.color = 'var(--light-text)';
+        messageInput.style.fontStyle = 'italic';
+        isShowingPlaceholder = true;
+        setCursorAfterPrefix();
+    }
+}
+
+function hidePlaceholder() {
+    const messageInput = document.getElementById('message-input');
+    if (isShowingPlaceholder) {
+        messageInput.value = PREFIX;
+        messageInput.style.color = '';
+        messageInput.style.fontStyle = '';
+        isShowingPlaceholder = false;
+        setCursorAfterPrefix();
+    }
+}
+
+function maintainPrefix() {
+    const messageInput = document.getElementById('message-input');
+    const currentValue = messageInput.value;
+    const cursorPos = messageInput.selectionStart;
+    
+    if (isShowingPlaceholder) {
+        const newChars = currentValue.replace(PREFIX + PLACEHOLDER_TEXT, '').replace(PREFIX, '');
+        hidePlaceholder();
+        if (newChars) {
+            messageInput.value = PREFIX + newChars;
+            messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+        }
+        return;
+    }
+    
+    if (!currentValue.startsWith(PREFIX)) {
+        const userText = currentValue.replace(/^[>\s]*/, '');
+        messageInput.value = PREFIX + userText;
+        
+        const newCursorPos = Math.max(PREFIX.length, cursorPos + PREFIX.length - (currentValue.length - userText.length));
+        messageInput.setSelectionRange(newCursorPos, newCursorPos);
+    }
+    
+    autoResizeTextarea();
+}
+
+function autoResizeTextarea() {
+    const messageInput = document.getElementById('message-input');
+    messageInput.style.height = 'auto';
+    messageInput.style.height = messageInput.scrollHeight + 'px';
+}
+
+// ==================== Chat Message Management ====================
+function addMessage(content, isUser) {
+    const chatContainer = document.getElementById('chat-container');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;
+    
+    // Add with-messages class to input container
+    const inputContainer = document.querySelector('.input-container');
+    if (inputContainer && !inputContainer.classList.contains('with-messages')) {
+        inputContainer.classList.add('with-messages');
+    }
+    
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'message-header';
+    
+    // Check if content is empty for assistant messages
+    if (!isUser && (!content || content.trim() === '')) {
+        headerDiv.innerHTML = '<span class="error-header">[ERR]</span>';
+        messageDiv.appendChild(headerDiv);
+    } else {
+        const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+        if (isDarkMode) {
+            headerDiv.textContent = isUser ? 'Me' : 'You';
+        } else {
+            headerDiv.textContent = isUser ? 'You' : 'Me';
+        }
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.textContent = content;
+        
+        messageDiv.appendChild(headerDiv);
+        messageDiv.appendChild(contentDiv);
+    }
+    
+    // Add reroll button for assistant messages
+    if (!isUser) {
+        const rerollButton = document.createElement('button');
+        rerollButton.className = 'reroll-button';
+        rerollButton.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 4v6h6M23 20v-6h-6"/>
+                <path d="M20.49 9A9 9 0 1 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+            </svg>
+            Retry
+        `;
+        rerollButton.onclick = handleReroll;
+        messageDiv.appendChild(rerollButton);
+    }
+    
+    chatContainer.appendChild(messageDiv);
+    
+    // Smooth scroll to bottom
+    requestAnimationFrame(() => {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    });
+    
+    // Add to conversation history
+    conversationHistory.push({
+        role: isUser ? 'user' : 'assistant',
+        content: content
+    });
+}
+
+function showThinking() {
+    const chatContainer = document.getElementById('chat-container');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant';
+    messageDiv.id = 'thinking-indicator';
+    
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'message-header';
+    
+    const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+    
+    let headerContent;
+    if (isDarkMode) {
+        headerContent = `
+            <span class="header-name">You</span>
+            <span class="thinking-status"> are thinking</span>
+        `;
+    } else {
+        headerContent = `
+            <span class="header-name">Meandering</span>
+        `;
+    }
+    
+    headerDiv.innerHTML = headerContent + `
+        <div class="dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+    `;
+    
+    messageDiv.appendChild(headerDiv);
+    
+    // Add timer to update thinking indicator
+    let thinkingTimeSeconds = 0;
+    const thinkingTimer = setInterval(() => {
+        thinkingTimeSeconds += 1;
+        
+        if (thinkingTimeSeconds >= 60) {
+            const minutes = Math.floor(thinkingTimeSeconds / 60);
+            const seconds = thinkingTimeSeconds % 60;
+            const timeDisplay = `${minutes}m ${seconds}s`;
+            
+            const timerElement = document.createElement('span');
+            timerElement.className = 'thinking-timer';
+            timerElement.textContent = ` (${timeDisplay})`;
+            timerElement.style.fontSize = '12px';
+            timerElement.style.color = 'var(--light-text)';
+            
+            const existingTimer = headerDiv.querySelector('.thinking-timer');
+            if (existingTimer) {
+                existingTimer.textContent = ` (${timeDisplay})`;
+            } else {
+                headerDiv.querySelector('.thinking-status').appendChild(timerElement);
+            }
+        }
+    }, 1000);
+    
+    messageDiv.dataset.timerId = thinkingTimer;
+    
+    chatContainer.appendChild(messageDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function hideThinking() {
+    const thinkingDiv = document.getElementById('thinking-indicator');
+    if (thinkingDiv) {
+        if (thinkingDiv.dataset.timerId) {
+            clearInterval(parseInt(thinkingDiv.dataset.timerId));
+        }
+        thinkingDiv.remove();
+    }
+}
+
+async function handleReroll() {
+    let lastUserMessage = null;
+    for (let i = conversationHistory.length - 1; i >= 0; i--) {
+        if (conversationHistory[i].role === 'user') {
+            lastUserMessage = conversationHistory[i].content;
+            break;
+        }
+    }
+    
+    if (!lastUserMessage) return;
+    
+    const chatContainer = document.getElementById('chat-container');
+    const assistantMessages = chatContainer.querySelectorAll('.message.assistant');
+    if (assistantMessages.length > 0) {
+        const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+        lastAssistantMessage.remove();
+    }
+    
+    if (conversationHistory[conversationHistory.length - 1].role === 'assistant') {
+        conversationHistory.pop();
+    }
+    
+    await sendMessageToAPI(lastUserMessage);
+}
+
+// ==================== API Communication ====================
+async function sendMessage() {
+    if (isShowingPlaceholder) return;
+    
+    const messageInput = document.getElementById('message-input');
+    const fullValue = messageInput.value;
+    
+    const message = fullValue.startsWith(PREFIX) 
+        ? fullValue.slice(PREFIX.length).trim() 
+        : fullValue.trim();
+    
+    if (!message) return;
+    
+    addMessage(message, true);
+    
+    messageInput.value = PREFIX;
+    messageInput.style.color = '';
+    messageInput.style.fontStyle = '';
+    isShowingPlaceholder = false;
+    setCursorAfterPrefix();
+    
+    await sendMessageToAPI(message);
+}
+
+async function sendMessageToAPI(message) {
+    showThinking();
+    
+    try {
+        const developerPrompt = document.getElementById('developer-prompt').innerText.trim() || "Write thy wrong.";
+        const staticPrompts = [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "developer", content: developerPrompt }
+        ];
+        
+        const truncatedHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+        const fullMessages = [...staticPrompts, ...truncatedHistory];
+        
+        const requestBody = {
+            messages: fullMessages,
+            ...generationParams
+        };
+        
+        if (debugLogging) {
+            console.group('🤖 AI Request Debug');
+            console.log('Request URL:', apiUrl);
+            console.log('Full Request Payload:', JSON.parse(JSON.stringify(requestBody)));
+            console.log('Messages Array:');
+            requestBody.messages.forEach((msg, index) => {
+                console.log(`[${index}] ${msg.role}:`, msg.content);
+            });
+            console.log('Generation Parameters:', {
+                max_new_tokens: requestBody.max_new_tokens,
+                temperature: requestBody.temperature,
+                repetition_penalty: requestBody.repetition_penalty,
+                do_sample: requestBody.do_sample
+            });
+            console.groupEnd();
+        }
+        
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Request timed out after 5 minutes')), 5 * 60 * 1000)
+        );
+        
+        let formattedUrl = apiUrl;
+        
+        if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+            formattedUrl = 'http://' + formattedUrl;
+        }
+        
+        if (!formattedUrl.endsWith('/')) {
+            formattedUrl = formattedUrl + '/';
+        }
+        
+        console.log('Final formatted URL being fetched:', formattedUrl);
+        
+        const fetchPromise = fetch(formattedUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody),
+            mode: 'cors',
+            credentials: 'omit'
+        });
+        
+        const response = await Promise.race([fetchPromise, timeoutPromise]);
+        
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => '');
+            throw new Error(`API error: ${response.status} - ${errorText || response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        if (debugLogging) {
+            console.group('🤖 AI Response Debug');
+            console.log('Response Status:', response.status);
+            console.log('Response Data:', result);
+            console.groupEnd();
+        }
+        
+        hideThinking();
+        addMessage(result.response, false);
+        
+    } catch (error) {
+        console.error('Error sending message:', error);
+        hideThinking();
+        
+        let errorMessage = "Sorry, there was an error processing your request. Please check your connection or API settings and try again.";
+        
+        if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch') || error.message.includes('timed out')) {
+            errorMessage = `Network error: Unable to connect to the API server at "${apiUrl}". Please check that the server is running and accessible.`;
+        } else if (error.message.includes('CORS')) {
+            errorMessage = `CORS error: The API server at "${apiUrl}" is not allowing requests from this webpage. Please ensure CORS is properly configured on the server.`;
+        } else if (error.message.includes('API error')) {
+            errorMessage = `Server error: ${error.message}. Please check your API server configuration.`;
+        }
+        
+        const chatContainer = document.getElementById('chat-container');
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'message assistant';
+        errorDiv.innerHTML = `
+            <div class="message-header">Me</div>
+            <div class="message-content">${errorMessage}</div>
+        `;
+        chatContainer.appendChild(errorDiv);
+    }
+    
+    const chatContainer = document.getElementById('chat-container');
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+// ==================== Mobile Support ====================
+function ensureLastMessageVisible() {
+    const chatContainer = document.getElementById('chat-container');
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+    
+    const messages = chatContainer.querySelectorAll('.message');
+    if (messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        const chatRect = chatContainer.getBoundingClientRect();
+        const messageRect = lastMessage.getBoundingClientRect();
+        
+        const viewportHeight = window.visualViewport ? 
+            window.visualViewport.height : 
+            window.innerHeight;
+        
+        const inputTop = viewportHeight - 100;
+        
+        if (messageRect.bottom > inputTop) {
+            const scrollOffset = messageRect.bottom - inputTop + 30;
+            chatContainer.scrollTop = Math.max(0, chatContainer.scrollTop + scrollOffset);
+        }
+    }
+}
+
+// ==================== Tab Management ====================
+function switchTab(tabName) {
+    currentTab = tabName;
+    
+    // Update tab buttons
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+    
+    if (tabName === 'chat') {
+        document.getElementById('chat-content').classList.add('active');
+        updateConnectionStatus();
+    } else if (tabName === 'terminal') {
+        document.getElementById('terminal-content').classList.add('active');
+        dashboardScale = null;
+        if (!terminalConnected) {
+            connectTerminal();
+        }
+        updateConnectionStatus();
+        setTimeout(() => {
+            if (terminalConnected) {
+                startTerminalCapture();
+            }
+            setTimeout(() => {
+                recalculateDashboardScale();
+            }, 200);
+        }, 100);
+    } else if (tabName === 'spec') {
+        document.getElementById('spec-content').classList.add('active');
+        loadSpec();
+        updateConnectionStatus();
+    } else if (tabName === 'agents') {
+        document.getElementById('agents-content').classList.add('active');
+        if (!agentsLoaded) {
+            loadAgents();
+        }
+        updateConnectionStatus();
+    }
+}
+
+// ==================== Terminal Functions ====================
+function updateConnectionStatus() {
+    const terminalStatus = document.getElementById('terminal-status');
+    const statusIndicator = document.getElementById('status-indicator');
+    
+    if (currentTab === 'terminal' && terminalConnected) {
+        terminalStatus.textContent = 'Connected';
+        statusIndicator.classList.add('connected');
+    } else {
+        terminalStatus.textContent = 'Disconnected';
+        statusIndicator.classList.remove('connected');
+    }
+}
+
+function connectTerminal() {
+    if (terminalSocket && terminalSocket.connected) {
+        return;
+    }
+    
+    console.log('Connecting to terminal WebSocket');
+    
+    const pathname = window.location.pathname;
+    let socketPath = '/socket.io';
+    
+    if (pathname && pathname !== '/') {
+        const cleanPath = pathname.replace(/\/$/, '');
+        socketPath = cleanPath + '/socket.io';
+    }
+    
+    console.log('Using socket.io path:', socketPath);
+    
+    terminalSocket = io.connect('/terminal', {
+        path: socketPath
+    });
+    
+    terminalSocket.on('connect', () => {
+        console.log('Terminal WebSocket connected');
+        terminalConnected = true;
+        updateConnectionStatus();
+    });
+    
+    terminalSocket.on('disconnect', () => {
+        console.log('Terminal WebSocket disconnected');
+        terminalConnected = false;
+        updateConnectionStatus();
+    });
+    
+    terminalSocket.on('connect_error', (error) => {
+        console.error('Terminal WebSocket connection error:', error);
+    });
+    
+    terminalSocket.on('terminal_output', (data) => {
+        appendTerminalOutput(data.data);
+    });
+    
+    terminalSocket.on('dashboard_frame', (data) => {
+        if (data.frame && Array.isArray(data.frame)) {
+            renderDashboardFrame(data.frame);
+        }
+    });
+    
+    terminalSocket.on('terminal_init', (data) => {
+        if (data.lines) {
+            const terminalDisplay = document.getElementById('terminal-display');
+            terminalDisplay.innerHTML = '';
+            data.lines.forEach(line => {
+                appendTerminalOutput(line);
+            });
+        }
+    });
+    
+    terminalSocket.on('capture_started', (data) => {
+        if (data.status === 'connected_to_existing') {
+            document.getElementById('terminal-display').innerHTML = '';
+        } else if (data.status === 'no_dashboard_found') {
+            appendTerminalOutput('No active dashboard found. Start training to see dashboard output.');
+        }
+    });
+    
+    terminalSocket.on('capture_stopped', () => {
+        appendTerminalOutput('Dashboard connection stopped.');
+    });
+}
+
+function appendTerminalOutput(text) {
+    const terminalDisplay = document.getElementById('terminal-display');
+    const lineDiv = document.createElement('div');
+    lineDiv.className = 'terminal-line';
+    lineDiv.textContent = text;
+    terminalDisplay.appendChild(lineDiv);
+    
+    while (terminalDisplay.children.length > 1000) {
+        terminalDisplay.removeChild(terminalDisplay.firstChild);
+    }
+    
+    terminalDisplay.scrollTop = terminalDisplay.scrollHeight;
+}
+
+function startTerminalCapture() {
+    if (terminalSocket && terminalConnected) {
+        terminalSocket.emit('start_capture', {
+            command: 'connect_existing'
+        });
+    }
+}
+
+function renderDashboardFrame(frame) {
+    const terminalDisplay = document.getElementById('terminal-display');
+    terminalDisplay.innerHTML = '';
+    
+    const wrapperDiv = document.createElement('div');
+    wrapperDiv.style.position = 'relative';
+    wrapperDiv.style.overflow = 'hidden';
+    wrapperDiv.style.backgroundColor = '#0d0d0d';
+    wrapperDiv.style.display = 'block';
+    wrapperDiv.style.margin = '0 auto';
+    
+    const frameContainer = document.createElement('div');
+    frameContainer.className = 'dashboard-frame';
+    
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    frame.forEach(line => {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'dashboard-line';
+        
+        if (isMobileDevice) {
+            // Replace Unicode box drawing characters with ASCII on mobile
+            line = line.replace(/[█▓▒░]/g, '#')
+                      .replace(/[▀▄]/g, '=')
+                      .replace(/[▌▐]/g, '|')
+                      .replace(/[■□▪▫◼◻◾◽▬▭▮▯]/g, '#')
+                      .replace(/[═]/g, '=')
+                      .replace(/[─━╌╍┄┅┈┉⎯⎼⎽]/g, '-')
+                      .replace(/[▁▂▃▄▅▆▇]/g, '_')
+                      .replace(/[⌐¬]/g, '-')
+                      .replace(/[·•◦]/g, '*')
+                      .replace(/[◯○]/g, 'o')
+                      .replace(/[●◉]/g, '*')
+                      .replace(/[║┃│|╎╏┆┇┊┋]/g, '|')
+                      .replace(/[┏┌┍┎╔╒╓╭┓┐┑┒╗╕╖╮┗└┕┖╚╘╙╰┛┘┙┚╝╛╜╯]/g, '+')
+                      .replace(/[┣├┝┞┟┠┡┢╟╞╠┫┤┥┦┧┨┩┪╢╡╣]/g, '+')
+                      .replace(/[┳┬┭┮┯┰┱┲╦╤╥┻┴┵┶┷┸┹┺╩╧╨]/g, '+')
+                      .replace(/[╋┼┽┾┿╀╁╂╬╪╫]/g, '+');
+        }
+        
+        lineDiv.textContent = line;
+        frameContainer.appendChild(lineDiv);
+    });
+    
+    wrapperDiv.appendChild(frameContainer);
+    terminalDisplay.appendChild(wrapperDiv);
+    
+    currentFrameContainer = frameContainer;
+    currentWrapperDiv = wrapperDiv;
+    
+    if (dashboardScale === null) {
+        requestAnimationFrame(() => {
+            calculateDashboardScale();
+        });
+    } else if (dashboardScale) {
+        applyDashboardScale();
+    }
+}
+
+function calculateDashboardScale() {
+    if (!currentFrameContainer || !currentWrapperDiv) return;
+    
+    const terminalDisplay = document.getElementById('terminal-display');
+    const naturalWidth = currentFrameContainer.scrollWidth;
+    const naturalHeight = currentFrameContainer.scrollHeight;
+    
+    currentFrameContainer.style.width = naturalWidth + 'px';
+    currentFrameContainer.style.height = naturalHeight + 'px';
+    currentFrameContainer.style.maxWidth = naturalWidth + 'px';
+    currentFrameContainer.style.overflow = 'hidden';
+    
+    const containerWidth = terminalDisplay.clientWidth;
+    const containerHeight = terminalDisplay.clientHeight || window.innerHeight * 0.6;
+    const padding = 20;
+    
+    const widthScale = (containerWidth - padding) / naturalWidth;
+    const heightScale = (containerHeight - padding) / naturalHeight;
+    
+    dashboardScale = Math.min(widthScale, heightScale, 1.5);
+    
+    if (window.innerWidth <= 768 && dashboardScale > 1) {
+        dashboardScale = 1;
+    }
+    
+    applyDashboardScale();
+}
+
+function applyDashboardScale() {
+    if (!currentFrameContainer || !currentWrapperDiv || !dashboardScale) return;
+    
+    const terminalDisplay = document.getElementById('terminal-display');
+    const naturalWidth = currentFrameContainer.scrollWidth || parseInt(currentFrameContainer.style.width);
+    const naturalHeight = currentFrameContainer.scrollHeight || parseInt(currentFrameContainer.style.height);
+    
+    currentFrameContainer.style.transform = `scale(${dashboardScale})`;
+    currentFrameContainer.style.transformOrigin = 'top left';
+    
+    const scaledHeight = naturalHeight * dashboardScale;
+    const scaledWidth = naturalWidth * dashboardScale;
+    
+    currentWrapperDiv.style.width = scaledWidth + 'px';
+    currentWrapperDiv.style.height = scaledHeight + 'px';
+    currentWrapperDiv.style.overflow = 'hidden';
+    currentWrapperDiv.style.margin = '0 auto';
+    currentWrapperDiv.style.display = 'block';
+    
+    terminalDisplay.style.minHeight = (scaledHeight + 20) + 'px';
+    terminalDisplay.scrollTop = 0;
+}
+
+function recalculateDashboardScale() {
+    if (!currentFrameContainer || !currentWrapperDiv || currentTab !== 'terminal') {
+        return;
+    }
+    
+    dashboardScale = null;
+    currentFrameContainer.style.transform = 'none';
+    calculateDashboardScale();
+}
+
+// ==================== Spec Tab Functions ====================
+async function loadSpec() {
+    if (specLoaded) return;
+    
+    const container = document.getElementById('spec-container');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/spec`);
+        if (!response.ok) throw new Error('Failed to fetch spec');
+        
+        const data = await response.json();
+        specLoaded = true;
+        
+        let html = '';
+        
+        // Identity section with hashes
+        if (data.full_hash && data.truncated_hash) {
+            html += '<div class="spec-section">';
+            html += '<div class="spec-title">Hashes</div>';
+            
+            const truncLen = data.truncated_hash.length;
+            const truncPart = data.full_hash.substring(0, truncLen);
+            const restPart = data.full_hash.substring(truncLen);
+            html += '<div class="spec-hash">';
+            html += `<a href="#args-title" style="color: #4caf50; font-weight: 600; text-decoration: none;">${truncPart}</a>`;
+            html += `<span style="color: var(--text);">${restPart}</span>`;
+            html += '</div>';
+            html += '</div>';
+        }
+        
+        // Checkout section
+        if (data.git_url) {
+            html += '<div class="spec-section">';
+            html += '<div class="spec-title">Checkout</div>';
+            html += '<div class="spec-code-block">';
+            html += `<code>git clone ${data.git_url}</code>`;
+            html += '</div>';
+            html += '</div>';
+        }
+        
+        // Command section
+        if (data.args || data.command || data.timestamp) {
+            html += '<div class="spec-section">';
+            html += '<div class="spec-title">Command</div>';
+            
+            if (data.command) {
+                html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
+            }
+            
+            html += '</div>';
+        }
+        
+        // Parameter statistics
+        if (data.param_stats) {
+            html += '<div class="spec-section">';
+            html += '<div class="spec-title">Parameter Statistics</div>';
+            
+            if (data.param_stats.total_params) {
+                html += `<div class="spec-metadata">Model Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.total_params.toLocaleString()}</span></div>`;
+            }
+            
+            if (data.param_stats.activation_params) {
+                const config = data.param_stats.config || {};
+                html += `<div class="spec-metadata">Activation Estimate: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.activation_params.toLocaleString()}</span>`;
+                if (config.batch_size || config.block_size || config.hidden_size || config.depth) {
+                    html += ` <span style="color: var(--light-text); font-size: 12px;">(batch=${config.batch_size || '?'}, seq=${config.block_size || '?'}, hidden=${config.hidden_size || '?'}, depth=${config.depth || '?'}, experts=${config.num_experts || '?'})</span>`;
+                }
+                html += '</div>';
+            }
+            
+            if (data.param_stats.total_params && data.param_stats.activation_params) {
+                const totalActive = data.param_stats.total_params + data.param_stats.activation_params;
+                html += `<div class="spec-metadata" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">`;
+                html += `Total Active Parameters: <span style="color: #4caf50; font-weight: 600; font-size: 16px;">${totalActive.toLocaleString()}</span>`;
+                html += '</div>';
+            }
+            
+            html += '</div>';
+        }
+        
+        // Model architecture
+        if (data.model_architecture) {
+            html += '<div class="spec-section">';
+            html += '<div class="spec-title">Specification</div>';
+            html += `<pre class="spec-code">${data.model_architecture}</pre>`;
+            html += '</div>';
+        }
+        
+        html += '<div id="args-title" class="args-title">Arguments</div>';
+        
+        if (data.timestamp) {
+            html += `<div class="spec-metadata">Created: ${data.timestamp}</div>`;
+        }
+        
+        if (data.args) {
+            html += `<pre class="spec-code">${JSON.stringify(data.args, null, 2)}</pre>`;
+        }
+        
+        container.innerHTML = html;
+        
+    } catch (error) {
+        console.error('Error loading spec:', error);
+        container.innerHTML = '<div style="padding: 20px; color: var(--light-text);">Error loading model specification</div>';
+    }
+}
+
+// ==================== Agents Tab Functions ====================
+async function loadAgents() {
+    const container = document.getElementById('agents-container');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/agents`);
+        const data = await response.json();
+        
+        if (data.error) {
+            container.innerHTML = `<div class="agents-error">Error: ${data.error}</div>`;
+            return;
+        }
+        
+        if (!data.agents || data.agents.length === 0) {
+            container.innerHTML = '<div class="agents-empty">No git remotes configured. Add remotes using: git remote add &lt;name&gt; &lt;url&gt;</div>';
+            return;
+        }
+        
+        // Check for duplicate masked URLs
+        const maskedUrlCounts = {};
+        data.agents.forEach(agent => {
+            const maskedUrl = agent.masked_url || agent.url;
+            maskedUrlCounts[maskedUrl] = (maskedUrlCounts[maskedUrl] || 0) + 1;
+        });
+        
+        // Build the agents section
+        let html = '<div class="agents-section">';
+        html += '<div class="agents-title">Remotes</div>';
+        html += '<div class="agents-table">';
+        html += '<div class="agents-list">';
+        
+        data.agents.forEach((agent, index) => {
+            const maskedUrl = agent.masked_url || agent.url;
+            const isDuplicate = maskedUrlCounts[maskedUrl] > 1;
+            
+            let statusClass, statusText;
+            if (isDuplicate) {
+                statusClass = 'ambiguous';
+                statusText = 'Ambiguous';
+            } else if (agent.status === 'online') {
+                statusClass = 'online';
+                statusText = 'Online';
+            } else {
+                statusClass = 'offline';
+                statusText = 'Unknown';
+            }
+            
+            let animationStyle = '';
+            if (statusClass === 'online') {
+                const duration = (1.5 + Math.random() * 2).toFixed(2);
+                const delay = (Math.random() * 2).toFixed(2);
+                animationStyle = `style="animation-duration: ${duration}s; animation-delay: ${delay}s;"`;
+            }
+            
+            html += `
+                <div class="agent-row">
+                    <div class="agent-info">
+                        <div class="agent-name">${agent.name}</div>
+                        <div class="agent-url">${agent.masked_url || agent.url}</div>
+                    </div>
+                    <div class="agent-status ${statusClass}">
+                        <span class="status-dot ${statusClass}" ${animationStyle}></span>
+                        ${statusText}
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        html += '</div>';
+        html += '</div>';
+        
+        container.innerHTML = html;
+        agentsLoaded = true;
+        
+    } catch (error) {
+        container.innerHTML = `<div class="agents-error">Failed to load agents: ${error.message}</div>`;
+    }
+}
+
+// ==================== Event Listeners Setup ====================
+document.addEventListener('DOMContentLoaded', () => {
+    // Setup live reload
+    setupLiveReload();
+    
+    // Get DOM elements
+    const messageInput = document.getElementById('message-input');
+    const settingsButton = document.getElementById('settings-button');
+    const themeToggleButton = document.getElementById('theme-toggle');
+    const closeModalButton = document.getElementById('close-modal');
+    const saveSettingsButton = document.getElementById('save-settings');
+    const resetButton = document.getElementById('reset-settings');
+    const developerPromptElement = document.getElementById('developer-prompt');
+    const settingsModal = document.getElementById('settings-modal');
+    const temperatureInput = document.getElementById('temperature');
+    const temperatureValue = document.getElementById('temperature-value');
+    const repetitionPenaltyInput = document.getElementById('repetition-penalty');
+    const repetitionPenaltyValue = document.getElementById('repetition-penalty-value');
+    
+    // Tab elements
+    const chatTab = document.getElementById('chat-tab');
+    const terminalTab = document.getElementById('terminal-tab');
+    const specTab = document.getElementById('spec-tab');
+    const agentsTab = document.getElementById('agents-tab');
+    
+    // Initialize message input
+    messageInput.value = PREFIX + PLACEHOLDER_TEXT;
+    messageInput.style.color = 'var(--light-text)';
+    messageInput.style.fontStyle = 'italic';
+    setCursorAfterPrefix();
+    
+    // Load saved settings
+    loadSettings();
+    
+    // Message input event listeners
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+            return;
+        }
+        
+        const cursorPos = messageInput.selectionStart;
+        if ((e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'Backspace') && cursorPos <= PREFIX.length) {
+            if (e.key === 'Backspace' && cursorPos === PREFIX.length) {
+                e.preventDefault();
+            } else if (e.key === 'ArrowLeft' && cursorPos === PREFIX.length) {
+                e.preventDefault();
+            } else if (e.key === 'Home') {
+                e.preventDefault();
+                setCursorAfterPrefix();
+            }
+        }
+    });
+    
+    messageInput.addEventListener('input', maintainPrefix);
+    
+    messageInput.addEventListener('focus', () => {
+        hidePlaceholder();
+        setTimeout(setCursorAfterPrefix, 0);
+        ensureLastMessageVisible();
+        setTimeout(ensureLastMessageVisible, 350);
+        setTimeout(ensureLastMessageVisible, 600);
+    });
+    
+    messageInput.addEventListener('blur', () => {
+        showPlaceholder();
+    });
+    
+    messageInput.addEventListener('click', () => {
+        if (isShowingPlaceholder) {
+            hidePlaceholder();
+        }
+        const cursorPos = messageInput.selectionStart;
+        if (cursorPos < PREFIX.length) {
+            setCursorAfterPrefix();
+        }
+    });
+    
+    // Settings and theme event listeners
+    themeToggleButton.addEventListener('click', toggleTheme);
+    settingsButton.addEventListener('click', openModal);
+    closeModalButton.addEventListener('click', closeModal);
+    
+    saveSettingsButton.addEventListener('click', () => {
+        saveSettings().catch(err => {
+            console.error('Error in save settings:', err);
+            const confirmationDiv = document.getElementById('save-confirmation');
+            confirmationDiv.textContent = 'Error saving settings. Check console.';
+            confirmationDiv.style.backgroundColor = '#d32f2f';
+            confirmationDiv.classList.add('show');
+            
+            setTimeout(() => {
+                confirmationDiv.classList.remove('show');
+                confirmationDiv.style.backgroundColor = '';
+            }, 3000);
+        });
+    });
+    
+    resetButton.addEventListener('click', () => {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('praxis_') || key === 'theme' || key === 'chatHistory')) {
+                keysToRemove.push(key);
+            }
+        }
+        
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        
+        const confirmationDiv = document.getElementById('save-confirmation');
+        confirmationDiv.textContent = 'All settings cleared! Refreshing...';
+        confirmationDiv.classList.add('show');
+        
+        setTimeout(() => window.location.reload(), 1500);
+    });
+    
+    // Parameter input event listeners
+    temperatureInput.addEventListener('input', () => {
+        temperatureValue.textContent = temperatureInput.value;
+    });
+    
+    repetitionPenaltyInput.addEventListener('input', () => {
+        repetitionPenaltyValue.textContent = repetitionPenaltyInput.value;
+    });
+    
+    // Modal click outside to close
+    settingsModal.addEventListener('click', (e) => {
+        if (e.target === settingsModal) {
+            closeModal();
+        }
+    });
+    
+    // Save developer prompt on change
+    developerPromptElement.addEventListener('blur', () => {
+        localStorage.setItem('praxis_developer_prompt', developerPromptElement.innerHTML.trim());
+    });
+    
+    // Tab event listeners
+    chatTab.addEventListener('click', () => switchTab('chat'));
+    terminalTab.addEventListener('click', () => switchTab('terminal'));
+    specTab.addEventListener('click', () => {
+        switchTab('spec');
+        if (!specLoaded) loadSpec();
+    });
+    agentsTab.addEventListener('click', () => {
+        switchTab('agents');
+        if (!agentsLoaded) {
+            loadAgents();
+            if (agentsRefreshInterval) clearInterval(agentsRefreshInterval);
+            agentsRefreshInterval = setInterval(() => {
+                if (currentTab === 'agents') {
+                    loadAgents();
+                }
+            }, 30000);
+        }
+    });
+    
+    // Visual Viewport API for mobile keyboard detection
+    if (window.visualViewport) {
+        let previousHeight = window.visualViewport.height;
+        
+        window.visualViewport.addEventListener('resize', () => {
+            const currentHeight = window.visualViewport.height;
+            
+            if (currentHeight < previousHeight && document.activeElement === messageInput) {
+                setTimeout(ensureLastMessageVisible, 100);
+            }
+            
+            previousHeight = currentHeight;
+        });
+    }
+    
+    // Handle orientation changes
+    window.addEventListener('orientationchange', () => {
+        setTimeout(() => {
+            recalculateDashboardScale();
+        }, 100);
+    });
+    
+    // Handle window resize
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            recalculateDashboardScale();
+        }, 250);
+    });
+});
