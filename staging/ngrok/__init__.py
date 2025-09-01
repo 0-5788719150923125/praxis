@@ -142,6 +142,9 @@ class NgrokTunnel:
                         f"!req.url.path.startsWith('/{self.webhook_secret}') && "
                         "!req.url.path.startsWith('/static/') && "
                         "!req.url.path.startsWith('/socket.io/') && "
+                        "!req.url.path.matches('^/info/refs$') && "  # Allow git discovery
+                        "!req.url.path.matches('^/git-upload-pack$') && "  # Allow git fetch
+                        "!req.url.path.startsWith('/praxis.git') && "  # Allow .git suffix paths
                         "!req.url.path.endsWith('.css') && "
                         "!req.url.path.endsWith('.js') && "
                         "!req.url.path.endsWith('.ico') && "

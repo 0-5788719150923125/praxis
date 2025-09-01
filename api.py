@@ -235,18 +235,20 @@ def get_spec():
                                 base_url = base_url.split("://", 1)[1]
                             if ":" in base_url and not base_url.startswith("["):
                                 base_url = base_url.split(":")[0]
-                            git_url = f"https://{base_url}/{webhook_secret}/src"
+                            # Use base URL directly - cleanest option
+                            git_url = f"https://{base_url}/{webhook_secret}"
                 except:
                     pass
             
             # Fallback if we couldn't read the file
             if not git_url:
                 # Ngrok always uses HTTPS without explicit port
-                git_url = f"https://{host}/src"
+                git_url = f"https://{host}"
         else:
             # Local URL with port
             port = request.host.split(":")[1] if ":" in request.host else "80"
-            git_url = f"http://{host}:{port}/src"
+            # For local, use praxis.git to avoid conflicts with web UI
+            git_url = f"http://{host}:{port}/praxis.git"
         
         # Return clean data structure
         spec = {
@@ -270,11 +272,19 @@ def get_spec():
         return error_response, 500
 
 
-@app.route("/src/<path:git_path>", methods=["GET", "POST"])
-def git_http_backend(git_path):
+# Git HTTP backend routes - support multiple URL patterns
+@app.route("/praxis.git/<path:git_path>", methods=["GET", "POST"])
+@app.route("/praxis.git", methods=["GET", "POST"], defaults={"git_path": ""})
+@app.route("/info/refs", methods=["GET"])  # Git discovery at root
+@app.route("/git-upload-pack", methods=["POST"])  # Git fetch at root
+@app.route("/src/<path:git_path>", methods=["GET", "POST"])  # Keep for backward compatibility
+def git_http_backend(git_path=None):
     """
     Simple Git HTTP backend for read-only access to the repository.
     Supports git clone and fetch operations.
+    Accessible via:
+    - With .git suffix: git clone https://domain.com/praxis.git
+    - Legacy /src path: git clone https://domain.com/src
     """
     import subprocess
     from flask import Response, stream_with_context
@@ -285,8 +295,15 @@ def git_http_backend(git_path):
     # Parse the service from the path
     service = request.args.get("service")
     
+    # Handle root-level git operations (when git_path is None)
+    if git_path is None:
+        if request.path == "/info/refs":
+            git_path = "info/refs"
+        elif request.path == "/git-upload-pack":
+            git_path = "git-upload-pack"
+    
     # Handle info/refs request (git discovery)
-    if git_path == "info/refs" and service:
+    if (git_path == "info/refs" or git_path == "") and service:
         if not service.startswith("git-"):
             return "Invalid service", 400
             
