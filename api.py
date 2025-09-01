@@ -7,7 +7,7 @@ import sys
 import time
 from threading import Event, Thread
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory, make_response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from watchdog.events import FileSystemEventHandler
@@ -41,6 +41,17 @@ socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 def add_ngrok_header(response):
     """Add header to bypass ngrok browser warning"""
     response.headers['ngrok-skip-browser-warning'] = 'true'
+    return response
+
+# Explicit static file route with proper headers for ngrok
+@app.route('/static/<path:filename>')
+def serve_static_files(filename):
+    """Serve static files with proper headers for ngrok and CORS"""
+    response = send_from_directory(app.static_folder, filename)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['ngrok-skip-browser-warning'] = 'true'
+    # Add cache control for better performance
+    response.headers['Cache-Control'] = 'public, max-age=3600'
     return response
 
 # Get all template files for monitoring
@@ -668,7 +679,28 @@ class APIServer:
 
 @app.route("/", methods=["GET"])
 def home():
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    # Add CSP header that allows scripts from same origin and CDNs
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self' https:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://*.ngrok-free.app https://*.ngrok.io; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self' wss: ws: https: http:;"
+    )
+    response.headers['ngrok-skip-browser-warning'] = 'true'
+    return response
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Serve favicon.ico from static folder if it exists"""
+    import os
+    if os.path.exists(os.path.join(app.static_folder, 'favicon.ico')):
+        return send_from_directory(app.static_folder, 'favicon.ico')
+    else:
+        # Return empty 204 No Content if favicon doesn't exist
+        return '', 204
 
 
 @app.route("/input/", methods=["GET", "POST", "OPTIONS"])

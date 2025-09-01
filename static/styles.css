@@ -21,9 +21,9 @@
     --spacing-xl: 1.5rem;
     
     /* Unified border radius variables */
-    --radius-small: 8px;
+    --radius-small: 12px;
     --radius-medium: 12px;
-    --radius-large: 16px;
+    --radius-large: 12px;
     --radius-round: 50%;
     
     /* Unified size variables */
@@ -180,7 +180,7 @@ body, html {
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 8px 12px;
+    padding: 10px 14px;
     border-radius: var(--radius-small);
     transition: background-color 0.2s;
 }
@@ -458,7 +458,7 @@ body, html {
     background: var(--background);
     border: 1px solid var(--border);
     border-radius: var(--radius-small);
-    padding: 4px 8px;
+    padding: 6px 10px;
     cursor: pointer;
     font-size: 12px;
     color: var(--light-text);
@@ -553,7 +553,7 @@ body, html {
 }
 
 .tab-button {
-    padding: 8px 16px;
+    padding: 10px 16px;
     background: none;
     border: none;
     color: var(--light-text);
@@ -653,7 +653,7 @@ body, html {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 8px;
+    padding: 10px 10px;
     border-radius: var(--radius-small);
 }
 
@@ -743,7 +743,7 @@ body, html {
 .spec-code {
     background-color: #f5f5f5;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 12px;
     padding: 16px;
     font-family: 'Cascadia Code', 'Fira Code', monospace;
     font-size: 13px;
@@ -900,7 +900,7 @@ body, html {
     padding: 20px;
     color: #c62828;
     background-color: #ffebee;
-    border-radius: 8px;
+    border-radius: 12px;
     margin: 20px;
 }
 
@@ -991,7 +991,7 @@ body, html {
     }
     
     .tab-button {
-        padding: 8px 10px 8px 10px;
+        padding: 10px 12px;
         font-size: 13px;
     }
     
@@ -1094,7 +1094,7 @@ body, html {
     }
     
     .tab-button {
-        padding: 7px 8px 7px 8px;
+        padding: 8px 10px;
         font-size: 12px;
         letter-spacing: -0.3px;
     }
@@ -1102,7 +1102,7 @@ body, html {
     .terminal-status {
         font-size: 10px;
         gap: 4px;
-        padding: 7px 8px 7px 8px;
+        padding: 8px 10px;
     }
     
     .status-indicator {

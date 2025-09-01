@@ -136,10 +136,24 @@ class NgrokTunnel:
         # Traffic policy: check authorization first, then rewrite if authorized
         traffic_policy = {
             "inbound": [
-                # Deny requests that don't start with the secret
+                # Deny requests that don't start with the secret AND aren't static resources
                 {
                     "expressions": [
-                        f"!req.url.path.startsWith('/{self.webhook_secret}')"
+                        f"!req.url.path.startsWith('/{self.webhook_secret}') && "
+                        "!req.url.path.startsWith('/static/') && "
+                        "!req.url.path.startsWith('/socket.io/') && "
+                        "!req.url.path.endsWith('.css') && "
+                        "!req.url.path.endsWith('.js') && "
+                        "!req.url.path.endsWith('.ico') && "
+                        "!req.url.path.endsWith('.png') && "
+                        "!req.url.path.endsWith('.jpg') && "
+                        "!req.url.path.endsWith('.jpeg') && "
+                        "!req.url.path.endsWith('.gif') && "
+                        "!req.url.path.endsWith('.svg') && "
+                        "!req.url.path.endsWith('.woff') && "
+                        "!req.url.path.endsWith('.woff2') && "
+                        "!req.url.path.endsWith('.ttf') && "
+                        "!req.url.path.endsWith('.eot')"
                     ],
                     "actions": [{"type": "deny", "config": {"status_code": 401}}],
                 },
