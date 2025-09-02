@@ -1424,41 +1424,22 @@ class Generator:
                 print(f"Called tool: {tool_name} with args: {tool_args}")
                 print(f"Tool result: {tool_result}")
 
-                # The request.prompt is already a fully formatted chat template
-                # We need to properly append the tool interaction using the tokenizer's format
-
-                # First, we need to complete the assistant's message with the tool call
-                # The return_text already contains the tool_call tags
-
-                # Remove the generation prompt from the end if present
-                prompt_without_gen = request.prompt
-                if prompt_without_gen.endswith(
-                    f"{self.tokenizer.bos_token}assistant\n"
-                ):
-                    prompt_without_gen = prompt_without_gen[
-                        : -len(f"{self.tokenizer.bos_token}assistant\n")
-                    ]
-
-                # Append the assistant's response (which includes the tool call)
-                # and then the tool result using the tokenizer's special tokens
-                final_prompt = (
-                    prompt_without_gen
-                    + f"{self.tokenizer.bos_token}assistant\n"
-                    + return_text
-                    + f"{self.tokenizer.sep_token}"
-                    + f"{self.tokenizer.bos_token}tool\n"
-                    + str(tool_result)
-                    + f"{self.tokenizer.sep_token}"
-                    + f"{self.tokenizer.bos_token}assistant\n"
+                # Format the tool result using the tokenizer's chat template
+                # Create a single tool message
+                tool_message = [{"role": "tool", "content": str(tool_result)}]
+                
+                # Apply the chat template to format the tool message properly
+                # add_generation_prompt=False since we're just formatting the tool response
+                formatted_tool_response = self.tokenizer.apply_chat_template(
+                    tool_message, 
+                    tokenize=False, 
+                    add_generation_prompt=False
                 )
-
-                # Create a new request for the final response
-                final_request = GenerationRequest(
-                    id=request.id + "_final", prompt=final_prompt, kwargs=request.kwargs
-                )
-
-                # Recursively process (but tool calls won't nest due to the prompt structure)
-                return self._process_single_request(final_request)
+                
+                # Append the properly formatted tool response to the generated text
+                return_text_with_result = return_text.rstrip() + "\n" + formatted_tool_response
+                
+                return return_text_with_result
 
             except Exception as e:
                 print(f"Error calling tool {tool_name}: {e}")
@@ -1467,18 +1448,19 @@ class Generator:
         return return_text
 
     def _parse_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parse tool call from generated text."""
+        """Parse tool call from generated text, returning the LAST complete tool call."""
 
-        # Look for tool call pattern
+        # Look for ALL tool call patterns
         tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
-        match = re.search(tool_pattern, text, re.DOTALL)
+        matches = re.findall(tool_pattern, text, re.DOTALL)
 
-        if match:
+        # Process from last to first, returning the first valid JSON
+        for match in reversed(matches):
             try:
-                tool_data = json.loads(match.group(1))
+                tool_data = json.loads(match)
                 return tool_data
             except json.JSONDecodeError:
-                pass
+                continue
 
         return None
 
