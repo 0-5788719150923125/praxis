@@ -978,7 +978,7 @@ class TerminalInterface(Callback):
             info_dict["vocab_size"] = vocab_size
             info_dict["block_size"] = seq_length
             info_dict["batch_size"] = batch_size
-            info_dict["target_size"] = target_batch_size
+            info_dict["target_batch"] = target_batch_size
             # info_dict["num_heads"] = int(num_heads.split(":")[0]) # not used by RNNs
             # info_dict["num_queries"] = int(num_heads.split(":")[1]) # not used by RNNs
             info_dict["depth"] = depth
@@ -1415,6 +1415,24 @@ class Generator:
         tool_call = self._parse_tool_call(return_text)
 
         if tool_call and self.tools and self.call_tool:
+            # Find the position of the last tool call in the text
+            tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
+            matches = list(re.finditer(tool_pattern, return_text, re.DOTALL))
+
+            if matches:
+                last_match = matches[-1]
+                # Check if there's already a tool response after this tool call
+                text_after_tool = return_text[last_match.end() :]
+
+                # If we see tool-related tokens after the tool call, it's already been processed
+                if (
+                    f"{self.tokenizer.bos_token}tool" in text_after_tool
+                    or "<tool_result>" in text_after_tool
+                    or f"{self.tokenizer.sep_token}" in text_after_tool
+                ):
+                    # Tool already processed, just return the text as-is
+                    return return_text
+
             # Execute the tool
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("arguments", {})
@@ -1427,19 +1445,27 @@ class Generator:
                 # Format the tool result using the tokenizer's chat template
                 # Create a single tool message
                 tool_message = [{"role": "tool", "content": str(tool_result)}]
-                
+
                 # Apply the chat template to format the tool message properly
-                # add_generation_prompt=False since we're just formatting the tool response
+                # add_generation_prompt=True to signal model should continue generating
                 formatted_tool_response = self.tokenizer.apply_chat_template(
-                    tool_message, 
-                    tokenize=False, 
-                    add_generation_prompt=False
+                    tool_message, tokenize=False, add_generation_prompt=True
                 )
-                
-                # Append the properly formatted tool response to the generated text
-                return_text_with_result = return_text.rstrip() + "\n" + formatted_tool_response
-                
-                return return_text_with_result
+
+                # Build the complete prompt with tool result for continuation
+                complete_prompt = return_text.rstrip() + "\n" + formatted_tool_response
+
+                # Create a new generation request with the tool result included
+                # This allows the model to generate a proper response after seeing the tool result
+                tool_response_request = GenerationRequest(
+                    id=request.id + "_tool_response",
+                    prompt=complete_prompt,
+                    kwargs=request.kwargs,  # Use same generation parameters
+                )
+
+                # Recursively process to get the model's response after tool execution
+                final_response = self._process_single_request(tool_response_request)
+                return final_response
 
             except Exception as e:
                 print(f"Error calling tool {tool_name}: {e}")
