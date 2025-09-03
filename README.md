@@ -12,7 +12,7 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), we are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
 
-In short: Praxis is a robust, open-source language model that can be anything, and do everything.
+In short: Praxis is a robust, open-source AI that can be anything, and do everything.
 
 <details>
 
@@ -236,4 +236,3 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 ## limitations
 
 - You will quickly run into rate limits with the Huggingface Datasets API. This is because anonymous users tend to be bots, and are subjected to severe restrictions. To alleviate this problem, you can install [huggingface-cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli), and authenticate with a real user account. Praxis will use this user automatically.
-- Praxis is a fluid architecture. Whatever decentralized solution we implement, it must respect the fact that peers are independent models, and will need to convert intermediate tensors into some singular, standardized format - for every remote operation. Data passed to remote peers will likely need reduction/projection, at a minimum.

@@ -348,6 +348,7 @@ train_params = dict(
 )
 
 # Configure the learning rate scheduler
+warmup_steps = 4096
 if disable_schedule:
 
     def lr_lambda_with_warmup(current_step, warmup_steps=1024):
@@ -357,7 +358,7 @@ if disable_schedule:
 
     scheduler_func = partial(
         torch.optim.lr_scheduler.LambdaLR,
-        lr_lambda=lambda step: lr_lambda_with_warmup(step),
+        lr_lambda=lambda step: lr_lambda_with_warmup(step, warmup_steps),
     )
 else:
 
@@ -374,7 +375,7 @@ else:
         max_lr=optimizer_config["lr"],
         min_lr=optimizer_config["lr"] * 1e-2,
         gamma=1.0,
-        warmup_steps=1024,
+        warmup_steps=warmup_steps,
     )
 
 
@@ -1077,6 +1078,7 @@ class TerminalInterface(Callback):
             tokenizer.pad_token,
             tokenizer.sep_token,
             f"{tokenizer.bos_token}system",
+            f"{tokenizer.bos_token}developer",
             f"{tokenizer.bos_token}user",
             f"{tokenizer.bos_token}assistant",
         ]

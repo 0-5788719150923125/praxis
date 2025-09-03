@@ -51,7 +51,7 @@ OPTIMIZER_PROFILES = {
     ),
     "Lion": dict(
         optimizer_name="Lion",
-        lr=0.000333,
+        lr=0.0003,
         weight_decay=0.1,
         betas=(0.9, 0.95),
         r=0.98,
@@ -62,7 +62,7 @@ OPTIMIZER_PROFILES = {
     "MARS": dict(
         optimizer_name="MARS",
         mars_type="shampoo",
-        lr=0.000333,
+        lr=0.0003,
         gamma=0.025,
         optimize_1d=True,
         betas=(0.95, 0.99),
@@ -70,6 +70,15 @@ OPTIMIZER_PROFILES = {
         weight_decay=0.1,
         weight_decay_1d=0.1,
         cautious=True,
+    ),
+    "Muon": dict(
+        optimizer_name="Muon",
+        lr=0.02,
+        momentum=0.95,
+        weight_decay=0.1,
+        adamw_lr=0.0003,
+        adamw_betas=(0.9, 0.95),
+        adamw_wd=0.1,
     ),
     "Prodigy": dict(
         optimizer_name="Prodigy",
