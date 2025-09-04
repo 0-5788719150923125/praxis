@@ -833,6 +833,10 @@ class TerminalInterface(Callback):
         self.inference_slowdown_threshold = (
             10.0  # Reset if inference is 10x slower than training
         )
+        # Track unchanged context to detect when model is stuck
+        self.previous_texts = []  # History of generated texts
+        self.unchanged_count = 0  # Count of unchanged predictions
+        self.unchanged_threshold = 30  # Reset after this many unchanged predictions
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
@@ -1023,6 +1027,8 @@ class TerminalInterface(Callback):
                         > train_step_time * self.inference_slowdown_threshold
                     ):
                         self.text = self.initial_text
+                        self.unchanged_count = 0
+                        self.previous_texts = []
                         self.inference_time_ema = (
                             None  # Reset timing after context reset
                         )
@@ -1057,7 +1063,32 @@ class TerminalInterface(Callback):
             generator.fulfill_requests(max_requests=5)
             result = generator.get_result(request_id)
             if result is not None:
-                self.text = result
+                # Track context changes to detect stuck generation
+                if len(self.previous_texts) > 0 and result == self.previous_texts[-1]:
+                    self.unchanged_count += 1
+                    # Log periodically when context is stuck
+                    if self.unchanged_count % 10 == 0 and self.unchanged_count > 0:
+                        print(f"[INFO] Context unchanged for {self.unchanged_count} predictions...")
+                        # Debug: show what tokens were attempted to be generated
+                        if debug:
+                            print(f"[DEBUG] Last text length: {len(result)}, First 100 chars: {repr(result[:100])}")
+                else:
+                    self.unchanged_count = 0
+                
+                # Keep history of last few texts for debugging
+                self.previous_texts.append(result)
+                if len(self.previous_texts) > 5:
+                    self.previous_texts.pop(0)
+                
+                # Reset context if it hasn't changed for too many predictions
+                if self.unchanged_count >= self.unchanged_threshold:
+                    print(f"[WARNING] Context stuck for {self.unchanged_count} predictions, resetting...")
+                    print(f"[INFO] Stuck text sample (first 200 chars): {repr(result[:200])}")
+                    self.text = self.initial_text
+                    self.unchanged_count = 0
+                    self.previous_texts = []
+                else:
+                    self.text = result
                 break
 
         # Track inference time
@@ -1089,6 +1120,8 @@ class TerminalInterface(Callback):
             or self._is_all_whitespace()
         ):
             self.text = self.initial_text
+            self.unchanged_count = 0
+            self.previous_texts = []
             if self.dashboard:
                 self.dashboard.update_status(self.initial_text)
                 self.dashboard.force_redraw()
@@ -1394,14 +1427,24 @@ class Generator:
 
                 # Check if the decoded text contains the replacement character
                 if "�" not in decoded_new:
-                    # Ensure that the new text is different from the prompt
-                    if decoded_new != request.prompt:
+                    # Check if we actually generated something new
+                    # Compare token lengths to detect if model generated whitespace
+                    prompt_tokens = len(self.tokenizer.encode(request.prompt))
+                    generated_token_count = len(generated_tokens[0])
+                    
+                    # If we have more tokens than the prompt, something was generated
+                    if generated_token_count > prompt_tokens:
+                        return_text = decoded_new
+                        break
+                    # If the decoded text is different, use it
+                    elif decoded_new != request.prompt:
                         return_text = decoded_new
                         break
                     else:
-                        # The decoded text is the same as the prompt, use it anyway
-                        return_text = decoded_new
-                        break
+                        # No new tokens were generated, try again with more tokens
+                        attempts += 1
+                        combined["max_new_tokens"] = min(combined.get("max_new_tokens", 1) + 1, 10)
+                        continue
                 else:
                     # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
@@ -1455,7 +1498,8 @@ class Generator:
                 )
 
                 # Build the complete prompt with tool result for continuation
-                complete_prompt = return_text.rstrip() + "\n" + formatted_tool_response
+                # Don't strip whitespace - it might be intentional
+                complete_prompt = return_text + "\n" + formatted_tool_response
 
                 # Create a new generation request with the tool result included
                 # This allows the model to generate a proper response after seeing the tool result
