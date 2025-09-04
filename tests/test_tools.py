@@ -1,4 +1,4 @@
-"""Test tool-calling functionality with smolagents integration."""
+"""Test tool-calling functionality."""
 
 import json
 import re
@@ -161,8 +161,8 @@ def test_tool_calling_during_inference():
             assert result == 30
 
 
-def test_model_with_smolagents():
-    """Test that model can work with smolagents tools."""
+def test_model_with_tools():
+    """Test that model can work with tools."""
     config = PraxisConfig(
         hidden_size=64,
         num_heads=2,

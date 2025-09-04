@@ -116,89 +116,23 @@ class NgrokTunnel:
             # Create a hash from the seed and take first 32 chars (base64 safe)
             hash_bytes = hashlib.sha256(secret_seed.encode()).digest()
             self.webhook_secret = base64.urlsafe_b64encode(hash_bytes)[:32].decode()
-            print(f"🔑 Using deterministic secret from seed")
+            # Using deterministic secret from seed
         else:
             # Use secure random generation
             alphabet = string.ascii_letters + string.digits
             self.webhook_secret = "".join(secrets.choice(alphabet) for _ in range(32))
-            print(f"🎲 Using random secret")
+            # Using random secret
 
         # Create session with auth token
         self.session = await ngrok.SessionBuilder().authtoken(self.auth_token).connect()
 
         # Try to use a hardcoded static domain (you can set this in .env)
         static_domain = os.getenv("NGROK_DOMAIN")
-        if static_domain:
-            print(f"🔍 Found static domain in environment: {static_domain}")
-        else:
-            print("ℹ️  No static domain configured, using random URL")
 
-        # Traffic policy: check authorization first, then rewrite if authorized
-        traffic_policy = {
-            "inbound": [
-                # Deny requests that don't start with the secret AND aren't static resources
-                {
-                    "expressions": [
-                        f"!req.url.path.startsWith('/{self.webhook_secret}') && "
-                        "!req.url.path.startsWith('/static/') && "
-                        "!req.url.path.startsWith('/socket.io/') && "
-                        "!req.url.path.matches('^/info/refs$') && "  # Allow git discovery
-                        "!req.url.path.matches('^/git-upload-pack$') && "  # Allow git fetch
-                        "!req.url.path.startsWith('/praxis.git') && "  # Allow .git suffix paths
-                        "!req.url.path.endsWith('.css') && "
-                        "!req.url.path.endsWith('.js') && "
-                        "!req.url.path.endsWith('.ico') && "
-                        "!req.url.path.endsWith('.png') && "
-                        "!req.url.path.endsWith('.jpg') && "
-                        "!req.url.path.endsWith('.jpeg') && "
-                        "!req.url.path.endsWith('.gif') && "
-                        "!req.url.path.endsWith('.svg') && "
-                        "!req.url.path.endsWith('.woff') && "
-                        "!req.url.path.endsWith('.woff2') && "
-                        "!req.url.path.endsWith('.ttf') && "
-                        "!req.url.path.endsWith('.eot')"
-                    ],
-                    "actions": [{"type": "deny", "config": {"status_code": 401}}],
-                },
-                # Rewrite all paths with secret prefix (including socket.io)
-                {
-                    "expressions": [
-                        f"req.url.path.startsWith('/{self.webhook_secret}')"
-                    ],
-                    "actions": [
-                        {
-                            "type": "url-rewrite",
-                            "config": {
-                                "from": f"/{self.webhook_secret}(.*)",
-                                "to": "$1",
-                            },
-                        },
-                        {
-                            "type": "add-headers",
-                            "config": {
-                                "headers": {
-                                    "X-Forwarded-Host": f"{self.host}:{self.port}",
-                                    "X-Original-Host": "req.host",
-                                }
-                            },
-                        },
-                    ],
-                },
-            ]
-        }
-
-        # Create HTTP listener with traffic policy (must be JSON string)
-        import json
-
-        traffic_policy_json = json.dumps(traffic_policy)
-
-        # Build the listener with optional domain
-        listener_builder = self.session.http_endpoint().traffic_policy(
-            traffic_policy_json
-        )
+        # Build the listener WITHOUT traffic policy - Flask will handle auth
+        listener_builder = self.session.http_endpoint()
         if static_domain:
             listener_builder = listener_builder.domain(static_domain)
-            print(f"🌐 Using static domain: {static_domain}")
 
         self.listener = await listener_builder.listen()
         self.public_url = self.listener.url()
@@ -287,17 +221,56 @@ def api_server_hook(host, port):
         print(f"🌐 Ngrok tunnel active: {base_url}")
         print(f"🔐 Protected URL: {protected_url}")
         print(f"📡 Local server: http://{host}:{port}")
-        print(f"ℹ️  URL rewriting:")
-        print(f"     /{_tunnel.webhook_secret} -> /")
-        print(f"     /{_tunnel.webhook_secret}/input/ -> /input/")
-        print(f"     /{_tunnel.webhook_secret}/socket.io/* -> /socket.io/* (WebSocket)")
-        print(f"🛡️  All other requests blocked with 401")
+        print(f"ℹ️  Flask will handle authentication")
+        print(f"     All requests to /{_tunnel.webhook_secret}/* are authorized")
+        print(f"     All other requests return 404 (silent drop)")
+        print(f"✅ No ngrok policy quota usage!")
         
         # Save ngrok info to a file for other processes to read
         ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
         os.makedirs(os.path.dirname(ngrok_info_path), exist_ok=True)
         with open(ngrok_info_path, "w") as f:
             f.write(f"{base_url}\n{_tunnel.webhook_secret}")
+        
+        # Now that we have the secret, set up Flask routes
+        # We need to get the Flask app instance
+        try:
+            # Import the api module to get the app
+            import api
+            setup_ngrok_routes(api.app)
+            
+            # Patch Socket.IO to handle prefixed paths
+            if hasattr(api, 'socketio'):
+                socketio = api.socketio
+                try:
+                    # Get the ngrok secret for patching
+                    ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+                    if os.path.exists(ngrok_info_path):
+                        with open(ngrok_info_path, 'r') as f:
+                            lines = f.read().strip().split('\n')
+                            if len(lines) >= 2:
+                                secret = lines[1]
+                                
+                                # Patch the underlying engineio server to handle prefixed paths
+                                if hasattr(socketio, 'server') and hasattr(socketio.server, 'eio'):
+                                    eio = socketio.server.eio
+                                    original_handle_request = eio.handle_request
+                                    
+                                    def patched_handle_request(environ, start_response):
+                                        path = environ.get('PATH_INFO', '')
+                                        # Strip the ngrok secret prefix from Socket.IO paths
+                                        if path.startswith(f'/{secret}/socket.io'):
+                                            environ['PATH_INFO'] = path[len(f'/{secret}'):]
+                                            environ['SCRIPT_NAME'] = f'/{secret}'
+                                            pass  # Stripped Socket.IO prefix
+                                        return original_handle_request(environ, start_response)
+                                    
+                                    eio.handle_request = patched_handle_request
+                                    pass  # Patched Socket.IO
+                except Exception as e:
+                    pass  # Could not patch Socket.IO
+        except Exception as e:
+            pass  # Could not set up routes
     else:
         print("\n❌ NGROK ERROR: Failed to establish tunnel")
         import sys
@@ -343,6 +316,36 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
         import sys
 
         sys.exit(1)
+    
+    # Register WSGI middleware early (before API server is created)
+    # This ensures it's applied before Socket.IO is initialized
+    try:
+        import api
+        
+        def create_ngrok_wsgi_middleware_early(original_wsgi):
+            """Create WSGI middleware to strip ngrok prefix from Socket.IO paths"""
+            def ngrok_wsgi_wrapper(environ, start_response):
+                # Check if we have ngrok info
+                ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+                if os.path.exists(ngrok_info_path):
+                    try:
+                        with open(ngrok_info_path, 'r') as f:
+                            lines = f.read().strip().split('\n')
+                            if len(lines) >= 2:
+                                secret = lines[1]
+                                path = environ.get('PATH_INFO', '')
+                                if path.startswith(f'/{secret}/socket.io'):
+                                    environ['PATH_INFO'] = path[len(f'/{secret}'):]
+                                    pass  # Stripped WSGI prefix
+                    except:
+                        pass
+                return original_wsgi(environ, start_response)
+            return ngrok_wsgi_wrapper
+        
+        api.register_wsgi_middleware(create_ngrok_wsgi_middleware_early)
+        pass  # Registered early WSGI middleware
+    except:
+        pass  # API module not yet available
 
     print("🔐 Will auto-generate secret with complete URL protection")
     print(f"ℹ️  URLs will use format: /SECRET instead of /webhook/SECRET")
@@ -350,12 +353,200 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     return {}
 
 
+# Ngrok authentication state
+_ngrok_secret = None
+_last_check_time = 0
+
+def load_ngrok_secret():
+    """Load the ngrok secret from the info file"""
+    global _ngrok_secret
+    try:
+        ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+        if os.path.exists(ngrok_info_path):
+            with open(ngrok_info_path, 'r') as f:
+                lines = f.read().strip().split('\n')
+                if len(lines) >= 2:
+                    _ngrok_secret = lines[1]  # Second line is the secret
+                    # Loaded ngrok secret
+                    return True
+    except Exception as e:
+        pass  # Error loading secret
+    return False
+
+def setup_ngrok_routes(app):
+    """Setup catch-all routes for ngrok secret-prefixed paths"""
+    global _ngrok_secret
+    
+    # Load secret if not loaded
+    if not _ngrok_secret:
+        load_ngrok_secret()
+    
+    if not _ngrok_secret:
+        return  # No secret loaded
+    
+    from flask import redirect, request as flask_request
+    import werkzeug
+    
+    # Create a catch-all route for the secret prefix
+    @app.route(f'/{_ngrok_secret}/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
+    @app.route(f'/{_ngrok_secret}/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
+    def ngrok_proxy(path):
+        """Proxy requests from ngrok secret URLs to the real endpoints"""
+        # Build the real path
+        real_path = '/' + path if path else '/'
+        
+        pass  # Proxying request
+        
+        # Get the view function for the real path
+        try:
+            # Build the full URL with query string
+            if flask_request.query_string:
+                real_url = real_path + '?' + flask_request.query_string.decode()
+            else:
+                real_url = real_path
+                
+            # Use Flask's test client to internally call the real endpoint
+            with app.test_client() as client:
+                # Copy headers but remove ngrok-identifying ones to avoid recursive auth checks
+                clean_headers = {}
+                for key, value in flask_request.headers:
+                    # Skip headers that would identify this as an ngrok request
+                    if key.lower() not in ['x-forwarded-host', 'ngrok-skip-browser-warning', 'host']:
+                        clean_headers[key] = value
+                
+                # Copy the original request method and data
+                response = client.open(
+                    real_url,
+                    method=flask_request.method,
+                    data=flask_request.get_data(),
+                    headers=clean_headers,
+                    follow_redirects=False
+                )
+                
+                # Get response data
+                data = response.get_data()
+                
+                # If it's HTML or JavaScript content, rewrite URLs to include the secret prefix
+                content_type = response.headers.get('Content-Type', '')
+                if ('text/html' in content_type or 'application/javascript' in content_type or 
+                    'text/javascript' in content_type) and isinstance(data, bytes):
+                    try:
+                        html = data.decode('utf-8')
+                        # Rewrite absolute URLs to include the secret prefix
+                        replacements = [
+                            ('src="/static/', f'src="/{_ngrok_secret}/static/'),
+                            ('href="/static/', f'href="/{_ngrok_secret}/static/'),
+                            ('url("/static/', f'url("/{_ngrok_secret}/static/'),
+                            ("url('/static/", f"url('/{_ngrok_secret}/static/"),
+                            ('src="/socket.io/', f'src="/{_ngrok_secret}/socket.io/'),
+                            # Socket.IO specific replacements
+                            ("socketPath = '/socket.io'", f"socketPath = '/{_ngrok_secret}/socket.io'"),
+                            ('socketPath = "/socket.io"', f'socketPath = "/{_ngrok_secret}/socket.io"'),
+                            # This is key - the connect call doesn't need rewriting but path does
+                            # Line will be: io.connect('/live-reload', { path: socketPath })
+                            # socketPath is already rewritten above
+                            ("fetch('/", f"fetch('/{_ngrok_secret}/"),
+                            ('fetch("/', f'fetch("/{_ngrok_secret}/'),
+                            ('"/api/', f'"/{_ngrok_secret}/api/'),
+                            ("'/api/", f"'/{_ngrok_secret}/api/"),
+                        ]
+                        for old, new in replacements:
+                            html = html.replace(old, new)
+                        data = html.encode('utf-8')
+                    except:
+                        pass  # If rewriting fails, return original
+                
+                # If it's JSON content from API endpoints, rewrite git_url
+                elif 'application/json' in content_type and isinstance(data, bytes):
+                    try:
+                        import json
+                        json_data = json.loads(data.decode('utf-8'))
+                        
+                        # For /api/spec endpoint, fix the git_url to use the ngrok URL with secret
+                        if 'git_url' in json_data:
+                            # We know this is coming through ngrok, so construct the URL from NGROK_INFO
+                            try:
+                                ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+                                if os.path.exists(ngrok_info_path):
+                                    with open(ngrok_info_path, 'r') as f:
+                                        lines = f.read().strip().split('\n')
+                                        if len(lines) >= 1:
+                                            base_url = lines[0]  # First line is base URL
+                                            # Replace any localhost URL with the proper ngrok URL
+                                            json_data['git_url'] = f"{base_url}/{_ngrok_secret}"
+                                            # Also update masked_git_url if present
+                                            if 'masked_git_url' in json_data:
+                                                from praxis.utils import mask_git_url
+                                                json_data['masked_git_url'] = mask_git_url(json_data['git_url'])
+                            except:
+                                pass
+                        
+                        # For /api/agents endpoint, fix agent URLs  
+                        if 'agents' in json_data:
+                            try:
+                                ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+                                if os.path.exists(ngrok_info_path):
+                                    with open(ngrok_info_path, 'r') as f:
+                                        lines = f.read().strip().split('\n')
+                                        if len(lines) >= 1:
+                                            base_url = lines[0]  # First line is base URL
+                                            for agent in json_data['agents']:
+                                                # Fix self agents that point to localhost
+                                                if agent.get('name', '').startswith('self') and 'localhost' in agent.get('url', ''):
+                                                    agent['url'] = f"{base_url}/{_ngrok_secret}"
+                                                    if 'masked_url' in agent:
+                                                        from praxis.utils import mask_git_url
+                                                        agent['masked_url'] = mask_git_url(agent['url'])
+                                                # Origin and other remotes should remain as-is
+                            except:
+                                pass
+                        
+                        data = json.dumps(json_data).encode('utf-8')
+                    except:
+                        pass  # If JSON rewriting fails, return original
+                
+                # Return the response with potentially rewritten content
+                return data, response.status_code, response.headers
+                
+        except Exception as e:
+            pass  # Proxy error
+            from flask import abort
+            return abort(404)
+    
+    pass  # Set up catch-all route
+
 def request_middleware(request, response=None):
-    """Middleware to add ngrok bypass headers."""
+    """Middleware to handle ngrok bypass headers and block unauthorized requests."""
     if response is not None:
         # This is the after_request phase - add the bypass header
         response.headers["ngrok-skip-browser-warning"] = "true"
-    # In before_request phase (response=None), we don't need to do anything
+        return None
+    
+    # This is the before_request phase - only check if ngrok request is authorized
+    # Check if this request is coming through ngrok
+    is_ngrok_request = 'ngrok-skip-browser-warning' in request.headers or \
+                       'X-Forwarded-Host' in request.headers or \
+                       request.host.endswith('.ngrok-free.app') or \
+                       request.host.endswith('.ngrok.io')
+    
+    if not is_ngrok_request:
+        return None  # Allow all local requests
+    
+    # For ngrok requests, check if they have the secret prefix
+    global _ngrok_secret
+    if not _ngrok_secret:
+        load_ngrok_secret()
+    
+    path = request.path
+    
+    # Allow requests that start with the secret
+    if _ngrok_secret and path.startswith(f'/{_ngrok_secret}'):
+        return None  # Authorized request  # Let the catch-all route handle it
+    
+    # Block unauthorized ngrok requests
+    pass  # Blocking unauthorized request
+    from flask import abort
+    return abort(404)
 
 
 def cleanup():

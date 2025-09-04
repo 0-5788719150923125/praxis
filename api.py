@@ -33,8 +33,53 @@ app.debug = True  # Enable debug mode for development
 # Enable CORS for all routes
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# WSGI middleware hooks for modules
+_wsgi_middleware = []
+
+def register_wsgi_middleware(middleware_func):
+    """Register a WSGI middleware function from modules"""
+    _wsgi_middleware.append(middleware_func)
+    print(f"Registered WSGI middleware: {middleware_func.__name__}")
+
+def apply_wsgi_middleware():
+    """Apply all registered WSGI middleware to the app"""
+    if _wsgi_middleware:
+        for middleware in _wsgi_middleware:
+            app.wsgi_app = middleware(app.wsgi_app)
+            print(f"Applied WSGI middleware: {middleware.__name__}")
+
 # Set up SocketIO for live reload
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+
+# Module middleware support
+_request_middleware = []
+_response_middleware = []
+
+def register_request_middleware(func):
+    """Register a request middleware function from modules"""
+    _request_middleware.append(func)
+    print(f"Registered request middleware: {func.__name__}")
+
+def register_response_middleware(func):
+    """Register a response middleware function from modules"""
+    _response_middleware.append(func)
+    print(f"Registered response middleware: {func.__name__}")
+
+@app.before_request
+def process_request_middleware():
+    """Process all registered request middleware"""
+    for middleware in _request_middleware:
+        result = middleware(request, None)
+        if result is not None:
+            return result
+    return None
+
+@app.after_request  
+def process_response_middleware(response):
+    """Process all registered response middleware"""
+    for middleware in _response_middleware:
+        middleware(request, response)
+    return response
 
 # Add ngrok bypass header to all responses
 @app.after_request
@@ -381,36 +426,49 @@ def get_agents():
     
     agents = []
     
-    # First, detect local Praxis instances (self agents)
+    # Always add the current instance as "self" 
     try:
         # Get current port
         current_port = int(request.environ.get('SERVER_PORT', 2100))
         
-        # Check if this is a custom port (not in the 2100-2200 range)
-        is_custom_port = current_port < 2100 or current_port >= 2200
-        
-        if is_custom_port:
-            # Only add current instance as self
+        # Always add the current instance first by getting the data directly
+        try:
+            # Get our git URL and hash directly (same logic as get_spec endpoint)
+            git_url = f"http://localhost:{current_port}/praxis.git"
+            
+            # Get git hash
+            import subprocess
             try:
-                # Get our own spec data
-                import json
-                spec_url = f"http://localhost:{current_port}/api/spec"
-                req = urllib.request.Request(spec_url)
-                with urllib.request.urlopen(req, timeout=1) as response:
-                    if response.status == 200:
-                        spec_data = json.loads(response.read())
-                        if spec_data.get('git_url'):
-                            agents.append({
-                                "name": "self",
-                                "url": spec_data['git_url'],
-                                "masked_url": spec_data.get('masked_git_url', mask_git_url(spec_data['git_url'])),
-                                "status": "online",
-                                "commit_hash": spec_data.get('full_hash'),
-                                "short_hash": spec_data.get('truncated_hash')
-                            })
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=os.getcwd()
+                )
+                full_hash = result.stdout.strip() if result.returncode == 0 else "unknown"
+                short_hash = full_hash[:9] if len(full_hash) >= 9 else full_hash
             except:
-                pass
-        else:
+                full_hash = "unknown"
+                short_hash = "unknown"
+            
+            agents.append({
+                "name": "self",
+                "url": git_url,
+                "masked_url": mask_git_url(git_url),
+                "status": "online",
+                "commit_hash": full_hash,
+                "short_hash": short_hash
+            })
+            print(f"[DEBUG] Successfully added self agent with URL: {git_url}")
+        except Exception as e:
+            print(f"[DEBUG] Failed to add self agent: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Check if this is in the standard port range (2100-2119)
+        is_standard_port = 2100 <= current_port < 2120
+        
+        if is_standard_port:
             # Scan ports 2100-2119 for local instances
             local_instances = []
             
@@ -449,10 +507,13 @@ def get_agents():
                     except:
                         pass
             
-            # Sort by port and create self agents
+            # Sort by port and create additional self agents (self-1, self-2, etc)
+            # Skip the current port since we already added it
+            local_instances = [i for i in local_instances if i and i['port'] != current_port]
             local_instances.sort(key=lambda x: x['port'])
+            
             for idx, instance in enumerate(local_instances):
-                name = "self" if len(local_instances) == 1 else f"self-{idx}"
+                name = f"self-{idx + 1}"  # Start numbering from 1
                 agents.append({
                     "name": name,
                     "url": instance['git_url'],
@@ -463,7 +524,9 @@ def get_agents():
                 })
     except Exception as e:
         # If local detection fails, continue with remote agents
-        print(f"Error detecting local instances: {e}")
+        print(f"[DEBUG] Error in self agent detection: {e}")
+        import traceback
+        traceback.print_exc()
     
     try:
         # Get git remotes
@@ -800,6 +863,9 @@ class APIServer:
         if self.param_stats:
             print(f"[DEBUG] _run_server self.param_stats keys: {list(self.param_stats.keys())}")
         
+        # Apply any WSGI middleware registered by modules (must be before starting server)
+        apply_wsgi_middleware()
+        
         with app.app_context():
             app.config["generator"] = self.generator
             app.config["tokenizer"] = self.tokenizer
@@ -813,6 +879,11 @@ class APIServer:
             else:
                 app.config["param_stats"] = {}
                 print(f"[DEBUG] API Server: No param_stats found, storing empty dict")
+            
+            # Register module middleware
+            if self.module_loader:
+                for middleware_func in self.module_loader.get_request_middleware():
+                    register_request_middleware(middleware_func)
 
             # Signal that the server will start
             self.started.set()

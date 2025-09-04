@@ -1850,6 +1850,12 @@ except Exception as e:
     param_stats = {}
 
 if local_rank == 0:
+    # Force reload of api module to pick up any recent changes
+    import importlib
+    import api
+    importlib.reload(api)
+    from api import APIServer
+    
     api_server = APIServer(
         generator,
         host_name,
@@ -1863,8 +1869,9 @@ if local_rank == 0:
     api_server.start()
 
     # Initialize any API server hooks from loaded modules
+    # Use the ACTUAL port that the API server is using (after auto-increment)
     for hook_func in module_loader_with_conditions.get_api_server_hooks():
-        hook_func(host_name, port)
+        hook_func(api_server.host, api_server.port)
 
 
 # Load datasets
