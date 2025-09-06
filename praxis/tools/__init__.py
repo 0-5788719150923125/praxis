@@ -5,16 +5,18 @@ from typing import Any, Dict, List, Optional, Union
 
 class Tool:
     """Simple tool wrapper to replace smolagents."""
+
     def __init__(self, func, name=None, description=None, parameters=None):
         self.func = func
         self.name = name or func.__name__
         self.description = description or func.__doc__ or ""
         self.inputs = parameters or self._extract_parameters(func)
         self.output_type = "float"  # Default for calc tool
-    
+
     def _extract_parameters(self, func):
         """Extract parameters from function signature."""
         import inspect
+
         sig = inspect.signature(func)
         params = {}
         for param_name, param in sig.parameters.items():
@@ -28,14 +30,16 @@ class Tool:
                     param_type = "string"
             params[param_name] = {
                 "type": param_type,
-                "default": param.default if param.default != inspect.Parameter.empty else None
+                "default": (
+                    param.default if param.default != inspect.Parameter.empty else None
+                ),
             }
         return params
-    
+
     def forward(self, **kwargs):
         """Execute the tool with given arguments."""
         return self.func(**kwargs)
-    
+
     def __call__(self, **kwargs):
         """Allow direct calling of the tool."""
         return self.func(**kwargs)
@@ -49,7 +53,7 @@ def tool(func):
 @tool
 def get_tools() -> str:
     """Get the JSON schema of all available tools.
-    
+
     Returns:
         JSON string containing all available tool schemas
     """
@@ -58,7 +62,7 @@ def get_tools() -> str:
         # Skip the get_tools tool itself to avoid recursion
         if isinstance(tool, Tool) and tool.name == "get_tools":
             continue
-        
+
         # Handle both Tool instances and regular functions
         if isinstance(tool, Tool):
             tool_schema = {
@@ -76,7 +80,7 @@ def get_tools() -> str:
         else:
             continue
         tools_schema.append(tool_schema)
-    
+
     # Also include dynamic tools
     for tool in DYNAMIC_TOOLS.values():
         if isinstance(tool, Tool):
@@ -86,7 +90,7 @@ def get_tools() -> str:
                 "parameters": tool.inputs,
             }
             tools_schema.append(tool_schema)
-    
+
     return json.dumps(tools_schema, indent=2)
 
 
@@ -180,7 +184,9 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
     """Call a tool by name with arguments (backward compatibility)."""
     tools = get_all_tools()
     for tool in tools:
-        tool_name = tool.name if isinstance(tool, Tool) else getattr(tool, "__name__", None)
+        tool_name = (
+            tool.name if isinstance(tool, Tool) else getattr(tool, "__name__", None)
+        )
         if tool_name == name:
             if isinstance(tool, Tool):
                 return tool(**arguments)

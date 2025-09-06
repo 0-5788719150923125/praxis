@@ -27,11 +27,13 @@ class TiedHead(BaseHead):
         """
         super().__init__(config)
         self.embedding_weight = embedding_weight
-        
+
         # If embed_size != hidden_size, we need a projection before using embeddings
         self.pre_projection = None
         if config.embed_size != config.hidden_size:
-            self.pre_projection = nn.Linear(config.hidden_size, config.embed_size, bias=False)
+            self.pre_projection = nn.Linear(
+                config.hidden_size, config.embed_size, bias=False
+            )
 
     def forward(self, hidden_states: Tensor, **kwargs: Any) -> Tensor:
         """
@@ -47,13 +49,13 @@ class TiedHead(BaseHead):
         # Project to embedding dimension if needed
         if self.pre_projection is not None:
             hidden_states = self.pre_projection(hidden_states)
-        
+
         # Use embedding weights as output projection
         # hidden_states: [batch, seq_len, embed_size]
         # embedding_weight: [vocab_size, embed_size]
         # We need to transpose the embedding weight for the linear transformation
         logits = F.linear(hidden_states, self.embedding_weight)
-        
+
         return logits
 
     @property
@@ -66,10 +68,11 @@ class TiedHead(BaseHead):
         Returns:
             A module that references the embedding weights
         """
+
         # Create a simple wrapper that holds the embedding weight
         class TiedClassifier(nn.Module):
             def __init__(self, weight):
                 super().__init__()
                 self.weight = weight
-        
+
         return TiedClassifier(self.embedding_weight)

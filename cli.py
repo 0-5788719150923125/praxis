@@ -7,19 +7,37 @@ import random
 import sys
 from datetime import datetime
 
-from praxis import (ACTIVATION_REGISTRY, ATTENTION_REGISTRY, BLOCK_REGISTRY,
-                    COMPRESSION_REGISTRY, CONTROLLER_REGISTRY,
-                    DECODER_REGISTRY, ENCODER_REGISTRY, ENCODING_REGISTRY,
-                    EXPERT_REGISTRY, HEAD_REGISTRY, LOSS_REGISTRY,
-                    NORMALIZATION_REGISTRY, RESIDUAL_REGISTRY,
-                    RL_POLICIES_REGISTRY, ROUTER_REGISTRY, SORTING_REGISTRY,
-                    STRATEGIES_REGISTRY)
+from praxis import (
+    ACTIVATION_REGISTRY,
+    ATTENTION_REGISTRY,
+    BLOCK_REGISTRY,
+    COMPRESSION_REGISTRY,
+    CONTROLLER_REGISTRY,
+    DECODER_REGISTRY,
+    ENCODER_REGISTRY,
+    ENCODING_REGISTRY,
+    EXPERT_REGISTRY,
+    HEAD_REGISTRY,
+    LOSS_REGISTRY,
+    NORMALIZATION_REGISTRY,
+    RESIDUAL_REGISTRY,
+    RL_POLICIES_REGISTRY,
+    ROUTER_REGISTRY,
+    SORTING_REGISTRY,
+    STRATEGIES_REGISTRY,
+)
 from praxis.modules import ModuleLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
 
 # Define the default list of arguments to exclude from hash computation
 # These are typically runtime/debugging flags that don't affect model architecture
-DEFAULT_EXCLUDE_FROM_HASH = ["--reset", "--debug", "--ngrok", "--wandb", "--no-dashboard"]
+DEFAULT_EXCLUDE_FROM_HASH = [
+    "--reset",
+    "--debug",
+    "--ngrok",
+    "--wandb",
+    "--no-dashboard",
+]
 
 
 def wrap_green(text):
@@ -670,7 +688,7 @@ def apply_defaults_and_parse(defaults_dict):
     def custom_log_command(exclude_from_hash=None):
         if exclude_from_hash is None:
             exclude_from_hash = DEFAULT_EXCLUDE_FROM_HASH
-        
+
         # Log the original command with computed hash
         script_name = os.path.basename(original_command[0])
         args_list = original_command[1:]
@@ -711,12 +729,12 @@ def apply_defaults_and_parse(defaults_dict):
         # Save both truncated and full hash
         hash_file_dir = os.path.join("data", "praxis")
         os.makedirs(hash_file_dir, exist_ok=True)
-        
+
         # Save truncated hash for backward compatibility
         hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
         with open(hash_file_path, "w") as f:
             f.write(truncated_hash)
-        
+
         # Save full hash in a separate file
         full_hash_path = os.path.join(hash_file_dir, "MODEL_HASH_FULL.txt")
         with open(full_hash_path, "w") as f:
@@ -850,12 +868,12 @@ def log_command(exclude_from_hash=None):
     # Save both truncated and full hash to data/praxis directory
     hash_file_dir = os.path.join("data", "praxis")
     os.makedirs(hash_file_dir, exist_ok=True)
-    
+
     # Save truncated hash for backward compatibility
     hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
     with open(hash_file_path, "w") as f:
         f.write(truncated_hash)
-    
+
     # Save full hash in a separate file
     full_hash_path = os.path.join(hash_file_dir, "MODEL_HASH_FULL.txt")
     with open(full_hash_path, "w") as f:

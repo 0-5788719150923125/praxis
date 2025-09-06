@@ -89,7 +89,7 @@ class GRU(nn.Module):
         else:
             # Check if we have a properly shaped hidden state
             valid_state = False
-            
+
             if prev_hidden.dim() == 2:
                 # Expected: [batch_size, dim_inner]
                 if prev_hidden.shape == (batch_size, self.dim_inner):
@@ -105,7 +105,7 @@ class GRU(nn.Module):
                     # Already in correct shape
                     h = prev_hidden
                     valid_state = True
-            
+
             # If we don't have a valid state, reinitialize
             if not valid_state:
                 h = None

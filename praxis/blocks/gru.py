@@ -27,8 +27,8 @@ class GRUBlock(nn.Module):
         """
         super().__init__()
         # Use num_smear if available, otherwise default to 3
-        num_smear = getattr(config, 'num_smear', 3)
-        
+        num_smear = getattr(config, "num_smear", 3)
+
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
         self.experts = SMEAR(
@@ -67,7 +67,7 @@ class GRUBlock(nn.Module):
         # Apply layer norm and process through SMEAR-routed GRU experts
         normed_inputs = self.norm(inputs)
         outputs, new_state, aux_loss = self.experts(normed_inputs, current_state)
-        
+
         # Apply dropout before residual connection
         outputs = self.dropout(outputs)
 

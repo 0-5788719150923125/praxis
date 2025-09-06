@@ -106,15 +106,17 @@ class ALiBi(NoPE):
             pos_diff = pos_diff * valid_mask  # Zero out cross-sequence differences
         else:
             # Handle asymmetric attention (different query and key lengths)
-            query_positions = torch.arange(query_len, dtype=torch.float32, device=device)
+            query_positions = torch.arange(
+                query_len, dtype=torch.float32, device=device
+            )
             key_positions = torch.arange(key_len, dtype=torch.float32, device=device)
-            
+
             query_positions = query_positions.unsqueeze(0).expand(batch_size, query_len)
             key_positions = key_positions.unsqueeze(0).expand(batch_size, key_len)
-            
+
             query_positions = query_positions + offset
             key_positions = key_positions + offset
-            
+
             # Compute position differences: [batch, query_len, key_len]
             pos_diff = query_positions.unsqueeze(-1) - key_positions.unsqueeze(-2)
 

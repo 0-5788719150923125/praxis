@@ -9,16 +9,16 @@ from datetime import datetime
 def add_cli_args(parser):
     """Add wandb CLI arguments to the parser."""
     other_group = None
-    
+
     # Find the 'other' argument group
     for group in parser._action_groups:
-        if group.title == 'other':
+        if group.title == "other":
             other_group = group
             break
-    
+
     if other_group is None:
-        other_group = parser.add_argument_group('other')
-    
+        other_group = parser.add_argument_group("other")
+
     other_group.add_argument(
         "--wandb",
         action="store_true",
@@ -36,9 +36,9 @@ def add_cli_args(parser):
 def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     """Initialize wandb and return logger configuration."""
     import wandb
-    
+
     wandb.login()
-    
+
     # Configure wandb options
     wandb_opts = dict(
         project="praxis",
@@ -51,20 +51,20 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
             _disable_stats=True,  # Disable system metrics
         ),
     )
-    
+
     # Handle resumption from checkpoint
     if ckpt_path is not None:
         run_id = find_latest_wandb_run(cache_dir, cleanup_old_runs=True)
         if run_id is not None:
             wandb_opts["id"] = run_id
             wandb_opts["resume"] = "must"
-    
+
     # Set run name
     if args.wandb_run_name:
         wandb_opts["name"] = args.wandb_run_name
     elif truncated_hash:
         wandb_opts["name"] = truncated_hash
-    
+
     return {"wandb_opts": wandb_opts}
 
 
@@ -72,6 +72,7 @@ def cleanup():
     """Cleanup wandb resources."""
     try:
         import wandb
+
         wandb.finish()
     except Exception:
         pass
@@ -80,19 +81,19 @@ def cleanup():
 def create_logger(cache_dir, ckpt_path=None, truncated_hash=None, **kwargs):
     """Create and configure a wandb logger if wandb is enabled."""
     # Check if wandb is enabled through kwargs
-    if not kwargs.get('wandb_enabled', False):
+    if not kwargs.get("wandb_enabled", False):
         return None
-    
+
     # Get args from kwargs
-    args = kwargs.get('args')
+    args = kwargs.get("args")
     if not args:
         return None
-        
+
     # Initialize wandb
     init_result = initialize(args, cache_dir, ckpt_path, truncated_hash)
-    if init_result and 'wandb_opts' in init_result:
-        return CustomWandbLogger(**init_result['wandb_opts'])
-    
+    if init_result and "wandb_opts" in init_result:
+        return CustomWandbLogger(**init_result["wandb_opts"])
+
     return None
 
 
@@ -173,15 +174,16 @@ def find_latest_wandb_run(cache_dir, cleanup_old_runs=True):
 
 class CustomWandbLogger:
     """Custom WandB logger that handles hyperparameter logging properly."""
-    
+
     def __init__(self, **wandb_opts):
         from lightning.pytorch.loggers import WandbLogger
+
         self._wandb_logger = WandbLogger(**wandb_opts)
-        
+
     def __getattr__(self, name):
         """Delegate all other attributes to the wrapped logger."""
         return getattr(self._wandb_logger, name)
-        
+
     def log_hyperparams(self, params):
         """Custom hyperparameter logging that flattens hparams."""
         # Create new dict with all non-hparams entries

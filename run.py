@@ -1068,22 +1068,30 @@ class TerminalInterface(Callback):
                     self.unchanged_count += 1
                     # Log periodically when context is stuck
                     if self.unchanged_count % 10 == 0 and self.unchanged_count > 0:
-                        print(f"[INFO] Context unchanged for {self.unchanged_count} predictions...")
+                        print(
+                            f"[INFO] Context unchanged for {self.unchanged_count} predictions..."
+                        )
                         # Debug: show what tokens were attempted to be generated
                         if debug:
-                            print(f"[DEBUG] Last text length: {len(result)}, First 100 chars: {repr(result[:100])}")
+                            print(
+                                f"[DEBUG] Last text length: {len(result)}, First 100 chars: {repr(result[:100])}"
+                            )
                 else:
                     self.unchanged_count = 0
-                
+
                 # Keep history of last few texts for debugging
                 self.previous_texts.append(result)
                 if len(self.previous_texts) > 5:
                     self.previous_texts.pop(0)
-                
+
                 # Reset context if it hasn't changed for too many predictions
                 if self.unchanged_count >= self.unchanged_threshold:
-                    print(f"[WARNING] Context stuck for {self.unchanged_count} predictions, resetting...")
-                    print(f"[INFO] Stuck text sample (first 200 chars): {repr(result[:200])}")
+                    print(
+                        f"[WARNING] Context stuck for {self.unchanged_count} predictions, resetting..."
+                    )
+                    print(
+                        f"[INFO] Stuck text sample (first 200 chars): {repr(result[:200])}"
+                    )
                     self.text = self.initial_text
                     self.unchanged_count = 0
                     self.previous_texts = []
@@ -1431,7 +1439,7 @@ class Generator:
                     # Compare token lengths to detect if model generated whitespace
                     prompt_tokens = len(self.tokenizer.encode(request.prompt))
                     generated_token_count = len(generated_tokens[0])
-                    
+
                     # If we have more tokens than the prompt, something was generated
                     if generated_token_count > prompt_tokens:
                         return_text = decoded_new
@@ -1443,7 +1451,9 @@ class Generator:
                     else:
                         # No new tokens were generated, try again with more tokens
                         attempts += 1
-                        combined["max_new_tokens"] = min(combined.get("max_new_tokens", 1) + 1, 10)
+                        combined["max_new_tokens"] = min(
+                            combined.get("max_new_tokens", 1) + 1, 10
+                        )
                         continue
                 else:
                     # The decoded text contains '�', so we need to generate more tokens
@@ -1461,7 +1471,7 @@ class Generator:
 
         if unprocessed_call and self.tools and self.call_tool:
             tool_call, _ = unprocessed_call
-            
+
             # Execute the tool
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("arguments", {})
@@ -1474,7 +1484,7 @@ class Generator:
                 # Append the tool result directly as a simple tag
                 # This preserves the exact format and allows for multiple tool calls
                 tool_result_tag = f"\n<tool_result>{str(tool_result)}</tool_result>\n"
-                
+
                 # Build the complete prompt with tool result for continuation
                 complete_prompt = return_text + tool_result_tag
 
@@ -1513,8 +1523,10 @@ class Generator:
                 continue
 
         return None
-    
-    def _get_unprocessed_tool_call(self, text: str) -> Optional[tuple[Dict[str, Any], int]]:
+
+    def _get_unprocessed_tool_call(
+        self, text: str
+    ) -> Optional[tuple[Dict[str, Any], int]]:
         """
         Find the last unprocessed tool call in the text.
         Returns a tuple of (tool_data, match_end_position) or None.
@@ -1522,36 +1534,35 @@ class Generator:
         """
         tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
         matches = list(re.finditer(tool_pattern, text, re.DOTALL))
-        
+
         if not matches:
             return None
-            
+
         # Check each tool call from last to first
         for match in reversed(matches):
             # Check if there's a tool_result tag after THIS specific tool call
-            text_after_this_call = text[match.end():]
-            
+            text_after_this_call = text[match.end() :]
+
             # Look for the next tool_result tag after this specific tool call
             # If there's no tool_result or there's another tool_call before the tool_result,
             # then this tool call is unprocessed
             next_tool_call_pos = text_after_this_call.find("<tool_call>")
             next_tool_result_pos = text_after_this_call.find("<tool_result>")
-            
+
             # This tool is unprocessed if:
             # 1. There's no tool_result after it, OR
             # 2. There's another tool_call before the next tool_result
-            is_unprocessed = (
-                next_tool_result_pos == -1 or 
-                (next_tool_call_pos != -1 and next_tool_call_pos < next_tool_result_pos)
+            is_unprocessed = next_tool_result_pos == -1 or (
+                next_tool_call_pos != -1 and next_tool_call_pos < next_tool_result_pos
             )
-            
+
             if is_unprocessed:
                 try:
                     tool_data = json.loads(match.group(1))
                     return (tool_data, match.end())
                 except json.JSONDecodeError:
                     continue
-                    
+
         return None
 
     def fulfill_requests(self, max_requests: int = None) -> int:
@@ -1871,9 +1882,10 @@ if local_rank == 0:
     # Force reload of api module to pick up any recent changes
     import importlib
     import api
+
     importlib.reload(api)
     from api import APIServer
-    
+
     api_server = APIServer(
         generator,
         host_name,

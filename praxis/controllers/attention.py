@@ -40,7 +40,10 @@ class AttentionChanneler(BaseController):
 
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
-            [nn.Embedding(self.num_experts, hidden_size) for _ in range(self.num_experts)]
+            [
+                nn.Embedding(self.num_experts, hidden_size)
+                for _ in range(self.num_experts)
+            ]
         )
 
         # Attention mechanism operating in hidden_size space
@@ -83,7 +86,8 @@ class AttentionChanneler(BaseController):
         # Residual projections
         self.router_projection = nn.Linear(hidden_size, self.num_experts)
         self.logits_projection = nn.ModuleList(
-            nn.Linear(self.num_experts, self.channel_size) for _ in range(self.num_experts)
+            nn.Linear(self.num_experts, self.channel_size)
+            for _ in range(self.num_experts)
         )
 
         # Project expert probs through a bottleneck

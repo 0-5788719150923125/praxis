@@ -137,16 +137,18 @@ class SyntaxesAttention(nn.Module):
         scores = self.encoding.after_scores(scores, offset=offset, block_ids=block_ids)
 
         # Create causal mask - each query can only attend to context positions <= its own position
-        query_positions = torch.arange(seq_len, device=device).unsqueeze(1)  # [seq_len, 1]
+        query_positions = torch.arange(seq_len, device=device).unsqueeze(
+            1
+        )  # [seq_len, 1]
         context_positions = torch.arange(
             context_start, context_start + context_size, device=device
-        ).unsqueeze(0)  # [1, context_size]
-        
+        ).unsqueeze(
+            0
+        )  # [1, context_size]
+
         # Causal mask: can only attend to positions <= query position
-        causal_mask = (
-            context_positions <= query_positions
-        )  # [seq_len, context_size]
-        
+        causal_mask = context_positions <= query_positions  # [seq_len, context_size]
+
         # Special handling: queries before the context window need at least one valid attention target
         # to avoid NaN. We'll let them attend to the first position in the context.
         queries_before_context = query_positions.squeeze(1) < context_start
@@ -162,16 +164,16 @@ class SyntaxesAttention(nn.Module):
         # Apply attention mask if provided
         if attention_mask is not None:
             # Extract context portion of attention mask
-            context_mask = attention_mask[:, context_start : context_start + context_size]
+            context_mask = attention_mask[
+                :, context_start : context_start + context_size
+            ]
             context_mask = context_mask.unsqueeze(1).unsqueeze(
                 1
             )  # [batch, 1, 1, context_size]
             scores = scores.masked_fill(context_mask == 0, -torch.inf)
 
         # Softmax and dropout
-        weights = F.softmax(
-            scores, dim=-1
-        )  # [batch, heads, seq_len, context_size]
+        weights = F.softmax(scores, dim=-1)  # [batch, heads, seq_len, context_size]
         weights = self.dropout(weights)
 
         # Apply attention to values

@@ -321,9 +321,11 @@ def test_huggingface_dataset_determinism():
     """Test that HuggingfaceDataset produces deterministic sequences with the same seed."""
     # Create a tokenizer
     tokenizer = AutoTokenizer.from_pretrained("facebook/opt-125m")
-    
+
     # Set a simple chat template for testing
-    tokenizer.chat_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    tokenizer.chat_template = (
+        "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    )
 
     # Choose a small dataset from the available ones
     dataset_config = HUGGINGFACE_DATASETS["minipile-validation"].copy()
@@ -371,9 +373,11 @@ def test_interleave_data_manager_determinism():
     """Test that InterleaveDataManager produces deterministic batches with fixed seeds."""
     # Create a tokenizer
     tokenizer = AutoTokenizer.from_pretrained("facebook/opt-125m")
-    
+
     # Set a simple chat template for testing
-    tokenizer.chat_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    tokenizer.chat_template = (
+        "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    )
 
     # Use a small dataset
     dataset_config = HUGGINGFACE_DATASETS["minipile-validation"].copy()
@@ -404,10 +408,10 @@ def test_interleave_data_manager_determinism():
     # Handle new dictionary format
     assert isinstance(batch_1, dict) and isinstance(batch_2, dict)
     assert "batch" in batch_1 and "batch" in batch_2
-    
+
     batch_tensors_1 = batch_1["batch"]
     batch_tensors_2 = batch_2["batch"]
-    
+
     assert len(batch_tensors_1) == len(batch_tensors_2)
     for i in range(len(batch_tensors_1)):
         torch.testing.assert_close(batch_tensors_1[i], batch_tensors_2[i])
@@ -424,7 +428,7 @@ def test_interleave_data_manager_determinism():
     # Check that batches are identical
     batch_tensors_3 = batch_3["batch"]
     batch_tensors_4 = batch_4["batch"]
-    
+
     assert len(batch_tensors_3) == len(batch_tensors_4)
     for i in range(len(batch_tensors_3)):
         torch.testing.assert_close(batch_tensors_3[i], batch_tensors_4[i])

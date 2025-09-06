@@ -23,7 +23,7 @@ class ForwardHead(BaseHead):
         """
         super().__init__(config)
         self.lm_head = nn.Linear(self.hidden_size, self.vocab_size, bias=False)
-        
+
         # Initialize weights
         self.lm_head.weight.data.normal_(mean=0.0, std=0.02)
 

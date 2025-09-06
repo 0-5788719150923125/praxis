@@ -39,13 +39,13 @@ class MonoForwardDecoder(SequentialDecoder):
 
         # Use smaller vocabulary for ALL internal projections
         # Since the main LM head handles final projection, all layers can use reduced size
-        internal_vocab_size = config.vocab_size // 4  # Uniform reduced size for efficiency
+        internal_vocab_size = (
+            config.vocab_size // 4
+        )  # Uniform reduced size for efficiency
 
         for i, layer in enumerate(self.locals):
             # Every layer uses the same reduced vocabulary for local training
-            projection = nn.Linear(
-                config.hidden_size, internal_vocab_size, bias=False
-            )
+            projection = nn.Linear(config.hidden_size, internal_vocab_size, bias=False)
 
             # Initialize projection weights
             nn.init.normal_(projection.weight, std=(2.0 / config.hidden_size) ** 0.5)

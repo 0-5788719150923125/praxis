@@ -179,7 +179,7 @@ print(
             },
             {
                 "role": "assistant",
-                "content": f"Let me calculate that for you.\n<tool_call>\n{{\"name\": \"calc\", \"arguments\": {{\"values\": [25, 17], \"op\": \"add\"}}}}\n</tool_call>\n<tool_result>{result}</tool_result>",
+                "content": f'Let me calculate that for you.\n<tool_call>\n{{"name": "calc", "arguments": {{"values": [25, 17], "op": "add"}}}}\n</tool_call>\n<tool_result>{result}</tool_result>',
             },
             {
                 "role": "assistant",
@@ -200,19 +200,19 @@ print(
 )
 
 # Auto-upload chat template to HuggingFace repos if authenticated
-print("\n" + "="*60)
+print("\n" + "=" * 60)
 print("Chat Template Upload to HuggingFace")
-print("="*60)
+print("=" * 60)
 
 try:
     from huggingface_hub import HfApi, login, upload_file
     from huggingface_hub.utils import RepositoryNotFoundError
     import tempfile
     import json
-    
+
     # Try to get HF API instance (will use cached token if available)
     api = HfApi()
-    
+
     # Check if user is authenticated
     try:
         user_info = api.whoami()
@@ -221,11 +221,11 @@ try:
         print("✗ Not authenticated with HuggingFace")
         print("  Run 'huggingface-cli login' to authenticate")
         exit(0)
-    
+
     # Define all praxis tokenizer repos for different vocab sizes
     vocab_sizes = [1024, 2048, 4096, 8192, 16384, 32768, 65536]
     repos = [f"UNSAFE/praxis-{size}" for size in vocab_sizes]
-    
+
     # Check which repos the user has access to
     accessible_repos = []
     for repo_id in repos:
@@ -236,32 +236,36 @@ try:
             print(f"  Skipping {repo_id} - not found")
         except Exception as e:
             print(f"  Skipping {repo_id} - no access")
-    
+
     if not accessible_repos:
         print("\n✗ No accessible praxis repos found")
         exit(0)
-    
+
     print(f"\n✓ Found {len(accessible_repos)} accessible repos:")
     for repo in accessible_repos:
         print(f"  - {repo}")
-    
+
     # Prompt user for confirmation
-    response = input("\nDo you want to upload the chat template to these repos? (y/n): ")
-    
-    if response.lower() != 'y':
+    response = input(
+        "\nDo you want to upload the chat template to these repos? (y/n): "
+    )
+
+    if response.lower() != "y":
         print("Skipping upload.")
         exit(0)
-    
+
     # Upload chat template to each accessible repo as a .jinja file
     print("\nUploading chat_template.jinja files...")
-    
+
     for repo_id in accessible_repos:
         try:
             # Create a temporary .jinja file with the chat template
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.jinja', delete=False) as f:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".jinja", delete=False
+            ) as f:
                 f.write(chat_template)
                 temp_path = f.name
-            
+
             # Upload the chat_template.jinja to the repo
             upload_file(
                 path_or_fileobj=temp_path,
@@ -270,17 +274,17 @@ try:
                 repo_type="model",
                 commit_message="Add chat_template.jinja with inline tool result support",
             )
-            
+
             print(f"  ✓ Uploaded chat_template.jinja to {repo_id}")
-            
+
             # Clean up temp file
             os.remove(temp_path)
-            
+
         except Exception as e:
             print(f"  ✗ Failed to upload to {repo_id}: {e}")
-    
+
     print("\n✓ Chat template upload complete!")
-    
+
 except ImportError:
     print("✗ huggingface_hub not installed")
     print("  Run 'pip install huggingface_hub' to enable auto-upload")

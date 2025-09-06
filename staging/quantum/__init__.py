@@ -145,7 +145,22 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
 
         # Count available text files
         total_files = 0
-        for ext in [".py", ".md", ".txt", ".rst", ".sol", ".vrp", ".yaml", ".yml", ".json", ".toml", ".cfg", ".ini", ".sh", ".ipynb"]:
+        for ext in [
+            ".py",
+            ".md",
+            ".txt",
+            ".rst",
+            ".sol",
+            ".vrp",
+            ".yaml",
+            ".yml",
+            ".json",
+            ".toml",
+            ".cfg",
+            ".ini",
+            ".sh",
+            ".ipynb",
+        ]:
             count = len(list(repo_path.rglob(f"*{ext}")))
             if count > 0:
                 total_files += count
@@ -236,20 +251,20 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
 
     # Valid text file extensions to process
     VALID_EXTENSIONS = {
-        ".py",    # Python code
-        ".md",    # Markdown documentation
-        ".txt",   # Text files
-        ".rst",   # ReStructuredText
-        ".sol",   # Solution files (routing solutions)
-        ".vrp",   # Vehicle Routing Problem files
+        ".py",  # Python code
+        ".md",  # Markdown documentation
+        ".txt",  # Text files
+        ".rst",  # ReStructuredText
+        ".sol",  # Solution files (routing solutions)
+        ".vrp",  # Vehicle Routing Problem files
         ".yaml",  # YAML config
-        ".yml",   # YAML config
+        ".yml",  # YAML config
         ".json",  # JSON data
         ".toml",  # TOML config
-        ".cfg",   # Config files
-        ".ini",   # INI config
-        ".sh",    # Shell scripts
-        ".ipynb", # Jupyter notebooks
+        ".cfg",  # Config files
+        ".ini",  # INI config
+        ".sh",  # Shell scripts
+        ".ipynb",  # Jupyter notebooks
     }
 
     # Find all valid text files
@@ -287,7 +302,9 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
         return []
 
     # Sample random files
-    sampled_files = random.sample(filtered_files, min(num_examples, len(filtered_files)))
+    sampled_files = random.sample(
+        filtered_files, min(num_examples, len(filtered_files))
+    )
 
     for file_path in sampled_files:
         try:
@@ -301,10 +318,10 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
 
             # Get relative path from repo root
             relative_path = file_path.relative_to(_quantum_path)
-            
+
             # Determine file type and format appropriately
             file_ext = file_path.suffix.lower()
-            
+
             # Choose appropriate language tag for code blocks
             lang_map = {
                 ".py": "python",
@@ -323,23 +340,33 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
                 ".ipynb": "json",  # Jupyter notebooks are JSON
             }
             lang = lang_map.get(file_ext, "text")
-            
+
             # Adjust the description based on file type
             if file_ext in [".md", ".rst", ".txt"]:
                 file_desc = "documentation from the qoblib quantum computing library"
-                user_prompt = f"Please summarize this {file_desc}:\n\n```{lang}\n{content}\n```"
+                user_prompt = (
+                    f"Please summarize this {file_desc}:\n\n```{lang}\n{content}\n```"
+                )
             elif file_ext == ".sol":
                 file_desc = "quantum optimization solution data"
-                user_prompt = f"Please explain this {file_desc}:\n\n```{lang}\n{content}\n```"
+                user_prompt = (
+                    f"Please explain this {file_desc}:\n\n```{lang}\n{content}\n```"
+                )
             elif file_ext == ".vrp":
                 file_desc = "Vehicle Routing Problem instance for quantum optimization"
-                user_prompt = f"Please analyze this {file_desc}:\n\n```{lang}\n{content}\n```"
+                user_prompt = (
+                    f"Please analyze this {file_desc}:\n\n```{lang}\n{content}\n```"
+                )
             elif file_ext in [".yaml", ".yml", ".json", ".toml", ".cfg", ".ini"]:
                 file_desc = "configuration from the qoblib quantum computing library"
-                user_prompt = f"Please explain this {file_desc}:\n\n```{lang}\n{content}\n```"
+                user_prompt = (
+                    f"Please explain this {file_desc}:\n\n```{lang}\n{content}\n```"
+                )
             else:
                 file_desc = "quantum computing code from the qoblib library"
-                user_prompt = f"Please analyze this {file_desc}:\n\n```{lang}\n{content}\n```"
+                user_prompt = (
+                    f"Please analyze this {file_desc}:\n\n```{lang}\n{content}\n```"
+                )
 
             # Create a chat message in the unified format
             messages = [
@@ -357,7 +384,9 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
                 },
                 {
                     "role": "assistant",
-                    "content": _generate_quantum_analysis(content, relative_path, file_ext),
+                    "content": _generate_quantum_analysis(
+                        content, relative_path, file_ext
+                    ),
                 },
             ]
 
@@ -377,26 +406,38 @@ def _generate_quantum_analysis(code: str, file_path: Path, file_ext: str) -> str
 
     # Simple heuristic-based analysis
     analysis_parts = []
-    
+
     # Handle different file types
     if file_ext in [".md", ".rst", ".txt"]:
         # Documentation files
         if "README" in str(file_path).upper():
-            analysis_parts.append(f"This README file from {file_path} provides documentation for quantum computing components.")
+            analysis_parts.append(
+                f"This README file from {file_path} provides documentation for quantum computing components."
+            )
         else:
-            analysis_parts.append(f"This documentation from {file_path} explains quantum computing concepts and implementations.")
+            analysis_parts.append(
+                f"This documentation from {file_path} explains quantum computing concepts and implementations."
+            )
     elif file_ext == ".sol":
         # Solution files
         if "Route" in code:
-            analysis_parts.append("This solution file contains optimized routing paths from quantum optimization algorithms.")
+            analysis_parts.append(
+                "This solution file contains optimized routing paths from quantum optimization algorithms."
+            )
         else:
-            analysis_parts.append("This file contains solution data from quantum optimization benchmarks.")
+            analysis_parts.append(
+                "This file contains solution data from quantum optimization benchmarks."
+            )
     elif file_ext == ".vrp":
         # Vehicle Routing Problem files
-        analysis_parts.append("This VRP instance defines a vehicle routing optimization problem suitable for quantum computing approaches.")
+        analysis_parts.append(
+            "This VRP instance defines a vehicle routing optimization problem suitable for quantum computing approaches."
+        )
     elif file_ext in [".yaml", ".yml", ".json", ".toml", ".cfg", ".ini"]:
         # Configuration files
-        analysis_parts.append(f"This configuration file from {file_path} defines parameters for quantum computing experiments.")
+        analysis_parts.append(
+            f"This configuration file from {file_path} defines parameters for quantum computing experiments."
+        )
     else:
         # Code files (Python, shell scripts, etc.)
         # Check for common quantum operations
@@ -421,9 +462,13 @@ def _generate_quantum_analysis(code: str, file_path: Path, file_ext: str) -> str
 
         # Check for specific algorithms
         if "grover" in code.lower():
-            analysis_parts.append("This appears to implement Grover's search algorithm.")
+            analysis_parts.append(
+                "This appears to implement Grover's search algorithm."
+            )
         elif "shor" in code.lower():
-            analysis_parts.append("This appears to implement Shor's factoring algorithm.")
+            analysis_parts.append(
+                "This appears to implement Shor's factoring algorithm."
+            )
         elif "qft" in code.lower() or "fourier" in code.lower():
             analysis_parts.append("This implements the Quantum Fourier Transform.")
 

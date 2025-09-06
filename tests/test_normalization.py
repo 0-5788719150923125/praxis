@@ -130,7 +130,7 @@ def test_pre_post_norm_flags():
     # Check post-norm configuration (pre_norm=False, post_norm=True)
     assert post_rms_norm.pre_norm == False
     assert post_rms_norm.post_norm == True
-    
+
     # Check sandwich configuration (pre_norm=True, post_norm=True)
     assert sandwich_norm.pre_norm == True
     assert sandwich_norm.post_norm == True
@@ -209,33 +209,33 @@ def test_sandwich_norm_behavior():
     """Test sandwich normalization (both pre and post norm enabled)."""
     hidden_size = 64
     x = torch.randn(10, 20, hidden_size)
-    
+
     sandwich_norm = NORMALIZATION_REGISTRY["sandwich"](hidden_size)
-    
+
     # Verify flags are set correctly
     assert sandwich_norm.pre_norm == True
     assert sandwich_norm.post_norm == True
-    
+
     # Test pre mode - should apply normalization (pre_norm=True)
     pre_output = sandwich_norm(x, mode="pre")
     assert not torch.equal(pre_output, x)  # Should be normalized
-    
+
     # Test post mode - should apply normalization (post_norm=True)
     post_output = sandwich_norm(x, mode="post")
     assert not torch.equal(post_output, x)  # Should be normalized
-    
+
     # Test both mode - should apply normalization (both flags True)
     both_output = sandwich_norm(x, mode="both")
     assert not torch.equal(both_output, x)  # Should be normalized
-    
+
     # Test direct mode - should always apply normalization
     direct_output = sandwich_norm(x, mode="direct")
     assert not torch.equal(direct_output, x)  # Should be normalized
-    
+
     # Test none mode - should always be no-op
     none_output = sandwich_norm(x, mode="none")
     assert torch.equal(none_output, x)  # Should be unchanged
-    
+
     # Verify it actually normalizes correctly (RMS should be ~1)
     normalized = sandwich_norm(x, mode="direct")
     rms = torch.sqrt(torch.mean(normalized**2, dim=-1))

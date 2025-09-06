@@ -167,7 +167,9 @@ class TestTemporalHealthComplex:
         # Check reasonable ranges
         assert stats["magnitude_std"] >= 0
         assert stats["phase_diff_std"] >= 0
-        assert 0 <= stats["phase_coherence"] <= 1, f"Phase coherence out of range: {stats['phase_coherence']}"
+        assert (
+            0 <= stats["phase_coherence"] <= 1
+        ), f"Phase coherence out of range: {stats['phase_coherence']}"
 
     def test_training_mode_effects(self, thc_module, test_input):
         """Test that training/eval modes affect the module appropriately."""

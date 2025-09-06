@@ -26,8 +26,8 @@ class RecurrentBlock(nn.Module):
         """
         super().__init__()
         # Use num_smear if available, otherwise default to 3
-        num_smear = getattr(config, 'num_smear', 3)
-        
+        num_smear = getattr(config, "num_smear", 3)
+
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.experts = SMEAR(
             config,

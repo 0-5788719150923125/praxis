@@ -199,11 +199,11 @@ def get_gun_dataset_class():
 def get_or_create_gun_adapter():
     """Get or create the global Gun adapter instance."""
     global _gun_adapter, _gun_enabled, _gun_initialized
-    
+
     # Only create adapter if the module was properly initialized with conditions met
     if not _gun_initialized:
         raise RuntimeError("[Gun] Module not properly initialized. Gun flag not set.")
-    
+
     if _gun_adapter is None:
         _gun_adapter = GunAdapter()
         # Register cleanup only when Gun is actually created
@@ -237,12 +237,12 @@ def add_cli_args(parser):
 def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     """Initialize Gun module when conditions are met."""
     global _gun_initialized
-    
+
     # Only initialize if the gun flag is actually set
     if not getattr(args, "gun", False):
         print("[Gun] Module not initialized (--gun flag not set)")
         return {}
-    
+
     # Check if Node.js is available
     try:
         result = subprocess.run(
@@ -276,12 +276,14 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
 def provide_dataset(tokenizer, seed, config=None, *args):
     """Provide Gun dataset when requested."""
     global _gun_initialized
-    
+
     # Only provide dataset if properly initialized
     if not _gun_initialized:
-        print("[Gun] ERROR: Dataset requested but module not initialized (--gun flag not set)")
+        print(
+            "[Gun] ERROR: Dataset requested but module not initialized (--gun flag not set)"
+        )
         return None
-    
+
     GunChatDataset = get_gun_dataset_class()
     # Create instance with just the tokenizer (PraxisSampler signature)
     dataset = GunChatDataset(tokenizer)

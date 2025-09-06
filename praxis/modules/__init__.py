@@ -2,4 +2,4 @@
 
 from .loader import ModuleLoader
 
-__all__ = ['ModuleLoader']
+__all__ = ["ModuleLoader"]

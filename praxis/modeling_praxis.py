@@ -169,7 +169,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Backward loss: predict previous token
         # For backward prediction, we want logits[1:] to predict input_ids[:-1]
         backward_labels = input_ids[..., :-1].contiguous()
-        
+
         # Select appropriate logits and classifier for backward prediction
         if backward_logits is not None:
             # Use separate backward head
@@ -183,7 +183,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             # Reuse forward head
             back_logits = logits[..., 1:, :].contiguous()
             back_classifier = classifier
-        
+
         # Compute backward loss
         backward_loss = self.criterion(
             logits=back_logits,
