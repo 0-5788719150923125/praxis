@@ -122,9 +122,14 @@ HUGGINGFACE_DATASETS = {
         keys=["definition", "inputs", "targets"],
         format=DataFormat.CONVERSATION,
     ),
+    # "persona-chat": dict(
+    #     path="google/Synthetic-Persona-Chat",
+    #     keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
+    #     format=DataFormat.PERSONACHAT,
+    # ),
     "persona-chat": dict(
-        path="google/Synthetic-Persona-Chat",
-        keys=["user 1 personas", "user 2 personas", "Best Generated Conversation"],
+        path="AlekseyKorshuk/persona-chat",
+        keys=["personality", "utterances"],
         format=DataFormat.PERSONACHAT,
     ),
     "smoltalk": dict(
@@ -611,63 +616,307 @@ def format_conversation(
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
+def repair_text_punctuation(text: str) -> str:
+    """First pass: Fix punctuation and spacing issues."""
+    import re
+
+    # Fix common typos/mangled words from the dataset
+    # "ll" at start of sentence is often "lol" that got mangled
+    text = re.sub(r"^ll\b", "lol", text, flags=re.IGNORECASE)
+    text = re.sub(r"([.!?]\s+)ll\b", r"\1lol", text, flags=re.IGNORECASE)
+
+    # Special case: Fix ". . . ? d" pattern (common in dataset)
+    # This becomes "...? :D"
+    text = re.sub(r"\.\s+\.\s+\.\s+\?\s+d$", r"...? :D", text, flags=re.IGNORECASE)
+
+    # Pass 1: Fix broken emoticons (before any other punctuation fixes)
+    # Common patterns where emoticons got split with spaces
+    text = re.sub(r":\s+([dDpPsS)])", r":\1", text)  # ": d" -> ":D"
+    text = re.sub(r";\s+([dDpPsS)])", r";\1", text)  # "; d" -> ";D"
+    text = re.sub(r"x\s+d\b", r"xD", text, flags=re.IGNORECASE)  # "x d" -> "xD"
+    # Fix standalone "? d" or ". d" at end
+    text = re.sub(r"\?\s+d$", r"? :D", text, flags=re.IGNORECASE)
+    text = re.sub(r"\.\s+d$", r". :D", text, flags=re.IGNORECASE)
+
+    # Pass 2: Collapse spaced punctuation sequences
+    text = re.sub(r"([.!?])\s+([.!?])", r"\1\2", text)  # ". ." -> ".."
+    text = re.sub(r"([.!?])\1{3,}", r"\1\1\1", text)  # Limit to max 3 repetitions
+
+    # Pass 3: Fix spacing around punctuation (but preserve emoticons)
+    # Don't collapse spaces before : or ; that are part of emoticons
+    text = re.sub(r"\s+([,.])", r"\1", text)  # Remove spaces before comma and period
+    text = re.sub(
+        r"\s+([!?])(?!\s*:)", r"\1", text
+    )  # Remove before ! and ? unless followed by :
+    text = re.sub(
+        r"\s+([:;])(?![DPSdps)(/])", r"\1", text
+    )  # Remove before : and ; unless emoticon
+    text = re.sub(r"([,;:])(?=[^\s])", r"\1 ", text)  # Add space after punctuation
+    text = re.sub(r"\s+", " ", text)  # Collapse multiple spaces
+
+    return text
+
+
+def repair_broken_emoticons(text: str) -> str:
+    """Second pass: Fix emoticons that got mangled by first pass."""
+    import re
+
+    # Fix patterns where emoticons got merged with punctuation
+    # "...?:D" should be "...? :D"
+    text = re.sub(r"([.!?]):([DPSdps)])", r"\1 :\2", text)
+    text = re.sub(r"([.!?]);([DPSdps)])", r"\1 ;\2", text)
+
+    # Uppercase emoticon letters (with optional space before)
+    text = re.sub(r":\s*d\b", ":D", text, flags=re.IGNORECASE)
+    text = re.sub(r":\s*p\b", ":P", text, flags=re.IGNORECASE)
+    text = re.sub(r":\s*s\b", ":S", text, flags=re.IGNORECASE)
+    text = re.sub(r";\s*d\b", ";D", text, flags=re.IGNORECASE)
+    text = re.sub(r";\s*p\b", ";P", text, flags=re.IGNORECASE)
+    text = re.sub(r"x\s*d\b", "xD", text, flags=re.IGNORECASE)
+
+    # Fix isolated ": d" patterns that might remain
+    text = re.sub(
+        r":\s+([dps])\b", lambda m: ":" + m.group(1).upper(), text, flags=re.IGNORECASE
+    )
+    text = re.sub(
+        r";\s+([dps])\b", lambda m: ";" + m.group(1).upper(), text, flags=re.IGNORECASE
+    )
+
+    return text
+
+
+def simple_truecase(text: str) -> str:
+    """Apply simple truecasing heuristics to text with multi-pass repair."""
+    if not text:
+        return text
+
+    # Strip whitespace
+    text = text.strip()
+    if not text:
+        return text
+
+    import re
+
+    # Multi-pass text repair
+    text = repair_text_punctuation(text)
+    text = repair_broken_emoticons(text)
+
+    # Split on sentence boundaries while preserving punctuation
+    sentences = re.split(r"([.!?]+\s*)", text)
+
+    result = []
+    for i, part in enumerate(sentences):
+        if not part or part.isspace():
+            continue
+
+        # If this is punctuation, just add it
+        if re.match(r"^[.!?]+\s*$", part):
+            result.append(part)
+            continue
+
+        # Process the sentence
+        words = part.split()
+        if not words:
+            continue
+
+        processed_words = []
+        for j, word in enumerate(words):
+            # Preserve emoticons as-is (common ones)
+            if word in [
+                ":D",
+                ":P",
+                ":S",
+                ";D",
+                ";P",
+                "xD",
+                "XD",
+                ":)",
+                ":(",
+                ";)",
+                ":/",
+            ]:
+                processed_words.append(word)
+                continue
+
+            # Handle words with punctuation
+            prefix = ""
+            suffix = ""
+            core_word = word
+
+            # Extract leading punctuation
+            while core_word and core_word[0] in "\"'-":
+                prefix += core_word[0]
+                core_word = core_word[1:]
+
+            # Extract trailing punctuation
+            while core_word and core_word[-1] in ".,!?;:'\"":
+                suffix = core_word[-1] + suffix
+                core_word = core_word[:-1]
+
+            # Process the core word
+            if not core_word:
+                processed_words.append(word)
+                continue
+
+            # Special cases for I and contractions
+            if core_word.lower() == "i" or core_word.lower().startswith("i'"):
+                processed_word = "I" + core_word[1:] if len(core_word) > 1 else "I"
+            # Special case: Internet slang should stay lowercase even at start of sentence
+            elif core_word.lower() in [
+                "lol",
+                "lmao",
+                "rofl",
+                "omg",
+                "wtf",
+                "brb",
+                "btw",
+                "fyi",
+                "imo",
+                "imho",
+                "afaik",
+            ]:
+                processed_word = core_word.lower()
+            # First word of sentence
+            elif j == 0:
+                processed_word = (
+                    core_word[0].upper() + core_word[1:].lower()
+                    if len(core_word) > 1
+                    else core_word.upper()
+                )
+            # Everything else lowercase
+            else:
+                processed_word = core_word.lower()
+
+            processed_words.append(prefix + processed_word + suffix)
+
+        result.append(" ".join(processed_words))
+
+    # Join the result
+    final = "".join(result)
+
+    # Final repair pass to fix any emoticons that got broken during truecasing
+    final = repair_broken_emoticons(final)
+
+    # Ensure the text ends with proper punctuation (but not after emoticons)
+    if final:
+        # Check if it ends with an emoticon
+        emoticon_endings = [
+            ":D",
+            ":P",
+            ":S",
+            ";D",
+            ";P",
+            "xD",
+            "XD",
+            ":)",
+            ":(",
+            ";)",
+            ":/",
+        ]
+        ends_with_emoticon = any(final.endswith(em) for em in emoticon_endings)
+
+        # Only add period if it doesn't end with punctuation or emoticon
+        if not ends_with_emoticon and final[-1] not in ".!?":
+            final += "."
+
+    return final
+
+
 def format_personachat(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> str:
-    """Format persona chat conversations using the tokenizer's chat template."""
-    # Extract personas
-    user_personas = document.get("user 1 personas", "").split("\n")
-    assistant_personas = document.get("user 2 personas", "").split("\n")
-    conversation = document.get("Best Generated Conversation", "").split("\n")
+    """Format AlekseyKorshuk persona-chat dataset with JSON structure for better randomization."""
+    # Extract personality traits and utterances
+    personality = document.get("personality", [])
+    utterances = document.get("utterances", [])
 
-    # Include personas in system message
-    system_message = ""
+    if not utterances:
+        return ""
 
-    # Random corruption encourages partial context
-    corruption_chance = 0.5
+    # Randomly select how much of the conversation to include (1 to all utterances)
+    num_utterances = random.randint(1, len(utterances))
+    selected_utterance = utterances[num_utterances - 1]  # Get the selected utterance
 
-    if user_personas:
-        system_message += "user:"
-        for p in user_personas:
-            if p.strip() or random.random() < corruption_chance:
-                continue
-            system_message += f"\n- {p.strip()}"
-    if assistant_personas:
-        system_message += "assistant:"
-        for p in assistant_personas:
-            if p.strip() or random.random() < corruption_chance:
-                continue
-            system_message += f"\n- {p.strip()}"
+    # Decide whether to apply truecasing (50% chance, applies to entire conversation)
+    apply_truecase = random.random() < 0.5
 
-    # Map speaker labels to ChatML roles
-    speaker_map = {
-        "A": "user",
-        "USER1": "user",
-        "USER 1": "user",
-        "B": "assistant",
-        "USER2": "assistant",
-        "USER 2": "assistant",
-    }
+    # Build personality description for developer message
+    # Always include personality when available (it's the assistant's personality)
+    developer_message = ""
+    if personality:
+        developer_message = "You have the following personality traits:\n"
+        # Randomly select subset of personality traits (or all)
+        if random.random() < 0.5:
+            # 50% chance to use all traits
+            selected_traits = personality
+        else:
+            # 50% chance to use a random subset
+            num_traits = random.randint(1, len(personality))
+            selected_traits = random.sample(personality, num_traits)
 
-    # Build messages list with unified system and personas as developer message
+        for trait in selected_traits:
+            # Always truecase personality traits (they're for the assistant)
+            trait_text = simple_truecase(trait) if trait else trait
+            developer_message += f"- {trait_text}\n"
+        developer_message = developer_message.strip()
+    else:
+        # Use default persona chat prompt if no personality provided
+        developer_message = DEVELOPER_PROMPTS["persona_chat"]
+
+    # Build messages list
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "developer",
-            "content": system_message.strip() or DEVELOPER_PROMPTS["persona_chat"],
-        },
+        {"role": "developer", "content": developer_message},
     ]
 
-    for i, utterance in enumerate(conversation):
-        if ": " in utterance:
-            speaker_label, text = utterance.split(": ", 1)
-            role = speaker_map.get(speaker_label.strip().upper(), "user")
-        else:
-            # Alternate speakers if no prefix is present
-            role = "user" if i % 2 == 0 else "assistant"
-            text = utterance
+    # Add the conversation history from the selected utterance
+    history = selected_utterance.get("history", [])
+    candidates = selected_utterance.get("candidates", [])
 
-        messages.append({"role": role, "content": text_formatter(text.strip())})
+    # Add history messages with proper role alternation (user starts)
+    for i, hist_msg in enumerate(history):
+        role = "user" if i % 2 == 0 else "assistant"
+        # Apply truecasing based on role and setting
+        if role == "assistant":
+            # Assistant always uses proper casing
+            content = simple_truecase(hist_msg) if hist_msg else hist_msg
+        else:
+            # User uses truecasing only if apply_truecase is True
+            content = (
+                simple_truecase(hist_msg) if (apply_truecase and hist_msg) else hist_msg
+            )
+        messages.append({"role": role, "content": text_formatter(content)})
+
+    # Pick one candidate as the final assistant response
+    if candidates:
+        # Filter out candidates that look like conversation starters
+        # (these sometimes appear incorrectly in the dataset)
+        filtered_candidates = []
+        for cand in candidates:
+            cand_lower = cand.lower().strip()
+            # Skip greetings that don't make sense in context
+            if len(history) > 2:  # If we're deep in conversation
+                if any(
+                    phrase in cand_lower
+                    for phrase in [
+                        "hi there",
+                        "hello",
+                        "how are you today",
+                        "hey there",
+                        "hi, how are you",
+                        "hello, how are you",
+                    ]
+                ):
+                    continue  # Skip this candidate
+            filtered_candidates.append(cand)
+
+        # Use filtered candidates if any remain, otherwise fall back to all
+        candidates_to_use = filtered_candidates if filtered_candidates else candidates
+        response = random.choice(candidates_to_use)
+
+        # Assistant always uses proper casing
+        response = simple_truecase(response) if response else response
+        messages.append({"role": "assistant", "content": text_formatter(response)})
 
     return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
@@ -860,44 +1109,43 @@ def format_tool_calling(
 
     user_prompt = random.choice(problem_templates)
 
-    # Assistant's response with tool call
-    assistant_templates = [
-        "I'll calculate that for you.",
-        "Let me compute that.",
-        "I'll help you with that calculation.",
-        "Let me work that out.",
-    ]
-
-    assistant_intro = random.choice(assistant_templates)
-
     # Build the conversation with unified system/developer prompts and tool usage
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "developer", "content": DEVELOPER_PROMPTS["use_tools"]},
         {"role": "user", "content": user_prompt},
-        {
-            "role": "assistant",
-            "content": f"{assistant_intro}\n<tool_call>\n{json.dumps({'name': 'calc', 'arguments': {'values': values, 'op': operation}}, indent=2)}\n</tool_call>",
-            "tool_calls": [
-                {
-                    "function": {
-                        "name": "calc",
-                        "arguments": {"values": values, "op": operation},
-                    }
-                }
-            ],
-        },
-        {"role": "tool", "content": str(float(result))},
-        {"role": "assistant", "content": result_phrase},
     ]
 
-    # Get available tools (we'll include both for variety)
-    from praxis.tools import get_tools_json_schema
+    # 50% chance to call get_tools() first before using calc
+    if random.random() < 0.5:
+        from praxis.tools import get_tools_json_schema
 
-    tools = get_tools_json_schema()
+        tools_json = json.dumps(get_tools_json_schema(), indent=2)
 
-    # Apply chat template with tools
-    return tokenizer.apply_chat_template(messages, tools=tools, tokenize=False) + "\n"
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "content": f"<tool_call>\n{json.dumps({'name': 'get_tools', 'arguments': {}}, indent=2)}\n</tool_call>",
+                },
+                {"role": "tool", "content": tools_json},
+            ]
+        )
+
+    # Always call calc tool
+    messages.extend(
+        [
+            {
+                "role": "assistant",
+                "content": f"<tool_call>\n{json.dumps({'name': 'calc', 'arguments': {'values': values, 'op': operation}}, indent=2)}\n</tool_call>",
+            },
+            {"role": "tool", "content": str(float(result))},
+            {"role": "assistant", "content": result_phrase},
+        ]
+    )
+
+    # Apply chat template without tools parameter
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
 
 
 def format_cot(
@@ -928,10 +1176,6 @@ def format_cot(
 
     # Apply chat template
     formatted_text = tokenizer.apply_chat_template(messages, tokenize=False)
-
-    # Add EOS token if not already added by the template
-    if tokenizer.eos_token and not formatted_text.endswith(tokenizer.eos_token):
-        formatted_text += tokenizer.eos_token
 
     # Detect which CoT tags are present in the response
     tags_present = []
@@ -1744,7 +1988,7 @@ class InterleaveDataManager:
             _rl_logger.log_dataset_sample(dataset_name, has_reward)
 
             # Add separator
-            text_with_sep = text + self.tokenizer.eos_token + "\n"
+            text_with_sep = text.rstrip() + "\n"
             sequences_to_add.append(
                 (
                     len(total_text),

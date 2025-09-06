@@ -47,6 +47,50 @@ def tool(func):
 
 
 @tool
+def get_tools() -> str:
+    """Get the JSON schema of all available tools.
+    
+    Returns:
+        JSON string containing all available tool schemas
+    """
+    tools_schema = []
+    for tool in AVAILABLE_TOOLS:
+        # Skip the get_tools tool itself to avoid recursion
+        if isinstance(tool, Tool) and tool.name == "get_tools":
+            continue
+        
+        # Handle both Tool instances and regular functions
+        if isinstance(tool, Tool):
+            tool_schema = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.inputs,
+            }
+        elif callable(tool):
+            # Fallback for regular functions
+            tool_schema = {
+                "name": getattr(tool, "__name__", "unknown"),
+                "description": getattr(tool, "__doc__", ""),
+                "parameters": {},
+            }
+        else:
+            continue
+        tools_schema.append(tool_schema)
+    
+    # Also include dynamic tools
+    for tool in DYNAMIC_TOOLS.values():
+        if isinstance(tool, Tool):
+            tool_schema = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.inputs,
+            }
+            tools_schema.append(tool_schema)
+    
+    return json.dumps(tools_schema, indent=2)
+
+
+@tool
 def calc(values: List[float], op: str = "add") -> float:
     """Perform a basic algebraic operation on a list of values.
 
@@ -92,7 +136,7 @@ def calc(values: List[float], op: str = "add") -> float:
 
 
 # Registry of available tools
-AVAILABLE_TOOLS = [calc]
+AVAILABLE_TOOLS = [get_tools, calc]
 
 # Registry for dynamically loaded tools (from JSON)
 DYNAMIC_TOOLS: Dict[str, Any] = {}

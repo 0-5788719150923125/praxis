@@ -106,33 +106,23 @@ trained_tokenizer.add_special_tokens(
 # Define a ChatML template with tool support and developer role
 # https://huggingface.co/docs/transformers/en/conversations
 # https://huggingface.co/docs/transformers/en/chat_extras
-# Tools are now rendered in system/developer blocks for persistence (like Harmony)
-chat_template = """{% if tools is defined and tools %}
-{% set tools_json = tools | tojson %}
-{% endif %}
-{% for message in messages %}
+# Tools are no longer rendered in system prompt - model should call get_tools() when needed
+chat_template = """{% for message in messages %}
 {% if message['role'] == 'system' %}
 {{ bos_token }}system
 {{ message['content'] }}
-{% if tools_json is defined and loop.first %}
-Available tools:
-{{ tools_json }}
-{% endif %}
+{{ sep_token }}
 {% elif message['role'] == 'developer' %}
 {{ bos_token }}developer
 {{ message['content'] }}
-{% if tools_json is defined and loop.first and not (messages[0]['role'] == 'system') %}
-Available tools:
-{{ tools_json }}
-{% endif %}
+{{ sep_token }}
 {% elif message['role'] == 'user' %}
 {{ bos_token }}user
 {{ message['content'] }}
-{% elif message['role'] == 'tool' %}
-{{ bos_token }}tool
-{{ message['content'] }}
+{{ sep_token }}
 {% elif message['role'] == 'assistant' %}
 {{ bos_token }}assistant
+{{ message['content'] }}
 {% if message.tool_calls is defined %}
 {% for tool_call in message.tool_calls %}
 <tool_call>
@@ -140,9 +130,8 @@ Available tools:
 </tool_call>
 {% endfor %}
 {% endif %}
-{{ message['content'] }}
-{% endif %}
 {{ sep_token }}
+{% endif %}
 {% endfor %}
 {% if add_generation_prompt %}
 {{ bos_token }}assistant
@@ -160,9 +149,8 @@ trained_tokenizer.save_pretrained(archive_path)
 print(f"\nSample ChatML-formatted messages demonstrating the unified format:")
 
 # Test both regular conversation and tool usage
-from praxis.tools import call_tool, get_tools_json_schema
+from praxis.tools import call_tool
 
-tools = get_tools_json_schema()
 result = call_tool("calc", {"values": [25, 17], "op": "add"})
 
 # Coherent multi-turn conversation demonstrating all components
@@ -191,17 +179,8 @@ print(
             },
             {
                 "role": "assistant",
-                "content": "Let me calculate that for you.",
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "calc",
-                            "arguments": {"values": [25, 17], "op": "add"},
-                        }
-                    }
-                ],
+                "content": f"Let me calculate that for you.\n<tool_call>\n{{\"name\": \"calc\", \"arguments\": {{\"values\": [25, 17], \"op\": \"add\"}}}}\n</tool_call>\n<tool_result>{result}</tool_result>",
             },
-            {"role": "tool", "content": str(result)},
             {
                 "role": "assistant",
                 "content": f"You would have {result} qubits total. With 42 qubits, your quantum computer could theoretically represent 2^42 (about 4.4 trillion) different states simultaneously - that's the power of quantum superposition at scale!",
@@ -215,8 +194,95 @@ print(
                 "content": "Indeed! To put it in perspective, while a classical 42-bit computer can only be in one of those 4.4 trillion states at any given time, a 42-qubit quantum computer can explore all of them simultaneously through superposition. This is why quantum computers excel at certain problems like cryptography and optimization.",
             },
         ],
-        tools=tools,
         tokenize=False,
         add_generation_prompt=True,
     )
 )
+
+# Auto-upload chat template to HuggingFace repos if authenticated
+print("\n" + "="*60)
+print("Chat Template Upload to HuggingFace")
+print("="*60)
+
+try:
+    from huggingface_hub import HfApi, login, upload_file
+    from huggingface_hub.utils import RepositoryNotFoundError
+    import tempfile
+    import json
+    
+    # Try to get HF API instance (will use cached token if available)
+    api = HfApi()
+    
+    # Check if user is authenticated
+    try:
+        user_info = api.whoami()
+        print(f"✓ Authenticated as: {user_info['name']}")
+    except Exception:
+        print("✗ Not authenticated with HuggingFace")
+        print("  Run 'huggingface-cli login' to authenticate")
+        exit(0)
+    
+    # Define all praxis tokenizer repos for different vocab sizes
+    vocab_sizes = [1024, 2048, 4096, 8192, 16384, 32768, 65536]
+    repos = [f"UNSAFE/praxis-{size}" for size in vocab_sizes]
+    
+    # Check which repos the user has access to
+    accessible_repos = []
+    for repo_id in repos:
+        try:
+            repo_info = api.repo_info(repo_id, repo_type="model")
+            accessible_repos.append(repo_id)
+        except RepositoryNotFoundError:
+            print(f"  Skipping {repo_id} - not found")
+        except Exception as e:
+            print(f"  Skipping {repo_id} - no access")
+    
+    if not accessible_repos:
+        print("\n✗ No accessible praxis repos found")
+        exit(0)
+    
+    print(f"\n✓ Found {len(accessible_repos)} accessible repos:")
+    for repo in accessible_repos:
+        print(f"  - {repo}")
+    
+    # Prompt user for confirmation
+    response = input("\nDo you want to upload the chat template to these repos? (y/n): ")
+    
+    if response.lower() != 'y':
+        print("Skipping upload.")
+        exit(0)
+    
+    # Upload chat template to each accessible repo as a .jinja file
+    print("\nUploading chat_template.jinja files...")
+    
+    for repo_id in accessible_repos:
+        try:
+            # Create a temporary .jinja file with the chat template
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.jinja', delete=False) as f:
+                f.write(chat_template)
+                temp_path = f.name
+            
+            # Upload the chat_template.jinja to the repo
+            upload_file(
+                path_or_fileobj=temp_path,
+                path_in_repo="chat_template.jinja",
+                repo_id=repo_id,
+                repo_type="model",
+                commit_message="Add chat_template.jinja with inline tool result support",
+            )
+            
+            print(f"  ✓ Uploaded chat_template.jinja to {repo_id}")
+            
+            # Clean up temp file
+            os.remove(temp_path)
+            
+        except Exception as e:
+            print(f"  ✗ Failed to upload to {repo_id}: {e}")
+    
+    print("\n✓ Chat template upload complete!")
+    
+except ImportError:
+    print("✗ huggingface_hub not installed")
+    print("  Run 'pip install huggingface_hub' to enable auto-upload")
+except Exception as e:
+    print(f"✗ Error during upload process: {e}")

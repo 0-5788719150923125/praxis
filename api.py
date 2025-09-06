@@ -7,7 +7,14 @@ import sys
 import time
 from threading import Event, Thread
 
-from flask import Flask, jsonify, render_template, request, send_from_directory, make_response
+from flask import (
+    Flask,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+    send_from_directory,
+)
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from watchdog.events import FileSystemEventHandler
@@ -16,8 +23,10 @@ from werkzeug.serving import make_server
 
 # Import terminal streaming components
 try:
-    import interface  # Import interface for dashboard streaming functions
     from flask_socketio import Namespace, emit
+
+    import interface  # Import interface for dashboard streaming functions
+
     terminal_available = True
 except ImportError as e:
     terminal_available = False
@@ -36,10 +45,12 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # WSGI middleware hooks for modules
 _wsgi_middleware = []
 
+
 def register_wsgi_middleware(middleware_func):
     """Register a WSGI middleware function from modules"""
     _wsgi_middleware.append(middleware_func)
     print(f"Registered WSGI middleware: {middleware_func.__name__}")
+
 
 def apply_wsgi_middleware():
     """Apply all registered WSGI middleware to the app"""
@@ -48,6 +59,7 @@ def apply_wsgi_middleware():
             app.wsgi_app = middleware(app.wsgi_app)
             print(f"Applied WSGI middleware: {middleware.__name__}")
 
+
 # Set up SocketIO for live reload
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
@@ -55,15 +67,18 @@ socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 _request_middleware = []
 _response_middleware = []
 
+
 def register_request_middleware(func):
     """Register a request middleware function from modules"""
     _request_middleware.append(func)
     print(f"Registered request middleware: {func.__name__}")
 
+
 def register_response_middleware(func):
     """Register a response middleware function from modules"""
     _response_middleware.append(func)
     print(f"Registered response middleware: {func.__name__}")
+
 
 @app.before_request
 def process_request_middleware():
@@ -74,30 +89,34 @@ def process_request_middleware():
             return result
     return None
 
-@app.after_request  
+
+@app.after_request
 def process_response_middleware(response):
     """Process all registered response middleware"""
     for middleware in _response_middleware:
         middleware(request, response)
     return response
 
+
 # Add ngrok bypass header to all responses
 @app.after_request
 def add_ngrok_header(response):
     """Add header to bypass ngrok browser warning"""
-    response.headers['ngrok-skip-browser-warning'] = 'true'
+    response.headers["ngrok-skip-browser-warning"] = "true"
     return response
 
+
 # Explicit static file route with proper headers for ngrok
-@app.route('/static/<path:filename>')
+@app.route("/static/<path:filename>")
 def serve_static_files(filename):
     """Serve static files with proper headers for ngrok and CORS"""
     response = send_from_directory(app.static_folder, filename)
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['ngrok-skip-browser-warning'] = 'true'
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["ngrok-skip-browser-warning"] = "true"
     # Add cache control for better performance
-    response.headers['Cache-Control'] = 'public, max-age=3600'
+    response.headers["Cache-Control"] = "public, max-age=3600"
     return response
+
 
 # Get all template files for monitoring
 templates_to_watch = glob.glob("templates/*.*")
@@ -137,16 +156,17 @@ def get_spec():
         response.headers.add("Access-Control-Allow-Headers", "Content-Type")
         response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
         return response
-    
+
     try:
         # Import CLI utilities to get configuration
-        from cli import get_cli_args
-        import json
         import hashlib
-        
+        import json
+
+        from cli import get_cli_args
+
         # Get CLI args
         args = get_cli_args()
-        
+
         # Convert args to dict, filtering out non-serializable items
         args_dict = {}
         for key, value in vars(args).items():
@@ -157,79 +177,85 @@ def get_spec():
             except (TypeError, ValueError):
                 # Skip non-serializable values
                 args_dict[key] = str(value)
-        
+
         # Read the hashes from files for consistency
         import os
+
         hash_file_path = os.path.join("data", "praxis", "MODEL_HASH.txt")
         full_hash_path = os.path.join("data", "praxis", "MODEL_HASH_FULL.txt")
         truncated_hash = None
         full_hash = None
-        
+
         # Read truncated hash
         if os.path.exists(hash_file_path):
             with open(hash_file_path, "r") as f:
                 truncated_hash = f.read().strip()
-        
+
         # Read full hash
         if os.path.exists(full_hash_path):
             with open(full_hash_path, "r") as f:
                 full_hash = f.read().strip()
-        
+
         # If full hash file doesn't exist but truncated does, generate a placeholder
         # (for backward compatibility with older runs)
         if truncated_hash and not full_hash:
             import hashlib
+
             # Use the truncated hash as a seed to generate a consistent full hash
             full_hash = hashlib.sha256(truncated_hash.encode()).hexdigest()
-        
+
         # If neither hash exists, mark as unknown
         if not truncated_hash:
             truncated_hash = "unknown"
             full_hash = "unknown"
-        
+
         # Get the model architecture string
         model_arch = None
         try:
             generator = app.config.get("generator")
-            if generator and hasattr(generator, 'model'):
+            if generator and hasattr(generator, "model"):
                 model = generator.model
                 # Get the string representation of the model
                 import io
                 from contextlib import redirect_stdout
-                
+
                 f = io.StringIO()
                 with redirect_stdout(f):
                     print(model)
                 model_arch = f.getvalue()
         except Exception as e:
             model_arch = f"Error getting model architecture: {str(e)}"
-        
+
         # Calculate parameter stats directly here
         param_stats = {}
         try:
             generator = app.config.get("generator")
-            if generator and hasattr(generator, 'model'):
+            if generator and hasattr(generator, "model"):
                 model = generator.model
                 # Count the parameters
                 total_params = sum(p.numel() for p in model.parameters())
-                
+
                 # Get actual config values from the model
-                config = model.config if hasattr(model, 'config') else None
+                config = model.config if hasattr(model, "config") else None
                 if config:
                     # Get actual values from config
-                    batch_size = args_dict.get('batch_size', 1)
-                    block_size = getattr(config, 'max_position_embeddings', getattr(config, 'block_size', 512))
-                    hidden_size = getattr(config, 'hidden_size', 768)
-                    
+                    batch_size = args_dict.get("batch_size", 1)
+                    block_size = getattr(
+                        config,
+                        "max_position_embeddings",
+                        getattr(config, "block_size", 512),
+                    )
+                    hidden_size = getattr(config, "hidden_size", 768)
+
                     # In Praxis, depth is the number of forward passes through experts
                     # num_experts is the pool of available experts to choose from
                     # The actual number of layers processed is just depth
-                    depth = getattr(config, 'depth', 3)
-                    num_experts = getattr(config, 'num_experts', 3)
-                    
+                    depth = getattr(config, "depth", 3)
+                    num_experts = getattr(config, "num_experts", 3)
+
                     # Simple activation estimate: batch_size * seq_len * hidden_size * depth
                     activation_params = batch_size * block_size * hidden_size * depth
-                    
+
                     param_stats = {
                         "total_params": total_params,
                         "activation_params": activation_params,
@@ -238,14 +264,14 @@ def get_spec():
                             "block_size": block_size,
                             "hidden_size": hidden_size,
                             "depth": depth,
-                            "num_experts": num_experts
-                        }
+                            "num_experts": num_experts,
+                        },
                     }
                 else:
                     param_stats = {"total_params": total_params}
         except:
             param_stats = {}
-        
+
         # Get metadata from history.log
         timestamp = None
         command = None
@@ -257,13 +283,13 @@ def get_spec():
                     if len(parts) >= 3:
                         timestamp = parts[0]
                         command = parts[2].strip('"')
-        
+
         # Get the appropriate git URL based on whether ngrok is active
         git_url = None
-        
+
         # First, check if we're being accessed through ngrok
         host = request.host.split(":")[0] if ":" in request.host else request.host
-        
+
         if host.endswith(".ngrok-free.app") or host.endswith(".ngrok.io"):
             # This request came through ngrok
             # Try to read ngrok info from file
@@ -284,7 +310,7 @@ def get_spec():
                             git_url = f"https://{base_url}/{webhook_secret}"
                 except:
                     pass
-            
+
             # Fallback if we couldn't read the file
             if not git_url:
                 # Ngrok always uses HTTPS without explicit port
@@ -294,10 +320,10 @@ def get_spec():
             port = request.host.split(":")[1] if ":" in request.host else "80"
             # For local, use praxis.git to avoid conflicts with web UI
             git_url = f"http://{host}:{port}/praxis.git"
-        
+
         # Import mask_git_url function
         from praxis.utils import mask_git_url
-        
+
         # Return clean data structure
         spec = {
             "truncated_hash": truncated_hash,
@@ -309,13 +335,13 @@ def get_spec():
             "command": command,
             "git_url": git_url,
             "masked_git_url": mask_git_url(git_url) if git_url else None,
-            "seed": app.config.get("seed")
+            "seed": app.config.get("seed"),
         }
-        
+
         response = jsonify(spec)
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
-        
+
     except Exception as e:
         error_response = jsonify({"error": str(e)})
         error_response.headers.add("Access-Control-Allow-Origin", "*")
@@ -327,7 +353,9 @@ def get_spec():
 @app.route("/praxis.git", methods=["GET", "POST"], defaults={"git_path": ""})
 @app.route("/info/refs", methods=["GET"])  # Git discovery at root
 @app.route("/git-upload-pack", methods=["POST"])  # Git fetch at root
-@app.route("/src/<path:git_path>", methods=["GET", "POST"])  # Keep for backward compatibility
+@app.route(
+    "/src/<path:git_path>", methods=["GET", "POST"]
+)  # Keep for backward compatibility
 def git_http_backend(git_path=None):
     """
     Simple Git HTTP backend for read-only access to the repository.
@@ -337,76 +365,76 @@ def git_http_backend(git_path=None):
     - Legacy /src path: git clone https://domain.com/src
     """
     import subprocess
+
     from flask import Response, stream_with_context
-    
+
     # Security: Only allow specific git commands for read-only access
     allowed_services = ["git-upload-pack", "git-receive-pack"]
-    
+
     # Parse the service from the path
     service = request.args.get("service")
-    
+
     # Handle root-level git operations (when git_path is None)
     if git_path is None:
         if request.path == "/info/refs":
             git_path = "info/refs"
         elif request.path == "/git-upload-pack":
             git_path = "git-upload-pack"
-    
+
     # Handle info/refs request (git discovery)
     if (git_path == "info/refs" or git_path == "") and service:
         if not service.startswith("git-"):
             return "Invalid service", 400
-            
+
         service_name = service.replace("git-", "")
         if service not in allowed_services:
             return "Service not allowed", 403
-        
+
         # Only allow upload-pack for read-only access
         if service != "git-upload-pack":
             return "Only read access is allowed", 403
-            
+
         try:
             # Run git command to get refs
             cmd = ["git", "upload-pack", "--stateless-rpc", "--advertise-refs", "."]
             result = subprocess.run(cmd, capture_output=True, cwd=os.getcwd())
-            
+
             # Format response for git HTTP protocol
-            response_data = f"001e# service={service}\n0000" + result.stdout.decode("latin-1")
-            
+            response_data = f"001e# service={service}\n0000" + result.stdout.decode(
+                "latin-1"
+            )
+
             return Response(
                 response_data,
                 content_type=f"application/x-{service}-advertisement",
                 headers={
                     "Cache-Control": "no-cache",
-                    "Access-Control-Allow-Origin": "*"
-                }
+                    "Access-Control-Allow-Origin": "*",
+                },
             )
         except Exception as e:
             return f"Git error: {str(e)}", 500
-    
+
     # Handle git-upload-pack request (actual clone/fetch)
     elif git_path == "git-upload-pack" and request.method == "POST":
         try:
             # Run git upload-pack with the request data
             cmd = ["git", "upload-pack", "--stateless-rpc", "."]
             result = subprocess.run(
-                cmd, 
-                input=request.data,
-                capture_output=True,
-                cwd=os.getcwd()
+                cmd, input=request.data, capture_output=True, cwd=os.getcwd()
             )
-            
+
             return Response(
                 result.stdout,
                 content_type="application/x-git-upload-pack-result",
                 headers={
                     "Cache-Control": "no-cache",
-                    "Access-Control-Allow-Origin": "*"
-                }
+                    "Access-Control-Allow-Origin": "*",
+                },
             )
         except Exception as e:
             return f"Git error: {str(e)}", 500
-    
+
     # Return 404 for other paths
     return "Not found", 404
 
@@ -416,89 +444,99 @@ def get_agents():
     """Get git remotes as peer agents with their online/offline status"""
     if request.method == "OPTIONS":
         return handle_cors_preflight()
-    
-    import subprocess
-    import urllib.request
-    import urllib.parse
-    from concurrent.futures import ThreadPoolExecutor
+
     import concurrent.futures
+    import subprocess
+    import urllib.parse
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
     from praxis.utils import mask_git_url
-    
+
     agents = []
-    
-    # Always add the current instance as "self" 
+
+    # Always add the current instance as "self"
     try:
         # Get current port
-        current_port = int(request.environ.get('SERVER_PORT', 2100))
-        
+        current_port = int(request.environ.get("SERVER_PORT", 2100))
+
         # Always add the current instance first by getting the data directly
         try:
             # Get our git URL and hash directly (same logic as get_spec endpoint)
             git_url = f"http://localhost:{current_port}/praxis.git"
-            
+
             # Get git hash
             import subprocess
+
             try:
                 result = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
                     capture_output=True,
                     text=True,
-                    cwd=os.getcwd()
+                    cwd=os.getcwd(),
                 )
-                full_hash = result.stdout.strip() if result.returncode == 0 else "unknown"
+                full_hash = (
+                    result.stdout.strip() if result.returncode == 0 else "unknown"
+                )
                 short_hash = full_hash[:9] if len(full_hash) >= 9 else full_hash
             except:
                 full_hash = "unknown"
                 short_hash = "unknown"
-            
-            agents.append({
-                "name": "self",
-                "url": git_url,
-                "masked_url": mask_git_url(git_url),
-                "status": "online",
-                "commit_hash": full_hash,
-                "short_hash": short_hash
-            })
-            print(f"[DEBUG] Successfully added self agent with URL: {git_url}")
+
+            agents.append(
+                {
+                    "name": "self",
+                    "url": git_url,
+                    "masked_url": mask_git_url(git_url),
+                    "status": "online",
+                    "commit_hash": full_hash,
+                    "short_hash": short_hash,
+                }
+            )
         except Exception as e:
-            print(f"[DEBUG] Failed to add self agent: {e}")
+            print(f"[WARNING] Failed to add self agent: {e}")
             import traceback
+
             traceback.print_exc()
-        
+
         # Check if this is in the standard port range (2100-2119)
         is_standard_port = 2100 <= current_port < 2120
-        
+
         if is_standard_port:
             # Scan ports 2100-2119 for local instances
             local_instances = []
-            
+
             def check_local_port(port):
                 try:
                     import json
+
                     spec_url = f"http://localhost:{port}/api/spec"
                     req = urllib.request.Request(spec_url)
                     with urllib.request.urlopen(req, timeout=0.5) as response:
                         if response.status == 200:
                             spec_data = json.loads(response.read())
-                            if spec_data.get('git_url'):
+                            if spec_data.get("git_url"):
                                 return {
                                     "port": port,
-                                    "git_url": spec_data['git_url'],
-                                    "masked_url": spec_data.get('masked_git_url', mask_git_url(spec_data['git_url'])),
-                                    "full_hash": spec_data.get('full_hash'),
-                                    "truncated_hash": spec_data.get('truncated_hash')
+                                    "git_url": spec_data["git_url"],
+                                    "masked_url": spec_data.get(
+                                        "masked_git_url",
+                                        mask_git_url(spec_data["git_url"]),
+                                    ),
+                                    "full_hash": spec_data.get("full_hash"),
+                                    "truncated_hash": spec_data.get("truncated_hash"),
                                 }
                 except:
                     pass
                 return None
-            
+
             # Check ports concurrently
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = []
                 for port in range(2100, 2120):
                     future = executor.submit(check_local_port, port)
                     futures.append(future)
-                
+
                 for future in concurrent.futures.as_completed(futures):
                     try:
                         result = future.result(timeout=1)
@@ -506,43 +544,45 @@ def get_agents():
                             local_instances.append(result)
                     except:
                         pass
-            
+
             # Sort by port and create additional self agents (self-1, self-2, etc)
             # Skip the current port since we already added it
-            local_instances = [i for i in local_instances if i and i['port'] != current_port]
-            local_instances.sort(key=lambda x: x['port'])
-            
+            local_instances = [
+                i for i in local_instances if i and i["port"] != current_port
+            ]
+            local_instances.sort(key=lambda x: x["port"])
+
             for idx, instance in enumerate(local_instances):
                 name = f"self-{idx + 1}"  # Start numbering from 1
-                agents.append({
-                    "name": name,
-                    "url": instance['git_url'],
-                    "masked_url": instance['masked_url'],
-                    "status": "online",
-                    "commit_hash": instance['full_hash'],
-                    "short_hash": instance['truncated_hash']
-                })
+                agents.append(
+                    {
+                        "name": name,
+                        "url": instance["git_url"],
+                        "masked_url": instance["masked_url"],
+                        "status": "online",
+                        "commit_hash": instance["full_hash"],
+                        "short_hash": instance["truncated_hash"],
+                    }
+                )
     except Exception as e:
         # If local detection fails, continue with remote agents
         print(f"[DEBUG] Error in self agent detection: {e}")
         import traceback
+
         traceback.print_exc()
-    
+
     try:
         # Get git remotes
         result = subprocess.run(
-            ["git", "remote", "-v"],
-            capture_output=True,
-            text=True,
-            cwd=os.getcwd()
+            ["git", "remote", "-v"], capture_output=True, text=True, cwd=os.getcwd()
         )
-        
+
         if result.returncode != 0:
             return jsonify({"agents": [], "error": "Failed to get git remotes"}), 200
-        
+
         # Parse remotes (each remote appears twice - for fetch and push)
         remotes = {}
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line:
                 parts = line.split()
                 if len(parts) >= 2:
@@ -551,7 +591,7 @@ def get_agents():
                     # Only store each remote once
                     if name not in remotes:
                         remotes[name] = url
-        
+
         def check_remote_status(name, url):
             """Check if a remote is accessible (online/offline) and get its latest commit"""
             agent = {
@@ -560,9 +600,9 @@ def get_agents():
                 "masked_url": mask_git_url(url),  # Add masked URL
                 "status": "offline",
                 "commit_hash": None,
-                "short_hash": None
+                "short_hash": None,
             }
-            
+
             # Try to check if the remote is accessible using git ls-remote
             # This works for all git URLs (http, https, ssh, git, local paths)
             try:
@@ -572,32 +612,40 @@ def get_agents():
                     stderr=subprocess.DEVNULL,
                     cwd=os.getcwd(),
                     timeout=3,
-                    text=True
+                    text=True,
                 )
                 if check_result.returncode == 0:
                     # Parse the commit hash from ls-remote output
                     # Format is: <hash>\tHEAD
                     output = check_result.stdout.strip()
                     if output:
-                        commit_hash = output.split('\t')[0]
+                        commit_hash = output.split("\t")[0]
                         agent["commit_hash"] = commit_hash
                         agent["short_hash"] = commit_hash[:7] if commit_hash else None
-                    
+
                     # Check if this is a Praxis instance by looking for /api/agents endpoint
                     # Extract base URL if it's an HTTP(S) git URL
                     is_praxis = False
-                    if url.startswith(('http://', 'https://')):
+                    if url.startswith(("http://", "https://")):
                         # Remove .git suffix and path components to get base URL
-                        base_url = url.replace('.git', '').rstrip('/')
+                        base_url = url.replace(".git", "").rstrip("/")
                         # If it looks like a GitHub/GitLab URL, it's not a Praxis instance
-                        if 'github.com' in base_url or 'gitlab.com' in base_url or 'bitbucket.org' in base_url:
+                        if (
+                            "github.com" in base_url
+                            or "gitlab.com" in base_url
+                            or "bitbucket.org" in base_url
+                        ):
                             agent["status"] = "archived"
                         else:
                             # Try to check for Praxis API endpoint
                             try:
                                 import urllib.request
+
                                 api_url = f"{base_url}/api/agents"
-                                req = urllib.request.Request(api_url, headers={'User-Agent': 'Praxis-Agent-Check'})
+                                req = urllib.request.Request(
+                                    api_url,
+                                    headers={"User-Agent": "Praxis-Agent-Check"},
+                                )
                                 with urllib.request.urlopen(req, timeout=2) as response:
                                     if response.status == 200:
                                         is_praxis = True
@@ -611,23 +659,23 @@ def get_agents():
                         # For SSH/git protocol URLs, we can't easily check for Praxis
                         # Mark as archived (regular git repo)
                         agent["status"] = "archived"
-                
+
             except subprocess.TimeoutExpired:
                 # Timeout means offline
                 pass
             except Exception:
                 # If any check fails, keep status as offline
                 pass
-            
+
             return agent
-        
+
         # Check status of each remote in parallel with timeout
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             for name, url in remotes.items():
                 future = executor.submit(check_remote_status, name, url)
                 futures.append(future)
-            
+
             # Collect results with timeout
             for future in futures:
                 try:
@@ -635,19 +683,21 @@ def get_agents():
                     agents.append(agent)
                 except concurrent.futures.TimeoutError:
                     # If timeout, add as offline
-                    agents.append({
-                        "name": "unknown",
-                        "url": "unknown",
-                        "status": "offline",
-                        "type": "unknown"
-                    })
-        
+                    agents.append(
+                        {
+                            "name": "unknown",
+                            "url": "unknown",
+                            "status": "offline",
+                            "type": "unknown",
+                        }
+                    )
+
         # Sort agents by name
         agents.sort(key=lambda x: x["name"])
-        
+
     except Exception as e:
         return jsonify({"agents": [], "error": str(e)}), 200
-    
+
     response = jsonify({"agents": agents})
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
@@ -661,10 +711,11 @@ class TemplateChangeHandler(FileSystemEventHandler):
         if not event.is_directory:
             templates_dir = os.path.abspath("templates")
             static_dir = os.path.abspath("static")
-            
+
             # Check if the file is in templates or static directory
-            if (event.src_path.startswith(templates_dir) or 
-                event.src_path.startswith(static_dir)):
+            if event.src_path.startswith(templates_dir) or event.src_path.startswith(
+                static_dir
+            ):
                 # print(f"File change detected: {event.src_path}")
                 # Emit reload event to all connected clients
                 try:
@@ -714,9 +765,13 @@ class APIServer:
         param_stats=None,
         seed=None,
     ):
-        print(f"[DEBUG] APIServer.__init__ called with param_stats: {param_stats is not None}")
+        print(
+            f"[DEBUG] APIServer.__init__ called with param_stats: {param_stats is not None}"
+        )
         if param_stats:
-            print(f"[DEBUG] APIServer.__init__ param_stats keys: {list(param_stats.keys())}")
+            print(
+                f"[DEBUG] APIServer.__init__ param_stats keys: {list(param_stats.keys())}"
+            )
         self.generator = generator
         self.server_thread = None
         self.server = None
@@ -732,73 +787,85 @@ class APIServer:
         self.module_loader = module_loader
         self.param_stats = param_stats if param_stats else {}
         self.template_watcher = TemplateWatcher()
-    
+
         # Initialize terminal WebSocket namespace if available
         if terminal_available:
             # Register socketio for dashboard streaming
             interface.register_socketio(socketio)
-            
+
             # Create a simplified terminal namespace for dashboard streaming
             class TerminalNamespace(Namespace):
                 """WebSocket namespace for terminal/dashboard interaction."""
-                
+
                 def on_connect(self):
                     """Send current dashboard state on connect."""
                     dashboard = interface.get_active_dashboard("main")
-                    if dashboard and hasattr(dashboard, '_streamer'):
+                    if dashboard and hasattr(dashboard, "_streamer"):
                         # Get the latest rendered frame
                         frame = dashboard._streamer.get_current_frame()
                         if frame:
-                            rendered = dashboard._streamer.renderer.render_frame_for_web(frame)
-                            emit('dashboard_frame', {
-                                'frame': rendered['text'],
-                                'metadata': {
-                                    'width': rendered['width'],
-                                    'height': rendered['height'],
-                                    'scale_factor': rendered['scale_factor']
-                                }
-                            })
-                
+                            rendered = (
+                                dashboard._streamer.renderer.render_frame_for_web(frame)
+                            )
+                            emit(
+                                "dashboard_frame",
+                                {
+                                    "frame": rendered["text"],
+                                    "metadata": {
+                                        "width": rendered["width"],
+                                        "height": rendered["height"],
+                                        "scale_factor": rendered["scale_factor"],
+                                    },
+                                },
+                            )
+
                 def on_disconnect(self):
                     """Handle client disconnection."""
                     pass
-                
+
                 def on_start_capture(self, data):
                     """Connect to existing dashboard."""
                     dashboard = interface.get_active_dashboard("main")
-                    if dashboard and hasattr(dashboard, '_streamer'):
+                    if dashboard and hasattr(dashboard, "_streamer"):
                         dashboard._streamer.start()
-                        emit('capture_started', {'status': 'connected_to_existing'})
-                        
+                        emit("capture_started", {"status": "connected_to_existing"})
+
                         # Send current frame if available
                         frame = dashboard._streamer.get_current_frame()
                         if frame:
-                            rendered = dashboard._streamer.renderer.render_frame_for_web(frame)
-                            emit('dashboard_frame', {
-                                'frame': rendered['text'],
-                                'metadata': {
-                                    'width': rendered['width'],
-                                    'height': rendered['height'],
-                                    'scale_factor': rendered['scale_factor']
-                                }
-                            })
+                            rendered = (
+                                dashboard._streamer.renderer.render_frame_for_web(frame)
+                            )
+                            emit(
+                                "dashboard_frame",
+                                {
+                                    "frame": rendered["text"],
+                                    "metadata": {
+                                        "width": rendered["width"],
+                                        "height": rendered["height"],
+                                        "scale_factor": rendered["scale_factor"],
+                                    },
+                                },
+                            )
                     else:
-                        emit('capture_started', {'status': 'no_dashboard_found'})
-                
+                        emit("capture_started", {"status": "no_dashboard_found"})
+
                 def on_stop_capture(self):
                     """Stop dashboard streaming."""
                     dashboard = interface.get_active_dashboard("main")
-                    if dashboard and hasattr(dashboard, '_streamer'):
+                    if dashboard and hasattr(dashboard, "_streamer"):
                         dashboard._streamer.stop()
-                    emit('capture_stopped', {'status': 'ok'})
-            
+                    emit("capture_stopped", {"status": "ok"})
+
             # Register the terminal namespace
-            socketio.on_namespace(TerminalNamespace('/terminal'))
-    
+            socketio.on_namespace(TerminalNamespace("/terminal"))
+
     def update_param_stats(self, param_stats):
         """Update the parameter statistics after optimizer creation"""
         self.param_stats = param_stats
-        print(f"[DEBUG] APIServer.update_param_stats called with stats: {bool(param_stats)}")
+        print(
+            f"[DEBUG] APIServer.update_param_stats called with stats: {bool(param_stats)}"
+        )
 
     def _is_port_in_use(self, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -859,27 +926,35 @@ class APIServer:
             self.server_thread = None
 
     def _run_server(self):
-        print(f"[DEBUG] _run_server starting, self.param_stats exists: {bool(self.param_stats)}")
+        print(
+            f"[DEBUG] _run_server starting, self.param_stats exists: {bool(self.param_stats)}"
+        )
         if self.param_stats:
-            print(f"[DEBUG] _run_server self.param_stats keys: {list(self.param_stats.keys())}")
-        
+            print(
+                f"[DEBUG] _run_server self.param_stats keys: {list(self.param_stats.keys())}"
+            )
+
         # Apply any WSGI middleware registered by modules (must be before starting server)
         apply_wsgi_middleware()
-        
+
         with app.app_context():
             app.config["generator"] = self.generator
             app.config["tokenizer"] = self.tokenizer
             app.config["module_loader"] = self.module_loader
             app.config["seed"] = self.seed
             # Store param_stats if available
-            if hasattr(self, 'param_stats') and self.param_stats:
+            if hasattr(self, "param_stats") and self.param_stats:
                 app.config["param_stats"] = self.param_stats
-                print(f"[DEBUG] API Server: Stored param_stats in app.config with {len(self.param_stats)} keys")
-                print(f"[DEBUG] API Server: param_stats keys: {list(self.param_stats.keys())}")
+                print(
+                    f"[DEBUG] API Server: Stored param_stats in app.config with {len(self.param_stats)} keys"
+                )
+                print(
+                    f"[DEBUG] API Server: param_stats keys: {list(self.param_stats.keys())}"
+                )
             else:
                 app.config["param_stats"] = {}
                 print(f"[DEBUG] API Server: No param_stats found, storing empty dict")
-            
+
             # Register module middleware
             if self.module_loader:
                 for middleware_func in self.module_loader.get_request_middleware():
@@ -906,14 +981,14 @@ class APIServer:
 def home():
     response = make_response(render_template("index.html"))
     # Add CSP header that allows scripts from same origin and CDNs
-    response.headers['Content-Security-Policy'] = (
+    response.headers["Content-Security-Policy"] = (
         "default-src 'self' https:; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://*.ngrok-free.app https://*.ngrok.io; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "connect-src 'self' wss: ws: https: http:;"
     )
-    response.headers['ngrok-skip-browser-warning'] = 'true'
+    response.headers["ngrok-skip-browser-warning"] = "true"
     return response
 
 
@@ -921,11 +996,12 @@ def home():
 def favicon():
     """Serve favicon.ico from static folder if it exists"""
     import os
-    if os.path.exists(os.path.join(app.static_folder, 'favicon.ico')):
-        return send_from_directory(app.static_folder, 'favicon.ico')
+
+    if os.path.exists(os.path.join(app.static_folder, "favicon.ico")):
+        return send_from_directory(app.static_folder, "favicon.ico")
     else:
         # Return empty 204 No Content if favicon doesn't exist
-        return '', 204
+        return "", 204
 
 
 @app.route("/input/", methods=["GET", "POST", "OPTIONS"])

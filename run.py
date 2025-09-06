@@ -1456,28 +1456,12 @@ class Generator:
                     generated_tokens[0], skip_special_tokens=skip_special_tokens
                 )
 
-        # Check if the generated text contains a tool call
-        tool_call = self._parse_tool_call(return_text)
+        # Check if the generated text contains an unprocessed tool call
+        unprocessed_call = self._get_unprocessed_tool_call(return_text)
 
-        if tool_call and self.tools and self.call_tool:
-            # Find the position of the last tool call in the text
-            tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
-            matches = list(re.finditer(tool_pattern, return_text, re.DOTALL))
-
-            if matches:
-                last_match = matches[-1]
-                # Check if there's already a tool response after this tool call
-                text_after_tool = return_text[last_match.end() :]
-
-                # If we see tool-related tokens after the tool call, it's already been processed
-                if (
-                    f"{self.tokenizer.bos_token}tool" in text_after_tool
-                    or "<tool_result>" in text_after_tool
-                    or f"{self.tokenizer.sep_token}" in text_after_tool
-                ):
-                    # Tool already processed, just return the text as-is
-                    return return_text
-
+        if unprocessed_call and self.tools and self.call_tool:
+            tool_call, _ = unprocessed_call
+            
             # Execute the tool
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("arguments", {})
@@ -1487,22 +1471,15 @@ class Generator:
                 print(f"Called tool: {tool_name} with args: {tool_args}")
                 print(f"Tool result: {tool_result}")
 
-                # Format the tool result using the tokenizer's chat template
-                # Create a single tool message
-                tool_message = [{"role": "tool", "content": str(tool_result)}]
-
-                # Apply the chat template to format the tool message properly
-                # add_generation_prompt=True to signal model should continue generating
-                formatted_tool_response = self.tokenizer.apply_chat_template(
-                    tool_message, tokenize=False, add_generation_prompt=True
-                )
-
+                # Append the tool result directly as a simple tag
+                # This preserves the exact format and allows for multiple tool calls
+                tool_result_tag = f"\n<tool_result>{str(tool_result)}</tool_result>\n"
+                
                 # Build the complete prompt with tool result for continuation
-                # Don't strip whitespace - it might be intentional
-                complete_prompt = return_text + "\n" + formatted_tool_response
+                complete_prompt = return_text + tool_result_tag
 
                 # Create a new generation request with the tool result included
-                # This allows the model to generate a proper response after seeing the tool result
+                # This allows the model to continue generating (possibly more tool calls)
                 tool_response_request = GenerationRequest(
                     id=request.id + "_tool_response",
                     prompt=complete_prompt,
@@ -1510,6 +1487,7 @@ class Generator:
                 )
 
                 # Recursively process to get the model's response after tool execution
+                # This will handle any additional tool calls the model might make
                 final_response = self._process_single_request(tool_response_request)
                 return final_response
 
@@ -1534,6 +1512,46 @@ class Generator:
             except json.JSONDecodeError:
                 continue
 
+        return None
+    
+    def _get_unprocessed_tool_call(self, text: str) -> Optional[tuple[Dict[str, Any], int]]:
+        """
+        Find the last unprocessed tool call in the text.
+        Returns a tuple of (tool_data, match_end_position) or None.
+        A tool call is considered processed if there's a <tool_result> tag after it.
+        """
+        tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
+        matches = list(re.finditer(tool_pattern, text, re.DOTALL))
+        
+        if not matches:
+            return None
+            
+        # Check each tool call from last to first
+        for match in reversed(matches):
+            # Check if there's a tool_result tag after THIS specific tool call
+            text_after_this_call = text[match.end():]
+            
+            # Look for the next tool_result tag after this specific tool call
+            # If there's no tool_result or there's another tool_call before the tool_result,
+            # then this tool call is unprocessed
+            next_tool_call_pos = text_after_this_call.find("<tool_call>")
+            next_tool_result_pos = text_after_this_call.find("<tool_result>")
+            
+            # This tool is unprocessed if:
+            # 1. There's no tool_result after it, OR
+            # 2. There's another tool_call before the next tool_result
+            is_unprocessed = (
+                next_tool_result_pos == -1 or 
+                (next_tool_call_pos != -1 and next_tool_call_pos < next_tool_result_pos)
+            )
+            
+            if is_unprocessed:
+                try:
+                    tool_data = json.loads(match.group(1))
+                    return (tool_data, match.end())
+                except json.JSONDecodeError:
+                    continue
+                    
         return None
 
     def fulfill_requests(self, max_requests: int = None) -> int:
