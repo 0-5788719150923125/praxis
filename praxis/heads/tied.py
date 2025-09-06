@@ -10,7 +10,7 @@ from torch import Tensor
 from praxis.heads.base import BaseHead
 
 
-class TiedHead(BaseHead):
+class TiedWeights(BaseHead):
     """
     Language modeling head with tied weights.
     Instead of having a separate output projection, this head reuses

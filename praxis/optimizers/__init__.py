@@ -23,7 +23,7 @@ def get_optimizer(
     weight_decay = kwargs.get("weight_decay", 0.0)
     if schedule_free:
         kwargs["lr"] *= 2.0  # Increase the learning rate by 2-10x
-        kwargs["weight_decay"] = 0.0  # Disable weight decay in the base optimizer
+        # kwargs["weight_decay"] = 0.0  # Disable weight decay in the base optimizer
     optimizer = create_optimizer(model, *args, **kwargs)
     if trac:
         optimizer = TRAC(optimizer, num_coefs=128)

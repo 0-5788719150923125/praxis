@@ -373,7 +373,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         if self.config.tie_word_embeddings and self.head is not None:
             input_embeddings = self.get_input_embeddings()
             if input_embeddings is not None and hasattr(self.head, "embedding_weight"):
-                # For TiedHead, set the embedding weight reference
+                # For TiedWeights, set the embedding weight reference
                 self.head.embedding_weight = input_embeddings.weight
             elif input_embeddings is not None and hasattr(self.head, "lm_head"):
                 # For regular heads, tie the weights directly
