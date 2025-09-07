@@ -46,12 +46,23 @@ def create_block_ids(
     """
     # Convert special tokens to tensor if needed
     if not isinstance(special_tokens, torch.Tensor):
-        special_tokens = torch.tensor(
-            special_tokens, device=input_ids.device, dtype=input_ids.dtype
-        )
-
-    # Create padding token mask
-    padding_mask = torch.isin(input_ids, special_tokens)
+        if isinstance(special_tokens, (int, float)):
+            # Single token - use simple comparison (torch.compile friendly)
+            padding_mask = input_ids == special_tokens
+        else:
+            special_tokens = torch.tensor(
+                special_tokens, device=input_ids.device, dtype=input_ids.dtype
+            )
+            # Create padding token mask
+            padding_mask = torch.isin(input_ids, special_tokens)
+    else:
+        # Already a tensor
+        if special_tokens.numel() == 1:
+            # Single token - use simple comparison
+            padding_mask = input_ids == special_tokens.item()
+        else:
+            # Multiple tokens - use isin
+            padding_mask = torch.isin(input_ids, special_tokens)
 
     # Create boundaries only when transitioning FROM non-padding TO padding
     # Get previous token's padding status (shift padding mask right)

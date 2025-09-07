@@ -31,4 +31,4 @@ hidden_size: 128
 
 Then use it: `./launch --beta`
 
-**Note:** Only `alpha.yml` is tracked in git. Other experiments are gitignored for local customization.
+**Note:** Only `alpha.yml` is tracked in git. Other experiments are gitignored to allow for local customization.
