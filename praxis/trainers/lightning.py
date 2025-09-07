@@ -36,8 +36,9 @@ class PraxisTrainer(LightningModule):
         # Try to compile the optimizer as well
         self.optimizer = try_compile_optimizer(optimizer, hparams)
 
-    def forward(self, inputs):
-        return self.model(**inputs)
+    def forward(self, **kwargs):
+        """Forward pass that accepts keyword arguments directly."""
+        return self.model(**kwargs)
 
     def on_train_start(self):
         super().on_train_start()

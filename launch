@@ -1,0 +1,60 @@
+#!/bin/bash
+# Praxis Launch Script - Simple router for Praxis commands
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if any arguments were provided
+if [ $# -eq 0 ]; then
+    # No arguments - run the default training script
+    exec python "$SCRIPT_DIR/main.py"
+fi
+
+# Parse the first argument as the command
+COMMAND="$1"
+shift  # Remove the first argument
+
+# Route based on command
+case "$COMMAND" in
+    tokenizer|tokenizers|train-tokenizer)
+        # Tokenizer training
+        exec python -m praxis.tokenizers.train "$@"
+        ;;
+    
+    archivist|archive)
+        # Archivist tool
+        exec python "$SCRIPT_DIR/archivist.py" "$@"
+        ;;
+    
+    run|train)
+        # Explicit training command
+        exec python "$SCRIPT_DIR/main.py" "$@"
+        ;;
+    
+    help|--help|-h)
+        # Show help
+        echo "Praxis Launcher - Unified CLI for the Praxis framework"
+        echo ""
+        echo "Usage: ./launch [command] [options]"
+        echo ""
+        echo "Commands:"
+        echo "  (none)              Run the default training script (main.py)"
+        echo "  run, train          Run training with specified options"
+        echo "  tokenizer           Train or manage tokenizers"
+        echo "  archivist           Run the archivist tool"
+        echo "  help, --help        Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  ./launch                    # Run default training"
+        echo "  ./launch --dev              # Run training in dev mode"
+        echo "  ./launch --alpha            # Run with alpha experiment"
+        echo "  ./launch tokenizer --help   # Show tokenizer options"
+        echo "  ./launch archivist --help   # Show archivist options"
+        ;;
+    
+    *)
+        # Unknown command - pass all args to main.py
+        # This allows "./launch --dev" to work
+        exec python "$SCRIPT_DIR/main.py" "$COMMAND" "$@"
+        ;;
+esac

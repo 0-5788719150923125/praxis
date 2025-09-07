@@ -24,3 +24,7 @@ tmp
 wandb
 !*/wandb
 !staging/integrations/wandb*
+
+# Experiments - only commit alpha.yml, ignore user custom experiments
+experiments/*.yml
+!experiments/alpha.yml

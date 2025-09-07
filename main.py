@@ -8,9 +8,14 @@ import sys
 sys.dont_write_bytecode = True
 
 # Import our new utilities
-from praxis.utils import (check_for_updates, find_latest_checkpoint,
-                          get_memory_info, get_scheduler,
-                          initialize_lazy_modules, sigint_handler)
+from praxis.utils import (
+  check_for_updates,
+  find_latest_checkpoint,
+  get_memory_info,
+  get_scheduler,
+  initialize_lazy_modules,
+  sigint_handler,
+)
 
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
@@ -29,8 +34,8 @@ import time
 import traceback
 import uuid
 import warnings
-
 from collections import Counter
+
 # dataclass import removed - no longer needed
 from datetime import datetime, timedelta
 from functools import partial
@@ -42,21 +47,36 @@ import torch
 import torch.nn as nn
 from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
-from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
-                          AutoTokenizer)
-from transformers.models.auto.modeling_auto import \
-  MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
+from transformers.models.auto.modeling_auto import (
+  MODEL_FOR_CAUSAL_LM_MAPPING_NAMES,
+)
 
-from praxis.callbacks import (AccumulationSchedule, PeriodicEvaluation,
-                              TerminalInterface, TimeBasedCheckpoint)
+from praxis.callbacks import (
+  AccumulationSchedule,
+  PeriodicEvaluation,
+  TerminalInterface,
+  TimeBasedCheckpoint,
+)
 from praxis.generation import Generator
-from praxis.optimizers import (get_optimizer, get_optimizer_profile,
-                               get_parameter_stats)
+from praxis.optimizers import (
+  get_optimizer,
+  get_optimizer_profile,
+  get_parameter_stats,
+)
+
 # Generic trainer imports
-from praxis.trainers import (PraxisTrainer, Trainer, TrainerConfig,
-                             TRAINER_REGISTRY, create_checkpoint_callback, 
-                             create_logger, create_progress_callback, 
-                             disable_warnings, reset_seed, seed_everything)
+from praxis.trainers import (
+  PraxisTrainer,
+  Trainer,
+  TrainerConfig,
+  create_checkpoint_callback,
+  create_logger,
+  create_progress_callback,
+  disable_warnings,
+  reset_seed,
+  seed_everything,
+)
 
 ignored_warnings = [
     ".*Checkpoint directory.*exists and is not empty*",
@@ -101,22 +121,17 @@ use_dashboard = False if no_dashboard else True
 
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
-# Tokenizer initialization
-if byte_latent:
-    from praxis.tokenizer_praxis import ByteLevelTokenizer
+# Tokenizer initialization - single unified interface
+from praxis.tokenizers import create_tokenizer
 
-    tokenizer = ByteLevelTokenizer()
-else:
-    possible_paths = [
-        os.path.join(cache_dir, "praxis"),
-        f"UNSAFE/praxis-{vocab_size}",
-    ]
-    for path in possible_paths:
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(path, cache_dir=cache_dir)
-            break
-        except Exception as e:
-            logging.warning(f"No tokenizer found at: {str(path)}")
+tokenizer = create_tokenizer(
+    tokenizer_name=tokenizer_type,
+    tokenizer_profile=tokenizer_profile,
+    tokenizer_path=tokenizer_path,
+    encoder_type=encoder_type,
+    vocab_size=vocab_size,
+    cache_dir=cache_dir,
+)
 
 # Transformers config
 config = PraxisConfig(
@@ -209,7 +224,7 @@ train_params = dict(
     accelerator=f"cpu" if device == "cpu" else "gpu",
     strategy="ddp_find_unused_parameters_true" if device == "cuda" else "auto",
     devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
-    max_steps=-1,
+    max_steps=max_steps if max_steps is not None else -1,
     max_epochs=-1,
     reload_dataloaders_every_n_epochs=0,
     precision="32-true",
@@ -395,6 +410,8 @@ if local_rank == 0:
     # Use the ACTUAL port that the API server is using (after auto-increment)
     for hook_func in integration_loader_with_conditions.get_api_server_hooks():
         hook_func(api_server.host, api_server.port)
+else:
+    api_server = None
 
 
 # Load datasets
@@ -421,8 +438,9 @@ if local_rank == 0 and param_stats:
 
         # Update the API server's param_stats if it exists
         if "api_server" in locals() and hasattr(api_server, "update_param_stats"):
-            api_server.update_param_stats(param_stats)
-            print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
+            if api_server:
+                api_server.update_param_stats(param_stats)
+                print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
     except Exception as e:
         print(f"[ERROR] counting optimizer states: {e}")
         import traceback
@@ -473,7 +491,7 @@ if local_rank == 0:
             tokenizer=tokenizer,
             generator=generator,
             use_dashboard=use_dashboard,
-            url=api_server.get_api_addr(),
+            url=api_server.get_api_addr() if api_server else None,
             progress_bar=progress_bar,
             device=device,
             quiet=quiet,
@@ -510,25 +528,21 @@ if hparams.get("decoder_type") == "mono_forward" and trainer_type == "praxis":
     print("[INFO] Decoder type is mono_forward, automatically using mono-forward trainer")
     trainer_type = "mono-forward"
 
-# Get the trainer class from registry
-if trainer_type in TRAINER_REGISTRY:
-    trainer_class = TRAINER_REGISTRY[trainer_type]
-    print(f"[INFO] Using {trainer_type} trainer: {trainer_class.__name__}")
-    
-    # MonoForward trainer needs special initialization
-    if trainer_type in ["mono-forward", "mono_forward"]:
-        trainer = trainer_class(
-            model=train_model,
-            cache_dir=cache_dir,
-            ckpt_path=ckpt_path,
-            **train_params
-        )
-    else:
-        # Standard trainer initialization
-        trainer = trainer_class(**train_params)
-else:
-    print(f"[WARNING] Unknown trainer type '{trainer_type}', using default Trainer")
-    trainer = Trainer(**train_params)
+# Use the factory to create trainer with proper module wrapping
+from praxis.trainers import create_trainer_with_module
+
+trainer, train_model = create_trainer_with_module(
+    trainer_type=trainer_type,
+    model=train_model,
+    optimizer=optimizer,
+    scheduler=scheduler,
+    hparams=hparams,
+    tokenizer=tokenizer,
+    cache_dir=cache_dir,
+    ckpt_path=ckpt_path,
+    trainer_params=train_params,
+    encoder_type=encoder_type
+)
 
 # Wrap training in exception handler to catch crashes and display them immediately
 try:
@@ -537,6 +551,22 @@ try:
         dataintegration,
         ckpt_path=ckpt_path,
     )
+    
+    # Training completed successfully
+    print("Training completed successfully!")
+    
+    # Run integration cleanup hooks
+    integration_loader_with_conditions.run_cleanup_hooks()
+    
+    # Stop API server if running
+    if 'api_server' in globals() and api_server:
+        print("Stopping API server...")
+        api_server.stop()
+    
+    # Force exit to ensure all threads terminate
+    import os
+    os._exit(0)
+    
 except Exception as e:
     # Run integration cleanup hooks
     integration_loader_with_conditions.run_cleanup_hooks()
@@ -561,4 +591,11 @@ except KeyboardInterrupt:
         # Dashboard already prints the interruption message
     else:
         print("\n🛑 Training interrupted by user", file=sys.stderr)
-    sys.exit(0)
+    
+    # Stop API server if running
+    if 'api_server' in globals() and api_server:
+        api_server.stop()
+    
+    # Force exit
+    import os
+    os._exit(0)

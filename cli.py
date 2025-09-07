@@ -4,8 +4,11 @@ import json
 import math
 import os
 import random
+import re
 import sys
+import yaml
 from datetime import datetime
+from pathlib import Path
 
 from praxis import (
     ACTIVATION_REGISTRY,
@@ -29,6 +32,7 @@ from praxis import (
 from praxis.integrations import IntegrationLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
 from praxis.trainers import TRAINER_REGISTRY
+from praxis.tokenizers import TOKENIZER_PROFILES, TOKENIZER_REGISTRY
 
 # Define the default list of arguments to exclude from hash computation
 # These are typically runtime/debugging flags that don't affect model architecture
@@ -172,6 +176,12 @@ training_group.add_argument(
     default="praxis",
     help="Training strategy to use (praxis: standard, mono-forward: layer-wise with O(1) memory)",
 )
+training_group.add_argument(
+    "--max-steps",
+    type=int,
+    default=None,
+    help="Maximum number of training steps (None for infinite training)",
+)
 
 # storage
 persistence_group.add_argument(
@@ -297,6 +307,26 @@ architecture_group.add_argument(
     choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
     default=16384,
     help="The absolute vocab size to use, though some architectures might scale it differently",
+)
+architecture_group.add_argument(
+    "--tokenizer-profile",
+    type=str,
+    choices=list(TOKENIZER_PROFILES.keys()),
+    default=None,
+    help="Tokenizer profile to use (default: auto-detect from available tokenizers)",
+)
+architecture_group.add_argument(
+    "--tokenizer-type",
+    type=str,
+    choices=list(TOKENIZER_REGISTRY.keys()),
+    default=None,
+    help="Specific tokenizer type to use (overrides profile)",
+)
+architecture_group.add_argument(
+    "--tokenizer-path",
+    type=str,
+    default=None,
+    help="Path to load a pretrained tokenizer from",
 )
 architecture_group.add_argument(
     "--depth",
@@ -598,8 +628,79 @@ other_group.add_argument(
     help="Reset the checkpoint",
 )
 
+# Experiment loading functionality
+def load_experiments():
+    """
+    Load experiment files from the experiments directory and add them as CLI arguments.
+    Each YAML file in experiments/ becomes a --<filename> flag that applies those defaults.
+    """
+    experiments_dir = Path("experiments")
+    if not experiments_dir.exists():
+        return {}
+    
+    # Create experiments argument group if we have any experiments
+    experiment_files = list(experiments_dir.glob("*.yml"))
+    if not experiment_files:
+        return {}
+    
+    experiments_group = parser.add_argument_group("experiments")
+    experiment_configs = {}
+    
+    for experiment_file in experiment_files:
+        # Validate and normalize the experiment name
+        name = experiment_file.stem.lower()
+        
+        # Only allow alphanumeric characters and hyphens
+        if not re.match(r'^[a-z0-9-]+$', name):
+            print(f"Warning: Skipping experiment '{experiment_file.name}' - name must only contain lowercase letters, numbers, and hyphens")
+            continue
+            
+        # Check for conflicts with existing arguments
+        arg_name = f"--{name}"
+        if any(arg_name in action.option_strings for action in parser._actions):
+            print(f"Warning: Skipping experiment '{experiment_file.name}' - conflicts with existing argument {arg_name}")
+            continue
+        
+        # Add the experiment argument to the experiments group
+        experiments_group.add_argument(
+            arg_name,
+            action="store_true",
+            default=False,
+            help=f"Apply {name} experiment configuration"
+        )
+        
+        # Store the experiment config for later application
+        try:
+            with open(experiment_file, 'r') as f:
+                experiment_configs[name] = yaml.safe_load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load experiment '{experiment_file.name}': {e}")
+            continue
+    
+    return experiment_configs
+
+# Load experiments and add them as CLI arguments
+experiment_configs = load_experiments()
+
 # Destructure CLI arguments
 args = parser.parse_args()
+
+# Apply experiment defaults if any experiment flags are set
+if experiment_configs:
+    for experiment_name, config in experiment_configs.items():
+        if getattr(args, experiment_name.replace('-', '_'), False):
+            # Apply experiment defaults (but don't override user-provided values)
+            for key, value in config.items():
+                # Convert key to argument name format (replace - with _)
+                attr_name = key.replace('-', '_')
+                
+                # Check if this argument was explicitly provided by the user
+                if attr_name in sys.argv or f"--{key}" in sys.argv:
+                    continue  # User override takes precedence
+                    
+                # Apply the experiment default
+                if hasattr(args, attr_name):
+                    setattr(args, attr_name, value)
 
 # Now check integration conditions based on parsed args
 for integration_manifest in integrations:
@@ -635,6 +736,23 @@ def apply_defaults_and_parse(defaults_dict):
 
     # Re-parse arguments with new defaults
     args = parser.parse_args()
+    
+    # Also apply experiment defaults if any experiment flags are set
+    if experiment_configs:
+        for experiment_name, config in experiment_configs.items():
+            if getattr(args, experiment_name.replace('-', '_'), False):
+                # Apply experiment defaults (but don't override user-provided values)
+                for key, value in config.items():
+                    # Convert key to argument name format (replace - with _)
+                    attr_name = key.replace('-', '_')
+                    
+                    # Check if this argument was explicitly provided by the user
+                    if attr_name in sys.argv or f"--{key}" in sys.argv:
+                        continue  # User override takes precedence
+                        
+                    # Apply the experiment default
+                    if hasattr(args, attr_name):
+                        setattr(args, attr_name, value)
 
     # Re-evaluate integration conditions with new args
     for integration_manifest in integrations:

@@ -19,6 +19,7 @@ from praxis.trainers.factory import (
     create_checkpoint_callback,
     create_progress_callback,
     disable_warnings,
+    create_trainer_with_module,
 )
 from praxis.trainers.progress import BaseProgressBar, get_progress_bar_base
 
@@ -99,6 +100,7 @@ __all__ = [
     "Trainer",
     # Factory functions
     "create_trainer",
+    "create_trainer_with_module",
     "create_logger",
     "create_checkpoint_callback",
     "create_progress_callback",

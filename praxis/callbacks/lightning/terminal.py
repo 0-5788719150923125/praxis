@@ -113,7 +113,6 @@ class TerminalInterface(Callback):
 
     def on_fit_start(self, trainer, lm):
         super().on_fit_start(trainer, lm)
-        lm.model.get_addr()
         # we limit the context length seen during training, to keep memory
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = self.terminal_output_length
@@ -172,9 +171,9 @@ class TerminalInterface(Callback):
             batch_size, seq_length = batch["input_ids"].shape
         else:
             batch_size, seq_length = batch.shape
-        swarm_info = lm.model.get_metrics()
-        local_experts = swarm_info["experts"].get("local", 0)
-        remote_experts = swarm_info["experts"].get("remote", 0)
+        swarm_info = None  # TODO: Add get_metrics() when available
+        local_experts = 0
+        remote_experts = 0
 
         data = {
             "step": int(batch_idx // trainer.accumulate_grad_batches),
@@ -182,19 +181,20 @@ class TerminalInterface(Callback):
             "remote_experts": int(remote_experts),
         }
 
-        if "fitness" in swarm_info:
-            data.update({"fitness": swarm_info["fitness"]})
+        if swarm_info is not None:
+            if "fitness" in swarm_info:
+                data.update({"fitness": swarm_info["fitness"]})
 
-        if "churn" in swarm_info:
-            data.update({"memory_churn": swarm_info["churn"]})
+            if "churn" in swarm_info:
+                data.update({"memory_churn": swarm_info["churn"]})
 
-        if "predictions" in swarm_info:
-            data.update(
-                {
-                    "acc0": swarm_info["predictions"]["mean"],
-                    "acc1": 0,
-                }
-            )
+            if "predictions" in swarm_info:
+                data.update(
+                    {
+                        "acc0": swarm_info["predictions"]["mean"],
+                        "acc1": 0,
+                    }
+                )
 
         self.log_dict(
             data,

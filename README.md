@@ -68,13 +68,13 @@ pytest tests -x
 To run with default settings:
 
 ```sh
-python run.py
+python main.py
 ```
 
 To view all supported command-line arguments:
 
 ```sh
-python run.py --help
+python main.py --help
 ```
 
 ## recommendations
@@ -84,7 +84,7 @@ We recommend you use a `batch-size` of at least 16, if possible. We have impleme
 We also recommend using an Nvidia GPU.
 
 ```sh
-python run.py --batch-size 16 --device cuda
+python main.py --batch-size 16 --device cuda
 ```
 
 </details>

@@ -134,21 +134,41 @@ def create_printing_progress_bar(
         def train_progress_bar(self):
             """Get training progress bar if it exists."""
             return getattr(self, "_train_progress_bar", None)
+        
+        @train_progress_bar.setter
+        def train_progress_bar(self, value):
+            """Set training progress bar."""
+            self._train_progress_bar = value
 
         @property
         def val_progress_bar(self):
             """Get validation progress bar if it exists."""
             return getattr(self, "_val_progress_bar", None)
+        
+        @val_progress_bar.setter
+        def val_progress_bar(self, value):
+            """Set validation progress bar."""
+            self._val_progress_bar = value
 
         @property
         def test_progress_bar(self):
             """Get test progress bar if it exists."""
             return getattr(self, "_test_progress_bar", None)
+        
+        @test_progress_bar.setter
+        def test_progress_bar(self, value):
+            """Set test progress bar."""
+            self._test_progress_bar = value
 
         @property
         def predict_progress_bar(self):
             """Get prediction progress bar if it exists."""
             return getattr(self, "_predict_progress_bar", None)
+        
+        @predict_progress_bar.setter
+        def predict_progress_bar(self, value):
+            """Set prediction progress bar."""
+            self._predict_progress_bar = value
 
     # Create and return an instance
     return PrintingProgressBar()

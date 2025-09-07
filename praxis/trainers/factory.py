@@ -140,3 +140,85 @@ def disable_warnings() -> None:
     # Disable logging warnings
     logging.getLogger("pytorch").setLevel(logging.ERROR)
     logging.getLogger("transformers").setLevel(logging.ERROR)
+
+
+def create_trainer_with_module(
+    trainer_type: str,
+    model: Any,
+    optimizer: Any = None,
+    scheduler: Any = None,
+    hparams: Dict[str, Any] = None,
+    tokenizer: Any = None,
+    cache_dir: str = None,
+    ckpt_path: str = None,
+    trainer_params: Dict[str, Any] = None,
+    **kwargs,
+) -> tuple[Any, Any]:
+    """Create a trainer with appropriate module wrapping.
+    
+    This factory function handles all the complexity of different trainer types,
+    including LightningModule wrapping for PraxisTrainer.
+    
+    Args:
+        trainer_type: Type of trainer to create
+        model: The model to train
+        optimizer: Optimizer instance
+        scheduler: Learning rate scheduler
+        hparams: Hyperparameters dict
+        tokenizer: Tokenizer instance
+        cache_dir: Cache directory for checkpoints
+        ckpt_path: Checkpoint path to resume from
+        trainer_params: Parameters for the underlying trainer (e.g., Lightning Trainer)
+        **kwargs: Additional arguments
+    
+    Returns:
+        Tuple of (trainer, training_module) where training_module is what gets passed to fit()
+    """
+    from praxis.trainers import TRAINER_REGISTRY
+    from praxis.trainers.trainer import Trainer
+    
+    if trainer_type not in TRAINER_REGISTRY:
+        print(f"[WARNING] Unknown trainer type '{trainer_type}', using default Trainer")
+        return Trainer(**(trainer_params or {})), model
+    
+    trainer_class = TRAINER_REGISTRY[trainer_type]
+    print(f"[INFO] Using {trainer_type} trainer: {trainer_class.__name__}")
+    
+    # Handle different trainer types
+    if trainer_type in ["mono-forward", "mono_forward"]:
+        # MonoForward has its own special initialization
+        trainer = trainer_class(
+            model=model,
+            cache_dir=cache_dir,
+            ckpt_path=ckpt_path,
+            **(trainer_params or {})
+        )
+        return trainer, model
+    
+    elif trainer_type in ["praxis", "default"]:
+        # PraxisTrainer is a LightningModule, needs special handling
+        from praxis.trainers.lightning import PraxisTrainer
+        
+        # Determine encoder type from hparams
+        encoder_type = hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
+        
+        # Create the LightningModule wrapper
+        lightning_module = PraxisTrainer(
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            hparams=hparams or {},
+            tokenizer=tokenizer,
+            byte_latent=(encoder_type == "byte_latent")
+        )
+        
+        # Create the actual Lightning Trainer
+        trainer = Trainer(**(trainer_params or {}))
+        
+        # Return trainer and the module to be passed to fit()
+        return trainer, lightning_module
+    
+    else:
+        # Standard trainer initialization
+        trainer = trainer_class(**(trainer_params or {}))
+        return trainer, model
