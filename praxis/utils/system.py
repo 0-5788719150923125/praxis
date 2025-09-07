@@ -1,10 +1,14 @@
 """System utilities for process management and updates."""
 
 import os
+import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import time
+from glob import glob
 
 
 def sigint_handler(signum, frame):
@@ -115,3 +119,80 @@ def initialize_lazy_modules(model, device):
             param.grad.zero_()
 
     return model
+
+
+def perform_reset(cache_dir, truncated_hash, integration_loader=None):
+    """Perform a full reset of the project, clearing all cached data.
+
+    Args:
+        cache_dir: The cache directory to clean
+        truncated_hash: The hash identifying this project instance
+        integration_loader: Optional integration loader for getting additional cleanup directories
+    """
+
+    grace_time = 7
+
+    print()
+    print(f" ⚠️ WARNING: Resetting project {truncated_hash}")
+    print(f"    This will permanently delete all checkpoints and cached data.")
+    print(f"    Press Ctrl+C within {grace_time} seconds to cancel...")
+
+    try:
+        time.sleep(grace_time)
+    except KeyboardInterrupt:
+        print("\n ✓   Reset cancelled.")
+        sys.exit(0)
+
+    print("\n   🗑️ Performing reset...")
+
+    # Get directories to clean
+    directories = ["logs"]
+    if integration_loader:
+        directories.extend(integration_loader.get_cleanup_directories())
+
+    # Clean directories
+    for directory in directories:
+        dir_path = os.path.join(cache_dir, directory)
+        if os.path.exists(dir_path):
+            shutil.rmtree(dir_path, ignore_errors=True)
+            print(f"   Removed: {directory}/")
+
+    # Clean checkpoint files
+    ckpt_pattern = os.path.join(cache_dir, "praxis", "*.ckpt")
+    checkpoints = glob(ckpt_pattern)
+    for checkpoint in checkpoints:
+        try:
+            os.remove(checkpoint)
+            print(f"   Removed: {os.path.basename(checkpoint)}")
+        except Exception:
+            pass
+
+    time.sleep(1)
+    print("\n   ✓ Reset complete.\n")
+
+
+def show_launch_animation(model, truncated_hash):
+    """Display the fancy launch animation for model loading.
+
+    Args:
+        model: The model to display
+        truncated_hash: The hash identifying this instance
+    """
+    plan = str(model.__repr__).splitlines()
+    launch_duration = random.uniform(6.7, 7.3)
+    acceleration_curve = random.uniform(3.5, 4.5)
+    start_time = time.time()
+
+    print(f"Staging: {truncated_hash}")
+    time.sleep(max(0, random.gauss(1.0, 3.0)))
+
+    for i, line in enumerate(plan):
+        print(line)
+        progress = i / len(plan)
+        scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
+        delay = scale_factor * (progress**acceleration_curve)
+        time.sleep(delay)
+
+    elapsed_time = time.time() - start_time
+    print(f"Loaded: {truncated_hash} in {elapsed_time:.3f} seconds.")
+    time.sleep(2)

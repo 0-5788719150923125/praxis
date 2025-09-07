@@ -21,6 +21,8 @@ from praxis.utils.system import (
     check_for_updates,
     find_latest_checkpoint,
     initialize_lazy_modules,
+    perform_reset,
+    show_launch_animation,
     sigint_handler,
 )
 from praxis.utils.tensors import create_block_ids, norm_scaling
@@ -46,4 +48,6 @@ __all__ = [
     "check_for_updates",
     "find_latest_checkpoint",
     "initialize_lazy_modules",
+    "perform_reset",
+    "show_launch_animation",
 ]

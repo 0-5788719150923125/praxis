@@ -9,19 +9,15 @@ import json
 import logging
 import math
 import os
-import random
 import re
-import shutil
 import signal
 import subprocess
 import sys
-import time
 import traceback
 import uuid
 import warnings
 from collections import Counter
 from datetime import datetime, timedelta
-from glob import glob
 from queue import Queue
 from typing import Any, Dict, List, Optional
 
@@ -30,32 +26,52 @@ import torch
 import torch.nn as nn
 from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
-from transformers.models.auto.modeling_auto import \
-    MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
 # Local application imports
 from api import APIServer
 from builders import get_datamodules
-from cli import (create_praxis_config, get_cli_args, get_processed_args,
-                 integration_loader, log_command)
+from cli import (
+    create_praxis_config,
+    get_cli_args,
+    get_processed_args,
+    integration_loader,
+    log_command,
+)
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
-from praxis.callbacks import (AccumulationSchedule, PeriodicEvaluation,
-                              TerminalInterface, TimeBasedCheckpoint,
-                              create_printing_progress_bar)
+from praxis.callbacks import (
+    AccumulationSchedule,
+    PeriodicEvaluation,
+    TerminalInterface,
+    TimeBasedCheckpoint,
+    create_printing_progress_bar,
+)
 from praxis.generation import Generator
-from praxis.optimizers import (get_optimizer, get_optimizer_profile,
-                               get_parameter_stats)
+from praxis.optimizers import get_optimizer, get_optimizer_profile, get_parameter_stats
 from praxis.schedulers import get_scheduler_func
 from praxis.tokenizers import create_tokenizer
-from praxis.trainers import (PraxisTrainer, Trainer, TrainerConfig,
-                             create_checkpoint_callback, create_logger,
-                             create_progress_callback,
-                             create_trainer_with_module, disable_warnings,
-                             reset_seed, seed_everything)
-from praxis.utils import (check_for_updates, find_latest_checkpoint,
-                          get_memory_info, initialize_lazy_modules,
-                          sigint_handler)
+from praxis.trainers import (
+    PraxisTrainer,
+    Trainer,
+    TrainerConfig,
+    create_checkpoint_callback,
+    create_logger,
+    create_progress_callback,
+    create_trainer_with_module,
+    disable_warnings,
+    reset_seed,
+    seed_everything,
+)
+from praxis.utils import (
+    check_for_updates,
+    find_latest_checkpoint,
+    get_memory_info,
+    initialize_lazy_modules,
+    perform_reset,
+    show_launch_animation,
+    sigint_handler,
+)
 
 # Prevent Python from creating .pyc files
 sys.dont_write_bytecode = True
@@ -233,41 +249,16 @@ def main():
     # Bootstrap the model and trainer
     model = AutoModelForCausalLM.from_config(config)
     
-    # Prepare for launch
-    plan = str(model.__repr__).splitlines()
-    launch_duration = random.uniform(6.7, 7.3)
-    acceleration_curve = random.uniform(3.5, 4.5)
-    start_time = time.time()
-    print(f"Staging: {truncated_hash}")
-    time.sleep(max(0, random.gauss(1.0, 3.0)))
-    for i, line in enumerate(plan):
-        print(line)
-        progress = i / len(plan)
-        scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
-        delay = scale_factor * (progress**acceleration_curve)
-        time.sleep(delay)
-    elapsed_time = time.time() - start_time
-    print(f"Loaded: {truncated_hash} in {elapsed_time:.3f} seconds.")
-    time.sleep(2)
-    
     initialize_lazy_modules(model, device)
     
     # Print the total parameter count
     total_params = sum(p.numel() for p in model.parameters())
     reduced = str(int(total_params / 10**6)) + "M"
     hparams["num_params"] = reduced
-    print(f"parameters: {reduced}")
-    
-    # Train info
-    print(f"optimizer: {optimizer_config['optimizer_name']}")
     
     # File cleanup
     if reset:
-        directories = ["logs"] + integration_loader.get_cleanup_directories()
-        for directory in directories:
-            shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
-        for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
-            os.remove(checkpoint)
+        perform_reset(cache_dir, truncated_hash, integration_loader)
     
     ckpt_path = None
     if not reset and not dev:
@@ -286,10 +277,7 @@ def main():
     
     try:
         param_stats = get_parameter_stats(model)
-        print(f"[DEBUG] param_stats created: {param_stats}")
     except Exception as e:
-        print(f"[ERROR] calculating parameter stats: {e}")
-        traceback.print_exc()
         param_stats = {}
     
     if local_rank == 0:
@@ -307,7 +295,6 @@ def main():
             param_stats,
             seed,
         )
-        print(f"[DEBUG] Created api_server with param_stats: {bool(param_stats)}")
         api_server.start()
         
         # Call API server hooks with (host, port) as in original implementation
@@ -336,15 +323,12 @@ def main():
     try:
         # Calculate statistics for all optimizer states
         param_stats = get_parameter_stats(model, optimizer)
-        print(f"[DEBUG] Updated param_stats with optimizer states: {param_stats}")
         
         # Update the API server if it exists
         if api_server and hasattr(api_server, "update_param_stats"):
             api_server.update_param_stats(param_stats)
-            print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
     except Exception as e:
-        print(f"[WARNING] Could not calculate optimizer statistics: {e}")
-        traceback.print_exc()
+        pass
     
     # create the scheduler
     scheduler = scheduler_func(optimizer)
@@ -353,6 +337,12 @@ def main():
     train_model = PraxisTrainer(
         model, optimizer, scheduler, hparams, tokenizer=tokenizer, byte_latent=byte_latent
     )
+    
+    # Print training configuration summary
+    print(f"[Training] Model: {reduced} parameters")
+    print(f"[Training] Optimizer: {optimizer_config['optimizer_name']}")
+    if api_server:
+        print(f"[Training] API Server: {api_server.get_api_addr()}")
     
     # Create progress bar callback (returns None if using dashboard)
     progress_bar = create_printing_progress_bar(
@@ -397,10 +387,9 @@ def main():
     )
     
     if hparams.get("decoder_type") == "mono_forward" and not no_compile:
-        print("[MonoForward] Skipping torch.compile (not compatible with layer-wise updates)")
+        print("[Compile] Skipping torch.compile (MonoForward not compatible with layer-wise updates)")
     elif not no_compile:
-        from praxis.trainers.compile import (try_compile_model,
-                                             try_compile_optimizer)
+        from praxis.trainers.compile import try_compile_model, try_compile_optimizer
 
         # Try to compile the model and optimizer
         model = try_compile_model(model, hparams)
@@ -414,7 +403,6 @@ def main():
     
     # Check if we should use MonoForward based on decoder type
     if hparams.get("decoder_type") == "mono_forward" and trainer_type == "praxis":
-        print("[INFO] Decoder type is mono_forward, using mono-forward trainer")
         trainer_type = "mono-forward"
     
     trainer, train_model = create_trainer_with_module(
@@ -430,18 +418,20 @@ def main():
         encoder_type=encoder_type,
     )
     
+    # Show launch animation just before training begins
+    show_launch_animation(model, truncated_hash)
+    
     try:
         trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
         
         # Training completed successfully
-        print("Training completed successfully!")
+        print("[Training] Completed successfully")
         
         # Run integration cleanup hooks
         integration_loader.run_cleanup_hooks()
         
         # Stop API server if running
         if api_server:
-            print("Stopping API server...")
             api_server.stop()
         
         # Force exit to ensure all threads terminate

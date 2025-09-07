@@ -33,7 +33,7 @@ def register_socketio(socketio_instance):
     """Register the global SocketIO instance for dashboard streaming."""
     global _global_socketio
     _global_socketio = socketio_instance
-    print("SocketIO registered for dashboard streaming")
+    # SocketIO registered for dashboard streaming
 
 
 def get_active_dashboard(identifier="main"):

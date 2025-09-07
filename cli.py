@@ -130,7 +130,7 @@ integrations = integration_loader.discover_integrations()
 
 # Load integrations that can add CLI arguments (without condition checks yet)
 for integration_manifest in integrations:
-    integration_loader.load_integration(integration_manifest, verbose=True)
+    integration_loader.load_integration(integration_manifest, verbose=False)
 
 # Let integrations add CLI arguments
 for cli_func in integration_loader.get_cli_functions():
@@ -711,7 +711,10 @@ if experiment_configs:
 
 # Now check integration conditions based on parsed args
 for integration_manifest in integrations:
-    integration_loader.load_integration(integration_manifest, args, verbose=True)
+    integration_loader.load_integration(integration_manifest, args, verbose=False)
+
+# Print clean summary of integrations
+integration_loader.print_summary()
 
 # Export the integration loader for use in other modules
 

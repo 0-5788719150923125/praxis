@@ -30,7 +30,6 @@ try:
     terminal_available = True
 except ImportError as e:
     terminal_available = False
-    print(f"Terminal streaming not available: {e}")
 
 logger = logging.getLogger("werkzeug")
 logger.setLevel(logging.ERROR)
@@ -49,7 +48,6 @@ _wsgi_middleware = []
 def register_wsgi_middleware(middleware_func):
     """Register a WSGI middleware function from modules"""
     _wsgi_middleware.append(middleware_func)
-    print(f"Registered WSGI middleware: {middleware_func.__name__}")
 
 
 def apply_wsgi_middleware():
@@ -57,7 +55,6 @@ def apply_wsgi_middleware():
     if _wsgi_middleware:
         for middleware in _wsgi_middleware:
             app.wsgi_app = middleware(app.wsgi_app)
-            print(f"Applied WSGI middleware: {middleware.__name__}")
 
 
 # Set up SocketIO for live reload
@@ -71,13 +68,11 @@ _response_middleware = []
 def register_request_middleware(func):
     """Register a request middleware function from modules"""
     _request_middleware.append(func)
-    print(f"Registered request middleware: {func.__name__}")
 
 
 def register_response_middleware(func):
     """Register a response middleware function from modules"""
     _response_middleware.append(func)
-    print(f"Registered response middleware: {func.__name__}")
 
 
 @app.before_request
@@ -708,7 +703,7 @@ class TemplateWatcher:
             self.observer.schedule(event_handler, self.template_dir, recursive=True)
             self.observer.schedule(event_handler, self.static_dir, recursive=True)
             self.observer.start()
-            print(f"Watching directories: {self.template_dir}, {self.static_dir}")
+            # Template watcher started silently
         except Exception as e:
             print(f"Error starting file watcher: {str(e)}")
 
@@ -732,13 +727,7 @@ class APIServer:
         param_stats=None,
         seed=None,
     ):
-        print(
-            f"[DEBUG] APIServer.__init__ called with param_stats: {param_stats is not None}"
-        )
-        if param_stats:
-            print(
-                f"[DEBUG] APIServer.__init__ param_stats keys: {list(param_stats.keys())}"
-            )
+        # Initialize APIServer with parameter statistics
         self.generator = generator
         self.server_thread = None
         self.server = None
@@ -830,9 +819,7 @@ class APIServer:
     def update_param_stats(self, param_stats):
         """Update the parameter statistics after optimizer creation"""
         self.param_stats = param_stats
-        print(
-            f"[DEBUG] APIServer.update_param_stats called with stats: {bool(param_stats)}"
-        )
+        # Update parameter statistics silently
 
     def _is_port_in_use(self, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -846,7 +833,8 @@ class APIServer:
                 os.kill(self.parent_pid, 0)
                 time.sleep(1)  # Check every second
             except OSError:  # Parent process no longer exists
-                print("Parent process died, shutting down API server...")
+                # Parent process died, shutting down API server
+                pass
                 self.stop()
                 break
 
@@ -870,9 +858,7 @@ class APIServer:
         self.started.wait(timeout=5)
         if not self.started.is_set():
             raise RuntimeError("Server failed to start within the timeout period")
-        print(f"API server started at: {self.get_api_addr()}")
-        print(f"Flask debug mode: {app.debug} (auto-reload enabled)")
-        print(f"Visit http://{self.get_api_addr()}/ in your browser")
+        print(f"[API] Server started at http://{self.get_api_addr()}/")
 
     def stop(self):
         self.shutdown_event.set()  # Signal monitor thread to stop
@@ -883,7 +869,7 @@ class APIServer:
 
         # Shut down SocketIO
         try:
-            print("Shutting down API server...")
+            # Shutting down API server
             socketio.stop()
         except Exception as e:
             print(f"Error stopping server: {str(e)}")
@@ -893,13 +879,7 @@ class APIServer:
             self.server_thread = None
 
     def _run_server(self):
-        print(
-            f"[DEBUG] _run_server starting, self.param_stats exists: {bool(self.param_stats)}"
-        )
-        if self.param_stats:
-            print(
-                f"[DEBUG] _run_server self.param_stats keys: {list(self.param_stats.keys())}"
-            )
+        # Start API server with parameter statistics
 
         # Apply any WSGI middleware registered by integrations (must be before starting server)
         apply_wsgi_middleware()
@@ -912,15 +892,10 @@ class APIServer:
             # Store param_stats if available
             if hasattr(self, "param_stats") and self.param_stats:
                 app.config["param_stats"] = self.param_stats
-                print(
-                    f"[DEBUG] API Server: Stored param_stats in app.config with {len(self.param_stats)} keys"
-                )
-                print(
-                    f"[DEBUG] API Server: param_stats keys: {list(self.param_stats.keys())}"
-                )
+                # Stored parameter statistics in app config
             else:
                 app.config["param_stats"] = {}
-                print(f"[DEBUG] API Server: No param_stats found, storing empty dict")
+                # No parameter statistics available
 
             # Register integration middleware FIRST
             if self.integration_loader:
