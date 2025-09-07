@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "praxis"
-version = "0.1.0"
+version = "0.2.0"
 description = "as above, so below"
 authors = [{ name = "Ryan Brooks", email = "ryan@src.eco" }]
 urls = { label = "https://src.eco" }

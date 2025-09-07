@@ -64,18 +64,18 @@ from praxis.callbacks import (
 from praxis.generation import Generator
 from praxis.optimizers import get_optimizer, get_optimizer_profile
 
-# Generic trainer imports
+# Lightning imports moved to praxis.trainers
 from praxis.trainers import (
   PraxisTrainer,
-  Trainer,
   TrainerConfig,
-  seed_everything,
-  reset_seed,
+  create_csv_logger,
+  create_model_checkpoint,
+  create_progress_bar,
+  create_trainer,
   disable_warnings,
-  create_logger,
-  create_checkpoint_callback,
-  create_progress_callback,
 )
+from praxis.trainers import reset_seed_lightning as reset_seed
+from praxis.trainers import seed_everything_lightning as seed_everything
 
 ignored_warnings = [
     ".*Checkpoint directory.*exists and is not empty*",
@@ -94,9 +94,9 @@ from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Register and configure environment
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# Disable warnings
+# Disable Lightning warnings (already imported above)
 disable_warnings()
-logging.getLogger("pytorch").setLevel(logging.ERROR)
+logging.getLogger("lightning.pytorch").setLevel(logging.ERROR)
 
 AutoConfig.register("praxis", PraxisConfig)
 AutoModel.register(PraxisConfig, PraxisModel)
@@ -245,7 +245,7 @@ train_params = dict(
     num_sanity_val_steps=0,
     limit_val_batches=4096 // hparams["batch_size"],
     log_every_n_steps=10,
-    logger=create_logger(log_dir=os.path.join(cache_dir, "logs"), name="praxis", format="csv"),
+    logger=create_csv_logger(os.path.join(cache_dir, "lightning"), name="praxis"),
     callbacks=[],
 )
 
@@ -334,7 +334,7 @@ print(f"optimizer: {optimizer_config['optimizer_name']}")
 # File cleanup
 if reset:
     directories = [
-        "logs"
+        "lightning"
     ] + module_loader_with_conditions.get_cleanup_directories()
     for directory in directories:
         shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
@@ -549,40 +549,109 @@ if local_rank == 0 and param_stats:
 # create the scheduler
 scheduler = get_scheduler(optimizer, optimizer_config, disable_schedule, warmup_steps)(optimizer)
 
-# Wrap the model in a training module
+# Wrap the model in a pytorch-lightning module
 train_model = PraxisTrainer(model, optimizer, scheduler, hparams, tokenizer=tokenizer, byte_latent=byte_latent)
 
 # Load the callbacks
-from praxis.callbacks import create_printing_progress_bar
+progress_bar = None
+if not use_dashboard:
+    from typing import Any
 
-progress_bar = create_printing_progress_bar(
-    process_position=0,
-    leave=True,
-    use_dashboard=use_dashboard
-)
+    # Import base progress bar class for subclassing
+    from lightning.pytorch.callbacks import TQDMProgressBar
+
+    from praxis.trainers import create_progress_bar
+    
+    class PrintingProgressBar(TQDMProgressBar):
+        def __init__(
+            self, refresh_rate: int = 1, process_position: int = 0, leave: bool = False
+        ):
+            super().__init__(refresh_rate, process_position, leave)
+            self._last_print_lines = 0
+            self._is_jupyter = self._check_jupyter()
+            self._output_div = None
+
+        def _check_jupyter(self) -> bool:
+            try:
+                from IPython import get_ipython
+
+                return get_ipython().__class__.__name__ == "ZMQInteractiveShell"
+            except Exception:
+                return False
+
+        def _get_active_progress_bar(self):
+            active_progress_bar = None
+            if (
+                self._train_progress_bar is not None
+                and not self.train_progress_bar.disable
+            ):
+                active_progress_bar = self.train_progress_bar
+            elif (
+                self._val_progress_bar is not None and not self.val_progress_bar.disable
+            ):
+                active_progress_bar = self.val_progress_bar
+            elif (
+                self._test_progress_bar is not None
+                and not self.test_progress_bar.disable
+            ):
+                active_progress_bar = self.test_progress_bar
+            elif (
+                self._predict_progress_bar is not None
+                and not self.predict_progress_bar.disable
+            ):
+                active_progress_bar = self.predict_progress_bar
+
+            return active_progress_bar
+
+        def _escape_html(self, text: str) -> str:
+            """Escape HTML special characters while preserving whitespace"""
+            import html
+
+            # First escape special characters
+            escaped = html.escape(str(text))
+            # Replace newlines with <br> tags to preserve formatting
+            escaped = escaped.replace("\n", "<br>")
+            # Replace spaces with &nbsp; to preserve multiple spaces
+            escaped = escaped.replace("  ", "&nbsp;&nbsp;")
+            return escaped
+
+        def print(self, *args: Any, sep: str = " ", **kwargs: Any) -> None:
+            active_progress_bar = self._get_active_progress_bar()
+            if active_progress_bar is None:
+                return
+
+            message = sep.join(map(str, args))
+
+            if self._is_jupyter:
+                from IPython.display import HTML, display
+
+                # Escape the message
+                safe_message = self._escape_html(message)
+
+                # Create a dedicated output area if it doesn't exist
+                if self._output_div is None:
+                    self._output_div = display(
+                        HTML(
+                            '<div id="custom-output" style="white-space: pre-wrap;"></div>'
+                        ),
+                        display_id=True,
+                    )
+
+                # Update the output area with the escaped message
+                self._output_div.update(
+                    HTML(
+                        f'<div id="custom-output" style="white-space: pre-wrap;">{safe_message}</div>'
+                    )
+                )
+            else:
+                print(message)
+
+    progress_bar = PrintingProgressBar(process_position=0, leave=True)
 
 if local_rank == 0:
     if progress_bar is not None:
         train_params["callbacks"].append(progress_bar)
     train_params["callbacks"].append(checkpoint_callback)
-    # Create model info dict for dashboard display
-    model_info = {
-        'optimizer_config': optimizer_config,
-        'strategy': strategy,
-        'rl_type': rl_type,
-        'vocab_size': vocab_size,
-        'depth': depth,
-        'hidden_size': hidden_size,
-        'embed_size': embed_size,
-        'dropout': dropout,
-        'use_source_code': use_source_code,
-        'dev': dev,
-        'meta': meta,
-        'seed': seed,
-        'truncated_hash': truncated_hash,
-        'total_params': total_params,
-    }
-    
     train_params["callbacks"].append(
         TerminalInterface(
             tokenizer=tokenizer,
@@ -596,8 +665,21 @@ if local_rank == 0:
             byte_latent=byte_latent,
             debug=debug,
             get_memory_info=get_memory_info,
+            optimizer_config=optimizer_config,
+            strategy=strategy,
+            rl_type=rl_type,
+            vocab_size=vocab_size,
+            depth=depth,
+            hidden_size=hidden_size,
+            embed_size=embed_size,
+            dropout=dropout,
+            use_source_code=use_source_code,
+            dev=dev,
+            meta=meta,
+            seed=seed,
+            truncated_hash=truncated_hash,
+            total_params=total_params,
             api_server=api_server,
-            model_info=model_info,
         )
     )
 
@@ -616,7 +698,9 @@ if eval_tasks:
         )
     )
 
-# Create trainer using generic interface
+# Create trainer using Lightning backend (for now)
+from lightning.pytorch.trainer import Trainer
+
 trainer = Trainer(**train_params)
 
 # Wrap training in exception handler to catch crashes and display them immediately
@@ -647,6 +731,10 @@ except KeyboardInterrupt:
     # Handle Ctrl+C gracefully
     if progress_bar and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
         progress_bar.dashboard.stop()
+        # Dashboard already prints the interruption message
+    else:
+        print("\n🛑 Training interrupted by user", file=sys.stderr)
+    sys.exit(0)
         # Dashboard already prints the interruption message
     else:
         print("\n🛑 Training interrupted by user", file=sys.stderr)
