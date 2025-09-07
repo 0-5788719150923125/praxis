@@ -901,12 +901,15 @@ class TerminalDashboard:
         if len(status_lines) > max_status_lines:
             status_lines = status_lines[-max_status_lines:]
 
-        log_text = "\n".join(list(self.log_buffer)[-((height // 2) - 1) :])
+        # Calculate available lines for LOG section
+        # Available from (height // 2) + 2 to height - 3 (excluding borders and footer)
+        log_available_lines = height - (height // 2) - 2 - 3
+        log_text = "\n".join(list(self.log_buffer)[-log_available_lines:])
         log_lines = self._wrap_text(log_text, right_width)
 
         # Pad status_lines and log_lines if they're shorter than the available space
         status_lines += [""] * (max_status_lines - len(status_lines))
-        log_lines += [""] * ((height // 2) - 1 - len(log_lines))
+        log_lines += [""] * (log_available_lines - len(log_lines))
 
         for i in range(height):
             left_content = " " * half_width

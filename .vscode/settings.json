@@ -5,6 +5,7 @@
       "source.organizeImports": "explicit"
     }
   },
+  "python.languageServer": "Default",
   "[latex]": {
     "editor.formatOnPaste": false,
     "editor.suggestSelection": "recentlyUsedByPrefix"
