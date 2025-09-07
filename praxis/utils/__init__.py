@@ -17,7 +17,6 @@ from praxis.utils.naming import (
     generate_deterministic_name,
     mask_git_url,
 )
-from praxis.utils.scheduler import get_scheduler
 from praxis.utils.system import (
     check_for_updates,
     find_latest_checkpoint,
@@ -47,6 +46,4 @@ __all__ = [
     "check_for_updates",
     "find_latest_checkpoint",
     "initialize_lazy_modules",
-    # Scheduler
-    "get_scheduler",
 ]

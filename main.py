@@ -1,432 +1,381 @@
-import json
-import os
-import re
-import signal
-import subprocess
-import sys
+#!/usr/bin/env python3
+"""Main training script for Praxis language models."""
 
-sys.dont_write_bytecode = True
-
-# Import our new utilities
-from praxis.utils import (
-  check_for_updates,
-  find_latest_checkpoint,
-  get_memory_info,
-  get_scheduler,
-  initialize_lazy_modules,
-  sigint_handler,
-)
-
-# Set up the SIGINT handler
-signal.signal(signal.SIGINT, sigint_handler)
-
-# Check for updates at startup
-check_for_updates()
-
+# Standard library imports
 import contextlib
+import importlib
 import itertools
+import json
 import logging
 import math
+import os
 import random
 import re
 import shutil
+import signal
+import subprocess
+import sys
 import time
 import traceback
 import uuid
 import warnings
 from collections import Counter
-
-# dataclass import removed - no longer needed
 from datetime import datetime, timedelta
-from functools import partial
 from glob import glob
 from queue import Queue
 from typing import Any, Dict, List, Optional
 
+# Third-party imports
 import torch
 import torch.nn as nn
-from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
-from transformers.models.auto.modeling_auto import (
-  MODEL_FOR_CAUSAL_LM_MAPPING_NAMES,
-)
+from transformers.models.auto.modeling_auto import \
+    MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from praxis.callbacks import (
-  AccumulationSchedule,
-  PeriodicEvaluation,
-  TerminalInterface,
-  TimeBasedCheckpoint,
-)
-from praxis.generation import Generator
-from praxis.optimizers import (
-  get_optimizer,
-  get_optimizer_profile,
-  get_parameter_stats,
-)
-
-# Generic trainer imports
-from praxis.trainers import (
-  PraxisTrainer,
-  Trainer,
-  TrainerConfig,
-  create_checkpoint_callback,
-  create_logger,
-  create_progress_callback,
-  disable_warnings,
-  reset_seed,
-  seed_everything,
-)
-
-ignored_warnings = [
-    ".*Checkpoint directory.*exists and is not empty*",
-    ".*JAX is multithreaded, so this will likely lead to a deadlock*",
-    ".*Total length of `list` across ranks is zero.*",
-]
-for pattern in ignored_warnings:
-    warnings.filterwarnings("ignore", pattern)
-
+# Local application imports
 from api import APIServer
 from builders import get_datamodules
-from cli import (
-    create_praxis_config,
-    get_cli_args,
-    get_processed_args,
-    integration_loader_with_conditions,
-    log_command,
-)
+from cli import (create_praxis_config, get_cli_args, get_processed_args,
+                 integration_loader_with_conditions, log_command)
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
-
-# Register and configure environment
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# Disable warnings
-disable_warnings()
-logging.getLogger("pytorch").setLevel(logging.ERROR)
-
-AutoConfig.register("praxis", PraxisConfig)
-AutoModel.register(PraxisConfig, PraxisModel)
-AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
-MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
-
-# Get processed arguments from CLI
-args = get_cli_args()
-processed_args = get_processed_args(args)
-
-# Extract all processed arguments as global variables for backward compatibility
-globals().update(processed_args)
-
-(_, args_hash, truncated_hash) = log_command()
-
-# Set seeds for reproducibility  
-seed_everything(seed, workers=True)
-
-# Tokenizer initialization - single unified interface
+from praxis.callbacks import (AccumulationSchedule, PeriodicEvaluation,
+                              TerminalInterface, TimeBasedCheckpoint,
+                              create_printing_progress_bar)
+from praxis.generation import Generator
+from praxis.optimizers import (get_optimizer, get_optimizer_profile,
+                               get_parameter_stats)
+from praxis.schedulers import get_scheduler_func
 from praxis.tokenizers import create_tokenizer
+from praxis.trainers import (PraxisTrainer, Trainer, TrainerConfig,
+                             create_checkpoint_callback, create_logger,
+                             create_progress_callback,
+                             create_trainer_with_module, disable_warnings,
+                             reset_seed, seed_everything)
+from praxis.utils import (check_for_updates, find_latest_checkpoint,
+                          get_memory_info, initialize_lazy_modules,
+                          sigint_handler)
 
-tokenizer = create_tokenizer(
-    tokenizer_name=tokenizer_type,
-    tokenizer_profile=tokenizer_profile,
-    tokenizer_path=tokenizer_path,
-    encoder_type=encoder_type,
-    vocab_size=vocab_size,
-    cache_dir=cache_dir,
-)
+# Prevent Python from creating .pyc files
+sys.dont_write_bytecode = True
 
-# Create Transformers config from CLI args
-config = create_praxis_config(args, tokenizer)
 
-# Add optimizer configuration (these are stored as attributes but not part of __init__)
-optimizer_config, disable_schedule = get_optimizer_profile(
-    optimizer, any([fixed_schedule, schedule_free])
-)
-config.optimizer_config = optimizer_config
-config.optimizer_wrappers = {
-    "trac": trac,
-    "ortho": ortho,
-    "lookahead": lookahead,
-    "schedule_free": schedule_free,
-}
+def setup_environment():
+    """Set up the environment and configurations."""
+    # Set up the SIGINT handler
+    signal.signal(signal.SIGINT, sigint_handler)
+    
+    # Check for updates at startup
+    check_for_updates()
+    
+    # Configure environment variables
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    
+    # Disable warnings
+    disable_warnings()
+    logging.getLogger("pytorch").setLevel(logging.ERROR)
+    
+    # Configure warning filters
+    ignored_warnings = [
+        ".*Checkpoint directory.*exists and is not empty*",
+        ".*JAX is multithreaded, so this will likely lead to a deadlock*",
+        ".*Total length of `list` across ranks is zero.*",
+    ]
+    for pattern in ignored_warnings:
+        warnings.filterwarnings("ignore", pattern)
+    
+    # Register Praxis models with transformers
+    AutoConfig.register("praxis", PraxisConfig)
+    AutoModel.register(PraxisConfig, PraxisModel)
+    AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
+    MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 
-# Misc hyperparameters
-hparams = dict(
-    batch_size=batch_size,
-    target_batch_size=target_batch_size,
-    block_size=block_size,
-    oversample_chance=0.1,  # double the block_size
-    supersample_chance=0.01,  # quadruple the block_size
-    hypersample_chance=0.001,  # octuple the block_size
-    device=device,
-    dev=dev,
-    **config.to_dict(),
-)
 
-# Training config
-train_params = dict(
-    accelerator=f"cpu" if device == "cpu" else "gpu",
-    strategy="ddp_find_unused_parameters_true" if device == "cuda" else "auto",
-    devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
-    max_steps=max_steps if max_steps is not None else -1,
-    max_epochs=-1,
-    reload_dataloaders_every_n_epochs=0,
-    precision="32-true",
-    gradient_clip_val=1.0,
-    gradient_clip_algorithm="norm",
-    benchmark=True,
-    deterministic=False,
-    enable_checkpointing=True,
-    enable_progress_bar=not use_dashboard,
-    enable_model_summary=False,
-    detect_anomaly=True if dev else False,
-    val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
-    num_sanity_val_steps=0,
-    limit_val_batches=4096 // hparams["batch_size"],
-    log_every_n_steps=10,
-    logger=create_logger(
-        log_dir=os.path.join(cache_dir, "logs"), name="praxis", format="csv"
-    ),
-    callbacks=[],
-)
-
-# Configure the learning rate scheduler
-warmup_steps = 4096
-if disable_schedule:
-
-    def lr_lambda_with_warmup(current_step, warmup_steps=1024):
-        if current_step < warmup_steps:
-            return float(current_step) / float(max(1, warmup_steps))
-        return 1.0
-
-    scheduler_func = partial(
-        torch.optim.lr_scheduler.LambdaLR,
-        lr_lambda=lambda step: lr_lambda_with_warmup(step, warmup_steps),
+def main():
+    """Main training function."""
+    # Set up environment
+    setup_environment()
+    
+    # Get processed arguments from CLI
+    args = get_cli_args()
+    processed_args = get_processed_args(args)
+    
+    # Extract all processed arguments as local variables
+    locals().update(processed_args)
+    
+    # Make necessary variables accessible
+    seed = processed_args['seed']
+    tokenizer_type = processed_args.get('tokenizer_type')
+    tokenizer_profile = processed_args.get('tokenizer_profile')
+    tokenizer_path = processed_args.get('tokenizer_path')
+    encoder_type = processed_args.get('encoder_type')
+    vocab_size = processed_args['vocab_size']
+    cache_dir = processed_args['cache_dir']
+    optimizer = processed_args['optimizer']
+    fixed_schedule = processed_args.get('fixed_schedule', False)
+    schedule_free = processed_args.get('schedule_free', False)
+    trac = processed_args.get('trac', False)
+    ortho = processed_args.get('ortho', False)
+    lookahead = processed_args.get('lookahead', False)
+    batch_size = processed_args['batch_size']
+    target_batch_size = processed_args.get('target_batch_size', batch_size)
+    block_size = processed_args['block_size']
+    device = processed_args['device']
+    dev = processed_args.get('dev', False)
+    max_steps = processed_args.get('max_steps')
+    use_dashboard = processed_args.get('use_dashboard', False)
+    reset = processed_args.get('reset', False)
+    local_rank = processed_args.get('local_rank', 0)
+    no_source = processed_args.get('no_source', False)
+    pile = processed_args.get('pile', False)
+    phi = processed_args.get('phi', False)
+    data_path = processed_args.get('data_path')
+    rl_type = processed_args.get('rl_type')
+    no_compile = processed_args.get('no_compile', False)
+    byte_latent = processed_args.get('byte_latent', False)
+    host_name = processed_args.get('host_name', 'localhost')
+    port = processed_args.get('port', 2100)
+    disable_schedule = processed_args.get('disable_schedule', False)
+    
+    (_, args_hash, truncated_hash) = log_command()
+    
+    # Set seeds for reproducibility
+    seed_everything(seed, workers=True)
+    
+    # Tokenizer initialization - single unified interface
+    tokenizer = create_tokenizer(
+        tokenizer_name=tokenizer_type,
+        tokenizer_profile=tokenizer_profile,
+        tokenizer_path=tokenizer_path,
+        encoder_type=encoder_type,
+        vocab_size=vocab_size,
+        cache_dir=cache_dir,
     )
-else:
-
-    class PatchedCosineAnnealingWarmupRestarts(CosineAnnealingWarmupRestarts):
-        def step(self, *args, **kwargs):
-            super().step(*args, **kwargs)
-            self._last_lr: List[float] = [
-                group["lr"] for group in self.optimizer.param_groups
-            ]
-
-    scheduler_func = partial(
-        PatchedCosineAnnealingWarmupRestarts,
-        first_cycle_steps=1024 * 256,
-        max_lr=optimizer_config["lr"],
-        min_lr=optimizer_config["lr"] * 1e-2,
-        gamma=1.0,
+    
+    # Create Transformers config from CLI args
+    config = create_praxis_config(args, tokenizer)
+    
+    # Add optimizer configuration
+    optimizer_config, disable_schedule_from_optimizer = get_optimizer_profile(
+        optimizer, any([fixed_schedule, schedule_free])
+    )
+    disable_schedule = disable_schedule or disable_schedule_from_optimizer
+    
+    config.optimizer_config = optimizer_config
+    config.optimizer_wrappers = {
+        "trac": trac,
+        "ortho": ortho,
+        "lookahead": lookahead,
+        "schedule_free": schedule_free,
+    }
+    
+    # Misc hyperparameters
+    hparams = dict(
+        batch_size=batch_size,
+        target_batch_size=target_batch_size,
+        block_size=block_size,
+        oversample_chance=0.1,  # double the block_size
+        supersample_chance=0.01,  # quadruple the block_size
+        hypersample_chance=0.001,  # octuple the block_size
+        device=device,
+        dev=dev,
+        **config.to_dict(),
+    )
+    
+    # Training config
+    train_params = dict(
+        accelerator=f"cpu" if device == "cpu" else "gpu",
+        strategy="ddp_find_unused_parameters_true" if device == "cuda" else "auto",
+        devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
+        max_steps=max_steps if max_steps is not None else -1,
+        max_epochs=-1,
+        reload_dataloaders_every_n_epochs=0,
+        precision="32-true",
+        gradient_clip_val=1.0,
+        gradient_clip_algorithm="norm",
+        benchmark=True,
+        deterministic=False,
+        enable_checkpointing=True,
+        enable_progress_bar=not use_dashboard,
+        enable_model_summary=False,
+        detect_anomaly=True if dev else False,
+        val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
+        num_sanity_val_steps=0,
+        limit_val_batches=4096 // hparams["batch_size"],
+        log_every_n_steps=10,
+        logger=create_logger(
+            log_dir=os.path.join(cache_dir, "logs"), name="praxis", format="csv"
+        ),
+        callbacks=[],
+    )
+    
+    # Configure the learning rate scheduler
+    warmup_steps = 4096
+    scheduler_func = get_scheduler_func(
+        optimizer_config=optimizer_config,
+        disable_schedule=disable_schedule,
         warmup_steps=warmup_steps,
     )
-
-
-# Define checkpointing behavior
-checkpoint_callback = TimeBasedCheckpoint(
-    save_top_k=3,
-    save_last="link",
-    monitor="batch",
-    mode="max",
-    dirpath=os.path.join(cache_dir, "praxis"),
-    filename="model-{batch}",
-    enable_version_counter=False,
-    save_interval=3600,
-)
-
-# Bootstrap the model and trainer
-model = AutoModelForCausalLM.from_config(config)
-
-# Prepare for launch
-plan = str(model.__repr__).splitlines()
-launch_duration = random.uniform(6.7, 7.3)
-acceleration_curve = random.uniform(
-    3.5, 4.5
-)  # Higher = more aggressive start (2=gentle, 4=moderate, 6=very aggressive)
-start_time = time.time()
-print(f"Staging: {truncated_hash}")
-time.sleep(max(0, random.gauss(1.0, 3.0)))
-for i, line in enumerate(plan):
-    print(line)
-    # Rolling down hill: bullet → boulder (normalized to launch_duration seconds total)
-    progress = i / len(plan)  # 0 to 1
-    # Normalize exponential curve to always sum to launch_duration seconds
-    # Scale factor adjusts based on curve steepness: steeper curves need different normalization
-    scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
-    delay = scale_factor * (progress**acceleration_curve)
-    time.sleep(delay)
-elapsed_time = time.time() - start_time
-print(f"Loaded: {truncated_hash} in {elapsed_time:.3f} seconds.")
-time.sleep(2)
-
-
-initialize_lazy_modules(model, device)
-
-# Print the total parameter count
-total_params = sum(p.numel() for p in model.parameters())
-reduced = str(int(total_params / 10**6)) + "M"
-hparams["num_params"] = reduced
-print(f"parameters: {reduced}")
-
-# Train info
-print(f"optimizer: {optimizer_config['optimizer_name']}")
-
-# File cleanup
-if reset:
-    directories = [
-        "logs"
-    ] + integration_loader_with_conditions.get_cleanup_directories()
-    for directory in directories:
-        shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
-    for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
-        os.remove(checkpoint)
-
-
-ckpt_path = None
-if not reset and not dev:
-    symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
-    true_link = find_latest_checkpoint(cache_dir)
-    if os.path.exists(symlink):
-        print(f"resuming from symbolic path: {symlink}")
-        ckpt_path = symlink
-    elif true_link is not None and os.path.exists(true_link):
-        print(f"resuming from true path: {true_link}")
-        ckpt_path = true_link
-
-
-# Initialize loggers through integration system
-class ArgsWrapper:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-
-args_obj = ArgsWrapper(wandb=wandb, wandb_run_name=globals().get("wandb_run_name"))
-
-# Initialize loaded integrations with proper parameters
-integration_loader_with_conditions.run_init_hooks(
-    get_cli_args(), cache_dir, ckpt_path, truncated_hash
-)
-
-logger = integration_loader_with_conditions.create_logger(
-    cache_dir, ckpt_path, truncated_hash, wandb_enabled=wandb, args=args_obj
-)
-
-if logger:
-    train_params["logger"] = logger
-
-generator = Generator(model, tokenizer, device=device)
-
-# Calculate parameter statistics (simplified)
-print(f"[DEBUG] Starting param_stats calculation")
-try:
-    param_stats = get_parameter_stats(model)
-    print(f"[DEBUG] param_stats created: {param_stats}")
-except Exception as e:
-    print(f"[ERROR] calculating parameter stats: {e}")
-    import traceback
-
-    traceback.print_exc()
-    param_stats = {}
-
-if local_rank == 0:
-    # Force reload of api integration to pick up any recent changes
-    import importlib
-
-    import api
-
-    importlib.reload(api)
-    from api import APIServer
-
-    api_server = APIServer(
-        generator,
-        host_name,
-        port,
-        tokenizer,
-        integration_loader_with_conditions,
-        param_stats,
-        seed,
-    )
-    print(f"[DEBUG] Created api_server with param_stats: {bool(param_stats)}")
-    api_server.start()
     
-    # Call API server hooks with (host, port) as in original implementation
-    for hook_func in integration_loader_with_conditions.get_api_server_hooks():
-        hook_func(api_server.host, api_server.port)
-else:
-    api_server = None
-
-
-# Load datasets
-use_source_code = not no_source
-dataintegration = get_datamodules(
-    seed, dev, pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
-)
-
-# create the optimizer
-optimizer = get_optimizer(
-    model,
-    trac=trac,
-    ortho=ortho,
-    lookahead=lookahead,
-    schedule_free=schedule_free,
-    **optimizer_config,
-)
-
-# Update optimizer parameter count after optimizer is created
-if local_rank == 0 and param_stats:
+    # Define checkpointing behavior
+    checkpoint_callback = TimeBasedCheckpoint(
+        save_top_k=3,
+        save_last="link",
+        monitor="batch",
+        mode="max",
+        dirpath=os.path.join(cache_dir, "praxis"),
+        filename="model-{batch}",
+        enable_version_counter=False,
+        save_interval=3600,
+    )
+    
+    # Bootstrap the model and trainer
+    model = AutoModelForCausalLM.from_config(config)
+    
+    # Prepare for launch
+    plan = str(model.__repr__).splitlines()
+    launch_duration = random.uniform(6.7, 7.3)
+    acceleration_curve = random.uniform(3.5, 4.5)
+    start_time = time.time()
+    print(f"Staging: {truncated_hash}")
+    time.sleep(max(0, random.gauss(1.0, 3.0)))
+    for i, line in enumerate(plan):
+        print(line)
+        progress = i / len(plan)
+        scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
+        delay = scale_factor * (progress**acceleration_curve)
+        time.sleep(delay)
+    elapsed_time = time.time() - start_time
+    print(f"Loaded: {truncated_hash} in {elapsed_time:.3f} seconds.")
+    time.sleep(2)
+    
+    initialize_lazy_modules(model, device)
+    
+    # Print the total parameter count
+    total_params = sum(p.numel() for p in model.parameters())
+    reduced = str(int(total_params / 10**6)) + "M"
+    hparams["num_params"] = reduced
+    print(f"parameters: {reduced}")
+    
+    # Train info
+    print(f"optimizer: {optimizer_config['optimizer_name']}")
+    
+    # File cleanup
+    if reset:
+        directories = ["logs"] + integration_loader_with_conditions.get_cleanup_directories()
+        for directory in directories:
+            shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
+        for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
+            os.remove(checkpoint)
+    
+    ckpt_path = None
+    if not reset and not dev:
+        symlink = os.path.join(cache_dir, "praxis", "last.ckpt")
+        true_link = find_latest_checkpoint(cache_dir)
+        if os.path.exists(symlink):
+            print(f"resuming from symbolic path: {symlink}")
+            ckpt_path = symlink
+        elif true_link is not None and os.path.exists(true_link):
+            print(f"resuming from true path: {true_link}")
+            ckpt_path = true_link
+    
+    # Initialize generator for tool calling during training and inference  
+    generator = Generator(model, tokenizer, device=device)
+    param_stats = {}
+    
     try:
+        param_stats = get_parameter_stats(model)
+        print(f"[DEBUG] param_stats created: {param_stats}")
+    except Exception as e:
+        print(f"[ERROR] calculating parameter stats: {e}")
+        traceback.print_exc()
+        param_stats = {}
+    
+    if local_rank == 0:
+        # Force reload of api integration to pick up any recent changes
+        import api
+        importlib.reload(api)
+        from api import APIServer
+        
+        api_server = APIServer(
+            generator,
+            host_name,
+            port,
+            tokenizer,
+            integration_loader_with_conditions,
+            param_stats,
+            seed,
+        )
+        print(f"[DEBUG] Created api_server with param_stats: {bool(param_stats)}")
+        api_server.start()
+        
+        # Call API server hooks with (host, port) as in original implementation
+        for hook_func in integration_loader_with_conditions.get_api_server_hooks():
+            hook_func(api_server.host, api_server.port)
+    else:
+        api_server = None
+    
+    # Load datasets
+    use_source_code = not no_source
+    dataintegration = get_datamodules(
+        seed, dev, pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
+    )
+    
+    # create the optimizer
+    optimizer = get_optimizer(
+        model,
+        trac=trac,
+        ortho=ortho,
+        lookahead=lookahead,
+        schedule_free=schedule_free,
+        **optimizer_config,
+    )
+    
+    # Log initial optimizer state information
+    try:
+        # Calculate statistics for all optimizer states
         param_stats = get_parameter_stats(model, optimizer)
         print(f"[DEBUG] Updated param_stats with optimizer states: {param_stats}")
-
-        # Update the API server's param_stats if it exists
-        if "api_server" in locals() and hasattr(api_server, "update_param_stats"):
-            if api_server:
-                api_server.update_param_stats(param_stats)
-                print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
+        
+        # Update the API server if it exists
+        if api_server and hasattr(api_server, "update_param_stats"):
+            api_server.update_param_stats(param_stats)
+            print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
     except Exception as e:
-        print(f"[ERROR] counting optimizer states: {e}")
-        import traceback
-
+        print(f"[WARNING] Could not calculate optimizer statistics: {e}")
         traceback.print_exc()
-
-# create the scheduler
-scheduler = get_scheduler(optimizer, optimizer_config, disable_schedule, warmup_steps)(
-    optimizer
-)
-
-# Wrap the model in a training module
-train_model = PraxisTrainer(
-    model, optimizer, scheduler, hparams, tokenizer=tokenizer, byte_latent=byte_latent
-)
-
-# Load the callbacks
-from praxis.callbacks import create_printing_progress_bar
-
-progress_bar = create_printing_progress_bar(
-    process_position=0, leave=True, use_dashboard=use_dashboard
-)
-
-if local_rank == 0:
+    
+    # create the scheduler
+    scheduler = scheduler_func(optimizer)
+    
+    # Wrap the model in a training module
+    train_model = PraxisTrainer(
+        model, optimizer, scheduler, hparams, tokenizer=tokenizer, byte_latent=byte_latent
+    )
+    
+    # Create progress bar callback (returns None if using dashboard)
+    progress_bar = create_printing_progress_bar(
+        process_position=0, leave=True, use_dashboard=use_dashboard
+    )
+    
+    # Configure callbacks list
+    train_params["callbacks"] = [
+        checkpoint_callback,
+        AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"]),
+        PeriodicEvaluation(generator),
+    ]
+    
+    # Add progress bar if not using dashboard
     if progress_bar is not None:
         train_params["callbacks"].append(progress_bar)
-    train_params["callbacks"].append(checkpoint_callback)
-    # Create model info dict for dashboard display
-    model_info = {
-        "optimizer_config": optimizer_config,
-        "strategy": strategy,
-        "rl_type": rl_type,
-        "vocab_size": vocab_size,
-        "depth": depth,
-        "hidden_size": hidden_size,
-        "embed_size": embed_size,
-        "dropout": dropout,
-        "use_source_code": use_source_code,
-        "dev": dev,
-        "meta": meta,
-        "seed": seed,
-        "truncated_hash": truncated_hash,
-        "total_params": total_params,
-    }
-
+    
+    # Add TerminalInterface which handles dashboard/console output routing
+    # TerminalInterface creates and manages the dashboard internally when use_dashboard=True
+    quiet = processed_args.get('quiet', False)
+    terminal_output_length = processed_args.get('terminal_output_length', block_size * 2)
+    debug = processed_args.get('debug', False)
+    
     train_params["callbacks"].append(
         TerminalInterface(
             tokenizer=tokenizer,
@@ -441,102 +390,93 @@ if local_rank == 0:
             debug=debug,
             get_memory_info=get_memory_info,
             api_server=api_server,
-            model_info=model_info,
+            seed=seed,
+            truncated_hash=truncated_hash,
+            total_params=total_params,  # Pass the actual number, not the string
         )
     )
+    
+    if hparams.get("decoder_type") == "mono_forward" and not no_compile:
+        print("[MonoForward] Skipping torch.compile (not compatible with layer-wise updates)")
+    elif not no_compile:
+        from praxis.trainers.compile import (try_compile_model,
+                                             try_compile_optimizer)
 
-train_params["callbacks"].append(
-    AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
-)
-
-if eval_tasks:
-    train_params["callbacks"].append(
-        PeriodicEvaluation(
-            eval_every=eval_every,
-            eval_tasks=eval_tasks,
-            model=model,
-            device=device,
-            vocab_size=vocab_size,
-            debug=debug,
-        )
-    )
-
-# Create trainer using the specified trainer type
-trainer_type = hparams.get("trainer_type", "praxis")
-
-# Check if we should use MonoForward based on decoder type (backward compatibility)
-if hparams.get("decoder_type") == "mono_forward" and trainer_type == "praxis":
-    print("[INFO] Decoder type is mono_forward, automatically using mono-forward trainer")
-    trainer_type = "mono-forward"
-
-# Use the factory to create trainer with proper module wrapping
-from praxis.trainers import create_trainer_with_module
-
-trainer, train_model = create_trainer_with_module(
-    trainer_type=trainer_type,
-    model=train_model,
-    optimizer=optimizer,
-    scheduler=scheduler,
-    hparams=hparams,
-    tokenizer=tokenizer,
-    cache_dir=cache_dir,
-    ckpt_path=ckpt_path,
-    trainer_params=train_params,
-    encoder_type=encoder_type
-)
-
-# Wrap training in exception handler to catch crashes and display them immediately
-try:
-    trainer.fit(
-        train_model,
-        dataintegration,
+        # Try to compile the model and optimizer
+        model = try_compile_model(model, hparams)
+        optimizer = try_compile_optimizer(optimizer, hparams)
+    
+    # Run init hooks for integrations
+    integration_loader_with_conditions.run_init_hooks(args, cache_dir)
+    
+    # Create trainer and fit model
+    trainer_type = hparams.get("trainer_type", "praxis")
+    
+    # Check if we should use MonoForward based on decoder type
+    if hparams.get("decoder_type") == "mono_forward" and trainer_type == "praxis":
+        print("[INFO] Decoder type is mono_forward, using mono-forward trainer")
+        trainer_type = "mono-forward"
+    
+    trainer, train_model = create_trainer_with_module(
+        trainer_type=trainer_type,
+        model=train_model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        hparams=hparams,
+        tokenizer=tokenizer,
+        cache_dir=cache_dir,
         ckpt_path=ckpt_path,
+        trainer_params=train_params,
+        encoder_type=encoder_type,
     )
     
-    # Training completed successfully
-    print("Training completed successfully!")
-    
-    # Run integration cleanup hooks
-    integration_loader_with_conditions.run_cleanup_hooks()
-    
-    # Stop API server if running
-    if 'api_server' in globals() and api_server:
-        print("Stopping API server...")
-        api_server.stop()
-    
-    # Force exit to ensure all threads terminate
-    import os
-    os._exit(0)
-    
-except Exception as e:
-    # Run integration cleanup hooks
-    integration_loader_with_conditions.run_cleanup_hooks()
+    try:
+        trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
+        
+        # Training completed successfully
+        print("Training completed successfully!")
+        
+        # Run integration cleanup hooks
+        integration_loader_with_conditions.run_cleanup_hooks()
+        
+        # Stop API server if running
+        if api_server:
+            print("Stopping API server...")
+            api_server.stop()
+        
+        # Force exit to ensure all threads terminate
+        os._exit(0)
+        
+    except Exception as e:
+        # Run integration cleanup hooks
+        integration_loader_with_conditions.run_cleanup_hooks()
+        
+        # If we have a dashboard running, force crash it to show the error
+        if 'progress_bar' in locals() and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
+            error_text = traceback.format_exc()
+            progress_bar.dashboard.crash_with_error(error_text)
+        else:
+            # No dashboard, just re-raise the exception normally
+            raise
+            
+    except KeyboardInterrupt:
+        # Run integration cleanup hooks
+        integration_loader_with_conditions.run_cleanup_hooks()
+        
+        # Handle Ctrl+C gracefully
+        if 'progress_bar' in locals() and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
+            progress_bar.dashboard.stop()
+            # Dashboard already prints the interruption message
+        else:
+            print("\n🛑 Training interrupted by user", file=sys.stderr)
+        
+        # Stop API server if running
+        if api_server:
+            api_server.stop()
+        
+        # Force exit
+        os._exit(0)
 
-    # If we have a dashboard running, force crash it to show the error
-    progress_bar = globals().get("progress_bar")
-    if progress_bar and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
-        import traceback
 
-        error_text = traceback.format_exc()
-        progress_bar.dashboard.crash_with_error(error_text)
-    else:
-        # No dashboard, just re-raise the exception normally
-        raise
-except KeyboardInterrupt:
-    # Run integration cleanup hooks
-    integration_loader_with_conditions.run_cleanup_hooks()
-
-    # Handle Ctrl+C gracefully
-    if progress_bar and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
-        progress_bar.dashboard.stop()
-        # Dashboard already prints the interruption message
-    else:
-        print("\n🛑 Training interrupted by user", file=sys.stderr)
-    
-    # Stop API server if running
-    if 'api_server' in globals() and api_server:
-        api_server.stop()
-    
-    # Force exit
-    import os
-    os._exit(0)
+if __name__ == "__main__":
+    main()

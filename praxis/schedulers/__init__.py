@@ -1,48 +1,43 @@
 """Learning rate scheduler utilities."""
 
 from functools import partial
-from typing import List
+from typing import Any, Dict
 
 import torch
-from pytorch_optimizer import CosineAnnealingWarmupRestarts
+
+from praxis.schedulers.cosine_warmup import PatchedCosineAnnealingWarmupRestarts
+from praxis.schedulers.warmup import LinearWarmupScheduler
 
 
-def get_scheduler(
-    optimizer, optimizer_config, disable_schedule=False, warmup_steps=4096
+def get_scheduler_func(
+    optimizer_config: Dict[str, Any],
+    disable_schedule: bool = False,
+    warmup_steps: int = 4096,
 ):
     """
-    Create a learning rate scheduler for the optimizer.
-
+    Returns a partial function for creating schedulers.
+    Exactly matches the implementation from main.py.
+    
     Args:
-        optimizer: The optimizer to schedule
         optimizer_config: Configuration dict with lr and other settings
-        disable_schedule: If True, use simple warmup without cosine annealing
+        disable_schedule: If True, use simple warmup without cosine annealing  
         warmup_steps: Number of warmup steps
-
+    
     Returns:
-        A scheduler function/class
+        A partial function that creates a scheduler when called with an optimizer
     """
     if disable_schedule:
-
         def lr_lambda_with_warmup(current_step, warmup_steps=1024):
             if current_step < warmup_steps:
                 return float(current_step) / float(max(1, warmup_steps))
             return 1.0
 
-        scheduler_func = partial(
+        return partial(
             torch.optim.lr_scheduler.LambdaLR,
             lr_lambda=lambda step: lr_lambda_with_warmup(step, warmup_steps),
         )
     else:
-
-        class PatchedCosineAnnealingWarmupRestarts(CosineAnnealingWarmupRestarts):
-            def step(self, *args, **kwargs):
-                super().step(*args, **kwargs)
-                self._last_lr: List[float] = [
-                    group["lr"] for group in self.optimizer.param_groups
-                ]
-
-        scheduler_func = partial(
+        return partial(
             PatchedCosineAnnealingWarmupRestarts,
             first_cycle_steps=1024 * 256,
             max_lr=optimizer_config["lr"],
@@ -51,4 +46,9 @@ def get_scheduler(
             warmup_steps=warmup_steps,
         )
 
-    return scheduler_func
+
+__all__ = [
+    "get_scheduler_func",
+    "LinearWarmupScheduler",
+    "PatchedCosineAnnealingWarmupRestarts",
+]

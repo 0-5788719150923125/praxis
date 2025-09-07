@@ -57,7 +57,8 @@ class TerminalInterface(Callback):
         self.text = self.initial_text
         self.interval = 3
         self.url = url
-        self.dashboard = use_dashboard
+        self.use_dashboard = use_dashboard
+        self.dashboard = None  # Will be initialized in on_fit_start if needed
         self.progress_bar = progress_bar
         self.device = device
         self.quiet = quiet
@@ -116,7 +117,7 @@ class TerminalInterface(Callback):
         # we limit the context length seen during training, to keep memory
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = self.terminal_output_length
-        if self.dashboard:
+        if self.use_dashboard:
             try:
                 # Import here to avoid circular dependency
                 from interface import TerminalDashboard
