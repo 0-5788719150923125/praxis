@@ -254,42 +254,28 @@ def get_spec():
                         timestamp = parts[0]
                         command = parts[2].strip('"')
 
-        # Get the appropriate git URL based on whether ngrok is active
+        # Get the appropriate git URL - prioritize ngrok if active
         git_url = None
 
-        # First, check if we're being accessed through ngrok
-        host = request.host.split(":")[0] if ":" in request.host else request.host
-
-        if host.endswith(".ngrok-free.app") or host.endswith(".ngrok.io"):
-            # This request came through ngrok
-            # Try to read ngrok info from file
-            ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
-            if os.path.exists(ngrok_info_path):
-                try:
-                    with open(ngrok_info_path, "r") as f:
-                        lines = f.read().strip().split("\n")
-                        if len(lines) >= 2:
-                            base_url = lines[0]
-                            webhook_secret = lines[1]
-                            # Ensure HTTPS and no port
-                            if "://" in base_url:
-                                base_url = base_url.split("://", 1)[1]
-                            if ":" in base_url and not base_url.startswith("["):
-                                base_url = base_url.split(":")[0]
-                            # Use base URL directly - cleanest option
-                            git_url = f"https://{base_url}/{webhook_secret}"
-                except:
-                    pass
-
-            # Fallback if we couldn't read the file
-            if not git_url:
-                # Ngrok always uses HTTPS without explicit port
-                git_url = f"https://{host}"
+        # First check if ngrok is active (regardless of how request came in)
+        ngrok_url = app.config.get("ngrok_url")
+        ngrok_secret = app.config.get("ngrok_secret")
+        
+        if ngrok_url and ngrok_secret:
+            # Ngrok is active - always use the protected URL with /praxis
+            git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
         else:
-            # Local URL with port
-            port = request.host.split(":")[1] if ":" in request.host else "80"
-            # For local, use praxis.git to avoid conflicts with web UI
-            git_url = f"http://{host}:{port}/praxis.git"
+            # No ngrok - use direct URL based on request
+            host = request.host.split(":")[0] if ":" in request.host else request.host
+            
+            if host.endswith(".ngrok-free.app") or host.endswith(".ngrok.io") or host.endswith(".src.eco"):
+                # Accessed through ngrok but no secret configured (shouldn't happen)
+                git_url = f"https://{host}/praxis"
+            else:
+                # Local URL with port
+                port = request.host.split(":")[1] if ":" in request.host else "80"
+                # Use /praxis path (works with or without .git)
+                git_url = f"http://{host}:{port}/praxis"
 
         # Import mask_git_url function
         from praxis.utils import mask_git_url
@@ -321,6 +307,8 @@ def get_spec():
 # Git HTTP backend routes - support multiple URL patterns
 @app.route("/praxis.git/<path:git_path>", methods=["GET", "POST"])
 @app.route("/praxis.git", methods=["GET", "POST"], defaults={"git_path": ""})
+@app.route("/praxis/<path:git_path>", methods=["GET", "POST"])  # Without .git suffix
+@app.route("/praxis", methods=["GET", "POST"], defaults={"git_path": ""})  # Without .git suffix
 @app.route("/info/refs", methods=["GET"])  # Git discovery at root
 @app.route("/git-upload-pack", methods=["POST"])  # Git fetch at root
 @app.route(
@@ -332,6 +320,7 @@ def git_http_backend(git_path=None):
     Supports git clone and fetch operations.
     Accessible via:
     - With .git suffix: git clone https://domain.com/praxis.git
+    - Without suffix: git clone https://domain.com/praxis
     - Legacy /src path: git clone https://domain.com/src
     """
     import subprocess
@@ -432,8 +421,16 @@ def get_agents():
 
         # Always add the current instance first by getting the data directly
         try:
-            # Get our git URL and hash directly (same logic as get_spec endpoint)
-            git_url = f"http://localhost:{current_port}/praxis.git"
+            # Get our git URL - prioritize ngrok if active
+            ngrok_url = app.config.get("ngrok_url")
+            ngrok_secret = app.config.get("ngrok_secret")
+            
+            if ngrok_url and ngrok_secret:
+                # Ngrok is active - use the protected URL
+                git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
+            else:
+                # No ngrok - use local URL
+                git_url = f"http://localhost:{current_port}/praxis"
 
             # Get git hash
             import subprocess
