@@ -6,9 +6,10 @@ import os
 import random
 import re
 import sys
-import yaml
 from datetime import datetime
 from pathlib import Path
+
+import yaml
 
 from praxis import (
     ACTIVATION_REGISTRY,
@@ -31,8 +32,8 @@ from praxis import (
 )
 from praxis.integrations import IntegrationLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
-from praxis.trainers import TRAINER_REGISTRY
 from praxis.tokenizers import TOKENIZER_PROFILES, TOKENIZER_REGISTRY
+from praxis.trainers import TRAINER_REGISTRY
 
 # Define the default list of arguments to exclude from hash computation
 # These are typically runtime/debugging flags that don't affect model architecture
@@ -628,6 +629,7 @@ other_group.add_argument(
     help="Reset the checkpoint",
 )
 
+
 # Experiment loading functionality
 def load_experiments():
     """
@@ -637,47 +639,52 @@ def load_experiments():
     experiments_dir = Path("experiments")
     if not experiments_dir.exists():
         return {}
-    
+
     # Create experiments argument group if we have any experiments
     experiment_files = list(experiments_dir.glob("*.yml"))
     if not experiment_files:
         return {}
-    
+
     experiments_group = parser.add_argument_group("experiments")
     experiment_configs = {}
-    
+
     for experiment_file in experiment_files:
         # Validate and normalize the experiment name
         name = experiment_file.stem.lower()
-        
+
         # Only allow alphanumeric characters and hyphens
-        if not re.match(r'^[a-z0-9-]+$', name):
-            print(f"Warning: Skipping experiment '{experiment_file.name}' - name must only contain lowercase letters, numbers, and hyphens")
+        if not re.match(r"^[a-z0-9-]+$", name):
+            print(
+                f"Warning: Skipping experiment '{experiment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
+            )
             continue
-            
+
         # Check for conflicts with existing arguments
         arg_name = f"--{name}"
         if any(arg_name in action.option_strings for action in parser._actions):
-            print(f"Warning: Skipping experiment '{experiment_file.name}' - conflicts with existing argument {arg_name}")
+            print(
+                f"Warning: Skipping experiment '{experiment_file.name}' - conflicts with existing argument {arg_name}"
+            )
             continue
-        
+
         # Add the experiment argument to the experiments group
         experiments_group.add_argument(
             arg_name,
             action="store_true",
             default=False,
-            help=f"Apply {name} experiment configuration"
+            help=f"Apply {name} experiment configuration",
         )
-        
+
         # Store the experiment config for later application
         try:
-            with open(experiment_file, 'r') as f:
+            with open(experiment_file, "r") as f:
                 experiment_configs[name] = yaml.safe_load(f)
         except Exception as e:
             print(f"Warning: Failed to load experiment '{experiment_file.name}': {e}")
             continue
-    
+
     return experiment_configs
+
 
 # Load experiments and add them as CLI arguments
 experiment_configs = load_experiments()
@@ -688,19 +695,19 @@ args = parser.parse_args()
 # Apply experiment defaults if any experiment flags are set
 if experiment_configs:
     for experiment_name, config in experiment_configs.items():
-        if getattr(args, experiment_name.replace('-', '_'), False):
+        if getattr(args, experiment_name.replace("-", "_"), False):
             # Apply experiment defaults (but don't override user-provided values)
             for key, value in config.items():
                 # Convert key to argument name format (replace - with _)
-                attr_name = key.replace('-', '_')
-                
+                attr_name = key.replace("-", "_")
+
                 # Check if this argument was explicitly provided by the user
                 if attr_name in sys.argv or f"--{key}" in sys.argv:
                     continue  # User override takes precedence
-                    
+
                 # Apply the experiment default
-                if hasattr(args, attr_name):
-                    setattr(args, attr_name, value)
+                # Always set the value, even if the attribute doesn't exist yet
+                setattr(args, attr_name, value)
 
 # Now check integration conditions based on parsed args
 for integration_manifest in integrations:
@@ -736,23 +743,34 @@ def apply_defaults_and_parse(defaults_dict):
 
     # Re-parse arguments with new defaults
     args = parser.parse_args()
-    
+
     # Also apply experiment defaults if any experiment flags are set
     if experiment_configs:
         for experiment_name, config in experiment_configs.items():
-            if getattr(args, experiment_name.replace('-', '_'), False):
+            if getattr(args, experiment_name.replace("-", "_"), False):
                 # Apply experiment defaults (but don't override user-provided values)
                 for key, value in config.items():
                     # Convert key to argument name format (replace - with _)
-                    attr_name = key.replace('-', '_')
-                    
+                    attr_name = key.replace("-", "_")
+
                     # Check if this argument was explicitly provided by the user
                     if attr_name in sys.argv or f"--{key}" in sys.argv:
                         continue  # User override takes precedence
-                        
+
                     # Apply the experiment default
-                    if hasattr(args, attr_name):
-                        setattr(args, attr_name, value)
+                    # Always set the value, even if the attribute doesn't exist yet
+                    setattr(args, attr_name, value)
+
+    # Apply --dev flag overrides AFTER experiments
+    # Dev mode should always override experiment values to ensure fast development
+    if getattr(args, "dev", False):
+        args.depth = 3
+        # Only override num_experts if not explicitly set by user via command line
+        if "--num-experts" not in sys.argv and "--num_experts" not in sys.argv:
+            args.num_experts = 3
+        # Also override num_smear for consistency with smaller model
+        if "--num-smear" not in sys.argv and "--num_smear" not in sys.argv:
+            args.num_smear = 3
 
     # Re-evaluate integration conditions with new args
     for integration_manifest in integrations:
@@ -911,121 +929,136 @@ def create_praxis_config(args=None, tokenizer=None):
     """
     Create a PraxisConfig object from CLI arguments.
     Automatically maps CLI arguments to PraxisConfig parameters based on the config's signature.
-    
+
     Args:
         args: Parsed arguments object (defaults to global args)
         tokenizer: Optional tokenizer for token IDs (if not provided, uses defaults)
-    
+
     Returns:
         PraxisConfig: Configuration object ready for model initialization
     """
     import inspect
+
     from praxis import PraxisConfig
-    
+
     if args is None:
-        args = globals()['args']
-    
+        args = globals()["args"]
+
     # Get PraxisConfig's __init__ parameters to know what it accepts
     config_signature = inspect.signature(PraxisConfig.__init__)
-    valid_config_params = set(config_signature.parameters.keys()) - {'self', 'kwargs'}
-    
+    valid_config_params = set(config_signature.parameters.keys()) - {"self", "kwargs"}
+
     # Extract and transform arguments
     config_kwargs = {}
-    
+
     # Mapping of CLI argument names to config parameter names (for renamed parameters)
     arg_to_config_mapping = {
-        'block_type': 'block',
-        'expert_type': 'expert',
-        'encoding_type': 'encoding',
-        'tie_weights': 'tie_word_embeddings',  # Handle tie_weights -> tie_word_embeddings
+        "block_type": "block",
+        "expert_type": "expert",
+        "encoding_type": "encoding",
     }
-    
+
     # Process all arguments from CLI
     for arg_name in vars(args):
         arg_value = getattr(args, arg_name)
-        
+
         # Skip None values
         if arg_value is None:
             continue
-            
+
         # Check if this arg needs to be mapped to a different config param name
         config_param = arg_to_config_mapping.get(arg_name, arg_name)
-        
+
         # Only include parameters that PraxisConfig actually accepts
         if config_param in valid_config_params:
             config_kwargs[config_param] = arg_value
-    
+
     # Special transformations that require custom logic
-    
+
     # num_heads and num_queries from "num_heads:num_queries" format
-    if hasattr(args, 'num_heads') and args.num_heads:
-        parts = args.num_heads.split(':')
-        config_kwargs['num_heads'] = int(parts[0])
-        config_kwargs['num_queries'] = int(parts[1]) if len(parts) > 1 else int(parts[0])
-    
+    if hasattr(args, "num_heads") and args.num_heads:
+        parts = args.num_heads.split(":")
+        config_kwargs["num_heads"] = int(parts[0])
+        config_kwargs["num_queries"] = (
+            int(parts[1]) if len(parts) > 1 else int(parts[0])
+        )
+
     # Handle dev mode adjustments
-    if hasattr(args, 'dev') and args.dev:
-        config_kwargs['depth'] = 3
-        if 'num_experts' not in config_kwargs or config_kwargs.get('num_experts') is None:
-            config_kwargs['num_experts'] = 3
+    if hasattr(args, "dev") and args.dev:
+        config_kwargs["depth"] = 3
+        # In dev mode, always use 3 experts for faster development
+        config_kwargs["num_experts"] = 3
+        # Also set num_smear to 3 for consistency
+        if "num_smear" in valid_config_params:
+            config_kwargs["num_smear"] = 3
     else:
         # num_experts defaults to depth if not specified
-        if 'num_experts' not in config_kwargs or config_kwargs.get('num_experts') is None:
-            config_kwargs['num_experts'] = config_kwargs.get('depth', 2)
-    
+        if (
+            "num_experts" not in config_kwargs
+            or config_kwargs.get("num_experts") is None
+        ):
+            config_kwargs["num_experts"] = config_kwargs.get("depth", 2)
+
     # Handle byte_latent encoding
-    byte_latent = (hasattr(args, 'encoder_type') and args.encoder_type == 'byte_latent')
-    if byte_latent and 'byte_latent' in valid_config_params:
-        config_kwargs['byte_latent'] = True
-    
+    byte_latent = hasattr(args, "encoder_type") and args.encoder_type == "byte_latent"
+    if byte_latent and "byte_latent" in valid_config_params:
+        config_kwargs["byte_latent"] = True
+
     # Handle max_length based on block_size
-    if hasattr(args, 'block_size') and 'max_length' in valid_config_params:
+    if hasattr(args, "block_size") and "max_length" in valid_config_params:
         block_size = args.block_size
         # Adjust for byte_latent if needed
         if byte_latent:
             block_size = block_size * 8
-        config_kwargs['max_length'] = block_size * 8
-    
+        config_kwargs["max_length"] = block_size * 8
+
     # Handle tokenizer IDs if tokenizer is provided
     if tokenizer is not None:
         token_id_mappings = [
-            ('pad_token_id', 'pad_token_id'),
-            ('bos_token_id', 'bos_token_id'),
-            ('eos_token_id', 'eos_token_id'),
-            ('sep_token_id', 'sep_token_id'),
+            ("pad_token_id", "pad_token_id"),
+            ("bos_token_id", "bos_token_id"),
+            ("eos_token_id", "eos_token_id"),
+            ("sep_token_id", "sep_token_id"),
         ]
         for tokenizer_attr, config_param in token_id_mappings:
-            if hasattr(tokenizer, tokenizer_attr) and config_param in valid_config_params:
+            if (
+                hasattr(tokenizer, tokenizer_attr)
+                and config_param in valid_config_params
+            ):
                 config_kwargs[config_param] = getattr(tokenizer, tokenizer_attr)
-    
+
     # Handle optimizer configuration
-    if hasattr(args, 'optimizer') and args.optimizer:
+    if hasattr(args, "optimizer") and args.optimizer:
         from praxis.optimizers import get_optimizer_profile
-        
+
         # Check for schedule-related flags
-        disable_schedule = any([
-            getattr(args, 'fixed_schedule', False),
-            getattr(args, 'schedule_free', False)
-        ])
-        
+        disable_schedule = any(
+            [
+                getattr(args, "fixed_schedule", False),
+                getattr(args, "schedule_free", False),
+            ]
+        )
+
         optimizer_config, _ = get_optimizer_profile(args.optimizer, disable_schedule)
-        
-        if 'optimizer_config' in valid_config_params:
-            config_kwargs['optimizer_config'] = optimizer_config
-        
+
+        if "optimizer_config" in valid_config_params:
+            config_kwargs["optimizer_config"] = optimizer_config
+
         # Add optimizer wrappers if they're valid config params
-        if 'optimizer_wrappers' in valid_config_params:
-            config_kwargs['optimizer_wrappers'] = {
-                "trac": getattr(args, 'trac', False),
-                "ortho": getattr(args, 'ortho', False),
-                "lookahead": getattr(args, 'lookahead', False),
-                "schedule_free": getattr(args, 'schedule_free', False),
+        if "optimizer_wrappers" in valid_config_params:
+            config_kwargs["optimizer_wrappers"] = {
+                "trac": getattr(args, "trac", False),
+                "ortho": getattr(args, "ortho", False),
+                "lookahead": getattr(args, "lookahead", False),
+                "schedule_free": getattr(args, "schedule_free", False),
             }
-    
+
     # Filter out any kwargs that aren't valid for PraxisConfig
     # This ensures we only pass parameters the config actually accepts
-    filtered_kwargs = {k: v for k, v in config_kwargs.items() if k in valid_config_params}
-    
+    filtered_kwargs = {
+        k: v for k, v in config_kwargs.items() if k in valid_config_params
+    }
+
     return PraxisConfig(**filtered_kwargs)
 
 
@@ -1033,39 +1066,52 @@ def get_processed_args(args=None):
     """
     Get a dictionary of processed arguments suitable for use in main.py.
     This handles all the preprocessing that was previously done via globals().update().
-    
+
     Args:
         args: Parsed arguments object (defaults to global args)
-    
+
     Returns:
         dict: Processed arguments ready for use
     """
     if args is None:
-        args = globals()['args']
-    
+        args = globals()["args"]
+
     # Create a dict from args
     processed = vars(args).copy()
-    
+
     # Add computed values
-    processed['byte_latent'] = args.encoder_type == 'byte_latent' if hasattr(args, 'encoder_type') else False
-    
+    processed["byte_latent"] = (
+        args.encoder_type == "byte_latent" if hasattr(args, "encoder_type") else False
+    )
+
     # Adjust block_size for byte_latent
-    if processed['byte_latent'] and 'block_size' in processed:
-        processed['block_size'] = processed['block_size'] * 8
-    
+    if processed["byte_latent"] and "block_size" in processed:
+        processed["block_size"] = processed["block_size"] * 8
+
     # Set terminal_output_length
-    if 'block_size' in processed:
-        if processed['byte_latent']:
-            processed['terminal_output_length'] = processed['block_size'] // 2
+    if "block_size" in processed:
+        if processed["byte_latent"]:
+            processed["terminal_output_length"] = processed["block_size"] // 2
         else:
-            processed['terminal_output_length'] = processed['block_size'] * 2
-    
+            processed["terminal_output_length"] = processed["block_size"] * 2
+
     # Set use_dashboard
-    processed['use_dashboard'] = not processed.get('no_dashboard', False)
-    
+    processed["use_dashboard"] = not processed.get("no_dashboard", False)
+
     # Set local_rank
-    processed['local_rank'] = int(os.environ.get("LOCAL_RANK", 0))
-    
+    processed["local_rank"] = int(os.environ.get("LOCAL_RANK", 0))
+
+    # Apply --dev flag modifications
+    # When dev mode is enabled, use smaller model for faster development
+    if processed.get("dev", False):
+        # Override depth to 3 for faster training
+        processed["depth"] = 3
+
+        # Override num_experts to 3 if not explicitly set
+        # Only set if num_experts wasn't explicitly provided by user
+        if processed.get("num_experts") is None:
+            processed["num_experts"] = 3
+
     return processed
 
 
@@ -1175,4 +1221,18 @@ def log_command(exclude_from_hash=None):
 
 
 # Export the integration loader for use in run.py
-__all__ = ["integration_loader_with_conditions", "args", "create_praxis_config", "get_processed_args", "get_cli_args"]
+__all__ = [
+    "integration_loader_with_conditions",
+    "args",
+    "create_praxis_config",
+    "get_processed_args",
+    "get_cli_args",
+]
+# Export the integration loader for use in run.py
+__all__ = [
+    "integration_loader_with_conditions",
+    "args",
+    "create_praxis_config",
+    "get_processed_args",
+    "get_cli_args",
+]

@@ -46,6 +46,8 @@ class PraxisConfig(PretrainedConfig):
         scaled: bool = False,
         mla: bool = False,
         hivemind: bool = False,
+        tie_weights: bool = False,
+        bidirectional: bool = False,
         initial_peers: List[str] = [],
         checkpoint_every: int = 0,
         loss_func: str = "cross_entropy",
@@ -117,9 +119,9 @@ class PraxisConfig(PretrainedConfig):
         self.debug = debug
         self.meta = meta
         self.causal = False
-        self.bidirectional = kwargs.get("bidirectional", False)
+        self.bidirectional = bidirectional
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
-        self.tie_word_embeddings = kwargs.get("tie_weights", False)
+        self.tie_word_embeddings = tie_weights
         self.rl_type = kwargs.get(
             "rl_type", None
         )  # "reinforce", "grpo", "ppo", or None

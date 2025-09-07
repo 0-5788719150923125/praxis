@@ -13,7 +13,7 @@ from praxis.trainers import (
     create_trainer_with_module,
     TRAINER_REGISTRY
 )
-from praxis.utils import get_scheduler
+from praxis.schedulers import get_scheduler_func
 
 
 class TestPraxisTrainer:
@@ -64,7 +64,8 @@ class TestPraxisTrainer:
         # Setup optimizer and scheduler
         optimizer_config, _ = get_optimizer_profile("AdamW")
         optimizer = get_optimizer(model, **optimizer_config)
-        scheduler = get_scheduler(optimizer, optimizer_config, warmup_steps=10)
+        scheduler_func = get_scheduler_func(optimizer_config)
+        scheduler = scheduler_func(optimizer)
 
         # Create trainer
         trainer = PraxisTrainer(
@@ -89,7 +90,8 @@ class TestPraxisTrainer:
         
         optimizer_config, _ = get_optimizer_profile("AdamW")
         optimizer = get_optimizer(model, **optimizer_config)
-        scheduler = get_scheduler(optimizer, optimizer_config, warmup_steps=10)
+        scheduler_func = get_scheduler_func(optimizer_config)
+        scheduler = scheduler_func(optimizer)
         
         trainer = PraxisTrainer(
             model=model,
@@ -118,7 +120,8 @@ class TestPraxisTrainer:
 
         optimizer_config, _ = get_optimizer_profile("AdamW")
         optimizer = get_optimizer(model, **optimizer_config)
-        scheduler = get_scheduler(optimizer, optimizer_config, warmup_steps=10)
+        scheduler_func = get_scheduler_func(optimizer_config)
+        scheduler = scheduler_func(optimizer)
 
         trainer = PraxisTrainer(
             model=model,
@@ -212,7 +215,8 @@ class TestTrainerFactory:
         
         optimizer_config, _ = get_optimizer_profile("AdamW")
         optimizer = get_optimizer(model, **optimizer_config)
-        scheduler = get_scheduler(optimizer, optimizer_config, warmup_steps=10)
+        scheduler_func = get_scheduler_func(optimizer_config)
+        scheduler = scheduler_func(optimizer)
         
         class MockTokenizer:
             pad_token_id = 0
