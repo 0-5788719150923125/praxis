@@ -66,24 +66,24 @@ class TerminalInterface(Callback):
         self.debug = debug
         self.get_memory_info = get_memory_info
         self.api_server = api_server
-        
+
         # Use model_info dict if provided, otherwise fall back to individual params
         if model_info is not None:
             # Modern usage: single dict with all model info
-            self.optimizer_config = model_info.get('optimizer_config', {})
-            self.strategy = model_info.get('strategy')
-            self.rl_type = model_info.get('rl_type')
-            self.vocab_size = model_info.get('vocab_size')
-            self.depth = model_info.get('depth')
-            self.hidden_size = model_info.get('hidden_size')
-            self.embed_size = model_info.get('embed_size')
-            self.dropout = model_info.get('dropout')
-            self.use_source_code = model_info.get('use_source_code', False)
-            self.dev = model_info.get('dev', False)
-            self.meta = model_info.get('meta', [])
-            self.seed = model_info.get('seed')
-            self.truncated_hash = model_info.get('truncated_hash')
-            self.total_params = model_info.get('total_params')
+            self.optimizer_config = model_info.get("optimizer_config", {})
+            self.strategy = model_info.get("strategy")
+            self.rl_type = model_info.get("rl_type")
+            self.vocab_size = model_info.get("vocab_size")
+            self.depth = model_info.get("depth")
+            self.hidden_size = model_info.get("hidden_size")
+            self.embed_size = model_info.get("embed_size")
+            self.dropout = model_info.get("dropout")
+            self.use_source_code = model_info.get("use_source_code", False)
+            self.dev = model_info.get("dev", False)
+            self.meta = model_info.get("meta", [])
+            self.seed = model_info.get("seed")
+            self.truncated_hash = model_info.get("truncated_hash")
+            self.total_params = model_info.get("total_params")
         else:
             # Legacy usage: individual parameters
             self.optimizer_config = optimizer_config or {}
@@ -100,10 +100,12 @@ class TerminalInterface(Callback):
             self.seed = seed
             self.truncated_hash = truncated_hash
             self.total_params = total_params
-        
+
         # Track inference timing to detect when it's too slow
         self.inference_time_ema = None
-        self.inference_slowdown_threshold = 10.0  # Reset if inference is 10x slower than training
+        self.inference_slowdown_threshold = (
+            10.0  # Reset if inference is 10x slower than training
+        )
         # Track unchanged context to detect when model is stuck
         self.previous_texts = []  # History of generated texts
         self.unchanged_count = 0  # Count of unchanged predictions
@@ -119,6 +121,7 @@ class TerminalInterface(Callback):
             try:
                 # Import here to avoid circular dependency
                 from interface import TerminalDashboard
+
                 self.dashboard = TerminalDashboard(self.seed, self.truncated_hash)
                 self.dashboard.start()
                 self.dashboard.update_seed(self.seed)
@@ -137,12 +140,12 @@ class TerminalInterface(Callback):
 
     def on_train_batch_start(self, trainer, lm, batch, batch_idx):
         super().on_train_batch_start(trainer, lm, batch, batch_idx)
-        if self.dashboard and hasattr(self.dashboard, 'set_mode'):
+        if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("train")
 
     def on_validation_start(self, trainer, lm):
         super().on_validation_start(trainer, lm)
-        if self.dashboard and hasattr(self.dashboard, 'set_mode'):
+        if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("validation")
 
     def on_validation_batch_end(self, trainer, lm, outputs, batch, batch_idx):
@@ -152,7 +155,7 @@ class TerminalInterface(Callback):
 
     def on_validation_end(self, trainer, lm):
         super().on_validation_end(trainer, lm)
-        if self.dashboard and hasattr(self.dashboard, 'set_mode'):
+        if self.dashboard and hasattr(self.dashboard, "set_mode"):
             self.dashboard.set_mode("evaluation")
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
@@ -203,27 +206,48 @@ class TerminalInterface(Callback):
             sync_dist=False,
         )
 
-        if self.dashboard and hasattr(self.dashboard, 'update_batch'):
-            self._update_dashboard(trainer, lm, batch_idx, batch_size, seq_length, 
-                                 local_experts, remote_experts, data)
+        if self.dashboard and hasattr(self.dashboard, "update_batch"):
+            self._update_dashboard(
+                trainer,
+                lm,
+                batch_idx,
+                batch_size,
+                seq_length,
+                local_experts,
+                remote_experts,
+                data,
+            )
 
-    def _update_dashboard(self, trainer, lm, batch_idx, batch_size, seq_length, 
-                         local_experts, remote_experts, data):
+    def _update_dashboard(
+        self,
+        trainer,
+        lm,
+        batch_idx,
+        batch_size,
+        seq_length,
+        local_experts,
+        remote_experts,
+        data,
+    ):
         """Update dashboard with current metrics."""
         batch = trainer.callback_metrics.get("batch", 0)
         step = trainer.callback_metrics.get("step", 0)
         rate = trainer.callback_metrics.get("avg_step_time", 0)
         tokens = trainer.callback_metrics.get("num_tokens", 0)
-        self.dashboard.update_batch(batch.item() if hasattr(batch, 'item') else batch)
-        self.dashboard.update_step(step.item() if hasattr(step, 'item') else step)
-        self.dashboard.update_rate(rate.item() if hasattr(rate, 'item') else rate)
-        self.dashboard.update_tokens(tokens.item() if hasattr(tokens, 'item') else tokens)
+        self.dashboard.update_batch(batch.item() if hasattr(batch, "item") else batch)
+        self.dashboard.update_step(step.item() if hasattr(step, "item") else step)
+        self.dashboard.update_rate(rate.item() if hasattr(rate, "item") else rate)
+        self.dashboard.update_tokens(
+            tokens.item() if hasattr(tokens, "item") else tokens
+        )
         self.dashboard.update_loss(self.ema_loss)
         self.dashboard.update_expert_count(local_experts, remote_experts)
-        
+
         val_loss = trainer.callback_metrics.get("val_loss", None)
         if val_loss is not None:
-            self.dashboard.update_val(val_loss.item() if hasattr(val_loss, 'item') else val_loss)
+            self.dashboard.update_val(
+                val_loss.item() if hasattr(val_loss, "item") else val_loss
+            )
         if "fitness" in data:
             self.dashboard.update_fitness(data["fitness"])
         if "memory_churn" in data:
@@ -236,7 +260,7 @@ class TerminalInterface(Callback):
             memory_info = self.get_memory_info(self.device)
         else:
             memory_info = {}
-            
+
         info_dict = {
             "device": self.device,
             "ram": f"{memory_info.get('ram_percent', 'N/A')}",
@@ -292,7 +316,7 @@ class TerminalInterface(Callback):
     def _generate_text(self, lm, batch_idx=0, interval=10):
         if not self.generator:
             return
-            
+
         if not self._is_trigger_passed(self.last_time, self.interval):
             return
 
@@ -311,7 +335,9 @@ class TerminalInterface(Callback):
                         self.text = self.initial_text
                         self.unchanged_count = 0
                         self.previous_texts = []
-                        self.inference_time_ema = None  # Reset timing after context reset
+                        self.inference_time_ema = (
+                            None  # Reset timing after context reset
+                        )
 
         max_new_tokens = 1 if not self.byte_latent else self._biased_randint(1, 7)
 
@@ -325,7 +351,7 @@ class TerminalInterface(Callback):
         # Count tokens in the prompt
         if self.tokenizer:
             prompt_tokens = len(self.tokenizer.encode(self.text))
-            if self.dashboard and hasattr(self.dashboard, 'update_context_tokens'):
+            if self.dashboard and hasattr(self.dashboard, "update_context_tokens"):
                 self.dashboard.update_context_tokens(prompt_tokens)
 
         request_id = self.generator.request_generation(
@@ -404,7 +430,7 @@ class TerminalInterface(Callback):
                 f"{self.tokenizer.bos_token}user",
                 f"{self.tokenizer.bos_token}assistant",
             ]
-        
+
         if (
             self._detect_repetition(n_gram_size, frequency)
             or self._detect_sequential_repetition(threshold=5, min_segment_length=8)
@@ -414,10 +440,10 @@ class TerminalInterface(Callback):
             self.text = self.initial_text
             self.unchanged_count = 0
             self.previous_texts = []
-            if self.dashboard and hasattr(self.dashboard, 'update_status'):
+            if self.dashboard and hasattr(self.dashboard, "update_status"):
                 self.dashboard.update_status(self.initial_text)
                 self.dashboard.force_redraw()
-        elif self.dashboard and hasattr(self.dashboard, 'update_status'):
+        elif self.dashboard and hasattr(self.dashboard, "update_status"):
             self.dashboard.update_status(self.text)
         else:
             self.print(self.text)

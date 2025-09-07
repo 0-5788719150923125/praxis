@@ -22,6 +22,7 @@ try:
         TimeBasedCheckpoint,
         LIGHTNING_CALLBACK_REGISTRY,
     )
+
     _HAS_LIGHTNING = True
 except ImportError:
     _HAS_LIGHTNING = False
@@ -30,13 +31,13 @@ except ImportError:
 
 def get_callback_registry(framework: str = "lightning") -> Dict[str, Type]:
     """Get the callback registry for a specific framework.
-    
+
     Args:
         framework: The training framework ("lightning", etc.)
-        
+
     Returns:
         Dictionary mapping callback names to classes
-        
+
     Raises:
         ValueError: If framework is not supported
     """
@@ -67,14 +68,16 @@ __all__ = [
 
 # Re-export Lightning callbacks for backward compatibility
 if _HAS_LIGHTNING:
-    __all__.extend([
-        "AccumulationSchedule",
-        "PeriodicEvaluation", 
-        "TerminalInterface",
-        "TimeBasedCheckpoint",
-    ])
+    __all__.extend(
+        [
+            "AccumulationSchedule",
+            "PeriodicEvaluation",
+            "TerminalInterface",
+            "TimeBasedCheckpoint",
+        ]
+    )
     warnings.warn(
         "PyTorch Lightning callbacks not available. "
         "Please install PyTorch Lightning to use training callbacks.",
-        ImportWarning
+        ImportWarning,
     )

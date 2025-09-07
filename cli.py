@@ -26,7 +26,7 @@ from praxis import (
     SORTING_REGISTRY,
     STRATEGIES_REGISTRY,
 )
-from praxis.modules import ModuleLoader
+from praxis.integrations import IntegrationLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
 
 # Define the default list of arguments to exclude from hash computation
@@ -118,16 +118,16 @@ networking_group = parser.add_argument_group("networking")
 data_group = parser.add_argument_group("data")
 other_group = parser.add_argument_group("other")
 
-# Initialize module loader and discover modules
-module_loader = ModuleLoader()
-modules = module_loader.discover_modules()
+# Initialize integration loader and discover modules
+integration_loader = IntegrationLoader()
+integrations = integration_loader.discover_integrations()
 
-# Load modules that can add CLI arguments (without condition checks yet)
-for module_manifest in modules:
-    module_loader.load_module(module_manifest, verbose=True)
+# Load integrations that can add CLI arguments (without condition checks yet)
+for integration_manifest in integrations:
+    integration_loader.load_integration(integration_manifest, verbose=True)
 
-# Let modules add CLI arguments
-for cli_func in module_loader.get_cli_functions():
+# Let integrations add CLI arguments
+for cli_func in integration_loader.get_cli_functions():
     cli_func(parser)
 
 # hardware
@@ -174,7 +174,7 @@ architecture_group.add_argument(
     type=str,
     choices=list(ENCODER_REGISTRY.keys()),
     default=None,
-    help="Encoder module to use",
+    help="Encoder integration to use",
 )
 architecture_group.add_argument(
     "--decoder-type",
@@ -195,7 +195,7 @@ architecture_group.add_argument(
     type=str,
     choices=EXPERT_REGISTRY.keys(),
     default="glu",
-    help="The module to use for feedforward networks",
+    help="The integration to use for feedforward networks",
 )
 architecture_group.add_argument(
     "--attention-type",
@@ -589,12 +589,12 @@ other_group.add_argument(
 # Destructure CLI arguments
 args = parser.parse_args()
 
-# Now check module conditions based on parsed args
-for module_manifest in modules:
-    module_loader.load_module(module_manifest, args, verbose=True)
+# Now check integration conditions based on parsed args
+for integration_manifest in integrations:
+    integration_loader.load_integration(integration_manifest, args, verbose=True)
 
-# Use the same module loader for consistency
-module_loader_with_conditions = module_loader
+# Use the same integration loader for consistency
+integration_loader_with_conditions = integration_loader
 
 
 def apply_defaults_and_parse(defaults_dict):
@@ -624,9 +624,9 @@ def apply_defaults_and_parse(defaults_dict):
     # Re-parse arguments with new defaults
     args = parser.parse_args()
 
-    # Re-evaluate module conditions with new args
-    for module_manifest in modules:
-        module_loader.load_module(module_manifest, args, verbose=False)
+    # Re-evaluate integration conditions with new args
+    for integration_manifest in integrations:
+        integration_loader.load_integration(integration_manifest, args, verbose=False)
 
     # Build equivalent command for hash computation
     equivalent_args = []
@@ -882,5 +882,5 @@ def log_command(exclude_from_hash=None):
     return full_command, args_hash, truncated_hash
 
 
-# Export the module loader for use in run.py
-__all__ = ["module_loader_with_conditions", "args"]
+# Export the integration loader for use in run.py
+__all__ = ["integration_loader_with_conditions", "args"]

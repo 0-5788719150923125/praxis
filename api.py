@@ -63,7 +63,7 @@ def apply_wsgi_middleware():
 # Set up SocketIO for live reload
 socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
-# Module middleware support
+# Integration middleware support
 _request_middleware = []
 _response_middleware = []
 
@@ -226,51 +226,21 @@ def get_spec():
         except Exception as e:
             model_arch = f"Error getting model architecture: {str(e)}"
 
-        # Calculate parameter stats directly here
-        param_stats = {}
-        try:
-            generator = app.config.get("generator")
-            if generator and hasattr(generator, "model"):
-                model = generator.model
-                # Count the parameters
-                total_params = sum(p.numel() for p in model.parameters())
+        # Use the simplified param_stats from the app config if available
+        param_stats = app.config.get("param_stats", {})
 
-                # Get actual config values from the model
-                config = model.config if hasattr(model, "config") else None
-                if config:
-                    # Get actual values from config
-                    batch_size = args_dict.get("batch_size", 1)
-                    block_size = getattr(
-                        config,
-                        "max_position_embeddings",
-                        getattr(config, "block_size", 512),
-                    )
-                    hidden_size = getattr(config, "hidden_size", 768)
+        # If not available in config, calculate it
+        if not param_stats:
+            try:
+                from praxis.optimizers import get_parameter_stats
 
-                    # In Praxis, depth is the number of forward passes through experts
-                    # num_experts is the pool of available experts to choose from
-                    # The actual number of layers processed is just depth
-                    depth = getattr(config, "depth", 3)
-                    num_experts = getattr(config, "num_experts", 3)
-
-                    # Simple activation estimate: batch_size * seq_len * hidden_size * depth
-                    activation_params = batch_size * block_size * hidden_size * depth
-
-                    param_stats = {
-                        "total_params": total_params,
-                        "activation_params": activation_params,
-                        "config": {
-                            "batch_size": batch_size,
-                            "block_size": block_size,
-                            "hidden_size": hidden_size,
-                            "depth": depth,
-                            "num_experts": num_experts,
-                        },
-                    }
-                else:
-                    param_stats = {"total_params": total_params}
-        except:
-            param_stats = {}
+                generator = app.config.get("generator")
+                if generator and hasattr(generator, "model"):
+                    model = generator.model
+                    # Get simplified stats (just model and optimizer counts)
+                    param_stats = get_parameter_stats(model)
+            except:
+                param_stats = {}
 
         # Get metadata from history.log
         timestamp = None
@@ -761,7 +731,7 @@ class APIServer:
         host="localhost",
         port=2100,
         tokenizer=None,
-        module_loader=None,
+        integration_loader=None,
         param_stats=None,
         seed=None,
     ):
@@ -784,7 +754,7 @@ class APIServer:
         self.parent_pid = os.getppid()
         self.seed = seed
         self.tokenizer = tokenizer
-        self.module_loader = module_loader
+        self.integration_loader = integration_loader
         self.param_stats = param_stats if param_stats else {}
         self.template_watcher = TemplateWatcher()
 
@@ -934,13 +904,13 @@ class APIServer:
                 f"[DEBUG] _run_server self.param_stats keys: {list(self.param_stats.keys())}"
             )
 
-        # Apply any WSGI middleware registered by modules (must be before starting server)
+        # Apply any WSGI middleware registered by integrations (must be before starting server)
         apply_wsgi_middleware()
 
         with app.app_context():
             app.config["generator"] = self.generator
             app.config["tokenizer"] = self.tokenizer
-            app.config["module_loader"] = self.module_loader
+            app.config["integration_loader"] = self.integration_loader
             app.config["seed"] = self.seed
             # Store param_stats if available
             if hasattr(self, "param_stats") and self.param_stats:
@@ -955,9 +925,9 @@ class APIServer:
                 app.config["param_stats"] = {}
                 print(f"[DEBUG] API Server: No param_stats found, storing empty dict")
 
-            # Register module middleware
-            if self.module_loader:
-                for middleware_func in self.module_loader.get_request_middleware():
+            # Register integration middleware
+            if self.integration_loader:
+                for middleware_func in self.integration_loader.get_request_middleware():
                     register_request_middleware(middleware_func)
 
             # Signal that the server will start
@@ -1098,10 +1068,10 @@ def generate():
 @app.before_request
 def apply_request_middleware():
     """Apply request middleware from loaded modules."""
-    module_loader = app.config.get("module_loader")
-    if module_loader:
+    integration_loader = app.config.get("integration_loader")
+    if integration_loader:
         # Get all middleware functions
-        middleware_funcs = module_loader.get_request_middleware()
+        middleware_funcs = integration_loader.get_request_middleware()
         for middleware_func in middleware_funcs:
             try:
                 # Call middleware with request object
@@ -1114,10 +1084,10 @@ def apply_request_middleware():
 @app.after_request
 def apply_response_middleware(response):
     """Apply response middleware from loaded modules."""
-    module_loader = app.config.get("module_loader")
-    if module_loader:
+    integration_loader = app.config.get("integration_loader")
+    if integration_loader:
         # Get all middleware functions
-        middleware_funcs = module_loader.get_request_middleware()
+        middleware_funcs = integration_loader.get_request_middleware()
         for middleware_func in middleware_funcs:
             try:
                 # Call middleware with request and response objects

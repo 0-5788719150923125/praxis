@@ -7,22 +7,22 @@ import logging
 
 class BaseTrainer(ABC):
     """Abstract base class for all trainers."""
-    
+
     @abstractmethod
     def fit(self, model: Any, datamodule: Any, **kwargs) -> None:
         """Train the model."""
         pass
-    
+
     @abstractmethod
     def validate(self, model: Any, datamodule: Any, **kwargs) -> Dict[str, float]:
         """Validate the model."""
         pass
-    
+
     @abstractmethod
     def test(self, model: Any, datamodule: Any, **kwargs) -> Dict[str, float]:
         """Test the model."""
         pass
-    
+
     @abstractmethod
     def predict(self, model: Any, datamodule: Any, **kwargs) -> Any:
         """Generate predictions."""
@@ -31,56 +31,62 @@ class BaseTrainer(ABC):
 
 class BaseCallback(ABC):
     """Abstract base class for training callbacks."""
-    
+
     @abstractmethod
     def on_train_start(self, trainer: BaseTrainer, model: Any) -> None:
         """Called when training starts."""
         pass
-    
+
     @abstractmethod
     def on_train_end(self, trainer: BaseTrainer, model: Any) -> None:
         """Called when training ends."""
         pass
-    
+
     @abstractmethod
     def on_epoch_start(self, trainer: BaseTrainer, model: Any) -> None:
         """Called at the start of each epoch."""
         pass
-    
+
     @abstractmethod
     def on_epoch_end(self, trainer: BaseTrainer, model: Any) -> None:
         """Called at the end of each epoch."""
         pass
-    
+
     @abstractmethod
-    def on_batch_start(self, trainer: BaseTrainer, model: Any, batch: Any, batch_idx: int) -> None:
+    def on_batch_start(
+        self, trainer: BaseTrainer, model: Any, batch: Any, batch_idx: int
+    ) -> None:
         """Called before processing a batch."""
         pass
-    
+
     @abstractmethod
-    def on_batch_end(self, trainer: BaseTrainer, model: Any, outputs: Any, batch: Any, batch_idx: int) -> None:
+    def on_batch_end(
+        self, trainer: BaseTrainer, model: Any, outputs: Any, batch: Any, batch_idx: int
+    ) -> None:
         """Called after processing a batch."""
         pass
 
 
 class BaseLogger(ABC):
     """Abstract base class for training loggers."""
-    
+
     @abstractmethod
-    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> None:
+    def log_metrics(
+        self, metrics: Dict[str, float], step: Optional[int] = None
+    ) -> None:
         """Log metrics."""
         pass
-    
+
     @abstractmethod
     def log_hyperparams(self, params: Dict[str, Any]) -> None:
         """Log hyperparameters."""
         pass
-    
+
     @abstractmethod
     def save(self) -> None:
         """Save any pending logs."""
         pass
-    
+
     @abstractmethod
     def finalize(self, status: str = "success") -> None:
         """Finalize logging."""
@@ -89,7 +95,7 @@ class BaseLogger(ABC):
 
 class TrainerConfig:
     """Configuration for trainers."""
-    
+
     def __init__(
         self,
         max_epochs: Optional[int] = None,
@@ -150,7 +156,7 @@ class TrainerConfig:
         self.sync_batchnorm = sync_batchnorm
         self.reload_dataloaders_every_n_epochs = reload_dataloaders_every_n_epochs
         self.use_distributed_sampler = use_distributed_sampler
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
         return {k: v for k, v in self.__dict__.items() if v is not None}
@@ -162,7 +168,7 @@ def set_seed(seed: int) -> None:
     import random
     import numpy as np
     import torch
-    
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -175,5 +181,6 @@ def reset_random_state(seed: Optional[int] = None) -> None:
     """Reset random state to a new seed."""
     if seed is None:
         import time
+
         seed = int(time.time() * 1000) % 2**32
     set_seed(seed)

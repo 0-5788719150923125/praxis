@@ -96,7 +96,7 @@ def find_latest_checkpoint(cache_dir):
 def initialize_lazy_modules(model, device):
     """Initialize lazy modules in a model by doing a dummy forward pass."""
     import torch
-    
+
     model = model.to(device)
 
     # Create dummy batch for initialization

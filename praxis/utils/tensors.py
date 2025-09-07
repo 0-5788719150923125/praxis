@@ -36,11 +36,11 @@ def create_block_ids(
 ) -> torch.LongTensor:
     """
     Create block IDs for input sequences based on special token boundaries.
-    
+
     Args:
         input_ids: Input token IDs
         special_tokens: List or tensor of special token IDs to use as boundaries
-        
+
     Returns:
         Block IDs tensor with same shape as input_ids
     """

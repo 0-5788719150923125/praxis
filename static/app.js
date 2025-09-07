@@ -1034,29 +1034,17 @@ async function loadSpec() {
             html += '</div>';
         }
         
-        // Parameter statistics
+        // Parameter statistics (simplified)
         if (data.param_stats) {
             html += '<div class="spec-section">';
-            html += '<div class="spec-title">Parameter Statistics</div>';
+            html += '<div class="spec-title">Parameters</div>';
             
-            if (data.param_stats.total_params) {
-                html += `<div class="spec-metadata">Model Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.total_params.toLocaleString()}</span></div>`;
+            if (data.param_stats.model_parameters) {
+                html += `<div class="spec-metadata">Model Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.model_parameters.toLocaleString()}</span></div>`;
             }
             
-            if (data.param_stats.activation_params) {
-                const config = data.param_stats.config || {};
-                html += `<div class="spec-metadata">Activation Estimate: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.activation_params.toLocaleString()}</span>`;
-                if (config.batch_size || config.block_size || config.hidden_size || config.depth) {
-                    html += ` <span style="color: var(--light-text); font-size: 12px;">(batch=${config.batch_size || '?'}, seq=${config.block_size || '?'}, hidden=${config.hidden_size || '?'}, depth=${config.depth || '?'}, experts=${config.num_experts || '?'})</span>`;
-                }
-                html += '</div>';
-            }
-            
-            if (data.param_stats.total_params && data.param_stats.activation_params) {
-                const totalActive = data.param_stats.total_params + data.param_stats.activation_params;
-                html += `<div class="spec-metadata" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">`;
-                html += `Total Active Parameters: <span style="color: #4caf50; font-weight: 600; font-size: 16px;">${totalActive.toLocaleString()}</span>`;
-                html += '</div>';
+            if (data.param_stats.optimizer_parameters) {
+                html += `<div class="spec-metadata">Optimizer Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.optimizer_parameters.toLocaleString()}</span></div>`;
             }
             
             html += '</div>';

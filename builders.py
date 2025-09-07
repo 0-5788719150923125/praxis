@@ -1377,7 +1377,7 @@ def get_datamodules(
     rl_type: Optional[str] = None,
     *args,
 ):
-    print(f"[RL] get_datamodules called with rl_type={rl_type}")
+    print(f"[RL] get_dataintegrations called with rl_type={rl_type}")
 
     print("Training datasets:")
     train_data = []
@@ -1416,23 +1416,27 @@ def get_datamodules(
             )
         # Load any module-provided datasets
         try:
-            from cli import module_loader_with_conditions
+            from cli import integration_loader_with_conditions
 
-            available_datasets = module_loader_with_conditions.integration_registry.get(
-                "datasets", {}
+            available_datasets = (
+                integration_loader_with_conditions.integration_registry.get(
+                    "datasets", {}
+                )
             )
-            # Process all available module datasets
-            # The modules themselves will check if they're properly initialized
+            # Process all available integration datasets
+            # The integrations themselves will check if they're properly initialized
             for dataset_name in available_datasets:
-                print(f"[Modules] Checking dataset: {dataset_name}")
+                print(f"[Integrations] Checking dataset: {dataset_name}")
                 dataset = get_dataset(dataset_name, tokenizer, seed)
                 if dataset is not None:
-                    print(f"[Modules] Adding dataset: {dataset_name}")
+                    print(f"[Integrations] Adding dataset: {dataset_name}")
                     train_data.append(dataset)
                 else:
-                    print(f"[Modules] Skipping dataset: {dataset_name} (not available)")
+                    print(
+                        f"[Integrations] Skipping dataset: {dataset_name} (not available)"
+                    )
         except ImportError:
-            pass  # Module loader not available
+            pass  # Integration loader not available
 
     print("Validation data:")
 
@@ -1462,9 +1466,9 @@ def get_datamodules(
 def get_dataset(format, tokenizer, seed, *args, **kwargs):
     # Check if this is a module-provided dataset
     try:
-        from cli import module_loader_with_conditions
+        from cli import integration_loader_with_conditions
 
-        dataset_provider = module_loader_with_conditions.get_dataset(format)
+        dataset_provider = integration_loader_with_conditions.get_dataset(format)
         if dataset_provider:
             # Call the provider function with standard arguments
             dataset = dataset_provider(tokenizer, seed, *args, **kwargs)
@@ -1475,7 +1479,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
                     dataset.weight = 1.0
                 return dataset
             else:
-                # Provider returned None (e.g., module not properly initialized)
+                # Provider returned None (e.g., integration not properly initialized)
                 return None
     except ImportError:
         pass

@@ -7,33 +7,34 @@ def create_printing_progress_bar(
     process_position: int = 0,
     leave: bool = True,
     use_dashboard: bool = False,
-    refresh_rate: int = 1
+    refresh_rate: int = 1,
 ) -> Optional[Any]:
     """Factory function to create a printing progress bar.
-    
+
     This dynamically creates a progress bar class that inherits from the
     appropriate base class (Lightning or generic).
-    
+
     Args:
         process_position: Position for multi-process environments
         leave: Whether to leave the progress bar after completion
         use_dashboard: Whether a dashboard is being used
         refresh_rate: How often to refresh the progress bar
-        
+
     Returns:
         Progress bar instance or None if dashboard is used
     """
     if use_dashboard:
         return None
-    
+
     # Get the appropriate base class dynamically
     from praxis.trainers import get_progress_bar_base
+
     base_class = get_progress_bar_base()
-    
+
     # Create the PrintingProgressBar class dynamically
     class PrintingProgressBar(base_class):
         """Progress bar that handles printing in both terminal and Jupyter environments."""
-        
+
         def __init__(self):
             """Initialize the printing progress bar."""
             super().__init__(refresh_rate, process_position, leave)
@@ -45,6 +46,7 @@ def create_printing_progress_bar(
             """Check if running in a Jupyter environment."""
             try:
                 from IPython import get_ipython
+
                 return get_ipython().__class__.__name__ == "ZMQInteractiveShell"
             except Exception:
                 return False
@@ -52,33 +54,33 @@ def create_printing_progress_bar(
         def _get_active_progress_bar(self):
             """Get the currently active progress bar."""
             active_progress_bar = None
-            
+
             # Check train progress bar
             if (
-                hasattr(self, '_train_progress_bar') and
-                self._train_progress_bar is not None and
-                not self.train_progress_bar.disable
+                hasattr(self, "_train_progress_bar")
+                and self._train_progress_bar is not None
+                and not self.train_progress_bar.disable
             ):
                 active_progress_bar = self.train_progress_bar
             # Check validation progress bar
             elif (
-                hasattr(self, '_val_progress_bar') and
-                self._val_progress_bar is not None and 
-                not self.val_progress_bar.disable
+                hasattr(self, "_val_progress_bar")
+                and self._val_progress_bar is not None
+                and not self.val_progress_bar.disable
             ):
                 active_progress_bar = self.val_progress_bar
             # Check test progress bar
             elif (
-                hasattr(self, '_test_progress_bar') and
-                self._test_progress_bar is not None and 
-                not self.test_progress_bar.disable
+                hasattr(self, "_test_progress_bar")
+                and self._test_progress_bar is not None
+                and not self.test_progress_bar.disable
             ):
                 active_progress_bar = self.test_progress_bar
             # Check predict progress bar
             elif (
-                hasattr(self, '_predict_progress_bar') and
-                self._predict_progress_bar is not None and 
-                not self.predict_progress_bar.disable
+                hasattr(self, "_predict_progress_bar")
+                and self._predict_progress_bar is not None
+                and not self.predict_progress_bar.disable
             ):
                 active_progress_bar = self.predict_progress_bar
 
@@ -87,7 +89,7 @@ def create_printing_progress_bar(
         def _escape_html(self, text: str) -> str:
             """Escape HTML special characters while preserving whitespace."""
             import html
-            
+
             # First escape special characters
             escaped = html.escape(str(text))
             # Replace newlines with <br> tags to preserve formatting
@@ -131,23 +133,23 @@ def create_printing_progress_bar(
         @property
         def train_progress_bar(self):
             """Get training progress bar if it exists."""
-            return getattr(self, '_train_progress_bar', None)
-        
+            return getattr(self, "_train_progress_bar", None)
+
         @property
         def val_progress_bar(self):
             """Get validation progress bar if it exists."""
-            return getattr(self, '_val_progress_bar', None)
-        
+            return getattr(self, "_val_progress_bar", None)
+
         @property
         def test_progress_bar(self):
             """Get test progress bar if it exists."""
-            return getattr(self, '_test_progress_bar', None)
-        
+            return getattr(self, "_test_progress_bar", None)
+
         @property
         def predict_progress_bar(self):
             """Get prediction progress bar if it exists."""
-            return getattr(self, '_predict_progress_bar', None)
-    
+            return getattr(self, "_predict_progress_bar", None)
+
     # Create and return an instance
     return PrintingProgressBar()
 
@@ -155,15 +157,15 @@ def create_printing_progress_bar(
 # For backward compatibility, export a class that can be imported
 class PrintingProgressBar:
     """Static class for backward compatibility.
-    
+
     Use create_printing_progress_bar() factory function instead.
     """
-    
+
     def __new__(cls, *args, **kwargs):
         """Create a new instance using the factory function."""
         return create_printing_progress_bar(
-            process_position=kwargs.get('process_position', 0),
-            leave=kwargs.get('leave', True),
-            use_dashboard=kwargs.get('use_dashboard', False),
-            refresh_rate=kwargs.get('refresh_rate', 1)
+            process_position=kwargs.get("process_position", 0),
+            leave=kwargs.get("leave", True),
+            use_dashboard=kwargs.get("use_dashboard", False),
+            refresh_rate=kwargs.get("refresh_rate", 1),
         )

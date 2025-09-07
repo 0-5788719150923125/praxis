@@ -15,7 +15,9 @@ class PraxisTrainer(LightningModule):
     A training module for Praxis with automatic torch.compile support.
     """
 
-    def __init__(self, model, optimizer, scheduler, hparams, tokenizer=None, byte_latent=False):
+    def __init__(
+        self, model, optimizer, scheduler, hparams, tokenizer=None, byte_latent=False
+    ):
         super(PraxisTrainer, self).__init__()
         self.scheduler = scheduler
         self.automatic_optimization = True
@@ -24,11 +26,13 @@ class PraxisTrainer(LightningModule):
         self.train_step_ema = None
         self.tokenizer = tokenizer
         self.byte_latent = byte_latent
-        self.save_hyperparameters(ignore=["model", "optimizer", "scheduler", "tokenizer"])
+        self.save_hyperparameters(
+            ignore=["model", "optimizer", "scheduler", "tokenizer"]
+        )
 
         # Try to compile the model automatically with fallback
         self.model = try_compile_model(model, hparams)
-        
+
         # Try to compile the optimizer as well
         self.optimizer = try_compile_optimizer(optimizer, hparams)
 
@@ -136,8 +140,12 @@ class PraxisTrainer(LightningModule):
                         max_new_tokens=256,
                         temperature=0.7,
                         do_sample=True,
-                        pad_token_id=self.tokenizer.pad_token_id if self.tokenizer else 0,
-                        eos_token_id=self.tokenizer.eos_token_id if self.tokenizer else 1,
+                        pad_token_id=(
+                            self.tokenizer.pad_token_id if self.tokenizer else 0
+                        ),
+                        eos_token_id=(
+                            self.tokenizer.eos_token_id if self.tokenizer else 1
+                        ),
                     )
 
                     # Decode to extract answer

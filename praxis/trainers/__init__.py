@@ -35,6 +35,7 @@ try:
         seed_everything_lightning,
         reset_seed_lightning,
     )
+
     _HAS_LIGHTNING = True
 except ImportError:
     _HAS_LIGHTNING = False
@@ -51,14 +52,16 @@ if _HAS_LIGHTNING:
     TRAINER_REGISTRY["lightning"] = LightningTrainerWrapper
 
 
-def create_trainer(framework: str = "lightning", config: TrainerConfig = None, **kwargs):
+def create_trainer(
+    framework: str = "lightning", config: TrainerConfig = None, **kwargs
+):
     """Create a trainer for the specified framework.
-    
+
     Args:
         framework: Training framework to use ("lightning", etc.)
         config: TrainerConfig object with training settings
         **kwargs: Additional framework-specific arguments
-        
+
     Returns:
         Trainer instance for the specified framework
     """
@@ -73,7 +76,7 @@ def create_trainer(framework: str = "lightning", config: TrainerConfig = None, *
 __all__ = [
     # Base classes
     "BaseTrainer",
-    "BaseCallback", 
+    "BaseCallback",
     "BaseLogger",
     "BaseTrainingModule",
     "BaseDataModule",
@@ -102,14 +105,16 @@ __all__ = [
 
 # Add Lightning exports if available
 if _HAS_LIGHTNING:
-    __all__.extend([
-        "LightningModule",
-        "LightningTrainerWrapper",
-        "create_lightning_trainer",
-        "create_csv_logger",
-        "create_model_checkpoint",
-        "create_progress_bar",
-        "disable_warnings",
-        "seed_everything_lightning",
-        "reset_seed_lightning",
-    ])
+    __all__.extend(
+        [
+            "LightningModule",
+            "LightningTrainerWrapper",
+            "create_lightning_trainer",
+            "create_csv_logger",
+            "create_model_checkpoint",
+            "create_progress_bar",
+            "disable_warnings",
+            "seed_everything_lightning",
+            "reset_seed_lightning",
+        ]
+    )

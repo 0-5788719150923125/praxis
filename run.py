@@ -8,14 +8,9 @@ import sys
 sys.dont_write_bytecode = True
 
 # Import our new utilities
-from praxis.utils import (
-  check_for_updates,
-  find_latest_checkpoint,
-  get_memory_info,
-  get_scheduler,
-  initialize_lazy_modules,
-  sigint_handler,
-)
+from praxis.utils import (check_for_updates, find_latest_checkpoint,
+                          get_memory_info, get_scheduler,
+                          initialize_lazy_modules, sigint_handler)
 
 # Set up the SIGINT handler
 signal.signal(signal.SIGINT, sigint_handler)
@@ -35,12 +30,7 @@ import traceback
 import uuid
 import warnings
 
-# Suppress protobuf version warnings from hivemind
-warnings.filterwarnings(
-    "ignore", ".*Protobuf gencode version.*is exactly one major version older.*"
-)
 from collections import Counter
-
 # dataclass import removed - no longer needed
 from datetime import datetime, timedelta
 from functools import partial
@@ -52,43 +42,33 @@ import torch
 import torch.nn as nn
 from pytorch_optimizer import CosineAnnealingWarmupRestarts
 from torcheval.metrics.functional import perplexity
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+from transformers import (AutoConfig, AutoModel, AutoModelForCausalLM,
+                          AutoTokenizer)
+from transformers.models.auto.modeling_auto import \
+  MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from praxis.callbacks import (
-  AccumulationSchedule,
-  PeriodicEvaluation,
-  TerminalInterface,
-  TimeBasedCheckpoint,
-)
+from praxis.callbacks import (AccumulationSchedule, PeriodicEvaluation,
+                              TerminalInterface, TimeBasedCheckpoint)
 from praxis.generation import Generator
-from praxis.optimizers import get_optimizer, get_optimizer_profile
-
+from praxis.optimizers import (get_optimizer, get_optimizer_profile,
+                               get_parameter_stats)
 # Generic trainer imports
-from praxis.trainers import (
-  PraxisTrainer,
-  Trainer,
-  TrainerConfig,
-  seed_everything,
-  reset_seed,
-  disable_warnings,
-  create_logger,
-  create_checkpoint_callback,
-  create_progress_callback,
-)
+from praxis.trainers import (PraxisTrainer, Trainer, TrainerConfig,
+                             create_checkpoint_callback, create_logger,
+                             create_progress_callback, disable_warnings,
+                             reset_seed, seed_everything)
 
 ignored_warnings = [
     ".*Checkpoint directory.*exists and is not empty*",
     ".*JAX is multithreaded, so this will likely lead to a deadlock*",
     ".*Total length of `list` across ranks is zero.*",
-    ".*Protobuf gencode version.*is exactly one major version older.*",
 ]
 for pattern in ignored_warnings:
     warnings.filterwarnings("ignore", pattern)
 
 from api import APIServer
 from builders import get_datamodules
-from cli import get_cli_args, log_command, module_loader_with_conditions
+from cli import get_cli_args, integration_loader_with_conditions, log_command
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
@@ -245,7 +225,9 @@ train_params = dict(
     num_sanity_val_steps=0,
     limit_val_batches=4096 // hparams["batch_size"],
     log_every_n_steps=10,
-    logger=create_logger(log_dir=os.path.join(cache_dir, "logs"), name="praxis", format="csv"),
+    logger=create_logger(
+        log_dir=os.path.join(cache_dir, "logs"), name="praxis", format="csv"
+    ),
     callbacks=[],
 )
 
@@ -279,7 +261,6 @@ else:
         gamma=1.0,
         warmup_steps=warmup_steps,
     )
-
 
 
 # Define checkpointing behavior
@@ -335,12 +316,11 @@ print(f"optimizer: {optimizer_config['optimizer_name']}")
 if reset:
     directories = [
         "logs"
-    ] + module_loader_with_conditions.get_cleanup_directories()
+    ] + integration_loader_with_conditions.get_cleanup_directories()
     for directory in directories:
         shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
     for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
         os.remove(checkpoint)
-
 
 
 ckpt_path = None
@@ -355,7 +335,7 @@ if not reset and not dev:
         ckpt_path = true_link
 
 
-# Initialize loggers through module system
+# Initialize loggers through integration system
 class ArgsWrapper:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
@@ -364,12 +344,12 @@ class ArgsWrapper:
 
 args_obj = ArgsWrapper(wandb=wandb, wandb_run_name=globals().get("wandb_run_name"))
 
-# Initialize loaded modules with proper parameters
-module_loader_with_conditions.run_init_hooks(
+# Initialize loaded integrations with proper parameters
+integration_loader_with_conditions.run_init_hooks(
     get_cli_args(), cache_dir, ckpt_path, truncated_hash
 )
 
-logger = module_loader_with_conditions.create_logger(
+logger = integration_loader_with_conditions.create_logger(
     cache_dir, ckpt_path, truncated_hash, wandb_enabled=wandb, args=args_obj
 )
 
@@ -378,73 +358,10 @@ if logger:
 
 generator = Generator(model, tokenizer, device=device)
 
-# Calculate parameter statistics for the API server
+# Calculate parameter statistics (simplified)
 print(f"[DEBUG] Starting param_stats calculation")
-param_stats = {}
 try:
-    import torch
-
-    print(f"[DEBUG] Torch imported successfully")
-
-    # Count model parameters
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    frozen_params = total_params - trainable_params
-
-    print(
-        f"[DEBUG] Model params - Total: {total_params}, Trainable: {trainable_params}, Frozen: {frozen_params}"
-    )
-
-    # Estimate activation sizes using actual configuration values
-    # We have direct access to all these as global variables
-    actual_batch_size = batch_size
-    actual_block_size = block_size
-    actual_hidden_size = hidden_size
-    actual_num_layers = depth
-    actual_num_heads = num_heads
-
-    print(
-        f"[DEBUG] Config - batch_size: {actual_batch_size}, block_size: {actual_block_size}, hidden: {actual_hidden_size}, layers: {actual_num_layers}, heads: {actual_num_heads}"
-    )
-
-    # Hidden states: batch_size * seq_len * hidden_size * num_layers
-    activation_params = (
-        actual_batch_size * actual_block_size * actual_hidden_size * actual_num_layers
-    )
-
-    # Add attention scores if using attention
-    # if attention_type and attention_type != "none":
-    #     # Attention scores: batch_size * num_heads * seq_len * seq_len * num_layers
-    #     attention_memory = (
-    #         actual_batch_size
-    #         * actual_num_heads
-    #         * actual_block_size
-    #         * actual_block_size
-    #         * actual_num_layers
-    #     )
-    #     activation_params = activation_params + attention_memory
-    #     print(
-    #         f"[DEBUG] Attention type: {attention_type}, attention memory: {attention_memory}"
-    #     )
-
-    param_stats = {
-        "model": {
-            "total": int(total_params),  # Convert to int for JSON serialization
-            "trainable": int(trainable_params),
-            "frozen": int(frozen_params),
-        },
-        "optimizer_states": 0,  # Will be calculated after optimizer is created
-        "activation_estimate": {
-            "per_batch": int(activation_params),
-            "batch_size": int(actual_batch_size),
-            "block_size": int(actual_block_size),
-            "hidden_size": int(actual_hidden_size),
-            "num_layers": int(actual_num_layers),
-        },
-        "total_active": int(
-            total_params + activation_params
-        ),  # Will add optimizer states later
-    }
+    param_stats = get_parameter_stats(model)
     print(f"[DEBUG] param_stats created: {param_stats}")
 except Exception as e:
     print(f"[ERROR] calculating parameter stats: {e}")
@@ -454,7 +371,7 @@ except Exception as e:
     param_stats = {}
 
 if local_rank == 0:
-    # Force reload of api module to pick up any recent changes
+    # Force reload of api integration to pick up any recent changes
     import importlib
 
     import api
@@ -467,7 +384,7 @@ if local_rank == 0:
         host_name,
         port,
         tokenizer,
-        module_loader_with_conditions,
+        integration_loader_with_conditions,
         param_stats,
         seed,
     )
@@ -476,13 +393,13 @@ if local_rank == 0:
 
     # Initialize any API server hooks from loaded modules
     # Use the ACTUAL port that the API server is using (after auto-increment)
-    for hook_func in module_loader_with_conditions.get_api_server_hooks():
+    for hook_func in integration_loader_with_conditions.get_api_server_hooks():
         hook_func(api_server.host, api_server.port)
 
 
 # Load datasets
 use_source_code = not no_source
-datamodule = get_datamodules(
+dataintegration = get_datamodules(
     seed, dev, pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
 )
 
@@ -496,50 +413,16 @@ optimizer = get_optimizer(
     **optimizer_config,
 )
 
-# Count optimizer state parameters after optimizer is created
+# Update optimizer parameter count after optimizer is created
 if local_rank == 0 and param_stats:
     try:
-        optimizer_state_params = 0
-
-        # Count parameters in main optimizer
-        for group in optimizer.param_groups:
-            for p in group["params"]:
-                state = optimizer.state.get(p, {})
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        optimizer_state_params += v.numel()
-
-        # Also check for layer-wise optimizers in MonoForward decoder
-        if hasattr(model, "decoder") and hasattr(model.decoder, "optimizers"):
-            for opt in model.decoder.optimizers:
-                if opt is not None:
-                    for group in opt.param_groups:
-                        for p in group["params"]:
-                            state = opt.state.get(p, {})
-                            for k, v in state.items():
-                                if torch.is_tensor(v):
-                                    optimizer_state_params += v.numel()
-
-        # Update param_stats with optimizer info
-        param_stats["optimizer_states"] = int(optimizer_state_params)
-        param_stats["total_active"] = int(
-            param_stats["model"]["total"]
-            + optimizer_state_params
-            + param_stats["activation_estimate"]["per_batch"]
-        )
-
-        print(
-            f"[DEBUG] Updated param_stats with optimizer states: {optimizer_state_params}"
-        )
+        param_stats = get_parameter_stats(model, optimizer)
+        print(f"[DEBUG] Updated param_stats with optimizer states: {param_stats}")
 
         # Update the API server's param_stats if it exists
         if "api_server" in locals() and hasattr(api_server, "update_param_stats"):
             api_server.update_param_stats(param_stats)
             print(f"[DEBUG] Updated api_server.param_stats with optimizer info")
-        else:
-            print(
-                f"[DEBUG] api_server not found in locals, cannot update optimizer states"
-            )
     except Exception as e:
         print(f"[ERROR] counting optimizer states: {e}")
         import traceback
@@ -547,18 +430,20 @@ if local_rank == 0 and param_stats:
         traceback.print_exc()
 
 # create the scheduler
-scheduler = get_scheduler(optimizer, optimizer_config, disable_schedule, warmup_steps)(optimizer)
+scheduler = get_scheduler(optimizer, optimizer_config, disable_schedule, warmup_steps)(
+    optimizer
+)
 
 # Wrap the model in a training module
-train_model = PraxisTrainer(model, optimizer, scheduler, hparams, tokenizer=tokenizer, byte_latent=byte_latent)
+train_model = PraxisTrainer(
+    model, optimizer, scheduler, hparams, tokenizer=tokenizer, byte_latent=byte_latent
+)
 
 # Load the callbacks
 from praxis.callbacks import create_printing_progress_bar
 
 progress_bar = create_printing_progress_bar(
-    process_position=0,
-    leave=True,
-    use_dashboard=use_dashboard
+    process_position=0, leave=True, use_dashboard=use_dashboard
 )
 
 if local_rank == 0:
@@ -567,22 +452,22 @@ if local_rank == 0:
     train_params["callbacks"].append(checkpoint_callback)
     # Create model info dict for dashboard display
     model_info = {
-        'optimizer_config': optimizer_config,
-        'strategy': strategy,
-        'rl_type': rl_type,
-        'vocab_size': vocab_size,
-        'depth': depth,
-        'hidden_size': hidden_size,
-        'embed_size': embed_size,
-        'dropout': dropout,
-        'use_source_code': use_source_code,
-        'dev': dev,
-        'meta': meta,
-        'seed': seed,
-        'truncated_hash': truncated_hash,
-        'total_params': total_params,
+        "optimizer_config": optimizer_config,
+        "strategy": strategy,
+        "rl_type": rl_type,
+        "vocab_size": vocab_size,
+        "depth": depth,
+        "hidden_size": hidden_size,
+        "embed_size": embed_size,
+        "dropout": dropout,
+        "use_source_code": use_source_code,
+        "dev": dev,
+        "meta": meta,
+        "seed": seed,
+        "truncated_hash": truncated_hash,
+        "total_params": total_params,
     }
-    
+
     train_params["callbacks"].append(
         TerminalInterface(
             tokenizer=tokenizer,
@@ -604,6 +489,7 @@ if local_rank == 0:
 train_params["callbacks"].append(
     AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
 )
+
 if eval_tasks:
     train_params["callbacks"].append(
         PeriodicEvaluation(
@@ -623,12 +509,12 @@ trainer = Trainer(**train_params)
 try:
     trainer.fit(
         train_model,
-        datamodule,
+        dataintegration,
         ckpt_path=ckpt_path,
     )
 except Exception as e:
-    # Run module cleanup hooks
-    module_loader_with_conditions.run_cleanup_hooks()
+    # Run integration cleanup hooks
+    integration_loader_with_conditions.run_cleanup_hooks()
 
     # If we have a dashboard running, force crash it to show the error
     progress_bar = globals().get("progress_bar")
@@ -641,8 +527,8 @@ except Exception as e:
         # No dashboard, just re-raise the exception normally
         raise
 except KeyboardInterrupt:
-    # Run module cleanup hooks
-    module_loader_with_conditions.run_cleanup_hooks()
+    # Run integration cleanup hooks
+    integration_loader_with_conditions.run_cleanup_hooks()
 
     # Handle Ctrl+C gracefully
     if progress_bar and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:

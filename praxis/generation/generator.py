@@ -23,10 +23,11 @@ class Generator:
         self.device = device
         self.request_queue = Queue()
         self.results = {}
-        
+
         # Try to import tools, but don't fail if they're not available
         try:
             from praxis.tools import call_tool, get_tools_json_schema
+
             self.tools = get_tools_json_schema()
             self.call_tool = call_tool
             print(f"Loaded {len(self.tools)} tools for function calling")
@@ -43,6 +44,7 @@ class Generator:
             yield
         except Exception as e:
             import traceback
+
             print(traceback.format_exc())
         finally:
             self.model.train(training)

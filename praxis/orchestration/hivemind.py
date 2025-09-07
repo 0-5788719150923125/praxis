@@ -1,9 +1,16 @@
 import logging
 import random
 import time
+import warnings
 from ipaddress import ip_address
 from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
+
+# Filter protobuf version warnings that come from hivemind
+warnings.filterwarnings(
+    "ignore",
+    message=".*Protobuf gencode version.*is exactly one major version older.*",
+)
 
 import hivemind
 import requests
