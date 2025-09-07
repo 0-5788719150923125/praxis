@@ -220,12 +220,12 @@ class BaseIntegration(ABC):
         """
         pass
 
-    def request_middleware(self, request: Any, response: Any) -> None:
+    def request_middleware(self, request: Any, response: Any = None) -> None:
         """Middleware for modifying requests/responses.
         
         Args:
             request: The request object
-            response: The response object
+            response: The response object (None for before_request phase)
             
         Note: Override this method if your integration provides middleware.
         """
@@ -328,7 +328,7 @@ class LegacyIntegrationWrapper(BaseIntegration):
         if hasattr(self.module, "on_api_server_start"):
             self.module.on_api_server_start(app, args)
 
-    def request_middleware(self, request: Any, response: Any) -> None:
+    def request_middleware(self, request: Any, response: Any = None) -> None:
         """Delegate to legacy module's request_middleware if it exists."""
         if hasattr(self.module, "request_middleware"):
-            self.module.request_middleware(request, response)
+            return self.module.request_middleware(request, response)

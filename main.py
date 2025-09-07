@@ -347,9 +347,8 @@ if local_rank == 0:
     )
     print(f"[DEBUG] Created api_server with param_stats: {bool(param_stats)}")
     api_server.start()
-
-    # Initialize any API server hooks from loaded modules
-    # Use the ACTUAL port that the API server is using (after auto-increment)
+    
+    # Call API server hooks with (host, port) as in original implementation
     for hook_func in integration_loader_with_conditions.get_api_server_hooks():
         hook_func(api_server.host, api_server.port)
 else:

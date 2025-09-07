@@ -15,5 +15,4 @@ integrations:
   request_middleware:
     function: "request_middleware"
   lifecycle:
-    init: "initialize"
     cleanup: "cleanup"

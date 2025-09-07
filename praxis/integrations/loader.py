@@ -266,12 +266,16 @@ class IntegrationLoader:
                 registered.append("logger provider")
 
         # Register API server hooks
-        if hasattr(integration, "on_api_server_start"):
+        if hasattr(integration, "api_server_hook"):
+            self.integration_registry["api_server_hooks"].append(
+                integration.api_server_hook
+            )
+            registered.append("API server hook")
+        elif hasattr(integration, "on_api_server_start"):
             self.integration_registry["api_server_hooks"].append(
                 integration.on_api_server_start
             )
-            if spec.integrations.get("api_server_hooks"):
-                registered.append("API server hook")
+            registered.append("API server hook")
 
         # Register request middleware
         if hasattr(integration, "request_middleware"):

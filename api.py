@@ -925,12 +925,21 @@ class APIServer:
                 app.config["param_stats"] = {}
                 print(f"[DEBUG] API Server: No param_stats found, storing empty dict")
 
-            # Register integration middleware
+            # Register integration middleware FIRST
             if self.integration_loader:
                 for middleware_func in self.integration_loader.get_request_middleware():
-                    register_request_middleware(middleware_func)
+                    # Wrap the middleware to handle both request and response phases
+                    def create_wrapper(func):
+                        def request_wrapper(req, resp):
+                            return func(req, resp)
+                        return request_wrapper
+                    
+                    wrapper = create_wrapper(middleware_func)
+                    register_request_middleware(wrapper)
+                    register_response_middleware(wrapper)
 
-            # Signal that the server will start
+
+            # Signal that the server will start (AFTER hooks are registered)
             self.started.set()
 
             # Use SocketIO's built-in server instead of werkzeug's
