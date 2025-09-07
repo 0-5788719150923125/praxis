@@ -257,8 +257,8 @@ def train_tokenizer(
         # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
         save_path = base_path / f"praxis-{vocab_size}-{tokenizer_type}"
         
-        # Also save to a generic "praxis" folder for backward compatibility
-        generic_path = base_path / "praxis"
+        # Also save to a generic "model" folder for backward compatibility
+        generic_path = base_path / "model"
         
         save_path.mkdir(parents=True, exist_ok=True)
         generic_path.mkdir(parents=True, exist_ok=True)

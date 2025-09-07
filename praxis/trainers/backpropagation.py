@@ -1,4 +1,4 @@
-"""Lightning training module for Praxis models."""
+"""Backpropagation training module for Praxis models."""
 
 import re
 from datetime import datetime
@@ -10,15 +10,15 @@ from torcheval.metrics.functional import perplexity
 from praxis.trainers.compile import try_compile_model, try_compile_optimizer
 
 
-class PraxisTrainer(LightningModule):
+class BackpropagationTrainer(LightningModule):
     """
-    A training module for Praxis with automatic torch.compile support.
+    A standard backpropagation training module with automatic torch.compile support.
     """
 
     def __init__(
         self, model, optimizer, scheduler, hparams, tokenizer=None, byte_latent=False
     ):
-        super(PraxisTrainer, self).__init__()
+        super(BackpropagationTrainer, self).__init__()
         self.scheduler = scheduler
         self.automatic_optimization = True
         self.num_tokens = 0

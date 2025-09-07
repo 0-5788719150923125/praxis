@@ -174,8 +174,8 @@ training_group.add_argument(
     "--trainer-type",
     type=str,
     choices=list(TRAINER_REGISTRY.keys()),
-    default="praxis",
-    help="Training strategy to use (praxis: standard, mono-forward: layer-wise with O(1) memory)",
+    default="backpropagation",
+    help="Training strategy to use (backpropagation: standard gradient descent, mono_forward: layer-wise with O(1) memory)",
 )
 training_group.add_argument(
     "--max-steps",
@@ -692,6 +692,18 @@ experiment_configs = load_experiments()
 # Destructure CLI arguments
 args = parser.parse_args()
 
+# Store original parsed values to detect what was explicitly provided
+explicitly_provided = set()
+for arg in sys.argv[1:]:  # Skip script name
+    if arg.startswith('--') and '=' in arg:
+        # Handle --arg=value format
+        key = arg.split('=')[0][2:]
+        explicitly_provided.add(key)
+    elif arg.startswith('--'):
+        # Handle --arg value format
+        key = arg[2:]
+        explicitly_provided.add(key)
+
 # Apply experiment defaults if any experiment flags are set
 if experiment_configs:
     for experiment_name, config in experiment_configs.items():
@@ -702,7 +714,7 @@ if experiment_configs:
                 attr_name = key.replace("-", "_")
 
                 # Check if this argument was explicitly provided by the user
-                if attr_name in sys.argv or f"--{key}" in sys.argv:
+                if key in explicitly_provided or key.replace('_', '-') in explicitly_provided:
                     continue  # User override takes precedence
 
                 # Apply the experiment default
@@ -877,7 +889,7 @@ def apply_defaults_and_parse(defaults_dict):
             f.write(new_entry + existing_content)
 
         # Save both truncated and full hash
-        hash_file_dir = os.path.join("build", "praxis")
+        hash_file_dir = os.path.join("build", "model")
         os.makedirs(hash_file_dir, exist_ok=True)
 
         # Save truncated hash for backward compatibility
@@ -1206,7 +1218,7 @@ def log_command(exclude_from_hash=None):
         f.write(new_entry + existing_content)
 
     # Save both truncated and full hash to build/praxis directory
-    hash_file_dir = os.path.join("build", "praxis")
+    hash_file_dir = os.path.join("build", "model")
     os.makedirs(hash_file_dir, exist_ok=True)
 
     # Save truncated hash for backward compatibility

@@ -33,7 +33,7 @@ vocab_size = 4096
 
 # Try the same paths as run.py
 possible_paths = [
-    os.path.join(cache_dir, "praxis"),
+    os.path.join(cache_dir, "model"),
     f"UNSAFE/praxis-{vocab_size}",
 ]
 

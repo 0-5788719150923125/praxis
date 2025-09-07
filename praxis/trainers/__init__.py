@@ -9,7 +9,7 @@ from praxis.trainers.base import (
     reset_random_state,
 )
 from praxis.trainers.compile import try_compile_model, try_compile_optimizer
-from praxis.trainers.lightning import PraxisTrainer
+from praxis.trainers.backpropagation import BackpropagationTrainer
 from praxis.trainers.module import BaseTrainingModule
 from praxis.trainers.datamodule import BaseDataModule
 from praxis.trainers.seed import seed_everything, reset_seed
@@ -48,14 +48,11 @@ from praxis.trainers.mono_forward import MonoForwardTrainer
 
 # Registry for trainers
 TRAINER_REGISTRY = {
-    "praxis": PraxisTrainer,
-    "default": PraxisTrainer,
+    "backpropagation": BackpropagationTrainer,
     "mono_forward": MonoForwardTrainer,
-    "mono-forward": MonoForwardTrainer,  # Allow hyphenated version
 }
 
-if _HAS_LIGHTNING:
-    TRAINER_REGISTRY["lightning"] = LightningTrainerWrapper
+# Lightning wrapper is not exposed as a separate trainer type
 
 
 def create_trainer(
@@ -95,7 +92,7 @@ __all__ = [
     "try_compile_model",
     "try_compile_optimizer",
     # Trainers
-    "PraxisTrainer",
+    "BackpropagationTrainer",
     "MonoForwardTrainer",
     "Trainer",
     # Factory functions

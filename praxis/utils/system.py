@@ -70,7 +70,7 @@ def check_for_updates():
 def find_latest_checkpoint(cache_dir):
     """Find the latest checkpoint file in the cache directory."""
     # Construct the checkpoint directory path
-    ckpt_dir = os.path.join(cache_dir, "praxis")
+    ckpt_dir = os.path.join(cache_dir, "model")
 
     # Get all checkpoint files
     ckpt_files = [f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
@@ -133,8 +133,8 @@ def perform_reset(cache_dir, truncated_hash, integration_loader=None):
     grace_time = 7
 
     print()
-    print(f" ⚠️ WARNING: Resetting project {truncated_hash}")
-    print(f"    This will permanently delete all checkpoints and cached data.")
+    print(f"    WARNING: Resetting project {truncated_hash}")
+    print(f" ⚠️ This will permanently delete all checkpoints and cached data.")
     print(f"    Press Ctrl+C within {grace_time} seconds to cancel...")
 
     try:
@@ -158,7 +158,7 @@ def perform_reset(cache_dir, truncated_hash, integration_loader=None):
             print(f"   Removed: {directory}/")
 
     # Clean checkpoint files
-    ckpt_pattern = os.path.join(cache_dir, "praxis", "*.ckpt")
+    ckpt_pattern = os.path.join(cache_dir, "model", "*.ckpt")
     checkpoints = glob(ckpt_pattern)
     for checkpoint in checkpoints:
         try:

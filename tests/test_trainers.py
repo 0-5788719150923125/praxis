@@ -7,7 +7,7 @@ from transformers import AutoTokenizer
 from praxis import PraxisConfig, PraxisForCausalLM
 from praxis.optimizers import get_optimizer, get_optimizer_profile
 from praxis.trainers import (
-    PraxisTrainer, 
+    BackpropagationTrainer, 
     try_compile_model, 
     try_compile_optimizer,
     create_trainer_with_module,
@@ -16,8 +16,8 @@ from praxis.trainers import (
 from praxis.schedulers import get_scheduler_func
 
 
-class TestPraxisTrainer:
-    """Test cases for PraxisTrainer."""
+class TestBackpropagationTrainer:
+    """Test cases for BackpropagationTrainer."""
 
     @pytest.fixture
     def setup_model(self):
@@ -223,12 +223,12 @@ class TestTrainerFactory:
             
         return model, optimizer, scheduler, MockTokenizer()
     
-    def test_create_praxis_trainer(self, setup_components):
-        """Test creating PraxisTrainer through factory."""
+    def test_create_backpropagation_trainer(self, setup_components):
+        """Test creating BackpropagationTrainer through factory."""
         model, optimizer, scheduler, tokenizer = setup_components
         
         trainer, training_module = create_trainer_with_module(
-            trainer_type="praxis",
+            trainer_type="backpropagation",
             model=model,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -237,10 +237,10 @@ class TestTrainerFactory:
             trainer_params={"max_steps": 10}
         )
         
-        # Should return Lightning Trainer and PraxisTrainer module
+        # Should return Lightning Trainer and BackpropagationTrainer module
         from praxis.trainers import Trainer
         assert isinstance(trainer, Trainer)
-        assert isinstance(training_module, PraxisTrainer)
+        assert isinstance(training_module, BackpropagationTrainer)
         assert training_module.model is not None
         
     def test_create_default_trainer(self, setup_components):
@@ -248,7 +248,7 @@ class TestTrainerFactory:
         model, optimizer, scheduler, tokenizer = setup_components
         
         trainer, training_module = create_trainer_with_module(
-            trainer_type="default",
+            trainer_type="backpropagation",
             model=model,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -259,40 +259,35 @@ class TestTrainerFactory:
         
         from praxis.trainers import Trainer
         assert isinstance(trainer, Trainer)
-        assert isinstance(training_module, PraxisTrainer)
+        assert isinstance(training_module, BackpropagationTrainer)
         
     def test_create_unknown_trainer(self, setup_components):
-        """Test fallback for unknown trainer type."""
+        """Test that unknown trainer types raise an error."""
         model, optimizer, scheduler, tokenizer = setup_components
         
-        trainer, training_module = create_trainer_with_module(
-            trainer_type="unknown_type",
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            hparams={"batch_size": 4, "device": "cpu"},
-            tokenizer=tokenizer,
-            trainer_params={"max_steps": 10}
-        )
-        
-        from praxis.trainers import Trainer
-        assert isinstance(trainer, Trainer)
-        # Should return original model for unknown types
-        assert training_module is model
+        with pytest.raises(ValueError, match="Unknown trainer type 'unknown_type'"):
+            trainer, training_module = create_trainer_with_module(
+                trainer_type="unknown_type",
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                hparams={"batch_size": 4, "device": "cpu"},
+                tokenizer=tokenizer,
+                trainer_params={"max_steps": 10}
+            )
         
     def test_trainer_registry_exists(self):
         """Test that trainer registry contains expected entries."""
-        assert "praxis" in TRAINER_REGISTRY
-        assert "default" in TRAINER_REGISTRY
+        assert "backpropagation" in TRAINER_REGISTRY
         assert "mono_forward" in TRAINER_REGISTRY
-        assert "mono-forward" in TRAINER_REGISTRY
+        assert len(TRAINER_REGISTRY) == 2  # Only 2 trainers
         
     def test_encoder_type_detection(self, setup_components):
         """Test that byte_latent is set based on encoder_type."""
         model, optimizer, scheduler, tokenizer = setup_components
         
         trainer, training_module = create_trainer_with_module(
-            trainer_type="praxis",
+            trainer_type="backpropagation",
             model=model,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -301,5 +296,5 @@ class TestTrainerFactory:
             trainer_params={"max_steps": 10}
         )
         
-        assert isinstance(training_module, PraxisTrainer)
+        assert isinstance(training_module, BackpropagationTrainer)
         assert training_module.byte_latent is True

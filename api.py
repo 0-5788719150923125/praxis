@@ -176,8 +176,8 @@ def get_spec():
         # Read the hashes from files for consistency
         import os
 
-        hash_file_path = os.path.join("build", "praxis", "MODEL_HASH.txt")
-        full_hash_path = os.path.join("build", "praxis", "MODEL_HASH_FULL.txt")
+        hash_file_path = os.path.join("build", "model", "MODEL_HASH.txt")
+        full_hash_path = os.path.join("build", "model", "MODEL_HASH_FULL.txt")
         truncated_hash = None
         full_hash = None
 

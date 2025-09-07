@@ -69,7 +69,7 @@ def evaluate_model(
     )
 
     model_config = TransformersModelConfig(
-        model_name=os.path.join(cache_dir, "praxis"),
+        model_name=os.path.join(cache_dir, "model"),
         device=device,
         tokenizer=f"UNSAFE/praxis-{vocab_size}",
         model_parallel=False,

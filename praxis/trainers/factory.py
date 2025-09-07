@@ -157,7 +157,7 @@ def create_trainer_with_module(
     """Create a trainer with appropriate module wrapping.
     
     This factory function handles all the complexity of different trainer types,
-    including LightningModule wrapping for PraxisTrainer.
+    including LightningModule wrapping for BackpropagationTrainer.
     
     Args:
         trainer_type: Type of trainer to create
@@ -178,14 +178,13 @@ def create_trainer_with_module(
     from praxis.trainers.trainer import Trainer
     
     if trainer_type not in TRAINER_REGISTRY:
-        print(f"[WARNING] Unknown trainer type '{trainer_type}', using default Trainer")
-        return Trainer(**(trainer_params or {})), model
+        raise ValueError(f"Unknown trainer type '{trainer_type}'. Available trainers: {list(TRAINER_REGISTRY.keys())}")
     
     trainer_class = TRAINER_REGISTRY[trainer_type]
     print(f"[INFO] Using {trainer_type} trainer: {trainer_class.__name__}")
     
     # Handle different trainer types
-    if trainer_type in ["mono-forward", "mono_forward"]:
+    if trainer_type == "mono_forward":
         # MonoForward has its own special initialization
         trainer = trainer_class(
             model=model,
@@ -195,15 +194,15 @@ def create_trainer_with_module(
         )
         return trainer, model
     
-    elif trainer_type in ["praxis", "default"]:
-        # PraxisTrainer is a LightningModule, needs special handling
-        from praxis.trainers.lightning import PraxisTrainer
+    elif trainer_type == "backpropagation":
+        # BackpropagationTrainer is a LightningModule, needs special handling
+        from praxis.trainers.backpropagation import BackpropagationTrainer
         
         # Determine encoder type from hparams
         encoder_type = hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
         
         # Create the LightningModule wrapper
-        lightning_module = PraxisTrainer(
+        lightning_module = BackpropagationTrainer(
             model=model,
             optimizer=optimizer,
             scheduler=scheduler,

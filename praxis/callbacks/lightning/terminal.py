@@ -40,10 +40,10 @@ class TerminalInterface(Callback):
         dropout=None,
         use_source_code=False,
         dev=False,
-        meta=None,
         seed=None,
         truncated_hash=None,
         total_params=None,
+        target_batch_size=None,
     ):
         super().__init__()
         self.alpha = 1e-2
@@ -81,10 +81,10 @@ class TerminalInterface(Callback):
             self.dropout = model_info.get("dropout")
             self.use_source_code = model_info.get("use_source_code", False)
             self.dev = model_info.get("dev", False)
-            self.meta = model_info.get("meta", [])
             self.seed = model_info.get("seed")
             self.truncated_hash = model_info.get("truncated_hash")
             self.total_params = model_info.get("total_params")
+            self.target_batch_size = model_info.get("target_batch_size")
         else:
             # Legacy usage: individual parameters
             self.optimizer_config = optimizer_config or {}
@@ -97,10 +97,10 @@ class TerminalInterface(Callback):
             self.dropout = dropout
             self.use_source_code = use_source_code
             self.dev = dev
-            self.meta = meta or []
             self.seed = seed
             self.truncated_hash = truncated_hash
             self.total_params = total_params
+            self.target_batch_size = target_batch_size
 
         # Track inference timing to detect when it's too slow
         self.inference_time_ema = None
@@ -156,7 +156,7 @@ class TerminalInterface(Callback):
     def on_validation_end(self, trainer, lm):
         super().on_validation_end(trainer, lm)
         if self.dashboard and hasattr(self.dashboard, "set_mode"):
-            self.dashboard.set_mode("evaluation")
+            self.dashboard.set_mode("train")
 
     def on_train_batch_end(self, trainer, lm, outputs, batch, batch_idx):
         super().on_train_batch_end(trainer, lm, outputs, batch, batch_idx)
@@ -290,7 +290,9 @@ class TerminalInterface(Callback):
         info_dict["vocab_size"] = self.vocab_size
         info_dict["block_size"] = seq_length
         info_dict["batch_size"] = batch_size
-        info_dict["target_batch"] = batch_size  # Could be passed as param
+        info_dict["target_batch"] = self.target_batch_size or getattr(
+            lm.hparams, "target_batch_size", batch_size
+        )
         info_dict["depth"] = self.depth
         info_dict["hidden_size"] = self.hidden_size
         info_dict["embed_size"] = self.embed_size
@@ -300,7 +302,7 @@ class TerminalInterface(Callback):
             item
             for item, condition in [("src", self.use_source_code), ("dev", self.dev)]
             if condition
-        ] + self.meta
+        ]
 
         self.dashboard.update_info(info_dict)
 

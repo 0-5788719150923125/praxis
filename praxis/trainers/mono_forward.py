@@ -6,11 +6,11 @@ import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 
-from praxis.trainers.lightning import PraxisTrainer
+from praxis.trainers.backpropagation import BackpropagationTrainer
 from praxis.trainers.layer_wise import LayerWithOptimizer
 
 
-class MonoForwardTrainer(PraxisTrainer):
+class MonoForwardTrainer(BackpropagationTrainer):
     """
     Trainer that implements MonoForward training strategy.
     

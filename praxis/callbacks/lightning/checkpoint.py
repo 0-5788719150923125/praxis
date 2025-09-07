@@ -46,7 +46,13 @@ class TimeBasedCheckpoint(ModelCheckpoint):
             self.last_checkpoint_time = current_time
 
             # Also save the model in Huggingface format
-            lm.model.save_pretrained(self.dirpath, safe_serialization=False)
+            # The lm is already the BackpropagationTrainer, which has the model as an attribute
+            if hasattr(lm, 'model') and hasattr(lm.model, 'save_pretrained'):
+                # Create a subdirectory for the HF model
+                import os
+                model_dir = os.path.join(self.dirpath, 'hf_model')
+                os.makedirs(model_dir, exist_ok=True)
+                lm.model.save_pretrained(model_dir, safe_serialization=False)
 
     def on_train_epoch_end(self, trainer, pl_module):
         # Disable saving checkpoints at the end of every epoch
