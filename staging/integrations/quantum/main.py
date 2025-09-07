@@ -37,8 +37,8 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
             module_path.parent.parent.parent
         )  # staging/quantum -> staging -> praxis root
 
-        # Set up the data directory relative to project root
-        data_dir = project_root / "data" / "quantum"
+        # Set up the build directory relative to project root
+        data_dir = project_root / "build" / "quantum"
         data_dir.mkdir(parents=True, exist_ok=True)
 
         repo_path = data_dir / "qoblib"
@@ -126,7 +126,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                     "[Quantum] This repository contains large files and may be slow to clone"
                 )
                 print(
-                    "[Quantum] You can try cloning manually: git clone --depth 1 --branch OUF_at_zurich.ibm.com-main-patch-70f8 https://github.com/Vectorrent/qoblib data/quantum/qoblib"
+                    "[Quantum] You can try cloning manually: git clone --depth 1 --branch OUF_at_zurich.ibm.com-main-patch-70f8 https://github.com/Vectorrent/qoblib build/quantum/qoblib"
                 )
                 if repo_path.exists():
                     import shutil
@@ -561,7 +561,7 @@ if __name__ == "__main__":
             "Failed to initialize quantum module - repository may need to be cloned manually"
         )
         print(
-            "Run: git clone --depth 1 https://github.com/Vectorrent/qoblib data/quantum/qoblib"
+            "Run: git clone --depth 1 https://github.com/Vectorrent/qoblib build/quantum/qoblib"
         )
         sys.exit(1)
 

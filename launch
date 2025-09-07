@@ -4,6 +4,18 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Check if we're already in a virtual environment or if .venv exists
+# Only activate if .venv exists and we're not already in a venv
+if [ -z "$VIRTUAL_ENV" ] && [ -d "$SCRIPT_DIR/.venv" ]; then
+    # Activate the virtual environment
+    . "$SCRIPT_DIR/.venv/bin/activate"
+elif [ -z "$VIRTUAL_ENV" ] && [ ! -d "$SCRIPT_DIR/.venv" ]; then
+    # Create and activate virtual environment if it doesn't exist
+    echo "Creating virtual environment..."
+    python3 -m venv "$SCRIPT_DIR/.venv"
+    . "$SCRIPT_DIR/.venv/bin/activate"
+fi
+
 # Check if any arguments were provided
 if [ $# -eq 0 ]; then
     # No arguments - run the default training script
@@ -31,23 +43,19 @@ case "$COMMAND" in
         exec python "$SCRIPT_DIR/main.py" "$@"
         ;;
     
-    help|--help|-h)
-        # Show help
-        echo "Praxis Launcher - Unified CLI for the Praxis framework"
+    --help|-h|help)
+        # First show main.py help
+        python "$SCRIPT_DIR/main.py" --help
+        
+        # Then append launcher-specific commands
         echo ""
-        echo "Usage: ./launch [command] [options]"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "Commands:"
-        echo "  (none)              Run the default training script (main.py)"
-        echo "  run, train          Run training with specified options"
-        echo "  tokenizer           Train or manage tokenizers"
-        echo "  archivist           Run the archivist tool"
-        echo "  help, --help        Show this help message"
+        echo "launcher commands:"
+        echo "  tokenizer               Train or manage tokenizers"
+        echo "  archivist               Run the archivist tool"
         echo ""
-        echo "Examples:"
-        echo "  ./launch                    # Run default training"
-        echo "  ./launch --dev              # Run training in dev mode"
-        echo "  ./launch --alpha            # Run with alpha experiment"
+        echo "launcher examples:"
         echo "  ./launch tokenizer --help   # Show tokenizer options"
         echo "  ./launch archivist --help   # Show archivist options"
         ;;

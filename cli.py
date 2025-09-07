@@ -995,8 +995,8 @@ def log_command(exclude_from_hash=None):
     with open(log_file, "w") as f:
         f.write(new_entry + existing_content)
 
-    # Save both truncated and full hash to data/praxis directory
-    hash_file_dir = os.path.join("data", "praxis")
+    # Save both truncated and full hash to build/praxis directory
+    hash_file_dir = os.path.join("build", "praxis")
     os.makedirs(hash_file_dir, exist_ok=True)
 
     # Save truncated hash for backward compatibility

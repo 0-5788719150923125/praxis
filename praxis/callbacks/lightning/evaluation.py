@@ -34,7 +34,7 @@ class PeriodicEvaluation(Callback):
             return
 
         try:
-            from eval import evaluate_model, get_all_task_metrics
+            from evaluation import evaluate_model, get_all_task_metrics
         except:
             return
 

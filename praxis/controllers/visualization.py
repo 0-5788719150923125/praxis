@@ -19,7 +19,7 @@ class TransitionVisualizer:
     def __init__(
         self,
         num_experts: int,
-        save_dir: str = "data",
+        save_dir: str = "build",
         max_depth: int = 4,
         window_size: int = 1000,
         use_time_weighting: bool = True,
@@ -816,7 +816,7 @@ if __name__ == "__main__":
     visualizer.visualize_expert_usage(time_weighted=True)  # Recent expert usage
     visualizer.visualize_top_routes()  # Top 10 most common recent routes
 
-    print("Visualizations saved to data/")
+    print("Visualizations saved to build/")
     print("- transition_viz.png: All-time transition patterns")
     print("- transition_viz_recent.png: Recent transition patterns")
     print("- transition_expert_usage.png: All-time expert usage distribution by depth")

@@ -180,7 +180,7 @@ class StandardTokenizer(PreTrainedTokenizerFast, PraxisTokenizerBase):
         vocab_size: int = 32768,
         tokenizer_type: str = "unigram",
         dropout: float = 0.1,
-        cache_dir: str = "data/datasets",
+        cache_dir: str = "build/datasets",
         **kwargs
     ) -> "StandardTokenizer":
         """

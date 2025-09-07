@@ -104,7 +104,7 @@ def create_tokenizer(
         1. Explicit tokenizer_path if provided
         2. Explicit tokenizer_profile or tokenizer_name if provided
         3. Encoder type detection (byte_latent -> ByteLevel)
-        4. Local paths (data/tokenizers/praxis-{vocab_size}-unigram)
+        4. Local paths (build/tokenizers/praxis-{vocab_size}-unigram)
         5. Remote HuggingFace repos (UNSAFE/praxis-{vocab_size})
         6. Default profile
     """
@@ -162,7 +162,7 @@ def create_tokenizer(
             )
     
     # 4. Try to load from local paths (single unified path)
-    local_path = Path(f"data/tokenizers/praxis-{vocab_size}-unigram")
+    local_path = Path(f"build/tokenizers/praxis-{vocab_size}-unigram")
     if local_path.exists():
         try:
             return AutoTokenizer.from_pretrained(
@@ -252,9 +252,9 @@ def train_tokenizer(
     
     # Save to deterministic locations
     if save:
-        base_path = Path("data/tokenizers")
+        base_path = Path("build/tokenizers")
         
-        # Main save path: data/tokenizers/praxis-{vocab_size}-{type}
+        # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
         save_path = base_path / f"praxis-{vocab_size}-{tokenizer_type}"
         
         # Also save to a generic "praxis" folder for backward compatibility

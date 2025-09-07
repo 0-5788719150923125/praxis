@@ -68,9 +68,9 @@ def train_tokenizer_cli():
     )
 
     # Save the tokenizer to deterministic locations
-    base_path = Path("data/tokenizers")
+    base_path = Path("build/tokenizers")
 
-    # Main save path: data/tokenizers/praxis-{vocab_size}-{type}
+    # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
     save_path = base_path / f"praxis-{args.vocab_size}-{args.type}"
 
     os.makedirs(save_path, exist_ok=True)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 def get_model_hash() -> str:
     """Read the model hash from MODEL_HASH.txt file."""
-    hash_file_path = Path("./data/praxis/MODEL_HASH.txt")
+    hash_file_path = Path("./build/praxis/MODEL_HASH.txt")
 
     if not hash_file_path.exists():
         print(f"Error: Model hash file '{hash_file_path}' does not exist.")

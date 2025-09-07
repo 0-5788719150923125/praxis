@@ -4,7 +4,7 @@ import SEA from 'gun/sea.js'
 const bootstrapPeers = ['wss://59.src.eco/gun', 'wss://95.src.eco/gun']
 const gun = Gun({
   peers: bootstrapPeers,
-  file: `data/gun`,
+  file: `build/gun`,
   radisk: false,
   axe: false
 })
