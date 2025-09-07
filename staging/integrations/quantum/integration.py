@@ -103,17 +103,45 @@ class Integration(BaseIntegration):
                         [
                             "git",
                             "clone",
-                            "--progress",
-                            "https://github.com/IonQ/qoblib.git",
+                            "--depth",
+                            "1",
+                            "--single-branch",
+                            "https://github.com/Vectorrent/qoblib",
                             str(repo_path),
                         ],
-                        check=True,
-                        stderr=subprocess.PIPE,
                         text=True,
+                        timeout=180,  # 180 second timeout
+                        check=True,
                     )
                     print("[Quantum] Repository cloned successfully")
+
+                    # Remove large archive files after cloning
+                    for pattern in ["*.tar.gz", "*.zip", "*.tar"]:
+                        for archive in repo_path.rglob(pattern):
+                            try:
+                                archive.unlink()
+                                print(f"[Quantum] Removed large file: {archive.name}")
+                            except Exception:
+                                pass
+
+                except subprocess.TimeoutExpired:
+                    print("[Quantum] Error: Git clone timed out after 180 seconds")
+                    print(
+                        "[Quantum] This repository contains large files and may be slow to clone"
+                    )
+                    print(
+                        "[Quantum] You can try cloning manually: git clone --depth 1 https://github.com/Vectorrent/qoblib build/quantum/qoblib"
+                    )
+                    if repo_path.exists():
+                        import shutil
+                        shutil.rmtree(repo_path)
+                    self.quantum_enabled = False
+                    return {}
                 except subprocess.CalledProcessError as e:
-                    print(f"[Quantum] Failed to clone repository: {e}")
+                    print(f"[Quantum] Error cloning repository: {e}")
+                    if repo_path.exists():
+                        import shutil
+                        shutil.rmtree(repo_path)
                     self.quantum_enabled = False
                     return {}
 
