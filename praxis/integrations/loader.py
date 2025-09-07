@@ -42,10 +42,10 @@ class IntegrationLoader:
         for integration_dir in self.integrations_dir.iterdir():
             if (
                 integration_dir.is_dir()
-                and (integration_dir / "integration.yaml").exists()
+                and (integration_dir / "spec.yaml").exists()
             ):
                 try:
-                    manifest_path = integration_dir / "integration.yaml"
+                    manifest_path = integration_dir / "spec.yaml"
                     with open(manifest_path) as f:
                         manifest = yaml.safe_load(f)
                     manifest["path"] = integration_dir
