@@ -226,7 +226,7 @@ def api_server_hook(host, port):
         print(f"✅ No ngrok policy quota usage!")
 
         # Save ngrok info to a file for other processes to read
-        ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+        ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
         os.makedirs(os.path.dirname(ngrok_info_path), exist_ok=True)
         with open(ngrok_info_path, "w") as f:
             f.write(f"{base_url}\n{_tunnel.webhook_secret}")
@@ -244,7 +244,7 @@ def api_server_hook(host, port):
                 socketio = api.socketio
                 try:
                     # Get the ngrok secret for patching
-                    ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+                    ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
                     if os.path.exists(ngrok_info_path):
                         with open(ngrok_info_path, "r") as f:
                             lines = f.read().strip().split("\n")
@@ -333,7 +333,7 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
 
             def ngrok_wsgi_wrapper(environ, start_response):
                 # Check if we have ngrok info
-                ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+                ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
                 if os.path.exists(ngrok_info_path):
                     try:
                         with open(ngrok_info_path, "r") as f:
@@ -370,7 +370,7 @@ def load_ngrok_secret():
     """Load the ngrok secret from the info file"""
     global _ngrok_secret
     try:
-        ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+        ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
         if os.path.exists(ngrok_info_path):
             with open(ngrok_info_path, "r") as f:
                 lines = f.read().strip().split("\n")
@@ -498,7 +498,7 @@ def setup_ngrok_routes(app):
                             # We know this is coming through ngrok, so construct the URL from NGROK_INFO
                             try:
                                 ngrok_info_path = os.path.join(
-                                    "data", "praxis", "NGROK_INFO.txt"
+                                    "build", "praxis", "NGROK_INFO.txt"
                                 )
                                 if os.path.exists(ngrok_info_path):
                                     with open(ngrok_info_path, "r") as f:
@@ -525,7 +525,7 @@ def setup_ngrok_routes(app):
                         if "agents" in json_data:
                             try:
                                 ngrok_info_path = os.path.join(
-                                    "data", "praxis", "NGROK_INFO.txt"
+                                    "build", "praxis", "NGROK_INFO.txt"
                                 )
                                 if os.path.exists(ngrok_info_path):
                                     with open(ngrok_info_path, "r") as f:
@@ -619,7 +619,7 @@ def cleanup():
 
         # Remove ngrok info file
         try:
-            ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+            ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
             if os.path.exists(ngrok_info_path):
                 os.remove(ngrok_info_path)
         except:

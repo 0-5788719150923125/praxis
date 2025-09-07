@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archive management script for data directory."""
+"""Archive management script for build directory."""
 
 import argparse
 import os
@@ -102,12 +102,12 @@ class ProgressFileWrapper:
 
 
 def save_project() -> None:
-    """Create a zip file from the data directory and save it to archive using the model hash as name."""
-    data_dir = Path("./data")
+    """Create a zip file from the build directory and save it to archive using the model hash as name."""
+    data_dir = Path("./build")
     archive_dir = Path("./staging")
 
     if not data_dir.exists():
-        print(f"Error: Data directory '{data_dir}' does not exist.")
+        print(f"Error: Build directory '{data_dir}' does not exist.")
         sys.exit(1)
 
     # Get the model hash as project name
@@ -281,7 +281,7 @@ def interactive_restore():
 def restore_project(project_name: str) -> None:
     """Restore a zip file back to the data directory."""
     archive_dir = Path("./staging")
-    data_dir = Path("./data")
+    data_dir = Path("./build")
     zip_path = archive_dir / f"{project_name}.zip"
 
     if not zip_path.exists():
@@ -292,12 +292,12 @@ def restore_project(project_name: str) -> None:
     archive_size = zip_path.stat().st_size
     print(f"Restoring project '{project_name}' ({format_bytes(archive_size)})...")
 
-    # Wipe the data directory if it exists
+    # Wipe the build directory if it exists
     if data_dir.exists():
-        print("Clearing existing data directory...")
+        print("Clearing existing build directory...")
         shutil.rmtree(data_dir)
 
-    # Create an empty data directory
+    # Create an empty build directory
     data_dir.mkdir(exist_ok=True)
 
     start_time = time.time()
@@ -377,7 +377,7 @@ def list_projects() -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Archive management for data directory"
+        description="Archive management for build directory"
     )
 
     parser.add_argument(

@@ -88,7 +88,13 @@ for pattern in ignored_warnings:
 
 from api import APIServer
 from builders import get_datamodules
-from cli import get_cli_args, integration_loader_with_conditions, log_command
+from cli import (
+    create_praxis_config,
+    get_cli_args,
+    get_processed_args,
+    integration_loader_with_conditions,
+    log_command,
+)
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
@@ -103,23 +109,17 @@ AutoModel.register(PraxisConfig, PraxisModel)
 AutoModelForCausalLM.register(PraxisConfig, PraxisForCausalLM)
 MODEL_FOR_CAUSAL_LM_MAPPING_NAMES["praxis"] = "PraxisForCausalLM"
 
-# Transform CLI args into global variables
-globals().update(vars(get_cli_args()))
+# Get processed arguments from CLI
+args = get_cli_args()
+processed_args = get_processed_args(args)
+
+# Extract all processed arguments as global variables for backward compatibility
+globals().update(processed_args)
 
 (_, args_hash, truncated_hash) = log_command()
 
-# Set seeds for reproducibility
+# Set seeds for reproducibility  
 seed_everything(seed, workers=True)
-
-# Set behavior flags
-byte_latent = encoder_type == "byte_latent"
-
-# Global configuration
-block_size = block_size * 8 if byte_latent else block_size
-terminal_output_length = block_size // 2 if byte_latent else block_size * 2
-use_dashboard = False if no_dashboard else True
-
-local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
 # Tokenizer initialization - single unified interface
 from praxis.tokenizers import create_tokenizer
@@ -133,71 +133,13 @@ tokenizer = create_tokenizer(
     cache_dir=cache_dir,
 )
 
-# Transformers config
-config = PraxisConfig(
-    depth=3 if dev else depth,
-    num_experts=num_experts if num_experts else (3 if dev else depth),
-    num_smear=num_smear,
-    hidden_size=hidden_size,
-    embed_size=embed_size,
-    num_heads=int(num_heads.split(":")[0]),
-    num_queries=int(num_heads.split(":")[1]),
-    head_size=head_size,
-    k_heads=k_heads,
-    kv_rank=kv_rank,
-    dropout=dropout,
-    vocab_size=vocab_size,
-    router_type=router_type,
-    controller_type=controller_type,
-    attention_type=attention_type,
-    encoder_type=encoder_type,
-    decoder_type=decoder_type,
-    residual_type=residual_type,
-    compression_type=compression_type,
-    sorting_type=sorting_type,
-    norm_type=norm_type,
-    linear=linear,
-    differential=differential,
-    stickbreaking=stickbreaking,
-    memory=memory,
-    mla=mla,
-    mta=mta,
-    mega=mega,
-    gated=gated,
-    evolve=evolve,
-    byte_latent=byte_latent,
-    scaled=scaled,
-    activation=activation,
-    hivemind=hivemind,
-    initial_peers=initial_peers,
-    block=block_type,
-    expert=expert_type,
-    encoding=encoding_type,
-    checkpoint_every=checkpoint_every,
-    loss_func=loss_func,
-    strategy=strategy,
-    head_type=head_type,
-    max_length=block_size * 8,
-    pad_token_id=tokenizer.pad_token_id,
-    bos_token_id=tokenizer.bos_token_id,
-    eos_token_id=tokenizer.eos_token_id,
-    sep_token_id=tokenizer.sep_token_id,
-    device_map=device,
-    cache_dir=cache_dir,
-    debug=debug,
-    seed=seed,
-    meta=meta,
-    bidirectional=bidirectional,
-    tie_weights=tie_weights,
-    rl_type=rl_type,
-)
+# Create Transformers config from CLI args
+config = create_praxis_config(args, tokenizer)
 
-# Add optimizer configuration after config is created
+# Add optimizer configuration (these are stored as attributes but not part of __init__)
 optimizer_config, disable_schedule = get_optimizer_profile(
     optimizer, any([fixed_schedule, schedule_free])
 )
-
-# Store optimizer settings in config for decoders that need it (e.g., MonoForward)
 config.optimizer_config = optimizer_config
 config.optimizer_wrappers = {
     "trac": trac,

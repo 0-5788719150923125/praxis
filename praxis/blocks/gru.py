@@ -36,7 +36,7 @@ class GRUBlock(nn.Module):
             experts=nn.ModuleList(
                 [
                     RECURRENT_REGISTRY["gru"](
-                        config.hidden_size, expansion_factor=1.25, proj_out=True
+                        config.hidden_size, expansion_factor=1.5, proj_out=True
                     )
                     for _ in range(num_smear)
                 ]

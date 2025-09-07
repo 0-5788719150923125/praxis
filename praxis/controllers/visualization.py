@@ -725,7 +725,7 @@ if __name__ == "__main__":
 
     visualizer = TransitionVisualizer(
         num_experts=num_experts,
-        save_dir="data",
+        save_dir="build",
         max_depth=max_depth,  # No need to adjust here since it's handled in __init__
         window_size=5000,
         use_time_weighting=True,

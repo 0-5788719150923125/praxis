@@ -56,7 +56,7 @@ def evaluate_model(
     verbose=True,
 ):
 
-    cache_dir = "data"
+    cache_dir = "build"
 
     if not verbose:
         logging.getLogger("lighteval").setLevel(logging.CRITICAL)

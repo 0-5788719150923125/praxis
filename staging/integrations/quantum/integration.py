@@ -43,8 +43,8 @@ class Integration(BaseIntegration):
                 module_path.parent.parent.parent.parent
             )  # integration.py -> quantum -> integrations -> staging -> praxis root
 
-            # Set up the data directory relative to project root
-            data_dir = project_root / "data" / "quantum"
+            # Set up the build directory relative to project root
+            data_dir = project_root / "build" / "quantum"
             data_dir.mkdir(parents=True, exist_ok=True)
 
             repo_path = data_dir / "qoblib"

@@ -94,22 +94,57 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
         if not repo_path.exists():
             print("[Quantum] Cloning qoblib repository (this may take a while)...")
             try:
-                # Clone with progress output
-                result = subprocess.run(
-                    [
-                        "git",
-                        "clone",
-                        "--depth",
-                        "1",
-                        "--single-branch",
-                        "https://github.com/Vectorrent/qoblib",
-                        str(repo_path),
-                    ],
-                    text=True,
-                    timeout=180,  # 180 second timeout
-                    check=True,
-                )
-                print("[Quantum] Repository cloned successfully")
+                # Try different URL formats - GitHub accepts both with and without .git
+                urls_to_try = [
+                    "https://github.com/Vectorrent/qoblib",  # Original format without .git
+                    "git://github.com/Vectorrent/qoblib",  # git protocol without .git
+                    "https://github.com/Vectorrent/qoblib.git",  # With .git as fallback
+                ]
+                
+                clone_success = False
+                last_error = None
+                
+                for url in urls_to_try:
+                    try:
+                        print(f"[Quantum] Attempting to clone from: {url}")
+                        
+                        # Set up environment to prevent auth prompts
+                        env = os.environ.copy()
+                        env["GIT_TERMINAL_PROMPT"] = "0"  # Disable terminal prompts
+                        env["GIT_ASKPASS"] = ""  # Empty askpass program
+                        env["GCM_INTERACTIVE"] = "never"  # Disable Windows Git Credential Manager
+                        
+                        result = subprocess.run(
+                            [
+                                "git",
+                                "clone",
+                                "--depth", "1",  # Shallow clone to reduce size
+                                "--single-branch",  # Only clone default branch
+                                "--progress",  # Show progress
+                                url,
+                                str(repo_path),
+                            ],
+                            env=env,
+                            stdin=subprocess.DEVNULL,  # Prevent input prompts
+                            stderr=subprocess.PIPE,  # Capture stderr for progress
+                            text=True,
+                            timeout=300,  # 5 minute timeout for large repo
+                            check=True,
+                        )
+                        
+                        clone_success = True
+                        print("[Quantum] Repository cloned successfully")
+                        break
+                        
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                        last_error = e
+                        if repo_path.exists():
+                            import shutil
+                            shutil.rmtree(repo_path)
+                        continue
+                
+                if not clone_success:
+                    raise last_error if last_error else Exception("Failed to clone repository")
 
                 # Remove large archive files after cloning
                 for pattern in ["*.tar.gz", "*.zip", "*.tar"]:

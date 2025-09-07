@@ -181,8 +181,8 @@ def get_spec():
         # Read the hashes from files for consistency
         import os
 
-        hash_file_path = os.path.join("data", "praxis", "MODEL_HASH.txt")
-        full_hash_path = os.path.join("data", "praxis", "MODEL_HASH_FULL.txt")
+        hash_file_path = os.path.join("build", "praxis", "MODEL_HASH.txt")
+        full_hash_path = os.path.join("build", "praxis", "MODEL_HASH_FULL.txt")
         truncated_hash = None
         full_hash = None
 
@@ -263,7 +263,7 @@ def get_spec():
         if host.endswith(".ngrok-free.app") or host.endswith(".ngrok.io"):
             # This request came through ngrok
             # Try to read ngrok info from file
-            ngrok_info_path = os.path.join("data", "praxis", "NGROK_INFO.txt")
+            ngrok_info_path = os.path.join("build", "praxis", "NGROK_INFO.txt")
             if os.path.exists(ngrok_info_path):
                 try:
                     with open(ngrok_info_path, "r") as f:

@@ -187,7 +187,7 @@ training_group.add_argument(
 persistence_group.add_argument(
     "--cache-dir",
     type=str,
-    default="data",
+    default="build",
     help="Paths to a directory where artifacts will be saved",
 )
 # architecture
@@ -337,7 +337,7 @@ architecture_group.add_argument(
 architecture_group.add_argument(
     "--num-experts",
     type=int,
-    default=False,
+    default=None,
     help="Number of experts to host (defaults to depth)",
 )
 architecture_group.add_argument(
@@ -857,7 +857,7 @@ def apply_defaults_and_parse(defaults_dict):
             f.write(new_entry + existing_content)
 
         # Save both truncated and full hash
-        hash_file_dir = os.path.join("data", "praxis")
+        hash_file_dir = os.path.join("build", "praxis")
         os.makedirs(hash_file_dir, exist_ok=True)
 
         # Save truncated hash for backward compatibility
@@ -905,6 +905,168 @@ def _compute_args_hash(args_list, exclude_from_hash=None):
     args_json = json.dumps(sorted_args, sort_keys=True)
     hash_object = hashlib.sha256(args_json.encode())
     return hash_object.hexdigest()
+
+
+def create_praxis_config(args=None, tokenizer=None):
+    """
+    Create a PraxisConfig object from CLI arguments.
+    Automatically maps CLI arguments to PraxisConfig parameters based on the config's signature.
+    
+    Args:
+        args: Parsed arguments object (defaults to global args)
+        tokenizer: Optional tokenizer for token IDs (if not provided, uses defaults)
+    
+    Returns:
+        PraxisConfig: Configuration object ready for model initialization
+    """
+    import inspect
+    from praxis import PraxisConfig
+    
+    if args is None:
+        args = globals()['args']
+    
+    # Get PraxisConfig's __init__ parameters to know what it accepts
+    config_signature = inspect.signature(PraxisConfig.__init__)
+    valid_config_params = set(config_signature.parameters.keys()) - {'self', 'kwargs'}
+    
+    # Extract and transform arguments
+    config_kwargs = {}
+    
+    # Mapping of CLI argument names to config parameter names (for renamed parameters)
+    arg_to_config_mapping = {
+        'block_type': 'block',
+        'expert_type': 'expert',
+        'encoding_type': 'encoding',
+        'tie_weights': 'tie_word_embeddings',  # Handle tie_weights -> tie_word_embeddings
+    }
+    
+    # Process all arguments from CLI
+    for arg_name in vars(args):
+        arg_value = getattr(args, arg_name)
+        
+        # Skip None values
+        if arg_value is None:
+            continue
+            
+        # Check if this arg needs to be mapped to a different config param name
+        config_param = arg_to_config_mapping.get(arg_name, arg_name)
+        
+        # Only include parameters that PraxisConfig actually accepts
+        if config_param in valid_config_params:
+            config_kwargs[config_param] = arg_value
+    
+    # Special transformations that require custom logic
+    
+    # num_heads and num_queries from "num_heads:num_queries" format
+    if hasattr(args, 'num_heads') and args.num_heads:
+        parts = args.num_heads.split(':')
+        config_kwargs['num_heads'] = int(parts[0])
+        config_kwargs['num_queries'] = int(parts[1]) if len(parts) > 1 else int(parts[0])
+    
+    # Handle dev mode adjustments
+    if hasattr(args, 'dev') and args.dev:
+        config_kwargs['depth'] = 3
+        if 'num_experts' not in config_kwargs or config_kwargs.get('num_experts') is None:
+            config_kwargs['num_experts'] = 3
+    else:
+        # num_experts defaults to depth if not specified
+        if 'num_experts' not in config_kwargs or config_kwargs.get('num_experts') is None:
+            config_kwargs['num_experts'] = config_kwargs.get('depth', 2)
+    
+    # Handle byte_latent encoding
+    byte_latent = (hasattr(args, 'encoder_type') and args.encoder_type == 'byte_latent')
+    if byte_latent and 'byte_latent' in valid_config_params:
+        config_kwargs['byte_latent'] = True
+    
+    # Handle max_length based on block_size
+    if hasattr(args, 'block_size') and 'max_length' in valid_config_params:
+        block_size = args.block_size
+        # Adjust for byte_latent if needed
+        if byte_latent:
+            block_size = block_size * 8
+        config_kwargs['max_length'] = block_size * 8
+    
+    # Handle tokenizer IDs if tokenizer is provided
+    if tokenizer is not None:
+        token_id_mappings = [
+            ('pad_token_id', 'pad_token_id'),
+            ('bos_token_id', 'bos_token_id'),
+            ('eos_token_id', 'eos_token_id'),
+            ('sep_token_id', 'sep_token_id'),
+        ]
+        for tokenizer_attr, config_param in token_id_mappings:
+            if hasattr(tokenizer, tokenizer_attr) and config_param in valid_config_params:
+                config_kwargs[config_param] = getattr(tokenizer, tokenizer_attr)
+    
+    # Handle optimizer configuration
+    if hasattr(args, 'optimizer') and args.optimizer:
+        from praxis.optimizers import get_optimizer_profile
+        
+        # Check for schedule-related flags
+        disable_schedule = any([
+            getattr(args, 'fixed_schedule', False),
+            getattr(args, 'schedule_free', False)
+        ])
+        
+        optimizer_config, _ = get_optimizer_profile(args.optimizer, disable_schedule)
+        
+        if 'optimizer_config' in valid_config_params:
+            config_kwargs['optimizer_config'] = optimizer_config
+        
+        # Add optimizer wrappers if they're valid config params
+        if 'optimizer_wrappers' in valid_config_params:
+            config_kwargs['optimizer_wrappers'] = {
+                "trac": getattr(args, 'trac', False),
+                "ortho": getattr(args, 'ortho', False),
+                "lookahead": getattr(args, 'lookahead', False),
+                "schedule_free": getattr(args, 'schedule_free', False),
+            }
+    
+    # Filter out any kwargs that aren't valid for PraxisConfig
+    # This ensures we only pass parameters the config actually accepts
+    filtered_kwargs = {k: v for k, v in config_kwargs.items() if k in valid_config_params}
+    
+    return PraxisConfig(**filtered_kwargs)
+
+
+def get_processed_args(args=None):
+    """
+    Get a dictionary of processed arguments suitable for use in main.py.
+    This handles all the preprocessing that was previously done via globals().update().
+    
+    Args:
+        args: Parsed arguments object (defaults to global args)
+    
+    Returns:
+        dict: Processed arguments ready for use
+    """
+    if args is None:
+        args = globals()['args']
+    
+    # Create a dict from args
+    processed = vars(args).copy()
+    
+    # Add computed values
+    processed['byte_latent'] = args.encoder_type == 'byte_latent' if hasattr(args, 'encoder_type') else False
+    
+    # Adjust block_size for byte_latent
+    if processed['byte_latent'] and 'block_size' in processed:
+        processed['block_size'] = processed['block_size'] * 8
+    
+    # Set terminal_output_length
+    if 'block_size' in processed:
+        if processed['byte_latent']:
+            processed['terminal_output_length'] = processed['block_size'] // 2
+        else:
+            processed['terminal_output_length'] = processed['block_size'] * 2
+    
+    # Set use_dashboard
+    processed['use_dashboard'] = not processed.get('no_dashboard', False)
+    
+    # Set local_rank
+    processed['local_rank'] = int(os.environ.get("LOCAL_RANK", 0))
+    
+    return processed
 
 
 def get_cli_args():
@@ -1013,4 +1175,4 @@ def log_command(exclude_from_hash=None):
 
 
 # Export the integration loader for use in run.py
-__all__ = ["integration_loader_with_conditions", "args"]
+__all__ = ["integration_loader_with_conditions", "args", "create_praxis_config", "get_processed_args", "get_cli_args"]
