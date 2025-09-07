@@ -256,7 +256,7 @@ class IntegrationFactory:
             Integration instance
             
         Raises:
-            ValueError: If module doesn't have an Integration class
+            ValueError: If module doesn't have an Integration class or has invalid methods
         """
         # Look for an Integration class in the module
         if hasattr(module, "Integration"):
@@ -265,10 +265,82 @@ class IntegrationFactory:
                 raise ValueError(
                     f"Integration class in {spec.name} must extend BaseIntegration"
                 )
+            
+            # Validate that the Integration class only implements allowed methods
+            IntegrationFactory._validate_integration_methods(integration_class, spec.name)
+            
             return integration_class(spec)
+        
+        # For legacy modules, validate all functions/methods at module level
+        IntegrationFactory._validate_module_methods(module, spec.name)
         
         # Fallback: create a dynamic integration wrapper for legacy modules
         return LegacyIntegrationWrapper(module, spec)
+    
+    @staticmethod
+    def _validate_integration_methods(integration_class: type, name: str) -> None:
+        """Validate that an Integration class only implements allowed methods.
+        
+        Args:
+            integration_class: The Integration class to validate
+            name: Name of the integration for error messages
+            
+        Raises:
+            ValueError: If the class has methods not defined in BaseIntegration
+        """
+        # Get all methods defined in BaseIntegration (our allowed list)
+        base_methods = set(dir(BaseIntegration))
+        
+        # Get all methods defined in the integration class
+        # Filter to only include methods defined directly in the class, not inherited
+        integration_methods = set()
+        for attr_name in dir(integration_class):
+            attr = getattr(integration_class, attr_name)
+            if callable(attr) and not attr_name.startswith('_'):
+                # Check if this method is defined in the integration class itself
+                if attr_name in integration_class.__dict__:
+                    integration_methods.add(attr_name)
+        
+        # Check for any methods not in the base class
+        invalid_methods = integration_methods - base_methods
+        if invalid_methods:
+            raise ValueError(
+                f"Integration '{name}' defines methods not in BaseIntegration: {invalid_methods}. "
+                f"To add new methods, update BaseIntegration in praxis/integrations/base.py first."
+            )
+    
+    @staticmethod
+    def _validate_module_methods(module: Any, name: str) -> None:
+        """Validate that a legacy module only implements allowed functions.
+        
+        Args:
+            module: The module to validate
+            name: Name of the integration for error messages
+            
+        Raises:
+            ValueError: If the module has functions not defined in BaseIntegration
+        """
+        # Get all public methods from BaseIntegration (our allowed list)
+        base_methods = {
+            'add_cli_args', 'initialize', 'cleanup', 'provide_dataset',
+            'provide_logger', 'on_api_server_start', 'request_middleware'
+        }
+        
+        # Get all callable attributes from the module
+        module_functions = set()
+        for attr_name in dir(module):
+            if not attr_name.startswith('_'):  # Skip private functions
+                attr = getattr(module, attr_name)
+                if callable(attr) and not isinstance(attr, type):  # Skip classes
+                    module_functions.add(attr_name)
+        
+        # Check for any functions not in the allowed list
+        invalid_functions = module_functions - base_methods
+        if invalid_functions:
+            raise ValueError(
+                f"Integration '{name}' defines functions not in BaseIntegration: {invalid_functions}. "
+                f"To add new functions, update BaseIntegration in praxis/integrations/base.py first."
+            )
 
 
 class LegacyIntegrationWrapper(BaseIntegration):

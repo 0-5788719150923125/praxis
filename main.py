@@ -37,7 +37,7 @@ from transformers.models.auto.modeling_auto import \
 from api import APIServer
 from builders import get_datamodules
 from cli import (create_praxis_config, get_cli_args, get_processed_args,
-                 integration_loader_with_conditions, log_command)
+                 integration_loader, log_command)
 from interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 from praxis.callbacks import (AccumulationSchedule, PeriodicEvaluation,
@@ -263,7 +263,7 @@ def main():
     
     # File cleanup
     if reset:
-        directories = ["logs"] + integration_loader_with_conditions.get_cleanup_directories()
+        directories = ["logs"] + integration_loader.get_cleanup_directories()
         for directory in directories:
             shutil.rmtree(os.path.join(cache_dir, directory), ignore_errors=True)
         for checkpoint in glob(os.path.join(cache_dir, "praxis", "*.ckpt")):
@@ -303,7 +303,7 @@ def main():
             host_name,
             port,
             tokenizer,
-            integration_loader_with_conditions,
+            integration_loader,
             param_stats,
             seed,
         )
@@ -311,7 +311,7 @@ def main():
         api_server.start()
         
         # Call API server hooks with (host, port) as in original implementation
-        for hook_func in integration_loader_with_conditions.get_api_server_hooks():
+        for hook_func in integration_loader.get_api_server_hooks():
             hook_func(api_server.host, api_server.port)
     else:
         api_server = None
@@ -407,7 +407,7 @@ def main():
         optimizer = try_compile_optimizer(optimizer, hparams)
     
     # Run init hooks for integrations
-    integration_loader_with_conditions.run_init_hooks(args, cache_dir)
+    integration_loader.run_init_hooks(args, cache_dir)
     
     # Create trainer and fit model
     trainer_type = hparams.get("trainer_type", "praxis")
@@ -437,7 +437,7 @@ def main():
         print("Training completed successfully!")
         
         # Run integration cleanup hooks
-        integration_loader_with_conditions.run_cleanup_hooks()
+        integration_loader.run_cleanup_hooks()
         
         # Stop API server if running
         if api_server:
@@ -449,7 +449,7 @@ def main():
         
     except Exception as e:
         # Run integration cleanup hooks
-        integration_loader_with_conditions.run_cleanup_hooks()
+        integration_loader.run_cleanup_hooks()
         
         # If we have a dashboard running, force crash it to show the error
         if 'progress_bar' in locals() and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:
@@ -461,7 +461,7 @@ def main():
             
     except KeyboardInterrupt:
         # Run integration cleanup hooks
-        integration_loader_with_conditions.run_cleanup_hooks()
+        integration_loader.run_cleanup_hooks()
         
         # Handle Ctrl+C gracefully
         if 'progress_bar' in locals() and hasattr(progress_bar, "dashboard") and progress_bar.dashboard:

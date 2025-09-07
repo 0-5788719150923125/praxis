@@ -713,8 +713,7 @@ if experiment_configs:
 for integration_manifest in integrations:
     integration_loader.load_integration(integration_manifest, args, verbose=True)
 
-# Use the same integration loader for consistency
-integration_loader_with_conditions = integration_loader
+# Export the integration loader for use in other modules
 
 
 def apply_defaults_and_parse(defaults_dict):
@@ -1222,15 +1221,7 @@ def log_command(exclude_from_hash=None):
 
 # Export the integration loader for use in run.py
 __all__ = [
-    "integration_loader_with_conditions",
-    "args",
-    "create_praxis_config",
-    "get_processed_args",
-    "get_cli_args",
-]
-# Export the integration loader for use in run.py
-__all__ = [
-    "integration_loader_with_conditions",
+    "integration_loader",
     "args",
     "create_praxis_config",
     "get_processed_args",

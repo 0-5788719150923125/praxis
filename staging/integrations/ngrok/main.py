@@ -267,13 +267,16 @@ class Integration(BaseIntegration):
             help="Ngrok auth token (can also be set via NGROK_AUTHTOKEN env var)",
         )
 
-    def api_server_hook(self, host: str, port: int) -> None:
+    def on_api_server_start(self, app: Any, args: Any) -> None:
         """Hook called when API server starts.
         
         Args:
-            host: The host the API server is running on
-            port: The port the API server is running on
+            app: Flask application instance
+            args: Command-line arguments
         """
+        # Extract host and port from the app or args as needed
+        host = getattr(args, 'host_name', 'localhost')
+        port = getattr(args, 'port', 2100)
         global _tunnel
         
         # Check if ngrok is actually enabled
