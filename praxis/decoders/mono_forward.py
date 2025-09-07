@@ -10,7 +10,7 @@ from torch.optim import Optimizer
 
 from praxis.containers import LossContainer
 from praxis.decoders.sequential import SequentialDecoder
-from praxis.integrations.layer_with_optimizer import LayerWithOptimizer
+from praxis.trainers.layer_wise import LayerWithOptimizer
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 

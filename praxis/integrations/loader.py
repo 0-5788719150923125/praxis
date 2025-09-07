@@ -1,13 +1,12 @@
 """Integration loader for Praxis integrations."""
 
 import importlib.util
-import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-import yaml
+from .base import BaseIntegration, IntegrationFactory, IntegrationSpec
 
 
 class IntegrationLoader:
@@ -15,8 +14,10 @@ class IntegrationLoader:
 
     def __init__(self, integrations_dir: str = "./staging/integrations"):
         self.integrations_dir = Path(integrations_dir)
-        self.loaded_integrations = {}
+        self.loaded_integrations: Dict[str, BaseIntegration] = {}
         self.installed_dependencies: Set[str] = set()  # Track installed packages
+        
+        # Legacy registry for backward compatibility
         self.integration_registry = {
             "cli": [],
             "loggers": {},
@@ -28,8 +29,12 @@ class IntegrationLoader:
             "request_middleware": [],  # Functions that modify request/response headers
         }
 
-    def discover_integrations(self) -> List[Dict]:
-        """Find all integrations in staging directory."""
+    def discover_integrations(self) -> List[IntegrationSpec]:
+        """Find all integrations in staging directory.
+        
+        Returns:
+            List of IntegrationSpec objects
+        """
         integrations = []
         if not self.integrations_dir.exists():
             print(
@@ -45,17 +50,15 @@ class IntegrationLoader:
                 and (integration_dir / "spec.yaml").exists()
             ):
                 try:
-                    manifest_path = integration_dir / "spec.yaml"
-                    with open(manifest_path) as f:
-                        manifest = yaml.safe_load(f)
-                    manifest["path"] = integration_dir
-                    integrations.append(manifest)
+                    spec_path = integration_dir / "spec.yaml"
+                    spec = IntegrationSpec.from_file(spec_path)
+                    integrations.append(spec)
                     print(
-                        f"[Integrations] Found integration: {manifest['name']} v{manifest.get('version', 'unknown')}"
+                        f"[Integrations] Found integration: {spec.name} v{spec.version}"
                     )
                 except Exception as e:
                     print(
-                        f"[Integrations] Warning: Failed to load integration manifest {integration_dir}: {e}"
+                        f"[Integrations] Warning: Failed to load integration spec {integration_dir}: {e}"
                     )
 
         if integrations:
@@ -66,14 +69,23 @@ class IntegrationLoader:
         return integrations
 
     def load_integration(
-        self, manifest: Dict, args: Optional[Any] = None, verbose: bool = True
+        self, spec: IntegrationSpec, args: Optional[Any] = None, verbose: bool = True
     ) -> bool:
-        """Load a single integration if conditions are met."""
-        integration_name = manifest["name"]
-        integration_path = manifest["path"]
+        """Load a single integration if conditions are met.
+        
+        Args:
+            spec: Integration specification
+            args: Command-line arguments
+            verbose: Whether to print verbose output
+            
+        Returns:
+            True if integration was loaded successfully
+        """
+        integration_name = spec.name
+        integration_path = spec.path
 
         # Check conditions if args provided
-        if args and not self._check_conditions(manifest.get("conditions", []), args):
+        if args and not self._check_conditions(spec.conditions, args):
             if verbose:
                 print(
                     f"[Integrations] Skipping {integration_name} (conditions not met)"
@@ -90,7 +102,7 @@ class IntegrationLoader:
             return True
 
         # Check and install dependencies if needed
-        if not self._check_and_install_dependencies(manifest):
+        if not self._check_and_install_dependencies(spec):
             if verbose:
                 print(
                     f"[Integrations] Skipping {integration_name} (missing dependencies)"
@@ -98,7 +110,7 @@ class IntegrationLoader:
             return False
 
         try:
-            # Load integration
+            # Load integration module
             init_file = integration_path / "__init__.py"
             if not init_file.exists():
                 print(
@@ -106,17 +118,21 @@ class IntegrationLoader:
                 )
                 return False
 
-            spec = importlib.util.spec_from_file_location(
+            spec_name = importlib.util.spec_from_file_location(
                 f"staging_{integration_name}", init_file
             )
-            integration = importlib.util.module_from_spec(spec)
+            module = importlib.util.module_from_spec(spec_name)
 
             # Add to sys.modules to make imports work
-            sys.modules[f"staging_{integration_name}"] = integration
-            spec.loader.exec_module(integration)
+            sys.modules[f"staging_{integration_name}"] = module
+            spec_name.loader.exec_module(module)
 
+            # Create integration instance using factory
+            integration = IntegrationFactory.create_from_module(module, spec)
             self.loaded_integrations[integration_name] = integration
-            registered_features = self._register_integrations(manifest, integration)
+            
+            # Register integration features (for backward compatibility)
+            registered_features = self._register_integration(integration)
 
             if verbose:
                 print(
@@ -146,13 +162,13 @@ class IntegrationLoader:
                 return False
         return True
 
-    def _check_and_install_dependencies(self, manifest: Dict) -> bool:
+    def _check_and_install_dependencies(self, spec: IntegrationSpec) -> bool:
         """Check and automatically install integration dependencies."""
-        dependencies = manifest.get("dependencies", {}).get("python", [])
+        dependencies = spec.dependencies.get("python", [])
         if not dependencies:
             return True
 
-        integration_name = manifest.get("name", "unknown")
+        integration_name = spec.name
         missing_deps = []
 
         # Check which dependencies are missing
@@ -204,80 +220,70 @@ class IntegrationLoader:
             print(f"[Integrations] ✗ Failed to install dependencies: {e}")
             return False
 
-    def _register_integrations(self, manifest: Dict, integration: Any) -> List[str]:
-        """Register integration's features."""
-        integrations = manifest.get("integrations", {})
+    def _register_integration(self, integration: BaseIntegration) -> List[str]:
+        """Register integration's features in the legacy registry.
+        
+        This maintains backward compatibility with the old registry system.
+        """
         registered = []
-        integration_name = manifest["name"]
+        spec = integration.spec
+        integration_name = spec.name
 
-        # Auto-detect common functions if not explicitly configured
-        provides = manifest.get("provides", [])
-
-        # CLI integration (explicit or auto-detect)
-        if "cli" in integrations:
-            cli_config = integrations["cli"]
-            if hasattr(integration, cli_config["function"]):
-                cli_func = getattr(integration, cli_config["function"])
-                self.integration_registry["cli"].append(cli_func)
+        # Register CLI functions
+        if hasattr(integration, "add_cli_args"):
+            # Create a wrapper to match old signature
+            self.integration_registry["cli"].append(integration.add_cli_args)
+            if spec.integrations.get("cli") or "cli_args" in spec.provides:
                 registered.append("CLI arguments")
-        elif "cli_args" in provides and hasattr(integration, "add_cli_args"):
-            # Auto-detect CLI function
-            cli_func = getattr(integration, "add_cli_args")
-            self.integration_registry["cli"].append(cli_func)
-            registered.append("CLI arguments")
 
-        # Logger integration
-        if "loggers" in integrations:
-            logger_config = integrations["loggers"]
-            if hasattr(integration, logger_config["class"]):
-                logger_class = getattr(integration, logger_config["class"])
-                self.integration_registry["loggers"][manifest["name"]] = logger_class
-                registered.append("logger class")
+        # Register lifecycle hooks
+        if hasattr(integration, "initialize"):
+            init_wrapper = lambda *args, **kwargs: integration.initialize(*args, **kwargs)
+            self.integration_registry["lifecycle"]["init"].append(init_wrapper)
+            if "lifecycle" in spec.provides or spec.integrations.get("lifecycle"):
+                registered.append("lifecycle (init)")
 
-        # Dataset integration (explicit or auto-detect)
-        if "datasets" in integrations:
-            dataset_config = integrations["datasets"]
-            if hasattr(integration, dataset_config["class"]):
-                dataset_class = getattr(integration, dataset_config["class"])
-                self.integration_registry["datasets"][manifest["name"]] = dataset_class
-                registered.append("dataset class")
-        elif "datasets" in provides and hasattr(integration, "provide_dataset"):
-            # Auto-detect dataset provider function
-            dataset_func = getattr(integration, "provide_dataset")
-            self.integration_registry["datasets"][integration_name] = dataset_func
-            registered.append("dataset provider")
+        if hasattr(integration, "cleanup"):
+            self.integration_registry["lifecycle"]["cleanup"].append(integration.cleanup)
+            if "lifecycle" in spec.provides or spec.integrations.get("lifecycle"):
+                if "lifecycle (init)" in registered:
+                    registered[-1] = "lifecycle (init, cleanup)"
+                else:
+                    registered.append("lifecycle (cleanup)")
 
-        # Lifecycle integration (explicit or auto-detect)
-        if "lifecycle" in integrations:
-            lifecycle = integrations["lifecycle"]
-            lifecycle_hooks = []
-            if "init" in lifecycle and hasattr(integration, lifecycle["init"]):
-                init_func = getattr(integration, lifecycle["init"])
-                self.integration_registry["lifecycle"]["init"].append(init_func)
-                lifecycle_hooks.append("init")
-            if "cleanup" in lifecycle and hasattr(integration, lifecycle["cleanup"]):
-                cleanup_func = getattr(integration, lifecycle["cleanup"])
-                self.integration_registry["lifecycle"]["cleanup"].append(cleanup_func)
-                lifecycle_hooks.append("cleanup")
-            if lifecycle_hooks:
-                registered.append(f"lifecycle ({', '.join(lifecycle_hooks)})")
-        elif "lifecycle" in provides:
-            # Auto-detect lifecycle functions
-            lifecycle_hooks = []
-            if hasattr(integration, "initialize"):
-                init_func = getattr(integration, "initialize")
-                self.integration_registry["lifecycle"]["init"].append(init_func)
-                lifecycle_hooks.append("init")
-            if hasattr(integration, "cleanup"):
-                cleanup_func = getattr(integration, "cleanup")
-                self.integration_registry["lifecycle"]["cleanup"].append(cleanup_func)
-                lifecycle_hooks.append("cleanup")
-            if lifecycle_hooks:
-                registered.append(f"lifecycle ({', '.join(lifecycle_hooks)})")
+        # Register dataset providers
+        if hasattr(integration, "provide_dataset"):
+            dataset_wrapper = lambda *args, **kwargs: integration.provide_dataset(*args, **kwargs)
+            self.integration_registry["datasets"][integration_name] = dataset_wrapper
+            if "datasets" in spec.provides or spec.integrations.get("datasets"):
+                registered.append("dataset provider")
 
-        # Cleanup directories integration
-        if "cleanup_dirs" in integrations:
-            cleanup_dirs = integrations["cleanup_dirs"]
+        # Register logger providers
+        if hasattr(integration, "provide_logger"):
+            logger_wrapper = lambda *args, **kwargs: integration.provide_logger(*args, **kwargs)
+            self.integration_registry["logger_providers"].append(logger_wrapper)
+            if "loggers" in spec.provides or spec.integrations.get("logger_providers"):
+                registered.append("logger provider")
+
+        # Register API server hooks
+        if hasattr(integration, "on_api_server_start"):
+            self.integration_registry["api_server_hooks"].append(
+                integration.on_api_server_start
+            )
+            if spec.integrations.get("api_server_hooks"):
+                registered.append("API server hook")
+
+        # Register request middleware
+        if hasattr(integration, "request_middleware"):
+            self.integration_registry["request_middleware"].append(
+                integration.request_middleware
+            )
+            if spec.integrations.get("request_middleware"):
+                registered.append("request middleware")
+
+        # Register cleanup directories
+        cleanup_dirs = spec.integrations.get("cleanup_dirs", [])
+        if cleanup_dirs:
             if isinstance(cleanup_dirs, list):
                 self.integration_registry["cleanup_dirs"].extend(cleanup_dirs)
                 registered.append(f"cleanup dirs ({', '.join(cleanup_dirs)})")
@@ -285,32 +291,9 @@ class IntegrationLoader:
                 self.integration_registry["cleanup_dirs"].append(cleanup_dirs)
                 registered.append(f"cleanup dir ({cleanup_dirs})")
 
-        # Logger provider integration
-        if "logger_providers" in integrations:
-            provider_config = integrations["logger_providers"]
-            if hasattr(integration, provider_config["function"]):
-                provider_func = getattr(integration, provider_config["function"])
-                self.integration_registry["logger_providers"].append(provider_func)
-                registered.append("logger provider")
-
-        # API server hooks integration
-        if "api_server_hooks" in integrations:
-            hook_config = integrations["api_server_hooks"]
-            if hasattr(integration, hook_config["function"]):
-                hook_func = getattr(integration, hook_config["function"])
-                self.integration_registry["api_server_hooks"].append(hook_func)
-                registered.append("API server hook")
-
-        # Request middleware integration
-        if "request_middleware" in integrations:
-            middleware_config = integrations["request_middleware"]
-            if hasattr(integration, middleware_config["function"]):
-                middleware_func = getattr(integration, middleware_config["function"])
-                self.integration_registry["request_middleware"].append(middleware_func)
-                registered.append("request middleware")
-
         return registered
 
+    # Legacy compatibility methods
     def get_cli_functions(self) -> List:
         """Get all CLI argument functions."""
         return self.integration_registry["cli"]
@@ -326,22 +309,22 @@ class IntegrationLoader:
     def run_init_hooks(self, *args, **kwargs):
         """Run all integration initialization hooks."""
         results = {}
-        for init_func in self.integration_registry["lifecycle"]["init"]:
+        for integration in self.loaded_integrations.values():
             try:
-                result = init_func(*args, **kwargs)
+                result = integration.initialize(*args, **kwargs)
                 if result:
                     results.update(result)
             except Exception as e:
-                print(f"Integration init hook failed: {e}")
+                print(f"Integration init hook failed for {integration.name}: {e}")
         return results
 
     def run_cleanup_hooks(self):
         """Run all integration cleanup hooks."""
-        for cleanup_func in self.integration_registry["lifecycle"]["cleanup"]:
+        for integration in self.loaded_integrations.values():
             try:
-                cleanup_func()
+                integration.cleanup()
             except Exception as e:
-                print(f"Integration cleanup hook failed: {e}")
+                print(f"Integration cleanup hook failed for {integration.name}: {e}")
 
     def get_cleanup_directories(self) -> List[str]:
         """Get all directories that should be cleaned on reset."""
@@ -361,11 +344,13 @@ class IntegrationLoader:
 
     def create_logger(self, cache_dir, ckpt_path=None, truncated_hash=None, **kwargs):
         """Create logger using loaded modules."""
-        for provider_func in self.get_logger_providers():
+        for integration in self.loaded_integrations.values():
             try:
-                logger = provider_func(cache_dir, ckpt_path, truncated_hash, **kwargs)
+                logger = integration.provide_logger(
+                    cache_dir, ckpt_path, truncated_hash, **kwargs
+                )
                 if logger:
                     return logger
             except Exception as e:
-                print(f"Logger provider failed: {e}")
+                print(f"Logger provider failed for {integration.name}: {e}")
         return None

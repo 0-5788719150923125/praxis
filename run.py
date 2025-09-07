@@ -54,9 +54,9 @@ from praxis.optimizers import (get_optimizer, get_optimizer_profile,
                                get_parameter_stats)
 # Generic trainer imports
 from praxis.trainers import (PraxisTrainer, Trainer, TrainerConfig,
-                             create_checkpoint_callback, create_logger,
-                             create_progress_callback, disable_warnings,
-                             reset_seed, seed_everything)
+                             TRAINER_REGISTRY, create_checkpoint_callback, 
+                             create_logger, create_progress_callback, 
+                             disable_warnings, reset_seed, seed_everything)
 
 ignored_warnings = [
     ".*Checkpoint directory.*exists and is not empty*",
@@ -502,8 +502,33 @@ if eval_tasks:
         )
     )
 
-# Create trainer using generic interface
-trainer = Trainer(**train_params)
+# Create trainer using the specified trainer type
+trainer_type = hparams.get("trainer_type", "praxis")
+
+# Check if we should use MonoForward based on decoder type (backward compatibility)
+if hparams.get("decoder_type") == "mono_forward" and trainer_type == "praxis":
+    print("[INFO] Decoder type is mono_forward, automatically using mono-forward trainer")
+    trainer_type = "mono-forward"
+
+# Get the trainer class from registry
+if trainer_type in TRAINER_REGISTRY:
+    trainer_class = TRAINER_REGISTRY[trainer_type]
+    print(f"[INFO] Using {trainer_type} trainer: {trainer_class.__name__}")
+    
+    # MonoForward trainer needs special initialization
+    if trainer_type in ["mono-forward", "mono_forward"]:
+        trainer = trainer_class(
+            model=train_model,
+            cache_dir=cache_dir,
+            ckpt_path=ckpt_path,
+            **train_params
+        )
+    else:
+        # Standard trainer initialization
+        trainer = trainer_class(**train_params)
+else:
+    print(f"[WARNING] Unknown trainer type '{trainer_type}', using default Trainer")
+    trainer = Trainer(**train_params)
 
 # Wrap training in exception handler to catch crashes and display them immediately
 try:

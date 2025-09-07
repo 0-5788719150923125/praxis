@@ -1,15 +1,15 @@
 name: gun
-version: 1.0.0
+version: 0.1.0
 description: Gun.js decentralized data adapter for live chat integration
 author: Praxis Team
 
 dependencies:
   system:
-    - node  # Node.js runtime required
-  python: []  # No Python dependencies
+    - node # Node.js runtime required
+  python: [] # No Python dependencies
 
 conditions:
-  - "args.gun"  # Only load when --gun flag is present
+  - "args.gun" # Only load when --gun flag is present
 
 provides:
   - cli_args

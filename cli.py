@@ -28,6 +28,7 @@ from praxis import (
 )
 from praxis.integrations import IntegrationLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
+from praxis.trainers import TRAINER_REGISTRY
 
 # Define the default list of arguments to exclude from hash computation
 # These are typically runtime/debugging flags that don't affect model architecture
@@ -161,6 +162,17 @@ hardware_group.add_argument(
     default=None,
     help="Apply gradient checkpointing every X layers",
 )
+
+# training
+training_group = parser.add_argument_group("training")
+training_group.add_argument(
+    "--trainer-type",
+    type=str,
+    choices=list(TRAINER_REGISTRY.keys()),
+    default="praxis",
+    help="Training strategy to use (praxis: standard, mono-forward: layer-wise with O(1) memory)",
+)
+
 # storage
 persistence_group.add_argument(
     "--cache-dir",

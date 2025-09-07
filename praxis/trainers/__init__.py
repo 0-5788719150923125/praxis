@@ -42,10 +42,15 @@ except ImportError:
     LightningModule = None
     LightningTrainerWrapper = None
 
+# Import MonoForward trainer
+from praxis.trainers.mono_forward import MonoForwardTrainer
+
 # Registry for trainers
 TRAINER_REGISTRY = {
     "praxis": PraxisTrainer,
     "default": PraxisTrainer,
+    "mono_forward": MonoForwardTrainer,
+    "mono-forward": MonoForwardTrainer,  # Allow hyphenated version
 }
 
 if _HAS_LIGHTNING:
@@ -90,6 +95,7 @@ __all__ = [
     "try_compile_optimizer",
     # Trainers
     "PraxisTrainer",
+    "MonoForwardTrainer",
     "Trainer",
     # Factory functions
     "create_trainer",
