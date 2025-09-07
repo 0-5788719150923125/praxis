@@ -1307,7 +1307,7 @@ class TerminalInterface(Callback):
                         f"[WARNING] Context stuck for {self.unchanged_count} predictions, resetting..."
                     )
                     print(
-                        f"[INFO] Stuck text sample (last 300 chars): {repr(result[-300:])}"
+                        f"[INFO] Stuck text sample (last 300 chars): {repr(self.text[-300:])}"
                     )
                     self.text = self.initial_text
                     self.unchanged_count = 0
