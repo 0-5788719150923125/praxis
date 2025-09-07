@@ -63,6 +63,7 @@ socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 # Integration middleware support
 _request_middleware = []
 _response_middleware = []
+_response_headers = []  # List of (header_name, header_value) tuples to add to all responses
 
 
 def register_request_middleware(func):
@@ -73,6 +74,11 @@ def register_request_middleware(func):
 def register_response_middleware(func):
     """Register a response middleware function from modules"""
     _response_middleware.append(func)
+
+
+def register_response_header(header_name, header_value):
+    """Register a header to be added to all responses"""
+    _response_headers.append((header_name, header_value))
 
 
 @app.before_request
@@ -87,27 +93,23 @@ def process_request_middleware():
 
 @app.after_request
 def process_response_middleware(response):
-    """Process all registered response middleware"""
+    """Process all registered response middleware and headers"""
+    # Add any registered headers
+    for header_name, header_value in _response_headers:
+        response.headers[header_name] = header_value
+    
+    # Process middleware functions
     for middleware in _response_middleware:
         middleware(request, response)
     return response
 
 
-# Add ngrok bypass header to all responses
-@app.after_request
-def add_ngrok_header(response):
-    """Add header to bypass ngrok browser warning"""
-    response.headers["ngrok-skip-browser-warning"] = "true"
-    return response
-
-
-# Explicit static file route with proper headers for ngrok
+# Explicit static file route with proper headers
 @app.route("/static/<path:filename>")
 def serve_static_files(filename):
-    """Serve static files with proper headers for ngrok and CORS"""
+    """Serve static files with proper headers for CORS"""
     response = send_from_directory(app.static_folder, filename)
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["ngrok-skip-browser-warning"] = "true"
     # Add cache control for better performance
     response.headers["Cache-Control"] = "public, max-age=3600"
     return response
@@ -173,30 +175,13 @@ def get_spec():
                 # Skip non-serializable values
                 args_dict[key] = str(value)
 
-        # Read the hashes from files for consistency
-        import os
+        # Use the hashes from app config instead of reading from disk
+        truncated_hash = app.config.get("truncated_hash")
+        full_hash = app.config.get("full_hash")
 
-        hash_file_path = os.path.join("build", "model", "MODEL_HASH.txt")
-        full_hash_path = os.path.join("build", "model", "MODEL_HASH_FULL.txt")
-        truncated_hash = None
-        full_hash = None
-
-        # Read truncated hash
-        if os.path.exists(hash_file_path):
-            with open(hash_file_path, "r") as f:
-                truncated_hash = f.read().strip()
-
-        # Read full hash
-        if os.path.exists(full_hash_path):
-            with open(full_hash_path, "r") as f:
-                full_hash = f.read().strip()
-
-        # If full hash file doesn't exist but truncated does, generate a placeholder
-        # (for backward compatibility with older runs)
+        # Fallback for backward compatibility if hashes weren't provided
         if truncated_hash and not full_hash:
             import hashlib
-
-            # Use the truncated hash as a seed to generate a consistent full hash
             full_hash = hashlib.sha256(truncated_hash.encode()).hexdigest()
 
         # If neither hash exists, mark as unknown
@@ -726,6 +711,8 @@ class APIServer:
         integration_loader=None,
         param_stats=None,
         seed=None,
+        truncated_hash=None,
+        full_hash=None,
     ):
         # Initialize APIServer with parameter statistics
         self.generator = generator
@@ -742,6 +729,8 @@ class APIServer:
         self.tokenizer = tokenizer
         self.integration_loader = integration_loader
         self.param_stats = param_stats if param_stats else {}
+        self.truncated_hash = truncated_hash
+        self.full_hash = full_hash
         self.template_watcher = TemplateWatcher()
 
         # Initialize terminal WebSocket namespace if available
@@ -889,6 +878,8 @@ class APIServer:
             app.config["tokenizer"] = self.tokenizer
             app.config["integration_loader"] = self.integration_loader
             app.config["seed"] = self.seed
+            app.config["truncated_hash"] = self.truncated_hash
+            app.config["full_hash"] = self.full_hash
             # Store param_stats if available
             if hasattr(self, "param_stats") and self.param_stats:
                 app.config["param_stats"] = self.param_stats

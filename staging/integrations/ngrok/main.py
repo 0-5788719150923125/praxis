@@ -327,6 +327,9 @@ class Integration(BaseIntegration):
                 api.app.config["ngrok_secret"] = _tunnel.webhook_secret
                 api.app.config["ngrok_protected_url"] = protected_url
                 
+                # Register the ngrok header using the generic hook
+                api.register_response_header("ngrok-skip-browser-warning", "true")
+                
                 # Set up Flask routes with the secret
                 setup_ngrok_routes(api.app, _tunnel.webhook_secret)
                 
@@ -340,8 +343,7 @@ class Integration(BaseIntegration):
     def request_middleware(self, request: Any, response: Any = None) -> Any:
         """Middleware for modifying requests/responses."""
         if response is not None:
-            # This is the after_request phase - add ngrok headers
-            response.headers["ngrok-skip-browser-warning"] = "true"
+            # This is the after_request phase - headers are now added via register_response_header
             return None
         
         # This is the before_request phase - check authorization for ngrok requests

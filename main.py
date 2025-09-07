@@ -218,7 +218,7 @@ def main():
         enable_progress_bar=not use_dashboard,
         enable_model_summary=False,
         detect_anomaly=True if dev else False,
-        val_check_interval=4 * hparams["target_batch_size"] // hparams["batch_size"],
+        val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
         num_sanity_val_steps=0,
         limit_val_batches=16384 // hparams["batch_size"],
         log_every_n_steps=10,
@@ -297,6 +297,8 @@ def main():
             integration_loader,
             param_stats,
             seed,
+            truncated_hash=truncated_hash,
+            full_hash=args_hash,
         )
         api_server.start()
 
@@ -371,7 +373,6 @@ def main():
         "terminal_output_length", block_size * 2
     )
     debug = processed_args.get("debug", False)
-    
 
     train_params["callbacks"].append(
         TerminalInterface(

@@ -143,7 +143,7 @@ def perform_reset(cache_dir, truncated_hash, integration_loader=None):
         print("\n ✓   Reset cancelled.")
         sys.exit(0)
 
-    print("\n   🗑️ Performing reset...")
+    print("\n 🗑️ Performing reset...")
 
     # Get directories to clean
     directories = ["logs"]
@@ -155,7 +155,7 @@ def perform_reset(cache_dir, truncated_hash, integration_loader=None):
         dir_path = os.path.join(cache_dir, directory)
         if os.path.exists(dir_path):
             shutil.rmtree(dir_path, ignore_errors=True)
-            print(f"   Removed: {directory}/")
+            print(f"    Removed: {directory}/")
 
     # Clean checkpoint files
     ckpt_pattern = os.path.join(cache_dir, "model", "*.ckpt")
@@ -163,12 +163,12 @@ def perform_reset(cache_dir, truncated_hash, integration_loader=None):
     for checkpoint in checkpoints:
         try:
             os.remove(checkpoint)
-            print(f"   Removed: {os.path.basename(checkpoint)}")
+            print(f"    Removed: {os.path.basename(checkpoint)}")
         except Exception:
             pass
 
     time.sleep(1)
-    print("\n   ✓ Reset complete.\n")
+    print("\n ✓  Reset complete.\n")
 
 
 def show_launch_animation(model, truncated_hash):
@@ -183,7 +183,6 @@ def show_launch_animation(model, truncated_hash):
     acceleration_curve = random.uniform(3.5, 4.5)
     start_time = time.time()
 
-    print(f"Staging: {truncated_hash}")
     time.sleep(max(0, random.gauss(1.0, 3.0)))
 
     for i, line in enumerate(plan):
