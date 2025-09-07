@@ -222,9 +222,7 @@ def main():
         num_sanity_val_steps=0,
         limit_val_batches=16384 // hparams["batch_size"],
         log_every_n_steps=10,
-        logger=create_logger(
-            log_dir=os.path.join(cache_dir, "logs"), name="model", format="csv"
-        ),
+        logger=None,  # Will be set below based on integrations
         callbacks=[],
     )
 
@@ -299,6 +297,7 @@ def main():
             seed,
             truncated_hash=truncated_hash,
             full_hash=args_hash,
+            dev_mode=dev,
         )
         api_server.start()
 
@@ -418,7 +417,34 @@ def main():
         optimizer = try_compile_optimizer(optimizer, hparams)
 
     # Run init hooks for integrations
-    integration_loader.run_init_hooks(args, cache_dir)
+    integration_loader.run_init_hooks(args, cache_dir, ckpt_path=ckpt_path, truncated_hash=truncated_hash)
+
+    # Try to get logger from integrations (e.g., wandb)
+    integration_logger = None
+    for provider in integration_loader.get_logger_providers():
+        try:
+            logger = provider(
+                cache_dir=cache_dir,
+                ckpt_path=ckpt_path, 
+                truncated_hash=truncated_hash,
+                wandb_enabled=getattr(args, 'wandb', False),
+                args=args
+            )
+            if logger:
+                integration_logger = logger
+                print(f"[Training] Using integration logger: {type(logger).__name__}")
+                break
+        except Exception as e:
+            print(f"[Warning] Logger provider failed: {e}")
+    
+    # Use integration logger if available, otherwise fall back to CSV
+    if integration_logger:
+        train_params["logger"] = integration_logger
+    else:
+        # Fallback to CSV logger
+        train_params["logger"] = create_logger(
+            log_dir=os.path.join(cache_dir, "logs"), name="model", format="csv"
+        )
 
     # Create trainer and fit model
     trainer_type = hparams.get("trainer_type", "backpropagation")

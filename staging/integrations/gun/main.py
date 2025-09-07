@@ -1,24 +1,22 @@
 """Gun.js integration implementation for Praxis."""
 
 import atexit
-import json
 import multiprocessing
-import os
 import random
 import subprocess
+import sys
 import time
 from collections import deque
 from pathlib import Path
 from queue import Empty, Full
-from typing import Optional
+from typing import Any, Dict, Optional
 
-# Global Gun adapter instance
-_gun_adapter = None
-_gun_enabled = False  # Track if Gun is actually enabled
-_gun_initialized = False  # Track if initialize() was called with proper conditions
+from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 
 class GunAdapter:
+    """Manages connection to Gun.js server for decentralized chat data."""
+    
     def __init__(self, max_cache_size=1000):
         self._nodejs_process = None
         self._output_queue = multiprocessing.Queue(maxsize=max_cache_size)
@@ -126,93 +124,7 @@ class GunAdapter:
             print("[Gun] Node.js process terminated.")
 
 
-def get_gun_dataset_class():
-    """Get the GunChatDataset class that properly inherits from PraxisSampler."""
-    from builders import PraxisSampler
-
-    class GunChatDataset(PraxisSampler):
-        """Dataset class for Gun chat data."""
-
-        def __init__(self, tokenizer):
-            super().__init__(tokenizer)
-            self.gun = get_or_create_gun_adapter()
-            self.weight = 0.1
-
-        def fill_sequence_cache(self):
-            """Fill the sequence cache with Gun chat data."""
-            # Get a list of text samples (these are individual messages)
-            text_list = self.gun.get_sample(250)
-
-            # Filter out empty messages
-            messages = [msg.strip() for msg in text_list if msg and msg.strip()]
-
-            if not messages:
-                # No real data available, return without adding anything
-                return
-
-            # Create one continuous chat room conversation with all messages
-            conversation = []
-
-            # Add a system prompt describing the chat room context
-            system_prompts = [
-                "You are participating in a decentralized chat network.",
-                "You are in a community chat room where multiple participants are having an ongoing discussion.",
-                "This is a free-form conversation between participants in a public chat.",
-                "You are observing and participating in a continuous stream of messages.",
-                "Write thy wrong.",
-            ]
-            conversation.append(
-                {"role": "system", "content": random.choice(system_prompts)}
-            )
-
-            # Assign alternating roles to simulate a continuous chat stream
-            # Start with a random role for the first message
-            current_role = random.choice(["user", "assistant"])
-
-            for message in messages:
-                # Add each message with alternating roles
-                conversation.append({"role": current_role, "content": message})
-
-                # Alternate roles for next message to simulate multiple participants
-                current_role = "assistant" if current_role == "user" else "user"
-
-            # Ensure conversation ends with assistant for proper training
-            if conversation and conversation[-1]["role"] == "user":
-                # Remove the last message if it's from user
-                conversation.pop()
-
-            # Only process if we have at least 2 messages (after potential pop)
-            if len(conversation) >= 3:  # system + at least 2 messages
-                try:
-                    # Format the entire conversation as one continuous sequence
-                    formatted_text = self.tokenizer.apply_chat_template(
-                        conversation, tokenize=False, add_generation_prompt=False
-                    )
-                    self.sequence_cache.append(formatted_text)
-                except Exception as e:
-                    # Skip if tokenization fails
-                    pass
-
-    return GunChatDataset
-
-
-def get_or_create_gun_adapter():
-    """Get or create the global Gun adapter instance."""
-    global _gun_adapter, _gun_enabled, _gun_initialized
-
-    # Only create adapter if the module was properly initialized with conditions met
-    if not _gun_initialized:
-        raise RuntimeError("[Gun] Module not properly initialized. Gun flag not set.")
-
-    if _gun_adapter is None:
-        _gun_adapter = GunAdapter()
-        # Register cleanup only when Gun is actually created
-        if not _gun_enabled:
-            atexit.register(cleanup)
-            _gun_enabled = True
-    return _gun_adapter
-
-
+# Legacy functions for backward compatibility
 def add_cli_args(parser):
     """Add gun CLI arguments to the parser."""
     data_group = None
@@ -236,64 +148,157 @@ def add_cli_args(parser):
 
 def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     """Initialize Gun module when conditions are met."""
-    global _gun_initialized
-
-    # Only initialize if the gun flag is actually set
-    if not getattr(args, "gun", False):
-        print("[Gun] Module not initialized (--gun flag not set)")
-        return {}
-
-    # Check if Node.js is available
-    try:
-        result = subprocess.run(
-            ["node", "--version"], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode != 0:
-            print("[Gun] Error: Node.js not available")
-            return {}
-    except (subprocess.SubprocessError, FileNotFoundError):
-        print(
-            "[Gun] Error: Node.js not found. Please install Node.js to use Gun data source."
-        )
-        import sys
-
-        sys.exit(1)
-
-    # Check for determinism warning
-    if getattr(args, "seed", None) and not getattr(args, "dev", False):
-        print(
-            "WARNING: GUN chats are never deterministic, and cannot be reproduced when using a `seed`. "
-            "You should omit the `--gun` argument for experiments."
-        )
-        time.sleep(5)
-
-    # Mark as properly initialized
-    _gun_initialized = True
-    print("[Gun] Module initialized")
+    # Delegate to Integration class (will be handled by Integration.initialize)
     return {}
 
 
 def provide_dataset(tokenizer, seed, config=None, *args):
     """Provide Gun dataset when requested."""
-    global _gun_initialized
-
-    # Only provide dataset if properly initialized
-    if not _gun_initialized:
-        print(
-            "[Gun] ERROR: Dataset requested but module not initialized (--gun flag not set)"
-        )
-        return None
-
-    GunChatDataset = get_gun_dataset_class()
-    # Create instance with just the tokenizer (PraxisSampler signature)
-    dataset = GunChatDataset(tokenizer)
-    return dataset
+    # This will be handled by Integration.provide_dataset
+    return None
 
 
 def cleanup():
     """Cleanup Gun resources."""
-    global _gun_adapter, _gun_enabled
-    if _gun_adapter is not None:
-        del _gun_adapter
-        _gun_adapter = None
-    _gun_enabled = False
+    # This will be handled by Integration.cleanup
+    pass
+
+
+class Integration(BaseIntegration):
+    """Gun.js integration for decentralized chat data."""
+
+    def __init__(self, spec: IntegrationSpec):
+        """Initialize the Gun integration."""
+        super().__init__(spec)
+        self.gun_adapter = None
+
+    def add_cli_args(self, parser) -> None:
+        """Add gun CLI arguments to the parser."""
+        return add_cli_args(parser)
+
+    def initialize(
+        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Initialize Gun module when conditions are met."""
+        # Only initialize if the gun flag is actually set
+        if not getattr(args, "gun", False):
+            print("[Gun] Module not initialized (--gun flag not set)")
+            return {}
+
+        # Check if Node.js is available
+        try:
+            result = subprocess.run(
+                ["node", "--version"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode != 0:
+                print("[Gun] Error: Node.js not available")
+                return {}
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print(
+                "[Gun] Error: Node.js not found. Please install Node.js to use Gun data source."
+            )
+            sys.exit(1)
+
+        # Check for determinism warning
+        if getattr(args, "seed", None) and not getattr(args, "dev", False):
+            print(
+                "WARNING: GUN chats are never deterministic, and cannot be reproduced when using a `seed`. "
+                "You should omit the `--gun` argument for experiments."
+            )
+            time.sleep(5)
+
+        # Create the Gun adapter
+        self.gun_adapter = GunAdapter()
+        
+        # Mark as properly initialized
+        self._initialized = True
+        print("[Gun] Module initialized")
+        return {}
+
+    def cleanup(self) -> None:
+        """Cleanup Gun resources."""
+        if self.gun_adapter is not None:
+            del self.gun_adapter
+            self.gun_adapter = None
+
+    def provide_dataset(
+        self, tokenizer: Any, seed: int, config: Optional[Any] = None, *args
+    ) -> Optional[Any]:
+        """Provide Gun dataset when requested."""
+        # Only provide dataset if properly initialized
+        if not self._initialized or self.gun_adapter is None:
+            print(
+                "[Gun] ERROR: Dataset requested but module not initialized (--gun flag not set)"
+            )
+            return None
+
+        # Import here to avoid circular dependency
+        from builders import PraxisSampler
+
+        class GunChatDataset(PraxisSampler):
+            """Dataset class for Gun chat data."""
+
+            def __init__(dataset_self, tokenizer):
+                super().__init__(tokenizer)
+                dataset_self.gun = self.gun_adapter  # Use the integration's adapter
+                dataset_self.weight = 0.1
+
+            def fill_sequence_cache(dataset_self):
+                """Fill the sequence cache with Gun chat data."""
+                # Get a list of text samples (these are individual messages)
+                text_list = dataset_self.gun.get_sample(250)
+
+                # Filter out empty messages
+                messages = [msg.strip() for msg in text_list if msg and msg.strip()]
+
+                if not messages:
+                    # No real data available, return without adding anything
+                    return
+
+                # Create one continuous chat room conversation with all messages
+                conversation = []
+
+                # Add a system prompt describing the chat room context
+                system_prompts = [
+                    "You are participating in a decentralized chat network.",
+                    "You are in a community chat room where multiple participants are having an ongoing discussion.",
+                    "This is a free-form conversation between participants in a public chat.",
+                    "You are observing and participating in a continuous stream of messages.",
+                    "Write thy wrong.",
+                ]
+                conversation.append(
+                    {"role": "system", "content": random.choice(system_prompts)}
+                )
+
+                # Assign alternating roles to simulate a continuous chat stream
+                # Start with a random role for the first message
+                current_role = random.choice(["user", "assistant"])
+
+                for message in messages:
+                    # Add each message with alternating roles
+                    conversation.append({"role": current_role, "content": message})
+
+                    # Alternate roles for next message to simulate multiple participants
+                    current_role = "assistant" if current_role == "user" else "user"
+
+                # Ensure conversation ends with assistant for proper training
+                if conversation and conversation[-1]["role"] == "user":
+                    # Remove the last message if it's from user
+                    conversation.pop()
+
+                # Only process if we have at least 2 messages (after potential pop)
+                if len(conversation) >= 3:  # system + at least 2 messages
+                    try:
+                        # Format the entire conversation as one continuous sequence
+                        formatted_text = dataset_self.tokenizer.apply_chat_template(
+                            conversation, tokenize=False, add_generation_prompt=False
+                        )
+                        dataset_self.sequence_cache.append(formatted_text)
+                    except Exception as e:
+                        # Skip if tokenization fails
+                        pass
+
+        # Create instance with just the tokenizer (PraxisSampler signature)
+        dataset = GunChatDataset(tokenizer)
+        return dataset

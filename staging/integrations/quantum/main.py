@@ -6,9 +6,11 @@ import os
 import random
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-# Module state
+from praxis.integrations.base import BaseIntegration, IntegrationSpec
+
+# Module state (for backward compatibility)
 _quantum_enabled = False
 _quantum_path = None
 
@@ -631,3 +633,46 @@ if __name__ == "__main__":
             print("[BOS]assistant")
             print(msg["content"])
         print("[SEP]", end="")
+
+
+class Integration(BaseIntegration):
+    """Quantum computing code dataset integration from qoblib."""
+
+    def __init__(self, spec: IntegrationSpec):
+        """Initialize the quantum integration."""
+        super().__init__(spec)
+        self.quantum_path = None
+        self.quantum_enabled = False
+
+    def add_cli_args(self, parser) -> None:
+        """Add quantum module arguments to the parser."""
+        return add_cli_args(parser)
+
+    def initialize(
+        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Initialize the quantum module."""
+        global _quantum_enabled, _quantum_path
+        
+        # Call the legacy initialize function
+        result = initialize(args, cache_dir, ckpt_path, truncated_hash)
+        
+        # Copy global state to instance variables
+        self.quantum_enabled = _quantum_enabled
+        self.quantum_path = _quantum_path
+        
+        if self.quantum_enabled:
+            self._initialized = True
+            
+        return result
+
+    def provide_dataset(
+        self, tokenizer: Any, seed: int, config: Optional[Any] = None, *args
+    ) -> Optional[Any]:
+        """Provide quantum dataset when requested."""
+        if not self.quantum_enabled or not self.quantum_path:
+            return None
+            
+        # Use the legacy provide_dataset function
+        return provide_dataset(tokenizer, seed, config, *args)

@@ -4,6 +4,9 @@ import os
 import re
 import shutil
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 
 def add_cli_args(parser):
@@ -35,6 +38,10 @@ def add_cli_args(parser):
 
 def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     """Initialize wandb and return logger configuration."""
+    # Only initialize if wandb flag is set
+    if not getattr(args, "wandb", False):
+        return {}
+        
     import wandb
 
     wandb.login()
@@ -60,7 +67,7 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
             wandb_opts["resume"] = "must"
 
     # Set run name
-    if args.wandb_run_name:
+    if getattr(args, "wandb_run_name", None):
         wandb_opts["name"] = args.wandb_run_name
     elif truncated_hash:
         wandb_opts["name"] = truncated_hash
@@ -89,7 +96,7 @@ def create_logger(cache_dir, ckpt_path=None, truncated_hash=None, **kwargs):
     if not args:
         return None
 
-    # Initialize wandb
+    # Initialize wandb if needed
     init_result = initialize(args, cache_dir, ckpt_path, truncated_hash)
     if init_result and "wandb_opts" in init_result:
         return CustomWandbLogger(**init_result["wandb_opts"])
@@ -198,3 +205,34 @@ class CustomWandbLogger:
             cleaned_params.update(params["hparams"])
 
         self._wandb_logger.log_hyperparams(cleaned_params)
+
+
+class Integration(BaseIntegration):
+    """Weights & Biases integration for experiment tracking."""
+
+    def __init__(self, spec: IntegrationSpec):
+        """Initialize the W&B integration."""
+        super().__init__(spec)
+        self.wandb_logger = None
+
+    def add_cli_args(self, parser) -> None:
+        """Add wandb CLI arguments to the parser."""
+        return add_cli_args(parser)
+
+    def initialize(
+        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Initialize wandb and return logger configuration."""
+        return initialize(args, cache_dir, ckpt_path, truncated_hash)
+
+    def cleanup(self) -> None:
+        """Cleanup wandb resources."""
+        return cleanup()
+
+    def provide_logger(
+        self, cache_dir: str, ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None, **kwargs
+    ) -> Optional[Any]:
+        """Create and configure a wandb logger if wandb is enabled."""
+        return create_logger(cache_dir, ckpt_path, truncated_hash, **kwargs)

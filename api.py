@@ -36,7 +36,7 @@ logger.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 app.static_folder = "static"
-app.debug = True  # Enable debug mode for development
+app.debug = False  # Disable debug mode by default for security
 
 # Enable CORS for all routes
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -713,6 +713,7 @@ class APIServer:
         seed=None,
         truncated_hash=None,
         full_hash=None,
+        dev_mode=False,
     ):
         # Initialize APIServer with parameter statistics
         self.generator = generator
@@ -731,6 +732,7 @@ class APIServer:
         self.param_stats = param_stats if param_stats else {}
         self.truncated_hash = truncated_hash
         self.full_hash = full_hash
+        self.dev_mode = dev_mode
         self.template_watcher = TemplateWatcher()
 
         # Initialize terminal WebSocket namespace if available
@@ -905,15 +907,36 @@ class APIServer:
             # Signal that the server will start (AFTER hooks are registered)
             self.started.set()
 
-            # Use SocketIO's built-in server instead of werkzeug's
-            socketio.run(
-                app,
-                host="0.0.0.0",  # Bind to all interfaces
-                port=self.port,
-                debug=True,
-                use_reloader=False,  # We handle reloading ourselves
-                allow_unsafe_werkzeug=True,
-            )
+            # Configure server based on dev mode
+            if self.dev_mode:
+                # In dev mode, enable reloading and watch extra files
+                import glob
+                extra_files = []
+                # Watch all static files
+                extra_files.extend(glob.glob('static/**/*', recursive=True))
+                # Watch all template files
+                extra_files.extend(glob.glob('templates/**/*', recursive=True))
+                
+                # Enable debug and reloader for development
+                app.debug = True
+                socketio.run(
+                    app,
+                    host="0.0.0.0",  # Bind to all interfaces
+                    port=self.port,
+                    debug=True,
+                    use_reloader=True,  # Enable auto-reload in dev mode
+                    extra_files=extra_files,  # Watch static and template files
+                )
+            else:
+                # Production mode - secure settings
+                app.debug = False
+                socketio.run(
+                    app,
+                    host="0.0.0.0",  # Bind to all interfaces
+                    port=self.port,
+                    debug=False,
+                    use_reloader=False,  # No auto-reload in production
+                )
 
     def get_api_addr(self):
         return f"{self.host}:{self.port}"
