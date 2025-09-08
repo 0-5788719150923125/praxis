@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Main training script for Praxis language models."""
 
+# CRITICAL: Set multiprocessing start method before ANY imports that might use CUDA
+# This is required for MonoForward pipeline parallelism with CUDA
+import torch.multiprocessing as mp
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    pass  # Already set
+
 # Standard library imports
 import contextlib
 import importlib
@@ -155,6 +163,8 @@ def main():
     disable_schedule = processed_args.get("disable_schedule", False)
     strategy = processed_args.get("strategy")
     dropout = processed_args.get("dropout", 0.1)
+    trainer_type = processed_args.get("trainer_type", "backpropagation")
+    pipeline_depth = processed_args.get("pipeline_depth", 4)
 
     (_, args_hash, truncated_hash) = log_command()
 
@@ -198,6 +208,7 @@ def main():
         hypersample_chance=0.001,  # octuple the block_size
         device=device,
         dev=dev,
+        trainer_type=trainer_type,
         **config.to_dict(),
     )
 
@@ -210,8 +221,9 @@ def main():
         max_epochs=-1,
         reload_dataloaders_every_n_epochs=0,
         precision="32-true",
-        gradient_clip_val=1.0,
-        gradient_clip_algorithm="norm",
+        # Gradient clipping not supported with manual optimization (mono_forward)
+        gradient_clip_val=1.0 if trainer_type != "mono_forward" else None,
+        gradient_clip_algorithm="norm" if trainer_type != "mono_forward" else None,
         benchmark=True,
         deterministic=False,
         enable_checkpointing=True,
@@ -307,6 +319,10 @@ def main():
     else:
         api_server = None
 
+    # Run init hooks for integrations BEFORE loading datasets
+    # This ensures integrations are properly initialized before their datasets are checked
+    integration_loader.run_init_hooks(args, cache_dir, ckpt_path=ckpt_path, truncated_hash=truncated_hash)
+
     # Load datasets
     use_source_code = not no_source
     dataintegration = get_datamodules(
@@ -337,16 +353,6 @@ def main():
     # create the scheduler
     scheduler = scheduler_func(optimizer)
 
-    # Wrap the model in a training module
-    train_model = BackpropagationTrainer(
-        model,
-        optimizer,
-        scheduler,
-        hparams,
-        tokenizer=tokenizer,
-        byte_latent=byte_latent,
-    )
-
     # Print training configuration will be shown later
 
     # Create progress bar callback (returns None if using dashboard)
@@ -354,12 +360,39 @@ def main():
         process_position=0, leave=True, use_dashboard=use_dashboard
     )
 
-    # Configure callbacks list
-    train_params["callbacks"] = [
-        checkpoint_callback,
-        AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"]),
-        PeriodicEvaluation(generator),
-    ]
+    # Get evaluation parameters from processed_args
+    eval_every = processed_args.get("eval_every", None)
+    eval_tasks = processed_args.get("eval_tasks", None)
+    debug = processed_args.get("debug", False)
+    
+    # Configure callbacks list based on trainer type
+    if trainer_type == "mono_forward":
+        # Manual optimization doesn't support AccumulationSchedule
+        train_params["callbacks"] = [
+            checkpoint_callback,
+            PeriodicEvaluation(
+                eval_every=eval_every,
+                eval_tasks=eval_tasks,
+                model=model,
+                device=device,
+                vocab_size=vocab_size,
+                debug=debug
+            ),
+        ]
+    else:
+        # Automatic optimization supports all callbacks
+        train_params["callbacks"] = [
+            checkpoint_callback,
+            AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"]),
+            PeriodicEvaluation(
+                eval_every=eval_every,
+                eval_tasks=eval_tasks,
+                model=model,
+                device=device,
+                vocab_size=vocab_size,
+                debug=debug
+            ),
+        ]
 
     # Add progress bar if not using dashboard
     if progress_bar is not None:
@@ -371,7 +404,6 @@ def main():
     terminal_output_length = processed_args.get(
         "terminal_output_length", block_size * 2
     )
-    debug = processed_args.get("debug", False)
 
     train_params["callbacks"].append(
         TerminalInterface(
@@ -416,9 +448,6 @@ def main():
         model = try_compile_model(model, hparams)
         optimizer = try_compile_optimizer(optimizer, hparams)
 
-    # Run init hooks for integrations
-    integration_loader.run_init_hooks(args, cache_dir, ckpt_path=ckpt_path, truncated_hash=truncated_hash)
-
     # Try to get logger from integrations (e.g., wandb)
     integration_logger = None
     for provider in integration_loader.get_logger_providers():
@@ -449,16 +478,9 @@ def main():
     # Create trainer and fit model
     trainer_type = hparams.get("trainer_type", "backpropagation")
 
-    # Check if we should use MonoForward based on decoder type
-    if (
-        hparams.get("decoder_type") == "mono_forward"
-        and trainer_type == "backpropagation"
-    ):
-        trainer_type = "mono_forward"
-
     trainer, train_model = create_trainer_with_module(
         trainer_type=trainer_type,
-        model=train_model,
+        model=model,  # Pass raw model, not BackpropagationTrainer
         optimizer=optimizer,
         scheduler=scheduler,
         hparams=hparams,
@@ -467,6 +489,8 @@ def main():
         ckpt_path=ckpt_path,
         trainer_params=train_params,
         encoder_type=encoder_type,
+        byte_latent=byte_latent,
+        pipeline_depth=pipeline_depth,
     )
 
     # Show launch animation just before training begins

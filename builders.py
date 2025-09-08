@@ -2382,6 +2382,29 @@ class HuggingfaceDataset(PraxisSampler):
                 f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Starting over. ({HuggingfaceDataset.counts[self.dataset_path]}x)"
             )
             self.dataset_iterator = iter(self.shuffled_dataset)
+            # Try again with the new iterator
+            try:
+                document = next(self.dataset_iterator)
+                formatted = self._format_document(document)
+                
+                # Store reward in cache if RL
+                if self.rl_config.get("enabled", False) and "reward" in formatted:
+                    import hashlib
+                    text_hash = hashlib.md5(formatted["text"].encode()).hexdigest()
+                    self.reward_cache[text_hash] = formatted
+                    
+                    # Add generation flag if needed
+                    if formatted.get("reward") == -1:
+                        _rl_logger.log_generation_flag()
+                    
+                    self.sequence_cache.append(formatted["text"])
+                else:
+                    # Regular format, just text
+                    self.sequence_cache.append(formatted)
+            except StopIteration:
+                # Dataset is empty or has issues, add a placeholder to prevent infinite loop
+                print(f"WARNING: Dataset '{self.dataset_path}' appears to be empty or has issues. Adding placeholder.")
+                self.sequence_cache.append("")
 
     def _format_document(self, document):
         return self.format_handler(document, self.keys, self.tokenizer)
@@ -2699,19 +2722,27 @@ class PraxisDataModule(LightningDataModule):
         )
 
     def train_dataloader(self):
+        # Use 0 workers if spawn method is set (required for MonoForward pipeline)
+        import multiprocessing as mp
+        num_workers = 0 if mp.get_start_method(allow_none=True) == 'spawn' else 1
+        
         return DataLoader(
             dataset=self.train_datasets,
             batch_size=None,
-            num_workers=1,
+            num_workers=num_workers,
             pin_memory=False,
         )
 
     def val_dataloader(self):
         if self.val_datasets:
+            # Use 0 workers if spawn method is set (required for MonoForward pipeline)
+            import multiprocessing as mp
+            num_workers = 0 if mp.get_start_method(allow_none=True) == 'spawn' else 1
+            
             return DataLoader(
                 dataset=self.val_datasets,
                 batch_size=None,
-                num_workers=1,
+                num_workers=num_workers,
                 pin_memory=False,
             )
         else:
@@ -2738,3 +2769,12 @@ class PraxisDataModule(LightningDataModule):
                 and callable(sampler.load_state_dict)
             ):
                 sampler.load_state_dict(s_state)
+    
+    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Lightning hook to save DataModule state to checkpoint."""
+        checkpoint["datamodule_state"] = self.state_dict()
+    
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Lightning hook to load DataModule state from checkpoint."""
+        if "datamodule_state" in checkpoint:
+            self.load_state_dict(checkpoint["datamodule_state"])

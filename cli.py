@@ -175,13 +175,19 @@ training_group.add_argument(
     type=str,
     choices=list(TRAINER_REGISTRY.keys()),
     default="backpropagation",
-    help="Training strategy to use (backpropagation: standard gradient descent, mono_forward: layer-wise with O(1) memory)",
+    help="Training strategy to use (backpropagation: standard gradient descent, mono_forward: process-based pipeline parallelism with O(1) memory)",
 )
 training_group.add_argument(
     "--max-steps",
     type=int,
     default=None,
     help="Maximum number of training steps (None for infinite training)",
+)
+training_group.add_argument(
+    "--pipeline-depth",
+    type=int,
+    default=4,
+    help="Number of batches to keep in pipeline for mono_forward trainer",
 )
 
 # storage

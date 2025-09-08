@@ -43,13 +43,13 @@ except ImportError:
     LightningModule = None
     LightningTrainerWrapper = None
 
-# Import MonoForward trainer
-from praxis.trainers.mono_forward import MonoForwardTrainer
+# Import MonoForward trainer (pipeline version)
+from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
 
 # Registry for trainers
 TRAINER_REGISTRY = {
     "backpropagation": BackpropagationTrainer,
-    "mono_forward": MonoForwardTrainer,
+    "mono_forward": MonoForwardPipelineModule,
 }
 
 # Lightning wrapper is not exposed as a separate trainer type
@@ -93,7 +93,7 @@ __all__ = [
     "try_compile_optimizer",
     # Trainers
     "BackpropagationTrainer",
-    "MonoForwardTrainer",
+    "MonoForwardPipelineModule",
     "Trainer",
     # Factory functions
     "create_trainer",

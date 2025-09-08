@@ -14,4 +14,5 @@ dependencies:
   python: []
 
 # Conditions when this module should be loaded
-conditions: []
+conditions:
+  - "args.quantum"

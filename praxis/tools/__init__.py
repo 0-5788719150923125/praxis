@@ -182,14 +182,21 @@ def get_tools_json_schema() -> List[Dict[str, Any]]:
 
 def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
     """Call a tool by name with arguments (backward compatibility)."""
+    if name is None:
+        raise ValueError("Tool name cannot be None")
+    
     tools = get_all_tools()
+    available_names = []
     for tool in tools:
         tool_name = (
             tool.name if isinstance(tool, Tool) else getattr(tool, "__name__", None)
         )
+        available_names.append(tool_name)
         if tool_name == name:
             if isinstance(tool, Tool):
                 return tool(**arguments)
             elif callable(tool):
                 return tool(**arguments)
-    raise ValueError(f"Tool '{name}' not found")
+    
+    # Provide helpful error message with available tools
+    raise ValueError(f"Tool '{name}' not found. Available tools: {available_names}")

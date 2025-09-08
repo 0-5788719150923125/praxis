@@ -185,21 +185,38 @@ def create_trainer_with_module(
     
     # Handle different trainer types
     if trainer_type == "mono_forward":
-        # MonoForward has its own special initialization
-        trainer = trainer_class(
+        # Pipeline version needs special handling as a LightningModule
+        from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
+        from praxis.trainers.trainer import Trainer
+        
+        # Extract optimizer config from model
+        optimizer_config = {}
+        if hasattr(model, 'config') and hasattr(model.config, 'optimizer_config'):
+            optimizer_config = model.config.optimizer_config
+        
+        # Create the Lightning module
+        lightning_module = MonoForwardPipelineModule(
             model=model,
-            cache_dir=cache_dir,
-            ckpt_path=ckpt_path,
-            **(trainer_params or {})
+            optimizer_config=optimizer_config,
+            pipeline_depth=kwargs.get('pipeline_depth', 4),
+            device=kwargs.get('device', 'cuda'),
         )
-        return trainer, model
+        
+        # Create Lightning Trainer
+        trainer = Trainer(**(trainer_params or {}))
+        
+        return trainer, lightning_module
     
     elif trainer_type == "backpropagation":
         # BackpropagationTrainer is a LightningModule, needs special handling
         from praxis.trainers.backpropagation import BackpropagationTrainer
         
-        # Determine encoder type from hparams
-        encoder_type = hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
+        # Use byte_latent if provided, otherwise determine from encoder_type
+        if 'byte_latent' in kwargs:
+            byte_latent = kwargs['byte_latent']
+        else:
+            encoder_type = hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
+            byte_latent = (encoder_type == "byte_latent")
         
         # Create the LightningModule wrapper
         lightning_module = BackpropagationTrainer(
@@ -208,7 +225,7 @@ def create_trainer_with_module(
             scheduler=scheduler,
             hparams=hparams or {},
             tokenizer=tokenizer,
-            byte_latent=(encoder_type == "byte_latent")
+            byte_latent=byte_latent
         )
         
         # Create the actual Lightning Trainer

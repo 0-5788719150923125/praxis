@@ -909,23 +909,14 @@ class APIServer:
 
             # Configure server based on dev mode
             if self.dev_mode:
-                # In dev mode, enable reloading and watch extra files
-                import glob
-                extra_files = []
-                # Watch all static files
-                extra_files.extend(glob.glob('static/**/*', recursive=True))
-                # Watch all template files
-                extra_files.extend(glob.glob('templates/**/*', recursive=True))
-                
-                # Enable debug and reloader for development
+                # In dev mode, enable debug but disable reloader (runs in thread)
                 app.debug = True
                 socketio.run(
                     app,
                     host="0.0.0.0",  # Bind to all interfaces
                     port=self.port,
                     debug=True,
-                    use_reloader=True,  # Enable auto-reload in dev mode
-                    extra_files=extra_files,  # Watch static and template files
+                    use_reloader=False,  # Cannot use reloader in background thread
                 )
             else:
                 # Production mode - secure settings

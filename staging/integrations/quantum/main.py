@@ -30,6 +30,11 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
 
     # Check if quantum flag is set
     _quantum_enabled = getattr(args, "quantum", False)
+    
+    # Debug logging
+    print(f"[Quantum] initialize() called with quantum flag: {_quantum_enabled}")
+    if hasattr(args, "beta"):
+        print(f"[Quantum] Beta flag is: {getattr(args, 'beta', False)}")
 
     if _quantum_enabled:
         # Get the project root directory (where run.py is located)
@@ -526,6 +531,9 @@ def provide_dataset(tokenizer, seed, config=None, *args):
     """Provide Quantum dataset when requested."""
     global _quantum_enabled
 
+    # Debug logging
+    print(f"[Quantum] provide_dataset() called, _quantum_enabled = {_quantum_enabled}")
+    
     # Only provide dataset if properly initialized
     if not _quantum_enabled:
         print(
