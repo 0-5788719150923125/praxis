@@ -343,10 +343,22 @@ class BackpropagationTrainer(LightningModule):
     def on_save_checkpoint(self, checkpoint):
         super().on_save_checkpoint(checkpoint)
         checkpoint["num_tokens"] = self.num_tokens
+        
+        # Explicitly save DataModule state if it exists
+        if hasattr(self.trainer, 'datamodule') and self.trainer.datamodule is not None:
+            if hasattr(self.trainer.datamodule, 'state_dict'):
+                checkpoint["datamodule_state"] = self.trainer.datamodule.state_dict()
+                print("[Checkpoint] Saved DataModule state including dataset positions")
 
     def on_load_checkpoint(self, checkpoint):
         super().on_load_checkpoint(checkpoint)
         self.num_tokens = checkpoint.get("num_tokens", 0)
+        
+        # Explicitly load DataModule state if it exists
+        if hasattr(self.trainer, 'datamodule') and self.trainer.datamodule is not None:
+            if "datamodule_state" in checkpoint and hasattr(self.trainer.datamodule, 'load_state_dict'):
+                self.trainer.datamodule.load_state_dict(checkpoint["datamodule_state"])
+                print("[Checkpoint] Restored DataModule state including dataset positions")
 
     def _update_ema(self, ema, new_value):
         if ema is None:
