@@ -45,14 +45,6 @@ The launch script automatically manages the virtual environment for you. Simply 
 ./launch
 ```
 
-This will create and activate a virtual environment if needed. Alternatively, you may use the VSCode command (`Ctrl + Shift + P`), and choose: `Python: Create Environment...`
-
-Then, install dependencies:
-
-```sh
-pip install -e .
-```
-
 ## run tests
 
 To run unit testing:

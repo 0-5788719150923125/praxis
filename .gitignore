@@ -22,7 +22,7 @@ node_modules
 tmp
 wandb
 !*/wandb
-!staging/integrations/wandb*
+!integrations/wandb*
 
 # Experiments - only commit alpha.yml, ignore user custom experiments
 experiments/*.yml

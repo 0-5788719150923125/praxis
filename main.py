@@ -4,8 +4,9 @@
 # CRITICAL: Set multiprocessing start method before ANY imports that might use CUDA
 # This is required for MonoForward pipeline parallelism with CUDA
 import torch.multiprocessing as mp
+
 try:
-    mp.set_start_method('spawn', force=True)
+    mp.set_start_method("spawn", force=True)
 except RuntimeError:
     pass  # Already set
 
@@ -38,7 +39,6 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_N
 
 # Local application imports
 from api import APIServer
-from praxis.data import get_datamodules
 from cli import (
     create_praxis_config,
     get_cli_args,
@@ -55,6 +55,7 @@ from praxis.callbacks import (
     TimeBasedCheckpoint,
     create_printing_progress_bar,
 )
+from praxis.data import get_datamodules
 from praxis.generation import Generator
 from praxis.optimizers import get_optimizer, get_optimizer_profile, get_parameter_stats
 from praxis.schedulers import get_scheduler_func
@@ -77,8 +78,9 @@ from praxis.utils import (
     get_memory_info,
     initialize_lazy_modules,
     perform_reset,
+    register_cleanup_function,
     show_launch_animation,
-    sigint_handler,
+    shutdown_manager,
 )
 
 # Prevent Python from creating .pyc files
@@ -87,8 +89,8 @@ sys.dont_write_bytecode = True
 
 def setup_environment():
     """Set up the environment and configurations."""
-    # Set up the SIGINT handler
-    signal.signal(signal.SIGINT, sigint_handler)
+    # Install the shutdown manager's signal handlers
+    shutdown_manager.install_signal_handlers()
 
     # Check for updates at startup
     check_for_updates()
@@ -321,7 +323,9 @@ def main():
 
     # Run init hooks for integrations BEFORE loading datasets
     # This ensures integrations are properly initialized before their datasets are checked
-    integration_loader.run_init_hooks(args, cache_dir, ckpt_path=ckpt_path, truncated_hash=truncated_hash)
+    integration_loader.run_init_hooks(
+        args, cache_dir, ckpt_path=ckpt_path, truncated_hash=truncated_hash
+    )
 
     # Load datasets
     use_source_code = not no_source
@@ -364,7 +368,7 @@ def main():
     eval_every = processed_args.get("eval_every", None)
     eval_tasks = processed_args.get("eval_tasks", None)
     debug = processed_args.get("debug", False)
-    
+
     # Configure callbacks list based on trainer type
     if trainer_type == "mono_forward":
         # Manual optimization doesn't support AccumulationSchedule
@@ -376,7 +380,7 @@ def main():
                 model=model,
                 device=device,
                 vocab_size=vocab_size,
-                debug=debug
+                debug=debug,
             ),
         ]
     else:
@@ -390,7 +394,7 @@ def main():
                 model=model,
                 device=device,
                 vocab_size=vocab_size,
-                debug=debug
+                debug=debug,
             ),
         ]
 
@@ -454,10 +458,10 @@ def main():
         try:
             logger = provider(
                 cache_dir=cache_dir,
-                ckpt_path=ckpt_path, 
+                ckpt_path=ckpt_path,
                 truncated_hash=truncated_hash,
-                wandb_enabled=getattr(args, 'wandb', False),
-                args=args
+                wandb_enabled=getattr(args, "wandb", False),
+                args=args,
             )
             if logger:
                 integration_logger = logger
@@ -465,7 +469,7 @@ def main():
                 break
         except Exception as e:
             print(f"[Warning] Logger provider failed: {e}")
-    
+
     # Use integration logger if available, otherwise fall back to CSV
     if integration_logger:
         train_params["logger"] = integration_logger
@@ -480,7 +484,7 @@ def main():
 
     trainer, train_model = create_trainer_with_module(
         trainer_type=trainer_type,
-        model=model,  # Pass raw model, not BackpropagationTrainer
+        model=model,
         optimizer=optimizer,
         scheduler=scheduler,
         hparams=hparams,
@@ -493,6 +497,36 @@ def main():
         pipeline_depth=pipeline_depth,
     )
 
+    # Register cleanup functions with shutdown manager
+    def cleanup_trainer():
+        """Cleanup function for trainer."""
+        try:
+            if hasattr(trainer, 'strategy') and hasattr(trainer.strategy, 'barrier'):
+                # Ensure all processes sync before cleanup
+                trainer.strategy.barrier()
+        except:
+            pass
+    
+    def cleanup_api():
+        """Cleanup function for API server."""
+        if api_server:
+            try:
+                api_server.stop()
+            except:
+                pass
+    
+    def cleanup_integrations():
+        """Cleanup function for integrations."""
+        try:
+            integration_loader.run_cleanup_hooks()
+        except:
+            pass
+    
+    # Register cleanup functions with priorities
+    register_cleanup_function(cleanup_trainer, priority=10)  # Trainer first
+    register_cleanup_function(cleanup_integrations, priority=20)  # Then integrations
+    register_cleanup_function(cleanup_api, priority=30)  # API server last
+    
     # Show launch animation just before training begins
     show_launch_animation(model, truncated_hash)
 
@@ -516,8 +550,8 @@ def main():
         if api_server:
             api_server.stop()
 
-        # Force exit to ensure all threads terminate
-        os._exit(0)
+        # Normal exit - cleanup will be handled by shutdown manager
+        return 0
 
     except Exception as e:
         # Run integration cleanup hooks
@@ -536,27 +570,16 @@ def main():
             raise
 
     except KeyboardInterrupt:
-        # Run integration cleanup hooks
-        integration_loader.run_cleanup_hooks()
-
-        # Handle Ctrl+C gracefully
+        # Handle Ctrl+C gracefully - shutdown manager will handle cleanup
         if (
             "progress_bar" in locals()
             and hasattr(progress_bar, "dashboard")
             and progress_bar.dashboard
         ):
             progress_bar.dashboard.stop()
-            # Dashboard already prints the interruption message
-        else:
-            print("\n🛑 Training interrupted by user", file=sys.stderr)
-
-        # Stop API server if running
-        if api_server:
-            api_server.stop()
-
-        # Force exit
-        os._exit(0)
+        # The shutdown manager handles the rest
+        return 130  # Standard exit code for SIGINT
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

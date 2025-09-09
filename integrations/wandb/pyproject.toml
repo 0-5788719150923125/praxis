@@ -1,0 +1,7 @@
+[project]
+name = "praxis-integration-wandb"
+version = "0.1.0"
+dependencies = [
+    "wandb",
+    "lightning",
+]

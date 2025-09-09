@@ -894,20 +894,6 @@ def apply_defaults_and_parse(defaults_dict):
         with open(log_file, "w") as f:
             f.write(new_entry + existing_content)
 
-        # Save both truncated and full hash
-        hash_file_dir = os.path.join("build", "model")
-        os.makedirs(hash_file_dir, exist_ok=True)
-
-        # Save truncated hash for backward compatibility
-        hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
-        with open(hash_file_path, "w") as f:
-            f.write(truncated_hash)
-
-        # Save full hash in a separate file
-        full_hash_path = os.path.join(hash_file_dir, "MODEL_HASH_FULL.txt")
-        with open(full_hash_path, "w") as f:
-            f.write(effective_hash)
-
         return displayed_command, effective_hash, truncated_hash
 
     # Replace log_command function
@@ -1218,20 +1204,6 @@ def log_command(exclude_from_hash=None):
     # Write new entry followed by existing content
     with open(log_file, "w") as f:
         f.write(new_entry + existing_content)
-
-    # Save both truncated and full hash to build/praxis directory
-    hash_file_dir = os.path.join("build", "model")
-    os.makedirs(hash_file_dir, exist_ok=True)
-
-    # Save truncated hash for backward compatibility
-    hash_file_path = os.path.join(hash_file_dir, "MODEL_HASH.txt")
-    with open(hash_file_path, "w") as f:
-        f.write(truncated_hash)
-
-    # Save full hash in a separate file
-    full_hash_path = os.path.join(hash_file_dir, "MODEL_HASH_FULL.txt")
-    with open(full_hash_path, "w") as f:
-        f.write(args_hash)
 
     return full_command, args_hash, truncated_hash
 

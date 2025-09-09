@@ -4,22 +4,34 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check if we're already in a virtual environment or if .venv exists
-# Only activate if .venv exists and we're not already in a venv
-if [ -z "$VIRTUAL_ENV" ] && [ -d "$SCRIPT_DIR/.venv" ]; then
-    # Activate the virtual environment
-    . "$SCRIPT_DIR/.venv/bin/activate"
-elif [ -z "$VIRTUAL_ENV" ] && [ ! -d "$SCRIPT_DIR/.venv" ]; then
-    # Create and activate virtual environment if it doesn't exist
+# Ensure we have a virtual environment and activate it
+if [ ! -d "$SCRIPT_DIR/.venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$SCRIPT_DIR/.venv"
-    . "$SCRIPT_DIR/.venv/bin/activate"
+fi
+
+# Always activate the venv (we'll deactivate at the end)
+. "$SCRIPT_DIR/.venv/bin/activate"
+
+# Install praxis package if not already installed
+# The pyproject.toml should always exist in the project root
+if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+    # Quick check if praxis is installed
+    if ! python -c "import praxis" 2>/dev/null; then
+        echo "[INFO] Installing Praxis in development mode..."
+        pip install -e "$SCRIPT_DIR" --quiet
+        echo "[INFO] Praxis installation complete"
+    else
+        echo "[INFO] Praxis is installed."
+    fi
 fi
 
 # Check if any arguments were provided
 if [ $# -eq 0 ]; then
     # No arguments - run the default training script
-    exec python "$SCRIPT_DIR/main.py"
+    python "$SCRIPT_DIR/main.py"
+    deactivate
+    exit $?
 fi
 
 # Parse the first argument as the command
@@ -30,17 +42,20 @@ shift  # Remove the first argument
 case "$COMMAND" in
     tokenizer|tokenizers|train-tokenizer)
         # Tokenizer training
-        exec python -m praxis.tokenizers.train "$@"
+        python -m praxis.tokenizers.train "$@"
+        EXIT_CODE=$?
         ;;
     
     archivist|archive)
         # Archivist tool
-        exec python "$SCRIPT_DIR/archivist.py" "$@"
+        python "$SCRIPT_DIR/archivist.py" "$@"
+        EXIT_CODE=$?
         ;;
     
     run|train)
         # Explicit training command
-        exec python "$SCRIPT_DIR/main.py" "$@"
+        python "$SCRIPT_DIR/main.py" "$@"
+        EXIT_CODE=$?
         ;;
     
     --help|-h|help)
@@ -58,11 +73,17 @@ case "$COMMAND" in
         echo "launcher examples:"
         echo "  ./launch tokenizer --help   # Show tokenizer options"
         echo "  ./launch archivist --help   # Show archivist options"
+        EXIT_CODE=0
         ;;
     
     *)
         # Unknown command - pass all args to main.py
         # This allows "./launch --dev" to work
-        exec python "$SCRIPT_DIR/main.py" "$COMMAND" "$@"
+        python "$SCRIPT_DIR/main.py" "$COMMAND" "$@"
+        EXIT_CODE=$?
         ;;
 esac
+
+# Deactivate the virtual environment and exit with the command's exit code
+deactivate
+exit $EXIT_CODE

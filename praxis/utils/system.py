@@ -1,5 +1,6 @@
 """System utilities for process management and updates."""
 
+import atexit
 import os
 import random
 import re
@@ -7,16 +8,208 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
+import weakref
 from glob import glob
 
 
+class ShutdownManager:
+    """Centralized shutdown manager for graceful termination."""
+    
+    _instance = None
+    _lock = threading.Lock()
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self._initialized = True
+        self._shutting_down = False
+        self._shutdown_lock = threading.Lock()
+        self._cleanup_functions = []
+        self._child_processes = weakref.WeakSet()
+        self._original_sigint = None
+        self._original_sigterm = None
+        self._interrupt_count = 0
+        self._last_interrupt_time = 0
+        
+        # Register atexit handler for normal program termination
+        atexit.register(self._cleanup_at_exit)
+    
+    def register_cleanup(self, func, priority=50):
+        """Register a cleanup function with priority (lower = earlier execution)."""
+        with self._shutdown_lock:
+            self._cleanup_functions.append((priority, func))
+            self._cleanup_functions.sort(key=lambda x: x[0])
+    
+    def register_process(self, process):
+        """Register a child process for tracking."""
+        self._child_processes.add(process)
+    
+    def initiate_shutdown(self, exit_code=0, force=False):
+        """Initiate graceful shutdown sequence."""
+        current_time = time.time()
+        
+        with self._shutdown_lock:
+            # Track rapid interrupts
+            if current_time - self._last_interrupt_time < 1.0:
+                self._interrupt_count += 1
+            else:
+                self._interrupt_count = 1
+            self._last_interrupt_time = current_time
+            
+            # Force immediate exit on third rapid interrupt or if already shutting down
+            if self._interrupt_count >= 3 or (self._shutting_down and self._interrupt_count >= 2):
+                print("\n⚠️  Force terminating...")
+                # Minimal cleanup before forced exit
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                except:
+                    pass
+                os._exit(exit_code)
+            
+            if self._shutting_down:
+                # Already shutting down, just wait
+                print("\n⏳ Shutdown in progress (press Ctrl+C again to force exit)...")
+                return
+            
+            self._shutting_down = True
+        
+        print("\n🛑 Initiating graceful shutdown...")
+        
+        # Step 1: Stop accepting new work
+        os.environ['PRAXIS_SHUTTING_DOWN'] = '1'
+        
+        # Step 2: Send termination signals to child processes
+        for proc in list(self._child_processes):
+            try:
+                if proc.is_alive():
+                    # Send SIGTERM to allow graceful shutdown
+                    proc.terminate()
+            except:
+                pass
+        
+        # Step 3: Shutdown torch compile workers first
+        try:
+            import torch
+            if hasattr(torch, '_inductor') and hasattr(torch._inductor, 'async_compile'):
+                if hasattr(torch._inductor.async_compile, 'shutdown_compile_workers'):
+                    # Forcefully clear the compile workers without waiting
+                    torch._inductor.async_compile._compile_worker_pool = None
+        except:
+            pass
+        
+        # Step 4: Execute registered cleanup functions
+        for priority, func in self._cleanup_functions:
+            try:
+                func()
+            except Exception as e:
+                print(f"  Warning: Cleanup function failed: {e}")
+        
+        # Step 5: Wait briefly for child processes to terminate
+        wait_start = time.time()
+        max_wait = 2.0  # Maximum 2 seconds wait
+        
+        while time.time() - wait_start < max_wait:
+            alive_procs = [p for p in self._child_processes if p.is_alive()]
+            if not alive_procs:
+                break
+            time.sleep(0.1)
+        
+        # Step 6: Force kill any remaining processes
+        for proc in list(self._child_processes):
+            try:
+                if proc.is_alive():
+                    proc.kill()  # Force kill
+            except:
+                pass
+        
+        # Step 7: PyTorch-specific cleanup
+        try:
+            import torch
+            
+            # Synchronize CUDA devices
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    try:
+                        with torch.cuda.device(i):
+                            torch.cuda.synchronize()
+                            torch.cuda.empty_cache()
+                    except:
+                        pass
+            
+            # Clean up distributed training
+            if torch.distributed.is_initialized():
+                try:
+                    torch.distributed.destroy_process_group()
+                except:
+                    pass
+            
+            # Clear any multiprocessing queues
+            if hasattr(torch.multiprocessing, '_clean_shutdown'):
+                torch.multiprocessing._clean_shutdown()
+        except ImportError:
+            pass
+        except Exception:
+            pass
+        
+        # Step 8: Flush output streams
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except:
+            pass
+        
+        print("✓ Shutdown complete")
+        
+        # Step 9: Exit cleanly
+        sys.exit(exit_code)
+    
+    def _cleanup_at_exit(self):
+        """Cleanup function called at normal program exit."""
+        if not self._shutting_down:
+            # Normal exit, just ensure streams are flushed
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            except:
+                pass
+    
+    def install_signal_handlers(self):
+        """Install signal handlers for graceful shutdown."""
+        # Store any existing handlers
+        self._original_sigint = signal.getsignal(signal.SIGINT)
+        self._original_sigterm = signal.getsignal(signal.SIGTERM)
+        
+        # Install our handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals."""
+        signal_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
+        print(f"\n📡 Received {signal_name}")
+        self.initiate_shutdown()
+
+
+# Global shutdown manager instance
+shutdown_manager = ShutdownManager()
+
+
 def sigint_handler(signum, frame):
-    """Handle SIGINT (Ctrl+C) by killing all spawned processes."""
-    print("\nCtrl+C detected. Killing all spawned processes.")
-    # Kill the entire process group
-    os.killpg(os.getpgid(0), signal.SIGTERM)
-    sys.exit(1)
+    """Handle SIGINT (Ctrl+C) gracefully."""
+    shutdown_manager.initiate_shutdown()
 
 
 def check_for_updates():
@@ -119,6 +312,30 @@ def initialize_lazy_modules(model, device):
             param.grad.zero_()
 
     return model
+
+
+def register_cleanup_function(func, priority=50):
+    """Register a cleanup function with the shutdown manager.
+    
+    Args:
+        func: Function to call during shutdown
+        priority: Lower numbers execute first (default 50)
+    """
+    shutdown_manager.register_cleanup(func, priority)
+
+
+def register_child_process(process):
+    """Register a child process with the shutdown manager.
+    
+    Args:
+        process: multiprocessing.Process or similar object
+    """
+    shutdown_manager.register_process(process)
+
+
+def is_shutting_down():
+    """Check if the system is currently shutting down."""
+    return os.environ.get('PRAXIS_SHUTTING_DOWN', '0') == '1'
 
 
 def perform_reset(cache_dir, truncated_hash, integration_loader=None):

@@ -10,9 +10,9 @@ from .base import BaseIntegration, IntegrationFactory, IntegrationSpec
 
 
 class IntegrationLoader:
-    """Loads and manages Praxis integrations from the staging directory."""
+    """Loads and manages Praxis integrations."""
 
-    def __init__(self, integrations_dir: str = "./staging/integrations"):
+    def __init__(self, integrations_dir: str = "./integrations"):
         self.integrations_dir = Path(integrations_dir)
         self.loaded_integrations: Dict[str, BaseIntegration] = {}
         self.installed_dependencies: Set[str] = set()  # Track installed packages
@@ -34,7 +34,7 @@ class IntegrationLoader:
         }
 
     def discover_integrations(self) -> List[IntegrationSpec]:
-        """Find all integrations in staging directory.
+        """Find all integrations in integrations directory.
 
         Returns:
             List of IntegrationSpec objects
@@ -138,6 +138,12 @@ class IntegrationLoader:
         self, spec: IntegrationSpec, verbose: bool = True
     ) -> bool:
         """Check and automatically install integration dependencies."""
+        # First check for pyproject.toml
+        pyproject_path = spec.path / "pyproject.toml"
+        if pyproject_path.exists():
+            return self._install_from_pyproject(spec, pyproject_path, verbose)
+        
+        # Fall back to spec.yaml dependencies
         dependencies = spec.dependencies.get("python", [])
         if not dependencies:
             return True
@@ -184,6 +190,35 @@ class IntegrationLoader:
 
             return True
 
+        except subprocess.CalledProcessError:
+            return False
+    
+    def _install_from_pyproject(
+        self, spec: IntegrationSpec, pyproject_path: Path, verbose: bool = True
+    ) -> bool:
+        """Install integration using pyproject.toml."""
+        try:
+            # Check if integration directory is already installed as editable
+            integration_name = spec.name
+            check_result = subprocess.run(
+                [sys.executable, "-m", "pip", "show", f"praxis-integration-{integration_name}"],
+                capture_output=True,
+                text=True
+            )
+            
+            if check_result.returncode == 0:
+                # Already installed
+                return True
+            
+            # Install the integration directory as editable package
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-e", str(spec.path), "--quiet"],
+                stdout=subprocess.DEVNULL if not verbose else None,
+                stderr=subprocess.DEVNULL if not verbose else None,
+            )
+            
+            return True
+            
         except subprocess.CalledProcessError:
             return False
 

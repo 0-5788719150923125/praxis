@@ -522,28 +522,45 @@ class TerminalDashboard:
             # Some signals may not be available on all platforms
             pass
 
-        # Handle Ctrl+C gracefully
-        def keyboard_interrupt_handler(signum, frame):
-            # Ensure terminal is restored before exiting
-            if not self.terminal_restored:
-                self._restore_terminal()
-                self.terminal_restored = True
-            self.stop()
-            print("\n🛑 Training interrupted by user", file=sys.stderr)
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, keyboard_interrupt_handler)
-
-        # Set up global exception handler for uncaught exceptions
-        def exception_handler(exc_type, exc_value, exc_traceback):
-            if exc_type == KeyboardInterrupt:
-                # Handle Ctrl+C gracefully
+        # Register terminal restoration with shutdown manager instead of signal handler
+        try:
+            from praxis.utils import shutdown_manager
+            
+            def restore_terminal_on_shutdown():
+                if not self.terminal_restored:
+                    self._restore_terminal()
+                    self.terminal_restored = True
+                self.stop()
+            
+            # Register with high priority (low number) to run early
+            shutdown_manager.register_cleanup(restore_terminal_on_shutdown, priority=5)
+        except ImportError:
+            # Fallback to simple signal handler if shutdown manager not available
+            def keyboard_interrupt_handler(signum, frame):
                 if not self.terminal_restored:
                     self._restore_terminal()
                     self.terminal_restored = True
                 self.stop()
                 print("\n🛑 Training interrupted by user", file=sys.stderr)
                 sys.exit(0)
+            
+            signal.signal(signal.SIGINT, keyboard_interrupt_handler)
+
+        # Set up global exception handler for uncaught exceptions
+        def exception_handler(exc_type, exc_value, exc_traceback):
+            if exc_type == KeyboardInterrupt:
+                # Let shutdown manager handle keyboard interrupts
+                try:
+                    from praxis.utils import shutdown_manager
+                    shutdown_manager.initiate_shutdown()
+                except ImportError:
+                    # Fallback if shutdown manager not available
+                    if not self.terminal_restored:
+                        self._restore_terminal()
+                        self.terminal_restored = True
+                    self.stop()
+                    print("\n🛑 Training interrupted by user", file=sys.stderr)
+                    sys.exit(0)
             else:
                 # Format the exception - this is a real crash
                 import traceback

@@ -17,6 +17,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
+from praxis.utils.system import register_child_process, is_shutting_down
+
 # Use torch multiprocessing with proper sharing strategy
 torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -119,6 +121,11 @@ class LayerWorkerProcess:
         running = True
         while running:
             try:
+                # Check if system is shutting down
+                if is_shutting_down():
+                    running = False
+                    break
+                
                 # Check for control messages (non-blocking)
                 try:
                     control_msg = self.control_queue.get_nowait()
@@ -392,6 +399,8 @@ class MonoForwardPipelineModule(LightningModule):
             )
             process.start()
             self.worker_processes.append(process)
+            # Register with shutdown manager for proper cleanup
+            register_child_process(process)
         
         print(f"[MonoForwardPipeline] All workers started")
         
@@ -497,16 +506,18 @@ class MonoForwardPipelineModule(LightningModule):
         
         # Send stop signal to all workers
         for control_queue in self.control_queues:
-            control_queue.put("stop")
+            try:
+                control_queue.put("stop")
+            except:
+                pass  # Queue might be closed
         
-        # Wait for processes to finish
+        # Wait for processes to finish gracefully
         for i, process in enumerate(self.worker_processes):
-            process.join(timeout=5)
+            process.join(timeout=2)
             if process.is_alive():
-                print(f"[MonoForwardPipeline] Force terminating worker {i}")
-                process.terminate()
+                print(f"[MonoForwardPipeline] Worker {i} still alive, will be terminated by shutdown manager")
         
-        print("[MonoForwardPipeline] All workers stopped")
+        print("[MonoForwardPipeline] Worker shutdown initiated")
     
     def configure_optimizers(self):
         """

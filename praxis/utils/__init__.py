@@ -21,8 +21,12 @@ from praxis.utils.system import (
     check_for_updates,
     find_latest_checkpoint,
     initialize_lazy_modules,
+    is_shutting_down,
     perform_reset,
+    register_child_process,
+    register_cleanup_function,
     show_launch_animation,
+    shutdown_manager,
     sigint_handler,
 )
 from praxis.utils.tensors import create_block_ids, norm_scaling
@@ -45,6 +49,10 @@ __all__ = [
     "get_memory_info",
     # System
     "sigint_handler",
+    "shutdown_manager",
+    "register_cleanup_function",
+    "register_child_process",
+    "is_shutting_down",
     "check_for_updates",
     "find_latest_checkpoint",
     "initialize_lazy_modules",
