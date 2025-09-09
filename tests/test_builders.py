@@ -1,6 +1,6 @@
 import pytest
 
-from builders import text_formatter
+from praxis.data.formatters import text_formatter
 
 # Define test cases as tuples of (input, expected_output, description)
 TEST_CASES = [

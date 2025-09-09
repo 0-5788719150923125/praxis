@@ -1,0 +1,34 @@
+"""Instruction-following format."""
+
+from typing import Dict, List
+from transformers import PreTrainedTokenizer
+
+from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
+from praxis.data.formatters.base import text_formatter
+
+
+def format_instruction(
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+) -> str:
+    """Format as instruction/output pairs with unified system/developer prompts.
+    
+    Args:
+        document: Dictionary containing the document data
+        keys: List of keys to extract from document (must be exactly 2)
+        tokenizer: Tokenizer with chat template support
+        
+    Returns:
+        Formatted text with chat template applied
+    """
+    assert len(keys) == 2, "Instruction format requires exactly 2 keys"
+    instruction = text_formatter(document.get(keys[0], ""))
+    output = text_formatter(document.get(keys[1], ""))
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "developer", "content": DEVELOPER_PROMPTS["follow_instruction"]},
+        {"role": "user", "content": instruction},
+        {"role": "assistant", "content": output},
+    ]
+
+    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"

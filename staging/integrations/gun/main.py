@@ -234,7 +234,7 @@ class Integration(BaseIntegration):
             return None
 
         # Import here to avoid circular dependency
-        from builders import PraxisSampler
+        from praxis.data.datasets import PraxisSampler
 
         class GunChatDataset(PraxisSampler):
             """Dataset class for Gun chat data."""

@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from praxis.data.formatters.files import format_file_as_messages
+from praxis.data.config import SYSTEM_PROMPT
 from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 # Module state (for backward compatibility)
@@ -30,7 +32,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
 
     # Check if quantum flag is set
     _quantum_enabled = getattr(args, "quantum", False)
-    
+
     # Debug logging
     print(f"[Quantum] initialize() called with quantum flag: {_quantum_enabled}")
     if hasattr(args, "beta"):
@@ -107,25 +109,28 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                     "git://github.com/Vectorrent/qoblib",  # git protocol without .git
                     "https://github.com/Vectorrent/qoblib.git",  # With .git as fallback
                 ]
-                
+
                 clone_success = False
                 last_error = None
-                
+
                 for url in urls_to_try:
                     try:
                         print(f"[Quantum] Attempting to clone from: {url}")
-                        
+
                         # Set up environment to prevent auth prompts
                         env = os.environ.copy()
                         env["GIT_TERMINAL_PROMPT"] = "0"  # Disable terminal prompts
                         env["GIT_ASKPASS"] = ""  # Empty askpass program
-                        env["GCM_INTERACTIVE"] = "never"  # Disable Windows Git Credential Manager
-                        
+                        env["GCM_INTERACTIVE"] = (
+                            "never"  # Disable Windows Git Credential Manager
+                        )
+
                         result = subprocess.run(
                             [
                                 "git",
                                 "clone",
-                                "--depth", "1",  # Shallow clone to reduce size
+                                "--depth",
+                                "1",  # Shallow clone to reduce size
                                 "--single-branch",  # Only clone default branch
                                 "--progress",  # Show progress
                                 url,
@@ -138,20 +143,28 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                             timeout=300,  # 5 minute timeout for large repo
                             check=True,
                         )
-                        
+
                         clone_success = True
                         print("[Quantum] Repository cloned successfully")
                         break
-                        
-                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+
+                    except (
+                        subprocess.CalledProcessError,
+                        subprocess.TimeoutExpired,
+                    ) as e:
                         last_error = e
                         if repo_path.exists():
                             import shutil
+
                             shutil.rmtree(repo_path)
                         continue
-                
+
                 if not clone_success:
-                    raise last_error if last_error else Exception("Failed to clone repository")
+                    raise (
+                        last_error
+                        if last_error
+                        else Exception("Failed to clone repository")
+                    )
 
                 # Remove large archive files after cloning
                 for pattern in ["*.tar.gz", "*.zip", "*.tar"]:
@@ -410,27 +423,16 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
                     f"Please analyze this {file_desc}:\n\n```{lang}\n{content}\n```"
                 )
 
-            # Create a chat message in the unified format
+            # Build messages with system, developer, user, and assistant
             messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation.",
-                },
-                {
-                    "role": "developer",
-                    "content": f"Reading file: {relative_path}\nThis is {file_desc}. Study it to understand quantum algorithms and implementations.",
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-                {
-                    "role": "assistant",
-                    "content": _generate_quantum_analysis(
-                        content, relative_path, file_ext
-                    ),
-                },
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "developer", "content": f"Reading file: {relative_path}\nThis is {file_desc}. Study it to understand quantum algorithms and implementations."},
+                {"role": "user", "content": user_prompt}
             ]
+            
+            # Add the assistant's analysis
+            analysis = _generate_quantum_analysis(content, file_path, file_ext)
+            messages.append({"role": "assistant", "content": analysis})
 
             examples.append(
                 {"messages": messages, "source": f"quantum:{relative_path}"}
@@ -533,7 +535,7 @@ def provide_dataset(tokenizer, seed, config=None, *args):
 
     # Debug logging
     print(f"[Quantum] provide_dataset() called, _quantum_enabled = {_quantum_enabled}")
-    
+
     # Only provide dataset if properly initialized
     if not _quantum_enabled:
         print(
@@ -541,7 +543,7 @@ def provide_dataset(tokenizer, seed, config=None, *args):
         )
         return None
 
-    from builders import PraxisSampler
+    from praxis.data.datasets import PraxisSampler
 
     class QuantumDataset(PraxisSampler):
         """Dataset class for Quantum code data."""
@@ -657,22 +659,25 @@ class Integration(BaseIntegration):
         return add_cli_args(parser)
 
     def initialize(
-        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None
+        self,
+        args: Any,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize the quantum module."""
         global _quantum_enabled, _quantum_path
-        
+
         # Call the legacy initialize function
         result = initialize(args, cache_dir, ckpt_path, truncated_hash)
-        
+
         # Copy global state to instance variables
         self.quantum_enabled = _quantum_enabled
         self.quantum_path = _quantum_path
-        
+
         if self.quantum_enabled:
             self._initialized = True
-            
+
         return result
 
     def provide_dataset(
@@ -681,6 +686,6 @@ class Integration(BaseIntegration):
         """Provide quantum dataset when requested."""
         if not self.quantum_enabled or not self.quantum_path:
             return None
-            
+
         # Use the legacy provide_dataset function
         return provide_dataset(tokenizer, seed, config, *args)

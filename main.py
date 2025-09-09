@@ -38,7 +38,7 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_N
 
 # Local application imports
 from api import APIServer
-from builders import get_datamodules
+from praxis.data import get_datamodules
 from cli import (
     create_praxis_config,
     get_cli_args,

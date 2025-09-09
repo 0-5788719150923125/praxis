@@ -17,7 +17,6 @@
 .venv
 __pycache__
 build
-data
 dist
 node_modules
 tmp

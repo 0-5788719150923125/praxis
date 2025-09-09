@@ -15,7 +15,7 @@ from praxis import PraxisConfig
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from builders import format_personachat
+from praxis.data.formatters import format_personachat
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Test persona-chat builder format")
@@ -76,7 +76,7 @@ if DEBUG:
 
     import re
 
-    from builders import simple_truecase
+    from praxis.data.formatters import simple_truecase
 
     test_text = "like most other humans . . . ? d"
     print(f"Raw text: {repr(test_text)}")

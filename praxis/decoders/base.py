@@ -49,7 +49,31 @@ class BaseDecoder(nn.Module):
             expert = LocalExpert(config, block=block)
             for i in range(self.num_experts):
                 self.locals.append(expert)
+        elif config.router_type == "smear" and hasattr(config, "num_smear") and config.num_smear > 1:
+            # For SMEAR with num_smear > 1, create a single SMEAR router managing multiple experts
+            from praxis.routers import ROUTER_REGISTRY
+            
+            # Create the expert blocks
+            expert_blocks = []
+            for i in range(config.num_smear):
+                if self.manager:
+                    block = self.manager.register_expert(config)
+                else:
+                    block = BLOCK_REGISTRY[config.block_type](config)
+                expert_blocks.append(block)
+            
+            # Create a single SMEAR router with all blocks
+            smear_router = ROUTER_REGISTRY["smear"](config, experts=expert_blocks)
+            
+            # Create a single LocalExpert with the SMEAR router
+            # The SMEAR router will handle merging and routing internally
+            expert = LocalExpert(config, block=expert_blocks[0], router=smear_router)
+            
+            # Add it multiple times to match num_experts for compatibility
+            for i in range(self.num_experts):
+                self.locals.append(expert)
         elif config.router_type == "smear":
+            # Original SMEAR implementation for backward compatibility
             # For SMEAR, we need to create all blocks first, then pass them to each expert
             expert_blocks = []
             for i in range(self.num_experts):

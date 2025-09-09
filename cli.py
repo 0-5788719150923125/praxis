@@ -701,11 +701,11 @@ args = parser.parse_args()
 # Store original parsed values to detect what was explicitly provided
 explicitly_provided = set()
 for arg in sys.argv[1:]:  # Skip script name
-    if arg.startswith('--') and '=' in arg:
+    if arg.startswith("--") and "=" in arg:
         # Handle --arg=value format
-        key = arg.split('=')[0][2:]
+        key = arg.split("=")[0][2:]
         explicitly_provided.add(key)
-    elif arg.startswith('--'):
+    elif arg.startswith("--"):
         # Handle --arg value format
         key = arg[2:]
         explicitly_provided.add(key)
@@ -720,7 +720,10 @@ if experiment_configs:
                 attr_name = key.replace("-", "_")
 
                 # Check if this argument was explicitly provided by the user
-                if key in explicitly_provided or key.replace('_', '-') in explicitly_provided:
+                if (
+                    key in explicitly_provided
+                    or key.replace("_", "-") in explicitly_provided
+                ):
                     continue  # User override takes precedence
 
                 # Apply the experiment default
@@ -788,9 +791,6 @@ def apply_defaults_and_parse(defaults_dict):
         # Only override num_experts if not explicitly set by user via command line
         if "--num-experts" not in sys.argv and "--num_experts" not in sys.argv:
             args.num_experts = 3
-        # Also override num_smear for consistency with smaller model
-        if "--num-smear" not in sys.argv and "--num_smear" not in sys.argv:
-            args.num_smear = 3
 
     # Re-evaluate integration conditions with new args
     for integration_manifest in integrations:
@@ -973,7 +973,6 @@ def create_praxis_config(args=None, tokenizer=None):
 
     # Mapping of CLI argument names to config parameter names (for renamed parameters)
     arg_to_config_mapping = {
-        "block_type": "block",
         "expert_type": "expert",
         "encoding_type": "encoding",
     }
@@ -1008,9 +1007,6 @@ def create_praxis_config(args=None, tokenizer=None):
         config_kwargs["depth"] = 3
         # In dev mode, always use 3 experts for faster development
         config_kwargs["num_experts"] = 3
-        # Also set num_smear to 3 for consistency
-        if "num_smear" in valid_config_params:
-            config_kwargs["num_smear"] = 3
     else:
         # num_experts defaults to depth if not specified
         if (

@@ -17,13 +17,13 @@ class PraxisConfig(PretrainedConfig):
         kv_rank: Optional[int] = None,
         depth: int = 2,
         num_experts: int = 2,
-        num_smear: int = 3,
+        num_smear: int = 1,
         dropout: float = 0.0,
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
         max_length: int = 4096,
         activation: str = "mish",
-        block: str = "transformer",
+        block_type: str = "transformer",
         expert: str = "glu",
         encoding: str = "rope",
         router_type: Optional[str] = None,
@@ -92,7 +92,7 @@ class PraxisConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.max_length = max_length
         self.activation = activation
-        self.block_type = block
+        self.block_type = block_type
         self.expert = expert
         self.encoding = encoding
         self.router_type = router_type
