@@ -1,6 +1,7 @@
 """Base dataset classes."""
 
-from typing import List, Any, Dict
+from typing import Any, Dict, List
+
 from transformers import PreTrainedTokenizer
 
 
@@ -27,9 +28,9 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
     """
     Load a dataset, handling cases where metadata files interfere.
     
-    This wrapper catches issues where the datasets library finds .METADATA files
-    and incorrectly assumes all splits are named METADATA, breaking loading.
-    We explicitly specify splits when this happens.
+    This wrapper handles two issues:
+    1. Datasets with .METADATA files that break split detection
+    2. Datasets like NextCoderDataset-Conversational where state.json gets loaded instead of data
     
     Args:
         dataset_args: Arguments to pass to load_dataset
@@ -39,6 +40,23 @@ def load_dataset_smart(dataset_args: Dict) -> Any:
     """
     from datasets import load_dataset
     
+    dataset_path = dataset_args.get("path", "")
+    
+    # For NextCoderDataset-Conversational, ALWAYS use the arrow file fix
+    # because the standard loading is completely broken
+    if "NextCoderDataset-Conversational" in dataset_path:
+        print(f"Note: Using arrow file workaround for {dataset_path}")
+        fixed_args = dataset_args.copy()
+        
+        # Replace path with arrow loader and direct file reference
+        fixed_args["path"] = "arrow"
+        fixed_args["data_files"] = {
+            "train": "hf://datasets/microsoft/NextCoderDataset-Conversational/data-00000-of-00001.arrow"
+        }
+        
+        return load_dataset(**fixed_args)
+    
+    # For all other datasets, try normal loading
     try:
         return load_dataset(**dataset_args)
     except Exception as e:

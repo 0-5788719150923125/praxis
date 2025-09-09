@@ -54,6 +54,11 @@ class HuggingfaceDataset(PraxisSampler):
             else FORMAT_HANDLERS[self.format]
         )
         self.dataset_path = config.get("path", "HuggingFaceFW/fineweb")
+        
+        # Store base seed and restart counter
+        self.base_seed = seed
+        self.restart_count = 0
+        self.is_streaming = config.get("streaming", True)
 
         # Debug log RL datasets
         if self.format == DataFormat.RL:
@@ -61,14 +66,16 @@ class HuggingfaceDataset(PraxisSampler):
         dataset_args = dict(
             path=self.dataset_path,
             split=config.get("split", "train"),
-            streaming=config.get("streaming", True),
+            streaming=self.is_streaming,
             trust_remote_code=config.get("trust_remote_code", False),
         )
         if "name" in config:
             dataset_args["name"] = config["name"]
         self.dataset = load_dataset_smart(dataset_args)
-        shuffle_args = {"seed": seed}
-        if dataset_args["streaming"]:
+        
+        # Initial shuffle with base seed
+        shuffle_args = {"seed": self.base_seed}
+        if self.is_streaming:
             shuffle_args["buffer_size"] = 1000
         self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
         self.dataset_iterator = iter(self.shuffled_dataset)
@@ -152,10 +159,21 @@ class HuggingfaceDataset(PraxisSampler):
                 self.sequence_cache.append(formatted)
         except StopIteration:
             HuggingfaceDataset.counts[self.dataset_path] += 1
+            self.restart_count += 1
+            
+            # Log every restart so we know when datasets are consumed too quickly
             print(
-                f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Starting over. ({HuggingfaceDataset.counts[self.dataset_path]}x)"
+                f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Reshuffling with new seed. ({HuggingfaceDataset.counts[self.dataset_path]}x)"
             )
+            
+            # Reshuffle with a new seed to avoid repeating the same pattern
+            new_seed = self.base_seed + self.restart_count
+            shuffle_args = {"seed": new_seed}
+            if self.is_streaming:
+                shuffle_args["buffer_size"] = 1000
+            self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
             self.dataset_iterator = iter(self.shuffled_dataset)
+            
             # Try again with the new iterator
             try:
                 document = next(self.dataset_iterator)
@@ -201,11 +219,20 @@ class HuggingfaceDataset(PraxisSampler):
         return self.format_handler(document, self.keys, self.tokenizer)
 
     def state_dict(self):
-        # Get the internal state of the shuffled dataset
-        return self.shuffled_dataset.state_dict()
+        # Get the internal state of the shuffled dataset and restart counter
+        return {
+            "dataset_state": self.shuffled_dataset.state_dict(),
+            "restart_count": self.restart_count
+        }
 
     def load_state_dict(self, state_dict):
+        # Restore the restart counter
+        self.restart_count = state_dict.get("restart_count", 0)
         # Restore the internal state so iteration picks up where we left off
-        self.shuffled_dataset.load_state_dict(state_dict)
+        if "dataset_state" in state_dict:
+            self.shuffled_dataset.load_state_dict(state_dict["dataset_state"])
+        else:
+            # Old format compatibility
+            self.shuffled_dataset.load_state_dict(state_dict)
         # Recreate the iterator from the restored state
         self.dataset_iterator = iter(self.shuffled_dataset)
