@@ -121,6 +121,14 @@ def test_chat_template(tokenizer: PreTrainedTokenizerFast):
             "content": "Superposition is a fundamental principle where a quantum system exists in multiple states simultaneously until measured. Think of Schrödinger's cat - before observation, it's both alive and dead. When we measure the system, it 'collapses' into one definite state.",
         },
         {
+            "role": "system",
+            "content": "This is a second system message that should be ignored due to deduplication.",
+        },
+        {
+            "role": "developer",
+            "content": "Now switch to discussing quantum computing applications.",
+        },
+        {
             "role": "user",
             "content": "Interesting! If I have a quantum computer with 25 qubits, and I add 17 more, how many total qubits would I have?",
         },
@@ -142,6 +150,22 @@ def test_chat_template(tokenizer: PreTrainedTokenizerFast):
     )
 
     print(chat_text)
+    
+    # Verify system and developer message deduplication
+    bos_token = tokenizer.bos_token or "[BOS]"
+    system_count = chat_text.count(f"{bos_token}system")
+    developer_count = chat_text.count(f"{bos_token}developer")
+    
+    print(f"\n✓ Template deduplication test:")
+    print(f"  System messages in output: {system_count} (expected: 1)")
+    print(f"  Developer messages in output: {developer_count} (expected: 2)")
+    
+    if system_count != 1:
+        print(f"  ⚠️  WARNING: Expected 1 system message, got {system_count}")
+        print("  The chat template should deduplicate system messages!")
+    
+    if developer_count != 2:
+        print(f"  ⚠️  WARNING: Expected 2 developer messages, got {developer_count}")
 
     # Test tokenization
     tokens = tokenizer.encode(chat_text)

@@ -32,7 +32,7 @@ DATASET_COLLECTIONS = dict(
         "minipile-train": DEFAULT_WEIGHT,
     },
     validation={
-        "minipile-validation": DEFAULT_WEIGHT,
+        "refinedweb": DEFAULT_WEIGHT,
     },
     dev={
         "textbooks": DEFAULT_WEIGHT,
@@ -167,12 +167,15 @@ HUGGINGFACE_DATASETS = {
         keys=["title", "text"],
         format=DataFormat.WIKI,
     ),
-    "validation": dict(
+    "c4": dict(
         path="allenai/c4",
         name="en",
         split="validation",
         keys=["text"],
         format=DataFormat.SIMPLE,
+    ),
+    "refinedweb": dict(
+        path="tiiuae/falcon-refinedweb", keys=["content"], format=DataFormat.SIMPLE
     ),
     "fineweb-edu-10bt": dict(
         path="HuggingFaceFW/fineweb-edu",

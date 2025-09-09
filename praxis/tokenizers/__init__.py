@@ -165,21 +165,29 @@ def create_tokenizer(
     local_path = Path(f"build/tokenizers/praxis-{vocab_size}-unigram")
     if local_path.exists():
         try:
-            return AutoTokenizer.from_pretrained(
+            tokenizer = AutoTokenizer.from_pretrained(
                 local_path,
                 cache_dir=cache_dir,
                 **kwargs
             )
+            # Override with our updated chat template
+            from .chat_templates import get_chat_template
+            tokenizer.chat_template = get_chat_template("default")
+            return tokenizer
         except Exception:
             pass
     
     # 5. Try to load from HuggingFace repo
     try:
-        return AutoTokenizer.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(
             f"UNSAFE/praxis-{vocab_size}",
             cache_dir=cache_dir,
             **kwargs
         )
+        # Override with our updated chat template
+        from .chat_templates import get_chat_template
+        tokenizer.chat_template = get_chat_template("default")
+        return tokenizer
     except Exception:
         pass
     
