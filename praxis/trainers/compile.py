@@ -45,14 +45,6 @@ def try_compile_model(model, hparams):
         print("[Compile] Skipping compilation for mono_forward decoder (incompatible)")
         return model
 
-    # Check for known problematic model architectures
-    model_str = str(model)
-    if any(x in model_str.lower() for x in ["differential", "stickbreaking", "mla"]):
-        print(
-            "[Compile] Model contains components with known compilation issues, skipping"
-        )
-        return model
-
     try:
         # Set TensorFloat32 for better performance
         torch.set_float32_matmul_precision("high")

@@ -172,9 +172,47 @@ class TerminalInterface(Callback):
             batch_size, seq_length = batch["input_ids"].shape
         else:
             batch_size, seq_length = batch.shape
-        swarm_info = None  # TODO: Add get_metrics() when available
+
+        # Get metrics from the model (handles compiled models too)
+        swarm_info = None
         local_experts = 0
         remote_experts = 0
+
+        # Try multiple approaches to get metrics from the model
+        # 1. Check for _original_model (set in BackpropagationTrainer for compiled models)
+        if hasattr(lm, "0x") and hasattr(lm.model, "get_metrics"):
+            try:
+                swarm_info = lm._original_model.get_metrics()
+            except Exception:
+                pass
+
+        # 2. Try direct model access (works for uncompiled and OptimizedModule)
+        if (
+            swarm_info is None
+            and hasattr(lm, "model")
+            and hasattr(lm.model, "get_metrics")
+        ):
+            try:
+                swarm_info = lm.model.get_metrics()
+            except Exception:
+                pass
+
+        # 3. Check for torch.compile internal reference
+        if (
+            swarm_info is None
+            and hasattr(lm, "model")
+            and hasattr(lm.model, "_orig_mod")
+        ):
+            if hasattr(lm.model._orig_mod, "get_metrics"):
+                try:
+                    swarm_info = lm.model._orig_mod.get_metrics()
+                except Exception:
+                    pass
+
+        # Extract expert counts if we got metrics
+        if swarm_info and "experts" in swarm_info:
+            local_experts = swarm_info["experts"].get("local", 0)
+            remote_experts = swarm_info["experts"].get("remote", 0)
 
         data = {
             "step": int(batch_idx // trainer.accumulate_grad_batches),
@@ -574,7 +612,7 @@ class TerminalInterface(Callback):
             return current_loss
         else:
             return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
-    
+
     def on_fit_end(self, trainer, pl_module):
         """Called when training ends - clean up dashboard."""
         if self.dashboard:
@@ -582,7 +620,7 @@ class TerminalInterface(Callback):
             # Use context manager's __exit__ to ensure terminal restoration
             self.dashboard.__exit__(None, None, None)
             self.dashboard = None
-    
+
     def on_exception(self, trainer, pl_module, exception):
         """Called when an exception occurs - clean up dashboard."""
         if self.dashboard:

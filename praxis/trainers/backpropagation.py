@@ -30,6 +30,9 @@ class BackpropagationTrainer(LightningModule):
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
         )
 
+        # Store original model reference for get_metrics access
+        self._original_model = model
+
         # Try to compile the model automatically with fallback
         self.model = try_compile_model(model, hparams)
 
@@ -291,10 +294,10 @@ class BackpropagationTrainer(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         # Check if we should stop early
-        if hasattr(self.trainer, 'should_stop') and self.trainer.should_stop:
+        if hasattr(self.trainer, "should_stop") and self.trainer.should_stop:
             # Return minimal tensor to avoid errors
             return torch.tensor(0.0, device=self.device)
-        
+
         input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
             batch, batch_idx, is_training=False
         )
@@ -348,22 +351,26 @@ class BackpropagationTrainer(LightningModule):
     def on_save_checkpoint(self, checkpoint):
         super().on_save_checkpoint(checkpoint)
         checkpoint["num_tokens"] = self.num_tokens
-        
+
         # Explicitly save DataModule state if it exists
-        if hasattr(self.trainer, 'datamodule') and self.trainer.datamodule is not None:
-            if hasattr(self.trainer.datamodule, 'state_dict'):
+        if hasattr(self.trainer, "datamodule") and self.trainer.datamodule is not None:
+            if hasattr(self.trainer.datamodule, "state_dict"):
                 checkpoint["datamodule_state"] = self.trainer.datamodule.state_dict()
                 print("[Checkpoint] Saved DataModule state including dataset positions")
 
     def on_load_checkpoint(self, checkpoint):
         super().on_load_checkpoint(checkpoint)
         self.num_tokens = checkpoint.get("num_tokens", 0)
-        
+
         # Explicitly load DataModule state if it exists
-        if hasattr(self.trainer, 'datamodule') and self.trainer.datamodule is not None:
-            if "datamodule_state" in checkpoint and hasattr(self.trainer.datamodule, 'load_state_dict'):
+        if hasattr(self.trainer, "datamodule") and self.trainer.datamodule is not None:
+            if "datamodule_state" in checkpoint and hasattr(
+                self.trainer.datamodule, "load_state_dict"
+            ):
                 self.trainer.datamodule.load_state_dict(checkpoint["datamodule_state"])
-                print("[Checkpoint] Restored DataModule state including dataset positions")
+                print(
+                    "[Checkpoint] Restored DataModule state including dataset positions"
+                )
 
     def _update_ema(self, ema, new_value):
         if ema is None:
