@@ -22,6 +22,7 @@ try:
         TimeBasedCheckpoint,
         LIGHTNING_CALLBACK_REGISTRY,
     )
+    from praxis.callbacks.lightning.signal_handler import SignalHandlerCallback
 
     _HAS_LIGHTNING = True
 except ImportError:
@@ -74,10 +75,6 @@ if _HAS_LIGHTNING:
             "PeriodicEvaluation",
             "TerminalInterface",
             "TimeBasedCheckpoint",
+            "SignalHandlerCallback",
         ]
-    )
-    warnings.warn(
-        "PyTorch Lightning callbacks not available. "
-        "Please install PyTorch Lightning to use training callbacks.",
-        ImportWarning,
     )

@@ -290,6 +290,11 @@ class BackpropagationTrainer(LightningModule):
         return input_ids, rewards, token_weights, False
 
     def validation_step(self, batch, batch_idx):
+        # Check if we should stop early
+        if hasattr(self.trainer, 'should_stop') and self.trainer.should_stop:
+            # Return minimal tensor to avoid errors
+            return torch.tensor(0.0, device=self.device)
+        
         input_ids, rewards, token_weights, should_skip = self._handle_batch_format(
             batch, batch_idx, is_training=False
         )

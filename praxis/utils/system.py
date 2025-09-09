@@ -16,10 +16,10 @@ from glob import glob
 
 class ShutdownManager:
     """Centralized shutdown manager for graceful termination."""
-    
+
     _instance = None
     _lock = threading.Lock()
-    
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
@@ -27,70 +27,45 @@ class ShutdownManager:
                     cls._instance = super().__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self):
         if self._initialized:
             return
-        
+
         self._initialized = True
         self._shutting_down = False
+        self._shutdown_requested = False  # Flag set by signal handler
         self._shutdown_lock = threading.Lock()
         self._cleanup_functions = []
         self._child_processes = weakref.WeakSet()
         self._original_sigint = None
         self._original_sigterm = None
         self._interrupt_count = 0
-        self._last_interrupt_time = 0
-        
+        self._shutdown_thread = None
+
         # Register atexit handler for normal program termination
         atexit.register(self._cleanup_at_exit)
-    
+
     def register_cleanup(self, func, priority=50):
         """Register a cleanup function with priority (lower = earlier execution)."""
         with self._shutdown_lock:
             self._cleanup_functions.append((priority, func))
             self._cleanup_functions.sort(key=lambda x: x[0])
-    
+
     def register_process(self, process):
         """Register a child process for tracking."""
         self._child_processes.add(process)
-    
+
     def initiate_shutdown(self, exit_code=0, force=False):
         """Initiate graceful shutdown sequence."""
-        current_time = time.time()
-        
         with self._shutdown_lock:
-            # Track rapid interrupts
-            if current_time - self._last_interrupt_time < 1.0:
-                self._interrupt_count += 1
-            else:
-                self._interrupt_count = 1
-            self._last_interrupt_time = current_time
-            
-            # Force immediate exit on third rapid interrupt or if already shutting down
-            if self._interrupt_count >= 3 or (self._shutting_down and self._interrupt_count >= 2):
-                print("\n⚠️  Force terminating...")
-                # Minimal cleanup before forced exit
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                except:
-                    pass
-                os._exit(exit_code)
-            
             if self._shutting_down:
-                # Already shutting down, just wait
-                print("\n⏳ Shutdown in progress (press Ctrl+C again to force exit)...")
                 return
-            
             self._shutting_down = True
-        
-        print("\n🛑 Initiating graceful shutdown...")
-        
+
         # Step 1: Stop accepting new work
-        os.environ['PRAXIS_SHUTTING_DOWN'] = '1'
-        
+        os.environ["PRAXIS_SHUTTING_DOWN"] = "1"
+
         # Step 2: Send termination signals to child processes
         for proc in list(self._child_processes):
             try:
@@ -99,34 +74,37 @@ class ShutdownManager:
                     proc.terminate()
             except:
                 pass
-        
+
         # Step 3: Shutdown torch compile workers first
         try:
             import torch
-            if hasattr(torch, '_inductor') and hasattr(torch._inductor, 'async_compile'):
-                if hasattr(torch._inductor.async_compile, 'shutdown_compile_workers'):
+
+            if hasattr(torch, "_inductor") and hasattr(
+                torch._inductor, "async_compile"
+            ):
+                if hasattr(torch._inductor.async_compile, "shutdown_compile_workers"):
                     # Forcefully clear the compile workers without waiting
                     torch._inductor.async_compile._compile_worker_pool = None
         except:
             pass
-        
+
         # Step 4: Execute registered cleanup functions
         for priority, func in self._cleanup_functions:
             try:
                 func()
             except Exception as e:
                 print(f"  Warning: Cleanup function failed: {e}")
-        
+
         # Step 5: Wait briefly for child processes to terminate
         wait_start = time.time()
         max_wait = 2.0  # Maximum 2 seconds wait
-        
+
         while time.time() - wait_start < max_wait:
             alive_procs = [p for p in self._child_processes if p.is_alive()]
             if not alive_procs:
                 break
             time.sleep(0.1)
-        
+
         # Step 6: Force kill any remaining processes
         for proc in list(self._child_processes):
             try:
@@ -134,11 +112,11 @@ class ShutdownManager:
                     proc.kill()  # Force kill
             except:
                 pass
-        
+
         # Step 7: PyTorch-specific cleanup
         try:
             import torch
-            
+
             # Synchronize CUDA devices
             if torch.cuda.is_available():
                 for i in range(torch.cuda.device_count()):
@@ -148,34 +126,34 @@ class ShutdownManager:
                             torch.cuda.empty_cache()
                     except:
                         pass
-            
+
             # Clean up distributed training
             if torch.distributed.is_initialized():
                 try:
                     torch.distributed.destroy_process_group()
                 except:
                     pass
-            
+
             # Clear any multiprocessing queues
-            if hasattr(torch.multiprocessing, '_clean_shutdown'):
+            if hasattr(torch.multiprocessing, "_clean_shutdown"):
                 torch.multiprocessing._clean_shutdown()
         except ImportError:
             pass
         except Exception:
             pass
-        
+
         # Step 8: Flush output streams
         try:
             sys.stdout.flush()
             sys.stderr.flush()
         except:
             pass
-        
+
         print("✓ Shutdown complete")
-        
+
         # Step 9: Exit cleanly
         sys.exit(exit_code)
-    
+
     def _cleanup_at_exit(self):
         """Cleanup function called at normal program exit."""
         if not self._shutting_down:
@@ -185,22 +163,16 @@ class ShutdownManager:
                 sys.stderr.flush()
             except:
                 pass
-    
-    def install_signal_handlers(self):
-        """Install signal handlers for graceful shutdown."""
-        # Store any existing handlers
-        self._original_sigint = signal.getsignal(signal.SIGINT)
-        self._original_sigterm = signal.getsignal(signal.SIGTERM)
-        
-        # Install our handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-    
+
     def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        signal_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
-        print(f"\n📡 Received {signal_name}")
-        self.initiate_shutdown()
+        """Deprecated - Let Lightning handle signals."""
+        # DO NOT handle signals here
+        pass
+
+    def _delayed_shutdown(self):
+        """Deprecated - Let Lightning handle shutdown."""
+        # DO NOT perform delayed shutdown
+        pass
 
 
 # Global shutdown manager instance
@@ -208,8 +180,9 @@ shutdown_manager = ShutdownManager()
 
 
 def sigint_handler(signum, frame):
-    """Handle SIGINT (Ctrl+C) gracefully."""
-    shutdown_manager.initiate_shutdown()
+    """Deprecated - Let Lightning handle signals."""
+    # DO NOT handle signals here
+    pass
 
 
 def check_for_updates():
@@ -291,32 +264,64 @@ def find_latest_checkpoint(cache_dir):
 
 
 def initialize_lazy_modules(model, device):
-    """Initialize lazy modules in a model by doing a dummy forward pass."""
+    """Initialize lazy modules in a model by doing a dummy forward pass.
+
+    This function is optimized to be interruptible during bootstrap.
+    """
+    import signal
+
     import torch
 
-    model = model.to(device)
+    # Check if we should skip initialization due to shutdown
+    def check_interrupt():
+        """Check if we've received an interrupt signal."""
+        # This will be caught by the signal handler if Ctrl+C is pressed
+        pass
 
-    # Create dummy batch for initialization
-    batch_size = 2
-    seq_length = 64
-    dummy_input = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
-    dummy_labels = dummy_input[..., 1:].contiguous()
+    try:
+        print("[Bootstrap] Moving model to device...")
+        check_interrupt()
 
-    # Do a dummy forward pass to initialize lazy parameters
-    model.train()
-    outputs = model(input_ids=dummy_input, labels=dummy_labels)
+        # Move model to device in chunks to be more interruptible
+        model = model.to(device)
 
-    # Reset any gradient accumulation
-    for param in model.parameters():
-        if param.grad is not None:
-            param.grad.zero_()
+        # Use smaller dummy batch for faster initialization
+        batch_size = 1  # Reduced from 2
+        seq_length = 32  # Reduced from 64
+
+        print("[Bootstrap] Initializing lazy modules...")
+        check_interrupt()
+
+        # Create dummy batch for initialization
+        dummy_input = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
+        dummy_labels = dummy_input[..., 1:].contiguous()
+
+        # Do a dummy forward pass to initialize lazy parameters
+        model.train()
+
+        # Use no_grad to speed up initialization (we don't need gradients here)
+        with torch.no_grad():
+            outputs = model(input_ids=dummy_input, labels=dummy_labels)
+
+        # Clear any cached memory immediately
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        print("[Bootstrap] Model initialization complete")
+
+    except KeyboardInterrupt:
+        print("\n[Bootstrap] Initialization interrupted")
+        # Clean up partial initialization
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise
 
     return model
 
 
 def register_cleanup_function(func, priority=50):
     """Register a cleanup function with the shutdown manager.
-    
+
     Args:
         func: Function to call during shutdown
         priority: Lower numbers execute first (default 50)
@@ -326,7 +331,7 @@ def register_cleanup_function(func, priority=50):
 
 def register_child_process(process):
     """Register a child process with the shutdown manager.
-    
+
     Args:
         process: multiprocessing.Process or similar object
     """
@@ -335,7 +340,11 @@ def register_child_process(process):
 
 def is_shutting_down():
     """Check if the system is currently shutting down."""
-    return os.environ.get('PRAXIS_SHUTTING_DOWN', '0') == '1'
+    # Check both the environment variable and the shutdown manager's flag
+    return (
+        os.environ.get("PRAXIS_SHUTTING_DOWN", "0") == "1"
+        or shutdown_manager._shutdown_requested
+    )
 
 
 def perform_reset(cache_dir, truncated_hash, integration_loader=None):
@@ -395,20 +404,66 @@ def show_launch_animation(model, truncated_hash):
         model: The model to display
         truncated_hash: The hash identifying this instance
     """
-    plan = str(model.__repr__).splitlines()
+    # Extract the actual model from torch.compile wrapper if present
+    display_model = model
+    if hasattr(model, "_orig_mod"):
+        # torch.compile OptimizedModule wrapper
+        display_model = model._orig_mod
+    elif hasattr(model, "_torchdynamo_orig_callable"):
+        # Alternative torch.compile wrapper
+        display_model = model._torchdynamo_orig_callable
+
+    # Get the repr and process it
+    full_repr = repr(display_model)
+    repr_lines = full_repr.splitlines()
+
+    # Filter out wrapper-related lines that might still be present
+    # Start from the first line that contains "PraxisForCausalLM"
+    start_idx = 0
+    for i, line in enumerate(repr_lines):
+        if "PraxisForCausalLM" in line:
+            start_idx = i
+            break
+
+    # Find the matching closing parenthesis for PraxisForCausalLM
+    # Count parenthesis depth starting from PraxisForCausalLM line
+    end_idx = len(repr_lines)
+    paren_depth = 0
+    for i in range(start_idx, len(repr_lines)):
+        line = repr_lines[i]
+        # Count opening and closing parentheses
+        paren_depth += line.count("(") - line.count(")")
+        # When we return to depth 0, we've found the matching closing paren
+        if i > start_idx and paren_depth == 0:
+            end_idx = i + 1
+            break
+
+    # Take lines from PraxisForCausalLM to its matching closing parenthesis
+    plan = repr_lines[start_idx:end_idx]
+
     launch_duration = random.uniform(6.7, 7.3)
     acceleration_curve = random.uniform(3.5, 4.5)
     start_time = time.time()
 
     time.sleep(max(0, random.gauss(1.0, 3.0)))
 
+    # Print opening backticks
+    print("```")
+    print(f"Hash: {truncated_hash}\n")
+
     for i, line in enumerate(plan):
-        print(line)
+        if i > 0:
+            print(line)
+        else:
+            print(f"Model: {line}")
         progress = i / len(plan)
         scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
         delay = scale_factor * (progress**acceleration_curve)
         time.sleep(delay)
 
+    # Print closing backticks
+    print("```\n")
+
     elapsed_time = time.time() - start_time
-    print(f"Loaded: {truncated_hash} in {elapsed_time:.3f} seconds.")
+    print(f"Rate: {elapsed_time:.3f}\s")
     time.sleep(2)

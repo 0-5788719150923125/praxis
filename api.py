@@ -63,7 +63,9 @@ socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 # Integration middleware support
 _request_middleware = []
 _response_middleware = []
-_response_headers = []  # List of (header_name, header_value) tuples to add to all responses
+_response_headers = (
+    []
+)  # List of (header_name, header_value) tuples to add to all responses
 
 
 def register_request_middleware(func):
@@ -97,7 +99,7 @@ def process_response_middleware(response):
     # Add any registered headers
     for header_name, header_value in _response_headers:
         response.headers[header_name] = header_value
-    
+
     # Process middleware functions
     for middleware in _response_middleware:
         middleware(request, response)
@@ -182,6 +184,7 @@ def get_spec():
         # Fallback for backward compatibility if hashes weren't provided
         if truncated_hash and not full_hash:
             import hashlib
+
             full_hash = hashlib.sha256(truncated_hash.encode()).hexdigest()
 
         # If neither hash exists, mark as unknown
@@ -240,15 +243,19 @@ def get_spec():
         # First check if ngrok is active (regardless of how request came in)
         ngrok_url = app.config.get("ngrok_url")
         ngrok_secret = app.config.get("ngrok_secret")
-        
+
         if ngrok_url and ngrok_secret:
             # Ngrok is active - always use the protected URL with /praxis
             git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
         else:
             # No ngrok - use direct URL based on request
             host = request.host.split(":")[0] if ":" in request.host else request.host
-            
-            if host.endswith(".ngrok-free.app") or host.endswith(".ngrok.io") or host.endswith(".src.eco"):
+
+            if (
+                host.endswith(".ngrok-free.app")
+                or host.endswith(".ngrok.io")
+                or host.endswith(".src.eco")
+            ):
                 # Accessed through ngrok but no secret configured (shouldn't happen)
                 git_url = f"https://{host}/praxis"
             else:
@@ -288,7 +295,9 @@ def get_spec():
 @app.route("/praxis.git/<path:git_path>", methods=["GET", "POST"])
 @app.route("/praxis.git", methods=["GET", "POST"], defaults={"git_path": ""})
 @app.route("/praxis/<path:git_path>", methods=["GET", "POST"])  # Without .git suffix
-@app.route("/praxis", methods=["GET", "POST"], defaults={"git_path": ""})  # Without .git suffix
+@app.route(
+    "/praxis", methods=["GET", "POST"], defaults={"git_path": ""}
+)  # Without .git suffix
 @app.route("/info/refs", methods=["GET"])  # Git discovery at root
 @app.route("/git-upload-pack", methods=["POST"])  # Git fetch at root
 @app.route(
@@ -404,7 +413,7 @@ def get_agents():
             # Get our git URL - prioritize ngrok if active
             ngrok_url = app.config.get("ngrok_url")
             ngrok_secret = app.config.get("ngrok_secret")
-            
+
             if ngrok_url and ngrok_secret:
                 # Ngrok is active - use the protected URL
                 git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
@@ -852,28 +861,27 @@ class APIServer:
         print(f"[API] Server started at http://{self.get_api_addr()}/")
 
     def stop(self):
-        self.shutdown_event.set()  # Signal monitor thread to stop
-
-        # Stop the template watcher
+        """Stop the API server - just signal shutdown, don't wait."""
+        self.shutdown_event.set()  # Signal threads to stop
+        
+        # Stop the template watcher if it exists
         if hasattr(self, "template_watcher"):
-            self.template_watcher.stop()
-
-        # Shut down SocketIO
-        try:
-            # Shutting down API server
-            socketio.stop()
-        except Exception as e:
-            print(f"Error stopping server: {str(e)}")
-
-        if self.server_thread:
-            self.server_thread.join(timeout=5)
-            self.server_thread = None
+            try:
+                self.template_watcher.stop()
+            except:
+                pass
+        
+        # Don't join daemon threads - let them die naturally when main exits
+        # This prevents hanging during shutdown
 
     def _run_server(self):
         # Start API server with parameter statistics
 
         # Apply any WSGI middleware registered by integrations (must be before starting server)
         apply_wsgi_middleware()
+        
+        # Store server instance for clean shutdown
+        self.server = None
 
         with app.app_context():
             app.config["generator"] = self.generator
@@ -897,12 +905,12 @@ class APIServer:
                     def create_wrapper(func):
                         def request_wrapper(req, resp):
                             return func(req, resp)
+
                         return request_wrapper
-                    
+
                     wrapper = create_wrapper(middleware_func)
                     register_request_middleware(wrapper)
                     register_response_middleware(wrapper)
-
 
             # Signal that the server will start (AFTER hooks are registered)
             self.started.set()

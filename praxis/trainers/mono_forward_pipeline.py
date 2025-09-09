@@ -515,7 +515,29 @@ class MonoForwardPipelineModule(LightningModule):
         for i, process in enumerate(self.worker_processes):
             process.join(timeout=2)
             if process.is_alive():
-                print(f"[MonoForwardPipeline] Worker {i} still alive, will be terminated by shutdown manager")
+                # Force terminate if still alive
+                print(f"[MonoForwardPipeline] Worker {i} still alive, terminating...")
+                process.terminate()
+                process.join(timeout=1)
+                if process.is_alive():
+                    # Last resort - force kill
+                    process.kill()
+                    process.join(timeout=0.5)
+        
+        # Properly close all queues to prevent resource leaks
+        all_queues = (
+            self.layer_input_queues + 
+            self.layer_output_queues + 
+            self.control_queues + 
+            [self.loss_queue]
+        )
+        
+        for queue in all_queues:
+            try:
+                queue.close()
+                queue.join_thread()
+            except:
+                pass  # Queue might already be closed
         
         print("[MonoForwardPipeline] Worker shutdown initiated")
     

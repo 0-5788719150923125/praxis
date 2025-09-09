@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets import WeightedIterableDataset
+from praxis.data.interruptible import InterruptibleDataLoader, DataLoaderManager
 
 
 class PraxisDataModule(LightningDataModule):
@@ -26,6 +27,7 @@ class PraxisDataModule(LightningDataModule):
     ):
         super().__init__()
         self.rl_type = rl_type
+        self.dataloader_manager = DataLoaderManager()  # Track dataloaders for shutdown
         self.train_datasets = self.create_datasets(
             train_datasets,
             tokenizer,
@@ -74,26 +76,40 @@ class PraxisDataModule(LightningDataModule):
         # Use 0 workers if spawn method is set (required for MonoForward pipeline)
         num_workers = 0 if mp.get_start_method(allow_none=True) == 'spawn' else 1
         
-        return DataLoader(
+        dataloader = InterruptibleDataLoader(
             dataset=self.train_datasets,
             batch_size=None,
             num_workers=num_workers,
             pin_memory=False,
+            persistent_workers=False,  # Ensure clean shutdown
         )
+        
+        # Register for shutdown management
+        self.dataloader_manager.register(dataloader)
+        return dataloader
 
     def val_dataloader(self):
         if self.val_datasets:
             # Use 0 workers if spawn method is set (required for MonoForward pipeline)
             num_workers = 0 if mp.get_start_method(allow_none=True) == 'spawn' else 1
             
-            return DataLoader(
+            dataloader = InterruptibleDataLoader(
                 dataset=self.val_datasets,
                 batch_size=None,
                 num_workers=num_workers,
                 pin_memory=False,
+                persistent_workers=False,  # Ensure clean shutdown
             )
+            
+            # Register for shutdown management
+            self.dataloader_manager.register(dataloader)
+            return dataloader
         else:
             return []
+    
+    def shutdown_dataloaders(self, timeout: float = 5.0):
+        """Shutdown all active dataloaders gracefully."""
+        self.dataloader_manager.shutdown_all(timeout=timeout)
 
     def state_dict(self) -> Dict[str, Any]:
         """Get the state dict for checkpointing."""

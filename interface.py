@@ -371,10 +371,6 @@ class TerminalDashboard:
         # Capture warnings
         warnings.showwarning = self.show_warning
 
-        # Set up signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-
         # Register the cleanup function
         self.error_exit = False
         self.error_message = None
@@ -398,9 +394,22 @@ class TerminalDashboard:
         )
         self.add_log(warning_message)
 
-    def _signal_handler(self, signum, frame):
+    # Signal handler removed - using shutdown_manager instead
+
+    def __enter__(self):
+        """Enter context manager - save terminal state."""
+        # Save terminal state happens in start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager - always restore terminal."""
+        # Always restore terminal, regardless of exceptions
         self.stop()
-        sys.exit(0)
+        if not self.terminal_restored:
+            self._restore_terminal()
+            self.terminal_restored = True
+        # Don't suppress exceptions
+        return False
 
     def _cleanup(self):
         # Only cleanup if we haven't already done so
@@ -500,87 +509,10 @@ class TerminalDashboard:
         Thread(target=self._run_dashboard).start()
 
     def _setup_signal_handlers(self):
-        """Set up signal handlers to catch crashes and display errors immediately."""
-
-        def crash_handler(signum, frame):
-            # Generate a stack trace from the crash point
-            import traceback
-
-            stack_trace = "".join(traceback.format_stack(frame))
-            error_text = (
-                f"Process crashed with signal {signum}\n\nStack trace:\n{stack_trace}"
-            )
-            self.crash_with_error(error_text)
-
-        # Handle various crash signals
-        try:
-            signal.signal(signal.SIGSEGV, crash_handler)  # Segmentation fault
-            signal.signal(signal.SIGFPE, crash_handler)  # Floating point exception
-            signal.signal(signal.SIGILL, crash_handler)  # Illegal instruction
-            signal.signal(signal.SIGABRT, crash_handler)  # Abort signal
-        except (OSError, ValueError):
-            # Some signals may not be available on all platforms
-            pass
-
-        # Register terminal restoration with shutdown manager instead of signal handler
-        try:
-            from praxis.utils import shutdown_manager
-            
-            def restore_terminal_on_shutdown():
-                if not self.terminal_restored:
-                    self._restore_terminal()
-                    self.terminal_restored = True
-                self.stop()
-            
-            # Register with high priority (low number) to run early
-            shutdown_manager.register_cleanup(restore_terminal_on_shutdown, priority=5)
-        except ImportError:
-            # Fallback to simple signal handler if shutdown manager not available
-            def keyboard_interrupt_handler(signum, frame):
-                if not self.terminal_restored:
-                    self._restore_terminal()
-                    self.terminal_restored = True
-                self.stop()
-                print("\n🛑 Training interrupted by user", file=sys.stderr)
-                sys.exit(0)
-            
-            signal.signal(signal.SIGINT, keyboard_interrupt_handler)
-
-        # Set up global exception handler for uncaught exceptions
-        def exception_handler(exc_type, exc_value, exc_traceback):
-            if exc_type == KeyboardInterrupt:
-                # Let shutdown manager handle keyboard interrupts
-                try:
-                    from praxis.utils import shutdown_manager
-                    shutdown_manager.initiate_shutdown()
-                except ImportError:
-                    # Fallback if shutdown manager not available
-                    if not self.terminal_restored:
-                        self._restore_terminal()
-                        self.terminal_restored = True
-                    self.stop()
-                    print("\n🛑 Training interrupted by user", file=sys.stderr)
-                    sys.exit(0)
-            else:
-                # Format the exception - this is a real crash
-                import traceback
-
-                error_lines = traceback.format_exception(
-                    exc_type, exc_value, exc_traceback
-                )
-                error_text = "".join(error_lines)
-
-                # Also capture recent log output for context
-                recent_logs = ""
-                if hasattr(self, "log_buffer") and self.log_buffer:
-                    recent_logs = "\n\nRecent log output:\n" + "-" * 40 + "\n"
-                    recent_logs += "\n".join(
-                        list(self.log_buffer)[-20:]
-                    )  # Last 20 lines
-
-                self.crash_with_error(error_text + recent_logs)
-
-        sys.excepthook = exception_handler
+        """Set up cleanup without signal handlers."""
+        # No signal handlers - let Lightning handle signals
+        # Terminal restoration will be handled by context manager cleanup
+        pass
 
     def stop(self, error=False):
         self.running = False
@@ -636,10 +568,8 @@ class TerminalDashboard:
         # Flush to ensure output is visible
         sys.stderr.flush()
 
-        # Exit immediately - don't wait for dashboard thread
-        import os
-
-        os._exit(1)
+        # Simply exit - let normal Python cleanup happen
+        sys.exit(1)
 
     def _mark_activity(self):
         """Mark that we've received activity from the training process."""
@@ -1465,4 +1395,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Shutting down gracefully...")
     finally:
+        dashboard.stop()
         dashboard.stop()

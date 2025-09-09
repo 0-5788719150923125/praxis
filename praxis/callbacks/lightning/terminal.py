@@ -574,3 +574,19 @@ class TerminalInterface(Callback):
             return current_loss
         else:
             return (alpha * current_loss) + (1 - alpha) * prev_avg_loss
+    
+    def on_fit_end(self, trainer, pl_module):
+        """Called when training ends - clean up dashboard."""
+        if self.dashboard:
+            self.dashboard.stop()
+            # Use context manager's __exit__ to ensure terminal restoration
+            self.dashboard.__exit__(None, None, None)
+            self.dashboard = None
+    
+    def on_exception(self, trainer, pl_module, exception):
+        """Called when an exception occurs - clean up dashboard."""
+        if self.dashboard:
+            self.dashboard.stop()
+            # Use context manager's __exit__ to ensure terminal restoration
+            self.dashboard.__exit__(None, None, None)
+            self.dashboard = None

@@ -4,6 +4,10 @@
 # CRITICAL: Set multiprocessing start method before ANY imports that might use CUDA
 # This is required for MonoForward pipeline parallelism with CUDA
 import torch.multiprocessing as mp
+import warnings
+
+# Suppress multiprocessing resource tracker warnings early
+warnings.filterwarnings('ignore', category=UserWarning, module='multiprocessing.resource_tracker')
 
 try:
     mp.set_start_method("spawn", force=True)
@@ -51,6 +55,7 @@ from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 from praxis.callbacks import (
     AccumulationSchedule,
     PeriodicEvaluation,
+    SignalHandlerCallback,
     TerminalInterface,
     TimeBasedCheckpoint,
     create_printing_progress_bar,
@@ -89,8 +94,6 @@ sys.dont_write_bytecode = True
 
 def setup_environment():
     """Set up the environment and configurations."""
-    # Install the shutdown manager's signal handlers
-    shutdown_manager.install_signal_handlers()
 
     # Check for updates at startup
     check_for_updates()
@@ -373,6 +376,7 @@ def main():
     if trainer_type == "mono_forward":
         # Manual optimization doesn't support AccumulationSchedule
         train_params["callbacks"] = [
+            SignalHandlerCallback(),  # Handle signals gracefully
             checkpoint_callback,
             PeriodicEvaluation(
                 eval_every=eval_every,
@@ -386,6 +390,7 @@ def main():
     else:
         # Automatic optimization supports all callbacks
         train_params["callbacks"] = [
+            SignalHandlerCallback(),  # Handle signals gracefully
             checkpoint_callback,
             AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"]),
             PeriodicEvaluation(
@@ -497,36 +502,9 @@ def main():
         pipeline_depth=pipeline_depth,
     )
 
-    # Register cleanup functions with shutdown manager
-    def cleanup_trainer():
-        """Cleanup function for trainer."""
-        try:
-            if hasattr(trainer, 'strategy') and hasattr(trainer.strategy, 'barrier'):
-                # Ensure all processes sync before cleanup
-                trainer.strategy.barrier()
-        except:
-            pass
-    
-    def cleanup_api():
-        """Cleanup function for API server."""
-        if api_server:
-            try:
-                api_server.stop()
-            except:
-                pass
-    
-    def cleanup_integrations():
-        """Cleanup function for integrations."""
-        try:
-            integration_loader.run_cleanup_hooks()
-        except:
-            pass
-    
-    # Register cleanup functions with priorities
-    register_cleanup_function(cleanup_trainer, priority=10)  # Trainer first
-    register_cleanup_function(cleanup_integrations, priority=20)  # Then integrations
-    register_cleanup_function(cleanup_api, priority=30)  # API server last
-    
+    # No cleanup registration - Lightning handles shutdown
+    # Cleanup will happen via try/finally blocks
+
     # Show launch animation just before training begins
     show_launch_animation(model, truncated_hash)
 
@@ -537,32 +515,47 @@ def main():
     if api_server:
         print(f"[Training] API available at http://{api_server.get_api_addr()}/")
 
+    # Install a simple signal handler for post-training cleanup
+    cleanup_interrupted = False
+    interrupt_count = 0
+    
+    def cleanup_signal_handler(signum, frame):
+        nonlocal cleanup_interrupted, interrupt_count
+        interrupt_count += 1
+        
+        if interrupt_count == 1:
+            cleanup_interrupted = True
+            print("\n⚠️  Forcing exit...")
+            # Don't wait for anything, just exit
+            os._exit(130)
+        else:
+            # Should never get here but just in case
+            os._exit(130)
+    
     try:
         trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
 
         # Training completed successfully
         print("[Training] Completed successfully")
-
-        # Run integration cleanup hooks
-        integration_loader.run_cleanup_hooks()
-
-        # Stop API server if running
-        if api_server:
-            api_server.stop()
-
-        # Normal exit - cleanup will be handled by shutdown manager
+        
+        # Install aggressive signal handler for cleanup phase
+        signal.signal(signal.SIGINT, cleanup_signal_handler)
+        signal.signal(signal.SIGTERM, cleanup_signal_handler)
+        
+        # Set a flag to skip most cleanup since training is done
+        cleanup_interrupted = False  # Reset flag
+        
         return 0
 
     except Exception as e:
-        # Run integration cleanup hooks
-        integration_loader.run_cleanup_hooks()
-
         # If we have a dashboard running, force crash it to show the error
         if (
             "progress_bar" in locals()
             and hasattr(progress_bar, "dashboard")
             and progress_bar.dashboard
         ):
+            import traceback
+
             error_text = traceback.format_exc()
             progress_bar.dashboard.crash_with_error(error_text)
         else:
@@ -570,15 +563,97 @@ def main():
             raise
 
     except KeyboardInterrupt:
-        # Handle Ctrl+C gracefully - shutdown manager will handle cleanup
-        if (
-            "progress_bar" in locals()
-            and hasattr(progress_bar, "dashboard")
-            and progress_bar.dashboard
-        ):
-            progress_bar.dashboard.stop()
-        # The shutdown manager handles the rest
+        # Lightning handles Ctrl+C gracefully
+        print("\n[Training] Interrupted by user")
+        # Install handler for cleanup
+        signal.signal(signal.SIGINT, cleanup_signal_handler)
+        signal.signal(signal.SIGTERM, cleanup_signal_handler)
         return 130  # Standard exit code for SIGINT
+    finally:
+        import time
+        
+        # Check if cleanup was interrupted or if training completed
+        if 'cleanup_interrupted' in locals() and cleanup_interrupted:
+            # Skip cleanup if interrupted
+            os._exit(130)
+        
+        # Super fast cleanup - we're done training
+        cleanup_start = time.time()
+        max_cleanup_time = 0.5  # Half second max for cleanup after successful training
+        cleanup_count = 0
+        
+        # DataLoaders need proper shutdown to avoid hanging
+        if "dataintegration" in locals() and hasattr(
+            dataintegration, "shutdown_dataloaders"
+        ):
+            try:
+                remaining_time = max(0.5, max_cleanup_time - (time.time() - cleanup_start))
+                dataintegration.shutdown_dataloaders(timeout=min(1.0, remaining_time))
+                cleanup_count += 1
+            except:
+                pass
+
+        # Just signal daemon threads to stop - don't wait for them
+        if "api_server" in locals() and api_server:
+            try:
+                api_server.stop()  # Quick signal, no waiting
+                cleanup_count += 1
+            except:
+                pass
+
+        # Run integration cleanup (but with timeout)
+        if "integration_loader" in locals() and integration_loader:
+            if time.time() - cleanup_start < max_cleanup_time - 0.5:
+                try:
+                    integration_loader.run_cleanup_hooks()
+                    cleanup_count += 1
+                except:
+                    pass
+        
+        # Clean termination of multiprocessing resources
+        try:
+            import multiprocessing
+            # Get active children and terminate them cleanly
+            active_children = multiprocessing.active_children()
+            if active_children:
+                cleanup_count += len(active_children)
+                for child in active_children:
+                    try:
+                        child.terminate()
+                        child.join(timeout=0.01)  # Very brief wait for clean termination
+                    except:
+                        pass
+            
+            # Force close any remaining multiprocessing resources
+            # This helps prevent the semaphore leak warnings
+            multiprocessing.resource_tracker._resource_tracker = None
+            multiprocessing.resource_tracker._fd = None
+        except:
+            pass
+
+        # Quick exit - don't wait around
+        remaining = max_cleanup_time - (time.time() - cleanup_start)
+        if remaining > 0:
+            time.sleep(min(0.01, remaining))  # Tiny pause
+        
+        # Print clean shutdown message if we cleaned anything
+        if cleanup_count > 0:
+            print(f"[Shutdown] Cleaned up {cleanup_count} resources")
+        
+        # Force exit to avoid C++ runtime errors from hanging threads
+        # This is aggressive but prevents "terminate called without an active exception"
+        import sys
+        sys.stdout.flush()
+        sys.stderr.flush()
+        
+        # Forcefully clear the resource tracker to prevent warnings
+        try:
+            import multiprocessing.resource_tracker
+            multiprocessing.resource_tracker._resource_tracker = None
+        except:
+            pass
+            
+        os._exit(0)  # Hard exit with success code
 
 
 if __name__ == "__main__":

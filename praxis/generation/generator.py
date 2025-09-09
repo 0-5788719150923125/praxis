@@ -30,7 +30,7 @@ class Generator:
 
             self.tools = get_tools_json_schema()
             self.call_tool = call_tool
-            print(f"Loaded {len(self.tools)} tools for function calling")
+            print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
         except ImportError:
             self.tools = []
             self.call_tool = None
@@ -168,14 +168,20 @@ class Generator:
             # Execute the tool
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("arguments", {})
-            
+
             # Debug: Log the actual tool call structure
             if tool_name is None:
-                print(f"Warning: Tool call missing 'name' field. Full tool_call: {tool_call}")
+                print(
+                    f"Warning: Tool call missing 'name' field. Full tool_call: {tool_call}"
+                )
                 # Try alternative field names
-                tool_name = tool_call.get("tool") or tool_call.get("function", {}).get("name")
+                tool_name = tool_call.get("tool") or tool_call.get("function", {}).get(
+                    "name"
+                )
                 if tool_name is None:
-                    print(f"Error: Could not extract tool name from tool call: {tool_call}")
+                    print(
+                        f"Error: Could not extract tool name from tool call: {tool_call}"
+                    )
                     return return_text
 
             try:

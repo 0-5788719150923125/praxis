@@ -10,6 +10,8 @@ if [ ! -d "$SCRIPT_DIR/.venv" ]; then
     python3 -m venv "$SCRIPT_DIR/.venv"
 fi
 
+echo "[INFO] Activated virtual environment."
+
 # Always activate the venv (we'll deactivate at the end)
 . "$SCRIPT_DIR/.venv/bin/activate"
 
