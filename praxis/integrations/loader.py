@@ -33,6 +33,68 @@ class IntegrationLoader:
             "request_middleware": [],  # Functions that modify request/response headers
         }
 
+    def bootstrap_integrations(self, args=None) -> None:
+        """Bootstrap install integrations that match conditions.
+        
+        This ensures integration dependencies are available before they're loaded.
+        Only installs integrations whose conditions are met (or have no conditions).
+        
+        Args:
+            args: Parsed command-line arguments to check conditions against.
+                  If None, only installs integrations without conditions.
+        """
+        if not self.integrations_dir.exists():
+            return
+            
+        # First discover all integrations to check their conditions
+        integrations_to_install = []
+        
+        for integration_dir in self.integrations_dir.iterdir():
+            if not integration_dir.is_dir():
+                continue
+                
+            # Check if this integration has a spec.yaml to read conditions
+            spec_path = integration_dir / "spec.yaml"
+            if spec_path.exists():
+                try:
+                    spec = IntegrationSpec.from_file(spec_path)
+                    
+                    # Check if conditions are met (if args provided)
+                    if args is None:
+                        # No args - only install if no conditions
+                        if not spec.conditions:
+                            integrations_to_install.append((integration_dir, spec.name))
+                    else:
+                        # Args provided - check conditions
+                        if self._check_conditions(spec.conditions, args):
+                            integrations_to_install.append((integration_dir, spec.name))
+                except Exception:
+                    # Failed to load spec - skip this integration
+                    pass
+        
+        # Now install only the integrations that passed condition checks
+        if integrations_to_install:
+            print("[Integrations] Bootstrapping integrations...")
+            for integration_dir, integration_name in integrations_to_install:
+                if (integration_dir / "pyproject.toml").exists():
+                    # Check if already installed
+                    check_result = subprocess.run(
+                        [sys.executable, "-m", "pip", "show", f"praxis-integration-{integration_name}"],
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    if check_result.returncode != 0:
+                        # Not installed - try to install it
+                        print(f"[Integrations] Installing {integration_name}...")
+                        try:
+                            subprocess.check_call(
+                                [sys.executable, "-m", "pip", "install", "-e", str(integration_dir)]
+                            )
+                        except subprocess.CalledProcessError as e:
+                            # Integration install failed - likely incompatible dependencies
+                            print(f"[Integrations] Warning: {integration_name} failed to install (may have incompatible dependencies)")
+
     def discover_integrations(self) -> List[IntegrationSpec]:
         """Find all integrations in integrations directory.
 
@@ -84,8 +146,11 @@ class IntegrationLoader:
                 self.used_integrations.add(integration_name)
             return True
 
-        # Check and install dependencies if needed (silent)
-        if not self._check_and_install_dependencies(spec, verbose=False):
+        # Dependencies should already be installed by bootstrap
+        # Only check if they're available, don't install here
+        if not self._check_dependencies_available(spec):
+            if verbose:
+                print(f"[Integrations] {spec.name} dependencies not available")
             return False
 
         try:
@@ -134,93 +199,27 @@ class IntegrationLoader:
                 return False
         return True
 
-    def _check_and_install_dependencies(
-        self, spec: IntegrationSpec, verbose: bool = True
-    ) -> bool:
-        """Check and automatically install integration dependencies."""
-        # First check for pyproject.toml
+    def _check_dependencies_available(self, spec: IntegrationSpec) -> bool:
+        """Check if integration dependencies are available (already installed).
+        
+        Args:
+            spec: Integration specification
+            
+        Returns:
+            True if dependencies are available or no dependencies needed
+        """
+        # Check if integration package is installed
         pyproject_path = spec.path / "pyproject.toml"
         if pyproject_path.exists():
-            return self._install_from_pyproject(spec, pyproject_path, verbose)
-        
-        # Fall back to spec.yaml dependencies
-        dependencies = spec.dependencies.get("python", [])
-        if not dependencies:
-            return True
-
-        integration_name = spec.name
-        missing_deps = []
-
-        # Check which dependencies are missing
-        for dep in dependencies:
-            # Extract package name (handle cases like 'package>=1.0.0')
-            pkg_name = (
-                dep.split(">=")[0].split("==")[0].split("<")[0].split(">")[0].strip()
-            )
-            if pkg_name in self.installed_dependencies:
-                continue
-
-            try:
-                __import__(pkg_name.replace("-", "_"))
-                self.installed_dependencies.add(pkg_name)
-            except ImportError:
-                missing_deps.append(dep)
-
-        if not missing_deps:
-            return True
-
-        # Auto-install missing dependencies (silently)
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--quiet"] + missing_deps,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
-            # Mark as installed
-            for dep in missing_deps:
-                pkg_name = (
-                    dep.split(">=")[0]
-                    .split("==")[0]
-                    .split("<")[0]
-                    .split(">")[0]
-                    .strip()
-                )
-                self.installed_dependencies.add(pkg_name)
-
-            return True
-
-        except subprocess.CalledProcessError:
-            return False
-    
-    def _install_from_pyproject(
-        self, spec: IntegrationSpec, pyproject_path: Path, verbose: bool = True
-    ) -> bool:
-        """Install integration using pyproject.toml."""
-        try:
-            # Check if integration directory is already installed as editable
-            integration_name = spec.name
             check_result = subprocess.run(
-                [sys.executable, "-m", "pip", "show", f"praxis-integration-{integration_name}"],
+                [sys.executable, "-m", "pip", "show", f"praxis-integration-{spec.name}"],
                 capture_output=True,
                 text=True
             )
-            
-            if check_result.returncode == 0:
-                # Already installed
-                return True
-            
-            # Install the integration directory as editable package
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "-e", str(spec.path), "--quiet"],
-                stdout=subprocess.DEVNULL if not verbose else None,
-                stderr=subprocess.DEVNULL if not verbose else None,
-            )
-            
-            return True
-            
-        except subprocess.CalledProcessError:
-            return False
+            return check_result.returncode == 0
+        
+        # No pyproject.toml means no dependencies
+        return True
 
     def _register_integration(self, integration: BaseIntegration) -> List[str]:
         """Register integration's features in the legacy registry.

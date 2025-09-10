@@ -13,7 +13,6 @@ class IntegrationSpec:
     REQUIRED_FIELDS = ["name", "version", "description"]
     OPTIONAL_FIELDS = [
         "author",
-        "dependencies",
         "conditions",
         "provides",
         "integrations",
@@ -67,11 +66,6 @@ class IntegrationSpec:
     def author(self) -> Optional[str]:
         """Get integration author."""
         return self._data.get("author")
-
-    @property
-    def dependencies(self) -> Dict[str, List[str]]:
-        """Get integration dependencies."""
-        return self._data.get("dependencies", {})
 
     @property
     def conditions(self) -> List[str]:
@@ -231,6 +225,17 @@ class BaseIntegration(ABC):
         """
         pass
 
+    def on_decoder_init(self, decoder: Any, config: Any) -> None:
+        """Hook called when a decoder is initialized.
+        
+        Args:
+            decoder: The decoder instance being initialized
+            config: The model configuration
+            
+        Note: Override this method if your integration needs to modify decoders.
+        """
+        pass
+
     @property
     def is_initialized(self) -> bool:
         """Check if the integration has been initialized."""
@@ -323,7 +328,7 @@ class IntegrationFactory:
         # Get all public methods from BaseIntegration (our allowed list)
         base_methods = {
             'add_cli_args', 'initialize', 'cleanup', 'provide_dataset',
-            'provide_logger', 'on_api_server_start', 'request_middleware'
+            'provide_logger', 'on_api_server_start', 'request_middleware', 'on_decoder_init'
         }
         
         # Get all callable attributes from the module
@@ -404,3 +409,8 @@ class LegacyIntegrationWrapper(BaseIntegration):
         """Delegate to legacy module's request_middleware if it exists."""
         if hasattr(self.module, "request_middleware"):
             return self.module.request_middleware(request, response)
+
+    def on_decoder_init(self, decoder: Any, config: Any) -> None:
+        """Delegate to legacy module's on_decoder_init if it exists."""
+        if hasattr(self.module, "on_decoder_init"):
+            self.module.on_decoder_init(decoder, config)

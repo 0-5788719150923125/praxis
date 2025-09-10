@@ -19,14 +19,25 @@ class GunAdapter:
     
     def __init__(self, max_cache_size=1000):
         self._nodejs_process = None
-        self._output_queue = multiprocessing.Queue(maxsize=max_cache_size)
-        self._stop_event = multiprocessing.Event()
+        self._output_queue = None
+        self._stop_event = None
         self._process = None
         self._max_cache_size = max_cache_size
         self._cache = deque(maxlen=max_cache_size)
-        self._cache_lock = multiprocessing.Lock()
-        self._connect_gun()
+        self._cache_lock = None
+        self._initialized = False
+        # Don't connect immediately - wait for first use
 
+    def _ensure_connected(self):
+        """Ensure Gun.js connection is established (lazy initialization)."""
+        if not self._initialized:
+            # Create multiprocessing objects only when needed
+            self._output_queue = multiprocessing.Queue(maxsize=self._max_cache_size)
+            self._stop_event = multiprocessing.Event()
+            self._cache_lock = multiprocessing.Lock()
+            self._connect_gun()
+            self._initialized = True
+    
     def _connect_gun(self):
         try:
             # Get the path to the gun.mjs file in this module
@@ -94,6 +105,9 @@ class GunAdapter:
                         pass  # Queue became empty, try putting again
 
     def get_sample(self, num_entries=10):
+        # Ensure connection is established before trying to get samples
+        self._ensure_connected()
+        
         new_entries = []
         while len(new_entries) < num_entries:
             try:
@@ -114,13 +128,22 @@ class GunAdapter:
         return sample
 
     def __del__(self):
-        if self._nodejs_process:
+        """Clean up Gun.js resources when object is destroyed."""
+        if self._initialized and self._nodejs_process:
             print("[Gun] Terminating Node.js process...")
-            self._stop_event.set()
+            if self._stop_event:
+                self._stop_event.set()
             self._nodejs_process.terminate()
-            self._nodejs_process.wait()
-            if self._process:
+            try:
+                self._nodejs_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._nodejs_process.kill()
+                self._nodejs_process.wait()
+            
+            if self._process and self._process.is_alive():
                 self._process.join(timeout=5)
+                if self._process.is_alive():
+                    self._process.terminate()
             print("[Gun] Node.js process terminated.")
 
 
@@ -208,8 +231,8 @@ class Integration(BaseIntegration):
             )
             time.sleep(5)
 
-        # Create the Gun adapter
-        self.gun_adapter = GunAdapter()
+        # Don't create the Gun adapter here - wait until dataset is requested
+        # This avoids pickle errors with multiprocessing objects
         
         # Mark as properly initialized
         self._initialized = True
@@ -227,11 +250,15 @@ class Integration(BaseIntegration):
     ) -> Optional[Any]:
         """Provide Gun dataset when requested."""
         # Only provide dataset if properly initialized
-        if not self._initialized or self.gun_adapter is None:
+        if not self._initialized:
             print(
                 "[Gun] ERROR: Dataset requested but module not initialized (--gun flag not set)"
             )
             return None
+
+        # Create the Gun adapter on demand (lazy initialization)
+        if self.gun_adapter is None:
+            self.gun_adapter = GunAdapter()
 
         # Import here to avoid circular dependency
         from praxis.data.datasets import PraxisSampler

@@ -1,3 +1,5 @@
+"""Hivemind integration for decentralized deep learning."""
+
 import logging
 import random
 import time
@@ -6,37 +8,28 @@ from ipaddress import ip_address
 from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+
+from praxis.integrations.base import BaseIntegration, IntegrationSpec
+
+ConfigType = TypeVar("ConfigType", bound="AutoConfig")
+
 # Filter protobuf version warnings that come from hivemind
 warnings.filterwarnings(
     "ignore",
     message=".*Protobuf gencode version.*is exactly one major version older.*",
 )
 
-import hivemind
-import requests
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from hivemind import DHT
-from hivemind.moe import ModuleBackend, Server, get_experts
-from hivemind.moe.server.layers import name_to_block
-from hivemind.moe.server.layers.custom_experts import register_expert_class
-from hivemind.p2p import P2PDaemonError, P2PHandlerError
-from hivemind.proto.runtime_pb2 import CompressionType
-from hivemind.utils import BatchTensorDescriptor
-from hivemind.utils.networking import log_visible_maddrs
-from torch import Tensor
 
-from praxis.orchestration import RemoteExpert
-from praxis.routers import ROUTER_REGISTRY
-from praxis.utils import PREFIXES, SUFFIXES
-
-ConfigType = TypeVar("ConfigType", bound="AutoConfig")
-
-
-class PraxisManagement:
+class HivemindOrchestrator:
     """
-    A helper class, with convenience methods for Hivemind swarm management.
+    Orchestrator for Hivemind decentralized deep learning operations.
+    
+    This class manages the connection to the Hivemind swarm, handles expert
+    registration and discovery, and coordinates distributed training.
 
     When using Hivemind, there are certain limitations:
 
@@ -58,6 +51,22 @@ class PraxisManagement:
             config: Model configuration
         """
         super().__init__()
+        
+        # Lazy import hivemind only when needed
+        global hivemind, requests, DHT, ModuleBackend, Server, get_experts
+        global name_to_block, register_expert_class, P2PDaemonError, P2PHandlerError
+        global CompressionType, BatchTensorDescriptor, log_visible_maddrs
+        
+        import hivemind
+        import requests
+        from hivemind import DHT
+        from hivemind.moe import ModuleBackend, Server, get_experts
+        from hivemind.moe.server.layers import name_to_block
+        from hivemind.moe.server.layers.custom_experts import register_expert_class
+        from hivemind.p2p import P2PDaemonError, P2PHandlerError
+        from hivemind.proto.runtime_pb2 import CompressionType
+        from hivemind.utils import BatchTensorDescriptor
+        from hivemind.utils.networking import log_visible_maddrs
 
         self.config = config
 
@@ -73,8 +82,12 @@ class PraxisManagement:
         # version = ip_address(address).version
         # announce_maddrs = [f"/ip{version}/{address}/tcp/0"]
         self.use_ipfs = False
+        
+        # Get initial peers from config
+        initial_peers = getattr(config, 'initial_peers', [])
+        
         self.dht = DHT(
-            initial_peers=PUBLIC_INITIAL_PEERS,
+            initial_peers=PUBLIC_INITIAL_PEERS + initial_peers,
             # initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
             # initial_peers=PUBLIC_INITIAL_PEERS + config.initial_peers,
             # initial_peers=config.initial_peers,
@@ -93,6 +106,11 @@ class PraxisManagement:
         visible_maddrs_str = [str(a) for a in self.dht.get_visible_maddrs()]
         self.backends = {}
         self.active_local_experts = []
+
+        # Import RemoteExpert from orchestration
+        from praxis.orchestration import RemoteExpert
+        from praxis.routers import ROUTER_REGISTRY
+        self.RemoteExpert = RemoteExpert
 
         router_cls = ROUTER_REGISTRY.get("mixture_of_depths")
         self.router = router_cls(
@@ -234,11 +252,12 @@ class PraxisManagement:
         Returns:
             Generated random name string
         """
+        from praxis.utils import PREFIXES, SUFFIXES
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
     def _generate_unique_name(
         self, k: int = 3, run_once: bool = False
-    ) -> Tuple[str, Optional[RemoteExpert]]:
+    ) -> Tuple[str, Optional[Any]]:
         """
         Generate a unique expert name not currently in use.
 
@@ -264,7 +283,7 @@ class PraxisManagement:
             if new_name in self.expert_uids:
                 continue
             new_expert = get_experts(self.dht, [new_name])[0]
-            if isinstance(new_expert, RemoteExpert) and not run_once:
+            if isinstance(new_expert, self.RemoteExpert) and not run_once:
                 continue
             else:
                 return new_name, new_expert
@@ -277,7 +296,7 @@ class PraxisManagement:
         if new_expert is None:
             return
         if new_expert.uid not in self.expert_uids:
-            expert = RemoteExpert(
+            expert = self.RemoteExpert(
                 self.config,
                 HivemindWrapper(new_expert),
                 self.router,
@@ -292,13 +311,26 @@ class PraxisManagement:
             ]
             print(random.choice(messages))
 
+    def cleanup(self) -> None:
+        """
+        Clean up Hivemind resources.
+        """
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+        if hasattr(self, 'dht'):
+            try:
+                self.dht.shutdown()
+            except:
+                pass
+
 
 class HivemindWrapper:
     """
     Ensures that gradients are not computed for remote experts.
     """
 
-    def __init__(self, module: RemoteExpert) -> None:
+    def __init__(self, module: Any) -> None:
         """
         Initialize wrapper for remote expert.
 
@@ -374,3 +406,140 @@ IPFS_INITIAL_PEERS = [
     "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
     "/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
 ]
+
+
+# Global instance holder
+_management_instance = None
+
+
+class Integration(BaseIntegration):
+    """Hivemind integration for decentralized deep learning."""
+
+    def __init__(self, spec: IntegrationSpec):
+        """Initialize the Hivemind integration."""
+        super().__init__(spec)
+        self.manager = None
+
+    def add_cli_args(self, parser) -> None:
+        """Add Hivemind CLI arguments to the parser."""
+        networking_group = None
+
+        # Find the 'networking' argument group
+        for group in parser._action_groups:
+            if group.title == "networking":
+                networking_group = group
+                break
+
+        if networking_group is None:
+            networking_group = parser.add_argument_group("networking")
+
+        networking_group.add_argument(
+            "--hivemind",
+            action="store_true",
+            default=False,
+            help="Connect your node to the Hivemind swarm",
+        )
+        networking_group.add_argument(
+            "--initial-peers",
+            nargs="*",
+            default=[],
+            help="Provide a list of Hivemind bootstrap peers",
+        )
+
+    def initialize(
+        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Initialize the Hivemind integration when conditions are met."""
+        global _management_instance
+        
+        # Check if hivemind is actually installed
+        try:
+            import hivemind
+        except ImportError:
+            print("❌ Hivemind integration enabled but hivemind package not installed.")
+            print("   Install with: pip install hivemind>=1.1.0")
+            return {}
+        
+        self._initialized = True
+        
+        # Store initial peers in config for later use
+        if hasattr(args, 'initial_peers'):
+            # This will be accessed by HivemindOrchestrator
+            pass
+        
+        return {"hivemind_enabled": True}
+
+    def on_decoder_init(self, decoder: Any, config: Any) -> None:
+        """Hook called when a decoder is initialized.
+        
+        This is where we inject the Hivemind orchestrator.
+        
+        Args:
+            decoder: The decoder instance being initialized
+            config: The model configuration
+        """
+        global _management_instance
+        
+        # Only create manager if config has hivemind=True
+        if getattr(config, 'hivemind', False):
+            if _management_instance is None:
+                _management_instance = HivemindOrchestrator(config)
+            
+            # Inject the manager into the decoder
+            decoder.manager = _management_instance
+            
+            # Update remotes reference
+            if hasattr(decoder, 'remotes'):
+                decoder.remotes = _management_instance.active_remote_experts
+
+    def cleanup(self) -> None:
+        """Clean up Hivemind resources."""
+        global _management_instance
+        
+        if _management_instance is not None:
+            _management_instance.cleanup()
+            _management_instance = None
+
+
+def get_hivemind_manager(config: Any) -> Optional[HivemindOrchestrator]:
+    """Get the global Hivemind orchestrator instance if available.
+    
+    Args:
+        config: Model configuration
+        
+    Returns:
+        HivemindOrchestrator instance or None
+    """
+    global _management_instance
+    
+    if _management_instance is None and getattr(config, 'hivemind', False):
+        # Try to import hivemind
+        try:
+            import hivemind
+            _management_instance = HivemindOrchestrator(config)
+        except ImportError:
+            print("Warning: Hivemind enabled but package not installed")
+            return None
+    
+    return _management_instance
+
+
+def get_hivemind_errors() -> Tuple[type, type]:
+    """Get Hivemind error classes for exception handling.
+    
+    Returns:
+        Tuple of (P2PDaemonError, P2PHandlerError) exception classes
+    """
+    try:
+        from hivemind.p2p import P2PDaemonError, P2PHandlerError
+        return P2PDaemonError, P2PHandlerError
+    except ImportError:
+        # Return dummy exceptions if Hivemind not available
+        class P2PDaemonError(Exception):
+            pass
+        
+        class P2PHandlerError(Exception):
+            pass
+        
+        return P2PDaemonError, P2PHandlerError

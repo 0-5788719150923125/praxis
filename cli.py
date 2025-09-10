@@ -128,7 +128,22 @@ other_group = parser.add_argument_group("other")
 integration_loader = IntegrationLoader()
 integrations = integration_loader.discover_integrations()
 
-# Load integrations that can add CLI arguments (without condition checks yet)
+# Do a preliminary parse to check which integrations are needed
+# We need to know this BEFORE installing dependencies
+preliminary_parser = argparse.ArgumentParser(add_help=False)
+# Add known integration flags for condition checking
+for integration_manifest in integrations:
+    # Add basic flag for each integration (e.g., --ngrok, --wandb)
+    integration_name = integration_manifest.name
+    preliminary_parser.add_argument(f"--{integration_name}", action="store_true", default=False)
+
+# Parse known args (ignore unknown args from integrations)
+preliminary_args, _ = preliminary_parser.parse_known_args()
+
+# Bootstrap only integrations whose conditions are met
+integration_loader.bootstrap_integrations(preliminary_args)
+
+# Now load integrations that can add CLI arguments (without condition checks yet)
 for integration_manifest in integrations:
     integration_loader.load_integration(integration_manifest, verbose=False)
 
@@ -531,18 +546,6 @@ optimization_group.add_argument(
     help="Use the Schedule-Free optimizer wrapper",
 )
 # networking
-networking_group.add_argument(
-    "--hivemind",
-    action="store_true",
-    default=False,
-    help="Connect your node to the Hivemind swarm",
-)
-networking_group.add_argument(
-    "--initial-peers",
-    nargs="*",
-    default=[],
-    help="Provide a list of Hivemind bootstrap peers",
-)
 # data
 data_group.add_argument(
     "--data-path",

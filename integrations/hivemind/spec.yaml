@@ -1,0 +1,18 @@
+name: hivemind
+version: 0.1.0
+description: Decentralized deep learning integration for distributed training across the Hivemind swarm
+author: Praxis Team
+
+conditions:
+  - "args.hivemind"
+
+provides:
+  - decentralized_training
+  - p2p_networking
+  - remote_experts
+  - distributed_experts
+  
+integrations:
+  hooks:
+    - on_model_init
+    - on_decoder_init

@@ -4,7 +4,17 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.orchestration.hivemind import P2PDaemonError, P2PHandlerError
+# Try to import Hivemind errors if available (from integration)
+try:
+    from integrations.hivemind import get_hivemind_errors
+    P2PDaemonError, P2PHandlerError = get_hivemind_errors()
+except (ImportError, AttributeError):
+    # Create dummy exceptions for when Hivemind is not available
+    class P2PDaemonError(Exception):
+        pass
+    
+    class P2PHandlerError(Exception):
+        pass
 
 
 def create_forward(

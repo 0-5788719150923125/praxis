@@ -21,7 +21,7 @@ if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     # Quick check if praxis is installed
     if ! python -c "import praxis" 2>/dev/null; then
         echo "[INFO] Installing Praxis in development mode..."
-        pip install -e "$SCRIPT_DIR" --quiet
+        pip install -e "$SCRIPT_DIR"
         echo "[INFO] Praxis installation complete"
     else
         echo "[INFO] Praxis is installed."

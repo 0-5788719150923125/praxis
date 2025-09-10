@@ -13,7 +13,6 @@ from praxis.experimental.evolution import GenomicBottleneck
 from praxis.orchestration import (
     EXPERT_REGISTRY,
     LocalExpert,
-    PraxisManagement,
     RemoteExpert,
 )
 from praxis.sorting import SORTING_REGISTRY
@@ -41,9 +40,10 @@ class BaseDecoder(nn.Module):
         self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
-        if config.hivemind:
-            self.manager = PraxisManagement(config)
-            self.remotes = self.manager.active_remote_experts
+        
+        # Call integration hooks for decoder initialization
+        # This allows integrations like Hivemind to inject their management systems
+        self._call_integration_hooks(config)
         if "scatter" in config.meta or config.expert in ["scatter"]:
             block = BLOCK_REGISTRY[config.block_type](config)
             expert = LocalExpert(config, block=block)
@@ -102,7 +102,33 @@ class BaseDecoder(nn.Module):
             if config.block_type == "mru"
             else False
         )
-        if self.manager:
+    
+    def _call_integration_hooks(self, config: ConfigType) -> None:
+        """Call integration hooks for decoder initialization.
+        
+        This allows integrations to modify the decoder during initialization.
+        For example, the Hivemind integration uses this to inject its management system.
+        
+        Args:
+            config: Model configuration
+        """
+        try:
+            # Try to get the integration loader if available
+            # We import it this way to avoid circular imports and other issues
+            import sys
+            if 'cli' in sys.modules and hasattr(sys.modules['cli'], 'integration_loader'):
+                integration_loader = sys.modules['cli'].integration_loader
+                
+                # Call on_decoder_init for all active integrations
+                for integration in integration_loader.loaded_integrations.values():
+                    if hasattr(integration, 'on_decoder_init'):
+                        integration.on_decoder_init(self, config)
+        except (ImportError, AttributeError, RuntimeError):
+            # Integration loader not available or other issues, skip hooks
+            pass
+        
+        # If manager was injected by integration, start serving experts
+        if self.manager and hasattr(self.manager, 'serve_experts'):
             self.manager.serve_experts()
 
     def post_layer(self, states: Tensor, current_depth: int) -> Tensor:

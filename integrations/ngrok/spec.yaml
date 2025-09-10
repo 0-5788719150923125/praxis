@@ -1,10 +1,6 @@
 name: "ngrok"
 version: "0.1.0"
 description: "Ngrok tunnel integration for exposing API server"
-dependencies:
-  python:
-    - "ngrok"
-    - "python-dotenv"
 conditions:
   - "args.ngrok"
 integrations:

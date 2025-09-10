@@ -19,8 +19,5 @@ integrations:
   logger_providers:
     function: "create_logger"
 
-dependencies:
-  python: ["wandb", "lightning"]
-
 conditions:
   - "args.wandb == True"

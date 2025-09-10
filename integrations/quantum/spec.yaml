@@ -9,10 +9,6 @@ provides:
   - datasets  # Provides training data
   - lifecycle  # Has initialize function
 
-# Dependencies needed for this module
-dependencies:
-  python: []
-
 # Conditions when this module should be loaded
 conditions:
   - "args.quantum"

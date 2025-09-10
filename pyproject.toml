@@ -22,7 +22,6 @@ dependencies = [
     "flask",
     "flask-cors",
     "flask-socketio",
-    "hivemind",
     "isort",
     # "lighteval[math]",
     "lightning",
