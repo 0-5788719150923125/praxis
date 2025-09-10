@@ -30,6 +30,14 @@ class SignalHandlerCallback(Callback):
         if hasattr(trainer, 'datamodule'):
             self.datamodule_ref = trainer.datamodule
         
+        # Find TerminalInterface callback to access dashboard
+        self.terminal_interface = None
+        if hasattr(trainer, 'callbacks'):
+            for callback in trainer.callbacks:
+                if callback.__class__.__name__ == 'TerminalInterface':
+                    self.terminal_interface = callback
+                    break
+        
         # Enable fast CUDA shutdown mode
         self.cuda_manager.patch_synchronize_for_shutdown()
         
@@ -50,6 +58,15 @@ class SignalHandlerCallback(Callback):
                 # First signal: request graceful shutdown
                 print(f"\n🛑 Shutdown requested, stopping training...")
                 
+                # Immediately stop dashboard in main thread (critical for terminal state)
+                if self.terminal_interface and hasattr(self.terminal_interface, 'dashboard'):
+                    try:
+                        dashboard = self.terminal_interface.dashboard
+                        if dashboard:
+                            dashboard.stop()
+                    except:
+                        pass
+                
                 # Signal CUDA manager that shutdown is requested
                 self.cuda_manager.request_shutdown()
                 
@@ -58,7 +75,27 @@ class SignalHandlerCallback(Callback):
                     """Run shutdown operations in parallel."""
                     threads = []
                     
-                    # 1. DataLoader shutdown
+                    # 1. Shutdown dashboard first (most important for terminal state)
+                    if self.terminal_interface and hasattr(self.terminal_interface, 'dashboard'):
+                        def shutdown_dashboard():
+                            try:
+                                dashboard = self.terminal_interface.dashboard
+                                if dashboard:
+                                    dashboard.stop()
+                                    # Call the exit handler to restore terminal
+                                    dashboard.__exit__(None, None, None)
+                                    self.terminal_interface.dashboard = None
+                            except Exception as e:
+                                # Fallback: at least try to restore cursor
+                                try:
+                                    import sys
+                                    sys.stderr.write("\033[?25h")
+                                    sys.stderr.flush()
+                                except:
+                                    pass
+                        threads.append(threading.Thread(target=shutdown_dashboard, daemon=True))
+                    
+                    # 2. DataLoader shutdown
                     if self.datamodule_ref and isinstance(self.datamodule_ref, PraxisDataModule):
                         def shutdown_dataloaders():
                             try:
@@ -67,7 +104,7 @@ class SignalHandlerCallback(Callback):
                                 print(f"   Warning: DataLoader shutdown error: {e}")
                         threads.append(threading.Thread(target=shutdown_dataloaders, daemon=True))
                     
-                    # 2. CUDA cleanup (if GPU is being used)
+                    # 3. CUDA cleanup (if GPU is being used)
                     if torch.cuda.is_available() and torch.cuda.is_initialized():
                         def cuda_cleanup():
                             try:

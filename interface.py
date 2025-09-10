@@ -420,6 +420,20 @@ class TerminalDashboard:
             self._restore_terminal()
             self.terminal_restored = True
 
+    def _restore_terminal_safe(self):
+        """Safe wrapper for terminal restoration that can be called from signal handlers."""
+        try:
+            if not self.terminal_restored:
+                self._restore_terminal()
+                self.terminal_restored = True
+        except:
+            # Last resort - try to show cursor at least
+            try:
+                sys.stderr.write("\033[?25h")  # ANSI escape to show cursor
+                sys.stderr.flush()
+            except:
+                pass
+
     def _restore_terminal(self):
         """Fully restore terminal to its original state."""
         try:
@@ -488,6 +502,16 @@ class TerminalDashboard:
                     self.saved_terminal_state = None
         except ImportError:
             self.saved_terminal_state = None
+
+        # Register terminal restoration with shutdown manager
+        # Use high priority (10) to ensure terminal is restored early
+        try:
+            from praxis.utils.system import get_shutdown_manager
+            shutdown_manager = get_shutdown_manager()
+            shutdown_manager.register_cleanup(self._restore_terminal_safe, priority=10)
+        except ImportError:
+            # Fallback if shutdown manager not available
+            pass
 
         # Set up signal handlers to catch crashes
         self._setup_signal_handlers()
