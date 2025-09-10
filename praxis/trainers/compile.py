@@ -34,9 +34,10 @@ def try_compile_model(model, hparams):
         print("[Compile] Skipping compilation on CPU (not beneficial)")
         return model
 
-    # Skip compilation in dev mode (faster iteration)
-    if getattr(hparams, "dev", False):
-        print("[Compile] Skipping compilation in dev mode")
+    # Skip compilation if feature flag is set (faster iteration)
+    from praxis.environments import EnvironmentFeatures
+    if EnvironmentFeatures.is_enabled('skip_compilation'):
+        print("[Compile] Skipping compilation (skip_compilation feature enabled)")
         return model
 
     # Skip compilation for certain problematic configurations
@@ -153,8 +154,9 @@ def try_compile_optimizer(optimizer, hparams):
     if "cpu" in str(device).lower():
         return optimizer
 
-    # Skip compilation in dev mode
-    if getattr(hparams, "dev", False):
+    # Skip compilation if feature flag is set
+    from praxis.environments import EnvironmentFeatures
+    if EnvironmentFeatures.is_enabled('skip_compilation'):
         return optimizer
 
     # Check if optimizer step can be compiled

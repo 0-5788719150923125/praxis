@@ -1,0 +1,26 @@
+# Development environment configuration
+# Applied when using --dev flag
+#
+# This environment provides faster iteration for development:
+# - Smaller model (3 layers)
+# - Minimal datasets
+# - Skip compilation for faster startup
+# - Force reset to always start fresh
+# - Enable anomaly detection for debugging
+
+overrides:
+  depth: 3
+  num_experts: 3
+  batch_size: 1
+  phi: false
+  quantum: false
+  ngrok: false
+  wandb: false
+  debug: false
+
+features:
+  force_reset: true # Always start from a new model (skip checkpoint loading)
+  detect_anomaly: true # Enable PyTorch anomaly detection for debugging
+  skip_compilation: true # Skip torch.compile for faster startup
+  minimal_data: true # Use minimal datasets for quick testing
+  cache_isolation: true # Use separate cache directory to avoid conflicts

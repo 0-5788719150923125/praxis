@@ -140,7 +140,17 @@ def main():
     tokenizer_path = processed_args.get("tokenizer_path")
     encoder_type = processed_args.get("encoder_type")
     vocab_size = processed_args["vocab_size"]
+    # Import EnvironmentFeatures to check for feature flags
+    from praxis.environments import EnvironmentFeatures
+    
     cache_dir = processed_args["cache_dir"]
+    
+    # Apply cache isolation if feature is enabled
+    if EnvironmentFeatures.is_enabled('cache_isolation'):
+        active_env = EnvironmentFeatures.get_active_environment()
+        if active_env:
+            cache_dir = os.path.join(cache_dir, f"env_{active_env}")
+            print(f"[Environment] Using isolated cache directory: {cache_dir}")
     optimizer = processed_args["optimizer"]
     fixed_schedule = processed_args.get("fixed_schedule", False)
     schedule_free = processed_args.get("schedule_free", False)
@@ -151,7 +161,6 @@ def main():
     target_batch_size = processed_args.get("target_batch_size", batch_size)
     block_size = processed_args["block_size"]
     device = processed_args["device"]
-    dev = processed_args.get("dev", False)
     max_steps = processed_args.get("max_steps")
     use_dashboard = processed_args.get("use_dashboard", False)
     reset = processed_args.get("reset", False)
@@ -212,7 +221,6 @@ def main():
         supersample_chance=0.01,  # quadruple the block_size
         hypersample_chance=0.001,  # octuple the block_size
         device=device,
-        dev=dev,
         trainer_type=trainer_type,
         **config.to_dict(),
     )
@@ -234,7 +242,7 @@ def main():
         enable_checkpointing=True,
         enable_progress_bar=not use_dashboard,
         enable_model_summary=False,
-        detect_anomaly=True if dev else False,
+        detect_anomaly=EnvironmentFeatures.is_enabled('detect_anomaly'),
         val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
         num_sanity_val_steps=0,
         limit_val_batches=16384 // hparams["batch_size"],
@@ -278,7 +286,8 @@ def main():
         perform_reset(cache_dir, truncated_hash, integration_loader)
 
     ckpt_path = None
-    if not reset and not dev:
+    # Check for force_reset feature or explicit reset flag
+    if not reset and not EnvironmentFeatures.is_enabled('force_reset'):
         symlink = os.path.join(cache_dir, "model", "last.ckpt")
         true_link = find_latest_checkpoint(cache_dir)
         if os.path.exists(symlink):
@@ -314,7 +323,7 @@ def main():
             seed,
             truncated_hash=truncated_hash,
             full_hash=args_hash,
-            dev_mode=dev,
+            dev_mode=(EnvironmentFeatures.get_active_environment() == 'dev'),
         )
         api_server.start()
 
@@ -332,8 +341,9 @@ def main():
 
     # Load datasets
     use_source_code = not no_source
+    # Pass minimal_data feature flag instead of old dev variable
     dataintegration = get_datamodules(
-        seed, dev, pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
+        seed, EnvironmentFeatures.is_enabled('minimal_data'), pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
     )
 
     # create the optimizer
@@ -441,7 +451,7 @@ def main():
             embed_size=config.embed_size,
             dropout=dropout,
             use_source_code=use_source_code,
-            dev=dev,
+            dev=(EnvironmentFeatures.get_active_environment() == 'dev'),
             target_batch_size=target_batch_size,
         )
     )

@@ -249,7 +249,9 @@ def get_dataset_configs(
         config = add_collection(config, "base", "primary")
         if phi:
             config = add_collection(config, "phi", "primary")
-        if dev:
+        # Check for minimal_data feature flag
+        from praxis.environments import EnvironmentFeatures
+        if EnvironmentFeatures.is_enabled('minimal_data'):
             config["primary"] = []
             config = add_collection(config, "dev", "primary")
             # Add RL datasets even in dev mode if RL is enabled

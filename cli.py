@@ -695,8 +695,74 @@ def load_experiments():
     return experiment_configs
 
 
+# Load environments functionality
+def load_environments():
+    """
+    Load environment files from the environments directory and add them as CLI arguments.
+    Each YAML file in environments/ becomes a --<filename> flag that applies those settings
+    with highest priority (overwrites everything else).
+    """
+    environments_dir = Path("environments")
+    if not environments_dir.exists():
+        return {}
+    
+    # Get environment files
+    environment_files = list(environments_dir.glob("*.yml"))
+    if not environment_files:
+        return {}
+    
+    # Create environments argument group
+    environments_group = parser.add_argument_group("environments")
+    environment_configs = {}
+    
+    for environment_file in environment_files:
+        # Validate and normalize the environment name
+        name = environment_file.stem.lower()
+        
+        # Only allow alphanumeric characters and hyphens
+        if not re.match(r"^[a-z0-9-]+$", name):
+            print(
+                f"Warning: Skipping environment '{environment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
+            )
+            continue
+        
+        # Check for conflicts with existing arguments (except --dev which we're replacing)
+        arg_name = f"--{name}"
+        if name != "dev" and any(arg_name in action.option_strings for action in parser._actions):
+            print(
+                f"Warning: Skipping environment '{environment_file.name}' - conflicts with existing argument {arg_name}"
+            )
+            continue
+        
+        # For --dev, we'll handle it specially to maintain backward compatibility
+        if name != "dev":
+            environments_group.add_argument(
+                arg_name,
+                action="store_true",
+                default=False,
+                help=f"Apply {name} environment configuration (highest priority)",
+            )
+        
+        # Store the environment config for later application
+        try:
+            with open(environment_file, "r") as f:
+                config = yaml.safe_load(f)
+                environment_configs[name] = {
+                    'overrides': config.get('overrides', {}),
+                    'features': config.get('features', {})
+                }
+        except Exception as e:
+            print(f"Warning: Failed to load environment '{environment_file.name}': {e}")
+            continue
+    
+    return environment_configs
+
+
 # Load experiments and add them as CLI arguments
 experiment_configs = load_experiments()
+
+# Load environments and add them as CLI arguments
+environment_configs = load_environments()
 
 # Destructure CLI arguments
 args = parser.parse_args()
@@ -733,7 +799,62 @@ if experiment_configs:
                 # Always set the value, even if the attribute doesn't exist yet
                 setattr(args, attr_name, value)
 
-# Now check integration conditions based on parsed args
+# Apply environment overrides LAST (highest priority) - they override everything
+# Also check for mutual exclusivity and handle --dev backward compatibility
+from praxis.environments import EnvironmentFeatures
+
+active_environment = None
+environment_features = {}
+
+# Check if --dev flag was used (backward compatibility)
+if getattr(args, 'dev', False):
+    # If dev.yml exists in environments, use it
+    if 'dev' in environment_configs:
+        active_environment = 'dev'
+        print("Note: --dev flag is deprecated. Use environments/dev.yml configuration instead.")
+    else:
+        # Fallback to hardcoded dev behavior for backward compatibility
+        print("Warning: --dev flag used but environments/dev.yml not found. Using legacy behavior.")
+        # Apply legacy dev overrides
+        args.depth = 3
+        args.num_experts = 3
+        # Set legacy dev features
+        environment_features = {
+            'force_reset': True,
+            'detect_anomaly': True,
+            'skip_compilation': True,
+            'minimal_data': True,
+            'cache_isolation': True,
+        }
+
+# Check for environment flags and apply them
+for env_name, env_config in environment_configs.items():
+    if env_name == 'dev' and active_environment == 'dev':
+        # Already handled above
+        pass
+    elif getattr(args, env_name.replace("-", "_"), False):
+        if active_environment and active_environment != env_name:
+            raise ValueError(
+                f"Cannot use multiple environments simultaneously: --{active_environment} and --{env_name}"
+            )
+        active_environment = env_name
+
+# Apply the active environment's configuration if one is set
+if active_environment and active_environment in environment_configs:
+    env_config = environment_configs[active_environment]
+    
+    # Apply overrides (these have highest priority, overwrite everything)
+    for key, value in env_config['overrides'].items():
+        attr_name = key.replace("-", "_")
+        setattr(args, attr_name, value)
+    
+    # Store features for global access
+    environment_features = env_config['features']
+
+# Set environment features globally for use throughout the codebase
+EnvironmentFeatures.set_from_environment(environment_features, active_environment)
+
+# Now check integration conditions based on parsed args (with environment overrides applied)
 for integration_manifest in integrations:
     integration_loader.load_integration(integration_manifest, args, verbose=False)
 
@@ -787,13 +908,31 @@ def apply_defaults_and_parse(defaults_dict):
                     # Always set the value, even if the attribute doesn't exist yet
                     setattr(args, attr_name, value)
 
-    # Apply --dev flag overrides AFTER experiments
-    # Dev mode should always override experiment values to ensure fast development
-    if getattr(args, "dev", False):
-        args.depth = 3
-        # Only override num_experts if not explicitly set by user via command line
-        if "--num-experts" not in sys.argv and "--num_experts" not in sys.argv:
-            args.num_experts = 3
+    # Apply environment overrides in apply_defaults_and_parse too
+    # This handles environments when using custom scripts
+    from praxis.environments import EnvironmentFeatures
+    
+    active_env = None
+    env_features = {}
+    
+    # Check for --dev backward compatibility
+    if getattr(args, "dev", False) and 'dev' in environment_configs:
+        active_env = 'dev'
+        env_features = environment_configs['dev']['features']
+        for key, value in environment_configs['dev']['overrides'].items():
+            setattr(args, key.replace("-", "_"), value)
+    
+    # Apply any other active environment
+    for env_name in environment_configs:
+        if getattr(args, env_name.replace("-", "_"), False) and env_name != 'dev':
+            if active_env:
+                raise ValueError(f"Cannot use multiple environments: --{active_env} and --{env_name}")
+            active_env = env_name
+            env_features = environment_configs[env_name]['features']
+            for key, value in environment_configs[env_name]['overrides'].items():
+                setattr(args, key.replace("-", "_"), value)
+    
+    EnvironmentFeatures.set_from_environment(env_features, active_env)
 
     # Re-evaluate integration conditions with new args
     for integration_manifest in integrations:
@@ -991,18 +1130,13 @@ def create_praxis_config(args=None, tokenizer=None):
             int(parts[1]) if len(parts) > 1 else int(parts[0])
         )
 
-    # Handle dev mode adjustments
-    if hasattr(args, "dev") and args.dev:
-        config_kwargs["depth"] = 3
-        # In dev mode, always use 3 experts for faster development
-        config_kwargs["num_experts"] = 3
-    else:
-        # num_experts defaults to depth if not specified
-        if (
-            "num_experts" not in config_kwargs
-            or config_kwargs.get("num_experts") is None
-        ):
-            config_kwargs["num_experts"] = config_kwargs.get("depth", 2)
+    # num_experts defaults to depth if not specified
+    # (Environment overrides will have already been applied if active)
+    if (
+        "num_experts" not in config_kwargs
+        or config_kwargs.get("num_experts") is None
+    ):
+        config_kwargs["num_experts"] = config_kwargs.get("depth", 2)
 
     # Handle byte_latent encoding
     byte_latent = hasattr(args, "encoder_type") and args.encoder_type == "byte_latent"
@@ -1106,17 +1240,9 @@ def get_processed_args(args=None):
     # Set local_rank
     processed["local_rank"] = int(os.environ.get("LOCAL_RANK", 0))
 
-    # Apply --dev flag modifications
-    # When dev mode is enabled, use smaller model for faster development
-    if processed.get("dev", False):
-        # Override depth to 3 for faster training
-        processed["depth"] = 3
-
-        # Override num_experts to 3 if not explicitly set
-        # Only set if num_experts wasn't explicitly provided by user
-        if processed.get("num_experts") is None:
-            processed["num_experts"] = 3
-
+    # Environment overrides will have already been applied by this point
+    # No need for hardcoded dev logic here
+    
     return processed
 
 
