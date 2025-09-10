@@ -1,0 +1,160 @@
+"""Dashboard streaming functionality for web clients."""
+
+import threading
+import time
+import weakref
+
+from .buffer import DashboardFrameBuffer
+from .renderer import WebDashboardRenderer
+
+# Global registry for dashboard streaming
+_active_dashboards = weakref.WeakValueDictionary()
+_dashboard_lock = threading.Lock()
+_global_socketio = None
+
+
+def register_socketio(socketio_instance):
+    """Register the global SocketIO instance for dashboard streaming."""
+    global _global_socketio
+    _global_socketio = socketio_instance
+    # SocketIO registered for dashboard streaming
+
+
+def get_active_dashboard(identifier="main"):
+    """Get the active dashboard instance if available."""
+    return _active_dashboards.get(identifier)
+
+
+class DashboardStreamer:
+    """Streams dashboard frames to web clients via SocketIO."""
+
+    def __init__(self, dashboard):
+        self.dashboard = weakref.ref(dashboard)
+        self.streaming = False
+        self.stream_thread = None
+        self.last_frame = None
+        self.frame_buffer = DashboardFrameBuffer()
+        # Use wider target width for better display
+        self.renderer = WebDashboardRenderer(target_width=200)
+
+    def start(self):
+        """Start streaming dashboard output."""
+        if self.streaming:
+            return
+
+        self.streaming = True
+        self.stream_thread = threading.Thread(target=self._stream_loop)
+        self.stream_thread.daemon = True
+        self.stream_thread.start()
+        print("Dashboard streaming started")
+
+    def stop(self):
+        """Stop streaming dashboard output."""
+        self.streaming = False
+        if self.stream_thread:
+            self.stream_thread.join(timeout=2)
+            self.stream_thread = None
+        print("Dashboard streaming stopped")
+
+    def get_current_frame(self):
+        """Get the current dashboard frame."""
+        dashboard = self.dashboard()
+        if dashboard and hasattr(dashboard, "previous_frame"):
+            return dashboard.previous_frame
+        return None
+
+    def get_buffered_frames(self):
+        """Get all buffered frames."""
+        return list(self.frame_buffer)
+
+    def _stream_loop(self):
+        """Main streaming loop."""
+        global _global_socketio
+
+        while self.streaming:
+            try:
+                dashboard = self.dashboard()
+                if not dashboard:
+                    # Dashboard was garbage collected
+                    break
+
+                # Get current frame
+                if hasattr(dashboard, "previous_frame"):
+                    frame = dashboard.previous_frame
+
+                    # Check if frame changed
+                    if frame != self.last_frame and frame is not None:
+                        self.last_frame = frame
+
+                        # Add to buffer
+                        if hasattr(self.frame_buffer, "add_frame"):
+                            self.frame_buffer.add_frame(frame)
+                        else:
+                            self.frame_buffer.append(frame)
+
+                        # Stream to web clients if socketio is available
+                        if _global_socketio:
+                            try:
+                                # Render frame for web if renderer available
+                                if self.renderer:
+                                    rendered = self.renderer.render_frame_for_web(frame)
+                                    _global_socketio.emit(
+                                        "dashboard_frame",
+                                        {
+                                            "frame": rendered["text"],
+                                            "metadata": {
+                                                "width": rendered["width"],
+                                                "height": rendered["height"],
+                                                "scale_factor": rendered[
+                                                    "scale_factor"
+                                                ],
+                                            },
+                                            "timestamp": time.time(),
+                                        },
+                                        namespace="/terminal",
+                                    )
+                                else:
+                                    # Fallback to raw frame
+                                    _global_socketio.emit(
+                                        "dashboard_frame",
+                                        {"frame": frame, "timestamp": time.time()},
+                                        namespace="/terminal",
+                                    )
+                            except Exception as e:
+                                print(f"Error emitting frame: {e}")
+
+                # Also capture dashboard state
+                if _global_socketio and dashboard:
+                    state = {
+                        "status": getattr(dashboard, "status_text", "Unknown"),
+                        "step": getattr(dashboard, "step", 0),
+                        "batch": getattr(dashboard, "batch", 0),
+                        "mode": getattr(dashboard, "mode", "unknown"),
+                        "running": getattr(dashboard, "running", False),
+                    }
+
+                    try:
+                        _global_socketio.emit(
+                            "dashboard_state", state, namespace="/terminal"
+                        )
+                    except:
+                        pass
+
+                time.sleep(0.1)  # Match dashboard update rate
+
+            except Exception as e:
+                print(f"Error in dashboard streaming: {e}")
+                time.sleep(1)
+
+        print("Dashboard streaming loop ended")
+
+
+# Export registry access
+def register_dashboard(identifier, dashboard):
+    """Register a dashboard instance."""
+    with _dashboard_lock:
+        _active_dashboards[identifier] = dashboard
+        if _global_socketio:
+            # Start streaming if socketio is available
+            if hasattr(dashboard, '_streamer'):
+                dashboard._streamer.start()

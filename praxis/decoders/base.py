@@ -49,11 +49,11 @@ class BaseDecoder(nn.Module):
             expert = LocalExpert(config, block=block)
             for i in range(self.num_experts):
                 self.locals.append(expert)
-        elif config.router_type == "smear" and hasattr(config, "num_smear") and config.num_smear > 1:
-            # For SMEAR with num_smear > 1, create a single SMEAR router managing multiple experts
+        elif config.router_type == "smear" and hasattr(config, "num_smear"):
+            # For SMEAR with explicit num_smear, create exactly that many expert blocks
             from praxis.routers import ROUTER_REGISTRY
             
-            # Create the expert blocks
+            # Create the expert blocks based on num_smear
             expert_blocks = []
             for i in range(config.num_smear):
                 if self.manager:

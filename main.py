@@ -50,7 +50,7 @@ from cli import (
     integration_loader,
     log_command,
 )
-from interface import TerminalDashboard
+from praxis.interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 from praxis.callbacks import (
     AccumulationSchedule,

@@ -124,6 +124,126 @@ networking_group = parser.add_argument_group("networking")
 data_group = parser.add_argument_group("data")
 other_group = parser.add_argument_group("other")
 
+# Define functions to load experiments and environments
+def load_experiments():
+    """
+    Load experiment files from the experiments directory and add them as CLI arguments.
+    Each YAML file in experiments/ becomes a --<filename> flag that applies those defaults.
+    """
+    experiments_dir = Path("experiments")
+    if not experiments_dir.exists():
+        return {}
+
+    # Create experiments argument group if we have any experiments
+    experiment_files = list(experiments_dir.glob("*.yml"))
+    if not experiment_files:
+        return {}
+
+    experiments_group = parser.add_argument_group("experiments")
+    experiment_configs = {}
+
+    for experiment_file in experiment_files:
+        # Validate and normalize the experiment name
+        name = experiment_file.stem.lower()
+
+        # Only allow alphanumeric characters and hyphens
+        if not re.match(r"^[a-z0-9-]+$", name):
+            print(
+                f"Warning: Skipping experiment '{experiment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
+            )
+            continue
+
+        # Check for conflicts with existing arguments
+        arg_name = f"--{name}"
+        if any(arg_name in action.option_strings for action in parser._actions):
+            print(
+                f"Warning: Skipping experiment '{experiment_file.name}' - conflicts with existing argument {arg_name}"
+            )
+            continue
+
+        # Add the experiment argument to the experiments group
+        experiments_group.add_argument(
+            arg_name,
+            action="store_true",
+            default=False,
+            help=f"Apply {name} experiment configuration",
+        )
+
+        # Store the experiment config for later application
+        try:
+            with open(experiment_file, "r") as f:
+                experiment_configs[name] = yaml.safe_load(f)
+        except Exception as e:
+            print(f"Warning: Failed to load experiment '{experiment_file.name}': {e}")
+            continue
+
+    return experiment_configs
+
+
+def load_environments():
+    """
+    Load environment files from the environments directory and add them as CLI arguments.
+    Each YAML file in environments/ becomes a --<filename> flag that applies those settings
+    with highest priority (overwrites everything else).
+    """
+    environments_dir = Path("environments")
+    if not environments_dir.exists():
+        return {}
+    
+    # Get environment files
+    environment_files = list(environments_dir.glob("*.yml"))
+    if not environment_files:
+        return {}
+    
+    # Create environments argument group
+    environments_group = parser.add_argument_group("environments")
+    environment_configs = {}
+    
+    for environment_file in environment_files:
+        # Validate and normalize the environment name
+        name = environment_file.stem.lower()
+        
+        # Only allow alphanumeric characters and hyphens
+        if not re.match(r"^[a-z0-9-]+$", name):
+            print(
+                f"Warning: Skipping environment '{environment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
+            )
+            continue
+        
+        # Check for conflicts with existing arguments
+        arg_name = f"--{name}"
+        if any(arg_name in action.option_strings for action in parser._actions):
+            # Skip if argument already exists (like --dev from the 'other' group)
+            # The existing argument will still work to activate the environment
+            continue
+        
+        # Add new environment argument
+        environments_group.add_argument(
+            arg_name,
+            action="store_true",
+            default=False,
+            help=f"Apply {name} environment configuration",
+        )
+        
+        # Store the environment config for later application
+        try:
+            with open(environment_file, "r") as f:
+                config = yaml.safe_load(f)
+                environment_configs[name] = {
+                    'overrides': config.get('overrides', {}),
+                    'features': config.get('features', {})
+                }
+        except Exception as e:
+            print(f"Warning: Failed to load environment '{environment_file.name}': {e}")
+            continue
+    
+    return environment_configs
+
+# Load experiments and environments FIRST (before integration loading)
+# We need these to properly determine which integrations should be loaded
+experiment_configs = load_experiments()
+environment_configs = load_environments()
+
 # Initialize integration loader and discover modules
 integration_loader = IntegrationLoader()
 integrations = integration_loader.discover_integrations()
@@ -131,6 +251,15 @@ integrations = integration_loader.discover_integrations()
 # Do a preliminary parse to check which integrations are needed
 # We need to know this BEFORE installing dependencies
 preliminary_parser = argparse.ArgumentParser(add_help=False)
+
+# Add experiment flags to preliminary parser
+for experiment_name in experiment_configs:
+    preliminary_parser.add_argument(f"--{experiment_name}", action="store_true", default=False)
+
+# Add environment flags to preliminary parser
+for env_name in environment_configs:
+    preliminary_parser.add_argument(f"--{env_name}", action="store_true", default=False)
+
 # Add known integration flags for condition checking
 for integration_manifest in integrations:
     # Add basic flag for each integration (e.g., --ngrok, --wandb)
@@ -140,7 +269,26 @@ for integration_manifest in integrations:
 # Parse known args (ignore unknown args from integrations)
 preliminary_args, _ = preliminary_parser.parse_known_args()
 
-# Bootstrap only integrations whose conditions are met
+# Apply experiments to preliminary args (medium priority)
+for experiment_name, config in experiment_configs.items():
+    if getattr(preliminary_args, experiment_name.replace("-", "_"), False):
+        for key, value in config.items():
+            attr_name = key.replace("-", "_")
+            setattr(preliminary_args, attr_name, value)
+
+# Apply environment overrides to preliminary args (highest priority)
+active_env = None
+for env_name in environment_configs:
+    if getattr(preliminary_args, env_name.replace("-", "_"), False):
+        if active_env and active_env != env_name:
+            raise ValueError(f"Cannot use multiple environments: --{active_env} and --{env_name}")
+        active_env = env_name
+        # Apply overrides
+        for key, value in environment_configs[env_name]['overrides'].items():
+            attr_name = key.replace("-", "_")
+            setattr(preliminary_args, attr_name, value)
+
+# Bootstrap only integrations whose conditions are met (after applying all overrides)
 integration_loader.bootstrap_integrations(preliminary_args)
 
 # Now load integrations that can add CLI arguments (without condition checks yet)
@@ -607,12 +755,14 @@ other_group.add_argument(
     default=False,
     help="Suppress text generation in the terminal",
 )
-other_group.add_argument(
-    "--dev",
-    action="store_true",
-    default=False,
-    help="Use fewer resources (3 layers, smaller datasets, etc), always start from a new model (i.e. force '--reset'), and never conflict/remove existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
-)
+# Only add --dev if it wasn't already added by environment loading
+if not any("--dev" in action.option_strings for action in parser._actions):
+    other_group.add_argument(
+        "--dev",
+        action="store_true",
+        default=False,
+        help="Use fewer resources (3 layers, smaller datasets, etc), always start from a new model (i.e. force '--reset'), and never conflict/remove existing, saved models. Can be used simultaneously alongside an active, running 'live' model.",
+    )
 other_group.add_argument(
     "--eval-every",
     type=int,
@@ -640,127 +790,7 @@ other_group.add_argument(
 
 
 # Experiment loading functionality
-def load_experiments():
-    """
-    Load experiment files from the experiments directory and add them as CLI arguments.
-    Each YAML file in experiments/ becomes a --<filename> flag that applies those defaults.
-    """
-    experiments_dir = Path("experiments")
-    if not experiments_dir.exists():
-        return {}
-
-    # Create experiments argument group if we have any experiments
-    experiment_files = list(experiments_dir.glob("*.yml"))
-    if not experiment_files:
-        return {}
-
-    experiments_group = parser.add_argument_group("experiments")
-    experiment_configs = {}
-
-    for experiment_file in experiment_files:
-        # Validate and normalize the experiment name
-        name = experiment_file.stem.lower()
-
-        # Only allow alphanumeric characters and hyphens
-        if not re.match(r"^[a-z0-9-]+$", name):
-            print(
-                f"Warning: Skipping experiment '{experiment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
-            )
-            continue
-
-        # Check for conflicts with existing arguments
-        arg_name = f"--{name}"
-        if any(arg_name in action.option_strings for action in parser._actions):
-            print(
-                f"Warning: Skipping experiment '{experiment_file.name}' - conflicts with existing argument {arg_name}"
-            )
-            continue
-
-        # Add the experiment argument to the experiments group
-        experiments_group.add_argument(
-            arg_name,
-            action="store_true",
-            default=False,
-            help=f"Apply {name} experiment configuration",
-        )
-
-        # Store the experiment config for later application
-        try:
-            with open(experiment_file, "r") as f:
-                experiment_configs[name] = yaml.safe_load(f)
-        except Exception as e:
-            print(f"Warning: Failed to load experiment '{experiment_file.name}': {e}")
-            continue
-
-    return experiment_configs
-
-
-# Load environments functionality
-def load_environments():
-    """
-    Load environment files from the environments directory and add them as CLI arguments.
-    Each YAML file in environments/ becomes a --<filename> flag that applies those settings
-    with highest priority (overwrites everything else).
-    """
-    environments_dir = Path("environments")
-    if not environments_dir.exists():
-        return {}
-    
-    # Get environment files
-    environment_files = list(environments_dir.glob("*.yml"))
-    if not environment_files:
-        return {}
-    
-    # Create environments argument group
-    environments_group = parser.add_argument_group("environments")
-    environment_configs = {}
-    
-    for environment_file in environment_files:
-        # Validate and normalize the environment name
-        name = environment_file.stem.lower()
-        
-        # Only allow alphanumeric characters and hyphens
-        if not re.match(r"^[a-z0-9-]+$", name):
-            print(
-                f"Warning: Skipping environment '{environment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
-            )
-            continue
-        
-        # Check for conflicts with existing arguments
-        arg_name = f"--{name}"
-        if any(arg_name in action.option_strings for action in parser._actions):
-            # Skip if argument already exists (like --dev from the 'other' group)
-            # The existing argument will still work to activate the environment
-            continue
-        
-        # Add new environment argument
-        environments_group.add_argument(
-            arg_name,
-            action="store_true",
-            default=False,
-            help=f"Apply {name} environment configuration",
-        )
-        
-        # Store the environment config for later application
-        try:
-            with open(environment_file, "r") as f:
-                config = yaml.safe_load(f)
-                environment_configs[name] = {
-                    'overrides': config.get('overrides', {}),
-                    'features': config.get('features', {})
-                }
-        except Exception as e:
-            print(f"Warning: Failed to load environment '{environment_file.name}': {e}")
-            continue
-    
-    return environment_configs
-
-
-# Load experiments and add them as CLI arguments
-experiment_configs = load_experiments()
-
-# Load environments and add them as CLI arguments
-environment_configs = load_environments()
+# Note: experiment_configs and environment_configs are already loaded above
 
 # Destructure CLI arguments
 args = parser.parse_args()

@@ -25,7 +25,7 @@ from werkzeug.serving import make_server
 try:
     from flask_socketio import Namespace, emit
 
-    import interface  # Import interface for dashboard streaming functions
+    from praxis import interface  # Import interface for dashboard streaming functions
 
     terminal_available = True
 except ImportError as e:

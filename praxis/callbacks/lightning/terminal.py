@@ -120,7 +120,7 @@ class TerminalInterface(Callback):
         if self.use_dashboard:
             try:
                 # Import here to avoid circular dependency
-                from interface import TerminalDashboard
+                from praxis.interface import TerminalDashboard
 
                 self.dashboard = TerminalDashboard(self.seed, self.truncated_hash)
                 self.dashboard.start()
