@@ -760,18 +760,23 @@ class APIServer:
                         # Get the latest rendered frame
                         frame = dashboard._streamer.get_current_frame()
                         if frame:
-                            rendered = (
-                                dashboard._streamer.renderer.render_frame_for_web(frame)
-                            )
+                            # Strip ANSI codes
+                            clean_frame = []
+                            if dashboard._streamer.renderer:
+                                for line in frame:
+                                    clean_frame.append(dashboard._streamer.renderer.strip_ansi(line))
+                            else:
+                                clean_frame = frame
+                            
+                            # Send as full update in new format
                             emit(
-                                "dashboard_frame",
+                                "dashboard_update",
                                 {
-                                    "frame": rendered["text"],
-                                    "metadata": {
-                                        "width": rendered["width"],
-                                        "height": rendered["height"],
-                                        "scale_factor": rendered["scale_factor"],
-                                    },
+                                    "type": "full",
+                                    "frame": clean_frame,
+                                    "width": max(len(line) for line in clean_frame) if clean_frame else 0,
+                                    "height": len(clean_frame),
+                                    "timestamp": time.time(),
                                 },
                             )
 
@@ -789,18 +794,23 @@ class APIServer:
                         # Send current frame if available
                         frame = dashboard._streamer.get_current_frame()
                         if frame:
-                            rendered = (
-                                dashboard._streamer.renderer.render_frame_for_web(frame)
-                            )
+                            # Strip ANSI codes
+                            clean_frame = []
+                            if dashboard._streamer.renderer:
+                                for line in frame:
+                                    clean_frame.append(dashboard._streamer.renderer.strip_ansi(line))
+                            else:
+                                clean_frame = frame
+                            
+                            # Send as full update in new format
                             emit(
-                                "dashboard_frame",
+                                "dashboard_update",
                                 {
-                                    "frame": rendered["text"],
-                                    "metadata": {
-                                        "width": rendered["width"],
-                                        "height": rendered["height"],
-                                        "scale_factor": rendered["scale_factor"],
-                                    },
+                                    "type": "full",
+                                    "frame": clean_frame,
+                                    "width": max(len(line) for line in clean_frame) if clean_frame else 0,
+                                    "height": len(clean_frame),
+                                    "timestamp": time.time(),
                                 },
                             )
                     else:

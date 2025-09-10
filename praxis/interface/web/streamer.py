@@ -5,6 +5,7 @@ import time
 import weakref
 
 from .buffer import DashboardFrameBuffer
+from .differential import OptimizedDifferentialRenderer
 from .renderer import WebDashboardRenderer
 
 # Global registry for dashboard streaming
@@ -36,6 +37,8 @@ class DashboardStreamer:
         self.frame_buffer = DashboardFrameBuffer()
         # Use wider target width for better display
         self.renderer = WebDashboardRenderer(target_width=200)
+        # Add differential renderer for efficient updates
+        self.differential_renderer = OptimizedDifferentialRenderer()
 
     def start(self):
         """Start streaming dashboard output."""
@@ -95,31 +98,30 @@ class DashboardStreamer:
                         # Stream to web clients if socketio is available
                         if _global_socketio:
                             try:
-                                # Render frame for web if renderer available
+                                # Strip ANSI codes from frame before diff
+                                clean_frame = []
                                 if self.renderer:
-                                    rendered = self.renderer.render_frame_for_web(frame)
-                                    _global_socketio.emit(
-                                        "dashboard_frame",
-                                        {
-                                            "frame": rendered["text"],
-                                            "metadata": {
-                                                "width": rendered["width"],
-                                                "height": rendered["height"],
-                                                "scale_factor": rendered[
-                                                    "scale_factor"
-                                                ],
-                                            },
-                                            "timestamp": time.time(),
-                                        },
-                                        namespace="/terminal",
-                                    )
+                                    for line in frame:
+                                        clean_frame.append(self.renderer.strip_ansi(line))
                                 else:
-                                    # Fallback to raw frame
-                                    _global_socketio.emit(
-                                        "dashboard_frame",
-                                        {"frame": frame, "timestamp": time.time()},
-                                        namespace="/terminal",
-                                    )
+                                    clean_frame = frame
+                                
+                                # Compute differential update
+                                diff_data = self.differential_renderer.compute_diff(clean_frame)
+                                
+                                # Send differential update to clients
+                                _global_socketio.emit(
+                                    "dashboard_update",
+                                    {
+                                        "type": diff_data["type"],
+                                        "changes": diff_data.get("changes", []),
+                                        "frame": diff_data.get("frame", None),
+                                        "width": diff_data.get("width", 0),
+                                        "height": diff_data.get("height", 0),
+                                        "timestamp": time.time(),
+                                    },
+                                    namespace="/terminal",
+                                )
                             except Exception as e:
                                 print(f"Error emitting frame: {e}")
 

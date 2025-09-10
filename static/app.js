@@ -808,9 +808,22 @@ function connectTerminal() {
         appendTerminalOutput(data.data);
     });
     
-    terminalSocket.on('dashboard_frame', (data) => {
-        if (data.frame && Array.isArray(data.frame)) {
-            renderDashboardFrame(data.frame);
+    // Handle new differential updates
+    terminalSocket.on('dashboard_update', (data) => {
+        // Debug: Log update type and size
+        if (window.dashboardDebug) {
+            const size = JSON.stringify(data).length;
+            console.log(`Dashboard update: type=${data.type}, size=${size} bytes, changes=${data.changes ? data.changes.length : 0}`);
+        }
+        
+        if (data.type === 'full') {
+            // Full frame update - render entire dashboard
+            if (data.frame && Array.isArray(data.frame)) {
+                renderDashboardFrame(data.frame);
+            }
+        } else if (data.type === 'diff') {
+            // Differential update - apply only changes
+            applyDashboardDiff(data.changes);
         }
     });
     
@@ -859,9 +872,17 @@ function startTerminalCapture() {
     }
 }
 
+// Dashboard frame buffer for differential updates
+let dashboardFrameBuffer = [];
+let dashboardInitialized = false;
+
 function renderDashboardFrame(frame) {
     const terminalDisplay = document.getElementById('terminal-display');
     terminalDisplay.innerHTML = '';
+    
+    // Store frame in buffer for differential updates
+    dashboardFrameBuffer = frame.slice();
+    dashboardInitialized = true;
     
     const wrapperDiv = document.createElement('div');
     wrapperDiv.style.position = 'relative';
@@ -869,15 +890,20 @@ function renderDashboardFrame(frame) {
     wrapperDiv.style.backgroundColor = '#0d0d0d';
     wrapperDiv.style.display = 'block';
     wrapperDiv.style.margin = '0 auto';
+    wrapperDiv.style.userSelect = 'text';  // Enable text selection
+    wrapperDiv.style.cursor = 'text';      // Show text cursor
     
     const frameContainer = document.createElement('div');
     frameContainer.className = 'dashboard-frame';
+    frameContainer.style.userSelect = 'text';  // Enable text selection
     
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
-    frame.forEach(line => {
+    frame.forEach((line, index) => {
         const lineDiv = document.createElement('div');
         lineDiv.className = 'dashboard-line';
+        lineDiv.setAttribute('data-line-index', index);
+        lineDiv.style.userSelect = 'text';  // Enable text selection per line
         
         if (isMobileDevice) {
             // Replace Unicode box drawing characters with ASCII on mobile
@@ -916,6 +942,98 @@ function renderDashboardFrame(frame) {
     } else if (dashboardScale) {
         applyDashboardScale();
     }
+}
+
+function applyDashboardDiff(changes) {
+    if (!dashboardInitialized || !currentFrameContainer) {
+        // No frame to update yet, wait for full frame
+        return;
+    }
+    
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // Apply each change
+    changes.forEach(change => {
+        const { row, col, text, length } = change;
+        
+        // Update buffer
+        if (row < dashboardFrameBuffer.length) {
+            const line = dashboardFrameBuffer[row];
+            const before = line.substring(0, col);
+            const after = line.substring(col + length);
+            dashboardFrameBuffer[row] = before + text + after;
+            
+            // Update DOM
+            const lineDiv = currentFrameContainer.querySelector(`[data-line-index="${row}"]`);
+            if (lineDiv) {
+                let updatedLine = dashboardFrameBuffer[row];
+                
+                if (isMobileDevice) {
+                    // Apply mobile character replacements
+                    updatedLine = updatedLine.replace(/[█▓▒░]/g, '#')
+                              .replace(/[▀▄]/g, '=')
+                              .replace(/[▌▐]/g, '|')
+                              .replace(/[■□▪▫◼◻◾◽▬▭▮▯]/g, '#')
+                              .replace(/[═]/g, '=')
+                              .replace(/[─━╌╍┄┅┈┉⎯⎼⎽]/g, '-')
+                              .replace(/[▁▂▃▄▅▆▇]/g, '_')
+                              .replace(/[⌐¬]/g, '-')
+                              .replace(/[·•◦]/g, '*')
+                              .replace(/[◯○]/g, 'o')
+                              .replace(/[●◉]/g, '*')
+                              .replace(/[║┃│|╎╏┆┇┊┋]/g, '|')
+                              .replace(/[┏┌┍┎╔╒╓╭┓┐┑┒╗╕╖╮┗└┕┖╚╘╙╰┛┘┙┚╝╛╜╯]/g, '+')
+                              .replace(/[┣├┝┞┟┠┡┢╟╞╠┫┤┥┦┧┨┩┪╢╡╣]/g, '+')
+                              .replace(/[┳┬┭┮┯┰┱┲╦╤╥┻┴┵┶┷┸┹┺╩╧╨]/g, '+')
+                              .replace(/[╋┼┽┾┿╀╁╂╬╪╫]/g, '+');
+                }
+                
+                // Only update if text actually changed to preserve selection
+                if (lineDiv.textContent !== updatedLine) {
+                    // Save any existing text selection
+                    const selection = window.getSelection();
+                    const hasSelection = selection.rangeCount > 0 && !selection.isCollapsed;
+                    let savedRange = null;
+                    
+                    // Check if selection intersects with this line
+                    if (hasSelection) {
+                        const range = selection.getRangeAt(0);
+                        if (lineDiv.contains(range.commonAncestorContainer)) {
+                            // Save selection relative to line start
+                            savedRange = {
+                                startOffset: range.startOffset,
+                                endOffset: range.endOffset
+                            };
+                        }
+                    }
+                    
+                    // Update the text content
+                    lineDiv.textContent = updatedLine;
+                    
+                    // Restore selection if it was in this line
+                    if (savedRange && lineDiv.firstChild) {
+                        try {
+                            const newRange = document.createRange();
+                            const textNode = lineDiv.firstChild;
+                            const maxOffset = textNode.textContent.length;
+                            
+                            // Clamp offsets to valid range
+                            const startOffset = Math.min(savedRange.startOffset, maxOffset);
+                            const endOffset = Math.min(savedRange.endOffset, maxOffset);
+                            
+                            newRange.setStart(textNode, startOffset);
+                            newRange.setEnd(textNode, endOffset);
+                            
+                            selection.removeAllRanges();
+                            selection.addRange(newRange);
+                        } catch (e) {
+                            // Selection restoration failed, ignore
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 function calculateDashboardScale() {

@@ -15,6 +15,7 @@ import blessed
 
 from .io import DashboardOutput, DashboardStreamHandler, LogCapture
 from .rendering import ChartRenderer, FrameBuilder, PanelRenderer, TextUtils
+from .rendering.differential import TerminalDifferentialRenderer
 from .state import ActivityMonitor, DashboardRegistry, MetricsState
 from .terminal import TerminalStateManager, managed_terminal
 from .visualization import ForestFireAutomata
@@ -38,6 +39,16 @@ class TerminalDashboard:
         self.frame_builder = FrameBuilder()
         self.chart_renderer = ChartRenderer()
         self.panel_renderer = PanelRenderer()
+        
+        # Allow disabling differential rendering for better text selection
+        # Set PRAXIS_NO_DIFF=1 to disable differential rendering
+        import os
+        self.use_differential = not os.environ.get('PRAXIS_NO_DIFF')
+        
+        if self.use_differential:
+            self.differential_renderer = TerminalDifferentialRenderer(self.term)
+        else:
+            self.differential_renderer = None
         
         # State initialization
         self.state.seed = seed
@@ -293,30 +304,12 @@ class TerminalDashboard:
         """Update the terminal screen with a new frame."""
         # Correct borders for all lines
         new_frame = self.frame_builder.correct_borders(new_frame)
-        frame_width = len(new_frame[0])
         
-        if self.previous_frame is None or len(self.previous_frame) != len(new_frame):
-            print(
-                self.term.home
-                + self.term.clear
-                + self.term.white
-                + "\n".join(new_frame),
-                end="",
-                file=self.dashboard_output,
-            )
-        else:
-            for i, (old_line, new_line) in enumerate(
-                zip(self.previous_frame, new_frame)
-            ):
-                if old_line != new_line:
-                    print(
-                        self.term.move(i, 0) + self.term.white + new_line,
-                        end="",
-                        file=self.dashboard_output,
-                    )
+        # Use differential renderer for efficient character-level updates
+        self.differential_renderer.render_frame(new_frame, self.dashboard_output)
         
+        # Store frame for web streaming
         self.previous_frame = new_frame
-        self.dashboard_output.flush()
 
     def _create_frame(self):
         """Create a new dashboard frame."""
