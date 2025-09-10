@@ -11,12 +11,13 @@
 overrides:
   depth: 3
   num_experts: 3
+  num_smear: 1
   batch_size: 1
   phi: false
   quantum: false
   ngrok: false
   wandb: false
-  debug: false
+  debug: true
 
 features:
   force_reset: true # Always start from a new model (skip checkpoint loading)

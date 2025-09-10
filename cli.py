@@ -726,22 +726,20 @@ def load_environments():
             )
             continue
         
-        # Check for conflicts with existing arguments (except --dev which we're replacing)
+        # Check for conflicts with existing arguments
         arg_name = f"--{name}"
-        if name != "dev" and any(arg_name in action.option_strings for action in parser._actions):
-            print(
-                f"Warning: Skipping environment '{environment_file.name}' - conflicts with existing argument {arg_name}"
-            )
+        if any(arg_name in action.option_strings for action in parser._actions):
+            # Skip if argument already exists (like --dev from the 'other' group)
+            # The existing argument will still work to activate the environment
             continue
         
-        # For --dev, we'll handle it specially to maintain backward compatibility
-        if name != "dev":
-            environments_group.add_argument(
-                arg_name,
-                action="store_true",
-                default=False,
-                help=f"Apply {name} environment configuration (highest priority)",
-            )
+        # Add new environment argument
+        environments_group.add_argument(
+            arg_name,
+            action="store_true",
+            default=False,
+            help=f"Apply {name} environment configuration",
+        )
         
         # Store the environment config for later application
         try:
@@ -806,33 +804,9 @@ from praxis.environments import EnvironmentFeatures
 active_environment = None
 environment_features = {}
 
-# Check if --dev flag was used (backward compatibility)
-if getattr(args, 'dev', False):
-    # If dev.yml exists in environments, use it
-    if 'dev' in environment_configs:
-        active_environment = 'dev'
-        print("Note: --dev flag is deprecated. Use environments/dev.yml configuration instead.")
-    else:
-        # Fallback to hardcoded dev behavior for backward compatibility
-        print("Warning: --dev flag used but environments/dev.yml not found. Using legacy behavior.")
-        # Apply legacy dev overrides
-        args.depth = 3
-        args.num_experts = 3
-        # Set legacy dev features
-        environment_features = {
-            'force_reset': True,
-            'detect_anomaly': True,
-            'skip_compilation': True,
-            'minimal_data': True,
-            'cache_isolation': True,
-        }
-
 # Check for environment flags and apply them
 for env_name, env_config in environment_configs.items():
-    if env_name == 'dev' and active_environment == 'dev':
-        # Already handled above
-        pass
-    elif getattr(args, env_name.replace("-", "_"), False):
+    if getattr(args, env_name.replace("-", "_"), False):
         if active_environment and active_environment != env_name:
             raise ValueError(
                 f"Cannot use multiple environments simultaneously: --{active_environment} and --{env_name}"
