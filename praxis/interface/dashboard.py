@@ -39,16 +39,7 @@ class TerminalDashboard:
         self.frame_builder = FrameBuilder()
         self.chart_renderer = ChartRenderer()
         self.panel_renderer = PanelRenderer()
-        
-        # Allow disabling differential rendering for better text selection
-        # Set PRAXIS_NO_DIFF=1 to disable differential rendering
-        import os
-        self.use_differential = not os.environ.get('PRAXIS_NO_DIFF')
-        
-        if self.use_differential:
-            self.differential_renderer = TerminalDifferentialRenderer(self.term)
-        else:
-            self.differential_renderer = None
+        self.differential_renderer = TerminalDifferentialRenderer(self.term)
         
         # State initialization
         self.state.seed = seed

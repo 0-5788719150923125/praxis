@@ -98,39 +98,44 @@ class TerminalDifferentialRenderer:
         return changes
     
     def _apply_updates(self, updates: List[tuple], dashboard_output) -> None:
-        """Apply character updates to terminal."""
+        """Apply character updates to terminal preserving text selection."""
         if not updates:
             return
-            
-        # Group updates by row to minimize cursor movements
+        
+        # Begin synchronized update (DCS sequence) - prevents flicker and preserves selection
+        # This is supported by modern terminals (kitty, iTerm2, newer gnome-terminal, etc)
+        output = ["\033[?2026h"]  # Begin synchronized update
+        
+        # Group updates by row for efficiency
         updates_by_row = {}
         for row, col, text in updates:
             if row not in updates_by_row:
                 updates_by_row[row] = []
             updates_by_row[row].append((col, text))
         
-        # Sort rows
-        sorted_rows = sorted(updates_by_row.keys())
-        
-        output = []
-        for row in sorted_rows:
-            # Sort columns within each row
+        # Apply updates using absolute positioning
+        for row in sorted(updates_by_row.keys()):
             row_updates = sorted(updates_by_row[row], key=lambda x: x[0])
             
-            # Try to minimize cursor movements by combining adjacent updates
-            combined = []
+            # Coalesce adjacent updates
+            merged = []
             for col, text in row_updates:
-                if combined and combined[-1][0] + len(combined[-1][1]) == col:
-                    # Adjacent update, combine them
-                    combined[-1] = (combined[-1][0], combined[-1][1] + text)
+                if merged and merged[-1][0] + len(merged[-1][1]) == col:
+                    merged[-1] = (merged[-1][0], merged[-1][1] + text)
                 else:
-                    combined.append((col, text))
+                    merged.append((col, text))
             
-            # Apply combined updates for this row
-            for col, text in combined:
-                output.append(self.term.move(row, col) + self.term.white + text)
+            # Apply each update using CSI CUP (Cursor Position) 
+            # This positions cursor without clearing selection in most terminals
+            for col, text in merged:
+                # CSI row;col H positions cursor (1-indexed)
+                # Then write text directly
+                output.append(f"\033[{row+1};{col+1}H{self.term.white}{text}")
         
-        # Send all updates at once
+        # End synchronized update
+        output.append("\033[?2026l")  # End synchronized update
+        
+        # Send all updates atomically
         print("".join(output), end="", file=dashboard_output)
         dashboard_output.flush()
     
