@@ -86,10 +86,18 @@ class TerminalDashboard:
     def _setup_streaming(self):
         """Set up dashboard streaming if available."""
         try:
+            from .web.streamer import register_dashboard as web_register_dashboard
+            
             self._streamer = DashboardStreamer(self)
-            # Register with global registry
+            
+            # Register with both registry systems
+            # 1. Register with DashboardRegistry (for internal use)
             registry = DashboardRegistry()
             registry.register("main", self)
+            
+            # 2. Register with web streamer (for API access)
+            web_register_dashboard("main", self)
+            
             if registry.socketio:
                 self._streamer.start()
         except Exception:

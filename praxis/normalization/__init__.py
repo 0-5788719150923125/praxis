@@ -1,13 +1,12 @@
-from functools import partial
 from typing import Any, Dict
 
-from praxis.normalization.base import LayerNorm, NoNorm, RMSNorm
+from praxis.normalization.base import LayerNorm, NoNorm, PostRMSNorm, RMSNorm, SandwichNorm
 
-# Base normalization types with partial for pre_norm and post_norm flags
+# Base normalization types
 NORMALIZATION_REGISTRY: Dict[str, Any] = {
     "none": NoNorm,
     "layer_norm": LayerNorm,
     "rms_norm": RMSNorm,
-    "post_rms_norm": partial(RMSNorm, pre_norm=False, post_norm=True),
-    "sandwich": partial(RMSNorm, pre_norm=True, post_norm=True),
+    "post_rms_norm": PostRMSNorm,
+    "sandwich": SandwichNorm,
 }
