@@ -5,7 +5,7 @@ from praxis.data.datasets.huggingface import HuggingfaceDataset, FORMAT_HANDLERS
 from praxis.data.datasets.synthetic import SyntheticToolCallingDataset
 from praxis.data.datasets.multi_dir import MultiDirectoryDataset
 from praxis.data.datasets.weighted import WeightedIterableDataset
-from praxis.data.datasets.manager import InterleaveDataManager
+from praxis.data.datasets.manager import InterleaveDataManagerV2 as InterleaveDataManager
 
 __all__ = [
     "PraxisSampler",

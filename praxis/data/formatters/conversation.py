@@ -11,7 +11,7 @@ from praxis.data.formatters.base import text_formatter, repair_text_punctuation,
 
 def format_conversation(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict:
     """Format as a conversation with unified system/developer prompts.
     
     Args:
@@ -20,7 +20,7 @@ def format_conversation(
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied
+        Dictionary with messages and metadata
     """
     assert len(keys) == 3, "Conversation format requires exactly 3 keys"
 
@@ -37,12 +37,18 @@ def format_conversation(
         {"role": "assistant", "content": text_formatter(document.get(keys[2], ""))},
     ]
 
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "conversation",
+            "source_keys": keys
+        }
+    }
 
 
 def format_messages(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict:
     """Convert already formatted messages with unified system/developer prompts.
     
     Args:
@@ -51,13 +57,13 @@ def format_messages(
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied
+        Dictionary with messages and metadata
     """
     messages_key = keys[0]
     messages = document.get(messages_key, [])
 
     if not messages:
-        return ""
+        return {"messages": [], "metadata": {}}
 
     # Preprocess messages to add unified system/developer prompts
     processed_messages = []
@@ -89,8 +95,13 @@ def format_messages(
         if content:
             processed_messages.append({"role": role, "content": content})
 
-    # Apply chat template and return
-    return tokenizer.apply_chat_template(processed_messages, tokenize=False) + "\n"
+    return {
+        "messages": processed_messages,
+        "metadata": {
+            "format": "messages",
+            "source_keys": keys
+        }
+    }
 
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
@@ -153,7 +164,14 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
         role = "user" if i % 2 == 0 else "assistant"
         messages.append({"role": role, "content": cleaned_turn})
 
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "soda",
+            "source_keys": keys,
+            "dialogue_turns": len(dialogue)
+        }
+    }
 
 
 def create_person_mapping(example: Dict) -> Dict[str, str]:

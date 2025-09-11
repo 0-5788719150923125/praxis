@@ -6,7 +6,7 @@ from transformers import PreTrainedTokenizer
 from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
 
 
-def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
+def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> Dict:
     """Format wiki text with unified system/developer prompts.
     
     Args:
@@ -15,7 +15,7 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied
+        Dictionary with messages and metadata
     """
     assert len(keys) == 2, "Wiki format requires exactly 2 keys"
     title = document.get(keys[0], "")
@@ -28,4 +28,11 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
         {"role": "assistant", "content": body},
     ]
 
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "wiki",
+            "source_keys": keys,
+            "title": title
+        }
+    }

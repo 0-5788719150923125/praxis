@@ -552,33 +552,56 @@ def provide_dataset(tokenizer, seed, config=None, *args):
             super().__init__(tokenizer)
             self.tokenizer = tokenizer
             self.weight = QUANTUM_WEIGHT
+            self.examples_cache = []
+            self.current_index = 0
+            
+        def get_document(self):
+            """Get a quantum code document.
+            
+            Returns:
+                Dictionary with messages and metadata
+            """
+            # Refill cache if empty
+            if self.current_index >= len(self.examples_cache):
+                self.examples_cache = get_quantum_examples(10)
+                self.current_index = 0
+                
+                if not self.examples_cache:
+                    # Try once more with just 1 example
+                    self.examples_cache = get_quantum_examples(1)
+                    if not self.examples_cache:
+                        print("[Quantum] Warning: No quantum examples available")
+                        return {"messages": [], "metadata": {}}
+            
+            # Get next example from cache
+            if self.current_index < len(self.examples_cache):
+                example = self.examples_cache[self.current_index]
+                self.current_index += 1
+                return {
+                    "messages": example.get("messages", []),
+                    "metadata": {
+                        "source": example.get("source", "quantum:unknown"),
+                        "format": "quantum_code"
+                    }
+                }
+            
+            return {"messages": [], "metadata": {}}
 
         def fill_sequence_cache(self):
-            """Fill the sequence cache with quantum code examples."""
-            # Get a batch of examples
-            examples = get_quantum_examples(10)  # Get 10 examples at a time
-
-            if not examples:
-                # No examples available, try to get at least one
-                examples = get_quantum_examples(1)
-                if not examples:
-                    print("[Quantum] Warning: No quantum examples available")
-                    return
-
-            for example in examples:
+            """Legacy method for compatibility - converts to old text format."""
+            document_data = self.get_document()
+            
+            # Convert back to text for legacy compatibility
+            if document_data and document_data.get("messages"):
                 try:
-                    # Apply the chat template to format the conversation
                     formatted = self.tokenizer.apply_chat_template(
-                        example["messages"], tokenize=False, add_generation_prompt=False
+                        document_data["messages"], 
+                        tokenize=False, 
+                        add_generation_prompt=False
                     )
-                    # Add to the sequence cache
                     self.sequence_cache.append(formatted)
                 except Exception as e:
-                    print(
-                        f"[Quantum] Error formatting example from {example.get('source', 'unknown')}: {e}"
-                    )
-                    # Skip this example if formatting fails
-                    continue
+                    print(f"[Quantum] Error formatting example: {e}")
 
     # Create and return dataset instance
     dataset = QuantumDataset(tokenizer)

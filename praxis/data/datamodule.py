@@ -40,7 +40,7 @@ class PraxisDataModule(LightningDataModule):
         self.val_datasets = False
         if len(val_datasets) > 0:
             self.val_datasets = self.create_datasets(
-                val_datasets, tokenizer, block_size, batch_size, 0, 0
+                val_datasets, tokenizer, block_size, batch_size, 0, 0, 0
             )
 
     def create_datasets(
@@ -58,7 +58,6 @@ class PraxisDataModule(LightningDataModule):
         weights = [w / sum(raw_weights) for w in raw_weights]
 
         # Debug log
-        print(f"[RL] Creating WeightedIterableDataset with rl_type={self.rl_type}")
 
         return WeightedIterableDataset(
             datasets,

@@ -2,7 +2,8 @@
 
 import os
 import random
-from typing import List, Optional, Set
+from itertools import cycle
+from typing import Dict, List, Optional, Set
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler
@@ -164,6 +165,62 @@ class MultiDirectoryDataset(PraxisSampler):
             # Any other error - silently remove the file from list
             return None
 
+    def get_document(self) -> Dict:
+        """Get a formatted document with messages and metadata."""
+        from praxis.data.config import SYSTEM_PROMPT
+        
+        # Get a file and its content
+        max_attempts = len(self.file_list) + 10
+        attempts = 0
+        
+        while attempts < max_attempts:
+            attempts += 1
+            
+            try:
+                # Get next file
+                file_path = next(self.file_iterator)
+                
+                # Skip if we've already removed this file
+                if file_path in self.removed_files:
+                    continue
+                
+                
+                # Try to read the file
+                content = self._read_file(file_path)
+                
+                if content is None:
+                    # File couldn't be read - remove it from the list silently
+                    self.removed_files.add(file_path)
+                    continue
+                    
+                
+                # Get relative path for formatting
+                rel_path = os.path.relpath(file_path, self.cwd)
+                
+                # Format as messages
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Continue or complete the following code from {rel_path}:"},
+                    {"role": "assistant", "content": content}
+                ]
+                
+                result = {
+                    "messages": messages,
+                    "metadata": {
+                        "source": "multi_dir",
+                        "file_path": file_path
+                    }
+                }
+                return result
+                
+            except StopIteration:
+                # No more files, reset the iterator
+                self.file_iterator = cycle(self.file_list)
+                continue
+                
+        # Fallback - return empty document
+        return {"messages": [], "metadata": {}}
+    
     def fill_sequence_cache(self):
         """Fill the sequence cache with formatted file content."""
         max_attempts = len(self.file_list) + 10  # Prevent infinite loops

@@ -60,9 +60,6 @@ class HuggingfaceDataset(PraxisSampler):
         self.restart_count = 0
         self.is_streaming = config.get("streaming", True)
 
-        # Debug log RL datasets
-        if self.format == DataFormat.RL:
-            print(f"[RL] Initializing RL dataset: {self.dataset_path}")
         dataset_args = dict(
             path=self.dataset_path,
             split=config.get("split", "train"),
@@ -96,7 +93,8 @@ class HuggingfaceDataset(PraxisSampler):
                 mix_ratio=0.95
             )  # 95% simple problems to force generation
 
-    def fill_sequence_cache(self):
+    def get_document(self) -> Dict:
+        """Get a formatted document with messages and metadata."""
         try:
             # Mix in simple math problems for RL
             if (
@@ -122,41 +120,67 @@ class HuggingfaceDataset(PraxisSampler):
                     print(
                         f"[RL DEBUG] Not using simple math (should_use={getattr(self, 'simple_math', None) and self.simple_math.should_use_simple() if hasattr(self, 'simple_math') else 'no simple_math'})"
                     )
-                document = next(self.dataset_iterator)
+                try:
+                    document = next(self.dataset_iterator)
+                except StopIteration:
+                    # Restart the dataset
+                    self.restart_count += 1
+                    new_seed = self.base_seed + self.restart_count
+                    shuffle_args = {"seed": new_seed}
+                    if self.is_streaming:
+                        shuffle_args["buffer_size"] = 1000
+                    self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
+                    self.dataset_iterator = iter(self.shuffled_dataset)
+                    document = next(self.dataset_iterator)
 
+            # Debug what keys the document has
+            if not hasattr(self, '_debug_printed'):
+                self._debug_printed = True
+                
             formatted = self._format_document(document)
 
-            # Handle formats that return dicts (RL and CoT)
+            # Handle different formatter return types
             if isinstance(formatted, dict):
-                text = formatted["text"]
-
-                # Store metadata in reward cache
-                text_hash = hashlib.md5(text.encode()).hexdigest()
-
-                if self.format == DataFormat.RL:
-                    # RL format with reward and ground truth
-                    reward = formatted["reward"]
-                    self.reward_cache[text_hash] = {
-                        "reward": reward,
-                        "ground_truth": formatted.get("ground_truth", ""),
-                        "original_difficulty": formatted.get(
-                            "original_difficulty", 0.0
-                        ),
-                    }
-                elif self.format == DataFormat.COT:
-                    # CoT format with tag metadata
-                    self.reward_cache[text_hash] = {
-                        "reward": formatted.get("reward", 0.0),
-                        "cot_metadata": formatted.get("cot_metadata", {}),
-                    }
-                else:
-                    # Generic dict format
-                    self.reward_cache[text_hash] = formatted
-
+                # Check if it's the new format (with messages)
+                if "messages" in formatted:
+                    # New format - return as-is
+                    return formatted
+                elif "text" in formatted:
+                    # Old RL/CoT format - needs conversion
+                    # For now, return empty to avoid breaking
+                    return {"messages": [], "metadata": {}}
+            else:
+                # Legacy text format - skip
+                return {"messages": [], "metadata": {}}
+                
+        except Exception as e:
+            print(f"[ERROR] HuggingfaceDataset.get_document failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"messages": [], "metadata": {}}
+    
+    def fill_sequence_cache(self):
+        """Legacy method for compatibility - converts to old text format."""
+        try:
+            document_data = self.get_document()
+            
+            # Convert back to text for legacy compatibility
+            if document_data and document_data.get("messages"):
+                text = self.tokenizer.apply_chat_template(
+                    document_data["messages"],
+                    tokenize=False,
+                    add_generation_prompt=False
+                ) + "\n"
+                
+                # Store metadata if needed
+                if self.format == DataFormat.RL and "reward" in document_data.get("metadata", {}):
+                    text_hash = hashlib.md5(text.encode()).hexdigest()
+                    self.reward_cache[text_hash] = document_data["metadata"]
+                
                 self.sequence_cache.append(text)
             else:
-                # Regular format, just text
-                self.sequence_cache.append(formatted)
+                # Empty document, try again
+                self.fill_sequence_cache()
         except StopIteration:
             HuggingfaceDataset.counts[self.dataset_path] += 1
             self.restart_count += 1
@@ -176,40 +200,25 @@ class HuggingfaceDataset(PraxisSampler):
             
             # Try again with the new iterator
             try:
-                document = next(self.dataset_iterator)
-                formatted = self._format_document(document)
+                document_data = self.get_document()
                 
-                # Handle formats that return dicts (RL and CoT)
-                if isinstance(formatted, dict):
-                    text = formatted["text"]
-                    text_hash = hashlib.md5(text.encode()).hexdigest()
+                # Convert back to text for legacy compatibility
+                if document_data and document_data.get("messages"):
+                    text = self.tokenizer.apply_chat_template(
+                        document_data["messages"],
+                        tokenize=False,
+                        add_generation_prompt=False
+                    ) + "\n"
                     
-                    if self.format == DataFormat.RL:
-                        # RL format with reward and ground truth
-                        reward = formatted["reward"]
-                        self.reward_cache[text_hash] = {
-                            "reward": reward,
-                            "ground_truth": formatted.get("ground_truth", ""),
-                            "original_difficulty": formatted.get("original_difficulty", 0.0),
-                        }
-                        
-                        # Add generation flag if needed
-                        if formatted.get("reward") == -1:
-                            _rl_logger.log_dataset_sample(self.dataset_path, True)
-                    elif self.format == DataFormat.COT:
-                        # CoT format with tag metadata
-                        self.reward_cache[text_hash] = {
-                            "reward": formatted.get("reward", 0.0),
-                            "cot_metadata": formatted.get("cot_metadata", {}),
-                        }
-                    else:
-                        # Generic dict format
-                        self.reward_cache[text_hash] = formatted
+                    # Store metadata if needed
+                    if self.format == DataFormat.RL and "reward" in document_data.get("metadata", {}):
+                        text_hash = hashlib.md5(text.encode()).hexdigest()
+                        self.reward_cache[text_hash] = document_data["metadata"]
                     
                     self.sequence_cache.append(text)
                 else:
-                    # Regular format, just text
-                    self.sequence_cache.append(formatted)
+                    # Empty document, add placeholder
+                    self.sequence_cache.append("")
             except StopIteration:
                 # Dataset is empty or has issues, add a placeholder to prevent infinite loop
                 print(f"WARNING: Dataset '{self.dataset_path}' appears to be empty or has issues. Adding placeholder.")

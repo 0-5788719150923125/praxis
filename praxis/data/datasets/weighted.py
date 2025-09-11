@@ -7,7 +7,7 @@ from torch.utils.data import IterableDataset
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler
-from praxis.data.datasets.manager import InterleaveDataManager
+from praxis.data.datasets.manager import InterleaveDataManagerV2
 from praxis.data.formatters import _rl_logger
 
 
@@ -26,9 +26,11 @@ class WeightedIterableDataset(IterableDataset):
         hypersample_chance: float = 0,
         rl_type: Optional[str] = None,
     ):
-        self.data_manager = InterleaveDataManager(
+        # Always use the new message queue system
+        self.data_manager = InterleaveDataManagerV2(
             datasets, weights, tokenizer, block_size, rl_type=rl_type
         )
+            
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
         self.supersample_chance = supersample_chance
@@ -36,8 +38,6 @@ class WeightedIterableDataset(IterableDataset):
         self.rl_type = rl_type
         self.tokenizer = tokenizer  # Store tokenizer for reward extraction
 
-        # Debug log
-        print(f"[RL] WeightedIterableDataset initialized with rl_type={rl_type}")
 
     def __iter__(self):
         while True:
@@ -68,17 +68,9 @@ class WeightedIterableDataset(IterableDataset):
                 needs_generation = (reward_tensor == -1).any()
                 generation_count = (reward_tensor == -1).sum().item()
 
-                # Debug batch reward composition
-                if generation_count > 0:
-                    print(
-                        f"[RL DEBUG] Batch has {generation_count} generation flags out of {len(reward_tensor)} total"
-                    )
 
                 # Only log when we actually have generation flags
                 if needs_generation:
-                    print(
-                        f"[RL] Batch ready for generation: {generation_count} sequences need responses"
-                    )
                     # Return special format for generation with proper metadata
                     result_dict = {
                         "input_ids": batch_tensor,

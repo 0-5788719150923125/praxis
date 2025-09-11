@@ -9,7 +9,7 @@ from praxis.data.formatters.base import text_formatter
 
 def format_simple(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict:
     """Convert raw text to unified format with system/developer prompts.
     
     Args:
@@ -18,11 +18,11 @@ def format_simple(
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied
+        Dictionary with messages and metadata
     """
     text = document.get(keys[0], "")
     if not text:
-        return ""
+        return {"messages": [], "metadata": {}}
 
     # For simple/raw text, we treat it as a direct completion task
     # The model should learn to continue/complete texts naturally
@@ -32,4 +32,10 @@ def format_simple(
         {"role": "assistant", "content": text_formatter(text)},
     ]
 
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "simple",
+            "source_keys": keys
+        }
+    }

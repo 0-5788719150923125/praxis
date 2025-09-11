@@ -11,7 +11,7 @@ from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
 
 def format_tool_calling(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict:
     """
     Format synthetic tool-calling examples for training.
     Generates math problems that require the calc tool.
@@ -22,7 +22,7 @@ def format_tool_calling(
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied including tool calls
+        Dictionary with messages and metadata
     """
 
     # Choose a random operation
@@ -175,5 +175,12 @@ def format_tool_calling(
         ]
     )
 
-    # Apply chat template without tools parameter
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    # Return messages and metadata
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "tool_calling",
+            "operation": operation,
+            "has_tool_call": True
+        }
+    }

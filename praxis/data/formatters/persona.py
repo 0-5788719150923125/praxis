@@ -10,7 +10,7 @@ from praxis.data.formatters.base import text_formatter, simple_truecase
 
 def format_personachat(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict:
     """Format AlekseyKorshuk persona-chat dataset with JSON structure for better randomization.
     
     Args:
@@ -19,14 +19,14 @@ def format_personachat(
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied
+        Dictionary with messages and metadata
     """
     # Extract personality traits and utterances
     personality = document.get("personality", [])
     utterances = document.get("utterances", [])
 
     if not utterances:
-        return ""
+        return {"messages": [], "metadata": {}}
 
     # Randomly select how much of the conversation to include (1 to all utterances)
     num_utterances = random.randint(1, len(utterances))
@@ -113,4 +113,12 @@ def format_personachat(
         response = simple_truecase(response) if response else response
         messages.append({"role": "assistant", "content": text_formatter(response)})
 
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "personachat",
+            "source_keys": keys,
+            "has_personality": bool(personality),
+            "num_utterances": num_utterances
+        }
+    }

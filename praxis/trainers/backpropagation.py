@@ -26,6 +26,7 @@ class BackpropagationTrainer(LightningModule):
         self.train_step_ema = None
         self.tokenizer = tokenizer
         self.byte_latent = byte_latent
+        self.last_logged_step = -1  # Track last step we logged a document
         self.save_hyperparameters(
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
         )
@@ -73,6 +74,11 @@ class BackpropagationTrainer(LightningModule):
         step_time = current_time - self.last_train_step_time
         self.train_step_ema = self._update_ema(self.train_step_ema, step_time)
         self.last_train_step_time = current_time
+
+        # Log document at 10% intervals (every 10 steps)
+        if batch_idx > 0 and batch_idx % 10 == 0 and batch_idx != self.last_logged_step:
+            self._log_training_document(input_ids, batch_idx)
+            self.last_logged_step = batch_idx
 
         # Prepare metrics dict
         metrics = {
@@ -241,6 +247,36 @@ class BackpropagationTrainer(LightningModule):
             pass
 
         return 0.1  # Small reward for extracting any number
+
+    def _log_training_document(self, input_ids, batch_idx):
+        """Log a single document from the training batch to see chat template rendering."""
+        try:
+            # Take the first document from the batch
+            first_doc = input_ids[0]
+
+            if self.tokenizer:
+                # Decode the document
+                text = self.tokenizer.decode(first_doc, skip_special_tokens=False)
+
+                # Create a visual separator
+                print("\n" + "=" * 80)
+                print(f"[DOCUMENT LOG] Step {batch_idx} - Chat Template Sample")
+                print("=" * 80)
+
+                # Print the decoded text (limit to first 500 chars for readability)
+                print(text)
+
+                print("=" * 80 + "\n")
+            else:
+                # If no tokenizer, just show token IDs
+                print("\n" + "=" * 80)
+                print(f"[DOCUMENT LOG] Step {batch_idx} - Token IDs (first 50)")
+                print("=" * 80)
+                print(first_doc[:50].tolist())
+                print("=" * 80 + "\n")
+
+        except Exception as e:
+            print(f"[DOCUMENT LOG] Error logging document at step {batch_idx}: {e}")
 
     def _handle_batch_format(self, batch, batch_idx, is_training=True):
         """

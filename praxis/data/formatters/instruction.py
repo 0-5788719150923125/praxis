@@ -9,7 +9,7 @@ from praxis.data.formatters.base import text_formatter
 
 def format_instruction(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
-) -> str:
+) -> Dict:
     """Format as instruction/output pairs with unified system/developer prompts.
     
     Args:
@@ -18,7 +18,7 @@ def format_instruction(
         tokenizer: Tokenizer with chat template support
         
     Returns:
-        Formatted text with chat template applied
+        Dictionary with messages and metadata
     """
     assert len(keys) == 2, "Instruction format requires exactly 2 keys"
     instruction = text_formatter(document.get(keys[0], ""))
@@ -31,4 +31,10 @@ def format_instruction(
         {"role": "assistant", "content": output},
     ]
 
-    return tokenizer.apply_chat_template(messages, tokenize=False) + "\n"
+    return {
+        "messages": messages,
+        "metadata": {
+            "format": "instruction",
+            "source_keys": keys
+        }
+    }

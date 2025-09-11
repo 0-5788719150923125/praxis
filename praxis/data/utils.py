@@ -46,14 +46,14 @@ def get_datamodules(
     Returns:
         PraxisDataModule configured with train and validation datasets
     """
-    print(f"[RL] get_datamodules called with rl_type={rl_type}")
 
     print("Training datasets:")
     train_data = []
     config = get_dataset_configs(dev, pile, phi, rl_type)
+    from praxis.environments import EnvironmentFeatures
     for c in config["primary"]:
         # load configs for huggingface datasets
-        print(dict(path=c["path"], weight=c["weight"]))
+        print(dict(path=c["path"], weight=c["weight"], keys=c.get("keys", ["text"])))
         train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
 
     # Add synthetic tool-calling dataset if phi is enabled

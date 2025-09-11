@@ -270,9 +270,14 @@ class Integration(BaseIntegration):
                 super().__init__(tokenizer)
                 dataset_self.gun = self.gun_adapter  # Use the integration's adapter
                 dataset_self.weight = 0.1
+                dataset_self.tokenizer = tokenizer
 
-            def fill_sequence_cache(dataset_self):
-                """Fill the sequence cache with Gun chat data."""
+            def get_document(dataset_self):
+                """Get a Gun chat document.
+                
+                Returns:
+                    Dictionary with messages and metadata
+                """
                 # Get a list of text samples (these are individual messages)
                 text_list = dataset_self.gun.get_sample(250)
 
@@ -280,8 +285,8 @@ class Integration(BaseIntegration):
                 messages = [msg.strip() for msg in text_list if msg and msg.strip()]
 
                 if not messages:
-                    # No real data available, return without adding anything
-                    return
+                    # No real data available
+                    return {"messages": [], "metadata": {}}
 
                 # Create one continuous chat room conversation with all messages
                 conversation = []
@@ -314,16 +319,32 @@ class Integration(BaseIntegration):
                     # Remove the last message if it's from user
                     conversation.pop()
 
-                # Only process if we have at least 2 messages (after potential pop)
+                # Only return if we have at least 2 messages (after potential pop)
                 if len(conversation) >= 3:  # system + at least 2 messages
+                    return {
+                        "messages": conversation,
+                        "metadata": {
+                            "source": "gun:chat",
+                            "format": "chat_room"
+                        }
+                    }
+                    
+                return {"messages": [], "metadata": {}}
+
+            def fill_sequence_cache(dataset_self):
+                """Legacy method for compatibility - converts to old text format."""
+                document_data = dataset_self.get_document()
+                
+                # Convert back to text for legacy compatibility
+                if document_data and document_data.get("messages"):
                     try:
-                        # Format the entire conversation as one continuous sequence
                         formatted_text = dataset_self.tokenizer.apply_chat_template(
-                            conversation, tokenize=False, add_generation_prompt=False
+                            document_data["messages"], 
+                            tokenize=False, 
+                            add_generation_prompt=False
                         )
                         dataset_self.sequence_cache.append(formatted_text)
                     except Exception as e:
-                        # Skip if tokenization fails
                         pass
 
         # Create instance with just the tokenizer (PraxisSampler signature)
