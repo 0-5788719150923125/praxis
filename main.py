@@ -479,11 +479,11 @@ def main():
         )
     )
 
-    from praxis.trainers.compile import try_compile_model, try_compile_optimizer
+    # from praxis.trainers.compile import try_compile_model, try_compile_optimizer
 
     # Try to compile the model and optimizer
-    model = try_compile_model(model, hparams)
-    optimizer = try_compile_optimizer(optimizer, hparams)
+    # model = try_compile_model(model, hparams)
+    # optimizer = try_compile_optimizer(optimizer, hparams)
 
     # Try to get logger from integrations (e.g., wandb)
     integration_logger = None

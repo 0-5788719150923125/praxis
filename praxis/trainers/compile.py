@@ -30,9 +30,9 @@ def try_compile_model(model, hparams):
     Returns:
         Compiled model or original model if compilation fails
     """
-    # TEMPORARY: Completely disable all model compilation to avoid FX tracing errors
-    print("[Compile] Model compilation is temporarily disabled")
-    return model
+    # # TEMPORARY: Completely disable all model compilation to avoid FX tracing errors
+    # print("[Compile] Model compilation is temporarily disabled")
+    # return model
 
     # Convert dict to object if needed for getattr
     if isinstance(hparams, dict):
@@ -75,9 +75,9 @@ def try_compile_model(model, hparams):
 
     # Skip compilation for certain problematic configurations
     # MonoForward decoder has issues with compilation due to dynamic behavior
-    if hasattr(hparams, "decoder_type") and hparams.decoder_type == "mono_forward":
-        print("[Compile] Skipping compilation for mono_forward decoder (incompatible)")
-        return model
+    # if hasattr(hparams, "decoder_type") and hparams.decoder_type == "mono_forward":
+    #     print("[Compile] Skipping compilation for mono_forward decoder (incompatible)")
+    #     return model
 
     print("[Compile] All modules are compilable, proceeding with compilation attempt")
 
@@ -133,7 +133,7 @@ def try_compile_model(model, hparams):
                     mode="reduce-overhead",
                     fullgraph=False,
                     disable=False,
-                    dynamic=False,  # Disable dynamic shapes
+                    dynamic=True,  # Disable dynamic shapes
                 )
 
                 if (

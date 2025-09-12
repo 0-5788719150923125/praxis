@@ -5,19 +5,19 @@ enabling layers to process different batches simultaneously without waiting for
 backpropagation through the entire network.
 """
 
-import torch.multiprocessing as mp
-from torch.multiprocessing import Queue, Process
 import queue
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
+from torch.multiprocessing import Process, Queue
 
-from praxis.utils.system import register_child_process, is_shutting_down
+from praxis.utils.system import is_shutting_down, register_child_process
 
 # Use torch multiprocessing with proper sharing strategy
 torch.multiprocessing.set_sharing_strategy("file_system")
@@ -311,6 +311,8 @@ class MonoForwardPipelineModule(LightningModule):
     Each layer runs in its own process, processing different batches simultaneously.
     The training_step just feeds data and collects results asynchronously.
     """
+
+    can_compile = False
 
     def __init__(
         self,
