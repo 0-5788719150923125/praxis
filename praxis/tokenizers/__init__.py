@@ -20,137 +20,30 @@ except ImportError:
     ByteLevelTokenizer = None
 
 
-# Tokenizer registry
-TOKENIZER_REGISTRY: Dict[str, Type[PraxisTokenizerBase]] = {
-    "standard": StandardTokenizer,
-    "bpe": StandardTokenizer,
-    "unigram": StandardTokenizer,
-}
-
-if HAS_BYTE_LEVEL:
-    TOKENIZER_REGISTRY["byte_level"] = ByteLevelTokenizer
-    TOKENIZER_REGISTRY["byte"] = ByteLevelTokenizer
-    TOKENIZER_REGISTRY["bytelevel"] = ByteLevelTokenizer
-
-
-# Tokenizer profiles with default configurations
-TOKENIZER_PROFILES = {
-    "default": {
-        "tokenizer_class": "standard",
-        "tokenizer_type": "unigram",
-        "vocab_size": 32768,
-        "model_max_length": 2048,
-    },
-    "bpe": {
-        "tokenizer_class": "standard",
-        "tokenizer_type": "bpe",
-        "vocab_size": 32768,
-        "dropout": 0.1,
-        "model_max_length": 2048,
-    },
-    "unigram": {
-        "tokenizer_class": "standard",
-        "tokenizer_type": "unigram",
-        "vocab_size": 32768,
-        "model_max_length": 2048,
-    },
-    "byte": {
-        "tokenizer_class": "byte_level",
-        "vocab_size_unit_1": 256,
-        "model_max_length": 2048,
-    },
-    "small": {
-        "tokenizer_class": "standard",
-        "tokenizer_type": "unigram",
-        "vocab_size": 8192,
-        "model_max_length": 1024,
-    },
-    "large": {
-        "tokenizer_class": "standard",
-        "tokenizer_type": "unigram",
-        "vocab_size": 65536,
-        "model_max_length": 4096,
-    },
-}
-
-
 def create_tokenizer(
-    tokenizer_name: Optional[str] = None,
-    tokenizer_profile: Optional[str] = None,
-    tokenizer_path: Optional[Union[str, Path]] = None,
-    encoder_type: Optional[str] = None,
     vocab_size: int = 32768,
+    encoder_type: Optional[str] = None,
     cache_dir: Optional[str] = None,
     **kwargs,
 ) -> PreTrainedTokenizer:
     """
-    Create a tokenizer instance with unified loading logic.
+    Create a tokenizer instance based on vocab_size.
 
-    This function provides a single interface for all tokenizer creation,
-    handling encoder type detection, local paths, and remote loading.
+    Simple logic:
+    1. If encoder_type is "byte_latent", use ByteLevelTokenizer
+    2. Try to load existing tokenizer for vocab_size
+    3. Create new StandardTokenizer if needed
 
     Args:
-        tokenizer_name: Name from the tokenizer registry
-        tokenizer_profile: Profile name with preset configuration
-        tokenizer_path: Path to load a pretrained tokenizer
-        encoder_type: Encoder type (if "byte_latent", uses ByteLevel tokenizer)
         vocab_size: Vocabulary size for tokenizer
+        encoder_type: Encoder type (if "byte_latent", uses ByteLevel tokenizer)
         cache_dir: Cache directory for downloading tokenizers
         **kwargs: Additional arguments passed to tokenizer constructor
 
     Returns:
         Tokenizer instance
-
-    Priority:
-        1. Explicit tokenizer_path if provided
-        2. Explicit tokenizer_profile or tokenizer_name if provided
-        3. Encoder type detection (byte_latent -> ByteLevel)
-        4. Local paths (build/tokenizers/praxis-{vocab_size}-unigram)
-        5. Remote HuggingFace repos (UNSAFE/praxis-{vocab_size})
-        6. Default profile
     """
-    # 1. Try to load from explicit path if provided
-    if tokenizer_path is not None:
-        path = Path(tokenizer_path)
-        if path.exists():
-            try:
-                return AutoTokenizer.from_pretrained(
-                    path, cache_dir=cache_dir, **kwargs
-                )
-            except Exception as e:
-                print(f"Warning: Could not load tokenizer from {path}: {e}")
-
-    # 2. Use explicit profile or name if provided
-    if tokenizer_profile is not None:
-        if tokenizer_profile not in TOKENIZER_PROFILES:
-            raise ValueError(
-                f"Unknown tokenizer profile: {tokenizer_profile}. "
-                f"Available profiles: {list(TOKENIZER_PROFILES.keys())}"
-            )
-
-        profile = TOKENIZER_PROFILES[tokenizer_profile].copy()
-        tokenizer_class_name = profile.pop("tokenizer_class")
-
-        # Merge profile settings with kwargs (kwargs take precedence)
-        profile.update(kwargs)
-
-        if tokenizer_class_name not in TOKENIZER_REGISTRY:
-            raise ValueError(f"Tokenizer class {tokenizer_class_name} not in registry")
-
-        tokenizer_class = TOKENIZER_REGISTRY[tokenizer_class_name]
-        return tokenizer_class(**profile)
-
-    if tokenizer_name is not None:
-        if tokenizer_name not in TOKENIZER_REGISTRY:
-            raise ValueError(
-                f"Unknown tokenizer: {tokenizer_name}. "
-                f"Available tokenizers: {list(TOKENIZER_REGISTRY.keys())}"
-            )
-
-        tokenizer_class = TOKENIZER_REGISTRY[tokenizer_name]
-        return tokenizer_class(**kwargs)
-
-    # 3. Determine tokenizer based on encoder type
+    # 1. Special case: byte_latent encoder uses ByteLevelTokenizer
     if encoder_type == "byte_latent":
         if HAS_BYTE_LEVEL:
             return ByteLevelTokenizer(**kwargs)
@@ -160,7 +53,8 @@ def create_tokenizer(
                 "Please install it with: pip install bytelatent"
             )
 
-    # 4. Try to load from local paths (single unified path)
+    # 2. Try to load existing tokenizer for this vocab_size
+    # First check local path
     local_path = Path(f"build/tokenizers/praxis-{vocab_size}-unigram")
     if local_path.exists():
         try:
@@ -175,7 +69,7 @@ def create_tokenizer(
         except Exception:
             pass
 
-    # 5. Try to load from HuggingFace repo
+    # Try HuggingFace repo
     try:
         tokenizer = AutoTokenizer.from_pretrained(
             f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir, **kwargs
@@ -188,40 +82,16 @@ def create_tokenizer(
     except Exception:
         pass
 
-    # 6. Fall back to default profile
-    print(f"No tokenizer found, creating default unigram tokenizer")
-    return create_tokenizer(
-        tokenizer_profile="default", vocab_size=vocab_size, **kwargs
-    )
-
-
-def get_tokenizer(
-    byte_latent: bool = False, cache_dir: Optional[str] = None, **kwargs
-) -> PreTrainedTokenizer:
-    """
-    Get a tokenizer with backward compatibility.
-
-    This function provides backward compatibility with the old
-    byte_latent flag while using the new tokenizer system.
-
-    Args:
-        byte_latent: Whether to use byte-level tokenizer
-        cache_dir: Cache directory for downloading tokenizers
-        **kwargs: Additional arguments
-
-    Returns:
-        Tokenizer instance
-    """
-    if byte_latent:
-        if not HAS_BYTE_LEVEL:
-            raise ImportError(
-                "ByteLevelTokenizer requires bytelatent package. "
-                "Please install it with: pip install bytelatent"
-            )
-        return create_tokenizer(tokenizer_name="byte_level", **kwargs)
-    else:
-        # Try to load from standard paths first
-        return create_tokenizer(cache_dir=cache_dir, **kwargs)
+    # 3. Create new StandardTokenizer if nothing found
+    # print(
+    #     f"No tokenizer found for vocab_size={vocab_size}, creating new unigram tokenizer"
+    # )
+    # return StandardTokenizer(
+    #     tokenizer_type="unigram",
+    #     vocab_size=vocab_size,
+    #     model_max_length=kwargs.get("model_max_length", 2048),
+    #     **kwargs,
+    # )
 
 
 def train_tokenizer(
@@ -281,11 +151,7 @@ __all__ = [
     "PraxisTokenizerBase",
     "ByteLevelTokenizer",
     "StandardTokenizer",
-    # Registry and profiles
-    "TOKENIZER_REGISTRY",
-    "TOKENIZER_PROFILES",
     # Factory functions
     "create_tokenizer",
-    "get_tokenizer",
     "train_tokenizer",
 ]

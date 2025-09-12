@@ -32,7 +32,6 @@ from praxis import (
 )
 from praxis.integrations import IntegrationLoader
 from praxis.optimizers import OPTIMIZER_PROFILES
-from praxis.tokenizers import TOKENIZER_PROFILES, TOKENIZER_REGISTRY
 from praxis.trainers import TRAINER_REGISTRY
 
 # Define the default list of arguments to exclude from hash computation
@@ -485,26 +484,6 @@ architecture_group.add_argument(
     choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
     default=16384,
     help="The absolute vocab size to use, though some architectures might scale it differently",
-)
-architecture_group.add_argument(
-    "--tokenizer-profile",
-    type=str,
-    choices=list(TOKENIZER_PROFILES.keys()),
-    default=None,
-    help="Tokenizer profile to use (default: auto-detect from available tokenizers)",
-)
-architecture_group.add_argument(
-    "--tokenizer-type",
-    type=str,
-    choices=list(TOKENIZER_REGISTRY.keys()),
-    default=None,
-    help="Specific tokenizer type to use (overrides profile)",
-)
-architecture_group.add_argument(
-    "--tokenizer-path",
-    type=str,
-    default=None,
-    help="Path to load a pretrained tokenizer from",
 )
 architecture_group.add_argument(
     "--depth",

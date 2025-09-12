@@ -32,37 +32,19 @@ class Generator:
 
     @contextlib.contextmanager
     def _eval_mode(self):
-        # For Lightning modules, we need to handle eval/train mode carefully
-        # Lightning manages its own training state during the training loop
-        if hasattr(self.model, "model"):
-            # Lightning module - get the actual model
-            actual_model = self.model.model
-            training = actual_model.training
-            actual_model.eval()
-            try:
-                yield
-            except Exception as e:
-                import traceback
+        # Simple eval mode handling - no Lightning-specific branching needed
+        training = self.model.training
+        self.model.eval()
+        try:
+            yield
+        except Exception as e:
+            import traceback
 
-                print(f"[ERROR] Exception during generation: {e}")
-                print(traceback.format_exc())
-                raise
-            finally:
-                actual_model.train(training)
-        else:
-            # Regular model
-            training = self.model.training
-            self.model.eval()
-            try:
-                yield
-            except Exception as e:
-                import traceback
-
-                print(f"[ERROR] Exception during generation: {e}")
-                print(traceback.format_exc())
-                raise
-            finally:
-                self.model.train(training)
+            print(f"[ERROR] Exception during generation: {e}")
+            print(traceback.format_exc())
+            raise
+        finally:
+            self.model.train(training)
 
     def request_generation(self, prompt, kwargs={}) -> str:
         """
@@ -138,47 +120,14 @@ class Generator:
             input_ids = self.tokenizer.encode(request.prompt)
 
         if isinstance(input_ids, list):
-            # For Lightning modules, create tensor on the model's current device
-            # For regular models, use the configured device
-            if hasattr(self.model, "model"):
-                # Lightning module - use its current device
-                model_device = next(self.model.model.parameters()).device
-                input_ids = torch.tensor(
-                    [input_ids], dtype=torch.long, device=model_device
-                )
-                # print(
-                #     f"[DEBUG] Created tensor on Lightning model's device: {model_device}"
-                # )
-            elif self.device and self.device.startswith("cuda"):
-                # Regular model with CUDA device
-                input_ids = torch.tensor(
-                    [input_ids], dtype=torch.long, device=self.device
-                )
-            else:
-                # Regular model on CPU
-                input_ids = torch.tensor([input_ids], dtype=torch.long)
+            # Get device from model parameters directly
+            model_device = next(self.model.parameters()).device
+            input_ids = torch.tensor([input_ids], dtype=torch.long, device=model_device)
 
-        # IMPORTANT: Never move Lightning modules - Lightning manages their device placement
-        # Moving them breaks training when the API is called mid-training
-        if hasattr(self.model, "model"):
-            # This is a Lightning module - DO NOT move it
-            # Lightning handles device placement during training
-
-            actual_model = self.model.model
-            # Get the device from the Lightning-managed model
-            model_device = next(actual_model.parameters()).device
-
-            # Move input_ids to match the model's device
-            if model_device.type == "cuda":
-                input_ids = input_ids.to(model_device)
-        else:
-            # Regular model (non-Lightning) - safe to move if needed
-            actual_model = self.model
-            if self.device and self.device.startswith("cuda"):
-                if not next(actual_model.parameters()).is_cuda:
-                    self.model = self.model.to(self.device)
-                # Move input_ids to the configured device
-                input_ids = input_ids.to(self.device)
+        # Ensure input_ids are on the same device as the model
+        model_device = next(self.model.parameters()).device
+        if input_ids.device != model_device:
+            input_ids = input_ids.to(model_device)
 
         defaults = dict(
             do_sample=True,
@@ -223,18 +172,8 @@ class Generator:
 
         with self._eval_mode():
             while attempts < max_attempts:
-                # Handle both Lightning modules and regular models
-                # Lightning modules wrap the actual model in a .model attribute
-                if hasattr(self.model, "model") and hasattr(
-                    self.model.model, "generate"
-                ):
-                    # This is a Lightning module - use the wrapped model
-                    actual_model = self.model.model
-                else:
-                    # This is a regular model
-                    actual_model = self.model
-
-                outputs = actual_model.generate(
+                # Direct model access - no branching needed
+                outputs = self.model.generate(
                     generated_tokens,
                     **combined,
                     tokenizer=self.tokenizer,
@@ -244,42 +183,35 @@ class Generator:
                 # Update generated_tokens with the new token
                 generated_tokens = outputs.sequences
 
-                # For message-based generation, decode only the generated portion
-                if (
-                    isinstance(request.prompt, list)
-                    and len(generated_tokens[0]) > original_prompt_length
-                ):
-                    # Decode only the new tokens (after the prompt)
-                    decoded_new = self.tokenizer.decode(
-                        generated_tokens[0][original_prompt_length:],
-                        skip_special_tokens=skip_special_tokens,
-                    )
-                else:
-                    # For string prompts or if nothing generated yet, decode everything
-                    decoded_new = self.tokenizer.decode(
-                        generated_tokens[0], skip_special_tokens=skip_special_tokens
-                    )
+                # Always decode the full sequence (matching original behavior)
+                # This ensures context accumulation works properly
+                decoded_new = self.tokenizer.decode(
+                    generated_tokens[0], skip_special_tokens=skip_special_tokens
+                )
 
                 # Check if the decoded text contains the replacement character
                 if "�" not in decoded_new:
-                    # For message prompts, check if we got any output
-                    if isinstance(request.prompt, list):
-                        if len(generated_tokens[0]) > original_prompt_length:
-                            # We have generated tokens
-                            return_text = decoded_new
-                            break
-                    else:
-                        # For string prompts, check if output differs from input
-                        if decoded_new != request.prompt:
-                            return_text = decoded_new
-                            break
+                    # Check if we actually generated something new
+                    generated_token_count = len(generated_tokens[0])
 
-                    # No new tokens were generated, try again with more tokens
-                    attempts += 1
-                    combined["max_new_tokens"] = min(
-                        combined.get("max_new_tokens", 1) + 1, 10
-                    )
-                    continue
+                    # If we have more tokens than the prompt, something was generated
+                    if generated_token_count > original_prompt_length:
+                        return_text = decoded_new
+                        break
+                    # For string prompts, also check if decoded differs (handles edge cases)
+                    elif (
+                        isinstance(request.prompt, str)
+                        and decoded_new != request.prompt
+                    ):
+                        return_text = decoded_new
+                        break
+                    else:
+                        # No new tokens were generated, try again with more tokens
+                        attempts += 1
+                        combined["max_new_tokens"] = min(
+                            combined.get("max_new_tokens", 1) + 1, 10
+                        )
+                        continue
                 else:
                     # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
@@ -287,18 +219,9 @@ class Generator:
                     combined["max_new_tokens"] += 1
             else:
                 # If we exhausted all attempts, return what we have
-                if (
-                    isinstance(request.prompt, list)
-                    and len(generated_tokens[0]) > original_prompt_length
-                ):
-                    return_text = self.tokenizer.decode(
-                        generated_tokens[0][original_prompt_length:],
-                        skip_special_tokens=skip_special_tokens,
-                    )
-                else:
-                    return_text = self.tokenizer.decode(
-                        generated_tokens[0], skip_special_tokens=skip_special_tokens
-                    )
+                return_text = self.tokenizer.decode(
+                    generated_tokens[0], skip_special_tokens=skip_special_tokens
+                )
 
         # Check if the generated text contains an unprocessed tool call
         unprocessed_call = self._get_unprocessed_tool_call(return_text)

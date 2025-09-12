@@ -139,9 +139,6 @@ def main():
 
     # Make necessary variables accessible
     seed = processed_args["seed"]
-    tokenizer_type = processed_args.get("tokenizer_type")
-    tokenizer_profile = processed_args.get("tokenizer_profile")
-    tokenizer_path = processed_args.get("tokenizer_path")
     encoder_type = processed_args.get("encoder_type")
     vocab_size = processed_args["vocab_size"]
     cache_dir = processed_args["cache_dir"]
@@ -184,13 +181,10 @@ def main():
     # Set seeds for reproducibility
     seed_everything(seed, workers=True)
 
-    # Tokenizer initialization - single unified interface
+    # Tokenizer initialization
     tokenizer = create_tokenizer(
-        tokenizer_name=tokenizer_type,
-        tokenizer_profile=tokenizer_profile,
-        tokenizer_path=tokenizer_path,
-        encoder_type=encoder_type,
         vocab_size=vocab_size,
+        encoder_type=encoder_type,
         cache_dir=cache_dir,
     )
 
@@ -251,7 +245,7 @@ def main():
     )
 
     # Configure the learning rate scheduler
-    warmup_steps = 4096
+    warmup_steps = hparams["target_batch_size"] * 4
     scheduler_func = get_scheduler_func(
         optimizer_config=optimizer_config,
         disable_schedule=disable_schedule,
@@ -525,9 +519,6 @@ def main():
         byte_latent=byte_latent,
         pipeline_depth=pipeline_depth,
     )
-
-    # For Lightning modules, we need to update the generator to use the wrapped model
-    generator.model = train_model
 
     # Show launch animation just before training begins
     show_launch_animation(model, truncated_hash)
