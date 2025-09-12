@@ -10,7 +10,7 @@ class PatchedCosineAnnealingWarmupRestarts(CosineAnnealingWarmupRestarts):
     Patched version of CosineAnnealingWarmupRestarts that properly tracks _last_lr.
     This matches the implementation from main.py exactly.
     """
-    
+
     def step(self, *args, **kwargs):
         super().step(*args, **kwargs)
         self._last_lr: List[float] = [

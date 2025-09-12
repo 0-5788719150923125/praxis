@@ -5,4 +5,4 @@ from .frame import FrameBuilder
 from .panels import PanelRenderer
 from .utils import TextUtils
 
-__all__ = ['ChartRenderer', 'FrameBuilder', 'PanelRenderer', 'TextUtils']
+__all__ = ["ChartRenderer", "FrameBuilder", "PanelRenderer", "TextUtils"]

@@ -3,4 +3,4 @@
 from .context import managed_terminal
 from .state import TerminalStateManager
 
-__all__ = ['managed_terminal', 'TerminalStateManager']
+__all__ = ["managed_terminal", "TerminalStateManager"]

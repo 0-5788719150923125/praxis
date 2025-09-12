@@ -27,7 +27,7 @@ warnings.filterwarnings(
 class HivemindOrchestrator:
     """
     Orchestrator for Hivemind decentralized deep learning operations.
-    
+
     This class manages the connection to the Hivemind swarm, handles expert
     registration and discovery, and coordinates distributed training.
 
@@ -51,12 +51,12 @@ class HivemindOrchestrator:
             config: Model configuration
         """
         super().__init__()
-        
+
         # Lazy import hivemind only when needed
         global hivemind, requests, DHT, ModuleBackend, Server, get_experts
         global name_to_block, register_expert_class, P2PDaemonError, P2PHandlerError
         global CompressionType, BatchTensorDescriptor, log_visible_maddrs
-        
+
         import hivemind
         import requests
         from hivemind import DHT
@@ -82,10 +82,10 @@ class HivemindOrchestrator:
         # version = ip_address(address).version
         # announce_maddrs = [f"/ip{version}/{address}/tcp/0"]
         self.use_ipfs = False
-        
+
         # Get initial peers from config
-        initial_peers = getattr(config, 'initial_peers', [])
-        
+        initial_peers = getattr(config, "initial_peers", [])
+
         self.dht = DHT(
             initial_peers=PUBLIC_INITIAL_PEERS + initial_peers,
             # initial_peers=IPFS_INITIAL_PEERS + config.initial_peers,
@@ -110,6 +110,7 @@ class HivemindOrchestrator:
         # Import RemoteExpert from orchestration
         from praxis.orchestration import RemoteExpert
         from praxis.routers import ROUTER_REGISTRY
+
         self.RemoteExpert = RemoteExpert
 
         router_cls = ROUTER_REGISTRY.get("mixture_of_depths")
@@ -253,6 +254,7 @@ class HivemindOrchestrator:
             Generated random name string
         """
         from praxis.utils import PREFIXES, SUFFIXES
+
         return random.choice(PREFIXES[:k]) + "~" + random.choice(SUFFIXES[:k]) + ".0"
 
     def _generate_unique_name(
@@ -318,7 +320,7 @@ class HivemindOrchestrator:
         self.running = False
         if self.thread:
             self.thread.join(timeout=1.0)
-        if hasattr(self, 'dht'):
+        if hasattr(self, "dht"):
             try:
                 self.dht.shutdown()
             except:
@@ -447,12 +449,15 @@ class Integration(BaseIntegration):
         )
 
     def initialize(
-        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None
+        self,
+        args: Any,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize the Hivemind integration when conditions are met."""
         global _management_instance
-        
+
         # Check if hivemind is actually installed
         try:
             import hivemind
@@ -460,43 +465,43 @@ class Integration(BaseIntegration):
             print("❌ Hivemind integration enabled but hivemind package not installed.")
             print("   Install with: pip install hivemind>=1.1.0")
             return {}
-        
+
         self._initialized = True
-        
+
         # Store initial peers in config for later use
-        if hasattr(args, 'initial_peers'):
+        if hasattr(args, "initial_peers"):
             # This will be accessed by HivemindOrchestrator
             pass
-        
+
         return {"hivemind_enabled": True}
 
     def on_decoder_init(self, decoder: Any, config: Any) -> None:
         """Hook called when a decoder is initialized.
-        
+
         This is where we inject the Hivemind orchestrator.
-        
+
         Args:
             decoder: The decoder instance being initialized
             config: The model configuration
         """
         global _management_instance
-        
+
         # Only create manager if config has hivemind=True
-        if getattr(config, 'hivemind', False):
+        if getattr(config, "hivemind", False):
             if _management_instance is None:
                 _management_instance = HivemindOrchestrator(config)
-            
+
             # Inject the manager into the decoder
             decoder.manager = _management_instance
-            
+
             # Update remotes reference
-            if hasattr(decoder, 'remotes'):
+            if hasattr(decoder, "remotes"):
                 decoder.remotes = _management_instance.active_remote_experts
 
     def cleanup(self) -> None:
         """Clean up Hivemind resources."""
         global _management_instance
-        
+
         if _management_instance is not None:
             _management_instance.cleanup()
             _management_instance = None
@@ -504,42 +509,44 @@ class Integration(BaseIntegration):
 
 def get_hivemind_manager(config: Any) -> Optional[HivemindOrchestrator]:
     """Get the global Hivemind orchestrator instance if available.
-    
+
     Args:
         config: Model configuration
-        
+
     Returns:
         HivemindOrchestrator instance or None
     """
     global _management_instance
-    
-    if _management_instance is None and getattr(config, 'hivemind', False):
+
+    if _management_instance is None and getattr(config, "hivemind", False):
         # Try to import hivemind
         try:
             import hivemind
+
             _management_instance = HivemindOrchestrator(config)
         except ImportError:
             print("Warning: Hivemind enabled but package not installed")
             return None
-    
+
     return _management_instance
 
 
 def get_hivemind_errors() -> Tuple[type, type]:
     """Get Hivemind error classes for exception handling.
-    
+
     Returns:
         Tuple of (P2PDaemonError, P2PHandlerError) exception classes
     """
     try:
         from hivemind.p2p import P2PDaemonError, P2PHandlerError
+
         return P2PDaemonError, P2PHandlerError
     except ImportError:
         # Return dummy exceptions if Hivemind not available
         class P2PDaemonError(Exception):
             pass
-        
+
         class P2PHandlerError(Exception):
             pass
-        
+
         return P2PDaemonError, P2PHandlerError

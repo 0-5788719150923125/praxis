@@ -16,7 +16,7 @@ from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 class GunAdapter:
     """Manages connection to Gun.js server for decentralized chat data."""
-    
+
     def __init__(self, max_cache_size=1000):
         self._nodejs_process = None
         self._output_queue = None
@@ -37,7 +37,7 @@ class GunAdapter:
             self._cache_lock = multiprocessing.Lock()
             self._connect_gun()
             self._initialized = True
-    
+
     def _connect_gun(self):
         try:
             # Get the path to the gun.mjs file in this module
@@ -107,7 +107,7 @@ class GunAdapter:
     def get_sample(self, num_entries=10):
         # Ensure connection is established before trying to get samples
         self._ensure_connected()
-        
+
         new_entries = []
         while len(new_entries) < num_entries:
             try:
@@ -139,7 +139,7 @@ class GunAdapter:
             except subprocess.TimeoutExpired:
                 self._nodejs_process.kill()
                 self._nodejs_process.wait()
-            
+
             if self._process and self._process.is_alive():
                 self._process.join(timeout=5)
                 if self._process.is_alive():
@@ -200,8 +200,11 @@ class Integration(BaseIntegration):
         return add_cli_args(parser)
 
     def initialize(
-        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None
+        self,
+        args: Any,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize Gun module when conditions are met."""
         # Only initialize if the gun flag is actually set
@@ -233,7 +236,7 @@ class Integration(BaseIntegration):
 
         # Don't create the Gun adapter here - wait until dataset is requested
         # This avoids pickle errors with multiprocessing objects
-        
+
         # Mark as properly initialized
         self._initialized = True
         print("[Gun] Module initialized")
@@ -274,7 +277,7 @@ class Integration(BaseIntegration):
 
             def get_document(dataset_self):
                 """Get a Gun chat document.
-                
+
                 Returns:
                     Dictionary with messages and metadata
                 """
@@ -323,25 +326,22 @@ class Integration(BaseIntegration):
                 if len(conversation) >= 3:  # system + at least 2 messages
                     return {
                         "messages": conversation,
-                        "metadata": {
-                            "source": "gun:chat",
-                            "format": "chat_room"
-                        }
+                        "metadata": {"source": "gun:chat", "format": "chat_room"},
                     }
-                    
+
                 return {"messages": [], "metadata": {}}
 
             def fill_sequence_cache(dataset_self):
                 """Legacy method for compatibility - converts to old text format."""
                 document_data = dataset_self.get_document()
-                
+
                 # Convert back to text for legacy compatibility
                 if document_data and document_data.get("messages"):
                     try:
                         formatted_text = dataset_self.tokenizer.apply_chat_template(
-                            document_data["messages"], 
-                            tokenize=False, 
-                            add_generation_prompt=False
+                            document_data["messages"],
+                            tokenize=False,
+                            add_generation_prompt=False,
                         )
                         dataset_self.sequence_cache.append(formatted_text)
                     except Exception as e:

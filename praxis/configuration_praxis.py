@@ -127,3 +127,6 @@ class PraxisConfig(PretrainedConfig):
         )  # "reinforce", "grpo", "ppo", or None
         self.rl_weight = kwargs.get("rl_weight", 0.1)
         self.grpo_group_size = kwargs.get("grpo_group_size", 8)  # For GRPO sampling
+
+        # Compatibility with HuggingFace transformers
+        self.num_hidden_layers = self.depth  # Map depth to num_hidden_layers for cache

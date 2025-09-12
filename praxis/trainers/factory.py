@@ -155,10 +155,10 @@ def create_trainer_with_module(
     **kwargs,
 ) -> tuple[Any, Any]:
     """Create a trainer with appropriate module wrapping.
-    
+
     This factory function handles all the complexity of different trainer types,
     including LightningModule wrapping for BackpropagationTrainer.
-    
+
     Args:
         trainer_type: Type of trainer to create
         model: The model to train
@@ -170,54 +170,59 @@ def create_trainer_with_module(
         ckpt_path: Checkpoint path to resume from
         trainer_params: Parameters for the underlying trainer (e.g., Lightning Trainer)
         **kwargs: Additional arguments
-    
+
     Returns:
         Tuple of (trainer, training_module) where training_module is what gets passed to fit()
     """
     from praxis.trainers import TRAINER_REGISTRY
     from praxis.trainers.trainer import Trainer
-    
+
     if trainer_type not in TRAINER_REGISTRY:
-        raise ValueError(f"Unknown trainer type '{trainer_type}'. Available trainers: {list(TRAINER_REGISTRY.keys())}")
-    
+        raise ValueError(
+            f"Unknown trainer type '{trainer_type}'. Available trainers: {list(TRAINER_REGISTRY.keys())}"
+        )
+
     trainer_class = TRAINER_REGISTRY[trainer_type]
+    # Handle lazy loading functions
+    if callable(trainer_class) and not isinstance(trainer_class, type):
+        trainer_class = trainer_class()  # Call the lazy loader
     print(f"[INFO] Using {trainer_type} trainer: {trainer_class.__name__}")
-    
+
     # Handle different trainer types
     if trainer_type == "mono_forward":
-        # Pipeline version needs special handling as a LightningModule
-        from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
         from praxis.trainers.trainer import Trainer
-        
+
         # Extract optimizer config from model
         optimizer_config = {}
-        if hasattr(model, 'config') and hasattr(model.config, 'optimizer_config'):
+        if hasattr(model, "config") and hasattr(model.config, "optimizer_config"):
             optimizer_config = model.config.optimizer_config
-        
+
         # Create the Lightning module
         lightning_module = MonoForwardPipelineModule(
             model=model,
             optimizer_config=optimizer_config,
-            pipeline_depth=kwargs.get('pipeline_depth', 4),
-            device=kwargs.get('device', 'cuda'),
+            pipeline_depth=kwargs.get("pipeline_depth", 4),
+            device=kwargs.get("device", "cuda"),
         )
-        
+
         # Create Lightning Trainer
         trainer = Trainer(**(trainer_params or {}))
-        
+
         return trainer, lightning_module
-    
+
     elif trainer_type == "backpropagation":
         # BackpropagationTrainer is a LightningModule, needs special handling
         from praxis.trainers.backpropagation import BackpropagationTrainer
-        
+
         # Use byte_latent if provided, otherwise determine from encoder_type
-        if 'byte_latent' in kwargs:
-            byte_latent = kwargs['byte_latent']
+        if "byte_latent" in kwargs:
+            byte_latent = kwargs["byte_latent"]
         else:
-            encoder_type = hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
-            byte_latent = (encoder_type == "byte_latent")
-        
+            encoder_type = (
+                hparams.get("encoder_type", "passthrough") if hparams else "passthrough"
+            )
+            byte_latent = encoder_type == "byte_latent"
+
         # Create the LightningModule wrapper
         lightning_module = BackpropagationTrainer(
             model=model,
@@ -225,15 +230,15 @@ def create_trainer_with_module(
             scheduler=scheduler,
             hparams=hparams or {},
             tokenizer=tokenizer,
-            byte_latent=byte_latent
+            byte_latent=byte_latent,
         )
-        
+
         # Create the actual Lightning Trainer
         trainer = Trainer(**(trainer_params or {}))
-        
+
         # Return trainer and the module to be passed to fit()
         return trainer, lightning_module
-    
+
     else:
         # Standard trainer initialization
         trainer = trainer_class(**(trainer_params or {}))

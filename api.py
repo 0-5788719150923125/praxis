@@ -31,8 +31,27 @@ try:
 except ImportError as e:
     terminal_available = False
 
-logger = logging.getLogger("werkzeug")
-logger.setLevel(logging.ERROR)
+# Configure logging for the API module - VERBOSE for debugging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
+    force=True,  # Force reconfiguration even if logging was already configured
+    handlers=[logging.StreamHandler()],  # Ensure we have a console handler
+)
+
+# Create a dedicated logger for the API module
+api_logger = logging.getLogger("praxis.api")
+api_logger.setLevel(logging.DEBUG)
+
+# Enable ALL logging for debugging - we want to see everything
+werkzeug_logger = logging.getLogger("werkzeug")
+werkzeug_logger.setLevel(logging.DEBUG)
+
+# Enable SocketIO/EngineIO logging to see what's happening
+logging.getLogger("socketio").setLevel(logging.DEBUG)
+logging.getLogger("engineio").setLevel(logging.DEBUG)
+logging.getLogger("socketio.server").setLevel(logging.DEBUG)
+logging.getLogger("engineio.server").setLevel(logging.DEBUG)
 
 app = Flask(__name__)
 app.static_folder = "static"
@@ -58,7 +77,13 @@ def apply_wsgi_middleware():
 
 
 # Set up SocketIO for live reload
-socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
+socketio = SocketIO(
+    app,
+    async_mode="threading",
+    cors_allowed_origins="*",
+    logger=True,
+    engineio_logger=True,
+)
 
 # Integration middleware support
 _request_middleware = []
@@ -453,7 +478,6 @@ def get_agents():
             print(f"[WARNING] Failed to add self agent: {e}")
             import traceback
 
-            traceback.print_exc()
 
         # Check if this is in the standard port range (2100-2119)
         is_standard_port = 2100 <= current_port < 2120
@@ -525,7 +549,6 @@ def get_agents():
         print(f"[DEBUG] Error in self agent detection: {e}")
         import traceback
 
-        traceback.print_exc()
 
     try:
         # Get git remotes
@@ -726,6 +749,13 @@ class APIServer:
     ):
         # Initialize APIServer with parameter statistics
         self.generator = generator
+
+        # Set logging level based on dev_mode
+        if dev_mode:
+            api_logger.setLevel(logging.DEBUG)
+            api_logger.debug(
+                "API server running in development mode with debug logging"
+            )
         self.server_thread = None
         self.server = None
         self.started = Event()
@@ -764,17 +794,23 @@ class APIServer:
                             clean_frame = []
                             if dashboard._streamer.renderer:
                                 for line in frame:
-                                    clean_frame.append(dashboard._streamer.renderer.strip_ansi(line))
+                                    clean_frame.append(
+                                        dashboard._streamer.renderer.strip_ansi(line)
+                                    )
                             else:
                                 clean_frame = frame
-                            
+
                             # Send as full update in new format
                             emit(
                                 "dashboard_update",
                                 {
                                     "type": "full",
                                     "frame": clean_frame,
-                                    "width": max(len(line) for line in clean_frame) if clean_frame else 0,
+                                    "width": (
+                                        max(len(line) for line in clean_frame)
+                                        if clean_frame
+                                        else 0
+                                    ),
                                     "height": len(clean_frame),
                                     "timestamp": time.time(),
                                 },
@@ -798,17 +834,23 @@ class APIServer:
                             clean_frame = []
                             if dashboard._streamer.renderer:
                                 for line in frame:
-                                    clean_frame.append(dashboard._streamer.renderer.strip_ansi(line))
+                                    clean_frame.append(
+                                        dashboard._streamer.renderer.strip_ansi(line)
+                                    )
                             else:
                                 clean_frame = frame
-                            
+
                             # Send as full update in new format
                             emit(
                                 "dashboard_update",
                                 {
                                     "type": "full",
                                     "frame": clean_frame,
-                                    "width": max(len(line) for line in clean_frame) if clean_frame else 0,
+                                    "width": (
+                                        max(len(line) for line in clean_frame)
+                                        if clean_frame
+                                        else 0
+                                    ),
                                     "height": len(clean_frame),
                                     "timestamp": time.time(),
                                 },
@@ -855,6 +897,21 @@ class APIServer:
         # Start the template watcher for logging
         self.template_watcher.start()
 
+        # Set up Flask app config BEFORE starting the server thread
+        # This ensures the config is available to all request handlers
+        app.config["api_server"] = self
+        app.config["generator"] = self.generator
+        app.config["tokenizer"] = self.tokenizer
+        app.config["integration_loader"] = self.integration_loader
+        app.config["seed"] = self.seed
+        app.config["truncated_hash"] = self.truncated_hash
+        app.config["full_hash"] = self.full_hash
+        # Store param_stats if available
+        if hasattr(self, "param_stats") and self.param_stats:
+            app.config["param_stats"] = self.param_stats
+        else:
+            app.config["param_stats"] = {}
+
         # Start the server thread
         self.server_thread = Thread(target=self._run_server)
         self.server_thread.daemon = True
@@ -868,84 +925,86 @@ class APIServer:
         self.started.wait(timeout=5)
         if not self.started.is_set():
             raise RuntimeError("Server failed to start within the timeout period")
+        api_logger.info(f"API Server started at http://{self.get_api_addr()}/")
         print(f"[API] Server started at http://{self.get_api_addr()}/")
 
     def stop(self):
         """Stop the API server - just signal shutdown, don't wait."""
         self.shutdown_event.set()  # Signal threads to stop
-        
+
         # Stop the template watcher if it exists
         if hasattr(self, "template_watcher"):
             try:
                 self.template_watcher.stop()
             except:
                 pass
-        
+
         # Don't join daemon threads - let them die naturally when main exits
         # This prevents hanging during shutdown
 
     def _run_server(self):
         # Start API server with parameter statistics
+        try:
+            api_logger.info("Starting API server thread...")
 
-        # Apply any WSGI middleware registered by integrations (must be before starting server)
-        apply_wsgi_middleware()
-        
-        # Store server instance for clean shutdown
-        self.server = None
+            # Apply any WSGI middleware registered by integrations (must be before starting server)
+            apply_wsgi_middleware()
 
-        with app.app_context():
-            app.config["generator"] = self.generator
-            app.config["tokenizer"] = self.tokenizer
-            app.config["integration_loader"] = self.integration_loader
-            app.config["seed"] = self.seed
-            app.config["truncated_hash"] = self.truncated_hash
-            app.config["full_hash"] = self.full_hash
-            # Store param_stats if available
-            if hasattr(self, "param_stats") and self.param_stats:
-                app.config["param_stats"] = self.param_stats
-                # Stored parameter statistics in app config
-            else:
-                app.config["param_stats"] = {}
-                # No parameter statistics available
+            # Store server instance for clean shutdown
+            self.server = None
 
-            # Register integration middleware FIRST
-            if self.integration_loader:
-                for middleware_func in self.integration_loader.get_request_middleware():
-                    # Wrap the middleware to handle both request and response phases
-                    def create_wrapper(func):
-                        def request_wrapper(req, resp):
-                            return func(req, resp)
+            with app.app_context():
+                # Config is already set in start() method before this thread starts
+                # Just need the app context for running the server
 
-                        return request_wrapper
+                # Register integration middleware FIRST
+                if self.integration_loader:
+                    for (
+                        middleware_func
+                    ) in self.integration_loader.get_request_middleware():
+                        # Wrap the middleware to handle both request and response phases
+                        def create_wrapper(func):
+                            def request_wrapper(req, resp):
+                                return func(req, resp)
 
-                    wrapper = create_wrapper(middleware_func)
-                    register_request_middleware(wrapper)
-                    register_response_middleware(wrapper)
+                            return request_wrapper
 
-            # Signal that the server will start (AFTER hooks are registered)
-            self.started.set()
+                        wrapper = create_wrapper(middleware_func)
+                        register_request_middleware(wrapper)
+                        register_response_middleware(wrapper)
 
-            # Configure server based on dev mode
-            if self.dev_mode:
-                # In dev mode, enable debug but disable reloader (runs in thread)
-                app.debug = True
-                socketio.run(
-                    app,
-                    host="0.0.0.0",  # Bind to all interfaces
-                    port=self.port,
-                    debug=True,
-                    use_reloader=False,  # Cannot use reloader in background thread
-                )
-            else:
-                # Production mode - secure settings
-                app.debug = False
-                socketio.run(
-                    app,
-                    host="0.0.0.0",  # Bind to all interfaces
-                    port=self.port,
-                    debug=False,
-                    use_reloader=False,  # No auto-reload in production
-                )
+                # Signal that the server will start (AFTER hooks are registered)
+                self.started.set()
+
+                # Configure server based on dev mode
+                if self.dev_mode:
+                    # In dev mode, enable debug but disable reloader (runs in thread)
+                    api_logger.info(f"Starting dev mode server on port {self.port}")
+                    app.debug = True
+                    socketio.run(
+                        app,
+                        host="0.0.0.0",  # Bind to all interfaces
+                        port=self.port,
+                        debug=True,
+                        use_reloader=False,  # Cannot use reloader in background thread
+                        allow_unsafe_werkzeug=True,  # Allow in dev mode
+                    )
+                else:
+                    # Production mode - secure settings
+                    api_logger.info(
+                        f"Starting production mode server on port {self.port}"
+                    )
+                    app.debug = False
+                    socketio.run(
+                        app,
+                        host="0.0.0.0",  # Bind to all interfaces
+                        port=self.port,
+                        debug=False,
+                        use_reloader=False,  # No auto-reload in production
+                    )
+        except Exception as e:
+            api_logger.error(f"API server crashed with exception: {e}", exc_info=True)
+            raise
 
     def get_api_addr(self):
         return f"{self.host}:{self.port}"
@@ -978,9 +1037,41 @@ def favicon():
         return "", 204
 
 
+@app.route("/messages/", methods=["POST", "OPTIONS"])
+@app.route("/messages", methods=["POST", "OPTIONS"])
+def generate_messages():
+    """Handle message-based generation - minimal version."""
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
+        return response
+    
+    # Get the request data
+    try:
+        data = request.get_json()
+        messages = data.get("messages", [])
+        
+        # For now, just return a simple response acknowledging we got the messages
+        response = jsonify({
+            "response": "Received messages successfully",
+            "message_count": len(messages)
+        })
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response, 200
+        
+    except Exception as e:
+        error_response = jsonify({"error": str(e)})
+        error_response.headers.add("Access-Control-Allow-Origin", "*")
+        return error_response, 500
+
+
 @app.route("/input/", methods=["GET", "POST", "OPTIONS"])
 @app.route("/input", methods=["GET", "POST", "OPTIONS"])
 def generate():
+    """Handle string-based prompt generation."""
     # Handle CORS preflight request
     if request.method == "OPTIONS":
         response = jsonify({"status": "ok"})
@@ -990,54 +1081,43 @@ def generate():
         return response
 
     try:
-        # # Log detailed request information
-        # print(f"Request received:")
-        # print(f"- From: {request.remote_addr}")
-        # print(f"- Method: {request.method}")
-        # print(f"- Headers: {dict(request.headers)}")
-        # print(f"- Origin: {request.headers.get('Origin', 'None')}")
-
         # Increase server timeout (30 minutes)
         request.environ.get("werkzeug.server.shutdown_timeout", 30 * 60)
 
         kwargs = request.get_json()
-        logging.info("Received a valid request via REST.")
+        api_logger.info("Received a valid request via REST.")
 
         prompt = kwargs.get("prompt")
-        messages = kwargs.get("messages")
 
-        if (prompt is not None) and (messages is not None):
+        if prompt is None:
             response = jsonify(
-                {"error": "Please provide either 'prompt' or 'messages', not both."}
+                {"error": "Please provide 'prompt' for string-based generation."}
             )
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response, 400
 
-        if (prompt is None) and (messages is None):
-            response = jsonify({"error": "Please provide 'prompt' or 'messages'."})
+        # Check if user mistakenly included messages
+        if "messages" in kwargs:
+            response = jsonify(
+                {"error": "Use /messages endpoint for message-based generation."}
+            )
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response, 400
 
-        is_chatml = False
-        if messages is not None:
-            # Format messages using the tokenizer's chat template
-            try:
-                tokenizer = app.config["tokenizer"]
-                prompt = format_messages_to_chatml(messages, tokenizer)
-                is_chatml = True
-                kwargs["eos_token_id"] = [
-                    tokenizer.eos_token_id,
-                    tokenizer.sep_token_id,
-                ]
-                kwargs["skip_special_tokens"] = False
-                del kwargs["messages"]
-            except ValueError as ve:
-                logging.error(ve)
-                response = jsonify({"error": str(ve)})
-                response.headers.add("Access-Control-Allow-Origin", "*")
-                return response, 400
-
-        generator = app.config["generator"]
+        # Get the generator from the APIServer instance to ensure we have the latest reference
+        if "api_server" in app.config:
+            generator = app.config["api_server"].generator
+        elif "generator" in app.config:
+            generator = app.config["generator"]
+        else:
+            api_logger.error("Generator not configured in app.config")
+            error_response = jsonify(
+                {
+                    "error": "Generator not initialized yet. Please wait for training to start."
+                }
+            )
+            error_response.headers.add("Access-Control-Allow-Origin", "*")
+            return error_response, 503
         request_id = generator.request_generation(prompt, kwargs)
         while True:
             result = generator.get_result(request_id)
@@ -1049,21 +1129,16 @@ def generate():
         if not output:
             raise Exception("Failed to generate an output from this API.")
 
-        if is_chatml:
-            # Extract only the assistant's reply using the tokenizer
-            assistant_reply = extract_assistant_reply(output, app.config["tokenizer"])
-            response = {"response": assistant_reply}
-        else:
-            # Return the full output as before
-            response = {"response": output}
+        # Return the full output
+        response = {"response": output}
 
     except Exception as e:
-        logging.error(e)
+        api_logger.error(e)
         error_response = jsonify({"error": str(e)})
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 400
 
-    logging.info("Successfully responded to REST request.")
+    api_logger.info("Successfully responded to REST request.")
     final_response = jsonify(response)
     final_response.headers.add("Access-Control-Allow-Origin", "*")
     return final_response, 200
@@ -1110,6 +1185,11 @@ def serve_static(filename):
     if filename in ["input", "input/"] and request.method in ["POST", "OPTIONS"]:
         print(f"[DEBUG] Redirecting {request.method} request to /input/ handler")
         return generate()
+
+    # If this is a POST to messages, redirect to the actual messages handler
+    if filename in ["messages", "messages/"] and request.method in ["POST", "OPTIONS"]:
+        print(f"[DEBUG] Redirecting {request.method} request to /messages/ handler")
+        return generate_messages()
 
     # Otherwise, serve static files only for GET/HEAD
     if request.method not in ["GET", "HEAD"]:

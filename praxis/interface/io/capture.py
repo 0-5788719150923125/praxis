@@ -5,7 +5,7 @@ import io
 
 class LogCapture:
     """Captures stdout/stderr output for dashboard display."""
-    
+
     def __init__(self, dashboard):
         self.dashboard = dashboard
         self.log_buffer = io.StringIO()

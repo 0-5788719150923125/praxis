@@ -3,6 +3,21 @@
 import torch
 
 
+def _check_module_compilability(module):
+    """
+    Recursively check if any submodule is marked as non-compilable.
+
+    Returns:
+        tuple: (can_compile, module_path, module_type)
+    """
+    for name, submodule in module.named_modules():
+        # Check for can_compile class variable on the submodule's class
+        submodule_class = submodule.__class__
+        if hasattr(submodule_class, "can_compile") and not submodule_class.can_compile:
+            return False, name, submodule_class.__name__
+    return True, None, None
+
+
 def try_compile_model(model, hparams):
     """
     Attempt to compile the model with torch.compile.
@@ -15,6 +30,10 @@ def try_compile_model(model, hparams):
     Returns:
         Compiled model or original model if compilation fails
     """
+    # TEMPORARY: Completely disable all model compilation to avoid FX tracing errors
+    print("[Compile] Model compilation is temporarily disabled")
+    return model
+
     # Convert dict to object if needed for getattr
     if isinstance(hparams, dict):
         from types import SimpleNamespace
@@ -36,8 +55,22 @@ def try_compile_model(model, hparams):
 
     # Skip compilation if feature flag is set (faster iteration)
     from praxis.environments import EnvironmentFeatures
-    if EnvironmentFeatures.is_enabled('skip_compilation'):
+
+    if EnvironmentFeatures.is_enabled("skip_compilation"):
         print("[Compile] Skipping compilation (skip_compilation feature enabled)")
+        return model
+
+    # Check if any module in the model is marked as non-compilable
+    # IMPORTANT: If ANY module cannot be compiled, we must skip ALL compilation
+    # to avoid FX tracing errors with partially compilable models
+    can_compile, module_path, module_type = _check_module_compilability(model)
+    if not can_compile:
+        print(
+            f"[Compile] Skipping ALL compilation: {module_type} at '{module_path}' marked as non-compilable"
+        )
+        print(
+            "[Compile] Note: When any module is non-compilable, the entire model must remain uncompiled"
+        )
         return model
 
     # Skip compilation for certain problematic configurations
@@ -45,6 +78,8 @@ def try_compile_model(model, hparams):
     if hasattr(hparams, "decoder_type") and hparams.decoder_type == "mono_forward":
         print("[Compile] Skipping compilation for mono_forward decoder (incompatible)")
         return model
+
+    print("[Compile] All modules are compilable, proceeding with compilation attempt")
 
     try:
         # Set TensorFloat32 for better performance
@@ -139,6 +174,10 @@ def try_compile_optimizer(optimizer, hparams):
     Returns:
         Compiled optimizer or original optimizer if compilation fails
     """
+    # TEMPORARY: Completely disable all optimizer compilation to avoid FX tracing errors
+    print("[Compile] Optimizer compilation is temporarily disabled")
+    return optimizer
+
     # Convert dict to object if needed for getattr
     if isinstance(hparams, dict):
         from types import SimpleNamespace
@@ -156,7 +195,8 @@ def try_compile_optimizer(optimizer, hparams):
 
     # Skip compilation if feature flag is set
     from praxis.environments import EnvironmentFeatures
-    if EnvironmentFeatures.is_enabled('skip_compilation'):
+
+    if EnvironmentFeatures.is_enabled("skip_compilation"):
         return optimizer
 
     # Check if optimizer step can be compiled

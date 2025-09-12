@@ -13,7 +13,7 @@ from praxis.data.formatters import _rl_logger
 
 class WeightedIterableDataset(IterableDataset):
     """Dataset that samples from multiple datasets with weights."""
-    
+
     def __init__(
         self,
         datasets: List[PraxisSampler],
@@ -30,14 +30,13 @@ class WeightedIterableDataset(IterableDataset):
         self.data_manager = InterleaveDataManagerV2(
             datasets, weights, tokenizer, block_size, rl_type=rl_type
         )
-            
+
         self.batch_size = batch_size
         self.oversample_chance = oversample_chance
         self.supersample_chance = supersample_chance
         self.hypersample_chance = hypersample_chance
         self.rl_type = rl_type
         self.tokenizer = tokenizer  # Store tokenizer for reward extraction
-
 
     def __iter__(self):
         while True:
@@ -67,7 +66,6 @@ class WeightedIterableDataset(IterableDataset):
                 # Check if this batch needs generation (rewards == -1)
                 needs_generation = (reward_tensor == -1).any()
                 generation_count = (reward_tensor == -1).sum().item()
-
 
                 # Only log when we actually have generation flags
                 if needs_generation:

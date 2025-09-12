@@ -102,13 +102,17 @@ class DashboardStreamer:
                                 clean_frame = []
                                 if self.renderer:
                                     for line in frame:
-                                        clean_frame.append(self.renderer.strip_ansi(line))
+                                        clean_frame.append(
+                                            self.renderer.strip_ansi(line)
+                                        )
                                 else:
                                     clean_frame = frame
-                                
+
                                 # Compute differential update
-                                diff_data = self.differential_renderer.compute_diff(clean_frame)
-                                
+                                diff_data = self.differential_renderer.compute_diff(
+                                    clean_frame
+                                )
+
                                 # Send differential update to clients
                                 _global_socketio.emit(
                                     "dashboard_update",
@@ -158,5 +162,5 @@ def register_dashboard(identifier, dashboard):
         _active_dashboards[identifier] = dashboard
         if _global_socketio:
             # Start streaming if socketio is available
-            if hasattr(dashboard, '_streamer'):
+            if hasattr(dashboard, "_streamer"):
                 dashboard._streamer.start()

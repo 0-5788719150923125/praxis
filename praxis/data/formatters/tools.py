@@ -15,12 +15,12 @@ def format_tool_calling(
     """
     Format synthetic tool-calling examples for training.
     Generates math problems that require the calc tool.
-    
+
     Args:
         document: Dictionary containing the document data (unused for synthetic generation)
         keys: List of keys to extract from document (unused for synthetic generation)
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -181,6 +181,6 @@ def format_tool_calling(
         "metadata": {
             "format": "tool_calling",
             "operation": operation,
-            "has_tool_call": True
-        }
+            "has_tool_call": True,
+        },
     }

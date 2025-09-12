@@ -138,14 +138,14 @@ def format_rl(
         document: Dictionary containing the document data
         keys: List of keys to extract from document (must be exactly 3)
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dict with special formatting for RL including text, reward, and metadata
     """
     assert len(keys) == 3, "RL format requires exactly 3 keys"
 
     prompt = text_formatter(document.get(keys[0], ""))
-    verification_info = document.get(keys[1], "{}") 
+    verification_info = document.get(keys[1], "{}")
     solve_rate = document.get(keys[2], 0.0)
 
     # Parse the ground truth from verification_info

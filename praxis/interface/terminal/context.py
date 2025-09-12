@@ -12,5 +12,7 @@ def managed_terminal(term, state_manager):
             yield
     finally:
         # Ensure terminal is restored when exiting the context
-        if not state_manager.terminal_restored and not getattr(state_manager, 'error_exit', False):
+        if not state_manager.terminal_restored and not getattr(
+            state_manager, "error_exit", False
+        ):
             state_manager.restore_terminal()

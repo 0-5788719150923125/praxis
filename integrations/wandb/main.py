@@ -41,7 +41,7 @@ def initialize(args, cache_dir, ckpt_path=None, truncated_hash=None):
     # Only initialize if wandb flag is set
     if not getattr(args, "wandb", False):
         return {}
-        
+
     import wandb
 
     wandb.login()
@@ -220,8 +220,11 @@ class Integration(BaseIntegration):
         return add_cli_args(parser)
 
     def initialize(
-        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None
+        self,
+        args: Any,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize wandb and return logger configuration."""
         return initialize(args, cache_dir, ckpt_path, truncated_hash)
@@ -231,8 +234,11 @@ class Integration(BaseIntegration):
         return cleanup()
 
     def provide_logger(
-        self, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None, **kwargs
+        self,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
+        **kwargs,
     ) -> Optional[Any]:
         """Create and configure a wandb logger if wandb is enabled."""
         return create_logger(cache_dir, ckpt_path, truncated_hash, **kwargs)

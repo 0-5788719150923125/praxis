@@ -18,6 +18,8 @@ class FlexAttention(nn.Module):
     Provides efficient attention computation with customizable block masking.
     """
 
+    can_compile = False  # FlexAttention with score_mod triggers FX tracing errors in torch.compile
+
     def __init__(self, config) -> None:
         """
         Initialize FlexAttention module.
@@ -236,11 +238,13 @@ class FlexAttention(nn.Module):
         # Use FlexAttention if available, otherwise fall back to standard attention
         # Note: FlexAttention with score_mod doesn't work well with torch.compile currently,
         # so we skip it when running under compilation
-        use_flex = (
-            self.flex_attention is not None
-            and self.causal
-            and not torch.compiler.is_compiling()
-        )
+        # TEMPORARY: Disable FlexAttention completely to avoid internal torch.compile calls
+        use_flex = False  # Force fallback to standard attention
+        # use_flex = (
+        #     self.flex_attention is not None
+        #     and self.causal
+        #     and not torch.compiler.is_compiling()
+        # )
 
         if use_flex:
             # Create or retrieve causal mask
@@ -300,6 +304,9 @@ class FlexAttention(nn.Module):
 
             # Apply attention mask if provided
             if attention_mask is not None:
+                # Ensure attention_mask is boolean
+                if attention_mask.dtype != torch.bool:
+                    attention_mask = attention_mask.bool()
                 scores = scores.masked_fill(
                     attention_mask.unsqueeze(1).unsqueeze(2), float("-inf")
                 )

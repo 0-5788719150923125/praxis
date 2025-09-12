@@ -11,12 +11,12 @@ def format_simple(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
     """Convert raw text to unified format with system/developer prompts.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -32,10 +32,4 @@ def format_simple(
         {"role": "assistant", "content": text_formatter(text)},
     ]
 
-    return {
-        "messages": messages,
-        "metadata": {
-            "format": "simple",
-            "source_keys": keys
-        }
-    }
+    return {"messages": messages, "metadata": {"format": "simple", "source_keys": keys}}

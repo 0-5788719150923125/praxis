@@ -12,12 +12,12 @@ def format_personachat(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
     """Format AlekseyKorshuk persona-chat dataset with JSON structure for better randomization.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -119,6 +119,6 @@ def format_personachat(
             "format": "personachat",
             "source_keys": keys,
             "has_personality": bool(personality),
-            "num_utterances": num_utterances
-        }
+            "num_utterances": num_utterances,
+        },
     }

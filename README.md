@@ -85,13 +85,13 @@ python main.py --batch-size 16 --device cuda
 
 ## do inference
 
-Send a JSON-encoded payload via POST to:
+### String-based generation
+
+For simple string prompts, send a JSON-encoded payload via POST to:
 
 ```
 http://localhost:2100/input
 ```
-
-This payload should support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
 
 Example request:
 
@@ -106,6 +106,37 @@ response = requests.post(url, json=payload)
 print(response.status_code)
 print(response.json())
 ```
+
+### Message-based generation (recommended)
+
+For conversation-style generation with support for system prompts and tool calls, use:
+
+```
+http://localhost:2100/messages
+```
+
+Example request:
+
+```py
+import requests
+
+url = "http://localhost:2100/messages"
+payload = {
+    "messages": [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "do_sample": True,
+    "temperature": 0.7
+}
+
+response = requests.post(url, json=payload)
+
+print(response.status_code)
+print(response.json())
+```
+
+Both endpoints support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
 
 ## local web chat
 

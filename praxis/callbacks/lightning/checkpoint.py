@@ -47,10 +47,11 @@ class TimeBasedCheckpoint(ModelCheckpoint):
 
             # Also save the model in Huggingface format
             # The lm is already the BackpropagationTrainer, which has the model as an attribute
-            if hasattr(lm, 'model') and hasattr(lm.model, 'save_pretrained'):
+            if hasattr(lm, "model") and hasattr(lm.model, "save_pretrained"):
                 # Create a subdirectory for the HF model
                 import os
-                model_dir = os.path.join(self.dirpath, 'hf_model')
+
+                model_dir = os.path.join(self.dirpath, "hf_model")
                 os.makedirs(model_dir, exist_ok=True)
                 lm.model.save_pretrained(model_dir, safe_serialization=False)
 

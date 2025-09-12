@@ -18,7 +18,7 @@ class SyntheticToolCallingDataset(PraxisSampler):
 
     def get_document(self) -> Dict:
         """Get a synthetic tool-calling document.
-        
+
         Returns:
             Dictionary with messages and metadata
         """
@@ -29,13 +29,11 @@ class SyntheticToolCallingDataset(PraxisSampler):
     def fill_sequence_cache(self):
         # Legacy method for compatibility - converts to old text format
         document_data = self.get_document()
-        
+
         # Convert back to text for legacy compatibility
         if document_data and document_data.get("messages"):
             text = self.tokenizer.apply_chat_template(
-                document_data["messages"],
-                tokenize=False,
-                add_generation_prompt=False
+                document_data["messages"], tokenize=False, add_generation_prompt=False
             )
             self.sequence_cache.append(text)
         else:

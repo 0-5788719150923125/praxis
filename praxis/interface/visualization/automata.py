@@ -5,7 +5,7 @@ import numpy as np
 
 class ForestFireAutomata:
     """Forest fire cellular automaton simulation."""
-    
+
     def __init__(self, width, height):
         """Initialize the forest fire simulation."""
         self.width = width

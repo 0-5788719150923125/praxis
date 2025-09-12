@@ -13,7 +13,7 @@ from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
 
 class MultiDirectoryDataset(PraxisSampler):
     """Dataset that reads files from multiple directories."""
-    
+
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
@@ -32,7 +32,7 @@ class MultiDirectoryDataset(PraxisSampler):
             else:
                 normalized = os.path.normpath(os.path.join(self.cwd, d))
             self.directories.append(normalized)
-        
+
         # Remove root directory if accidentally included
         if "/" in self.directories:
             self.directories.remove("/")
@@ -168,135 +168,146 @@ class MultiDirectoryDataset(PraxisSampler):
     def get_document(self) -> Dict:
         """Get a formatted document with messages and metadata."""
         from praxis.data.config import SYSTEM_PROMPT
-        
+
         # Get a file and its content
         max_attempts = len(self.file_list) + 10
         attempts = 0
-        
+
         while attempts < max_attempts:
             attempts += 1
-            
+
             try:
                 # Get next file
                 file_path = next(self.file_iterator)
-                
+
                 # Skip if we've already removed this file
                 if file_path in self.removed_files:
                     continue
-                
-                
+
                 # Try to read the file
                 content = self._read_file(file_path)
-                
+
                 if content is None:
                     # File couldn't be read - remove it from the list silently
                     self.removed_files.add(file_path)
                     continue
-                    
-                
+
                 # Get relative path for formatting
                 rel_path = os.path.relpath(file_path, self.cwd)
-                
+
                 # Format as messages
                 messages = [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Continue or complete the following code from {rel_path}:"},
-                    {"role": "assistant", "content": content}
+                    {
+                        "role": "user",
+                        "content": f"Continue or complete the following code from {rel_path}:",
+                    },
+                    {"role": "assistant", "content": content},
                 ]
-                
+
                 result = {
                     "messages": messages,
-                    "metadata": {
-                        "source": "multi_dir",
-                        "file_path": file_path
-                    }
+                    "metadata": {"source": "multi_dir", "file_path": file_path},
                 }
                 return result
-                
+
             except StopIteration:
                 # No more files, reset the iterator
                 self.file_iterator = cycle(self.file_list)
                 continue
-                
+
         # Fallback - return empty document
         return {"messages": [], "metadata": {}}
-    
+
     def fill_sequence_cache(self):
         """Fill the sequence cache with formatted file content."""
         max_attempts = len(self.file_list) + 10  # Prevent infinite loops
         attempts = 0
-        
+
         while attempts < max_attempts:
             attempts += 1
-            
+
             try:
                 # Get next file
                 file_path = next(self.file_iterator)
-                
+
                 # Skip if we've already removed this file
                 if file_path in self.removed_files:
                     continue
-                
+
                 # Try to read the file
                 content = self._read_file(file_path)
-                
+
                 if content is None:
                     # File couldn't be read - remove it from the list silently
                     self.removed_files.add(file_path)
-                    self.file_list = [f for f in self.file_list if f not in self.removed_files]
+                    self.file_list = [
+                        f for f in self.file_list if f not in self.removed_files
+                    ]
                     continue
-                
+
                 # Skip empty files
                 if not content.strip():
                     continue
-                
+
                 # Build a proper message structure
                 try:
                     # Start with system and developer prompts
                     messages = [
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "developer", "content": DEVELOPER_PROMPTS.get("continue_text", "Continue or complete the provided text.")},
+                        {
+                            "role": "developer",
+                            "content": DEVELOPER_PROMPTS.get(
+                                "continue_text",
+                                "Continue or complete the provided text.",
+                            ),
+                        },
                     ]
-                    
+
                     # Add the file content as assistant message
                     file_messages = format_file_as_messages(
-                        file_path=file_path,
-                        content=content
+                        file_path=file_path, content=content
                     )
                     messages.extend(file_messages)
-                    
+
                     # Apply chat template to format the messages
                     formatted_text = self.tokenizer.apply_chat_template(
-                        messages,
-                        tokenize=False,
-                        add_generation_prompt=False
+                        messages, tokenize=False, add_generation_prompt=False
                     )
-                    
+
                     self.sequence_cache.append(formatted_text)
                     return  # Successfully added to cache
-                    
+
                 except Exception:
                     # If formatting fails, fall back to simple format
                     simple_content = self.tokenizer.bos_token + content
                     self.sequence_cache.append(simple_content)
                     return
-                    
+
             except StopIteration:
                 # End of file list - reshuffle and start over
                 # Remove any files that couldn't be read
-                self.file_list = [f for f in self.file_list if f not in self.removed_files]
-                
+                self.file_list = [
+                    f for f in self.file_list if f not in self.removed_files
+                ]
+
                 if not self.file_list:
                     # No files left to read
-                    print("Warning: No readable files remaining in MultiDirectoryDataset")
+                    print(
+                        "Warning: No readable files remaining in MultiDirectoryDataset"
+                    )
                     # Add a dummy entry to prevent crashes
-                    self.sequence_cache.append(self.tokenizer.bos_token + "No files available.")
+                    self.sequence_cache.append(
+                        self.tokenizer.bos_token + "No files available."
+                    )
                     return
-                
+
                 random.shuffle(self.file_list)
                 self.file_iterator = iter(self.file_list)
                 continue
-        
+
         # Fallback if we hit max attempts
-        print("Warning: Max attempts reached in MultiDirectoryDataset.fill_sequence_cache")
+        print(
+            "Warning: Max attempts reached in MultiDirectoryDataset.fill_sequence_cache"
+        )
         self.sequence_cache.append(self.tokenizer.bos_token + "Error loading files.")

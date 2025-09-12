@@ -77,7 +77,7 @@ class BackpropagationTrainer(LightningModule):
 
         # Log document at 10% intervals (every 10 steps)
         if batch_idx > 0 and batch_idx % 10 == 0 and batch_idx != self.last_logged_step:
-            self._log_training_document(input_ids, batch_idx)
+            # self._log_training_document(input_ids, batch_idx)
             self.last_logged_step = batch_idx
 
         # Prepare metrics dict

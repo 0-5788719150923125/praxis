@@ -31,6 +31,10 @@ DEFAULT_CHAT_TEMPLATE = """{% set ns = namespace(system_seen=false) %}
 {% endfor %}
 {% endif %}
 {{ sep_token }}
+{% elif message['role'] == 'tool' %}
+{{ bos_token }}tool
+{{ message['content'] }}
+{{ sep_token }}
 {% endif %}
 {% endfor %}
 {% if add_generation_prompt %}
@@ -46,13 +50,14 @@ STANDARD_CHAT_TEMPLATE = DEFAULT_CHAT_TEMPLATE
 # Export the default template
 CHAT_TEMPLATE = DEFAULT_CHAT_TEMPLATE
 
+
 def get_chat_template(tokenizer_type: str = "default") -> str:
     """
     Get the appropriate chat template for a tokenizer type.
-    
+
     Args:
         tokenizer_type: Type of tokenizer ("byte_level", "standard", or "default")
-        
+
     Returns:
         Chat template string
     """
@@ -64,5 +69,5 @@ def get_chat_template(tokenizer_type: str = "default") -> str:
         "bpe": STANDARD_CHAT_TEMPLATE,
         "unigram": STANDARD_CHAT_TEMPLATE,
     }
-    
+
     return templates.get(tokenizer_type, DEFAULT_CHAT_TEMPLATE)

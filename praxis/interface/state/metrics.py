@@ -7,43 +7,43 @@ from threading import Lock
 
 class MetricsState:
     """Manages dashboard metrics and state."""
-    
+
     def __init__(self, max_data_points=1000):
         self.lock = Lock()
         self.max_data_points = max_data_points
-        
+
         # Training metrics
         self.train_losses = deque(maxlen=max_data_points)
         self.val_loss = None
         self.accuracy = None
         self.fitness = None
         self.memory_churn = None
-        
+
         # Progress tracking
         self.batch = 0
         self.step = 0
         self.rate = 0
         self.num_tokens = 0
         self.context_tokens = 0
-        
+
         # Model info
         self.total_params = "0M"
         self.local_experts = 0
         self.remote_experts = 0
-        
+
         # Status
         self.mode = "train"
         self.status_text = "_initializing"
         self.url = "N/A"
         self.seed = None
         self.arg_hash = "000000"
-        
+
         # Time tracking
         self.start_time = datetime.now()
-        
+
         # Additional info
         self.info_dict = {}
-        
+
         # Visual elements
         self.sign = 1
 

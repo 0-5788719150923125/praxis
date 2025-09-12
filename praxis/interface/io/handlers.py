@@ -5,7 +5,7 @@ import logging
 
 class DashboardStreamHandler(logging.StreamHandler):
     """Stream handler that routes logs to the dashboard."""
-    
+
     def __init__(self, dashboard):
         super().__init__()
         self.dashboard = dashboard

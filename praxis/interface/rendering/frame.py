@@ -5,7 +5,7 @@ from .utils import TextUtils
 
 class FrameBuilder:
     """Builds and manages dashboard frames."""
-    
+
     def __init__(self):
         self.text_utils = TextUtils()
 
@@ -32,7 +32,9 @@ class FrameBuilder:
         # Assuming the ERROR section is on the first content line after the top border
         error_line_index = 1  # Adjust if necessary
         line = frame[error_line_index]
-        expected_length = self.text_utils.visual_len(frame[0])  # Length of the top border
+        expected_length = self.text_utils.visual_len(
+            frame[0]
+        )  # Length of the top border
         line_visual_len = self.text_utils.visual_len(line)
         if line_visual_len != expected_length:
             return False

@@ -218,19 +218,68 @@ def simple_truecase(text: str) -> str:
     result = text[0].upper() + text[1:] if text else text
 
     # Capitalize after sentence-ending punctuation
-    result = re.sub(r"([.!?])\s+([a-z])", lambda m: m.group(1) + " " + m.group(2).upper(), result)
+    result = re.sub(
+        r"([.!?])\s+([a-z])", lambda m: m.group(1) + " " + m.group(2).upper(), result
+    )
 
     # Common words that should stay lowercase mid-sentence
     lowercase_words = {
-        "a", "an", "the", "and", "but", "or", "for", "nor", "on", "at", "to", "by",
-        "up", "in", "out", "if", "is", "it", "of", "as", "was", "with", "be", "are",
-        "been", "were", "that", "this", "these", "those", "some", "all", "no",
-        "not", "can", "will", "may", "would", "could", "should", "might", "must",
-        "shall", "has", "have", "had", "do", "does", "did", "so", "yet", "from"
+        "a",
+        "an",
+        "the",
+        "and",
+        "but",
+        "or",
+        "for",
+        "nor",
+        "on",
+        "at",
+        "to",
+        "by",
+        "up",
+        "in",
+        "out",
+        "if",
+        "is",
+        "it",
+        "of",
+        "as",
+        "was",
+        "with",
+        "be",
+        "are",
+        "been",
+        "were",
+        "that",
+        "this",
+        "these",
+        "those",
+        "some",
+        "all",
+        "no",
+        "not",
+        "can",
+        "will",
+        "may",
+        "would",
+        "could",
+        "should",
+        "might",
+        "must",
+        "shall",
+        "has",
+        "have",
+        "had",
+        "do",
+        "does",
+        "did",
+        "so",
+        "yet",
+        "from",
     }
 
     # Split into sentences and process each
-    sentences = re.split(r'([.!?]\s+)', result)
+    sentences = re.split(r"([.!?]\s+)", result)
     processed = []
 
     for i, part in enumerate(sentences):
@@ -245,8 +294,8 @@ def simple_truecase(text: str) -> str:
                         new_words.append(word.lower())
                     else:
                         new_words.append(word)
-                processed.append(' '.join(new_words))
+                processed.append(" ".join(new_words))
         else:
             processed.append(part)
 
-    return ''.join(processed)
+    return "".join(processed)

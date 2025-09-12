@@ -6,7 +6,7 @@ import blessed
 
 class TerminalStateManager:
     """Manages terminal state saving and restoration."""
-    
+
     def __init__(self):
         self.term = blessed.Terminal()
         self.saved_terminal_state = None
@@ -19,7 +19,7 @@ class TerminalStateManager:
         try:
             import termios
             import tty
-            
+
             if hasattr(sys.stdin, "fileno"):
                 try:
                     self.saved_terminal_state = termios.tcgetattr(sys.stdin.fileno())
@@ -32,7 +32,7 @@ class TerminalStateManager:
         """Fully restore terminal to its original state."""
         if self.terminal_restored:
             return
-            
+
         try:
             # First exit fullscreen and restore cursor
             if hasattr(self, "original_stderr"):
@@ -51,7 +51,7 @@ class TerminalStateManager:
             if self.saved_terminal_state is not None:
                 try:
                     import termios
-                    
+
                     if hasattr(sys.stdin, "fileno"):
                         termios.tcsetattr(
                             sys.stdin.fileno(),
@@ -68,7 +68,7 @@ class TerminalStateManager:
                 sys.stderr.flush()
             except:
                 pass
-        
+
         self.terminal_restored = True
 
     def restore_terminal_safe(self):

@@ -1,0 +1,432 @@
+(.venv) [crow@crow-pc praxis]$ bash test.sh 
+<!doctype html>
+<html lang=en>
+  <head>
+    <title>BrokenPipeError: [Errno 32] Broken pipe
+ // Werkzeug Debugger</title>
+    <link rel="stylesheet" href="?__debugger__=yes&amp;cmd=resource&amp;f=style.css">
+    <link rel="shortcut icon"
+        href="?__debugger__=yes&amp;cmd=resource&amp;f=console.png">
+    <script src="?__debugger__=yes&amp;cmd=resource&amp;f=debugger.js"></script>
+    <script>
+      var CONSOLE_MODE = false,
+          EVALEX = true,
+          EVALEX_TRUSTED = false,
+          SECRET = "hg9HyxcBsPvNOx8ZAn4J";
+    </script>
+  </head>
+  <body style="background-color: #fff">
+    <div class="debugger">
+<h1>BrokenPipeError</h1>
+<div class="detail">
+  <p class="errormsg">BrokenPipeError: [Errno 32] Broken pipe
+</p>
+</div>
+<h2 class="traceback">Traceback <em>(most recent call last)</em></h2>
+<div class="traceback">
+  <h3></h3>
+  <ul><li><div class="frame" id="frame-139897287498048">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/api.py"</cite>,
+      line <em class="line">1074</em>,
+      in <code class="function">generate_messages</code></h4>
+  <div class="source "><pre class="line before"><span class="ws">            </span>response = jsonify({&#34;error&#34;: &#34;Please provide &#39;messages&#39; array.&#34;})</pre>
+<pre class="line before"><span class="ws">            </span>response.headers.add(&#34;Access-Control-Allow-Origin&#34;, &#34;*&#34;)</pre>
+<pre class="line before"><span class="ws">            </span>return response, 400</pre>
+<pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws">        </span># Validate messages format</pre>
+<pre class="line current"><span class="ws">        </span>if not isinstance(messages, list):
+<span class="ws">        </span>            ^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">            </span>response = jsonify({&#34;error&#34;: &#34;&#39;messages&#39; must be an array.&#34;})</pre>
+<pre class="line after"><span class="ws">            </span>response.headers.add(&#34;Access-Control-Allow-Origin&#34;, &#34;*&#34;)</pre>
+<pre class="line after"><span class="ws">            </span>return response, 400</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">        </span>for msg in messages:</pre></div>
+</div>
+
+<li><div class="exc-divider">During handling of the above exception, another exception occurred:</div>
+<li><div class="frame" id="frame-139897287495648">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py"</cite>,
+      line <em class="line">1536</em>,
+      in <code class="function">__call__</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">    </span>) -&gt; cabc.Iterable[bytes]:</pre>
+<pre class="line before"><span class="ws">        </span>&#34;&#34;&#34;The WSGI server calls the Flask application object as the</pre>
+<pre class="line before"><span class="ws">        </span>WSGI application. This calls :meth:`wsgi_app`, which can be</pre>
+<pre class="line before"><span class="ws">        </span>wrapped to apply middleware.</pre>
+<pre class="line before"><span class="ws">        </span>&#34;&#34;&#34;</pre>
+<pre class="line current"><span class="ws">        </span>return self.wsgi_app(environ, start_response)
+<span class="ws">        </span>       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287495808">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_socketio/__init__.py"</cite>,
+      line <em class="line">42</em>,
+      in <code class="function">__call__</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">                         </span>socketio_path=socketio_path)</pre>
+<pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws">    </span>def __call__(self, environ, start_response):</pre>
+<pre class="line before"><span class="ws">        </span>environ = environ.copy()</pre>
+<pre class="line before"><span class="ws">        </span>environ[&#39;flask.app&#39;] = self.flask_app</pre>
+<pre class="line current"><span class="ws">        </span>return super().__call__(environ, start_response)
+<span class="ws">        </span>       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span>class _ManagedSession(dict, SessionMixin):</pre>
+<pre class="line after"><span class="ws">    </span>&#34;&#34;&#34;This class is used for user sessions that are managed by</pre>
+<pre class="line after"><span class="ws">    </span>Flask-SocketIO. It is simple dict, expanded with the Flask session</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287495968">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/engineio/middleware.py"</cite>,
+      line <em class="line">74</em>,
+      in <code class="function">__call__</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">                    </span>&#39;200 OK&#39;,</pre>
+<pre class="line before"><span class="ws">                    </span>[(&#39;Content-Type&#39;, static_file[&#39;content_type&#39;])])</pre>
+<pre class="line before"><span class="ws">                </span>with open(static_file[&#39;filename&#39;], &#39;rb&#39;) as f:</pre>
+<pre class="line before"><span class="ws">                    </span>return [f.read()]</pre>
+<pre class="line before"><span class="ws">            </span>elif self.wsgi_app is not None:</pre>
+<pre class="line current"><span class="ws">                </span>return self.wsgi_app(environ, start_response)
+<span class="ws">                </span>       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">        </span>return self.not_found(start_response)</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">    </span>def not_found(self, start_response):</pre>
+<pre class="line after"><span class="ws">        </span>start_response(&#34;404 Not Found&#34;, [(&#39;Content-Type&#39;, &#39;text/plain&#39;)])</pre>
+<pre class="line after"><span class="ws">        </span>return [b&#39;Not Found&#39;]</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287496128">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py"</cite>,
+      line <em class="line">1514</em>,
+      in <code class="function">wsgi_app</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">            </span>try:</pre>
+<pre class="line before"><span class="ws">                </span>ctx.push()</pre>
+<pre class="line before"><span class="ws">                </span>response = self.full_dispatch_request()</pre>
+<pre class="line before"><span class="ws">            </span>except Exception as e:</pre>
+<pre class="line before"><span class="ws">                </span>error = e</pre>
+<pre class="line current"><span class="ws">                </span>response = self.handle_exception(e)
+<span class="ws">                </span>           ^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">            </span>except:  # noqa: B001</pre>
+<pre class="line after"><span class="ws">                </span>error = sys.exc_info()[1]</pre>
+<pre class="line after"><span class="ws">                </span>raise</pre>
+<pre class="line after"><span class="ws">            </span>return response(environ, start_response)</pre>
+<pre class="line after"><span class="ws">        </span>finally:</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287496288">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_cors/extension.py"</cite>,
+      line <em class="line">176</em>,
+      in <code class="function">wrapped_function</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">        </span># These error handlers will still respect the behavior of the route</pre>
+<pre class="line before"><span class="ws">        </span>if options.get(&#34;intercept_exceptions&#34;, True):</pre>
+<pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws">            </span>def _after_request_decorator(f):</pre>
+<pre class="line before"><span class="ws">                </span>def wrapped_function(*args, **kwargs):</pre>
+<pre class="line current"><span class="ws">                    </span>return cors_after_request(app.make_response(f(*args, **kwargs)))
+<span class="ws">                    </span>                                            ^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">                </span>return wrapped_function</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">            </span>if hasattr(app, &#34;handle_exception&#34;):</pre>
+<pre class="line after"><span class="ws">                </span>app.handle_exception = _after_request_decorator(app.handle_exception)</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287496448">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py"</cite>,
+      line <em class="line">1511</em>,
+      in <code class="function">wsgi_app</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">        </span>ctx = self.request_context(environ)</pre>
+<pre class="line before"><span class="ws">        </span>error: BaseException | None = None</pre>
+<pre class="line before"><span class="ws">        </span>try:</pre>
+<pre class="line before"><span class="ws">            </span>try:</pre>
+<pre class="line before"><span class="ws">                </span>ctx.push()</pre>
+<pre class="line current"><span class="ws">                </span>response = self.full_dispatch_request()
+<span class="ws">                </span>           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">            </span>except Exception as e:</pre>
+<pre class="line after"><span class="ws">                </span>error = e</pre>
+<pre class="line after"><span class="ws">                </span>response = self.handle_exception(e)</pre>
+<pre class="line after"><span class="ws">            </span>except:  # noqa: B001</pre>
+<pre class="line after"><span class="ws">                </span>error = sys.exc_info()[1]</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287496608">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py"</cite>,
+      line <em class="line">919</em>,
+      in <code class="function">full_dispatch_request</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">            </span>request_started.send(self, _async_wrapper=self.ensure_sync)</pre>
+<pre class="line before"><span class="ws">            </span>rv = self.preprocess_request()</pre>
+<pre class="line before"><span class="ws">            </span>if rv is None:</pre>
+<pre class="line before"><span class="ws">                </span>rv = self.dispatch_request()</pre>
+<pre class="line before"><span class="ws">        </span>except Exception as e:</pre>
+<pre class="line current"><span class="ws">            </span>rv = self.handle_user_exception(e)
+<span class="ws">            </span>     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">        </span>return self.finalize_request(rv)</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">    </span>def finalize_request(</pre>
+<pre class="line after"><span class="ws">        </span>self,</pre>
+<pre class="line after"><span class="ws">        </span>rv: ft.ResponseReturnValue | HTTPException,</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287496768">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_cors/extension.py"</cite>,
+      line <em class="line">176</em>,
+      in <code class="function">wrapped_function</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">        </span># These error handlers will still respect the behavior of the route</pre>
+<pre class="line before"><span class="ws">        </span>if options.get(&#34;intercept_exceptions&#34;, True):</pre>
+<pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws">            </span>def _after_request_decorator(f):</pre>
+<pre class="line before"><span class="ws">                </span>def wrapped_function(*args, **kwargs):</pre>
+<pre class="line current"><span class="ws">                    </span>return cors_after_request(app.make_response(f(*args, **kwargs)))
+<span class="ws">                    </span>                                            ^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">                </span>return wrapped_function</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">            </span>if hasattr(app, &#34;handle_exception&#34;):</pre>
+<pre class="line after"><span class="ws">                </span>app.handle_exception = _after_request_decorator(app.handle_exception)</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287496928">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py"</cite>,
+      line <em class="line">917</em>,
+      in <code class="function">full_dispatch_request</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws">        </span>try:</pre>
+<pre class="line before"><span class="ws">            </span>request_started.send(self, _async_wrapper=self.ensure_sync)</pre>
+<pre class="line before"><span class="ws">            </span>rv = self.preprocess_request()</pre>
+<pre class="line before"><span class="ws">            </span>if rv is None:</pre>
+<pre class="line current"><span class="ws">                </span>rv = self.dispatch_request()
+<span class="ws">                </span>     ^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">        </span>except Exception as e:</pre>
+<pre class="line after"><span class="ws">            </span>rv = self.handle_user_exception(e)</pre>
+<pre class="line after"><span class="ws">        </span>return self.finalize_request(rv)</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">    </span>def finalize_request(</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287497088">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py"</cite>,
+      line <em class="line">902</em>,
+      in <code class="function">dispatch_request</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">            </span>and req.method == &#34;OPTIONS&#34;</pre>
+<pre class="line before"><span class="ws">        </span>):</pre>
+<pre class="line before"><span class="ws">            </span>return self.make_default_options_response()</pre>
+<pre class="line before"><span class="ws">        </span># otherwise dispatch to the handler for that endpoint</pre>
+<pre class="line before"><span class="ws">        </span>view_args: dict[str, t.Any] = req.view_args  # type: ignore[assignment]</pre>
+<pre class="line current"><span class="ws">        </span>return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+<span class="ws">        </span>       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">    </span>def full_dispatch_request(self) -&gt; Response:</pre>
+<pre class="line after"><span class="ws">        </span>&#34;&#34;&#34;Dispatches the request and on top of that performs request</pre>
+<pre class="line after"><span class="ws">        </span>pre and postprocessing as well as HTTP exception catching and</pre>
+<pre class="line after"><span class="ws">        </span>error handling.</pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287497248">
+  <h4>File <cite class="filename">"/home/crow/repos/praxis/api.py"</cite>,
+      line <em class="line">1123</em>,
+      in <code class="function">generate_messages</code></h4>
+  <div class="source "><pre class="line before"><span class="ws">            </span>request_id = generator.request_generation(messages, generation_kwargs)</pre>
+<pre class="line before"><span class="ws">            </span>while True:</pre>
+<pre class="line before"><span class="ws">                </span>result = generator.get_result(request_id)</pre>
+<pre class="line before"><span class="ws">                </span>if result is not None:</pre>
+<pre class="line before"><span class="ws">                    </span>output = result</pre>
+<pre class="line current"><span class="ws">                    </span>break
+<span class="ws">                    </span>^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws">                </span>time.sleep(0.1)</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws">        </span>if not output:</pre>
+<pre class="line after"><span class="ws">            </span>raise Exception(&#34;Failed to generate an output from this API.&#34;)</pre>
+<pre class="line after"><span class="ws"></span> </pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287497568">
+  <h4>File <cite class="filename">"/usr/lib/python3.13/traceback.py"</cite>,
+      line <em class="line">208</em>,
+      in <code class="function">print_exc</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws"></span># --</pre>
+<pre class="line before"><span class="ws"></span> </pre>
+<pre class="line before"><span class="ws"></span>def print_exc(limit=None, file=None, chain=True):</pre>
+<pre class="line before"><span class="ws">    </span>&#34;&#34;&#34;Shorthand for &#39;print_exception(sys.exception(), limit=limit, file=file, chain=chain)&#39;.&#34;&#34;&#34;</pre>
+<pre class="line current"><span class="ws">    </span>print_exception(sys.exception(), limit=limit, file=file, chain=chain)
+<span class="ws">    </span>^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span>def format_exc(limit=None, chain=True):</pre>
+<pre class="line after"><span class="ws">    </span>&#34;&#34;&#34;Like print_exc() but return a string.&#34;&#34;&#34;</pre>
+<pre class="line after"><span class="ws">    </span>return &#34;&#34;.join(format_exception(sys.exception(), limit=limit, chain=chain))</pre>
+<pre class="line after"><span class="ws"></span> </pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287497728">
+  <h4>File <cite class="filename">"/usr/lib/python3.13/traceback.py"</cite>,
+      line <em class="line">130</em>,
+      in <code class="function">print_exception</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">    </span>position of the error.</pre>
+<pre class="line before"><span class="ws">    </span>&#34;&#34;&#34;</pre>
+<pre class="line before"><span class="ws">    </span>colorize = kwargs.get(&#34;colorize&#34;, False)</pre>
+<pre class="line before"><span class="ws">    </span>value, tb = _parse_value_tb(exc, value, tb)</pre>
+<pre class="line before"><span class="ws">    </span>te = TracebackException(type(value), value, tb, limit=limit, compact=True)</pre>
+<pre class="line current"><span class="ws">    </span>te.print(file=file, chain=chain, colorize=colorize)
+<span class="ws">    </span>^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span>BUILTIN_EXCEPTION_LIMIT = object()</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span> </pre></div>
+</div>
+
+<li><div class="frame" id="frame-139897287497888">
+  <h4>File <cite class="filename">"/usr/lib/python3.13/traceback.py"</cite>,
+      line <em class="line">1470</em>,
+      in <code class="function">print</code></h4>
+  <div class="source library"><pre class="line before"><span class="ws">        </span>&#34;&#34;&#34;Print the result of self.format(chain=chain) to &#39;file&#39;.&#34;&#34;&#34;</pre>
+<pre class="line before"><span class="ws">        </span>colorize = kwargs.get(&#34;colorize&#34;, False)</pre>
+<pre class="line before"><span class="ws">        </span>if file is None:</pre>
+<pre class="line before"><span class="ws">            </span>file = sys.stderr</pre>
+<pre class="line before"><span class="ws">        </span>for line in self.format(chain=chain, colorize=colorize):</pre>
+<pre class="line current"><span class="ws">            </span>print(line, file=file, end=&#34;&#34;)
+<span class="ws">            </span>^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span> </pre>
+<pre class="line after"><span class="ws"></span>_MAX_CANDIDATE_ITEMS = 750</pre>
+<pre class="line after"><span class="ws"></span>_MAX_STRING_SIZE = 40</pre>
+<pre class="line after"><span class="ws"></span>_MOVE_COST = 2</pre></div>
+</div>
+</ul>
+  <blockquote>BrokenPipeError: [Errno 32] Broken pipe
+</blockquote>
+</div>
+
+<div class="plain">
+    <p>
+      This is the Copy/Paste friendly version of the traceback.
+    </p>
+    <textarea cols="50" rows="10" name="code" readonly>Traceback (most recent call last):
+  File &#34;/home/crow/repos/praxis/api.py&#34;, line 1074, in generate_messages
+    if not isinstance(messages, list):
+                ^^^^^^^^^^^^^^^^^^^^^^
+KeyError: &#39;generator&#39;
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py&#34;, line 1536, in __call__
+    return self.wsgi_app(environ, start_response)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_socketio/__init__.py&#34;, line 42, in __call__
+    return super().__call__(environ, start_response)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/engineio/middleware.py&#34;, line 74, in __call__
+    return self.wsgi_app(environ, start_response)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py&#34;, line 1514, in wsgi_app
+    response = self.handle_exception(e)
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_cors/extension.py&#34;, line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py&#34;, line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py&#34;, line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_cors/extension.py&#34;, line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py&#34;, line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File &#34;/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py&#34;, line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File &#34;/home/crow/repos/praxis/api.py&#34;, line 1123, in generate_messages
+    break
+  File &#34;/usr/lib/python3.13/traceback.py&#34;, line 208, in print_exc
+    print_exception(sys.exception(), limit=limit, file=file, chain=chain)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File &#34;/usr/lib/python3.13/traceback.py&#34;, line 130, in print_exception
+    te.print(file=file, chain=chain, colorize=colorize)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File &#34;/usr/lib/python3.13/traceback.py&#34;, line 1470, in print
+    print(line, file=file, end=&#34;&#34;)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+</textarea>
+</div>
+<div class="explanation">
+  The debugger caught an exception in your WSGI application.  You can now
+  look at the traceback which led to the error.  <span class="nojavascript">
+  If you enable JavaScript you can also use additional features such as code
+  execution (if the evalex feature is enabled), automatic pasting of the
+  exceptions and much more.</span>
+</div>
+      <div class="footer">
+        Brought to you by <strong class="arthur">DON'T PANIC</strong>, your
+        friendly Werkzeug powered traceback interpreter.
+      </div>
+    </div>
+
+    <div class="pin-prompt">
+      <div class="inner">
+        <h3>Console Locked</h3>
+        <p>
+          The console is locked and needs to be unlocked by entering the PIN.
+          You can find the PIN printed out on the standard output of your
+          shell that runs the server.
+        <form>
+          <p>PIN:
+            <input type=text name=pin size=14>
+            <input type=submit name=btn value="Confirm Pin">
+        </form>
+      </div>
+    </div>
+  </body>
+</html>
+
+<!--
+
+Traceback (most recent call last):
+  File "/home/crow/repos/praxis/api.py", line 1074, in generate_messages
+    if not isinstance(messages, list):
+                ^^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'generator'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py", line 1536, in __call__
+    return self.wsgi_app(environ, start_response)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_socketio/__init__.py", line 42, in __call__
+    return super().__call__(environ, start_response)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/engineio/middleware.py", line 74, in __call__
+    return self.wsgi_app(environ, start_response)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py", line 1514, in wsgi_app
+    response = self.handle_exception(e)
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_cors/extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask_cors/extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/home/crow/repos/praxis/.venv/lib/python3.13/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/crow/repos/praxis/api.py", line 1123, in generate_messages
+    break
+  File "/usr/lib/python3.13/traceback.py", line 208, in print_exc
+    print_exception(sys.exception(), limit=limit, file=file, chain=chain)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/traceback.py", line 130, in print_exception
+    te.print(file=file, chain=chain, colorize=colorize)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/traceback.py", line 1470, in print
+    print(line, file=file, end="")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+
+-->

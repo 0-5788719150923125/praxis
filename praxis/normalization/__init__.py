@@ -1,6 +1,12 @@
 from typing import Any, Dict
 
-from praxis.normalization.base import LayerNorm, NoNorm, PostRMSNorm, RMSNorm, SandwichNorm
+from praxis.normalization.base import (
+    LayerNorm,
+    NoNorm,
+    PostRMSNorm,
+    RMSNorm,
+    SandwichNorm,
+)
 
 # Base normalization types
 NORMALIZATION_REGISTRY: Dict[str, Any] = {

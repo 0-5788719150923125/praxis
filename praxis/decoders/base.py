@@ -40,7 +40,7 @@ class BaseDecoder(nn.Module):
         self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
-        
+
         # Call integration hooks for decoder initialization
         # This allows integrations like Hivemind to inject their management systems
         self._call_integration_hooks(config)
@@ -52,7 +52,7 @@ class BaseDecoder(nn.Module):
         elif config.router_type == "smear" and hasattr(config, "num_smear"):
             # For SMEAR with explicit num_smear, create exactly that many expert blocks
             from praxis.routers import ROUTER_REGISTRY
-            
+
             # Create the expert blocks based on num_smear
             expert_blocks = []
             for i in range(config.num_smear):
@@ -61,14 +61,14 @@ class BaseDecoder(nn.Module):
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
-            
+
             # Create a single SMEAR router with all blocks
             smear_router = ROUTER_REGISTRY["smear"](config, experts=expert_blocks)
-            
+
             # Create a single LocalExpert with the SMEAR router
             # The SMEAR router will handle merging and routing internally
             expert = LocalExpert(config, block=expert_blocks[0], router=smear_router)
-            
+
             # Add it multiple times to match num_experts for compatibility
             for i in range(self.num_experts):
                 self.locals.append(expert)
@@ -102,13 +102,13 @@ class BaseDecoder(nn.Module):
             if config.block_type == "mru"
             else False
         )
-    
+
     def _call_integration_hooks(self, config: ConfigType) -> None:
         """Call integration hooks for decoder initialization.
-        
+
         This allows integrations to modify the decoder during initialization.
         For example, the Hivemind integration uses this to inject its management system.
-        
+
         Args:
             config: Model configuration
         """
@@ -116,19 +116,22 @@ class BaseDecoder(nn.Module):
             # Try to get the integration loader if available
             # We import it this way to avoid circular imports and other issues
             import sys
-            if 'cli' in sys.modules and hasattr(sys.modules['cli'], 'integration_loader'):
-                integration_loader = sys.modules['cli'].integration_loader
-                
+
+            if "cli" in sys.modules and hasattr(
+                sys.modules["cli"], "integration_loader"
+            ):
+                integration_loader = sys.modules["cli"].integration_loader
+
                 # Call on_decoder_init for all active integrations
                 for integration in integration_loader.loaded_integrations.values():
-                    if hasattr(integration, 'on_decoder_init'):
+                    if hasattr(integration, "on_decoder_init"):
                         integration.on_decoder_init(self, config)
         except (ImportError, AttributeError, RuntimeError):
             # Integration loader not available or other issues, skip hooks
             pass
-        
+
         # If manager was injected by integration, start serving experts
-        if self.manager and hasattr(self.manager, 'serve_experts'):
+        if self.manager and hasattr(self.manager, "serve_experts"):
             self.manager.serve_experts()
 
     def post_layer(self, states: Tensor, current_depth: int) -> Tensor:

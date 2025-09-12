@@ -124,6 +124,7 @@ networking_group = parser.add_argument_group("networking")
 data_group = parser.add_argument_group("data")
 other_group = parser.add_argument_group("other")
 
+
 # Define functions to load experiments and environments
 def load_experiments():
     """
@@ -189,34 +190,34 @@ def load_environments():
     environments_dir = Path("environments")
     if not environments_dir.exists():
         return {}
-    
+
     # Get environment files
     environment_files = list(environments_dir.glob("*.yml"))
     if not environment_files:
         return {}
-    
+
     # Create environments argument group
     environments_group = parser.add_argument_group("environments")
     environment_configs = {}
-    
+
     for environment_file in environment_files:
         # Validate and normalize the environment name
         name = environment_file.stem.lower()
-        
+
         # Only allow alphanumeric characters and hyphens
         if not re.match(r"^[a-z0-9-]+$", name):
             print(
                 f"Warning: Skipping environment '{environment_file.name}' - name must only contain lowercase letters, numbers, and hyphens"
             )
             continue
-        
+
         # Check for conflicts with existing arguments
         arg_name = f"--{name}"
         if any(arg_name in action.option_strings for action in parser._actions):
             # Skip if argument already exists (like --dev from the 'other' group)
             # The existing argument will still work to activate the environment
             continue
-        
+
         # Add new environment argument
         environments_group.add_argument(
             arg_name,
@@ -224,20 +225,21 @@ def load_environments():
             default=False,
             help=f"Apply {name} environment configuration",
         )
-        
+
         # Store the environment config for later application
         try:
             with open(environment_file, "r") as f:
                 config = yaml.safe_load(f)
                 environment_configs[name] = {
-                    'overrides': config.get('overrides', {}),
-                    'features': config.get('features', {})
+                    "overrides": config.get("overrides", {}),
+                    "features": config.get("features", {}),
                 }
         except Exception as e:
             print(f"Warning: Failed to load environment '{environment_file.name}': {e}")
             continue
-    
+
     return environment_configs
+
 
 # Load experiments and environments FIRST (before integration loading)
 # We need these to properly determine which integrations should be loaded
@@ -254,7 +256,9 @@ preliminary_parser = argparse.ArgumentParser(add_help=False)
 
 # Add experiment flags to preliminary parser
 for experiment_name in experiment_configs:
-    preliminary_parser.add_argument(f"--{experiment_name}", action="store_true", default=False)
+    preliminary_parser.add_argument(
+        f"--{experiment_name}", action="store_true", default=False
+    )
 
 # Add environment flags to preliminary parser
 for env_name in environment_configs:
@@ -264,7 +268,9 @@ for env_name in environment_configs:
 for integration_manifest in integrations:
     # Add basic flag for each integration (e.g., --ngrok, --wandb)
     integration_name = integration_manifest.name
-    preliminary_parser.add_argument(f"--{integration_name}", action="store_true", default=False)
+    preliminary_parser.add_argument(
+        f"--{integration_name}", action="store_true", default=False
+    )
 
 # Parse known args (ignore unknown args from integrations)
 preliminary_args, _ = preliminary_parser.parse_known_args()
@@ -281,10 +287,12 @@ active_env = None
 for env_name in environment_configs:
     if getattr(preliminary_args, env_name.replace("-", "_"), False):
         if active_env and active_env != env_name:
-            raise ValueError(f"Cannot use multiple environments: --{active_env} and --{env_name}")
+            raise ValueError(
+                f"Cannot use multiple environments: --{active_env} and --{env_name}"
+            )
         active_env = env_name
         # Apply overrides
-        for key, value in environment_configs[env_name]['overrides'].items():
+        for key, value in environment_configs[env_name]["overrides"].items():
             attr_name = key.replace("-", "_")
             setattr(preliminary_args, attr_name, value)
 
@@ -846,14 +854,14 @@ for env_name, env_config in environment_configs.items():
 # Apply the active environment's configuration if one is set
 if active_environment and active_environment in environment_configs:
     env_config = environment_configs[active_environment]
-    
+
     # Apply overrides (these have highest priority, overwrite everything)
-    for key, value in env_config['overrides'].items():
+    for key, value in env_config["overrides"].items():
         attr_name = key.replace("-", "_")
         setattr(args, attr_name, value)
-    
+
     # Store features for global access
-    environment_features = env_config['features']
+    environment_features = env_config["features"]
 
 # Set environment features globally for use throughout the codebase
 EnvironmentFeatures.set_from_environment(environment_features, active_environment)
@@ -915,27 +923,29 @@ def apply_defaults_and_parse(defaults_dict):
     # Apply environment overrides in apply_defaults_and_parse too
     # This handles environments when using custom scripts
     from praxis.environments import EnvironmentFeatures
-    
+
     active_env = None
     env_features = {}
-    
+
     # Check for --dev backward compatibility
-    if getattr(args, "dev", False) and 'dev' in environment_configs:
-        active_env = 'dev'
-        env_features = environment_configs['dev']['features']
-        for key, value in environment_configs['dev']['overrides'].items():
+    if getattr(args, "dev", False) and "dev" in environment_configs:
+        active_env = "dev"
+        env_features = environment_configs["dev"]["features"]
+        for key, value in environment_configs["dev"]["overrides"].items():
             setattr(args, key.replace("-", "_"), value)
-    
+
     # Apply any other active environment
     for env_name in environment_configs:
-        if getattr(args, env_name.replace("-", "_"), False) and env_name != 'dev':
+        if getattr(args, env_name.replace("-", "_"), False) and env_name != "dev":
             if active_env:
-                raise ValueError(f"Cannot use multiple environments: --{active_env} and --{env_name}")
+                raise ValueError(
+                    f"Cannot use multiple environments: --{active_env} and --{env_name}"
+                )
             active_env = env_name
-            env_features = environment_configs[env_name]['features']
-            for key, value in environment_configs[env_name]['overrides'].items():
+            env_features = environment_configs[env_name]["features"]
+            for key, value in environment_configs[env_name]["overrides"].items():
                 setattr(args, key.replace("-", "_"), value)
-    
+
     EnvironmentFeatures.set_from_environment(env_features, active_env)
 
     # Re-evaluate integration conditions with new args
@@ -1136,10 +1146,7 @@ def create_praxis_config(args=None, tokenizer=None):
 
     # num_experts defaults to depth if not specified
     # (Environment overrides will have already been applied if active)
-    if (
-        "num_experts" not in config_kwargs
-        or config_kwargs.get("num_experts") is None
-    ):
+    if "num_experts" not in config_kwargs or config_kwargs.get("num_experts") is None:
         config_kwargs["num_experts"] = config_kwargs.get("depth", 2)
 
     # Handle byte_latent encoding
@@ -1246,7 +1253,7 @@ def get_processed_args(args=None):
 
     # Environment overrides will have already been applied by this point
     # No need for hardcoded dev logic here
-    
+
     return processed
 
 

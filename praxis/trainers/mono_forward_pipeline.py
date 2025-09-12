@@ -20,10 +20,10 @@ from lightning.pytorch import LightningModule
 from praxis.utils.system import register_child_process, is_shutting_down
 
 # Use torch multiprocessing with proper sharing strategy
-torch.multiprocessing.set_sharing_strategy('file_system')
+torch.multiprocessing.set_sharing_strategy("file_system")
 
 # Verify spawn method is set (required for CUDA)
-if mp.get_start_method(allow_none=True) != 'spawn':
+if mp.get_start_method(allow_none=True) != "spawn":
     raise RuntimeError(
         "MonoForward pipeline requires 'spawn' multiprocessing method for CUDA support. "
         "Please set multiprocessing.set_start_method('spawn') at the start of your program."
@@ -33,12 +33,15 @@ if mp.get_start_method(allow_none=True) != 'spawn':
 @dataclass
 class LayerWorkerConfig:
     """Configuration for a layer worker process."""
+
     layer_idx: int
     hidden_size: int
     vocab_size: int
     optimizer_config: Dict[str, Any]
     device: str = "cpu"
-    internal_vocab_size: Optional[int] = None  # For reduced vocabulary in internal layers
+    internal_vocab_size: Optional[int] = (
+        None  # For reduced vocabulary in internal layers
+    )
 
 
 class LayerWorkerProcess:
@@ -46,7 +49,7 @@ class LayerWorkerProcess:
     A worker process that handles a single layer's forward pass and weight updates.
     Runs continuously, pulling batches from input queue and pushing to output queue.
     """
-    
+
     def __init__(
         self,
         layer_module: nn.Module,
@@ -59,7 +62,7 @@ class LayerWorkerProcess:
     ):
         """
         Initialize layer worker.
-        
+
         Args:
             layer_module: The actual layer to run
             projection: Projection matrix for computing goodness scores
@@ -76,31 +79,31 @@ class LayerWorkerProcess:
         self.output_queue = output_queue
         self.loss_queue = loss_queue
         self.control_queue = control_queue
-        
+
         # Set device - CUDA will be initialized automatically when needed
         self.device = torch.device(config.device)
-        
+
         # Move modules to device
         self.layer = self.layer.to(self.device)
         if self.projection:
             self.projection = self.projection.to(self.device)
-        
+
         # Create optimizer
         self.optimizer = self._create_optimizer()
-        
+
         # Statistics
         self.batches_processed = 0
         self.total_loss = 0.0
-        
+
     def _create_optimizer(self):
         """Create optimizer from config."""
         params = list(self.layer.parameters())
         if self.projection:
             params.extend(self.projection.parameters())
-        
-        optimizer_class = self.config.optimizer_config.get('class', torch.optim.Adam)
-        optimizer_kwargs = self.config.optimizer_config.get('kwargs', {'lr': 1e-3})
-        
+
+        optimizer_class = self.config.optimizer_config.get("class", torch.optim.Adam)
+        optimizer_kwargs = self.config.optimizer_config.get("kwargs", {"lr": 1e-3})
+
         if isinstance(optimizer_class, str):
             # Convert string to class
             if hasattr(torch.optim, optimizer_class):
@@ -108,16 +111,19 @@ class LayerWorkerProcess:
             else:
                 # Try to import from custom optimizers
                 from praxis.optimizers import OPTIMIZER_REGISTRY
-                optimizer_class = OPTIMIZER_REGISTRY.get(optimizer_class, torch.optim.Adam)
-        
+
+                optimizer_class = OPTIMIZER_REGISTRY.get(
+                    optimizer_class, torch.optim.Adam
+                )
+
         return optimizer_class(params, **optimizer_kwargs)
-    
+
     def run(self):
         """Main worker loop - process batches continuously."""
         self.layer.train()
         if self.projection:
             self.projection.train()
-        
+
         running = True
         while running:
             try:
@@ -125,7 +131,7 @@ class LayerWorkerProcess:
                 if is_shutting_down():
                     running = False
                     break
-                
+
                 # Check for control messages (non-blocking)
                 try:
                     control_msg = self.control_queue.get_nowait()
@@ -136,27 +142,29 @@ class LayerWorkerProcess:
                         self._save_checkpoint()
                 except queue.Empty:
                     pass
-                
+
                 # Get next batch (blocking with timeout)
                 try:
                     batch_data = self.input_queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
-                
+
                 # Unpack batch data (always 3 elements for simplicity)
                 hidden_states, labels, batch_idx = batch_data
-                
+
                 # Move to device
                 hidden_states = hidden_states.to(self.device)
                 labels = labels.to(self.device)
-                
+
                 # CRITICAL: Detach inputs to prevent gradient flow from previous layers
                 hidden_states = hidden_states.detach().requires_grad_(True)
-                
+
                 # Create dummy arguments for LocalExpert
                 batch_size, seq_len = hidden_states.shape[:2]
-                attention_mask = torch.ones(batch_size, seq_len, dtype=torch.long, device=self.device)
-                
+                attention_mask = torch.ones(
+                    batch_size, seq_len, dtype=torch.long, device=self.device
+                )
+
                 # Forward pass through layer with all required arguments
                 # LocalExpert expects: inputs, current_state, attention_mask, past_key_values, current_depth, block_ids
                 output = self.layer(
@@ -167,96 +175,107 @@ class LayerWorkerProcess:
                     current_depth=self.config.layer_idx,  # Use layer index as depth
                     block_ids=None,  # Not used in MonoForward
                 )
-                
+
                 # Handle different output types - LocalExpert returns tuple
                 if isinstance(output, tuple):
                     # LocalExpert returns: (hidden_states, key_values, state_update, aux_loss, exit_signal)
-                    hidden_output, new_key_values, new_state, aux_loss, exit_signal = output
+                    hidden_output, new_key_values, new_state, aux_loss, exit_signal = (
+                        output
+                    )
                 else:
                     hidden_output = output
                     new_key_values = past_key_values
                     new_state = current_state
                     aux_loss = None
-                
+
                 # Compute loss and update if we have projection
                 loss = None
                 if self.projection is not None and labels is not None:
                     # Compute goodness scores
                     logits = self.projection(hidden_output)
-                    
+
                     # Reshape for loss computation
                     if logits.dim() == 3 and labels.dim() == 2:
                         batch_size, seq_len = labels.shape
                         vocab_size = logits.size(-1)
-                        
+
                         # Align sequence lengths
                         if logits.size(1) != seq_len:
                             min_len = min(logits.size(1), seq_len)
                             logits = logits[:, :min_len, :]
                             labels = labels[:, :min_len]
-                        
+
                         # Flatten for loss
                         logits_flat = logits.reshape(-1, vocab_size)
                         labels_flat = labels.reshape(-1)
-                        
+
                         # Handle vocabulary size mismatch
                         if vocab_size < labels_flat.max().item() + 1:
                             labels_flat = labels_flat % vocab_size
                     else:
                         logits_flat = logits
                         labels_flat = labels
-                    
+
                     # Compute cross-entropy loss
                     loss = F.cross_entropy(logits_flat, labels_flat, ignore_index=-100)
-                    
+
                     # IMMEDIATE WEIGHT UPDATE (key to MonoForward)
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
-                    
+
                     # Send loss to main process for logging
-                    self.loss_queue.put((
-                        self.config.layer_idx,
-                        batch_idx,
-                        loss.detach().cpu().item()
-                    ))
-                    
+                    self.loss_queue.put(
+                        (self.config.layer_idx, batch_idx, loss.detach().cpu().item())
+                    )
+
                     # Update statistics
                     self.total_loss += loss.item()
-                
+
                 # CRITICAL: Detach output before sending to next layer
                 hidden_output = hidden_output.detach()
-                
+
                 # Send to next layer (keep simple format)
-                self.output_queue.put((
-                    hidden_output.cpu(),  # Move to CPU for IPC
-                    labels.cpu() if labels is not None else None,
-                    batch_idx
-                ))
-                
+                self.output_queue.put(
+                    (
+                        hidden_output.cpu(),  # Move to CPU for IPC
+                        labels.cpu() if labels is not None else None,
+                        batch_idx,
+                    )
+                )
+
                 self.batches_processed += 1
-                
+
                 # Periodic status update
                 if self.batches_processed % 10 == 0:
-                    avg_loss = self.total_loss / self.batches_processed if self.batches_processed > 0 else 0
-                    print(f"[Layer {self.config.layer_idx}] Processed {self.batches_processed} batches, avg loss: {avg_loss:.4f}")
-                    
+                    avg_loss = (
+                        self.total_loss / self.batches_processed
+                        if self.batches_processed > 0
+                        else 0
+                    )
+                    print(
+                        f"[Layer {self.config.layer_idx}] Processed {self.batches_processed} batches, avg loss: {avg_loss:.4f}"
+                    )
+
             except Exception as e:
                 print(f"[Layer {self.config.layer_idx}] Error: {e}")
                 import traceback
+
                 traceback.print_exc()
                 # Continue processing despite errors
-        
+
         print(f"[Layer {self.config.layer_idx}] Worker stopped")
-    
+
     def _save_checkpoint(self):
         """Save checkpoint of this layer's state."""
         checkpoint = {
-            'layer_state_dict': self.layer.state_dict(),
-            'projection_state_dict': self.projection.state_dict() if self.projection else None,
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'batches_processed': self.batches_processed,
-            'total_loss': self.total_loss,
+            "layer_state_dict": self.layer.state_dict(),
+            "projection_state_dict": (
+                self.projection.state_dict() if self.projection else None
+            ),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "batches_processed": self.batches_processed,
+            "total_loss": self.total_loss,
         }
         # Send checkpoint data through control queue response
         # (Implementation depends on checkpointing strategy)
@@ -274,8 +293,13 @@ def worker_process_main(
 ):
     """Main function for worker process."""
     worker = LayerWorkerProcess(
-        layer_module, projection, config,
-        input_queue, output_queue, loss_queue, control_queue
+        layer_module,
+        projection,
+        config,
+        input_queue,
+        output_queue,
+        loss_queue,
+        control_queue,
     )
     worker.run()
 
@@ -283,11 +307,11 @@ def worker_process_main(
 class MonoForwardPipelineModule(LightningModule):
     """
     Lightning module implementing pipeline-parallel MonoForward training.
-    
+
     Each layer runs in its own process, processing different batches simultaneously.
     The training_step just feeds data and collects results asynchronously.
     """
-    
+
     def __init__(
         self,
         model: nn.Module,
@@ -297,55 +321,59 @@ class MonoForwardPipelineModule(LightningModule):
         internal_vocab_reduction: int = 4,  # Reduce vocab by this factor for internal layers
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=['model'])
-        
+        self.save_hyperparameters(ignore=["model"])
+
         # Disable automatic optimization - we handle it per-layer
         self.automatic_optimization = False
-        
+
         self.model = model
         self.pipeline_depth = pipeline_depth
-        
+
         self.device_str = device
-        
+
         # Extract layers from model's decoder
-        if not hasattr(model, 'decoder') or not hasattr(model.decoder, 'locals'):
+        if not hasattr(model, "decoder") or not hasattr(model.decoder, "locals"):
             raise ValueError("Model must have decoder.locals containing layers")
-        
+
         # Store reference to decoder to preserve layer list
         self.decoder = model.decoder
         self.num_layers = len(self.decoder.locals)
-        
+
         # Configuration
         self.hidden_size = model.config.hidden_size
         self.vocab_size = model.config.vocab_size
         self.internal_vocab_size = self.vocab_size // internal_vocab_reduction
-        
+
         # Create queues for inter-process communication
-        self.layer_input_queues = [mp.Queue(maxsize=pipeline_depth) for _ in range(self.num_layers)]
-        self.layer_output_queues = [mp.Queue(maxsize=pipeline_depth) for _ in range(self.num_layers)]
+        self.layer_input_queues = [
+            mp.Queue(maxsize=pipeline_depth) for _ in range(self.num_layers)
+        ]
+        self.layer_output_queues = [
+            mp.Queue(maxsize=pipeline_depth) for _ in range(self.num_layers)
+        ]
         self.loss_queue = mp.Queue()
         self.control_queues = [mp.Queue() for _ in range(self.num_layers)]
-        
+
         # Final output queue for completed batches
         self.final_output_queue = self.layer_output_queues[-1]
-        
+
         # Worker processes (will be created in on_train_start)
         self.worker_processes = []
-        
+
         # Loss accumulation
         self.accumulated_losses = {}  # batch_idx -> [layer_losses]
         self.completed_batches = set()
-        
+
         # Optimizer config for workers
         self.optimizer_config = optimizer_config
-        
+
     def on_train_start(self):
         """Start worker processes when training begins."""
         print(f"[MonoForwardPipeline] Starting {self.num_layers} worker processes")
-        
+
         # Get the layers from the decoder
         layers = self.decoder.locals
-        
+
         for i in range(self.num_layers):
             # Create projection matrix for this layer
             # Final layer uses full vocabulary, others use reduced
@@ -353,34 +381,40 @@ class MonoForwardPipelineModule(LightningModule):
                 layer_vocab_size = self.vocab_size
             else:
                 layer_vocab_size = self.internal_vocab_size
-            
+
             projection = nn.Linear(self.hidden_size, layer_vocab_size, bias=False)
             nn.init.normal_(projection.weight, std=(2.0 / self.hidden_size) ** 0.5)
-            
+
             # Get the layer module for this worker - we'll deepcopy in the worker
             layer_module = layers[i]
-            
+
             # Projection is newly created, can be moved to CPU safely
             projection_cpu = projection.cpu()
-            
+
             # Worker configuration
             config = LayerWorkerConfig(
                 layer_idx=i,
                 hidden_size=self.hidden_size,
                 vocab_size=self.vocab_size,
-                internal_vocab_size=self.internal_vocab_size if i < self.num_layers - 1 else None,
+                internal_vocab_size=(
+                    self.internal_vocab_size if i < self.num_layers - 1 else None
+                ),
                 optimizer_config=self.optimizer_config,
                 device=self.device_str,
             )
-            
+
             # Determine input/output queues
             input_queue = self.layer_input_queues[i]
-            output_queue = self.layer_output_queues[i] if i < self.num_layers - 1 else self.final_output_queue
-            
+            output_queue = (
+                self.layer_output_queues[i]
+                if i < self.num_layers - 1
+                else self.final_output_queue
+            )
+
             # For layers after the first, connect to previous layer's output
             if i > 0:
                 input_queue = self.layer_output_queues[i - 1]
-            
+
             # Create and start worker process
             # Note: With spawn method, all arguments must be pickleable
             # Each worker gets its own copy of the layer module
@@ -395,18 +429,18 @@ class MonoForwardPipelineModule(LightningModule):
                     self.loss_queue,
                     self.control_queues[i],
                 ),
-                name=f"LayerWorker-{i}"
+                name=f"LayerWorker-{i}",
             )
             process.start()
             self.worker_processes.append(process)
             # Register with shutdown manager for proper cleanup
             register_child_process(process)
-        
+
         print(f"[MonoForwardPipeline] All workers started")
-        
+
         # Give workers time to initialize
         time.sleep(1)
-    
+
     def training_step(self, batch, batch_idx):
         """
         Feed batch to pipeline and collect results asynchronously.
@@ -414,39 +448,43 @@ class MonoForwardPipelineModule(LightningModule):
         """
         # Extract input_ids and create labels
         if isinstance(batch, dict):
-            input_ids = batch['input_ids']
+            input_ids = batch["input_ids"]
         else:
             input_ids = batch
-        
+
         labels = input_ids[..., 1:].contiguous()
         input_ids = input_ids[..., :-1].contiguous()
-        
+
         # Get initial embeddings - PraxisModel uses self.embeds
-        if hasattr(self.model, 'embeds'):
+        if hasattr(self.model, "embeds"):
             # PraxisForCausalLM uses embeds
             hidden_states = self.model.embeds(input_ids)
-        elif hasattr(self.model, 'embeddings'):
+        elif hasattr(self.model, "embeddings"):
             # Fallback to embeddings
             hidden_states = self.model.embeddings(input_ids)
-        elif hasattr(self.model, 'embed_tokens'):
+        elif hasattr(self.model, "embed_tokens"):
             # Some models use embed_tokens
             hidden_states = self.model.embed_tokens(input_ids)
         else:
             # This shouldn't happen
-            raise ValueError(f"Cannot find embedding layer in model of type {type(self.model)}")
-        
+            raise ValueError(
+                f"Cannot find embedding layer in model of type {type(self.model)}"
+            )
+
         # Create attention mask if not provided
         batch_size, seq_len = input_ids.shape
-        attention_mask = torch.ones(batch_size, seq_len, dtype=torch.long, device=input_ids.device)
-        
+        attention_mask = torch.ones(
+            batch_size, seq_len, dtype=torch.long, device=input_ids.device
+        )
+
         # Feed to first layer's queue with retry mechanism
         # Start with simple format for first layer
         batch_data = (
             hidden_states.cpu(),  # Move to CPU for IPC
             labels.cpu(),
-            batch_idx
+            batch_idx,
         )
-        
+
         # Keep trying to put the batch in the queue with small waits
         retry_count = 0
         max_retries = 100  # About 10 seconds total wait
@@ -456,61 +494,67 @@ class MonoForwardPipelineModule(LightningModule):
                 break  # Success!
             except queue.Full:
                 if retry_count == 0:
-                    print(f"[Pipeline] Input queue full for batch {batch_idx}, waiting...")
+                    print(
+                        f"[Pipeline] Input queue full for batch {batch_idx}, waiting..."
+                    )
                 time.sleep(0.1)  # Wait 100ms before retry
                 retry_count += 1
         else:
             # Only skip if we've waited too long
-            print(f"[Pipeline] WARNING: Queue still full after {retry_count * 0.1:.1f}s, skipping batch {batch_idx}")
+            print(
+                f"[Pipeline] WARNING: Queue still full after {retry_count * 0.1:.1f}s, skipping batch {batch_idx}"
+            )
             return None
-        
+
         # Collect completed losses (non-blocking)
         losses_collected = []
         try:
             while True:
                 layer_idx, loss_batch_idx, loss_value = self.loss_queue.get_nowait()
-                
+
                 if loss_batch_idx not in self.accumulated_losses:
                     self.accumulated_losses[loss_batch_idx] = {}
-                
+
                 self.accumulated_losses[loss_batch_idx][layer_idx] = loss_value
-                
+
                 # Check if we have all layer losses for this batch
                 if len(self.accumulated_losses[loss_batch_idx]) == self.num_layers:
                     # Average losses across layers
-                    batch_losses = list(self.accumulated_losses[loss_batch_idx].values())
+                    batch_losses = list(
+                        self.accumulated_losses[loss_batch_idx].values()
+                    )
                     avg_loss = sum(batch_losses) / len(batch_losses)
                     losses_collected.append(avg_loss)
                     self.completed_batches.add(loss_batch_idx)
                     del self.accumulated_losses[loss_batch_idx]
-                    
+
         except queue.Empty:
             pass
-        
+
         # Log and return loss if we have accumulated enough
         if losses_collected:
             avg_loss = sum(losses_collected) / len(losses_collected)
-            self.log('train_loss', avg_loss, prog_bar=True)
-            self.log('pipeline_depth', len(self.accumulated_losses), prog_bar=True)
-            self.log('completed_batches', len(self.completed_batches))
-            
+            self.log("train_loss", avg_loss, prog_bar=True)
+            self.log("pipeline_depth", len(self.accumulated_losses), prog_bar=True)
+            self.log("completed_batches", len(self.completed_batches))
+
             # Return tensor for Lightning
             return torch.tensor(avg_loss, requires_grad=True)
-        
+
         # Return None to keep pipeline flowing
         return None
-    
+
     def on_train_end(self):
         """Stop all worker processes."""
         print("[MonoForwardPipeline] Stopping workers...")
-        
+
         # Send stop signal to all workers
         for control_queue in self.control_queues:
             try:
                 control_queue.put("stop")
             except:
                 pass  # Queue might be closed
-        
+
         # Wait for processes to finish gracefully
         for i, process in enumerate(self.worker_processes):
             process.join(timeout=2)
@@ -523,24 +567,24 @@ class MonoForwardPipelineModule(LightningModule):
                     # Last resort - force kill
                     process.kill()
                     process.join(timeout=0.5)
-        
+
         # Properly close all queues to prevent resource leaks
         all_queues = (
-            self.layer_input_queues + 
-            self.layer_output_queues + 
-            self.control_queues + 
-            [self.loss_queue]
+            self.layer_input_queues
+            + self.layer_output_queues
+            + self.control_queues
+            + [self.loss_queue]
         )
-        
+
         for queue in all_queues:
             try:
                 queue.close()
                 queue.join_thread()
             except:
                 pass  # Queue might already be closed
-        
+
         print("[MonoForwardPipeline] Worker shutdown initiated")
-    
+
     def configure_optimizers(self):
         """
         Return a dummy optimizer for Lightning compatibility.
@@ -548,5 +592,5 @@ class MonoForwardPipelineModule(LightningModule):
         """
         # Create a dummy parameter that never gets updated
         dummy_param = nn.Parameter(torch.zeros(1))
-        self.register_parameter('_dummy', dummy_param)
+        self.register_parameter("_dummy", dummy_param)
         return torch.optim.SGD([dummy_param], lr=0.0)

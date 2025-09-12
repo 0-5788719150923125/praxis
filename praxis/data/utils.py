@@ -30,7 +30,7 @@ def get_datamodules(
     *args,
 ):
     """Create and configure data modules for training and validation.
-    
+
     Args:
         seed: Random seed for dataset shuffling
         dev: Use development dataset configuration
@@ -42,7 +42,7 @@ def get_datamodules(
         data_path: Path to additional data directories
         rl_type: Type of reinforcement learning to use
         *args: Additional arguments
-        
+
     Returns:
         PraxisDataModule configured with train and validation datasets
     """
@@ -51,6 +51,7 @@ def get_datamodules(
     train_data = []
     config = get_dataset_configs(dev, pile, phi, rl_type)
     from praxis.environments import EnvironmentFeatures
+
     for c in config["primary"]:
         # load configs for huggingface datasets
         print(dict(path=c["path"], weight=c["weight"], keys=c.get("keys", ["text"])))
@@ -87,10 +88,8 @@ def get_datamodules(
         try:
             from cli import integration_loader
 
-            available_datasets = (
-                integration_loader.integration_registry.get(
-                    "datasets", {}
-                )
+            available_datasets = integration_loader.integration_registry.get(
+                "datasets", {}
             )
             # Process all available integration datasets
             # The integrations themselves will check if they're properly initialized
@@ -134,14 +133,14 @@ def get_datamodules(
 
 def get_dataset(format, tokenizer, seed, *args, **kwargs):
     """Get a dataset instance based on format type.
-    
+
     Args:
         format: Type of dataset (huggingface, directory, self, synthetic-tool-calling)
         tokenizer: Tokenizer to use
         seed: Random seed
         *args: Additional positional arguments
         **kwargs: Additional keyword arguments
-        
+
     Returns:
         Dataset instance or None if not available
     """
@@ -210,12 +209,12 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
 
 def add_collection(config, collection_name, target_key):
     """Add datasets from a collection to the config with their weights.
-    
+
     Args:
         config: Configuration dictionary to update
         collection_name: Name of the collection to add
         target_key: Key in config to add datasets to (primary or validation)
-        
+
     Returns:
         Updated configuration dictionary
     """
@@ -231,13 +230,13 @@ def get_dataset_configs(
     dev: bool, pile: bool, phi: bool, rl_type: Optional[str] = None
 ):
     """Get dataset configurations based on flags.
-    
+
     Args:
         dev: Use development configuration
         pile: Use Pile dataset collection
         phi: Use Phi dataset collection
         rl_type: Type of reinforcement learning
-        
+
     Returns:
         Dictionary with primary and validation dataset configurations
     """
@@ -251,7 +250,8 @@ def get_dataset_configs(
             config = add_collection(config, "phi", "primary")
         # Check for minimal_data feature flag
         from praxis.environments import EnvironmentFeatures
-        if EnvironmentFeatures.is_enabled('minimal_data'):
+
+        if EnvironmentFeatures.is_enabled("minimal_data"):
             config["primary"] = []
             config = add_collection(config, "dev", "primary")
             # Add RL datasets even in dev mode if RL is enabled

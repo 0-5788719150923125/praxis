@@ -38,20 +38,54 @@ class Generator:
 
     @contextlib.contextmanager
     def _eval_mode(self):
-        training = self.model.training
-        self.model.eval()
-        try:
-            yield
-        except Exception as e:
-            import traceback
+        # For Lightning modules, we need to handle eval/train mode carefully
+        # Lightning manages its own training state during the training loop
+        if hasattr(self.model, "model"):
+            # Lightning module - get the actual model
+            actual_model = self.model.model
+            training = actual_model.training
+            print(
+                f"[DEBUG] Lightning module entering eval mode (was training={training})"
+            )
+            actual_model.eval()
+            try:
+                yield
+            except Exception as e:
+                import traceback
 
-            print(traceback.format_exc())
-        finally:
-            self.model.train(training)
+                print(f"[ERROR] Exception during generation: {e}")
+                print(traceback.format_exc())
+                raise
+            finally:
+                actual_model.train(training)
+                print(f"[DEBUG] Lightning module restored to training={training}")
+        else:
+            # Regular model
+            training = self.model.training
+            print(f"[DEBUG] Model entering eval mode (was training={training})")
+            self.model.eval()
+            try:
+                yield
+            except Exception as e:
+                import traceback
 
-    def request_generation(self, prompt: str, kwargs={}) -> str:
+                print(f"[ERROR] Exception during generation: {e}")
+                print(traceback.format_exc())
+                raise
+            finally:
+                self.model.train(training)
+                print(f"[DEBUG] Model restored to training={training}")
+
+    def request_generation(self, prompt, kwargs={}) -> str:
         """
         Submit a generation request and return a request ID.
+
+        Args:
+            prompt: Either a string prompt or a list of message dicts with 'role' and 'content'
+            kwargs: Additional generation parameters
+
+        Returns:
+            Request ID string
         """
         request_id = str(uuid.uuid4())
         request = GenerationRequest(id=request_id, prompt=prompt, kwargs=kwargs)
@@ -68,17 +102,102 @@ class Generator:
             del self.results[request_id]
         return result
 
+    def generate_with_messages(self, messages: list, **kwargs) -> str:
+        """
+        Convenience method for generating with a list of messages.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            **kwargs: Additional generation parameters
+
+        Returns:
+            Generated text response
+        """
+        request = GenerationRequest(
+            id=str(uuid.uuid4()), prompt=messages, kwargs=kwargs
+        )
+        return self._process_single_request(request)
+
     def _process_single_request(self, request: GenerationRequest):
         """
         Process a single generation request, automatically handling tool calls if detected.
+        Returns the generated text with proper message structure for tool calls.
         """
-        input_ids = self.tokenizer.encode(request.prompt, return_tensors="pt")
+        # Check if the prompt is already a list of messages
+        if isinstance(request.prompt, list):
+            # Apply chat template to messages
+            print(f"[DEBUG] Applying chat template to messages: {request.prompt}")
+            try:
+                prompt_text = self.tokenizer.apply_chat_template(
+                    request.prompt, tokenize=False, add_generation_prompt=True
+                )
+                print(f"[DEBUG] Chat template output: {prompt_text[:200]}...")
+            except Exception as e:
+                print(f"[ERROR] Failed to apply chat template: {e}")
+                # Fallback: convert messages to simple string
+                prompt_text = "\n".join(
+                    [f"{m['role']}: {m['content']}" for m in request.prompt]
+                )
+                print(f"[DEBUG] Using fallback prompt: {prompt_text}")
+
+            # Encode without return_tensors to get a list first
+            input_ids = self.tokenizer.encode(prompt_text)
+            print(f"[DEBUG] Encoded to {len(input_ids)} tokens")
+        else:
+            # Legacy string prompt
+            prompt_text = request.prompt
+            # Encode without return_tensors to get a list first
+            input_ids = self.tokenizer.encode(request.prompt)
 
         if isinstance(input_ids, list):
-            input_ids = torch.tensor([input_ids], dtype=torch.long)
+            # For Lightning modules, create tensor on the model's current device
+            # For regular models, use the configured device
+            if hasattr(self.model, "model"):
+                # Lightning module - use its current device
+                model_device = next(self.model.model.parameters()).device
+                input_ids = torch.tensor(
+                    [input_ids], dtype=torch.long, device=model_device
+                )
+                print(
+                    f"[DEBUG] Created tensor on Lightning model's device: {model_device}"
+                )
+            elif self.device and self.device.startswith("cuda"):
+                # Regular model with CUDA device
+                input_ids = torch.tensor(
+                    [input_ids], dtype=torch.long, device=self.device
+                )
+            else:
+                # Regular model on CPU
+                input_ids = torch.tensor([input_ids], dtype=torch.long)
 
-        if self.device.startswith("cuda"):
-            input_ids = input_ids.to(self.device)
+        # IMPORTANT: Never move Lightning modules - Lightning manages their device placement
+        # Moving them breaks training when the API is called mid-training
+        if hasattr(self.model, "model"):
+            # This is a Lightning module - DO NOT move it
+            # Lightning handles device placement during training
+            print(f"[DEBUG] Lightning module detected - not moving model")
+            actual_model = self.model.model
+            # Get the device from the Lightning-managed model
+            model_device = next(actual_model.parameters()).device
+            print(f"[DEBUG] Lightning model is on device: {model_device}")
+            # Move input_ids to match the model's device
+            if model_device.type == "cuda":
+                input_ids = input_ids.to(model_device)
+                print(
+                    f"[DEBUG] Moved input_ids to Lightning model's device: {input_ids.device}"
+                )
+        else:
+            # Regular model (non-Lightning) - safe to move if needed
+            actual_model = self.model
+            if self.device and self.device.startswith("cuda"):
+                if not next(actual_model.parameters()).is_cuda:
+                    print(f"[DEBUG] Moving non-Lightning model to {self.device}")
+                    self.model = self.model.to(self.device)
+                # Move input_ids to the configured device
+                input_ids = input_ids.to(self.device)
+                print(
+                    f"[DEBUG] Moved input_ids to configured device: {input_ids.device}"
+                )
 
         defaults = dict(
             do_sample=True,
@@ -102,16 +221,39 @@ class Generator:
             if input_ids.size(1) > truncate_to:
                 input_ids = input_ids[:, -truncate_to:]
             del combined["truncate_to"]
+        print(combined)
+        # Remove use_cache if set to False - it causes device placement issues
+        # during inference with certain model architectures
+        if "use_cache" in combined and combined["use_cache"] == False:
+            del combined["use_cache"]
 
         generated_tokens = input_ids
 
         max_attempts = 3
         attempts = 0
-        return_text = request.prompt  # Initialize with the prompt as default
+        # Initialize return_text based on prompt type
+        if isinstance(request.prompt, list):
+            return_text = prompt_text  # Use the text after applying chat template
+        else:
+            return_text = request.prompt  # String prompt
+
+        # Store the original prompt length for extracting only generated text
+        original_prompt_length = input_ids.shape[1]
 
         with self._eval_mode():
             while attempts < max_attempts:
-                outputs = self.model.generate(
+                # Handle both Lightning modules and regular models
+                # Lightning modules wrap the actual model in a .model attribute
+                if hasattr(self.model, "model") and hasattr(
+                    self.model.model, "generate"
+                ):
+                    # This is a Lightning module - use the wrapped model
+                    actual_model = self.model.model
+                else:
+                    # This is a regular model
+                    actual_model = self.model
+
+                outputs = actual_model.generate(
                     generated_tokens,
                     **combined,
                     tokenizer=self.tokenizer,
@@ -121,33 +263,42 @@ class Generator:
                 # Update generated_tokens with the new token
                 generated_tokens = outputs.sequences
 
-                # Decode the tokens generated so far
-                decoded_new = self.tokenizer.decode(
-                    generated_tokens[0], skip_special_tokens=skip_special_tokens
-                )
+                # For message-based generation, decode only the generated portion
+                if (
+                    isinstance(request.prompt, list)
+                    and len(generated_tokens[0]) > original_prompt_length
+                ):
+                    # Decode only the new tokens (after the prompt)
+                    decoded_new = self.tokenizer.decode(
+                        generated_tokens[0][original_prompt_length:],
+                        skip_special_tokens=skip_special_tokens,
+                    )
+                else:
+                    # For string prompts or if nothing generated yet, decode everything
+                    decoded_new = self.tokenizer.decode(
+                        generated_tokens[0], skip_special_tokens=skip_special_tokens
+                    )
 
                 # Check if the decoded text contains the replacement character
                 if "�" not in decoded_new:
-                    # Check if we actually generated something new
-                    # Compare token lengths to detect if model generated whitespace
-                    prompt_tokens = len(self.tokenizer.encode(request.prompt))
-                    generated_token_count = len(generated_tokens[0])
-
-                    # If we have more tokens than the prompt, something was generated
-                    if generated_token_count > prompt_tokens:
-                        return_text = decoded_new
-                        break
-                    # If the decoded text is different, use it
-                    elif decoded_new != request.prompt:
-                        return_text = decoded_new
-                        break
+                    # For message prompts, check if we got any output
+                    if isinstance(request.prompt, list):
+                        if len(generated_tokens[0]) > original_prompt_length:
+                            # We have generated tokens
+                            return_text = decoded_new
+                            break
                     else:
-                        # No new tokens were generated, try again with more tokens
-                        attempts += 1
-                        combined["max_new_tokens"] = min(
-                            combined.get("max_new_tokens", 1) + 1, 10
-                        )
-                        continue
+                        # For string prompts, check if output differs from input
+                        if decoded_new != request.prompt:
+                            return_text = decoded_new
+                            break
+
+                    # No new tokens were generated, try again with more tokens
+                    attempts += 1
+                    combined["max_new_tokens"] = min(
+                        combined.get("max_new_tokens", 1) + 1, 10
+                    )
+                    continue
                 else:
                     # The decoded text contains '�', so we need to generate more tokens
                     attempts += 1
@@ -155,10 +306,19 @@ class Generator:
                     combined["max_new_tokens"] += 1
             else:
                 # If we exhausted all attempts, return what we have
-                return_text = self.tokenizer.decode(
-                    generated_tokens[0], skip_special_tokens=skip_special_tokens
-                )
-
+                if (
+                    isinstance(request.prompt, list)
+                    and len(generated_tokens[0]) > original_prompt_length
+                ):
+                    return_text = self.tokenizer.decode(
+                        generated_tokens[0][original_prompt_length:],
+                        skip_special_tokens=skip_special_tokens,
+                    )
+                else:
+                    return_text = self.tokenizer.decode(
+                        generated_tokens[0], skip_special_tokens=skip_special_tokens
+                    )
+        print(skip_special_tokens)
         # Check if the generated text contains an unprocessed tool call
         unprocessed_call = self._get_unprocessed_tool_call(return_text)
 
@@ -189,19 +349,32 @@ class Generator:
                 print(f"Called tool: {tool_name} with args: {tool_args}")
                 print(f"Tool result: {tool_result}")
 
-                # Append the tool result directly as a simple tag
-                # This preserves the exact format and allows for multiple tool calls
-                tool_result_tag = f"\n<tool_result>{str(tool_result)}</tool_result>\n"
+                # Build a new messages list with the tool result
+                if isinstance(request.prompt, list):
+                    messages = request.prompt.copy()
+                else:
+                    # Convert string prompt to messages format
+                    messages = [{"role": "user", "content": request.prompt}]
 
-                # Build the complete prompt with tool result for continuation
-                complete_prompt = return_text + tool_result_tag
+                # Extract assistant's content (without the original prompt)
+                assistant_content = return_text
+                if prompt_text in assistant_content:
+                    assistant_content = assistant_content.replace(
+                        prompt_text, ""
+                    ).strip()
 
-                # Create a new generation request with the tool result included
-                # This allows the model to continue generating (possibly more tool calls)
+                # Add assistant message if there's content
+                if assistant_content:
+                    messages.append({"role": "assistant", "content": assistant_content})
+
+                # Add tool result as a proper tool message
+                messages.append({"role": "tool", "content": str(tool_result)})
+
+                # Create new request with proper messages
                 tool_response_request = GenerationRequest(
                     id=request.id + "_tool_response",
-                    prompt=complete_prompt,
-                    kwargs=request.kwargs,  # Use same generation parameters
+                    prompt=messages,
+                    kwargs=request.kwargs,
                 )
 
                 # Recursively process to get the model's response after tool execution
@@ -236,9 +409,9 @@ class Generator:
         self, text: str
     ) -> Optional[tuple[Dict[str, Any], int]]:
         """
-        Find the last unprocessed tool call in the text.
+        Find the last tool call in the text.
         Returns a tuple of (tool_data, match_end_position) or None.
-        A tool call is considered processed if there's a <tool_result> tag after it.
+        Since we use message-based tool responses, we simply return the last valid tool call.
         """
         tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
         matches = list(re.finditer(tool_pattern, text, re.DOTALL))
@@ -246,30 +419,13 @@ class Generator:
         if not matches:
             return None
 
-        # Check each tool call from last to first
+        # Return the last valid tool call
         for match in reversed(matches):
-            # Check if there's a tool_result tag after THIS specific tool call
-            text_after_this_call = text[match.end() :]
-
-            # Look for the next tool_result tag after this specific tool call
-            # If there's no tool_result or there's another tool_call before the tool_result,
-            # then this tool call is unprocessed
-            next_tool_call_pos = text_after_this_call.find("<tool_call>")
-            next_tool_result_pos = text_after_this_call.find("<tool_result>")
-
-            # This tool is unprocessed if:
-            # 1. There's no tool_result after it, OR
-            # 2. There's another tool_call before the next tool_result
-            is_unprocessed = next_tool_result_pos == -1 or (
-                next_tool_call_pos != -1 and next_tool_call_pos < next_tool_result_pos
-            )
-
-            if is_unprocessed:
-                try:
-                    tool_data = json.loads(match.group(1))
-                    return (tool_data, match.end())
-                except json.JSONDecodeError:
-                    continue
+            try:
+                tool_data = json.loads(match.group(1))
+                return (tool_data, match.end())
+            except json.JSONDecodeError:
+                continue
 
         return None
 

@@ -14,14 +14,18 @@ from praxis.utils import norm_scaling
 # Conditional hivemind import - only used if hivemind integration is loaded
 try:
     from hivemind.moe.server.layers.custom_experts import register_expert_class
+
     HIVEMIND_AVAILABLE = True
 except ImportError:
     HIVEMIND_AVAILABLE = False
+
     # Create a no-op decorator when hivemind is not available
     def register_expert_class(name, shape_fn):
         def decorator(cls):
             return cls
+
         return decorator
+
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))

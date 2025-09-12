@@ -5,7 +5,7 @@ from .utils import TextUtils
 
 class PanelRenderer:
     """Renders various dashboard panels."""
-    
+
     def __init__(self):
         self.text_utils = TextUtils()
 
@@ -25,7 +25,9 @@ class PanelRenderer:
                 # If the list representation is too long, wrap it intelligently
                 if len(val_str) > max_val_len:
                     # Smart wrapping that respects list structure
-                    wrapped_parts = self.text_utils.wrap_list_string(val_str, max_val_len)
+                    wrapped_parts = self.text_utils.wrap_list_string(
+                        val_str, max_val_len
+                    )
                     # First line with key
                     display_items.append((key, wrapped_parts[0]))
                     # Continuation lines with empty key
@@ -67,6 +69,7 @@ class PanelRenderer:
             or automata.height != height
         ):
             from ..visualization.automata import ForestFireAutomata
+
             automata = ForestFireAutomata((width - 2) // 2, height)
 
         # Update the game state

@@ -123,7 +123,7 @@ class NgrokTunnel:
                 except (RuntimeError, AttributeError):
                     # Loop is in an invalid state
                     is_closed = True
-                
+
                 if not is_closed:
                     try:
                         # Schedule cleanup in the event loop with very short timeout
@@ -138,10 +138,13 @@ class NgrokTunnel:
                         # Only log unexpected errors
                         if "Event loop is closed" not in str(e):
                             pass  # Silently ignore
-                    
+
                     try:
                         # Try to stop the event loop if it's still running
-                        if hasattr(self._loop, 'is_running') and self._loop.is_running():
+                        if (
+                            hasattr(self._loop, "is_running")
+                            and self._loop.is_running()
+                        ):
                             self._loop.call_soon_threadsafe(self._loop.stop)
                     except (RuntimeError, AttributeError):
                         # Loop might be closed or stopped already
@@ -170,13 +173,13 @@ _tunnel = None
 
 def setup_ngrok_routes(app, ngrok_secret):
     """Setup catch-all routes for ngrok secret-prefixed paths.
-    
+
     Args:
         app: Flask application instance
         ngrok_secret: The secret to use for the URL prefix
     """
     from flask import request as flask_request
-    
+
     # Create a catch-all route for the secret prefix
     @app.route(
         f"/{ngrok_secret}/",
@@ -191,7 +194,7 @@ def setup_ngrok_routes(app, ngrok_secret):
         """Proxy requests from ngrok secret URLs to the real endpoints."""
         # Build the real path
         real_path = "/" + path if path else "/"
-        
+
         # Get the view function for the real path
         try:
             # Build the full URL with query string
@@ -199,7 +202,7 @@ def setup_ngrok_routes(app, ngrok_secret):
                 real_url = f"{real_path}?{flask_request.query_string.decode()}"
             else:
                 real_url = real_path
-            
+
             # Use Flask's test client to make internal request
             with app.test_client() as client:
                 # Copy headers but remove ngrok-identifying ones
@@ -211,7 +214,7 @@ def setup_ngrok_routes(app, ngrok_secret):
                         "host",
                     ]:
                         clean_headers[key] = value
-                
+
                 # Copy the request method and data
                 response = client.open(
                     real_url,
@@ -220,10 +223,10 @@ def setup_ngrok_routes(app, ngrok_secret):
                     headers=clean_headers,
                     follow_redirects=False,
                 )
-                
+
                 # Get response data
                 data = response.get_data()
-                
+
                 # If it's HTML or JavaScript, rewrite URLs to include the secret prefix
                 content_type = response.headers.get("Content-Type", "")
                 if (
@@ -249,12 +252,13 @@ def setup_ngrok_routes(app, ngrok_secret):
                         data = html.encode("utf-8")
                     except:
                         pass
-                
+
                 # Return the response
                 return data, response.status_code, response.headers
-                
+
         except Exception as e:
             from flask import abort
+
             return abort(404)
 
 
@@ -294,75 +298,82 @@ class Integration(BaseIntegration):
 
     def on_api_server_start(self, app: Any, args: Any) -> None:
         """Hook called when API server starts.
-        
+
         Args:
             app: Flask application instance
             args: Command-line arguments
         """
         # Extract host and port from the app or args as needed
-        host = getattr(args, 'host_name', 'localhost')
-        port = getattr(args, 'port', 2100)
+        host = getattr(args, "host_name", "localhost")
+        port = getattr(args, "port", 2100)
         global _tunnel
-        
+
         # Check if ngrok is actually enabled
         try:
             from cli import get_cli_args
+
             args = get_cli_args()
             if not getattr(args, "ngrok", False):
                 return
         except:
             return
-        
+
         if _tunnel is not None:
             print("⚠️  Ngrok tunnel already running")
             return
-        
+
         # Load from .env file first
         try:
             from dotenv import load_dotenv
+
             load_dotenv()
         except ImportError:
             pass
-        
+
         # Get auth token from args or environment
-        auth_token = getattr(args, "ngrok_auth_token", None) or os.getenv("NGROK_AUTHTOKEN")
-        
+        auth_token = getattr(args, "ngrok_auth_token", None) or os.getenv(
+            "NGROK_AUTHTOKEN"
+        )
+
         if not auth_token:
-            print("❌ NGROK ERROR: No auth token provided. Set NGROK_AUTHTOKEN env var or use --ngrok-auth-token")
+            print(
+                "❌ NGROK ERROR: No auth token provided. Set NGROK_AUTHTOKEN env var or use --ngrok-auth-token"
+            )
             return
-        
+
         print(f"🚀 Starting ngrok tunnel for {host}:{port}")
         _tunnel = NgrokTunnel(host, port, auth_token)
         success = _tunnel.start()
-        
+
         if success:
             base_url = _tunnel.public_url
             protected_url = f"{base_url}/{_tunnel.webhook_secret}"
-            
+
             print(f"🌐 Ngrok tunnel active: {base_url}")
             print(f"🔐 Protected URL: {protected_url}")
             print(f"📡 Local server: http://{host}:{port}")
-            
+
             # Store ngrok info in Flask app config for middleware to access
             try:
                 import api
-                
+
                 # Store the ngrok information in app config
                 api.app.config["ngrok_url"] = base_url
                 api.app.config["ngrok_secret"] = _tunnel.webhook_secret
                 api.app.config["ngrok_protected_url"] = protected_url
-                
+
                 # Register the ngrok header using the generic hook
                 api.register_response_header("ngrok-skip-browser-warning", "true")
-                
+
                 # Set up Flask routes with the secret
                 setup_ngrok_routes(api.app, _tunnel.webhook_secret)
-                
+
             except Exception as e:
                 print(f"Could not set up routes: {e}")
         else:
             print("\n❌ NGROK ERROR: Failed to establish tunnel")
             import sys
+
             sys.exit(1)
 
     def request_middleware(self, request: Any, response: Any = None) -> Any:
@@ -370,7 +381,7 @@ class Integration(BaseIntegration):
         if response is not None:
             # This is the after_request phase - headers are now added via register_response_header
             return None
-        
+
         # This is the before_request phase - check authorization for ngrok requests
         # Check if this request is coming through ngrok
         is_ngrok_request = (
@@ -380,37 +391,40 @@ class Integration(BaseIntegration):
             or request.host.endswith(".ngrok.io")
             or request.host.endswith(".src.eco")
         )
-        
+
         if not is_ngrok_request:
             return None  # Allow all local requests
-        
+
         # For ngrok requests, check if they have the secret prefix
         # Get the secret from Flask app config
         try:
             from flask import current_app
+
             ngrok_secret = current_app.config.get("ngrok_secret")
         except:
             ngrok_secret = None
-        
+
         if not ngrok_secret:
             # No secret configured, block the request
             from flask import abort
+
             return abort(404)
-        
+
         path = request.path
-        
+
         # Allow requests that start with the secret
         if path.startswith(f"/{ngrok_secret}"):
             return None  # Authorized request
-        
+
         # Block unauthorized ngrok requests
         from flask import abort
+
         return abort(404)
 
     def cleanup(self) -> None:
         """Clean up ngrok resources."""
         global _tunnel
-        
+
         if _tunnel is not None:
             _tunnel.stop()
             _tunnel = None

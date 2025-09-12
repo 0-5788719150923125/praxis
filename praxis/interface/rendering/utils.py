@@ -7,7 +7,7 @@ import wcwidth
 
 class TextUtils:
     """Utilities for text rendering and manipulation."""
-    
+
     def __init__(self):
         self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 

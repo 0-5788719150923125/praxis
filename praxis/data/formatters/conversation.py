@@ -6,19 +6,24 @@ from typing import Dict, List
 from transformers import PreTrainedTokenizer
 
 from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
-from praxis.data.formatters.base import text_formatter, repair_text_punctuation, repair_broken_emoticons, simple_truecase
+from praxis.data.formatters.base import (
+    text_formatter,
+    repair_text_punctuation,
+    repair_broken_emoticons,
+    simple_truecase,
+)
 
 
 def format_conversation(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
     """Format as a conversation with unified system/developer prompts.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document (must be exactly 3)
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -39,10 +44,7 @@ def format_conversation(
 
     return {
         "messages": messages,
-        "metadata": {
-            "format": "conversation",
-            "source_keys": keys
-        }
+        "metadata": {"format": "conversation", "source_keys": keys},
     }
 
 
@@ -50,12 +52,12 @@ def format_messages(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
     """Convert already formatted messages with unified system/developer prompts.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -97,23 +99,20 @@ def format_messages(
 
     return {
         "messages": processed_messages,
-        "metadata": {
-            "format": "messages",
-            "source_keys": keys
-        }
+        "metadata": {"format": "messages", "source_keys": keys},
     }
 
 
 def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> str:
     """Format SODA dataset entries as conversations.
-    
+
     The SODA dataset contains dialogues with context and speaker information.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Formatted text with chat template applied
     """
@@ -143,9 +142,7 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
 
     # Add context as a developer message if available
     if context_parts:
-        messages.append(
-            {"role": "developer", "content": "\n".join(context_parts)}
-        )
+        messages.append({"role": "developer", "content": "\n".join(context_parts)})
 
     # Create person mapping if we have speakers
     person_mapping = create_person_mapping({"speakers": speakers}) if speakers else {}
@@ -169,8 +166,8 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
         "metadata": {
             "format": "soda",
             "source_keys": keys,
-            "dialogue_turns": len(dialogue)
-        }
+            "dialogue_turns": len(dialogue),
+        },
     }
 
 

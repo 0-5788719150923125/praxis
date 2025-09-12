@@ -184,7 +184,7 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
     """Call a tool by name with arguments (backward compatibility)."""
     if name is None:
         raise ValueError("Tool name cannot be None")
-    
+
     tools = get_all_tools()
     available_names = []
     for tool in tools:
@@ -197,6 +197,6 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
                 return tool(**arguments)
             elif callable(tool):
                 return tool(**arguments)
-    
+
     # Provide helpful error message with available tools
     raise ValueError(f"Tool '{name}' not found. Available tools: {available_names}")

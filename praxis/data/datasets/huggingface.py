@@ -37,7 +37,7 @@ FORMAT_HANDLERS = {
 
 class HuggingfaceDataset(PraxisSampler):
     """Dataset that loads from HuggingFace datasets library."""
-    
+
     counts = {}
 
     def __init__(self, tokenizer: PreTrainedTokenizer, seed: int, config: Dict):
@@ -54,7 +54,7 @@ class HuggingfaceDataset(PraxisSampler):
             else FORMAT_HANDLERS[self.format]
         )
         self.dataset_path = config.get("path", "HuggingFaceFW/fineweb")
-        
+
         # Store base seed and restart counter
         self.base_seed = seed
         self.restart_count = 0
@@ -69,7 +69,7 @@ class HuggingfaceDataset(PraxisSampler):
         if "name" in config:
             dataset_args["name"] = config["name"]
         self.dataset = load_dataset_smart(dataset_args)
-        
+
         # Initial shuffle with base seed
         shuffle_args = {"seed": self.base_seed}
         if self.is_streaming:
@@ -134,9 +134,9 @@ class HuggingfaceDataset(PraxisSampler):
                     document = next(self.dataset_iterator)
 
             # Debug what keys the document has
-            if not hasattr(self, '_debug_printed'):
+            if not hasattr(self, "_debug_printed"):
                 self._debug_printed = True
-                
+
             formatted = self._format_document(document)
 
             # Handle different formatter return types
@@ -152,31 +152,37 @@ class HuggingfaceDataset(PraxisSampler):
             else:
                 # Legacy text format - skip
                 return {"messages": [], "metadata": {}}
-                
+
         except Exception as e:
             print(f"[ERROR] HuggingfaceDataset.get_document failed: {e}")
             import traceback
+
             traceback.print_exc()
             return {"messages": [], "metadata": {}}
-    
+
     def fill_sequence_cache(self):
         """Legacy method for compatibility - converts to old text format."""
         try:
             document_data = self.get_document()
-            
+
             # Convert back to text for legacy compatibility
             if document_data and document_data.get("messages"):
-                text = self.tokenizer.apply_chat_template(
-                    document_data["messages"],
-                    tokenize=False,
-                    add_generation_prompt=False
-                ) + "\n"
-                
+                text = (
+                    self.tokenizer.apply_chat_template(
+                        document_data["messages"],
+                        tokenize=False,
+                        add_generation_prompt=False,
+                    )
+                    + "\n"
+                )
+
                 # Store metadata if needed
-                if self.format == DataFormat.RL and "reward" in document_data.get("metadata", {}):
+                if self.format == DataFormat.RL and "reward" in document_data.get(
+                    "metadata", {}
+                ):
                     text_hash = hashlib.md5(text.encode()).hexdigest()
                     self.reward_cache[text_hash] = document_data["metadata"]
-                
+
                 self.sequence_cache.append(text)
             else:
                 # Empty document, try again
@@ -184,12 +190,12 @@ class HuggingfaceDataset(PraxisSampler):
         except StopIteration:
             HuggingfaceDataset.counts[self.dataset_path] += 1
             self.restart_count += 1
-            
+
             # Log every restart so we know when datasets are consumed too quickly
             print(
                 f"INFO: Reached the last batch of '{self.dataset_path}' dataset. Reshuffling with new seed. ({HuggingfaceDataset.counts[self.dataset_path]}x)"
             )
-            
+
             # Reshuffle with a new seed to avoid repeating the same pattern
             new_seed = self.base_seed + self.restart_count
             shuffle_args = {"seed": new_seed}
@@ -197,31 +203,38 @@ class HuggingfaceDataset(PraxisSampler):
                 shuffle_args["buffer_size"] = 1000
             self.shuffled_dataset = self.dataset.shuffle(**shuffle_args)
             self.dataset_iterator = iter(self.shuffled_dataset)
-            
+
             # Try again with the new iterator
             try:
                 document_data = self.get_document()
-                
+
                 # Convert back to text for legacy compatibility
                 if document_data and document_data.get("messages"):
-                    text = self.tokenizer.apply_chat_template(
-                        document_data["messages"],
-                        tokenize=False,
-                        add_generation_prompt=False
-                    ) + "\n"
-                    
+                    text = (
+                        self.tokenizer.apply_chat_template(
+                            document_data["messages"],
+                            tokenize=False,
+                            add_generation_prompt=False,
+                        )
+                        + "\n"
+                    )
+
                     # Store metadata if needed
-                    if self.format == DataFormat.RL and "reward" in document_data.get("metadata", {}):
+                    if self.format == DataFormat.RL and "reward" in document_data.get(
+                        "metadata", {}
+                    ):
                         text_hash = hashlib.md5(text.encode()).hexdigest()
                         self.reward_cache[text_hash] = document_data["metadata"]
-                    
+
                     self.sequence_cache.append(text)
                 else:
                     # Empty document, add placeholder
                     self.sequence_cache.append("")
             except StopIteration:
                 # Dataset is empty or has issues, add a placeholder to prevent infinite loop
-                print(f"WARNING: Dataset '{self.dataset_path}' appears to be empty or has issues. Adding placeholder.")
+                print(
+                    f"WARNING: Dataset '{self.dataset_path}' appears to be empty or has issues. Adding placeholder."
+                )
                 self.sequence_cache.append("")
 
     def _format_document(self, document):
@@ -231,7 +244,7 @@ class HuggingfaceDataset(PraxisSampler):
         # Get the internal state of the shuffled dataset and restart counter
         return {
             "dataset_state": self.shuffled_dataset.state_dict(),
-            "restart_count": self.restart_count
+            "restart_count": self.restart_count,
         }
 
     def load_state_dict(self, state_dict):

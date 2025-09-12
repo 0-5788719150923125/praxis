@@ -35,30 +35,30 @@ class IntegrationLoader:
 
     def bootstrap_integrations(self, args=None) -> None:
         """Bootstrap install integrations that match conditions.
-        
+
         This ensures integration dependencies are available before they're loaded.
         Only installs integrations whose conditions are met (or have no conditions).
-        
+
         Args:
             args: Parsed command-line arguments to check conditions against.
                   If None, only installs integrations without conditions.
         """
         if not self.integrations_dir.exists():
             return
-            
+
         # First discover all integrations to check their conditions
         integrations_to_install = []
-        
+
         for integration_dir in self.integrations_dir.iterdir():
             if not integration_dir.is_dir():
                 continue
-                
+
             # Check if this integration has a spec.yaml to read conditions
             spec_path = integration_dir / "spec.yaml"
             if spec_path.exists():
                 try:
                     spec = IntegrationSpec.from_file(spec_path)
-                    
+
                     # Check if conditions are met (if args provided)
                     if args is None:
                         # No args - only install if no conditions
@@ -71,7 +71,7 @@ class IntegrationLoader:
                 except Exception:
                     # Failed to load spec - skip this integration
                     pass
-        
+
         # Now install only the integrations that passed condition checks
         if integrations_to_install:
             print("[Integrations] Bootstrapping integrations...")
@@ -79,21 +79,36 @@ class IntegrationLoader:
                 if (integration_dir / "pyproject.toml").exists():
                     # Check if already installed
                     check_result = subprocess.run(
-                        [sys.executable, "-m", "pip", "show", f"praxis-integration-{integration_name}"],
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "show",
+                            f"praxis-integration-{integration_name}",
+                        ],
                         capture_output=True,
-                        text=True
+                        text=True,
                     )
-                    
+
                     if check_result.returncode != 0:
                         # Not installed - try to install it
                         print(f"[Integrations] Installing {integration_name}...")
                         try:
                             subprocess.check_call(
-                                [sys.executable, "-m", "pip", "install", "-e", str(integration_dir)]
+                                [
+                                    sys.executable,
+                                    "-m",
+                                    "pip",
+                                    "install",
+                                    "-e",
+                                    str(integration_dir),
+                                ]
                             )
                         except subprocess.CalledProcessError as e:
                             # Integration install failed - likely incompatible dependencies
-                            print(f"[Integrations] Warning: {integration_name} failed to install (may have incompatible dependencies)")
+                            print(
+                                f"[Integrations] Warning: {integration_name} failed to install (may have incompatible dependencies)"
+                            )
 
     def discover_integrations(self) -> List[IntegrationSpec]:
         """Find all integrations in integrations directory.
@@ -201,10 +216,10 @@ class IntegrationLoader:
 
     def _check_dependencies_available(self, spec: IntegrationSpec) -> bool:
         """Check if integration dependencies are available (already installed).
-        
+
         Args:
             spec: Integration specification
-            
+
         Returns:
             True if dependencies are available or no dependencies needed
         """
@@ -212,12 +227,18 @@ class IntegrationLoader:
         pyproject_path = spec.path / "pyproject.toml"
         if pyproject_path.exists():
             check_result = subprocess.run(
-                [sys.executable, "-m", "pip", "show", f"praxis-integration-{spec.name}"],
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "show",
+                    f"praxis-integration-{spec.name}",
+                ],
                 capture_output=True,
-                text=True
+                text=True,
             )
             return check_result.returncode == 0
-        
+
         # No pyproject.toml means no dependencies
         return True
 

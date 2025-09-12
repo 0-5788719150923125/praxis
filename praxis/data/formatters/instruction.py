@@ -11,12 +11,12 @@ def format_instruction(
     document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
 ) -> Dict:
     """Format as instruction/output pairs with unified system/developer prompts.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document (must be exactly 2)
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -33,8 +33,5 @@ def format_instruction(
 
     return {
         "messages": messages,
-        "metadata": {
-            "format": "instruction",
-            "source_keys": keys
-        }
+        "metadata": {"format": "instruction", "source_keys": keys},
     }

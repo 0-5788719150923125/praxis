@@ -2,4 +2,4 @@
 
 from .automata import ForestFireAutomata
 
-__all__ = ['ForestFireAutomata']
+__all__ = ["ForestFireAutomata"]

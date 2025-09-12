@@ -12,7 +12,7 @@ This is a modern chat interface for interacting with AI models through the Praxi
 
 ## Configuration
 
-The chat interface automatically connects to the current server's `/input/` endpoint by default. You can change this in the settings to connect to any compatible API endpoint.
+The chat interface automatically connects to the current server's `/messages/` endpoint by default for conversation-style interactions. You can change this in the settings to connect to any compatible API endpoint.
 
 ## Cross-Origin (CORS) Support
 
@@ -28,7 +28,7 @@ If you encounter connection issues when connecting to a different server:
 
 1. Make sure the target server is running
 2. Verify the server has CORS enabled (all Praxis servers now include this by default)
-3. Check the URL format in settings (should include protocol, host, port and /input/ path)
+3. Check the URL format in settings (should include protocol, host, port and /messages/ path)
 4. Check browser console for detailed error messages
 
 ## Development

@@ -12,7 +12,7 @@ from praxis.data.interruptible import InterruptibleDataLoader, DataLoaderManager
 
 class PraxisDataModule(LightningDataModule):
     """Lightning DataModule for managing train and validation datasets."""
-    
+
     def __init__(
         self,
         train_datasets: List[Dict],
@@ -73,8 +73,8 @@ class PraxisDataModule(LightningDataModule):
 
     def train_dataloader(self):
         # Use 0 workers if spawn method is set (required for MonoForward pipeline)
-        num_workers = 0 if mp.get_start_method(allow_none=True) == 'spawn' else 1
-        
+        num_workers = 0 if mp.get_start_method(allow_none=True) == "spawn" else 1
+
         dataloader = InterruptibleDataLoader(
             dataset=self.train_datasets,
             batch_size=None,
@@ -82,7 +82,7 @@ class PraxisDataModule(LightningDataModule):
             pin_memory=False,
             persistent_workers=False,  # Ensure clean shutdown
         )
-        
+
         # Register for shutdown management
         self.dataloader_manager.register(dataloader)
         return dataloader
@@ -90,8 +90,8 @@ class PraxisDataModule(LightningDataModule):
     def val_dataloader(self):
         if self.val_datasets:
             # Use 0 workers if spawn method is set (required for MonoForward pipeline)
-            num_workers = 0 if mp.get_start_method(allow_none=True) == 'spawn' else 1
-            
+            num_workers = 0 if mp.get_start_method(allow_none=True) == "spawn" else 1
+
             dataloader = InterruptibleDataLoader(
                 dataset=self.val_datasets,
                 batch_size=None,
@@ -99,13 +99,13 @@ class PraxisDataModule(LightningDataModule):
                 pin_memory=False,
                 persistent_workers=False,  # Ensure clean shutdown
             )
-            
+
             # Register for shutdown management
             self.dataloader_manager.register(dataloader)
             return dataloader
         else:
             return []
-    
+
     def shutdown_dataloaders(self, timeout: float = 5.0):
         """Shutdown all active dataloaders gracefully."""
         self.dataloader_manager.shutdown_all(timeout=timeout)
@@ -133,11 +133,11 @@ class PraxisDataModule(LightningDataModule):
                 and callable(sampler.load_state_dict)
             ):
                 sampler.load_state_dict(s_state)
-    
+
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Lightning hook to save DataModule state to checkpoint."""
         checkpoint["datamodule_state"] = self.state_dict()
-    
+
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Lightning hook to load DataModule state from checkpoint."""
         if "datamodule_state" in checkpoint:

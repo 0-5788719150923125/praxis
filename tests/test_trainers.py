@@ -7,11 +7,11 @@ from transformers import AutoTokenizer
 from praxis import PraxisConfig, PraxisForCausalLM
 from praxis.optimizers import get_optimizer, get_optimizer_profile
 from praxis.trainers import (
-    BackpropagationTrainer, 
-    try_compile_model, 
+    BackpropagationTrainer,
+    try_compile_model,
     try_compile_optimizer,
     create_trainer_with_module,
-    TRAINER_REGISTRY
+    TRAINER_REGISTRY,
 )
 from praxis.schedulers import get_scheduler_func
 
@@ -87,12 +87,12 @@ class TestBackpropagationTrainer:
         """Test that PraxisTrainer forward accepts keyword arguments."""
         model, config = setup_model
         tokenizer = setup_tokenizer
-        
+
         optimizer_config, _ = get_optimizer_profile("AdamW")
         optimizer = get_optimizer(model, **optimizer_config)
         scheduler_func = get_scheduler_func(optimizer_config)
         scheduler = scheduler_func(optimizer)
-        
+
         trainer = PraxisTrainer(
             model=model,
             optimizer=optimizer,
@@ -101,10 +101,10 @@ class TestBackpropagationTrainer:
             tokenizer=tokenizer,
             byte_latent=False,
         )
-        
+
         batch_size = 2
         seq_len = 10
-        
+
         # Test with keyword arguments (matching training_step usage)
         outputs = trainer.forward(
             input_ids=torch.randint(0, 100, (batch_size, seq_len)),
@@ -198,7 +198,7 @@ class TestCompilationUtils:
 
 class TestTrainerFactory:
     """Test the trainer factory function."""
-    
+
     @pytest.fixture
     def setup_components(self):
         """Create model and optimizer components for testing."""
@@ -212,21 +212,21 @@ class TestTrainerFactory:
             device_map="cpu",
         )
         model = PraxisForCausalLM(config)
-        
+
         optimizer_config, _ = get_optimizer_profile("AdamW")
         optimizer = get_optimizer(model, **optimizer_config)
         scheduler_func = get_scheduler_func(optimizer_config)
         scheduler = scheduler_func(optimizer)
-        
+
         class MockTokenizer:
             pad_token_id = 0
-            
+
         return model, optimizer, scheduler, MockTokenizer()
-    
+
     def test_create_backpropagation_trainer(self, setup_components):
         """Test creating BackpropagationTrainer through factory."""
         model, optimizer, scheduler, tokenizer = setup_components
-        
+
         trainer, training_module = create_trainer_with_module(
             trainer_type="backpropagation",
             model=model,
@@ -234,19 +234,20 @@ class TestTrainerFactory:
             scheduler=scheduler,
             hparams={"batch_size": 4, "device": "cpu"},
             tokenizer=tokenizer,
-            trainer_params={"max_steps": 10}
+            trainer_params={"max_steps": 10},
         )
-        
+
         # Should return Lightning Trainer and BackpropagationTrainer module
         from praxis.trainers import Trainer
+
         assert isinstance(trainer, Trainer)
         assert isinstance(training_module, BackpropagationTrainer)
         assert training_module.model is not None
-        
+
     def test_create_default_trainer(self, setup_components):
         """Test that 'default' maps to PraxisTrainer."""
         model, optimizer, scheduler, tokenizer = setup_components
-        
+
         trainer, training_module = create_trainer_with_module(
             trainer_type="backpropagation",
             model=model,
@@ -254,17 +255,18 @@ class TestTrainerFactory:
             scheduler=scheduler,
             hparams={"batch_size": 4, "device": "cpu"},
             tokenizer=tokenizer,
-            trainer_params={"max_steps": 10}
+            trainer_params={"max_steps": 10},
         )
-        
+
         from praxis.trainers import Trainer
+
         assert isinstance(trainer, Trainer)
         assert isinstance(training_module, BackpropagationTrainer)
-        
+
     def test_create_unknown_trainer(self, setup_components):
         """Test that unknown trainer types raise an error."""
         model, optimizer, scheduler, tokenizer = setup_components
-        
+
         with pytest.raises(ValueError, match="Unknown trainer type 'unknown_type'"):
             trainer, training_module = create_trainer_with_module(
                 trainer_type="unknown_type",
@@ -273,19 +275,19 @@ class TestTrainerFactory:
                 scheduler=scheduler,
                 hparams={"batch_size": 4, "device": "cpu"},
                 tokenizer=tokenizer,
-                trainer_params={"max_steps": 10}
+                trainer_params={"max_steps": 10},
             )
-        
+
     def test_trainer_registry_exists(self):
         """Test that trainer registry contains expected entries."""
         assert "backpropagation" in TRAINER_REGISTRY
         assert "mono_forward" in TRAINER_REGISTRY
         assert len(TRAINER_REGISTRY) == 2  # Only 2 trainers
-        
+
     def test_encoder_type_detection(self, setup_components):
         """Test that byte_latent is set based on encoder_type."""
         model, optimizer, scheduler, tokenizer = setup_components
-        
+
         trainer, training_module = create_trainer_with_module(
             trainer_type="backpropagation",
             model=model,
@@ -293,8 +295,8 @@ class TestTrainerFactory:
             scheduler=scheduler,
             hparams={"encoder_type": "byte_latent"},
             tokenizer=tokenizer,
-            trainer_params={"max_steps": 10}
+            trainer_params={"max_steps": 10},
         )
-        
+
         assert isinstance(training_module, BackpropagationTrainer)
         assert training_module.byte_latent is True

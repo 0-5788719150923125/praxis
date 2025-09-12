@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Main training script for Praxis language models."""
 
+import warnings
+
 # CRITICAL: Set multiprocessing start method before ANY imports that might use CUDA
 # This is required for MonoForward pipeline parallelism with CUDA
 import torch.multiprocessing as mp
-import warnings
 
 # Suppress multiprocessing resource tracker warnings early
-warnings.filterwarnings('ignore', category=UserWarning, module='multiprocessing.resource_tracker')
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="multiprocessing.resource_tracker"
+)
 
 try:
     mp.set_start_method("spawn", force=True)
@@ -50,7 +53,6 @@ from cli import (
     integration_loader,
     log_command,
 )
-from praxis.interface import TerminalDashboard
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 from praxis.callbacks import (
     AccumulationSchedule,
@@ -62,6 +64,7 @@ from praxis.callbacks import (
 )
 from praxis.data import get_datamodules
 from praxis.generation import Generator
+from praxis.interface import TerminalDashboard
 from praxis.optimizers import get_optimizer, get_optimizer_profile, get_parameter_stats
 from praxis.schedulers import get_scheduler_func
 from praxis.tokenizers import create_tokenizer
@@ -142,11 +145,11 @@ def main():
     vocab_size = processed_args["vocab_size"]
     # Import EnvironmentFeatures to check for feature flags
     from praxis.environments import EnvironmentFeatures
-    
+
     cache_dir = processed_args["cache_dir"]
-    
+
     # Apply cache isolation if feature is enabled
-    if EnvironmentFeatures.is_enabled('cache_isolation'):
+    if EnvironmentFeatures.is_enabled("cache_isolation"):
         active_env = EnvironmentFeatures.get_active_environment()
         if active_env:
             cache_dir = os.path.join(cache_dir, f"env_{active_env}")
@@ -242,7 +245,7 @@ def main():
         enable_checkpointing=True,
         enable_progress_bar=not use_dashboard,
         enable_model_summary=False,
-        detect_anomaly=EnvironmentFeatures.is_enabled('detect_anomaly'),
+        detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
         val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
         num_sanity_val_steps=0,
         limit_val_batches=16384 // hparams["batch_size"],
@@ -287,7 +290,7 @@ def main():
 
     ckpt_path = None
     # Check for force_reset feature or explicit reset flag
-    if not reset and not EnvironmentFeatures.is_enabled('force_reset'):
+    if not reset and not EnvironmentFeatures.is_enabled("force_reset"):
         symlink = os.path.join(cache_dir, "model", "last.ckpt")
         true_link = find_latest_checkpoint(cache_dir)
         if os.path.exists(symlink):
@@ -323,7 +326,7 @@ def main():
             seed,
             truncated_hash=truncated_hash,
             full_hash=args_hash,
-            dev_mode=(EnvironmentFeatures.get_active_environment() == 'dev'),
+            dev_mode=(EnvironmentFeatures.get_active_environment() == "dev"),
         )
         api_server.start()
 
@@ -343,7 +346,15 @@ def main():
     use_source_code = not no_source
     # Pass minimal_data feature flag instead of old dev variable
     dataintegration = get_datamodules(
-        seed, EnvironmentFeatures.is_enabled('minimal_data'), pile, phi, use_source_code, tokenizer, hparams, data_path, rl_type
+        seed,
+        EnvironmentFeatures.is_enabled("minimal_data"),
+        pile,
+        phi,
+        use_source_code,
+        tokenizer,
+        hparams,
+        data_path,
+        rl_type,
     )
 
     # create the optimizer
@@ -451,7 +462,7 @@ def main():
             embed_size=config.embed_size,
             dropout=dropout,
             use_source_code=use_source_code,
-            dev=(EnvironmentFeatures.get_active_environment() == 'dev'),
+            dev=(EnvironmentFeatures.get_active_environment() == "dev"),
             target_batch_size=target_batch_size,
         )
     )
@@ -512,6 +523,14 @@ def main():
         pipeline_depth=pipeline_depth,
     )
 
+    # For Lightning modules, we need to update the generator to use the wrapped model
+    # Note: The actual device movement happens during trainer.fit(), so we pass the wrapper
+    if trainer_type == "backpropagation":
+        # Pass the Lightning module itself, which will handle device placement
+        generator.model = train_model
+    elif trainer_type == "mono_forward" and hasattr(train_model, "model"):
+        generator.model = train_model
+
     # No cleanup registration - Lightning handles shutdown
     # Cleanup will happen via try/finally blocks
 
@@ -528,11 +547,11 @@ def main():
     # Install a simple signal handler for post-training cleanup
     cleanup_interrupted = False
     interrupt_count = 0
-    
+
     def cleanup_signal_handler(signum, frame):
         nonlocal cleanup_interrupted, interrupt_count
         interrupt_count += 1
-        
+
         if interrupt_count == 1:
             cleanup_interrupted = True
             print("\n⚠️  Forcing exit...")
@@ -541,20 +560,20 @@ def main():
         else:
             # Should never get here but just in case
             os._exit(130)
-    
+
     try:
         trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
 
         # Training completed successfully
         print("[Training] Completed successfully")
-        
+
         # Install aggressive signal handler for cleanup phase
         signal.signal(signal.SIGINT, cleanup_signal_handler)
         signal.signal(signal.SIGTERM, cleanup_signal_handler)
-        
+
         # Set a flag to skip most cleanup since training is done
         cleanup_interrupted = False  # Reset flag
-        
+
         return 0
 
     except Exception as e:
@@ -581,35 +600,37 @@ def main():
         return 130  # Standard exit code for SIGINT
     finally:
         import time
-        
+
         # Check if cleanup was interrupted or if training completed
-        if 'cleanup_interrupted' in locals() and cleanup_interrupted:
+        if "cleanup_interrupted" in locals() and cleanup_interrupted:
             # Skip cleanup if interrupted
             os._exit(130)
-        
+
         # Super fast cleanup - we're done training
         cleanup_start = time.time()
         max_cleanup_time = 0.5  # Half second max for cleanup after successful training
         cleanup_count = 0
-        
+
         # DataLoaders need proper shutdown to avoid hanging
         if "dataintegration" in locals() and hasattr(
             dataintegration, "shutdown_dataloaders"
         ):
             try:
-                remaining_time = max(0.5, max_cleanup_time - (time.time() - cleanup_start))
+                remaining_time = max(
+                    0.5, max_cleanup_time - (time.time() - cleanup_start)
+                )
                 dataintegration.shutdown_dataloaders(timeout=min(1.0, remaining_time))
                 cleanup_count += 1
-            except:
-                pass
+            except Exception as e:
+                print(e)
 
         # Just signal daemon threads to stop - don't wait for them
         if "api_server" in locals() and api_server:
             try:
                 api_server.stop()  # Quick signal, no waiting
                 cleanup_count += 1
-            except:
-                pass
+            except Exception as e:
+                print(e)
 
         # Run integration cleanup (but with timeout)
         if "integration_loader" in locals() and integration_loader:
@@ -617,12 +638,13 @@ def main():
                 try:
                     integration_loader.run_cleanup_hooks()
                     cleanup_count += 1
-                except:
-                    pass
-        
+                except Exception as e:
+                    print(e)
+
         # Clean termination of multiprocessing resources
         try:
             import multiprocessing
+
             # Get active children and terminate them cleanly
             active_children = multiprocessing.active_children()
             if active_children:
@@ -630,39 +652,43 @@ def main():
                 for child in active_children:
                     try:
                         child.terminate()
-                        child.join(timeout=0.01)  # Very brief wait for clean termination
-                    except:
-                        pass
-            
+                        child.join(
+                            timeout=0.01
+                        )  # Very brief wait for clean termination
+                    except Exception as e:
+                        print(e)
+
             # Force close any remaining multiprocessing resources
             # This helps prevent the semaphore leak warnings
             multiprocessing.resource_tracker._resource_tracker = None
             multiprocessing.resource_tracker._fd = None
-        except:
-            pass
+        except Exception as e:
+            print(e)
 
         # Quick exit - don't wait around
         remaining = max_cleanup_time - (time.time() - cleanup_start)
         if remaining > 0:
             time.sleep(min(0.01, remaining))  # Tiny pause
-        
+
         # Print clean shutdown message if we cleaned anything
         if cleanup_count > 0:
             print(f"[Shutdown] Cleaned up {cleanup_count} resources")
-        
+
         # Force exit to avoid C++ runtime errors from hanging threads
         # This is aggressive but prevents "terminate called without an active exception"
         import sys
+
         sys.stdout.flush()
         sys.stderr.flush()
-        
+
         # Forcefully clear the resource tracker to prevent warnings
         try:
             import multiprocessing.resource_tracker
+
             multiprocessing.resource_tracker._resource_tracker = None
-        except:
-            pass
-            
+        except Exception as e:
+            print(e)
+
         os._exit(0)  # Hard exit with success code
 
 

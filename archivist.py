@@ -16,25 +16,25 @@ from pathlib import Path
 def get_model_hash() -> str:
     """Get the model hash from the most recent history.log entry."""
     history_file = Path("history.log")
-    
+
     if not history_file.exists():
         print("Error: history.log file does not exist.")
         print("Please run the model at least once to generate this file.")
         sys.exit(1)
-    
+
     with open(history_file, "r") as f:
         first_line = f.readline().strip()
-    
+
     if not first_line:
         print("Error: history.log is empty.")
         sys.exit(1)
-    
+
     # Parse the hash from the history.log format: "timestamp | hash | command"
     parts = first_line.split(" | ")
     if len(parts) < 3:
         print("Error: history.log has unexpected format.")
         sys.exit(1)
-    
+
     model_hash = parts[1].strip()
     return model_hash
 

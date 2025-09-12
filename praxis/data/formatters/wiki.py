@@ -6,14 +6,16 @@ from transformers import PreTrainedTokenizer
 from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
 
 
-def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer) -> Dict:
+def format_wiki(
+    document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer
+) -> Dict:
     """Format wiki text with unified system/developer prompts.
-    
+
     Args:
         document: Dictionary containing the document data
         keys: List of keys to extract from document (must be exactly 2 - title and body)
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dictionary with messages and metadata
     """
@@ -30,9 +32,5 @@ def format_wiki(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
 
     return {
         "messages": messages,
-        "metadata": {
-            "format": "wiki",
-            "source_keys": keys,
-            "title": title
-        }
+        "metadata": {"format": "wiki", "source_keys": keys, "title": title},
     }

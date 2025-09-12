@@ -13,6 +13,7 @@ from .standard import StandardTokenizer
 # Check if ByteLevelTokenizer is available
 try:
     from .byte_level import ByteLevelTokenizer
+
     HAS_BYTE_LEVEL = True
 except ImportError:
     HAS_BYTE_LEVEL = False
@@ -80,14 +81,14 @@ def create_tokenizer(
     encoder_type: Optional[str] = None,
     vocab_size: int = 32768,
     cache_dir: Optional[str] = None,
-    **kwargs
+    **kwargs,
 ) -> PreTrainedTokenizer:
     """
     Create a tokenizer instance with unified loading logic.
-    
+
     This function provides a single interface for all tokenizer creation,
     handling encoder type detection, local paths, and remote loading.
-    
+
     Args:
         tokenizer_name: Name from the tokenizer registry
         tokenizer_profile: Profile name with preset configuration
@@ -96,10 +97,10 @@ def create_tokenizer(
         vocab_size: Vocabulary size for tokenizer
         cache_dir: Cache directory for downloading tokenizers
         **kwargs: Additional arguments passed to tokenizer constructor
-    
+
     Returns:
         Tokenizer instance
-    
+
     Priority:
         1. Explicit tokenizer_path if provided
         2. Explicit tokenizer_profile or tokenizer_name if provided
@@ -114,13 +115,11 @@ def create_tokenizer(
         if path.exists():
             try:
                 return AutoTokenizer.from_pretrained(
-                    path,
-                    cache_dir=cache_dir,
-                    **kwargs
+                    path, cache_dir=cache_dir, **kwargs
                 )
             except Exception as e:
                 print(f"Warning: Could not load tokenizer from {path}: {e}")
-    
+
     # 2. Use explicit profile or name if provided
     if tokenizer_profile is not None:
         if tokenizer_profile not in TOKENIZER_PROFILES:
@@ -128,29 +127,29 @@ def create_tokenizer(
                 f"Unknown tokenizer profile: {tokenizer_profile}. "
                 f"Available profiles: {list(TOKENIZER_PROFILES.keys())}"
             )
-        
+
         profile = TOKENIZER_PROFILES[tokenizer_profile].copy()
         tokenizer_class_name = profile.pop("tokenizer_class")
-        
+
         # Merge profile settings with kwargs (kwargs take precedence)
         profile.update(kwargs)
-        
+
         if tokenizer_class_name not in TOKENIZER_REGISTRY:
             raise ValueError(f"Tokenizer class {tokenizer_class_name} not in registry")
-        
+
         tokenizer_class = TOKENIZER_REGISTRY[tokenizer_class_name]
         return tokenizer_class(**profile)
-    
+
     if tokenizer_name is not None:
         if tokenizer_name not in TOKENIZER_REGISTRY:
             raise ValueError(
                 f"Unknown tokenizer: {tokenizer_name}. "
                 f"Available tokenizers: {list(TOKENIZER_REGISTRY.keys())}"
             )
-        
+
         tokenizer_class = TOKENIZER_REGISTRY[tokenizer_name]
         return tokenizer_class(**kwargs)
-    
+
     # 3. Determine tokenizer based on encoder type
     if encoder_type == "byte_latent":
         if HAS_BYTE_LEVEL:
@@ -160,58 +159,56 @@ def create_tokenizer(
                 "ByteLevelTokenizer requires bytelatent package. "
                 "Please install it with: pip install bytelatent"
             )
-    
+
     # 4. Try to load from local paths (single unified path)
     local_path = Path(f"build/tokenizers/praxis-{vocab_size}-unigram")
     if local_path.exists():
         try:
             tokenizer = AutoTokenizer.from_pretrained(
-                local_path,
-                cache_dir=cache_dir,
-                **kwargs
+                local_path, cache_dir=cache_dir, **kwargs
             )
             # Override with our updated chat template
             from .chat_templates import get_chat_template
+
             tokenizer.chat_template = get_chat_template("default")
             return tokenizer
         except Exception:
             pass
-    
+
     # 5. Try to load from HuggingFace repo
     try:
         tokenizer = AutoTokenizer.from_pretrained(
-            f"UNSAFE/praxis-{vocab_size}",
-            cache_dir=cache_dir,
-            **kwargs
+            f"UNSAFE/praxis-{vocab_size}", cache_dir=cache_dir, **kwargs
         )
         # Override with our updated chat template
         from .chat_templates import get_chat_template
+
         tokenizer.chat_template = get_chat_template("default")
         return tokenizer
     except Exception:
         pass
-    
+
     # 6. Fall back to default profile
     print(f"No tokenizer found, creating default unigram tokenizer")
-    return create_tokenizer(tokenizer_profile="default", vocab_size=vocab_size, **kwargs)
+    return create_tokenizer(
+        tokenizer_profile="default", vocab_size=vocab_size, **kwargs
+    )
 
 
 def get_tokenizer(
-    byte_latent: bool = False,
-    cache_dir: Optional[str] = None,
-    **kwargs
+    byte_latent: bool = False, cache_dir: Optional[str] = None, **kwargs
 ) -> PreTrainedTokenizer:
     """
     Get a tokenizer with backward compatibility.
-    
+
     This function provides backward compatibility with the old
     byte_latent flag while using the new tokenizer system.
-    
+
     Args:
         byte_latent: Whether to use byte-level tokenizer
         cache_dir: Cache directory for downloading tokenizers
         **kwargs: Additional arguments
-    
+
     Returns:
         Tokenizer instance
     """
@@ -232,21 +229,21 @@ def train_tokenizer(
     vocab_size: int = 32768,
     num_examples: int = 5_000_000,
     save: bool = True,
-    **kwargs
+    **kwargs,
 ) -> StandardTokenizer:
     """
     Train a new tokenizer from a dataset.
-    
+
     This function provides the functionality of train_tokenizer.py
     as a callable function.
-    
+
     Args:
         tokenizer_type: Type of tokenizer ("bpe" or "unigram")
         vocab_size: Target vocabulary size
         num_examples: Number of examples to use for training
         save: Whether to save the tokenizer to disk
         **kwargs: Additional arguments passed to train_from_dataset
-    
+
     Returns:
         Trained tokenizer instance
     """
@@ -255,27 +252,27 @@ def train_tokenizer(
         tokenizer_type=tokenizer_type,
         vocab_size=vocab_size,
         num_examples=num_examples,
-        **kwargs
+        **kwargs,
     )
-    
+
     # Save to deterministic locations
     if save:
         base_path = Path("build/tokenizers")
-        
+
         # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
         save_path = base_path / f"praxis-{vocab_size}-{tokenizer_type}"
-        
+
         # Also save to a generic "model" folder for backward compatibility
         generic_path = base_path / "model"
-        
+
         save_path.mkdir(parents=True, exist_ok=True)
         generic_path.mkdir(parents=True, exist_ok=True)
-        
+
         tokenizer.save_pretrained(save_path)
         tokenizer.save_pretrained(generic_path)
-        
+
         print(f"Tokenizer saved to {save_path} and {generic_path}")
-    
+
     return tokenizer
 
 

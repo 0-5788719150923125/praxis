@@ -5,7 +5,7 @@ import asciichartpy
 
 class ChartRenderer:
     """Renders charts for dashboard display."""
-    
+
     def draw_chart(self, data, width, height):
         """Draw a chart from data points."""
         if len(data) > 1:

@@ -30,6 +30,7 @@ class SMEAR(nn.Module):
     """
 
     __version__ = "0.3.0"
+    can_compile = False  # Incompatible with torch.compile due to functional_call usage
 
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
@@ -231,6 +232,10 @@ class SMEAR(nn.Module):
                     raise ValueError(
                         f"Parameter '{param_name}' not found in expert {expert_idx}."
                     )
+
+                # Ensure param is on the same device as expert_weights before multiplication
+                if param.device != expert_weights.device:
+                    param = param.to(expert_weights.device)
 
                 # Weight the parameter by the expert's routing probability
                 weighted_param = param * expert_weights[expert_idx]

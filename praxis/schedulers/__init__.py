@@ -17,16 +17,17 @@ def get_scheduler_func(
     """
     Returns a partial function for creating schedulers.
     Exactly matches the implementation from main.py.
-    
+
     Args:
         optimizer_config: Configuration dict with lr and other settings
-        disable_schedule: If True, use simple warmup without cosine annealing  
+        disable_schedule: If True, use simple warmup without cosine annealing
         warmup_steps: Number of warmup steps
-    
+
     Returns:
         A partial function that creates a scheduler when called with an optimizer
     """
     if disable_schedule:
+
         def lr_lambda_with_warmup(current_step, warmup_steps=1024):
             if current_step < warmup_steps:
                 return float(current_step) / float(max(1, warmup_steps))

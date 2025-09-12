@@ -20,7 +20,7 @@ class IntegrationSpec:
 
     def __init__(self, spec_dict: Dict[str, Any], path: Path):
         """Initialize integration spec from dictionary and path.
-        
+
         Args:
             spec_dict: Dictionary containing the spec data
             path: Path to the integration directory
@@ -39,9 +39,7 @@ class IntegrationSpec:
 
         # Validate version format (should be semantic versioning)
         version = self._data["version"]
-        if not isinstance(version, str) or not any(
-            c.isdigit() for c in version
-        ):
+        if not isinstance(version, str) or not any(c.isdigit() for c in version):
             raise ValueError(
                 f"Invalid version format '{version}' in {self.path}. "
                 "Expected semantic versioning (e.g., '1.0.0')"
@@ -91,10 +89,10 @@ class IntegrationSpec:
     @classmethod
     def from_file(cls, spec_path: Path) -> "IntegrationSpec":
         """Load integration spec from YAML file.
-        
+
         Args:
             spec_path: Path to the spec.yaml file
-            
+
         Returns:
             IntegrationSpec instance
         """
@@ -105,14 +103,14 @@ class IntegrationSpec:
 
 class BaseIntegration(ABC):
     """Abstract base class for all Praxis integrations.
-    
+
     All integrations should extend this class and implement the required methods.
     This ensures a consistent interface across all integrations.
     """
 
     def __init__(self, spec: IntegrationSpec):
         """Initialize the integration with its specification.
-        
+
         Args:
             spec: The integration specification
         """
@@ -131,29 +129,32 @@ class BaseIntegration(ABC):
 
     def add_cli_args(self, parser) -> None:
         """Add CLI arguments for this integration.
-        
+
         Args:
             parser: ArgumentParser to add arguments to
-            
+
         Note: Override this method if your integration adds CLI arguments.
         """
         pass
 
     def initialize(
-        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None, 
-        truncated_hash: Optional[str] = None
+        self,
+        args: Any,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Initialize the integration when conditions are met.
-        
+
         Args:
             args: Parsed command-line arguments
             cache_dir: Cache directory path
             ckpt_path: Optional checkpoint path
             truncated_hash: Optional truncated hash
-            
+
         Returns:
             Dictionary of initialization results (can be empty)
-            
+
         Note: Override this method if your integration needs initialization.
         """
         self._initialized = True
@@ -161,7 +162,7 @@ class BaseIntegration(ABC):
 
     def cleanup(self) -> None:
         """Clean up integration resources.
-        
+
         Note: Override this method if your integration needs cleanup.
         """
         pass
@@ -170,68 +171,71 @@ class BaseIntegration(ABC):
         self, tokenizer: Any, seed: int, config: Optional[Any] = None, *args
     ) -> Optional[Any]:
         """Provide a dataset for training.
-        
+
         Args:
             tokenizer: The tokenizer to use
             seed: Random seed
             config: Optional configuration
             *args: Additional arguments
-            
+
         Returns:
             Dataset instance or None if not applicable
-            
+
         Note: Override this method if your integration provides datasets.
         """
         return None
 
     def provide_logger(
-        self, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None, **kwargs
+        self,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
+        **kwargs,
     ) -> Optional[Any]:
         """Provide a logger for training.
-        
+
         Args:
             cache_dir: Cache directory path
             ckpt_path: Optional checkpoint path
             truncated_hash: Optional truncated hash
             **kwargs: Additional keyword arguments
-            
+
         Returns:
             Logger instance or None if not applicable
-            
+
         Note: Override this method if your integration provides loggers.
         """
         return None
 
     def on_api_server_start(self, app: Any, args: Any) -> None:
         """Hook called when API server starts.
-        
+
         Args:
             app: Flask application instance
             args: Command-line arguments
-            
+
         Note: Override this method if your integration needs API server hooks.
         """
         pass
 
     def request_middleware(self, request: Any, response: Any = None) -> None:
         """Middleware for modifying requests/responses.
-        
+
         Args:
             request: The request object
             response: The response object (None for before_request phase)
-            
+
         Note: Override this method if your integration provides middleware.
         """
         pass
 
     def on_decoder_init(self, decoder: Any, config: Any) -> None:
         """Hook called when a decoder is initialized.
-        
+
         Args:
             decoder: The decoder instance being initialized
             config: The model configuration
-            
+
         Note: Override this method if your integration needs to modify decoders.
         """
         pass
@@ -252,14 +256,14 @@ class IntegrationFactory:
     @staticmethod
     def create_from_module(module: Any, spec: IntegrationSpec) -> BaseIntegration:
         """Create an integration instance from a module.
-        
+
         Args:
             module: The loaded Python module
             spec: The integration specification
-            
+
         Returns:
             Integration instance
-            
+
         Raises:
             ValueError: If module doesn't have an Integration class or has invalid methods
         """
@@ -270,42 +274,44 @@ class IntegrationFactory:
                 raise ValueError(
                     f"Integration class in {spec.name} must extend BaseIntegration"
                 )
-            
+
             # Validate that the Integration class only implements allowed methods
-            IntegrationFactory._validate_integration_methods(integration_class, spec.name)
-            
+            IntegrationFactory._validate_integration_methods(
+                integration_class, spec.name
+            )
+
             return integration_class(spec)
-        
+
         # For legacy modules, validate all functions/methods at module level
         IntegrationFactory._validate_module_methods(module, spec.name)
-        
+
         # Fallback: create a dynamic integration wrapper for legacy modules
         return LegacyIntegrationWrapper(module, spec)
-    
+
     @staticmethod
     def _validate_integration_methods(integration_class: type, name: str) -> None:
         """Validate that an Integration class only implements allowed methods.
-        
+
         Args:
             integration_class: The Integration class to validate
             name: Name of the integration for error messages
-            
+
         Raises:
             ValueError: If the class has methods not defined in BaseIntegration
         """
         # Get all methods defined in BaseIntegration (our allowed list)
         base_methods = set(dir(BaseIntegration))
-        
+
         # Get all methods defined in the integration class
         # Filter to only include methods defined directly in the class, not inherited
         integration_methods = set()
         for attr_name in dir(integration_class):
             attr = getattr(integration_class, attr_name)
-            if callable(attr) and not attr_name.startswith('_'):
+            if callable(attr) and not attr_name.startswith("_"):
                 # Check if this method is defined in the integration class itself
                 if attr_name in integration_class.__dict__:
                     integration_methods.add(attr_name)
-        
+
         # Check for any methods not in the base class
         invalid_methods = integration_methods - base_methods
         if invalid_methods:
@@ -313,32 +319,38 @@ class IntegrationFactory:
                 f"Integration '{name}' defines methods not in BaseIntegration: {invalid_methods}. "
                 f"To add new methods, update BaseIntegration in praxis/integrations/base.py first."
             )
-    
+
     @staticmethod
     def _validate_module_methods(module: Any, name: str) -> None:
         """Validate that a legacy module only implements allowed functions.
-        
+
         Args:
             module: The module to validate
             name: Name of the integration for error messages
-            
+
         Raises:
             ValueError: If the module has functions not defined in BaseIntegration
         """
         # Get all public methods from BaseIntegration (our allowed list)
         base_methods = {
-            'add_cli_args', 'initialize', 'cleanup', 'provide_dataset',
-            'provide_logger', 'on_api_server_start', 'request_middleware', 'on_decoder_init'
+            "add_cli_args",
+            "initialize",
+            "cleanup",
+            "provide_dataset",
+            "provide_logger",
+            "on_api_server_start",
+            "request_middleware",
+            "on_decoder_init",
         }
-        
+
         # Get all callable attributes from the module
         module_functions = set()
         for attr_name in dir(module):
-            if not attr_name.startswith('_'):  # Skip private functions
+            if not attr_name.startswith("_"):  # Skip private functions
                 attr = getattr(module, attr_name)
                 if callable(attr) and not isinstance(attr, type):  # Skip classes
                     module_functions.add(attr_name)
-        
+
         # Check for any functions not in the allowed list
         invalid_functions = module_functions - base_methods
         if invalid_functions:
@@ -353,7 +365,7 @@ class LegacyIntegrationWrapper(BaseIntegration):
 
     def __init__(self, module: Any, spec: IntegrationSpec):
         """Initialize wrapper with legacy module.
-        
+
         Args:
             module: The legacy integration module
             spec: The integration specification
@@ -367,8 +379,11 @@ class LegacyIntegrationWrapper(BaseIntegration):
             self.module.add_cli_args(parser)
 
     def initialize(
-        self, args: Any, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None
+        self,
+        args: Any,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Delegate to legacy module's initialize if it exists."""
         if hasattr(self.module, "initialize"):
@@ -392,12 +407,17 @@ class LegacyIntegrationWrapper(BaseIntegration):
         return None
 
     def provide_logger(
-        self, cache_dir: str, ckpt_path: Optional[str] = None,
-        truncated_hash: Optional[str] = None, **kwargs
+        self,
+        cache_dir: str,
+        ckpt_path: Optional[str] = None,
+        truncated_hash: Optional[str] = None,
+        **kwargs,
     ) -> Optional[Any]:
         """Delegate to legacy module's provide_logger if it exists."""
         if hasattr(self.module, "provide_logger"):
-            return self.module.provide_logger(cache_dir, ckpt_path, truncated_hash, **kwargs)
+            return self.module.provide_logger(
+                cache_dir, ckpt_path, truncated_hash, **kwargs
+            )
         return None
 
     def on_api_server_start(self, app: Any, args: Any) -> None:

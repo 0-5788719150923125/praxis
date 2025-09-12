@@ -42,7 +42,7 @@ if (pathPrefix === '/') {
     pathPrefix = '';
 }
 const API_BASE_URL = window.location.origin + pathPrefix;
-let apiUrl = API_BASE_URL + '/input/';
+let apiUrl = API_BASE_URL + '/messages/';
 
 // ==================== Live Reload Setup ====================
 function setupLiveReload() {
@@ -189,7 +189,10 @@ async function testApiConnection(url) {
     try {
         let baseUrl = url;
         
-        if (baseUrl.endsWith('/input/')) {
+        if (baseUrl.endsWith('/messages/')) {
+            baseUrl = baseUrl.substring(0, baseUrl.length - 10);
+        } else if (baseUrl.endsWith('/input/')) {
+            // Handle old saved URLs
             baseUrl = baseUrl.substring(0, baseUrl.length - 7);
         }
         

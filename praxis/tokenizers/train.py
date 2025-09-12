@@ -134,7 +134,11 @@ def test_chat_template(tokenizer: PreTrainedTokenizerFast):
         },
         {
             "role": "assistant",
-            "content": f'Let me calculate that for you.\n<tool_call>\n{{"name": "calc", "arguments": {{"values": [25, 17], "op": "add"}}}}\n</tool_call>\n<tool_result>{result}</tool_result>',
+            "content": 'Let me calculate that for you.\n<tool_call>\n{"name": "calc", "arguments": {"values": [25, 17], "op": "add"}}\n</tool_call>',
+        },
+        {
+            "role": "tool",
+            "content": f"{result}",
         },
         {
             "role": "assistant",
@@ -150,20 +154,20 @@ def test_chat_template(tokenizer: PreTrainedTokenizerFast):
     )
 
     print(chat_text)
-    
+
     # Verify system and developer message deduplication
     bos_token = tokenizer.bos_token or "[BOS]"
     system_count = chat_text.count(f"{bos_token}system")
     developer_count = chat_text.count(f"{bos_token}developer")
-    
+
     print(f"\n✓ Template deduplication test:")
     print(f"  System messages in output: {system_count} (expected: 1)")
     print(f"  Developer messages in output: {developer_count} (expected: 2)")
-    
+
     if system_count != 1:
         print(f"  ⚠️  WARNING: Expected 1 system message, got {system_count}")
         print("  The chat template should deduplicate system messages!")
-    
+
     if developer_count != 2:
         print(f"  ⚠️  WARNING: Expected 2 developer messages, got {developer_count}")
 

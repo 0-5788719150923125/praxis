@@ -65,7 +65,7 @@ def format_cot(
         document: Dictionary containing the document data
         keys: List of keys to extract from document (at least 2: prompt, response)
         tokenizer: Tokenizer with chat template support
-        
+
     Returns:
         Dict with text and metadata for token-level reward computation
     """
