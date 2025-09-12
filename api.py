@@ -31,9 +31,9 @@ try:
 except ImportError as e:
     terminal_available = False
 
-# Configure logging for the API module - VERBOSE for debugging
+# Configure logging for the API module
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format="[%(asctime)s] [%(levelname)s] %(name)s: %(message)s",
     force=True,  # Force reconfiguration even if logging was already configured
     handlers=[logging.StreamHandler()],  # Ensure we have a console handler
@@ -41,17 +41,17 @@ logging.basicConfig(
 
 # Create a dedicated logger for the API module
 api_logger = logging.getLogger("praxis.api")
-api_logger.setLevel(logging.DEBUG)
+api_logger.setLevel(logging.WARNING)
 
-# Enable ALL logging for debugging - we want to see everything
+# Set werkzeug logger
 werkzeug_logger = logging.getLogger("werkzeug")
-werkzeug_logger.setLevel(logging.DEBUG)
+werkzeug_logger.setLevel(logging.WARNING)
 
-# Enable SocketIO/EngineIO logging to see what's happening
-logging.getLogger("socketio").setLevel(logging.DEBUG)
-logging.getLogger("engineio").setLevel(logging.DEBUG)
-logging.getLogger("socketio.server").setLevel(logging.DEBUG)
-logging.getLogger("engineio.server").setLevel(logging.DEBUG)
+# Set SocketIO/EngineIO logging
+logging.getLogger("socketio").setLevel(logging.WARNING)
+logging.getLogger("engineio").setLevel(logging.WARNING)
+logging.getLogger("socketio.server").setLevel(logging.WARNING)
+logging.getLogger("engineio.server").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 app.static_folder = "static"
@@ -746,16 +746,54 @@ class APIServer:
         truncated_hash=None,
         full_hash=None,
         dev_mode=False,
+        dashboard=None,
     ):
         # Initialize APIServer with parameter statistics
         self.generator = generator
+        self.dashboard = dashboard
 
-        # Set logging level based on dev_mode
-        if dev_mode:
-            api_logger.setLevel(logging.DEBUG)
-            api_logger.debug(
-                "API server running in development mode with debug logging"
-            )
+        # Configure logging based on dashboard and dev_mode
+        if dashboard:
+            # When dashboard is active, route logs through dashboard handler
+            from praxis.interface.io.handlers import DashboardStreamHandler
+            
+            # Remove existing handlers and add dashboard handler
+            for logger in [api_logger, werkzeug_logger, 
+                          logging.getLogger("socketio"), 
+                          logging.getLogger("engineio")]:
+                logger.handlers = []
+                dashboard_handler = DashboardStreamHandler(dashboard)
+                dashboard_handler.setFormatter(
+                    logging.Formatter("[%(name)s] %(message)s")
+                )
+                logger.addHandler(dashboard_handler)
+                logger.propagate = False
+            
+            # Set appropriate log levels
+            if dev_mode:
+                api_logger.setLevel(logging.INFO)
+                werkzeug_logger.setLevel(logging.INFO)
+                logging.getLogger("socketio").setLevel(logging.INFO)
+                logging.getLogger("engineio").setLevel(logging.INFO)
+                api_logger.info("API server running in development mode with dashboard")
+            else:
+                api_logger.setLevel(logging.WARNING)
+                werkzeug_logger.setLevel(logging.WARNING)
+                logging.getLogger("socketio").setLevel(logging.WARNING)
+                logging.getLogger("engineio").setLevel(logging.WARNING)
+        else:
+            # Normal console logging when no dashboard
+            if dev_mode:
+                api_logger.setLevel(logging.INFO)
+                werkzeug_logger.setLevel(logging.INFO)
+                logging.getLogger("socketio").setLevel(logging.INFO)
+                logging.getLogger("engineio").setLevel(logging.INFO)
+                api_logger.info("API server running in development mode")
+            else:
+                api_logger.setLevel(logging.WARNING)
+                werkzeug_logger.setLevel(logging.WARNING)
+                logging.getLogger("socketio").setLevel(logging.WARNING)
+                logging.getLogger("engineio").setLevel(logging.WARNING)
         self.server_thread = None
         self.server = None
         self.started = Event()
@@ -1091,7 +1129,6 @@ def generate_messages():
                 tokenize=False,
                 add_generation_prompt=True
             )
-            api_logger.info(f"Formatted prompt from {len(messages)} messages")
         except Exception as e:
             api_logger.error(f"Error formatting messages: {e}")
             # Fallback to simple concatenation if chat template fails
@@ -1153,7 +1190,6 @@ def generate():
         request.environ.get("werkzeug.server.shutdown_timeout", 30 * 60)
 
         kwargs = request.get_json()
-        api_logger.info("Received a valid request via REST.")
 
         prompt = kwargs.get("prompt")
 
@@ -1206,7 +1242,6 @@ def generate():
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 400
 
-    api_logger.info("Successfully responded to REST request.")
     final_response = jsonify(response)
     final_response.headers.add("Access-Control-Allow-Origin", "*")
     return final_response, 200

@@ -24,17 +24,11 @@ class Generator:
         self.request_queue = Queue()
         self.results = {}
 
-        # Try to import tools, but don't fail if they're not available
-        try:
-            from praxis.tools import call_tool, get_tools_json_schema
+        from praxis.tools import call_tool, get_tools_json_schema
 
-            self.tools = get_tools_json_schema()
-            self.call_tool = call_tool
-            print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
-        except ImportError:
-            self.tools = []
-            self.call_tool = None
-            print("Tools module not available, function calling disabled")
+        self.tools = get_tools_json_schema()
+        self.call_tool = call_tool
+        print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
 
     @contextlib.contextmanager
     def _eval_mode(self):
@@ -44,9 +38,6 @@ class Generator:
             # Lightning module - get the actual model
             actual_model = self.model.model
             training = actual_model.training
-            print(
-                f"[DEBUG] Lightning module entering eval mode (was training={training})"
-            )
             actual_model.eval()
             try:
                 yield
@@ -58,11 +49,9 @@ class Generator:
                 raise
             finally:
                 actual_model.train(training)
-                print(f"[DEBUG] Lightning module restored to training={training}")
         else:
             # Regular model
             training = self.model.training
-            print(f"[DEBUG] Model entering eval mode (was training={training})")
             self.model.eval()
             try:
                 yield
@@ -74,7 +63,6 @@ class Generator:
                 raise
             finally:
                 self.model.train(training)
-                print(f"[DEBUG] Model restored to training={training}")
 
     def request_generation(self, prompt, kwargs={}) -> str:
         """
@@ -158,9 +146,9 @@ class Generator:
                 input_ids = torch.tensor(
                     [input_ids], dtype=torch.long, device=model_device
                 )
-                print(
-                    f"[DEBUG] Created tensor on Lightning model's device: {model_device}"
-                )
+                # print(
+                #     f"[DEBUG] Created tensor on Lightning model's device: {model_device}"
+                # )
             elif self.device and self.device.startswith("cuda"):
                 # Regular model with CUDA device
                 input_ids = torch.tensor(
@@ -175,29 +163,22 @@ class Generator:
         if hasattr(self.model, "model"):
             # This is a Lightning module - DO NOT move it
             # Lightning handles device placement during training
-            print(f"[DEBUG] Lightning module detected - not moving model")
+
             actual_model = self.model.model
             # Get the device from the Lightning-managed model
             model_device = next(actual_model.parameters()).device
-            print(f"[DEBUG] Lightning model is on device: {model_device}")
+
             # Move input_ids to match the model's device
             if model_device.type == "cuda":
                 input_ids = input_ids.to(model_device)
-                print(
-                    f"[DEBUG] Moved input_ids to Lightning model's device: {input_ids.device}"
-                )
         else:
             # Regular model (non-Lightning) - safe to move if needed
             actual_model = self.model
             if self.device and self.device.startswith("cuda"):
                 if not next(actual_model.parameters()).is_cuda:
-                    print(f"[DEBUG] Moving non-Lightning model to {self.device}")
                     self.model = self.model.to(self.device)
                 # Move input_ids to the configured device
                 input_ids = input_ids.to(self.device)
-                print(
-                    f"[DEBUG] Moved input_ids to configured device: {input_ids.device}"
-                )
 
         defaults = dict(
             do_sample=True,
@@ -221,11 +202,11 @@ class Generator:
             if input_ids.size(1) > truncate_to:
                 input_ids = input_ids[:, -truncate_to:]
             del combined["truncate_to"]
-        print(combined)
+
         # Remove use_cache if set to False - it causes device placement issues
         # during inference with certain model architectures
-        if "use_cache" in combined and combined["use_cache"] == False:
-            del combined["use_cache"]
+        # if "use_cache" in combined and combined["use_cache"] == False:
+        #     del combined["use_cache"]
 
         generated_tokens = input_ids
 
@@ -318,7 +299,7 @@ class Generator:
                     return_text = self.tokenizer.decode(
                         generated_tokens[0], skip_special_tokens=skip_special_tokens
                     )
-        print(skip_special_tokens)
+
         # Check if the generated text contains an unprocessed tool call
         unprocessed_call = self._get_unprocessed_tool_call(return_text)
 

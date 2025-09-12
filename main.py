@@ -310,6 +310,18 @@ def main():
         param_stats = {}
 
     if local_rank == 0:
+        # Create dashboard first if needed (for API server logging)
+        dashboard = None
+        if use_dashboard:
+            try:
+                from praxis.interface import TerminalDashboard
+
+                dashboard = TerminalDashboard(seed, truncated_hash)
+                # Don't start it yet - TerminalInterface will handle that
+            except Exception as e:
+                print(f"Warning: Could not create dashboard for API logging: {e}")
+                dashboard = None
+
         # Force reload of api integration to pick up any recent changes
         import api
 
@@ -327,6 +339,7 @@ def main():
             truncated_hash=truncated_hash,
             full_hash=args_hash,
             dev_mode=(EnvironmentFeatures.get_active_environment() == "dev"),
+            dashboard=dashboard,
         )
         api_server.start()
 
@@ -452,6 +465,7 @@ def main():
             seed=seed,
             truncated_hash=truncated_hash,
             total_params=total_params,  # Pass the actual number, not the string
+            dashboard=dashboard if local_rank == 0 else None,  # Pass existing dashboard
             # Additional parameters for info panel
             optimizer_config=optimizer_config,
             strategy=strategy,
@@ -530,9 +544,6 @@ def main():
         generator.model = train_model
     elif trainer_type == "mono_forward" and hasattr(train_model, "model"):
         generator.model = train_model
-
-    # No cleanup registration - Lightning handles shutdown
-    # Cleanup will happen via try/finally blocks
 
     # Show launch animation just before training begins
     show_launch_animation(model, truncated_hash)

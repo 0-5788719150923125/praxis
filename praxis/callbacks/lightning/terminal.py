@@ -29,6 +29,7 @@ class TerminalInterface(Callback):
         get_memory_info=None,
         api_server=None,
         model_info=None,
+        dashboard=None,  # Accept existing dashboard
         # Legacy parameters for backward compatibility
         optimizer_config=None,
         strategy=None,
@@ -58,7 +59,7 @@ class TerminalInterface(Callback):
         self.interval = 3
         self.url = url
         self.use_dashboard = use_dashboard
-        self.dashboard = None  # Will be initialized in on_fit_start if needed
+        self.dashboard = dashboard  # Use existing dashboard if provided
         self.progress_bar = progress_bar
         self.device = device
         self.quiet = quiet
@@ -118,21 +119,29 @@ class TerminalInterface(Callback):
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = self.terminal_output_length
         if self.use_dashboard:
-            try:
-                # Import here to avoid circular dependency
-                from praxis.interface import TerminalDashboard
+            if self.dashboard is None:
+                # Create new dashboard if not provided
+                try:
+                    # Import here to avoid circular dependency
+                    from praxis.interface import TerminalDashboard
 
-                self.dashboard = TerminalDashboard(self.seed, self.truncated_hash)
+                    self.dashboard = TerminalDashboard(self.seed, self.truncated_hash)
+                    self.dashboard.start()
+                except KeyboardInterrupt:
+                    if self.dashboard:
+                        self.dashboard.stop()
+                    if self.api_server:
+                        self.api_server.stop()
+            elif not self.dashboard.running:
+                # Start existing dashboard if not already running
                 self.dashboard.start()
-                self.dashboard.update_seed(self.seed)
-                self.dashboard.update_url(self.url)
-            except KeyboardInterrupt:
-                self.dashboard.stop()
-                if self.api_server:
-                    self.api_server.stop()
-            self.print = print
+            
+            # Update dashboard info
+            self.dashboard.update_seed(self.seed)
+            self.dashboard.update_url(self.url)
             self.dashboard.update_params(self.total_params)
             self.dashboard.set_start_time(self.start_time)
+            self.print = print
         elif self.progress_bar is not None:
             self.print = self.progress_bar.print
         else:
