@@ -4,11 +4,12 @@ import os
 import random
 from itertools import cycle
 from typing import Dict, List, Optional, Set
+
 from transformers import PreTrainedTokenizer
 
+from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 from praxis.data.datasets.base import PraxisSampler
 from praxis.data.formatters.files import format_file_as_messages
-from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
 
 
 class MultiDirectoryDataset(PraxisSampler):
@@ -42,7 +43,6 @@ class MultiDirectoryDataset(PraxisSampler):
         default_exclusions = {
             ".git",
             ".venv",
-            "venv",
             "__pycache__",
             "staging",
             "build",
@@ -310,4 +310,5 @@ class MultiDirectoryDataset(PraxisSampler):
         print(
             "Warning: Max attempts reached in MultiDirectoryDataset.fill_sequence_cache"
         )
+        self.sequence_cache.append(self.tokenizer.bos_token + "Error loading files.")
         self.sequence_cache.append(self.tokenizer.bos_token + "Error loading files.")

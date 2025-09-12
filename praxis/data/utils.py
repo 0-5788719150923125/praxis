@@ -1,20 +1,20 @@
 """Utility functions for data loading and dataset management."""
 
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from praxis.data.config import (
     DATASET_COLLECTIONS,
+    DIR_WEIGHT,
     HUGGINGFACE_DATASETS,
     SRC_WEIGHT,
-    DIR_WEIGHT,
     TOOLS_WEIGHT,
 )
+from praxis.data.datamodule import PraxisDataModule
 from praxis.data.datasets import (
     HuggingfaceDataset,
     MultiDirectoryDataset,
     SyntheticToolCallingDataset,
 )
-from praxis.data.datamodule import PraxisDataModule
 
 
 def get_datamodules(
@@ -197,6 +197,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
                 ".yaml",
                 ".yml",
                 "LICENSE",
+                "launch",
             ],
         )
         dataset.weight = SRC_WEIGHT

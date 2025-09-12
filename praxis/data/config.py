@@ -15,6 +15,7 @@ DATASET_COLLECTIONS = dict(
     },
     phi={
         "fineweb": 0.75,
+        "finepdfs": 0.1,
         "textbooks": 0.002,
         "tinystories": 0.01,
         "wikipedia": 0.02,
@@ -198,6 +199,13 @@ HUGGINGFACE_DATASETS = {
     "fineweb": dict(
         path="HuggingFaceFW/fineweb",
         name="default",
+        keys=["text"],
+        format=DataFormat.SIMPLE,
+    ),
+    "finepdfs": dict(
+        path="HuggingFaceFW/finepdfs",
+        name="eng_Latn",
+        split="train",
         keys=["text"],
         format=DataFormat.SIMPLE,
     ),
