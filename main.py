@@ -564,38 +564,32 @@ def main():
     def update_license_timestamp():
         """Update the LICENSE file with current year progress (0-1)."""
         from datetime import datetime
-        
+
         now = datetime.now()
         year_start = datetime(now.year, 1, 1)
         year_end = datetime(now.year + 1, 1, 1)
-        
+
         elapsed = (now - year_start).total_seconds()
         total = (year_end - year_start).total_seconds()
         year_progress = elapsed / total
-        
+
         # Read and update LICENSE file
-        try:
-            with open('LICENSE', 'r') as f:
-                lines = f.readlines()
-            
-            # Update line 3 with the new timestamp
-            if len(lines) >= 3 and 'Copyright (c)' in lines[2]:
-                # Extract the year and replace the float
-                parts = lines[2].split()
-                if len(parts) >= 4:
-                    # Format: "Copyright (c) YEAR FLOAT\n"
-                    lines[2] = f"Copyright (c) {parts[2]} {year_progress}\n"
-                    
-                    with open('LICENSE', 'w') as f:
-                        f.writelines(lines)
-                    
-                    print(f"[LICENSE] Updated year progress: {year_progress:.16f}")
-        except Exception as e:
-            # Don't fail training if LICENSE update fails
-            print(f"[LICENSE] Warning: Could not update timestamp: {e}")
-    
+        with open("LICENSE", "r") as f:
+            lines = f.readlines()
+
+        # Update line 3 with the new timestamp
+        if len(lines) >= 3 and "Copyright (c)" in lines[2]:
+            # Extract the year and replace the float
+            parts = lines[2].split()
+            if len(parts) >= 4:
+                # Format: "Copyright (c) YEAR FLOAT\n"
+                lines[2] = f"Copyright (c) {parts[2]} {year_progress}\n"
+
+                with open("LICENSE", "w") as f:
+                    f.writelines(lines)
+
     update_license_timestamp()
-    
+
     try:
         trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
 
