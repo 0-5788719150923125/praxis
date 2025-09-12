@@ -479,16 +479,11 @@ def main():
         )
     )
 
-    if hparams.get("decoder_type") == "mono_forward" and not no_compile:
-        print(
-            "[Compile] Skipping torch.compile (MonoForward not compatible with layer-wise updates)"
-        )
-    elif not no_compile:
-        from praxis.trainers.compile import try_compile_model, try_compile_optimizer
+    from praxis.trainers.compile import try_compile_model, try_compile_optimizer
 
-        # Try to compile the model and optimizer
-        model = try_compile_model(model, hparams)
-        optimizer = try_compile_optimizer(optimizer, hparams)
+    # Try to compile the model and optimizer
+    model = try_compile_model(model, hparams)
+    optimizer = try_compile_optimizer(optimizer, hparams)
 
     # Try to get logger from integrations (e.g., wandb)
     integration_logger = None
