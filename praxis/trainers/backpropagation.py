@@ -31,9 +31,6 @@ class BackpropagationTrainer(LightningModule):
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
         )
 
-        # Store original model reference for get_metrics access
-        self._original_model = model
-
         # Try to compile the model automatically with fallback
         self.model = try_compile_model(model, hparams)
 
@@ -43,6 +40,16 @@ class BackpropagationTrainer(LightningModule):
     def forward(self, **kwargs):
         """Forward pass that accepts keyword arguments directly."""
         return self.model(**kwargs)
+
+    def get_metrics(self):
+        """Get metrics from the underlying model if available."""
+        # Check if the model has get_metrics (handles both compiled and uncompiled)
+        if hasattr(self.model, 'get_metrics'):
+            return self.model.get_metrics()
+        # For torch.compile wrapped models, check _orig_mod
+        elif hasattr(self.model, '_orig_mod') and hasattr(self.model._orig_mod, 'get_metrics'):
+            return self.model._orig_mod.get_metrics()
+        return {}
 
     def on_train_start(self):
         super().on_train_start()

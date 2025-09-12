@@ -187,36 +187,12 @@ class TerminalInterface(Callback):
         local_experts = 0
         remote_experts = 0
 
-        # Try multiple approaches to get metrics from the model
-        # 1. Check for _original_model (set in BackpropagationTrainer for compiled models)
-        if hasattr(lm, "0x") and hasattr(lm.model, "get_metrics"):
+        # Get metrics from the trainer (which handles compiled/uncompiled models)
+        if hasattr(lm, "get_metrics"):
             try:
-                swarm_info = lm._original_model.get_metrics()
+                swarm_info = lm.get_metrics()
             except Exception:
                 pass
-
-        # 2. Try direct model access (works for uncompiled and OptimizedModule)
-        if (
-            swarm_info is None
-            and hasattr(lm, "model")
-            and hasattr(lm.model, "get_metrics")
-        ):
-            try:
-                swarm_info = lm.model.get_metrics()
-            except Exception:
-                pass
-
-        # 3. Check for torch.compile internal reference
-        if (
-            swarm_info is None
-            and hasattr(lm, "model")
-            and hasattr(lm.model, "_orig_mod")
-        ):
-            if hasattr(lm.model._orig_mod, "get_metrics"):
-                try:
-                    swarm_info = lm.model._orig_mod.get_metrics()
-                except Exception:
-                    pass
 
         # Extract expert counts if we got metrics
         if swarm_info and "experts" in swarm_info:
