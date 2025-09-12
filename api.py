@@ -1040,7 +1040,7 @@ def favicon():
 @app.route("/messages/", methods=["POST", "OPTIONS"])
 @app.route("/messages", methods=["POST", "OPTIONS"])
 def generate_messages():
-    """Handle message-based generation - minimal version."""
+    """Handle message-based generation."""
     # Handle CORS preflight
     if request.method == "OPTIONS":
         response = jsonify({"status": "ok"})
@@ -1054,15 +1054,83 @@ def generate_messages():
         data = request.get_json()
         messages = data.get("messages", [])
         
-        # For now, just return a simple response acknowledging we got the messages
-        response = jsonify({
-            "response": "Received messages successfully",
-            "message_count": len(messages)
-        })
+        if not messages:
+            response = jsonify({"error": "Please provide 'messages' for generation."})
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            return response, 400
+        
+        # Get the generator from the APIServer instance to ensure we have the latest reference
+        if "api_server" in app.config:
+            generator = app.config["api_server"].generator
+        elif "generator" in app.config:
+            generator = app.config["generator"]
+        else:
+            api_logger.error("Generator not configured in app.config")
+            error_response = jsonify(
+                {
+                    "error": "Generator not initialized yet. Please wait for training to start."
+                }
+            )
+            error_response.headers.add("Access-Control-Allow-Origin", "*")
+            return error_response, 503
+        
+        # Get the tokenizer to format messages
+        if "tokenizer" in app.config:
+            tokenizer = app.config["tokenizer"]
+        else:
+            api_logger.error("Tokenizer not configured in app.config")
+            error_response = jsonify({"error": "Tokenizer not available"})
+            error_response.headers.add("Access-Control-Allow-Origin", "*")
+            return error_response, 503
+        
+        # Format messages using the tokenizer's chat template
+        try:
+            # Convert messages to the format expected by the tokenizer
+            formatted_prompt = tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            api_logger.info(f"Formatted prompt from {len(messages)} messages")
+        except Exception as e:
+            api_logger.error(f"Error formatting messages: {e}")
+            # Fallback to simple concatenation if chat template fails
+            formatted_prompt = "\n".join([
+                f"{msg.get('role', 'user')}: {msg.get('content', '')}"
+                for msg in messages
+            ])
+        
+        # Extract generation parameters from request
+        kwargs = {
+            "max_new_tokens": data.get("max_new_tokens", 256),
+            "temperature": data.get("temperature", 0.4),
+            "repetition_penalty": data.get("repetition_penalty", 1.15),
+            "do_sample": data.get("do_sample", True),
+            "use_cache": data.get("use_cache", False),
+            "skip_special_tokens": data.get("skip_special_tokens", False)
+        }
+        
+        # Request generation
+        request_id = generator.request_generation(formatted_prompt, kwargs)
+        
+        # Wait for result
+        while True:
+            result = generator.get_result(request_id)
+            if result is not None:
+                output = result
+                break
+            time.sleep(0.1)
+        
+        if not output:
+            raise Exception("Failed to generate an output from this API.")
+        
+        # Return the generated response
+        response = jsonify({"response": output})
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response, 200
         
     except Exception as e:
+        api_logger.error(f"Error in /messages endpoint: {e}")
         error_response = jsonify({"error": str(e)})
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
