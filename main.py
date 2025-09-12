@@ -394,8 +394,6 @@ def main():
     # create the scheduler
     scheduler = scheduler_func(optimizer)
 
-    # Print training configuration will be shown later
-
     # Create progress bar callback (returns None if using dashboard)
     progress_bar = create_printing_progress_bar(
         process_position=0, leave=True, use_dashboard=use_dashboard
@@ -538,12 +536,7 @@ def main():
     )
 
     # For Lightning modules, we need to update the generator to use the wrapped model
-    # Note: The actual device movement happens during trainer.fit(), so we pass the wrapper
-    if trainer_type == "backpropagation":
-        # Pass the Lightning module itself, which will handle device placement
-        generator.model = train_model
-    elif trainer_type == "mono_forward" and hasattr(train_model, "model"):
-        generator.model = train_model
+    generator.model = train_model
 
     # Show launch animation just before training begins
     show_launch_animation(model, truncated_hash)
