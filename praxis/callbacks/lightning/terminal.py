@@ -135,7 +135,7 @@ class TerminalInterface(Callback):
             elif not self.dashboard.running:
                 # Start existing dashboard if not already running
                 self.dashboard.start()
-            
+
             # Update dashboard info
             self.dashboard.update_seed(self.seed)
             self.dashboard.update_url(self.url)
