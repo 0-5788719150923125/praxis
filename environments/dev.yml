@@ -1,12 +1,5 @@
 # Development environment configuration
 # Applied when using --dev flag
-#
-# This environment provides faster iteration for development:
-# - Smaller model (3 layers)
-# - Minimal datasets
-# - Skip compilation for faster startup
-# - Force reset to always start fresh
-# - Enable anomaly detection for debugging
 
 overrides:
   depth: 3

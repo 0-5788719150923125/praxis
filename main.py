@@ -63,6 +63,7 @@ from praxis.callbacks import (
     create_printing_progress_bar,
 )
 from praxis.data import get_datamodules
+from praxis.environments import EnvironmentFeatures
 from praxis.generation import Generator
 from praxis.interface import TerminalDashboard
 from praxis.optimizers import get_optimizer, get_optimizer_profile, get_parameter_stats
@@ -143,12 +144,7 @@ def main():
     tokenizer_path = processed_args.get("tokenizer_path")
     encoder_type = processed_args.get("encoder_type")
     vocab_size = processed_args["vocab_size"]
-    # Import EnvironmentFeatures to check for feature flags
-    from praxis.environments import EnvironmentFeatures
-
     cache_dir = processed_args["cache_dir"]
-
-    # Apply cache isolation if feature is enabled
     if EnvironmentFeatures.is_enabled("cache_isolation"):
         active_env = EnvironmentFeatures.get_active_environment()
         if active_env:
