@@ -21,6 +21,10 @@ def format_file_as_messages(
         List of message dictionaries with tool calls and responses
     """
 
+    # Ensure file_path is a string
+    if isinstance(file_path, Path):
+        file_path = str(file_path)
+
     sample_path = file_path
     if random.random() > 0.5:
         # Get clean path
@@ -32,11 +36,20 @@ def format_file_as_messages(
         except (ValueError, RuntimeError):
             sample_path = file_path_obj.as_posix()
 
+    # Ensure sample_path is a string, not a Path object
+    if isinstance(sample_path, Path):
+        sample_path = str(sample_path)
+
     # Create tool-calling format
     messages = []
 
     # Assistant calls the read_file tool
-    tool_call = {"name": "read_file", "arguments": {"file_path": sample_path}}
+    tool_call = {
+        "function": {
+            "name": "read_file",
+            "arguments": {"file_path": sample_path}
+        }
+    }
 
     # Assistant message with tool call (no content needed, just the tool call)
     messages.append({"role": "assistant", "tool_calls": [tool_call]})

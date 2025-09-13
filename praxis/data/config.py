@@ -15,7 +15,7 @@ DATASET_COLLECTIONS = dict(
     },
     phi={
         "fineweb": 0.75,
-        # "finepdfs": 0.1,
+        "finepdfs": 0.01,
         "textbooks": 0.002,
         "tinystories": 0.01,
         "wikipedia": 0.02,

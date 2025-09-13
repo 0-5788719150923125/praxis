@@ -372,7 +372,7 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
                 continue
 
             # Get relative path from repo root
-            relative_path = file_path.relative_to(_quantum_path)
+            relative_path = str(file_path.relative_to(_quantum_path))
 
             # Determine file type and format appropriately
             file_ext = file_path.suffix.lower()
@@ -434,7 +434,12 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
             ]
 
             # Assistant calls the read_file tool
-            tool_call = {"name": "read_file", "arguments": {"file_path": relative_path}}
+            tool_call = {
+                "function": {
+                    "name": "read_file",
+                    "arguments": {"file_path": relative_path}
+                }
+            }
 
             # Assistant message with tool call (no content needed, just the tool call)
             messages.append({"role": "assistant", "tool_calls": [tool_call]})
