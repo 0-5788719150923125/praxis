@@ -66,46 +66,46 @@ class TerminalDashboard:
         self.error_exit = False
         self.error_message = None
 
-        # Set up logging
-        self.logger = logging.getLogger()
-        self.logger.setLevel(logging.WARNING)  # Capture WARNING and above
+        # Set up logging - intercept ALL loggers
         handler = DashboardStreamHandler(self)
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
         handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
 
-        # Specifically configure the datasets logger to use our handler
-        datasets_logger = logging.getLogger("datasets")
-        datasets_logger.setLevel(logging.WARNING)
-        # Remove any existing handlers to avoid duplicate output
-        datasets_logger.handlers = []
-        datasets_logger.addHandler(handler)
-        datasets_logger.propagate = False  # Don't propagate to root logger
+        # Configure root logger to capture everything
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)  # Capture INFO and above from all sources
 
-        # Also handle datasets.iterable_dataset specifically
-        datasets_iterable_logger = logging.getLogger("datasets.iterable_dataset")
-        datasets_iterable_logger.setLevel(logging.WARNING)
-        datasets_iterable_logger.handlers = []
-        datasets_iterable_logger.addHandler(handler)
-        datasets_iterable_logger.propagate = False
+        # Remove all existing handlers from root logger to avoid duplicates
+        root_logger.handlers = []
+        root_logger.addHandler(handler)
 
-        # Configure Lightning loggers to use our handler
-        lightning_logger = logging.getLogger("lightning")
-        lightning_logger.setLevel(
-            logging.INFO
-        )  # Lightning uses INFO for checkpoint messages
-        lightning_logger.handlers = []
-        lightning_logger.addHandler(handler)
-        lightning_logger.propagate = False
+        # Store original logging class to restore later if needed
+        self._original_logger_class = logging.getLoggerClass()
 
-        # Handle lightning.pytorch specifically (newer versions)
-        lightning_pytorch_logger = logging.getLogger("lightning.pytorch")
-        lightning_pytorch_logger.setLevel(logging.INFO)
-        lightning_pytorch_logger.handlers = []
-        lightning_pytorch_logger.addHandler(handler)
-        lightning_pytorch_logger.propagate = False
+        # Create a custom logger class that automatically uses our handler
+        class DashboardLogger(logging.Logger):
+            def __init__(self, name, level=logging.NOTSET):
+                super().__init__(name, level)
+                # Ensure all loggers created use the dashboard handler
+                if name != '':  # Don't modify root logger again
+                    self.handlers = []
+                    self.addHandler(handler)
+                    self.propagate = False
+
+        # Set our custom logger class as the default
+        logging.setLoggerClass(DashboardLogger)
+
+        # For already-created loggers, retrofit them with our handler
+        for name in list(logging.Logger.manager.loggerDict.keys()):
+            logger = logging.getLogger(name)
+            if isinstance(logger, logging.Logger):  # Skip PlaceHolder objects
+                logger.handlers = []
+                logger.addHandler(handler)
+                logger.propagate = False
+                # Use INFO as the default level for all loggers
+                logger.setLevel(logging.INFO)
 
         # Capture warnings
         warnings.showwarning = self.show_warning
@@ -159,6 +159,11 @@ class TerminalDashboard:
         """Cleanup on exit."""
         if self.running:
             self.stop()
+
+        # Restore original logger class
+        if hasattr(self, '_original_logger_class'):
+            logging.setLoggerClass(self._original_logger_class)
+
         # Always try to restore terminal on cleanup
         if not self.terminal_manager.terminal_restored:
             self.terminal_manager.restore_terminal()
