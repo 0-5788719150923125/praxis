@@ -52,6 +52,7 @@ class TerminalDashboard:
         self.lock = Lock()
         self.previous_size = self._get_terminal_size()
         self.previous_frame = None
+        self.fullscreen_log_mode = False  # Flag for fullscreen log mode
 
         # I/O management
         self.original_stdout = sys.stdout
@@ -89,7 +90,7 @@ class TerminalDashboard:
             def __init__(self, name, level=logging.NOTSET):
                 super().__init__(name, level)
                 # Ensure all loggers created use the dashboard handler
-                if name != '':  # Don't modify root logger again
+                if name != "":  # Don't modify root logger again
                     self.handlers = []
                     self.addHandler(handler)
                     self.propagate = False
@@ -161,7 +162,7 @@ class TerminalDashboard:
             self.stop()
 
         # Restore original logger class
-        if hasattr(self, '_original_logger_class'):
+        if hasattr(self, "_original_logger_class"):
             logging.setLoggerClass(self._original_logger_class)
 
         # Always try to restore terminal on cleanup
@@ -452,7 +453,9 @@ class TerminalDashboard:
                     :lower_right_quarter_width
                 ]
                 left_content = attention_content + "║" + info_content
-                right_content = " LOG".ljust(right_width)[:right_width]
+                right_content = " LOG (Press 'L' to fullscreen)".ljust(right_width)[
+                    :right_width
+                ]
 
             elif i == (height // 2) + 1:
                 # Split the separator line for the lower left panel
@@ -520,19 +523,93 @@ class TerminalDashboard:
 
         return frame
 
+    def _handle_keyboard_input(self, key):
+        """Handle keyboard input for dashboard controls."""
+        # Toggle fullscreen log mode with 'l' or 'L' key
+        if key.lower() == "l":
+            self.fullscreen_log_mode = not self.fullscreen_log_mode
+            # Clear the screen when switching modes
+            self.previous_frame = None
+            # Add a notification to the log
+            mode_name = "fullscreen log" if self.fullscreen_log_mode else "dashboard"
+            self.add_log(f"Switched to {mode_name} mode (press 'L' to toggle)")
+
+    def _create_fullscreen_log_frame(self):
+        """Create a fullscreen view of the log output."""
+        width, height = self._get_terminal_size()
+        frame = []
+
+        # Create top border using the same style as main dashboard
+        # For fullscreen, we don't need the middle divider, so create a simple top border
+        top_border = "╔" + "═" * (width - 2) + "╗"
+        # Insert title in the center of the border
+        title = " LOG VIEW (Press 'L' to return to dashboard) "
+        title_start = (width - len(title)) // 2
+        if title_start > 0 and title_start + len(title) < width - 1:
+            top_border = (
+                top_border[:title_start]
+                + title
+                + top_border[title_start + len(title) :]
+            )
+        frame.append(top_border)
+
+        # Calculate available space for logs (accounting for borders)
+        available_height = height - 2  # Subtract top and bottom border lines
+
+        # Calculate content width (accounting for left and right borders)
+        content_width = width - 4  # "║ " on left and " ║" on right
+
+        # Get recent log entries (they're already in chronological order in the buffer)
+        log_entries = list(self.log_buffer)
+
+        # Take the most recent logs that fit on screen
+        if len(log_entries) > available_height:
+            # If we have more logs than screen space, show the most recent ones
+            visible_logs = log_entries[-available_height:]
+        else:
+            # If we have fewer logs than screen space, pad at the top with empty lines
+            visible_logs = [""] * (available_height - len(log_entries)) + log_entries
+
+        # Add each log line to the frame with proper borders and padding
+        for log_line in visible_logs:
+            # Truncate or pad the log line to fit within content area
+            if len(log_line) > content_width:
+                formatted_line = log_line[: content_width - 3] + "..."
+            else:
+                formatted_line = log_line.ljust(content_width)
+
+            # Add borders and 2-char buffer on the left
+            frame.append(f"║ {formatted_line} ║")
+
+        # Add bottom border
+        bottom_border = "╚" + "═" * (width - 2) + "╝"
+        frame.append(bottom_border)
+
+        return frame
+
     def _run_dashboard(self):
         """Main dashboard rendering loop."""
         try:
             with managed_terminal(self.term, self.terminal_manager):
                 while self.running:
                     try:
+                        # Check for keyboard input (non-blocking)
+                        key = self.term.inkey(timeout=0.01)
+                        if key:
+                            self._handle_keyboard_input(key)
+
                         # Check for inactivity
                         inactive_time = self.activity_monitor.check_inactivity()
                         if inactive_time:
                             # Just note it internally, don't break the display
                             pass
 
-                        new_frame = self._create_frame()
+                        # Render either fullscreen log or normal dashboard
+                        if self.fullscreen_log_mode:
+                            new_frame = self._create_fullscreen_log_frame()
+                        else:
+                            new_frame = self._create_frame()
+
                         if not self.frame_builder.check_border_alignment(new_frame):
                             self.previous_frame = None
                         self._update_screen(new_frame)
