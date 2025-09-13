@@ -94,14 +94,14 @@ def get_datamodules(
             # Process all available integration datasets
             # The integrations themselves will check if they're properly initialized
             for dataset_name in available_datasets:
-                print(f"[Integrations] Checking dataset: {dataset_name}")
+                print(f"[INTEGRATIONS] Checking dataset: {dataset_name}")
                 dataset = get_dataset(dataset_name, tokenizer, seed)
                 if dataset is not None:
-                    print(f"[Integrations] Adding dataset: {dataset_name}")
+                    print(f"[INTEGRATIONS] Adding dataset: {dataset_name}")
                     train_data.append(dataset)
                 else:
                     print(
-                        f"[Integrations] Skipping dataset: {dataset_name} (not available)"
+                        f"[INTEGRATIONS] Skipping dataset: {dataset_name} (not available)"
                     )
         except ImportError:
             pass  # Integration loader not available

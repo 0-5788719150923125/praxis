@@ -92,7 +92,7 @@ class IntegrationLoader:
 
                     if check_result.returncode != 0:
                         # Not installed - try to install it
-                        print(f"[Integrations] Installing {integration_name}...")
+                        print(f"[INTEGRATIONS] Installing {integration_name}...")
                         try:
                             subprocess.check_call(
                                 [
@@ -107,7 +107,7 @@ class IntegrationLoader:
                         except subprocess.CalledProcessError as e:
                             # Integration install failed - likely incompatible dependencies
                             print(
-                                f"[Integrations] Warning: {integration_name} failed to install (may have incompatible dependencies)"
+                                f"[INTEGRATIONS] Warning: {integration_name} failed to install (may have incompatible dependencies)"
                             )
 
     def discover_integrations(self) -> List[IntegrationSpec]:
@@ -165,7 +165,7 @@ class IntegrationLoader:
         # Only check if they're available, don't install here
         if not self._check_dependencies_available(spec):
             if verbose:
-                print(f"[Integrations] {spec.name} dependencies not available")
+                print(f"[INTEGRATIONS] {spec.name} dependencies not available")
             return False
 
         try:
@@ -403,10 +403,10 @@ class IntegrationLoader:
 
         # Print summary
         if available or used:
-            print(f"[Integrations] Path: {self.integrations_dir}")
+            print(f"[INTEGRATIONS] Path: {self.integrations_dir}")
 
             if available:
-                print(f"[Integrations] Available: {', '.join(sorted(available))}")
+                print(f"[INTEGRATIONS] Available: {', '.join(sorted(available))}")
 
             if used:
-                print(f"[Integrations] Loaded: {', '.join(sorted(used))}")
+                print(f"[INTEGRATIONS] Loaded: {', '.join(sorted(used))}")

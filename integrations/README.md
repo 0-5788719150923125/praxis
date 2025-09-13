@@ -112,5 +112,5 @@ python main.py --ngrok  # or --wandb, --gun, --quantum
   - Required dependencies are installed
   - The `__init__.py` follows the correct structure
 
-- Integration logs appear in the console with `[Integrations]` prefix
+- Integration logs appear in the console with `[INTEGRATIONS]` prefix
 - Failed integrations are silently skipped to avoid breaking the main application
