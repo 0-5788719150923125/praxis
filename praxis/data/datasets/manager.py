@@ -1,7 +1,8 @@
 """Data interleaving and management with message queue for efficient deduplication."""
 
 import random
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import torch
 from transformers import PreTrainedTokenizer
 
@@ -9,7 +10,7 @@ from praxis.data.datasets.message_queue import MessageQueueManager
 from praxis.data.formatters import _rl_logger
 
 
-class InterleaveDataManagerV2:
+class InterleaveDataManager:
     """
     Manages interleaving of multiple datasets using message queue for efficient tokenization.
 
@@ -71,14 +72,14 @@ class InterleaveDataManagerV2:
             # Share weights between workers
             num_samplers = len(self.samplers)
             if (
-                InterleaveDataManagerV2.shared_weights_initialized
-                and InterleaveDataManagerV2.shared_weights is not None
-                and len(InterleaveDataManagerV2.shared_weights) == num_samplers
+                InterleaveDataManager.shared_weights_initialized
+                and InterleaveDataManager.shared_weights is not None
+                and len(InterleaveDataManager.shared_weights) == num_samplers
             ):
-                self.dynamic_weights = InterleaveDataManagerV2.shared_weights.copy()
-            elif not InterleaveDataManagerV2.shared_weights_initialized:
-                InterleaveDataManagerV2.shared_weights = self.dynamic_weights.copy()
-                InterleaveDataManagerV2.shared_weights_initialized = True
+                self.dynamic_weights = InterleaveDataManager.shared_weights.copy()
+            elif not InterleaveDataManager.shared_weights_initialized:
+                InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
+                InterleaveDataManager.shared_weights_initialized = True
 
             self.weights = self.dynamic_weights
         else:
@@ -115,10 +116,10 @@ class InterleaveDataManagerV2:
 
         # Update weights if using dynamic weighting
         if self.use_dynamic_weights:
-            if InterleaveDataManagerV2.shared_weights is not None and len(
-                InterleaveDataManagerV2.shared_weights
+            if InterleaveDataManager.shared_weights is not None and len(
+                InterleaveDataManager.shared_weights
             ) == len(self.samplers):
-                self.weights = InterleaveDataManagerV2.shared_weights
+                self.weights = InterleaveDataManager.shared_weights
             else:
                 self.weights = self.dynamic_weights
 
@@ -236,11 +237,11 @@ class InterleaveDataManagerV2:
 
         # Update shared weights
         if (
-            len(self.samplers) == len(InterleaveDataManagerV2.shared_weights)
-            if InterleaveDataManagerV2.shared_weights
+            len(self.samplers) == len(InterleaveDataManager.shared_weights)
+            if InterleaveDataManager.shared_weights
             else True
         ):
-            InterleaveDataManagerV2.shared_weights = self.dynamic_weights.copy()
+            InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
 
     def _calculate_target_weights(self):
         """Calculate target weights based on current metrics."""
@@ -298,4 +299,5 @@ class InterleaveDataManagerV2:
         if total > 0:
             return [w / total for w in target_weights]
         else:
+            return self.static_weights
             return self.static_weights

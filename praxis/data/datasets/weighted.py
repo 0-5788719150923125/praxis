@@ -2,12 +2,13 @@
 
 import random
 from typing import List, Optional
+
 import torch
 from torch.utils.data import IterableDataset
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler
-from praxis.data.datasets.manager import InterleaveDataManagerV2
+from praxis.data.datasets.manager import InterleaveDataManager
 from praxis.data.formatters import _rl_logger
 
 
@@ -27,7 +28,7 @@ class WeightedIterableDataset(IterableDataset):
         rl_type: Optional[str] = None,
     ):
         # Always use the new message queue system
-        self.data_manager = InterleaveDataManagerV2(
+        self.data_manager = InterleaveDataManager(
             datasets, weights, tokenizer, block_size, rl_type=rl_type
         )
 
@@ -102,4 +103,5 @@ class WeightedIterableDataset(IterableDataset):
                     }
                 else:
                     # Return regular tensor for backward compatibility
+                    yield batch_tensor
                     yield batch_tensor
