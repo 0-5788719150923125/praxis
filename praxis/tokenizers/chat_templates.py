@@ -3,6 +3,7 @@
 # Default ChatML template with tool support and developer role
 # https://huggingface.co/docs/transformers/en/conversations
 # https://huggingface.co/docs/transformers/en/chat_extras
+# https://cookbook.openai.com/articles/openai-harmony
 DEFAULT_CHAT_TEMPLATE = """{% set ns = namespace(system_seen=false) %}
 {% for message in messages %}
 {% if message['role'] == 'system' %}
