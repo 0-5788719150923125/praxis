@@ -55,10 +55,19 @@ class SignalHandlerCallback(Callback):
             self.signal_count += 1
 
             if self.signal_count == 1:
-                # First signal: request graceful shutdown
-                print(f"\n🛑 Shutdown requested, stopping training...")
+                # First signal: Fast but safe shutdown
+                print(f"\n🛑 Stopping immediately...")
 
-                # Immediately stop dashboard in main thread (critical for terminal state)
+                # Signal CUDA manager for fast shutdown
+                self.cuda_manager.request_shutdown()
+
+                # Stop trainer immediately
+                if self.trainer_ref is not None:
+                    self.trainer_ref.should_stop = True
+                    self.trainer_ref.limit_val_batches = 0
+                    self.trainer_ref.num_sanity_val_steps = 0
+
+                # Restore terminal immediately (most important)
                 if self.terminal_interface and hasattr(
                     self.terminal_interface, "dashboard"
                 ):
@@ -66,142 +75,57 @@ class SignalHandlerCallback(Callback):
                         dashboard = self.terminal_interface.dashboard
                         if dashboard:
                             dashboard.stop()
+                            dashboard.__exit__(None, None, None)
+                            self.terminal_interface.dashboard = None
                     except:
-                        pass
+                        # Fallback: restore cursor visibility
+                        try:
+                            import sys
+                            sys.stderr.write("\033[?25h")
+                            sys.stderr.flush()
+                        except:
+                            pass
 
-                # Signal CUDA manager that shutdown is requested
-                self.cuda_manager.request_shutdown()
-
-                # Start parallel shutdown operations
-                def parallel_shutdown():
-                    """Run shutdown operations in parallel."""
-                    threads = []
-
-                    # 1. Shutdown dashboard first (most important for terminal state)
-                    if self.terminal_interface and hasattr(
-                        self.terminal_interface, "dashboard"
-                    ):
-
-                        def shutdown_dashboard():
-                            try:
-                                dashboard = self.terminal_interface.dashboard
-                                if dashboard:
-                                    dashboard.stop()
-                                    # Call the exit handler to restore terminal
-                                    dashboard.__exit__(None, None, None)
-                                    self.terminal_interface.dashboard = None
-                            except Exception as e:
-                                # Fallback: at least try to restore cursor
-                                try:
-                                    import sys
-
-                                    sys.stderr.write("\033[?25h")
-                                    sys.stderr.flush()
-                                except:
-                                    pass
-
-                        threads.append(
-                            threading.Thread(target=shutdown_dashboard, daemon=True)
-                        )
-
-                    # 2. DataLoader shutdown
+                # Quick cleanup in background thread (non-blocking)
+                def quick_cleanup():
+                    """Minimal cleanup operations."""
+                    # 1. Stop dataloaders (fast timeout)
                     if self.datamodule_ref and isinstance(
                         self.datamodule_ref, PraxisDataModule
                     ):
+                        try:
+                            self.datamodule_ref.shutdown_dataloaders(timeout=0.5)
+                        except:
+                            pass
 
-                        def shutdown_dataloaders():
-                            try:
-                                self.datamodule_ref.shutdown_dataloaders(timeout=2.0)
-                            except Exception as e:
-                                print(f"   Warning: DataLoader shutdown error: {e}")
+                    # 2. Quick CUDA cleanup
+                    if torch.cuda.is_available():
+                        try:
+                            # Just empty cache, don't wait for sync
+                            torch.cuda.empty_cache()
+                        except:
+                            pass
 
-                        threads.append(
-                            threading.Thread(target=shutdown_dataloaders, daemon=True)
-                        )
+                # Start cleanup but don't wait
+                threading.Thread(target=quick_cleanup, daemon=True).start()
 
-                    # 3. CUDA cleanup (if GPU is being used)
-                    if torch.cuda.is_available() and torch.cuda.is_initialized():
-
-                        def cuda_cleanup():
-                            try:
-                                self.cuda_manager.fast_cuda_cleanup(timeout=2.0)
-                            except Exception as e:
-                                print(f"   Warning: CUDA cleanup error: {e}")
-
-                        threads.append(
-                            threading.Thread(target=cuda_cleanup, daemon=True)
-                        )
-
-                    # Start all threads
-                    for thread in threads:
-                        thread.start()
-
-                    # Wait for completion with timeout
-                    for thread in threads:
-                        thread.join(timeout=3.0)
-
-                # Start parallel shutdown in background
-                shutdown_thread = threading.Thread(
-                    target=parallel_shutdown, daemon=True
-                )
-                shutdown_thread.start()
-
-                # Check if we're in validation
-                if self.trainer_ref is not None:
-                    self.trainer_ref.should_stop = True
-
-                    # Disable any future validation (using writable properties)
-                    self.trainer_ref.limit_val_batches = 0
-                    self.trainer_ref.num_sanity_val_steps = 0
-
-                    # If in validation, try to stop it immediately
-                    if hasattr(self.trainer_ref, "state") and hasattr(
-                        self.trainer_ref.state, "stage"
-                    ):
-                        stage = (
-                            str(self.trainer_ref.state.stage)
-                            if self.trainer_ref.state.stage
-                            else ""
-                        )
-                        if "validat" in stage.lower():
-                            print(f"   Interrupting validation...")
-                        else:
-                            print(f"   Current stage: {stage}")
-
-                print(f"   (Press Ctrl+C again to force immediate shutdown)")
-
-            elif self.signal_count == 2:
-                # Second signal: more aggressive
-                print(f"\n⚠️  Force stopping... (Press Ctrl+C once more for hard exit)")
-
-                if self.trainer_ref is not None:
-                    # Really try to stop validation
-                    self.trainer_ref.limit_val_batches = 0
-                    self.trainer_ref.should_stop = True
-
-                # Force DataLoader shutdown if not done
-                if self.datamodule_ref and isinstance(
-                    self.datamodule_ref, PraxisDataModule
-                ):
-                    try:
-                        self.datamodule_ref.shutdown_dataloaders(timeout=1.0)
-                    except:
-                        pass
-
-                # Raise KeyboardInterrupt to trigger cleanup
+                # Immediately raise KeyboardInterrupt to stop Lightning
                 raise KeyboardInterrupt
 
             else:
-                # Third+ signal: immediate exit
-                print(f"\n💀 Hard exit!")
-
-                # Restore original handler and re-raise
-                if self.original_sigint is not None:
-                    signal.signal(signal.SIGINT, self.original_sigint)
-
-                # Force immediate termination
+                # Second+ signal: immediate hard exit
+                print(f"\n💀 Force exit!")
+                
+                # Restore terminal before exit
+                try:
+                    import sys
+                    sys.stderr.write("\033[?25h")  # Show cursor
+                    sys.stderr.flush()
+                except:
+                    pass
+                
+                # Immediate termination
                 import os
-
                 os._exit(130)
 
     def on_train_end(self, trainer, pl_module):
