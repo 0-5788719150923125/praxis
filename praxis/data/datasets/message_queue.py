@@ -1,19 +1,16 @@
-"""Message queue manager for efficient batching with forced system prompts."""
+"""Message queue manager for efficient batching."""
 
 import torch
 from typing import Dict, List, Any, Optional
 from collections import deque
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import SYSTEM_PROMPT
-
 
 class MessageQueueManager:
     """
-    Manages a queue of messages and efficiently batches them with forced system prompts.
-
-    Every training sequence of block_size tokens MUST start with the system prompt,
-    with content flowing continuously after the system prompt tokens.
+    Manages a queue of messages and efficiently batches them.
+    
+    Simply queues and tokenizes messages without modifying their structure.
     """
 
     def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
@@ -30,21 +27,11 @@ class MessageQueueManager:
         # Message queue stores structured message data
         self.message_queue = deque()
 
-        # Token buffer stores already tokenized content (without system prompt)
+        # Token buffer stores already tokenized content
         self.token_buffer = torch.tensor([], dtype=torch.long)
 
         # Metadata buffer parallel to token buffer
         self.metadata_buffer = []
-
-        # Pre-tokenize and cache the system prompt
-        self.system_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        system_text = self.tokenizer.apply_chat_template(
-            self.system_messages, tokenize=False, add_generation_prompt=False
-        )
-        self.system_prompt_tokens = self.tokenizer(
-            system_text, return_tensors="pt", padding=False, truncation=False
-        )["input_ids"].squeeze(0)
-        self.system_prompt_length = len(self.system_prompt_tokens)
 
     def add_document(self, document_data: Dict[str, Any]):
         """
@@ -59,16 +46,10 @@ class MessageQueueManager:
         if not messages:
             return
 
-        # Filter out system messages - we'll use our own consistent system prompt
-        filtered_messages = []
-        for msg in messages:
-            if msg["role"] != "system":
-                filtered_messages.append(msg)
-
-        if filtered_messages:
-            self.message_queue.append(
-                {"messages": filtered_messages, "metadata": metadata}
-            )
+        # Simply add the messages as-is, no filtering or modification
+        self.message_queue.append(
+            {"messages": messages, "metadata": metadata}
+        )
 
     def _refill_token_buffer(self):
         """Refill the token buffer from the message queue."""
@@ -90,7 +71,7 @@ class MessageQueueManager:
         if not messages_to_process:
             return
 
-        # Tokenize all messages at once (without system prompt)
+        # Tokenize all messages at once (preserving their complete structure)
         try:
             text = self.tokenizer.apply_chat_template(
                 messages_to_process, tokenize=False, add_generation_prompt=False
@@ -123,16 +104,15 @@ class MessageQueueManager:
 
     def get_batch(self, batch_size: int) -> Dict[str, Any]:
         """
-        Get a batch of sequences, each starting with the system prompt.
+        Get a batch of sequences.
 
         Args:
             batch_size: Number of sequences in the batch
 
         Returns:
-            Dictionary with 'input_ids' tensor and metadata
+            Dictionary with 'batch' tensor and metadata
         """
-        content_length = self.block_size - self.system_prompt_length
-        tokens_needed = batch_size * content_length
+        tokens_needed = batch_size * self.block_size
 
         # Ensure we have enough tokens
         refill_attempts = 0
@@ -171,27 +151,21 @@ class MessageQueueManager:
         batch_metadata = []
 
         for i in range(batch_size):
-            # Start with system prompt
-            sequence = self.system_prompt_tokens.clone()
-
-            # Extract content tokens
-            start_idx = i * content_length
-            end_idx = start_idx + content_length
-            content_tokens = self.token_buffer[start_idx:end_idx]
-
-            # Concatenate system prompt + content
-            full_sequence = torch.cat([sequence, content_tokens])
+            # Extract tokens for this sequence
+            start_idx = i * self.block_size
+            end_idx = start_idx + self.block_size
+            sequence = self.token_buffer[start_idx:end_idx]
 
             # Ensure exactly block_size tokens
-            if len(full_sequence) > self.block_size:
-                full_sequence = full_sequence[: self.block_size]
-            elif len(full_sequence) < self.block_size:
+            if len(sequence) > self.block_size:
+                sequence = sequence[: self.block_size]
+            elif len(sequence) < self.block_size:
                 padding = torch.zeros(
-                    self.block_size - len(full_sequence), dtype=torch.long
+                    self.block_size - len(sequence), dtype=torch.long
                 )
-                full_sequence = torch.cat([full_sequence, padding])
+                sequence = torch.cat([sequence, padding])
 
-            sequences.append(full_sequence)
+            sequences.append(sequence)
 
             # Collect metadata for this sequence (from the dominant source)
             if start_idx < len(self.metadata_buffer):
