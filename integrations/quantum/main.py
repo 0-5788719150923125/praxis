@@ -8,8 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from praxis.data.formatters.files import format_file_as_messages
 from praxis.data.config import SYSTEM_PROMPT
+from praxis.data.formatters.files import format_file_as_messages
 from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 # Module state (for backward compatibility)
@@ -34,9 +34,9 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
     _quantum_enabled = getattr(args, "quantum", False)
 
     # Debug logging
-    print(f"[Quantum] initialize() called with quantum flag: {_quantum_enabled}")
+    print(f"[QUANTUM] initialize() called with quantum flag: {_quantum_enabled}")
     if hasattr(args, "beta"):
-        print(f"[Quantum] Beta flag is: {getattr(args, 'beta', False)}")
+        print(f"[QUANTUM] Beta flag is: {getattr(args, 'beta', False)}")
 
     if _quantum_enabled:
         # Get the project root directory (where run.py is located)
@@ -67,7 +67,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                 )
                 if result.returncode != 0:
                     print(
-                        f"[Quantum] Invalid repository detected, removing and re-cloning..."
+                        f"[QUANTUM] Invalid repository detected, removing and re-cloning..."
                     )
                     import shutil
 
@@ -83,17 +83,17 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                     if sparse_check.returncode == 0 and sparse_check.stdout.strip():
                         # Sparse checkout is enabled, disable it to get all files
                         print(
-                            "[Quantum] Disabling sparse checkout to access all files..."
+                            "[QUANTUM] Disabling sparse checkout to access all files..."
                         )
                         subprocess.run(
                             ["git", "sparse-checkout", "disable"],
                             cwd=str(repo_path),
                             capture_output=True,
                         )
-                    print(f"[Quantum] Using existing repository at {repo_path}")
+                    print(f"[QUANTUM] Using existing repository at {repo_path}")
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 print(
-                    f"[Quantum] Repository validation failed, removing and re-cloning..."
+                    f"[QUANTUM] Repository validation failed, removing and re-cloning..."
                 )
                 import shutil
 
@@ -101,7 +101,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
 
         # Clone the repository if it doesn't exist
         if not repo_path.exists():
-            print("[Quantum] Cloning qoblib repository (this may take a while)...")
+            print("[QUANTUM] Cloning qoblib repository (this may take a while)...")
             try:
                 # Try different URL formats - GitHub accepts both with and without .git
                 urls_to_try = [
@@ -115,7 +115,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
 
                 for url in urls_to_try:
                     try:
-                        print(f"[Quantum] Attempting to clone from: {url}")
+                        print(f"[QUANTUM] Attempting to clone from: {url}")
 
                         # Set up environment to prevent auth prompts
                         env = os.environ.copy()
@@ -145,7 +145,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                         )
 
                         clone_success = True
-                        print("[Quantum] Repository cloned successfully")
+                        print("[QUANTUM] Repository cloned successfully")
                         break
 
                     except (
@@ -171,17 +171,17 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                     for archive in repo_path.rglob(pattern):
                         try:
                             archive.unlink()
-                            print(f"[Quantum] Removed large file: {archive.name}")
+                            print(f"[QUANTUM] Removed large file: {archive.name}")
                         except Exception:
                             pass
 
             except subprocess.TimeoutExpired:
-                print("[Quantum] Error: Git clone timed out after 180 seconds")
+                print("[QUANTUM] Error: Git clone timed out after 180 seconds")
                 print(
-                    "[Quantum] This repository contains large files and may be slow to clone"
+                    "[QUANTUM] This repository contains large files and may be slow to clone"
                 )
                 print(
-                    "[Quantum] You can try cloning manually: git clone --depth 1 --branch OUF_at_zurich.ibm.com-main-patch-70f8 https://github.com/Vectorrent/qoblib build/quantum/qoblib"
+                    "[QUANTUM] You can try cloning manually: git clone --depth 1 --branch OUF_at_zurich.ibm.com-main-patch-70f8 https://github.com/Vectorrent/qoblib build/quantum/qoblib"
                 )
                 if repo_path.exists():
                     import shutil
@@ -190,7 +190,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
                 _quantum_enabled = False
                 return
             except subprocess.CalledProcessError as e:
-                print(f"[Quantum] Error cloning repository: {e.stderr}")
+                print(f"[QUANTUM] Error cloning repository: {e.stderr}")
                 if repo_path.exists():
                     import shutil
 
@@ -219,7 +219,7 @@ def initialize(args, cache_dir=None, ckpt_path=None, truncated_hash=None):
             count = len(list(repo_path.rglob(f"*{ext}")))
             if count > 0:
                 total_files += count
-        print(f"[Quantum] Found {total_files} text files for training")
+        print(f"[QUANTUM] Found {total_files} text files for training")
 
 
 def _is_binary_file(file_path: Path) -> bool:
@@ -353,7 +353,7 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
             continue
 
     if not filtered_files:
-        print("[Quantum] Warning: No valid text files found after filtering")
+        print("[QUANTUM] Warning: No valid text files found after filtering")
         return []
 
     # Sample random files
@@ -423,17 +423,26 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
                     f"Please analyze this {file_desc}:\n\n```{lang}\n{content}\n```"
                 )
 
-            # Build messages with system, developer, user, and assistant
+            # Build messages with system, developer, and tool-calling format
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "developer",
-                    "content": f"Reading file: {relative_path}\nThis is {file_desc}. Study it to understand quantum algorithms and implementations.",
+                    "content": f"This is {file_desc}. Study it to understand quantum algorithms and implementations.",
                 },
                 {"role": "user", "content": user_prompt},
             ]
 
-            # Add the assistant's analysis
+            # Assistant calls the read_file tool
+            tool_call = {"name": "read_file", "arguments": {"file_path": relative_path}}
+
+            # Assistant message with tool call (no content needed, just the tool call)
+            messages.append({"role": "assistant", "tool_calls": [tool_call]})
+
+            # Tool response with the file content
+            messages.append({"role": "tool", "content": content})
+
+            # Add the assistant's analysis after reading the file
             analysis = _generate_quantum_analysis(content, file_path, file_ext)
             messages.append({"role": "assistant", "content": analysis})
 
@@ -442,7 +451,7 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
             )
 
         except Exception as e:
-            print(f"[Quantum] Error reading {file_path}: {e}")
+            print(f"[QUANTUM] Error reading {file_path}: {e}")
             continue
 
     return examples
@@ -537,12 +546,12 @@ def provide_dataset(tokenizer, seed, config=None, *args):
     global _quantum_enabled
 
     # Debug logging
-    print(f"[Quantum] provide_dataset() called, _quantum_enabled = {_quantum_enabled}")
+    print(f"[QUANTUM] provide_dataset() called, _quantum_enabled = {_quantum_enabled}")
 
     # Only provide dataset if properly initialized
     if not _quantum_enabled:
         print(
-            "[Quantum] ERROR: Dataset requested but module not initialized (--quantum flag not set)"
+            "[QUANTUM] ERROR: Dataset requested but module not initialized (--quantum flag not set)"
         )
         return None
 
@@ -573,7 +582,7 @@ def provide_dataset(tokenizer, seed, config=None, *args):
                     # Try once more with just 1 example
                     self.examples_cache = get_quantum_examples(1)
                     if not self.examples_cache:
-                        print("[Quantum] Warning: No quantum examples available")
+                        print("[QUANTUM] Warning: No quantum examples available")
                         return {"messages": [], "metadata": {}}
 
             # Get next example from cache
@@ -604,7 +613,7 @@ def provide_dataset(tokenizer, seed, config=None, *args):
                     )
                     self.sequence_cache.append(formatted)
                 except Exception as e:
-                    print(f"[Quantum] Error formatting example: {e}")
+                    print(f"[QUANTUM] Error formatting example: {e}")
 
     # Create and return dataset instance
     dataset = QuantumDataset(tokenizer)

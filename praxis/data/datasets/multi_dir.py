@@ -56,8 +56,8 @@ class MultiDirectoryDataset(PraxisSampler):
         user_exclusions = set(excluded_dirs) if excluded_dirs else set()
         self.excluded_dirs = default_exclusions.union(user_exclusions)
 
-        print(f"Working directory: {self.cwd}")
-        print(f"Scanning directories: {self.directories}")
+        print(f"[DATA] Working directory: {self.cwd}")
+        print(f"[DATA] Scanning directories: {self.directories}")
 
         self.file_list = self._get_file_list()
         print(f"Found {len(self.file_list)} files")

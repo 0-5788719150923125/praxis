@@ -279,7 +279,7 @@ def initialize_lazy_modules(model, device):
         pass
 
     try:
-        print("[Bootstrap] Moving model to device...")
+        print("[INIT] Moving model to device...")
         check_interrupt()
 
         # Move model to device in chunks to be more interruptible
@@ -289,7 +289,7 @@ def initialize_lazy_modules(model, device):
         batch_size = 1  # Reduced from 2
         seq_length = 32  # Reduced from 64
 
-        print("[Bootstrap] Initializing lazy modules...")
+        print("[INIT] Initializing lazy modules...")
         check_interrupt()
 
         # Create dummy batch for initialization
@@ -307,10 +307,10 @@ def initialize_lazy_modules(model, device):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print("[Bootstrap] Model initialization complete")
+        print("[INIT] Model initialization complete")
 
     except KeyboardInterrupt:
-        print("\n[Bootstrap] Initialization interrupted")
+        print("\n[INIT] Initialization interrupted")
         # Clean up partial initialization
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -448,12 +448,10 @@ def show_launch_animation(model, truncated_hash):
     time.sleep(max(0, random.gauss(1.0, 3.0)))
 
     # Print opening backticks
+    print("[MODEL]")
     print("```")
     for i, line in enumerate(plan):
-        if i > 0:
-            print(line)
-        else:
-            print(f"Model: {line}")
+        print(line)
         progress = i / len(plan)
         scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
         delay = scale_factor * (progress**acceleration_curve)

@@ -31,7 +31,7 @@ def try_compile_model(model, hparams):
         Compiled model or original model if compilation fails
     """
     # # TEMPORARY: Completely disable all model compilation to avoid FX tracing errors
-    # print("[Compile] Model compilation is temporarily disabled")
+    # print("[COMPILE] Model compilation is temporarily disabled")
     # return model
 
     # Convert dict to object if needed for getattr
@@ -43,21 +43,21 @@ def try_compile_model(model, hparams):
     # Check if torch.compile is available (PyTorch 2.0+)
     if not hasattr(torch, "compile"):
         print(
-            "[Compile] torch.compile not available (requires PyTorch 2.0+), using uncompiled model"
+            "[COMPILE] torch.compile not available (requires PyTorch 2.0+), using uncompiled model"
         )
         return model
 
     # Skip compilation for CPU (usually not beneficial)
     device = getattr(hparams, "device", "cpu")
     if "cpu" in str(device).lower():
-        print("[Compile] Skipping compilation on CPU (not beneficial)")
+        print("[COMPILE] Skipping compilation on CPU (not beneficial)")
         return model
 
     # Skip compilation if feature flag is set (faster iteration)
     from praxis.environments import EnvironmentFeatures
 
     if EnvironmentFeatures.is_enabled("skip_compilation"):
-        print("[Compile] Skipping compilation (skip_compilation feature enabled)")
+        print("[COMPILE] Skipping compilation (skip_compilation feature enabled)")
         return model
 
     # Check if any module in the model is marked as non-compilable
@@ -66,26 +66,26 @@ def try_compile_model(model, hparams):
     can_compile, module_path, module_type = _check_module_compilability(model)
     if not can_compile:
         print(
-            f"[Compile] Skipping ALL compilation: {module_type} at '{module_path}' marked as non-compilable"
+            f"[COMPILE] Skipping ALL compilation: {module_type} at '{module_path}' marked as non-compilable"
         )
         print(
-            "[Compile] Note: When any module is non-compilable, the entire model must remain uncompiled"
+            "[COMPILE] Note: When any module is non-compilable, the entire model must remain uncompiled"
         )
         return model
 
     # Skip compilation for certain problematic configurations
     # MonoForward decoder has issues with compilation due to dynamic behavior
     # if hasattr(hparams, "decoder_type") and hparams.decoder_type == "mono_forward":
-    #     print("[Compile] Skipping compilation for mono_forward decoder (incompatible)")
+    #     print("[COMPILE] Skipping compilation for mono_forward decoder (incompatible)")
     #     return model
 
-    print("[Compile] All modules are compilable, proceeding with compilation attempt")
+    print("[COMPILE] All modules are compilable, proceeding with compilation attempt")
 
     try:
         # Set TensorFloat32 for better performance
         torch.set_float32_matmul_precision("high")
 
-        print("[Compile] Attempting model compilation...")
+        print("[COMPILE] Attempting model compilation...")
 
         # First try with most compatible settings
         # Note: 'default' mode balances speed and memory usage
@@ -106,26 +106,26 @@ def try_compile_model(model, hparams):
                 or hasattr(compiled_model, "_torchdynamo_orig_callable")
                 or "OptimizedModule" in type(compiled_model).__name__
             ):
-                print("[Compile] ✓ Model compilation wrapper created successfully")
+                print("[COMPILE] ✓ Model compilation wrapper created successfully")
                 print(
-                    "[Compile] Note: Actual compilation will happen on first forward pass"
+                    "[COMPILE] Note: Actual compilation will happen on first forward pass"
                 )
                 print(
-                    "[Compile] Memory usage will increase by ~20-40% due to graph storage"
+                    "[COMPILE] Memory usage will increase by ~20-40% due to graph storage"
                 )
                 return compiled_model
             else:
                 print(
-                    "[Compile] Compilation did not create expected wrapper, using uncompiled model"
+                    "[COMPILE] Compilation did not create expected wrapper, using uncompiled model"
                 )
                 return model
 
         except Exception as compile_error:
             # If even basic compilation fails, try with minimal settings
             print(
-                f"[Compile] Standard compilation failed: {str(compile_error)[:100]}..."
+                f"[COMPILE] Standard compilation failed: {str(compile_error)[:100]}..."
             )
-            print("[Compile] Trying minimal compilation mode...")
+            print("[COMPILE] Trying minimal compilation mode...")
 
             try:
                 compiled_model = torch.compile(
@@ -141,24 +141,24 @@ def try_compile_model(model, hparams):
                     or hasattr(compiled_model, "_torchdynamo_orig_callable")
                     or "OptimizedModule" in type(compiled_model).__name__
                 ):
-                    print("[Compile] ✓ Model compiled with minimal settings")
+                    print("[COMPILE] ✓ Model compiled with minimal settings")
                     return compiled_model
                 else:
                     print(
-                        "[Compile] Minimal compilation failed, using uncompiled model"
+                        "[COMPILE] Minimal compilation failed, using uncompiled model"
                     )
                     return model
 
             except Exception:
                 print(
-                    "[Compile] All compilation attempts failed, using uncompiled model"
+                    "[COMPILE] All compilation attempts failed, using uncompiled model"
                 )
                 return model
 
     except Exception as e:
         # Fallback to uncompiled model if compilation fails
-        print(f"[Compile] Unexpected error during compilation: {e}")
-        print("[Compile] Falling back to uncompiled model")
+        print(f"[COMPILE] Unexpected error during compilation: {e}")
+        print("[COMPILE] Falling back to uncompiled model")
         return model
 
 
@@ -175,7 +175,7 @@ def try_compile_optimizer(optimizer, hparams):
         Compiled optimizer or original optimizer if compilation fails
     """
     # TEMPORARY: Completely disable all optimizer compilation to avoid FX tracing errors
-    print("[Compile] Optimizer compilation is temporarily disabled")
+    print("[COMPILE] Optimizer compilation is temporarily disabled")
     return optimizer
 
     # Convert dict to object if needed for getattr
@@ -219,12 +219,12 @@ def try_compile_optimizer(optimizer, hparams):
         for class_name in class_chain:
             if any(opt in class_name for opt in problematic_optimizers):
                 print(
-                    f"[Compile] Skipping compilation for {optimizer.__class__.__name__} optimizer (contains datetime or complex control flow)"
+                    f"[COMPILE] Skipping compilation for {optimizer.__class__.__name__} optimizer (contains datetime or complex control flow)"
                 )
                 return optimizer
 
     try:
-        print("[Compile] Attempting optimizer compilation...")
+        print("[COMPILE] Attempting optimizer compilation...")
 
         # Compile the optimizer's step method
         original_step = optimizer.step
@@ -242,21 +242,21 @@ def try_compile_optimizer(optimizer, hparams):
 
         # Check if compilation wrapper was created
         if hasattr(optimizer.step, "_torchdynamo_orig_callable"):
-            print("[Compile] ✓ Optimizer compilation wrapper created successfully")
-            print("[Compile] Note: Optimizer compilation happens on first step")
+            print("[COMPILE] ✓ Optimizer compilation wrapper created successfully")
+            print("[COMPILE] Note: Optimizer compilation happens on first step")
             return optimizer
         else:
             # Restore original if compilation didn't work
             optimizer.step = original_step
             print(
-                "[Compile] Optimizer compilation did not create wrapper, using uncompiled"
+                "[COMPILE] Optimizer compilation did not create wrapper, using uncompiled"
             )
             return optimizer
 
     except Exception as e:
         # Fallback to uncompiled optimizer
-        print(f"[Compile] Optimizer compilation failed: {str(e)[:100]}...")
-        print("[Compile] Using uncompiled optimizer")
+        print(f"[COMPILE] Optimizer compilation failed: {str(e)[:100]}...")
+        print("[COMPILE] Using uncompiled optimizer")
         # Ensure we restore the original step method if it was modified
         if hasattr(optimizer, "step") and hasattr(
             optimizer.step, "_torchdynamo_orig_callable"

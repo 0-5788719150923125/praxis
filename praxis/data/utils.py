@@ -47,14 +47,18 @@ def get_datamodules(
         PraxisDataModule configured with train and validation datasets
     """
 
-    print("Training datasets:")
     train_data = []
     config = get_dataset_configs(dev, pile, phi, rl_type)
     from praxis.environments import EnvironmentFeatures
 
     for c in config["primary"]:
         # load configs for huggingface datasets
-        print(dict(path=c["path"], weight=c["weight"], keys=c.get("keys", ["text"])))
+        print(
+            "[DATA][TRAIN] "
+            + str(
+                dict(path=c["path"], weight=c["weight"], keys=c.get("keys", ["text"]))
+            )
+        )
         train_data.append(get_dataset("huggingface", tokenizer, seed, c, *args))
 
     # Add synthetic tool-calling dataset if phi is enabled
@@ -106,12 +110,10 @@ def get_datamodules(
         except ImportError:
             pass  # Integration loader not available
 
-    print("Validation data:")
-
     validation_data = []
     if len(config["validation"]) > 0:
         for c in config["validation"]:
-            print(dict(path=c["path"], weight=c["weight"]))
+            print("[DATA][VALIDATION] " + str(dict(path=c["path"], weight=c["weight"])))
             validation_data.append(
                 get_dataset("huggingface", tokenizer, seed, c, *args)
             )

@@ -1,8 +1,8 @@
 """Factory functions for creating trainer components."""
 
-from typing import Any, Dict, List, Optional, Union
 import logging
 import os
+from typing import Any, Dict, List, Optional, Union
 
 
 def create_logger(
@@ -186,7 +186,7 @@ def create_trainer_with_module(
     # Handle lazy loading functions
     if callable(trainer_class) and not isinstance(trainer_class, type):
         trainer_class = trainer_class()  # Call the lazy loader
-    print(f"[INFO] Using {trainer_type} trainer: {trainer_class.__name__}")
+    print(f"[TRAINER] Using {trainer_type} trainer: {trainer_class.__name__}")
 
     # Handle different trainer types
     if trainer_type == "mono_forward":

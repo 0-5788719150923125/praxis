@@ -45,11 +45,11 @@ class DashboardStreamer:
         if self.streaming:
             return
 
+        print("Dashboard streaming started.")
         self.streaming = True
         self.stream_thread = threading.Thread(target=self._stream_loop)
         self.stream_thread.daemon = True
         self.stream_thread.start()
-        print("Dashboard streaming started")
 
     def stop(self):
         """Stop streaming dashboard output."""
