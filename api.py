@@ -1159,9 +1159,12 @@ def generate_messages():
         
         if not output:
             raise Exception("Failed to generate an output from this API.")
-        
+
+        # Extract just the assistant's reply from the full output
+        assistant_reply = extract_assistant_reply(output, tokenizer)
+
         # Return the generated response
-        response = jsonify({"response": output})
+        response = jsonify({"response": assistant_reply})
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response, 200
         

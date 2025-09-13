@@ -68,13 +68,44 @@ class TerminalDashboard:
 
         # Set up logging
         self.logger = logging.getLogger()
-        self.logger.setLevel(logging.ERROR)
+        self.logger.setLevel(logging.WARNING)  # Capture WARNING and above
         handler = DashboardStreamHandler(self)
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
+
+        # Specifically configure the datasets logger to use our handler
+        datasets_logger = logging.getLogger("datasets")
+        datasets_logger.setLevel(logging.WARNING)
+        # Remove any existing handlers to avoid duplicate output
+        datasets_logger.handlers = []
+        datasets_logger.addHandler(handler)
+        datasets_logger.propagate = False  # Don't propagate to root logger
+
+        # Also handle datasets.iterable_dataset specifically
+        datasets_iterable_logger = logging.getLogger("datasets.iterable_dataset")
+        datasets_iterable_logger.setLevel(logging.WARNING)
+        datasets_iterable_logger.handlers = []
+        datasets_iterable_logger.addHandler(handler)
+        datasets_iterable_logger.propagate = False
+
+        # Configure Lightning loggers to use our handler
+        lightning_logger = logging.getLogger("lightning")
+        lightning_logger.setLevel(
+            logging.INFO
+        )  # Lightning uses INFO for checkpoint messages
+        lightning_logger.handlers = []
+        lightning_logger.addHandler(handler)
+        lightning_logger.propagate = False
+
+        # Handle lightning.pytorch specifically (newer versions)
+        lightning_pytorch_logger = logging.getLogger("lightning.pytorch")
+        lightning_pytorch_logger.setLevel(logging.INFO)
+        lightning_pytorch_logger.handlers = []
+        lightning_pytorch_logger.addHandler(handler)
+        lightning_pytorch_logger.propagate = False
 
         # Capture warnings
         warnings.showwarning = self.show_warning

@@ -96,12 +96,12 @@ class Generator:
         # Check if the prompt is already a list of messages
         if isinstance(request.prompt, list):
             # Apply chat template to messages
-            print(f"[DEBUG] Applying chat template to messages: {request.prompt}")
+            # print(f"[DEBUG] Applying chat template to messages: {request.prompt}")
             try:
                 prompt_text = self.tokenizer.apply_chat_template(
                     request.prompt, tokenize=False, add_generation_prompt=True
                 )
-                print(f"[DEBUG] Chat template output: {prompt_text[:200]}...")
+                # print(f"[DEBUG] Chat template output: {prompt_text[:200]}...")
             except Exception as e:
                 print(f"[ERROR] Failed to apply chat template: {e}")
                 # Fallback: convert messages to simple string
@@ -112,7 +112,7 @@ class Generator:
 
             # Encode without return_tensors to get a list first
             input_ids = self.tokenizer.encode(prompt_text)
-            print(f"[DEBUG] Encoded to {len(input_ids)} tokens")
+            # print(f"[DEBUG] Encoded to {len(input_ids)} tokens")
         else:
             # Legacy string prompt
             prompt_text = request.prompt
@@ -135,6 +135,15 @@ class Generator:
             remove_invalid_values=True,
             # token_healing=True,
         )
+
+        # Add stop tokens if tokenizer has them
+        if hasattr(self.tokenizer, 'eos_token_id') and self.tokenizer.eos_token_id is not None:
+            if hasattr(self.tokenizer, 'sep_token_id') and self.tokenizer.sep_token_id is not None:
+                # Use both EOS and SEP as stop tokens
+                defaults['eos_token_id'] = [self.tokenizer.eos_token_id, self.tokenizer.sep_token_id]
+            else:
+                # Use only EOS as stop token
+                defaults['eos_token_id'] = self.tokenizer.eos_token_id
         combined = {**defaults, **request.kwargs}
 
         # These values are largely an extension of the Huggingface `generate()` method, and
