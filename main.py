@@ -163,7 +163,7 @@ def main():
     trainer_type = processed_args.get("trainer_type", "backpropagation")
     pipeline_depth = processed_args.get("pipeline_depth", 4)
 
-    (_, args_hash, truncated_hash) = log_command()
+    (full_command, args_hash, truncated_hash) = log_command()
 
     # Set seeds for reproducibility
     seed_everything(seed, workers=True)
@@ -317,6 +317,7 @@ def main():
             full_hash=args_hash,
             dev_mode=(EnvironmentFeatures.get_active_environment() == "dev"),
             dashboard=dashboard,
+            launch_command=full_command,
         )
         api_server.start()
 

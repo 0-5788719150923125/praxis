@@ -250,17 +250,9 @@ def get_spec():
             except:
                 param_stats = {}
 
-        # Get metadata from history.log
-        timestamp = None
-        command = None
-        if os.path.exists("history.log"):
-            with open("history.log", "r") as f:
-                first_line = f.readline().strip()
-                if first_line:
-                    parts = first_line.split(" | ")
-                    if len(parts) >= 3:
-                        timestamp = parts[0]
-                        command = parts[2].strip('"')
+        # Get the launch command and timestamp from the app config (instance-specific)
+        command = app.config.get("launch_command")
+        timestamp = app.config.get("launch_timestamp")
 
         # Get the appropriate git URL - prioritize ngrok if active
         git_url = None
@@ -747,6 +739,7 @@ class APIServer:
         full_hash=None,
         dev_mode=False,
         dashboard=None,
+        launch_command=None,
     ):
         # Initialize APIServer with parameter statistics
         self.generator = generator
@@ -809,7 +802,11 @@ class APIServer:
         self.param_stats = param_stats if param_stats else {}
         self.truncated_hash = truncated_hash
         self.full_hash = full_hash
+        self.launch_command = launch_command
         self.dev_mode = dev_mode
+        # Generate timestamp when this instance starts
+        from datetime import datetime
+        self.launch_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.template_watcher = TemplateWatcher()
 
         # Initialize terminal WebSocket namespace if available
@@ -944,6 +941,8 @@ class APIServer:
         app.config["seed"] = self.seed
         app.config["truncated_hash"] = self.truncated_hash
         app.config["full_hash"] = self.full_hash
+        app.config["launch_command"] = self.launch_command
+        app.config["launch_timestamp"] = self.launch_timestamp
         # Store param_stats if available
         if hasattr(self, "param_stats") and self.param_stats:
             app.config["param_stats"] = self.param_stats
