@@ -74,7 +74,6 @@ class IntegrationLoader:
 
         # Now install only the integrations that passed condition checks
         if integrations_to_install:
-            print("[INTEGRATIONS]")
             for integration_dir, integration_name in integrations_to_install:
                 if (integration_dir / "pyproject.toml").exists():
                     # Check if already installed

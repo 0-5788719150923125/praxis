@@ -133,7 +133,7 @@ def main():
         active_env = EnvironmentFeatures.get_active_environment()
         if active_env:
             cache_dir = os.path.join(cache_dir, f"env_{active_env}")
-            print(f"[Environment] Using isolated cache directory: {cache_dir}")
+            print(f"[ENVIRONMENT] Using isolated cache directory: {cache_dir}")
     optimizer = processed_args["optimizer"]
     fixed_schedule = processed_args.get("fixed_schedule", False)
     schedule_free = processed_args.get("schedule_free", False)
@@ -476,7 +476,7 @@ def main():
             )
             if logger:
                 integration_logger = logger
-                print(f"[Training] Using integration logger: {type(logger).__name__}")
+                print(f"[TRAIN] Using integration logger: {type(logger).__name__}")
                 break
         except Exception as e:
             print(f"[Warning] Logger provider failed: {e}")
@@ -513,10 +513,10 @@ def main():
 
     # Print final training configuration
     print(
-        f"[Training] Starting with {reduced} parameters, {optimizer_config['optimizer_name']} optimizer"
+        f"[TRAIN] Starting with {reduced} parameters, {optimizer_config['optimizer_name']} optimizer"
     )
     if api_server:
-        print(f"[Training] API available at http://{api_server.get_api_addr()}/")
+        print(f"[TRAIN] API available at http://{api_server.get_api_addr()}/")
 
     # Install a simple signal handler for post-training cleanup
     cleanup_interrupted = False
@@ -569,7 +569,7 @@ def main():
         trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
 
         # Training completed successfully
-        print("[Training] Completed successfully")
+        print("[TRAIN] Completed successfully")
 
         # Install aggressive signal handler for cleanup phase
         signal.signal(signal.SIGINT, cleanup_signal_handler)
@@ -597,7 +597,7 @@ def main():
 
     except KeyboardInterrupt:
         # Lightning handles Ctrl+C gracefully
-        print("\n[Training] Interrupted by user")
+        print("\n[TRAIN] Interrupted by user")
         # Install handler for cleanup
         signal.signal(signal.SIGINT, cleanup_signal_handler)
         signal.signal(signal.SIGTERM, cleanup_signal_handler)

@@ -60,7 +60,7 @@ class MultiDirectoryDataset(PraxisSampler):
         print(f"[DATA] Scanning directories: {self.directories}")
 
         self.file_list = self._get_file_list()
-        print(f"Found {len(self.file_list)} files")
+        print(f"[DATA] Found {len(self.file_list)} files")
         random.shuffle(self.file_list)
         self.file_iterator = iter(self.file_list)
         # Track files that have been removed due to read errors

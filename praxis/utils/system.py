@@ -448,20 +448,15 @@ def show_launch_animation(model, truncated_hash):
     time.sleep(max(0, random.gauss(1.0, 3.0)))
 
     # Print opening backticks
-    print("[MODEL]")
-    print("```")
     for i, line in enumerate(plan):
-        print(line)
+        print(f"{line}")
         progress = i / len(plan)
         scale_factor = launch_duration * (acceleration_curve + 1) / len(plan)
         delay = scale_factor * (progress**acceleration_curve)
         time.sleep(delay)
 
-    print()
-    print(f"Hash: {truncated_hash}")
+    print(f"[HASH] {truncated_hash}")
     time.sleep(2)
     elapsed_time = time.time() - start_time
-    print(f"Rate: {elapsed_time:.3f}\s")
+    print(f"[RATE] {elapsed_time:.3f}\s")
     time.sleep(1)
-    # Print closing backticks
-    print("```")
