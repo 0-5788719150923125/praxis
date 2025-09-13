@@ -18,29 +18,17 @@ except RuntimeError:
     pass  # Already set
 
 # Standard library imports
-import contextlib
 import importlib
-import itertools
-import json
 import logging
-import math
 import os
-import re
 import signal
-import subprocess
 import sys
 import traceback
-import uuid
 import warnings
-from collections import Counter
-from datetime import datetime, timedelta
-from queue import Queue
-from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 # Third-party imports
 import torch
-import torch.nn as nn
-from torcheval.metrics.functional import perplexity
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
@@ -70,15 +58,9 @@ from praxis.optimizers import get_optimizer, get_optimizer_profile, get_paramete
 from praxis.schedulers import get_scheduler_func
 from praxis.tokenizers import create_tokenizer
 from praxis.trainers import (
-    BackpropagationTrainer,
-    Trainer,
-    TrainerConfig,
-    create_checkpoint_callback,
     create_logger,
-    create_progress_callback,
     create_trainer_with_module,
     disable_warnings,
-    reset_seed,
     seed_everything,
 )
 from praxis.utils import (
@@ -87,13 +69,18 @@ from praxis.utils import (
     get_memory_info,
     initialize_lazy_modules,
     perform_reset,
-    register_cleanup_function,
     show_launch_animation,
-    shutdown_manager,
 )
 
 # Prevent Python from creating .pyc files
 sys.dont_write_bytecode = True
+
+try:
+    torch.set_float32_matmul_precision("medium")
+    print("[INIT] Your system will train in 'medium' precision.")
+except Exception as e:
+    print(e)
+    print("[INIT] Your system does not support low-precision training.")
 
 
 def setup_environment():
@@ -614,98 +601,6 @@ def main():
         signal.signal(signal.SIGINT, cleanup_signal_handler)
         signal.signal(signal.SIGTERM, cleanup_signal_handler)
         return 130  # Standard exit code for SIGINT
-    finally:
-        import time
-
-        # Check if cleanup was interrupted or if training completed
-        if "cleanup_interrupted" in locals() and cleanup_interrupted:
-            # Skip cleanup if interrupted
-            os._exit(130)
-
-        # Super fast cleanup - we're done training
-        cleanup_start = time.time()
-        max_cleanup_time = 0.5  # Half second max for cleanup after successful training
-        cleanup_count = 0
-
-        # DataLoaders need proper shutdown to avoid hanging
-        if "dataintegration" in locals() and hasattr(
-            dataintegration, "shutdown_dataloaders"
-        ):
-            try:
-                remaining_time = max(
-                    0.5, max_cleanup_time - (time.time() - cleanup_start)
-                )
-                dataintegration.shutdown_dataloaders(timeout=min(1.0, remaining_time))
-                cleanup_count += 1
-            except Exception as e:
-                print(e)
-
-        # Just signal daemon threads to stop - don't wait for them
-        if "api_server" in locals() and api_server:
-            try:
-                api_server.stop()  # Quick signal, no waiting
-                cleanup_count += 1
-            except Exception as e:
-                print(e)
-
-        # Run integration cleanup (but with timeout)
-        if "integration_loader" in locals() and integration_loader:
-            if time.time() - cleanup_start < max_cleanup_time - 0.5:
-                try:
-                    integration_loader.run_cleanup_hooks()
-                    cleanup_count += 1
-                except Exception as e:
-                    print(e)
-
-        # Clean termination of multiprocessing resources
-        try:
-            import multiprocessing
-
-            # Get active children and terminate them cleanly
-            active_children = multiprocessing.active_children()
-            if active_children:
-                cleanup_count += len(active_children)
-                for child in active_children:
-                    try:
-                        child.terminate()
-                        child.join(
-                            timeout=0.01
-                        )  # Very brief wait for clean termination
-                    except Exception as e:
-                        print(e)
-
-            # Force close any remaining multiprocessing resources
-            # This helps prevent the semaphore leak warnings
-            multiprocessing.resource_tracker._resource_tracker = None
-            multiprocessing.resource_tracker._fd = None
-        except Exception as e:
-            print(e)
-
-        # Quick exit - don't wait around
-        remaining = max_cleanup_time - (time.time() - cleanup_start)
-        if remaining > 0:
-            time.sleep(min(0.01, remaining))  # Tiny pause
-
-        # Print clean shutdown message if we cleaned anything
-        if cleanup_count > 0:
-            print(f"[Shutdown] Cleaned up {cleanup_count} resources")
-
-        # Force exit to avoid C++ runtime errors from hanging threads
-        # This is aggressive but prevents "terminate called without an active exception"
-        import sys
-
-        sys.stdout.flush()
-        sys.stderr.flush()
-
-        # Forcefully clear the resource tracker to prevent warnings
-        try:
-            import multiprocessing.resource_tracker
-
-            multiprocessing.resource_tracker._resource_tracker = None
-        except Exception as e:
-            print(e)
-
-        os._exit(0)  # Hard exit with success code
 
 
 if __name__ == "__main__":

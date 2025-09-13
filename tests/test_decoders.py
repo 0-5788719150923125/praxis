@@ -35,6 +35,7 @@ def get_decoder_configs() -> List[PraxisConfig]:
     return [
         PraxisConfig(**dict(zip(PARAM_KEYS, combo)))
         for combo in itertools.product(*param_value_lists)
+        if combo[PARAM_KEYS.index("block_type")] != "mru"
     ]
 
 

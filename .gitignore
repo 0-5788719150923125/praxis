@@ -32,3 +32,7 @@ experiments/*.yml
 environments/*.yml
 !environments/dev.yml
 !environments/README.md
+
+# AI - ignore common agents
+CLAUDE.md
+GEMINI.md
