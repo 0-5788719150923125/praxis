@@ -10,7 +10,7 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 ## description
 
-The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), we are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
+The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). We are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at any scale. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
 
 <details>
 

@@ -2,6 +2,7 @@
 
 import atexit
 import logging
+import math
 import random
 import shutil
 import sys
@@ -54,6 +55,10 @@ class TerminalDashboard:
         self.previous_frame = None
         self.fullscreen_log_mode = False  # Flag for fullscreen log mode
         self.log_scroll_offset = 0  # Scroll position for fullscreen log view
+
+        # Correlation animation state
+        self.correlation_frame = 0  # Frame counter for animations
+        self.correlation_phase = 0.0  # Phase for oscillations
 
         # I/O management
         self.original_stdout = sys.stdout
@@ -441,9 +446,41 @@ class TerminalDashboard:
                 right_content = "═" * right_width
 
             elif i == (height // 2):
+                # Update animation state
+                self.correlation_frame += 1
+
+                # Polarity changes - same as before (10% chance)
                 if random.random() < 0.1:
                     self.state.sign = -1 * self.state.sign
-                value = "+" if self.state.sign == 1 else "-"
+
+                # Create oscillating patterns with varying frequencies
+                # Primary wave - slow expansion/contraction
+                primary_wave = math.sin(self.correlation_frame * 0.05)
+
+                # Secondary wave - faster oscillation that modulates the primary
+                secondary_wave = math.sin(self.correlation_frame * 0.15) * 0.3
+
+                # Tertiary wave - even faster, creates "breathing" effect
+                tertiary_wave = math.sin(self.correlation_frame * 0.25) * 0.2
+
+                # Combine waves with phase shifting for more complex patterns
+                self.correlation_phase += 0.02 + (math.sin(self.correlation_frame * 0.01) * 0.01)
+                phase_shift = math.sin(self.correlation_phase) * 0.5
+
+                # Calculate final amplitude (1-10 symbols, weighted towards fewer)
+                combined = primary_wave + secondary_wave + tertiary_wave + phase_shift
+                # Normalize to 0-1 range
+                normalized = (combined + 2.0) / 4.0
+                # Use a power function to bias towards lower values
+                # Squaring makes lower values more common
+                weighted = normalized ** 1.5  # Power of 1.5 gives nice distribution
+                # Map to 1-10 symbols
+                num_symbols = 1 + int(weighted * 9)
+
+                # Build the symbol string
+                symbol = "+" if self.state.sign == 1 else "-"
+                value = symbol * num_symbols
+
                 # Split the left section into two parts
                 attention_label = f" CORRELATION: {value}"
                 info_label = " INFO"
