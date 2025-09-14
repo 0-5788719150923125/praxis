@@ -7,7 +7,7 @@ import torch
 from lightning.pytorch import LightningModule
 from torcheval.metrics.functional import perplexity
 
-from praxis.trainers.compile import try_compile_model, try_compile_optimizer
+from praxis.trainers.compile import try_compile
 
 
 class BackpropagationTrainer(LightningModule):
@@ -32,10 +32,10 @@ class BackpropagationTrainer(LightningModule):
         )
 
         # Try to compile the model automatically with fallback
-        self.model = try_compile_model(model, hparams)
+        self.model = try_compile(model, hparams)
 
         # Try to compile the optimizer as well
-        self.optimizer = try_compile_optimizer(optimizer, hparams)
+        self.optimizer = try_compile(optimizer, hparams)
 
     def forward(self, **kwargs):
         """Forward pass that accepts keyword arguments directly."""

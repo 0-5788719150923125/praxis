@@ -8,7 +8,7 @@ from praxis.trainers.base import (
     set_seed,
     reset_random_state,
 )
-from praxis.trainers.compile import try_compile_model, try_compile_optimizer
+from praxis.trainers.compile import try_compile
 from praxis.trainers.backpropagation import BackpropagationTrainer
 from praxis.trainers.module import BaseTrainingModule
 from praxis.trainers.datamodule import BaseDataModule
@@ -94,8 +94,7 @@ __all__ = [
     "reset_random_state",
     "seed_everything",
     "reset_seed",
-    "try_compile_model",
-    "try_compile_optimizer",
+    "try_compile",
     # Trainers
     "BackpropagationTrainer",
     "MonoForwardPipelineModule",
