@@ -355,7 +355,7 @@ class Integration(BaseIntegration):
 
             # Store ngrok info in Flask app config for middleware to access
             try:
-                import api
+                from praxis import api
 
                 # Store the ngrok information in app config
                 api.app.config["ngrok_url"] = base_url

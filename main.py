@@ -32,8 +32,6 @@ import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-# Local application imports
-from api import APIServer
 from cli import (
     create_praxis_config,
     get_cli_args,
@@ -42,6 +40,9 @@ from cli import (
     log_command,
 )
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
+
+# Local application imports
+from praxis.api import APIServer
 from praxis.callbacks import (
     AccumulationSchedule,
     PeriodicEvaluation,
@@ -51,11 +52,11 @@ from praxis.callbacks import (
     create_printing_progress_bar,
 )
 from praxis.data import get_datamodules
+from praxis.data.runs import RunManager
 from praxis.environments import EnvironmentFeatures
 from praxis.generation import Generator
 from praxis.interface import TerminalDashboard
 from praxis.optimizers import get_optimizer, get_optimizer_profile, get_parameter_stats
-from praxis.data.runs import RunManager
 from praxis.schedulers import get_scheduler_func
 from praxis.tokenizers import create_tokenizer
 from praxis.trainers import (
@@ -342,10 +343,10 @@ def main():
                 dashboard = None
 
         # Force reload of api integration to pick up any recent changes
-        import api
+        from praxis import api
 
         importlib.reload(api)
-        from api import APIServer
+        from praxis.api import APIServer
 
         api_server = APIServer(
             generator,
