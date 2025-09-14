@@ -232,6 +232,26 @@ class Generator:
                     generated_tokens[0], skip_special_tokens=skip_special_tokens
                 )
 
+        # Clean up any malformed tool call closing tags before processing
+        # Fix truncated </tool_call tags (e.g., "</tool_call" without the closing >)
+        if "</tool_call" in return_text and not "</tool_call>" in return_text:
+            # Find the truncated tag and fix it
+            return_text = return_text.replace("</tool_call", "</tool_call>")
+            # Remove any extra content after the fixed tag that shouldn't be there
+            # Look for patterns like "</tool_call>[SEP][BOS]assistant>"
+            # Remove assistant message with just ">" or similar fragments after tool call
+            return_text = re.sub(
+                r'</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]',
+                '</tool_call>',
+                return_text
+            )
+            # Also handle cases without the special tokens
+            return_text = re.sub(
+                r'</tool_call>\s*assistant\s*>\s*',
+                '</tool_call>',
+                return_text
+            )
+
         # Check if the generated text contains an unprocessed tool call
         unprocessed_call = self._get_unprocessed_tool_call(return_text)
 
@@ -275,6 +295,12 @@ class Generator:
                     assistant_content = assistant_content.replace(
                         prompt_text, ""
                     ).strip()
+
+                # Clean up any fragments like lone ">" that might be in the content
+                # Remove patterns like "[SEP][BOS]assistant>[SEP]" or just ">"
+                assistant_content = re.sub(r'\[SEP\]\[BOS\]assistant\s*>\s*\[SEP\]', '', assistant_content)
+                assistant_content = re.sub(r'^\s*>\s*$', '', assistant_content)
+                assistant_content = assistant_content.strip()
 
                 # Add assistant message if there's content
                 if assistant_content:
