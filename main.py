@@ -63,6 +63,7 @@ from praxis.trainers import (
     disable_warnings,
     seed_everything,
 )
+from praxis.trainers.capabilities import get_trainer_capabilities
 from praxis.utils import (
     check_for_updates,
     find_latest_checkpoint,
@@ -214,9 +215,17 @@ def main():
         max_epochs=-1,
         reload_dataloaders_every_n_epochs=0,
         precision="32-true",
-        # Gradient clipping not supported with manual optimization (mono_forward)
-        gradient_clip_val=1.0 if trainer_type != "mono_forward" else None,
-        gradient_clip_algorithm="norm" if trainer_type != "mono_forward" else None,
+        # Gradient clipping based on trainer capabilities
+        gradient_clip_val=(
+            1.0
+            if get_trainer_capabilities(trainer_type).supports_gradient_clipping
+            else None
+        ),
+        gradient_clip_algorithm=(
+            "norm"
+            if get_trainer_capabilities(trainer_type).supports_gradient_clipping
+            else None
+        ),
         benchmark=True,
         deterministic=False,
         enable_checkpointing=True,
@@ -382,36 +391,30 @@ def main():
     eval_tasks = processed_args.get("eval_tasks", None)
     debug = processed_args.get("debug", False)
 
-    # Configure callbacks list based on trainer type
-    if trainer_type == "mono_forward":
-        # Manual optimization doesn't support AccumulationSchedule
-        train_params["callbacks"] = [
-            SignalHandlerCallback(),  # Handle signals gracefully
-            checkpoint_callback,
-            PeriodicEvaluation(
-                eval_every=eval_every,
-                eval_tasks=eval_tasks,
-                model=model,
-                device=device,
-                vocab_size=vocab_size,
-                debug=debug,
-            ),
-        ]
-    else:
-        # Automatic optimization supports all callbacks
-        train_params["callbacks"] = [
-            SignalHandlerCallback(),  # Handle signals gracefully
-            checkpoint_callback,
-            AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"]),
-            PeriodicEvaluation(
-                eval_every=eval_every,
-                eval_tasks=eval_tasks,
-                model=model,
-                device=device,
-                vocab_size=vocab_size,
-                debug=debug,
-            ),
-        ]
+    # Configure callbacks list - always include core callbacks
+    train_params["callbacks"] = [
+        SignalHandlerCallback(),  # Handle signals gracefully
+        checkpoint_callback,
+    ]
+
+    # Add AccumulationSchedule only if trainer supports it
+    trainer_caps = get_trainer_capabilities(trainer_type)
+    if trainer_caps.supports_accumulation_schedule:
+        train_params["callbacks"].append(
+            AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
+        )
+
+    # Add evaluation callback
+    train_params["callbacks"].append(
+        PeriodicEvaluation(
+            eval_every=eval_every,
+            eval_tasks=eval_tasks,
+            model=model,
+            device=device,
+            vocab_size=vocab_size,
+            debug=debug,
+        )
+    )
 
     # Add progress bar if not using dashboard
     if progress_bar is not None:
@@ -457,11 +460,6 @@ def main():
         )
     )
 
-    # from praxis.trainers.compile import try_compile
-
-    # # Try to compile the model and optimizer
-    # model = try_compile(model, hparams)
-    # optimizer = try_compile(optimizer, hparams)
     # Try to get logger from integrations (e.g., wandb)
     integration_logger = None
     for provider in integration_loader.get_logger_providers():
@@ -512,10 +510,10 @@ def main():
 
     # Print final training configuration
     print(
-        f"[TRAIN] Starting with {reduced} parameters, {optimizer_config['optimizer_name']} optimizer"
+        f"[TRAINING] Starting with {reduced} parameters, {optimizer_config['optimizer_name']} optimizer"
     )
     if api_server:
-        print(f"[TRAIN] API available at http://{api_server.get_api_addr()}/")
+        print(f"[TRAINING] API available at http://{api_server.get_api_addr()}/")
 
     # Install a simple signal handler for post-training cleanup
     cleanup_interrupted = False

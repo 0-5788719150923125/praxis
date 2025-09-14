@@ -54,7 +54,7 @@ def get_datamodules(
     for c in config["primary"]:
         # load configs for huggingface datasets
         print(
-            "[DATA][TRAIN] "
+            "[DATA] "
             + str(
                 dict(path=c["path"], weight=c["weight"], keys=c.get("keys", ["text"]))
             )
@@ -113,7 +113,7 @@ def get_datamodules(
     validation_data = []
     if len(config["validation"]) > 0:
         for c in config["validation"]:
-            print("[DATA][VALIDATION] " + str(dict(path=c["path"], weight=c["weight"])))
+            print("[VALIDATION] " + str(dict(path=c["path"], weight=c["weight"])))
             validation_data.append(
                 get_dataset("huggingface", tokenizer, seed, c, *args)
             )

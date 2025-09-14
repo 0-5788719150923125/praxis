@@ -4,6 +4,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
+from .capabilities import get_trainer_capabilities
+
 
 def create_logger(
     log_dir: str = ".",
@@ -188,8 +190,10 @@ def create_trainer_with_module(
         trainer_class = trainer_class()  # Call the lazy loader
     print(f"[TRAINER] Using {trainer_type} trainer: {trainer_class.__name__}")
 
-    # Handle different trainer types
-    if trainer_type == "mono_forward":
+    # Handle different trainer types based on capabilities
+    capabilities = get_trainer_capabilities(trainer_type)
+
+    if capabilities.requires_custom_init and trainer_type == "mono_forward":
         from praxis.trainers.trainer import Trainer
 
         # Extract optimizer config from model
