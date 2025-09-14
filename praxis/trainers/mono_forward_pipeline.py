@@ -312,8 +312,6 @@ class MonoForwardPipelineModule(LightningModule):
     The training_step just feeds data and collects results asynchronously.
     """
 
-    can_compile = False
-
     def __init__(
         self,
         model: nn.Module,

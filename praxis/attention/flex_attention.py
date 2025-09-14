@@ -18,8 +18,6 @@ class FlexAttention(nn.Module):
     Provides efficient attention computation with customizable block masking.
     """
 
-    can_compile = False  # FlexAttention with score_mod triggers FX tracing errors in torch.compile
-
     def __init__(self, config) -> None:
         """
         Initialize FlexAttention module.

@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from unittest.mock import patch, MagicMock
 
-from praxis.trainers.compile import try_compile, _check_module_compilability
+from praxis.trainers.compile import try_compile
 from praxis import PraxisConfig, PraxisForCausalLM
 
 
@@ -54,41 +54,6 @@ class TestCompilation:
             # Should return the original model when compilation fails
             assert compiled is model
 
-    def test_check_module_compilability(self):
-        """Test that _check_module_compilability works correctly."""
-
-        class NonCompilableModule(nn.Module):
-            can_compile = False
-            def forward(self, x):
-                return x
-
-        class CompilableModule(nn.Module):
-            def forward(self, x):
-                return x
-
-        # Test with non-compilable module
-        model = nn.Sequential(
-            nn.Linear(10, 10),
-            NonCompilableModule(),
-            nn.Linear(10, 10)
-        )
-
-        can_compile, module_path, module_type = _check_module_compilability(model)
-        assert not can_compile
-        assert module_type == "NonCompilableModule"
-        assert module_path is not None
-
-        # Test with compilable module
-        model = nn.Sequential(
-            nn.Linear(10, 10),
-            CompilableModule(),
-            nn.Linear(10, 10)
-        )
-
-        can_compile, module_path, module_type = _check_module_compilability(model)
-        assert can_compile
-        assert module_path is None
-        assert module_type is None
 
 
 if __name__ == "__main__":

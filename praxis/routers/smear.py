@@ -30,7 +30,6 @@ class SMEAR(nn.Module):
     """
 
     __version__ = "0.3.0"
-    can_compile = False  # Incompatible with torch.compile due to functional_call usage
 
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
