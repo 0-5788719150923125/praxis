@@ -55,6 +55,7 @@ from praxis.environments import EnvironmentFeatures
 from praxis.generation import Generator
 from praxis.interface import TerminalDashboard
 from praxis.optimizers import get_optimizer, get_optimizer_profile, get_parameter_stats
+from praxis.data.runs import RunManager
 from praxis.schedulers import get_scheduler_func
 from praxis.tokenizers import create_tokenizer
 from praxis.trainers import (
@@ -129,12 +130,25 @@ def main():
     seed = processed_args["seed"]
     encoder_type = processed_args.get("encoder_type")
     vocab_size = processed_args["vocab_size"]
-    cache_dir = processed_args["cache_dir"]
-    if EnvironmentFeatures.is_enabled("cache_isolation"):
-        active_env = EnvironmentFeatures.get_active_environment()
-        if active_env:
-            cache_dir = os.path.join(cache_dir, f"env_{active_env}")
-            print(f"[ENVIRONMENT] Using isolated cache directory: {cache_dir}")
+    base_cache_dir = processed_args["cache_dir"]
+
+    # Check for --list-runs first
+    if processed_args.get("list_runs", False):
+        run_manager = RunManager(base_cache_dir)
+        runs = run_manager.list_runs()
+        if not runs:
+            print("No runs found.")
+        else:
+            print("\nAvailable runs:")
+            for run in runs:
+                status = "[CURRENT]" if run.get("is_current") else ""
+                preserved = "[PRESERVED]" if run.get("preserve") else ""
+                created = run.get("created", "Unknown")
+                size = run.get("size_human", "Unknown")
+                print(
+                    f"  {run['truncated_hash']} - {size} - Created: {created} {preserved} {status}"
+                )
+        return 0
     optimizer = processed_args["optimizer"]
     fixed_schedule = processed_args.get("fixed_schedule", False)
     schedule_free = processed_args.get("schedule_free", False)
@@ -163,8 +177,31 @@ def main():
     dropout = processed_args.get("dropout", 0.1)
     trainer_type = processed_args.get("trainer_type", "backpropagation")
     pipeline_depth = processed_args.get("pipeline_depth", 4)
+    preserve = processed_args.get("preserve", False)
 
     (full_command, args_hash, truncated_hash) = log_command()
+
+    # Initialize RunManager
+    run_manager = RunManager(base_cache_dir)
+
+    # Handle reset BEFORE setting up the run directory
+    # When --reset is used with a specific configuration, we always force the reset
+    # (preserve flag only protects from bulk/general resets, not explicit ones)
+    if reset:
+        run_manager.reset_run(truncated_hash, force=True)
+
+    # Now set up the namespaced directory
+    run_dir, is_existing_run = run_manager.setup_run(
+        truncated_hash, full_command, args_hash, preserve
+    )
+
+    # Update cache_dir to point to the run-specific directory
+    cache_dir = str(run_dir)
+
+    if is_existing_run:
+        print(f"[RUN] Resuming existing run: {truncated_hash}")
+    else:
+        print(f"[RUN] Starting new run: {truncated_hash}")
 
     # Set seeds for reproducibility
     seed_everything(seed, workers=True)
@@ -269,10 +306,6 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     reduced = str(int(total_params / 10**6)) + "M"
     hparams["num_params"] = reduced
-
-    # File cleanup
-    if reset:
-        perform_reset(cache_dir, truncated_hash, integration_loader)
 
     ckpt_path = None
     # Check for force_reset feature or explicit reset flag

@@ -4,7 +4,7 @@ from typing import List
 import pytest
 import torch
 
-from praxis.tokenizer_praxis import ByteLevelTokenizer
+from praxis.tokenizers.byte_level import ByteLevelTokenizer
 
 TOKENIZER_TYPES = [ByteLevelTokenizer]
 

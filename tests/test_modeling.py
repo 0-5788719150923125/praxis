@@ -212,7 +212,7 @@ def encoder_config():
 @pytest.fixture
 def byte_tokenizer():
     """Create a ByteLevelTokenizer instance for testing with the encoder."""
-    from praxis.tokenizer_praxis import ByteLevelTokenizer
+    from praxis.tokenizers.byte_level import ByteLevelTokenizer
 
     return ByteLevelTokenizer()
 

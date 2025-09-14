@@ -38,6 +38,8 @@ from praxis.trainers import TRAINER_REGISTRY
 # These are typically runtime/debugging flags that don't affect model architecture
 DEFAULT_EXCLUDE_FROM_HASH = [
     "--reset",
+    "--preserve",
+    "--list-runs",
     "--debug",
     "--ngrok",
     "--wandb",
@@ -787,6 +789,18 @@ other_group.add_argument(
     action="store_true",
     default=False,
     help="Reset the checkpoint",
+)
+other_group.add_argument(
+    "--preserve",
+    action="store_true",
+    default=False,
+    help="Mark this run as preserved (protected from --reset)",
+)
+other_group.add_argument(
+    "--list-runs",
+    action="store_true",
+    default=False,
+    help="List all available runs and exit",
 )
 
 
