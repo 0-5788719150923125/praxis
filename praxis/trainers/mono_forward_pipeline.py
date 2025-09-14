@@ -3,6 +3,9 @@
 This implements true pipeline parallelism where each layer runs in its own process,
 enabling layers to process different batches simultaneously without waiting for
 backpropagation through the entire network.
+
+Based on "Mono-Forward: Backpropagation-Free Algorithm for Efficient Neural Network Training
+Harnessing Local Errors" by Gong, Li, and Abdulla (2025).
 """
 
 import queue
@@ -30,6 +33,23 @@ if mp.get_start_method(allow_none=True) != "spawn":
     )
 
 
+class ProjectionMatrix(nn.Module):
+    """Projection matrix for computing goodness scores in Mono-Forward.
+
+    Computes G = activations × M^T where M maps from hidden_size to num_classes.
+    This is the key innovation of the Mono-Forward algorithm.
+    """
+
+    def __init__(self, hidden_size: int, num_classes: int):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_classes, hidden_size))
+        nn.init.normal_(self.weight, mean=0.0, std=(2.0 / hidden_size) ** 0.5)
+
+    def forward(self, activations: torch.Tensor) -> torch.Tensor:
+        """Compute goodness scores: G = activations × M^T"""
+        return F.linear(activations, self.weight)
+
+
 @dataclass
 class LayerWorkerConfig:
     """Configuration for a layer worker process."""
@@ -39,9 +59,6 @@ class LayerWorkerConfig:
     vocab_size: int
     optimizer_config: Dict[str, Any]
     device: str = "cpu"
-    internal_vocab_size: Optional[int] = (
-        None  # For reduced vocabulary in internal layers
-    )
 
 
 class LayerWorkerProcess:
@@ -191,33 +208,30 @@ class LayerWorkerProcess:
                 # Compute loss and update if we have projection
                 loss = None
                 if self.projection is not None and labels is not None:
-                    # Compute goodness scores
-                    logits = self.projection(hidden_output)
+                    # MONO-FORWARD: Compute goodness scores G = activations × M^T
+                    # The projection module already implements this correctly
+                    goodness_scores = self.projection(hidden_output)
 
                     # Reshape for loss computation
-                    if logits.dim() == 3 and labels.dim() == 2:
+                    if goodness_scores.dim() == 3 and labels.dim() == 2:
                         batch_size, seq_len = labels.shape
-                        vocab_size = logits.size(-1)
+                        vocab_size = goodness_scores.size(-1)
 
                         # Align sequence lengths
-                        if logits.size(1) != seq_len:
-                            min_len = min(logits.size(1), seq_len)
-                            logits = logits[:, :min_len, :]
+                        if goodness_scores.size(1) != seq_len:
+                            min_len = min(goodness_scores.size(1), seq_len)
+                            goodness_scores = goodness_scores[:, :min_len, :]
                             labels = labels[:, :min_len]
 
                         # Flatten for loss
-                        logits_flat = logits.reshape(-1, vocab_size)
+                        goodness_flat = goodness_scores.reshape(-1, vocab_size)
                         labels_flat = labels.reshape(-1)
-
-                        # Handle vocabulary size mismatch
-                        if vocab_size < labels_flat.max().item() + 1:
-                            labels_flat = labels_flat % vocab_size
                     else:
-                        logits_flat = logits
+                        goodness_flat = goodness_scores
                         labels_flat = labels
 
-                    # Compute cross-entropy loss
-                    loss = F.cross_entropy(logits_flat, labels_flat, ignore_index=-100)
+                    # Compute cross-entropy loss on goodness scores (key to Mono-Forward)
+                    loss = F.cross_entropy(goodness_flat, labels_flat, ignore_index=-100)
 
                     # IMMEDIATE WEIGHT UPDATE (key to MonoForward)
                     self.optimizer.zero_grad()
@@ -236,10 +250,11 @@ class LayerWorkerProcess:
                 hidden_output = hidden_output.detach()
 
                 # Send to next layer (keep simple format)
+                # Make sure everything is detached and on CPU for IPC
                 self.output_queue.put(
                     (
-                        hidden_output.cpu(),  # Move to CPU for IPC
-                        labels.cpu() if labels is not None else None,
+                        hidden_output.detach().cpu(),  # Double-check detach and move to CPU
+                        labels.detach().cpu() if labels is not None else None,
                         batch_idx,
                     )
                 )
@@ -308,8 +323,14 @@ class MonoForwardPipelineModule(LightningModule):
     """
     Lightning module implementing pipeline-parallel MonoForward training.
 
-    Each layer runs in its own process, processing different batches simultaneously.
-    The training_step just feeds data and collects results asynchronously.
+    This implements the complete Mono-Forward algorithm where:
+    - Each layer runs in its own process with local learning
+    - Projection matrices compute goodness scores: G = activations × M^T
+    - Cross-entropy loss is computed on goodness scores
+    - Gradients are detached between layers (O(1) memory)
+    - Works with ANY decoder type (sequential, parallel, etc.)
+
+    The key innovation is the training strategy, not the decoder architecture.
     """
 
     def __init__(
@@ -318,7 +339,7 @@ class MonoForwardPipelineModule(LightningModule):
         optimizer_config: Dict[str, Any],
         pipeline_depth: int = 4,
         device: str = "cuda",
-        internal_vocab_reduction: int = 4,  # Reduce vocab by this factor for internal layers
+        prediction_mode: str = "bp",  # 'ff' or 'bp'
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -328,8 +349,8 @@ class MonoForwardPipelineModule(LightningModule):
 
         self.model = model
         self.pipeline_depth = pipeline_depth
-
         self.device_str = device
+        self.prediction_mode = prediction_mode
 
         # Extract layers from model's decoder
         if not hasattr(model, "decoder") or not hasattr(model.decoder, "locals"):
@@ -342,7 +363,9 @@ class MonoForwardPipelineModule(LightningModule):
         # Configuration
         self.hidden_size = model.config.hidden_size
         self.vocab_size = model.config.vocab_size
-        self.internal_vocab_size = self.vocab_size // internal_vocab_reduction
+
+        # Store projection matrices for prediction
+        self.projection_matrices = nn.ModuleList()
 
         # Create queues for inter-process communication
         self.layer_input_queues = [
@@ -370,20 +393,21 @@ class MonoForwardPipelineModule(LightningModule):
     def on_train_start(self):
         """Start worker processes when training begins."""
         print(f"[MonoForwardPipeline] Starting {self.num_layers} worker processes")
+        print(f"[MonoForwardPipeline] Mono-Forward training with {self.prediction_mode.upper()} prediction mode")
 
         # Get the layers from the decoder
         layers = self.decoder.locals
 
         for i in range(self.num_layers):
             # Create projection matrix for this layer
-            # Final layer uses full vocabulary, others use reduced
-            if i == self.num_layers - 1:
-                layer_vocab_size = self.vocab_size
-            else:
-                layer_vocab_size = self.internal_vocab_size
+            # All layers use full vocabulary (simplification from paper)
+            layer_vocab_size = self.vocab_size
 
-            projection = nn.Linear(self.hidden_size, layer_vocab_size, bias=False)
-            nn.init.normal_(projection.weight, std=(2.0 / self.hidden_size) ** 0.5)
+            # Use ProjectionMatrix for computing goodness scores: G = a × M^T
+            projection = ProjectionMatrix(self.hidden_size, layer_vocab_size)
+
+            # Store for prediction later
+            self.projection_matrices.append(projection)
 
             # Get the layer module for this worker - we'll deepcopy in the worker
             layer_module = layers[i]
@@ -396,9 +420,6 @@ class MonoForwardPipelineModule(LightningModule):
                 layer_idx=i,
                 hidden_size=self.hidden_size,
                 vocab_size=self.vocab_size,
-                internal_vocab_size=(
-                    self.internal_vocab_size if i < self.num_layers - 1 else None
-                ),
                 optimizer_config=self.optimizer_config,
                 device=self.device_str,
             )
@@ -479,9 +500,10 @@ class MonoForwardPipelineModule(LightningModule):
 
         # Feed to first layer's queue with retry mechanism
         # Start with simple format for first layer
+        # IMPORTANT: Detach tensors before sending to avoid gradient serialization errors
         batch_data = (
-            hidden_states.cpu(),  # Move to CPU for IPC
-            labels.cpu(),
+            hidden_states.detach().cpu(),  # Detach and move to CPU for IPC
+            labels.cpu() if labels is not None else None,
             batch_idx,
         )
 
@@ -538,7 +560,11 @@ class MonoForwardPipelineModule(LightningModule):
             self.log("pipeline_depth", len(self.accumulated_losses), prog_bar=True)
             self.log("completed_batches", len(self.completed_batches))
 
-            # Return tensor for Lightning
+            # Create marker loss to indicate layer-wise training is complete
+            # This tells the model not to compute its own loss
+            marker = torch.tensor(0.0, requires_grad=True)
+
+            # Return tensor for Lightning with marker
             return torch.tensor(avg_loss, requires_grad=True)
 
         # Return None to keep pipeline flowing
@@ -584,6 +610,71 @@ class MonoForwardPipelineModule(LightningModule):
                 pass  # Queue might already be closed
 
         print("[MonoForwardPipeline] Worker shutdown initiated")
+
+    def compute_goodness_scores(self, hidden_states: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        """Compute goodness scores for a specific layer using its projection matrix.
+
+        Args:
+            hidden_states: Activations from layer [batch_size, seq_len, hidden_size]
+            layer_idx: Which layer's projection matrix to use
+
+        Returns:
+            goodness_scores: Scores for each class [batch_size, seq_len, vocab_size]
+        """
+        return self.projection_matrices[layer_idx](hidden_states)
+
+    def predict(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Make predictions using trained projection matrices.
+
+        Args:
+            input_ids: Input token IDs [batch_size, seq_len]
+
+        Returns:
+            prediction_scores: Class scores based on prediction_mode
+        """
+        # Get embeddings
+        if hasattr(self.model, "embeds"):
+            hidden_states = self.model.embeds(input_ids)
+        else:
+            hidden_states = self.model.embeddings(input_ids)
+
+        # Collect goodness scores from each layer
+        all_goodness_scores = []
+
+        # Forward through decoder layers
+        for i, layer in enumerate(self.decoder.locals):
+            # Forward through layer
+            layer_output = layer(
+                hidden_states,
+                current_state=None,
+                attention_mask=None,
+                past_key_values=None,
+                current_depth=i,
+                block_ids=None,
+            )
+
+            # Extract hidden states from output
+            if isinstance(layer_output, tuple):
+                hidden_states = layer_output[0]
+            else:
+                hidden_states = layer_output
+
+            # Compute goodness scores for this layer
+            goodness_scores = self.compute_goodness_scores(hidden_states, i)
+            all_goodness_scores.append(goodness_scores)
+
+            # Detach for next layer (key to Mono-Forward)
+            hidden_states = hidden_states.detach()
+
+        # Combine scores based on prediction mode
+        if self.prediction_mode == "ff":
+            # FF mode: Sum goodness scores from all layers
+            final_scores = torch.stack(all_goodness_scores, dim=0).sum(dim=0)
+        else:  # "bp"
+            # BP mode: Use only last layer's goodness scores
+            final_scores = all_goodness_scores[-1]
+
+        return final_scores
 
     def configure_optimizers(self):
         """

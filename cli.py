@@ -347,6 +347,20 @@ training_group.add_argument(
     default="backpropagation",
     help="Training strategy to use (backpropagation: standard gradient descent, mono_forward: process-based pipeline parallelism with O(1) memory)",
 )
+# Mono-Forward specific arguments
+training_group.add_argument(
+    "--mono-forward-prediction-mode",
+    type=str,
+    choices=["ff", "bp"],
+    default="bp",
+    help="Mono-Forward prediction mode: 'ff' sums all layer goodness scores, 'bp' uses only last layer (default: bp)",
+)
+training_group.add_argument(
+    "--mono-forward-vocab-reduction",
+    type=int,
+    default=4,
+    help="Factor to reduce vocabulary size for internal Mono-Forward layers (default: 4)",
+)
 training_group.add_argument(
     "--max-steps",
     type=int,

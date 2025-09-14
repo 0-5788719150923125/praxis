@@ -315,7 +315,14 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         loss = 0
         if labels is not None:
-            if self.config.bidirectional:
+            # Check if trainer already computed layer-wise losses (e.g., MonoForward trainer)
+            if "_layer_wise_complete" in outputs.losses.loss_dict:
+                # Trainer handled its own training, use strategy to combine losses
+                layer_losses = [v for k, v in outputs.losses.loss_dict.items()
+                               if k != "_layer_wise_complete" and k != "main"]
+                if layer_losses:
+                    loss = self.strategy(layer_losses)
+            elif self.config.bidirectional:
                 main_loss = self._compute_bidirectional_loss(
                     logits=logits,
                     labels=labels,
@@ -324,6 +331,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     input_ids=input_ids,
                     backward_logits=backward_logits,
                 )
+                loss = outputs.losses.add_loss("main", main_loss)
             else:
                 main_loss = self._compute_loss(
                     logits=logits,
@@ -332,7 +340,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                     classifier=classifier,
                     input_ids=input_ids,
                 )
-            loss = outputs.losses.add_loss("main", main_loss)
+                loss = outputs.losses.add_loss("main", main_loss)
 
         # We omit auxiliary losses during validation and inference
         if self.training and labels is not None:

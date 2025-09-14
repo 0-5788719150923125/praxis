@@ -503,6 +503,7 @@ def main():
         encoder_type=encoder_type,
         byte_latent=byte_latent,
         pipeline_depth=pipeline_depth,
+        device=device,
     )
 
     # Show launch animation just before training begins

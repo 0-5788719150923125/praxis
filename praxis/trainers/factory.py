@@ -195,18 +195,25 @@ def create_trainer_with_module(
 
     if capabilities.requires_custom_init and trainer_type == "mono_forward":
         from praxis.trainers.trainer import Trainer
+        from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
 
         # Extract optimizer config from model
         optimizer_config = {}
         if hasattr(model, "config") and hasattr(model.config, "optimizer_config"):
             optimizer_config = model.config.optimizer_config
 
-        # Create the Lightning module
+        # Create the Lightning module - properly get device string
+        device_str = str(kwargs.get("device", "cpu"))
+        if hasattr(device_str, "type"):
+            # If it's a torch.device object, get the string representation
+            device_str = str(device_str)
+
         lightning_module = MonoForwardPipelineModule(
             model=model,
             optimizer_config=optimizer_config,
             pipeline_depth=kwargs.get("pipeline_depth", 4),
-            device=kwargs.get("device", "cuda"),
+            device=device_str,
+            prediction_mode=hparams.get("mono_forward_prediction_mode", "bp"),
         )
 
         # Create Lightning Trainer
