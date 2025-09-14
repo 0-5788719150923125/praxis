@@ -1,5 +1,5 @@
 #!/bin/bash
-# Praxis Launch Script - Simple router for Praxis commands
+# Praxis Launch Script - Simple wrapper for virtual environment management
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,55 +28,9 @@ if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
     fi
 fi
 
-# Check if any arguments were provided
-if [ $# -eq 0 ]; then
-    # No arguments - run the default training script
-    python "$SCRIPT_DIR/main.py"
-    deactivate
-    exit $?
-fi
-
-# Parse the first argument as the command
-COMMAND="$1"
-shift  # Remove the first argument
-
-# Route based on command
-case "$COMMAND" in
-    tokenizer|tokenizers|train-tokenizer)
-        # Tokenizer training
-        python -m praxis.tokenizers.train "$@"
-        EXIT_CODE=$?
-        ;;
-    
-    run|train)
-        # Explicit training command
-        python "$SCRIPT_DIR/main.py" "$@"
-        EXIT_CODE=$?
-        ;;
-    
-    --help|-h|help)
-        # First show main.py help
-        python "$SCRIPT_DIR/main.py" --help
-        
-        # Then append launcher-specific commands
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "launcher commands:"
-        echo "  tokenizer               Train or manage tokenizers"
-        echo ""
-        echo "launcher examples:"
-        echo "  ./launch tokenizer --help   # Show tokenizer options"
-        EXIT_CODE=0
-        ;;
-    
-    *)
-        # Unknown command - pass all args to main.py
-        # This allows "./launch --dev" to work
-        python "$SCRIPT_DIR/main.py" "$COMMAND" "$@"
-        EXIT_CODE=$?
-        ;;
-esac
+# Pass all arguments directly to main.py
+python "$SCRIPT_DIR/main.py" "$@"
+EXIT_CODE=$?
 
 # Deactivate the virtual environment and exit with the command's exit code
 deactivate

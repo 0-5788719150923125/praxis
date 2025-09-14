@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Tokenizer training module for Praxis.
 
@@ -6,7 +5,6 @@ This module provides the complete tokenizer training functionality,
 including dataset loading, training, and HuggingFace Hub integration.
 """
 
-import argparse
 import json
 import os
 import tempfile
@@ -20,73 +18,6 @@ from transformers import PreTrainedTokenizerFast
 from .standard import StandardTokenizer
 
 
-def train_tokenizer_cli():
-    """Command-line interface for training tokenizers."""
-    parser = argparse.ArgumentParser(
-        description="Train a Praxis tokenizer",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    parser.add_argument(
-        "--type",
-        type=str,
-        choices=["bpe", "unigram"],
-        default="unigram",
-        help="The type of tokenizer to train",
-    )
-    parser.add_argument(
-        "--num-examples",
-        type=int,
-        default=5_000_000,
-        help="The number of examples to train",
-    )
-    parser.add_argument(
-        "--vocab-size",
-        type=int,
-        choices=[1024, 2048, 4096, 8192, 16384, 32768, 65536],
-        default=16384,
-        help="The absolute vocab size to use",
-    )
-
-    args = parser.parse_args()
-
-    # Hardcoded dataset configuration
-    dataset_name = "HuggingFaceFW/fineweb"
-    dataset_config = "sample-350BT"
-
-    # Train the tokenizer
-    print(f"Training {args.type} tokenizer with vocab_size={args.vocab_size}...")
-    print(f"Using {args.num_examples:,} examples from {dataset_name}")
-
-    tokenizer = StandardTokenizer.train_from_dataset(
-        dataset_name=dataset_name,
-        dataset_config=dataset_config,
-        num_examples=args.num_examples,
-        vocab_size=args.vocab_size,
-        tokenizer_type=args.type,
-        dropout=0.1,
-    )
-
-    # Save the tokenizer to deterministic locations
-    base_path = Path("build/tokenizers")
-
-    # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
-    save_path = base_path / f"praxis-{args.vocab_size}-{args.type}"
-
-    os.makedirs(save_path, exist_ok=True)
-
-    tokenizer.save_pretrained(save_path)
-
-    print(f"\n✓ Tokenizer saved to:")
-    print(f"  - {save_path}")
-
-    # Always test chat template
-    test_chat_template(tokenizer)
-
-    # Always attempt to upload to HuggingFace Hub (gated by auth and user confirmation)
-    upload_to_hub(tokenizer, args.vocab_size, args.type)
-
-    return tokenizer
 
 
 def test_chat_template(tokenizer: PreTrainedTokenizerFast):
@@ -277,10 +208,3 @@ def upload_to_hub(
     print("\n✓ Chat template upload complete!")
 
 
-def main():
-    """Main entry point for the tokenizer training module."""
-    train_tokenizer_cli()
-
-
-if __name__ == "__main__":
-    main()

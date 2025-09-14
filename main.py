@@ -32,13 +32,6 @@ import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from praxis.cli import (
-    create_praxis_config,
-    get_cli_args,
-    get_processed_args,
-    integration_loader,
-    log_command,
-)
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Local application imports
@@ -50,6 +43,13 @@ from praxis.callbacks import (
     TerminalInterface,
     TimeBasedCheckpoint,
     create_printing_progress_bar,
+)
+from praxis.cli import (
+    create_praxis_config,
+    get_cli_args,
+    get_processed_args,
+    integration_loader,
+    log_command,
 )
 from praxis.data import get_datamodules
 from praxis.data.runs import RunManager
@@ -149,6 +149,61 @@ def main():
                 print(
                     f"  {run['truncated_hash']} - {size} - Created: {created} {preserved} {status}"
                 )
+        return 0
+
+    # Check for --train-tokenizer (shortcut mode)
+    if processed_args.get("train_tokenizer", False):
+        from pathlib import Path
+
+        from praxis.tokenizers.standard import StandardTokenizer
+
+        # Get tokenizer training arguments
+        tokenizer_type = processed_args.get("tokenizer_train_type", "unigram")
+        num_examples = processed_args.get("tokenizer_num_examples", 5_000_000)
+        vocab_size_for_training = processed_args.get(
+            "tokenizer_train_vocab_size", 16384
+        )
+
+        # Hardcoded dataset configuration
+        dataset_name = "HuggingFaceFW/fineweb"
+        dataset_config = "sample-350BT"
+
+        # Train the tokenizer
+        print(
+            f"Training {tokenizer_type} tokenizer with vocab_size={vocab_size_for_training}..."
+        )
+        print(f"Using {num_examples:,} examples from {dataset_name}")
+
+        tokenizer = StandardTokenizer.train_from_dataset(
+            dataset_name=dataset_name,
+            dataset_config=dataset_config,
+            num_examples=num_examples,
+            vocab_size=vocab_size_for_training,
+            tokenizer_type=tokenizer_type,
+            dropout=0.1,
+        )
+
+        # Save the tokenizer to deterministic locations
+        base_path = Path("build/tokenizers")
+
+        # Main save path: build/tokenizers/praxis-{vocab_size}-{type}
+        save_path = base_path / f"praxis-{vocab_size_for_training}-{tokenizer_type}"
+
+        os.makedirs(save_path, exist_ok=True)
+
+        tokenizer.save_pretrained(save_path)
+
+        print(f"\n✓ Tokenizer saved to:")
+        print(f"  - {save_path}")
+
+        # Test chat template
+        from praxis.tokenizers.train import test_chat_template, upload_to_hub
+
+        test_chat_template(tokenizer)
+
+        # Attempt to upload to HuggingFace Hub (gated by auth and user confirmation)
+        upload_to_hub(tokenizer, vocab_size_for_training, tokenizer_type)
+
         return 0
     optimizer = processed_args["optimizer"]
     fixed_schedule = processed_args.get("fixed_schedule", False)
@@ -637,4 +692,5 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.exit(main() or 0)
     sys.exit(main() or 0)

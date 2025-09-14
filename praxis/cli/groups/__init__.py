@@ -8,6 +8,7 @@ from .networking import NetworkingGroup
 from .optimization import OptimizationGroup
 from .other import OtherGroup
 from .persistence import PersistenceGroup
+from .tokenizer import TokenizerGroup
 from .training import TrainingGroup
 
 # Registry of all argument groups
@@ -20,6 +21,7 @@ ARGUMENT_GROUPS = [
     NetworkingGroup,
     DataGroup,
     LoggingGroup,
+    TokenizerGroup,
     OtherGroup,
 ]
 
@@ -50,5 +52,6 @@ __all__ = [
     "NetworkingGroup",
     "DataGroup",
     "LoggingGroup",
+    "TokenizerGroup",
     "OtherGroup",
 ]
