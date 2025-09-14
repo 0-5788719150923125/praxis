@@ -53,6 +53,7 @@ class TerminalDashboard:
         self.previous_size = self._get_terminal_size()
         self.previous_frame = None
         self.fullscreen_log_mode = False  # Flag for fullscreen log mode
+        self.log_scroll_offset = 0  # Scroll position for fullscreen log view
 
         # I/O management
         self.original_stdout = sys.stdout
@@ -530,20 +531,67 @@ class TerminalDashboard:
             self.fullscreen_log_mode = not self.fullscreen_log_mode
             # Clear the screen when switching modes
             self.previous_frame = None
+            # Reset scroll position when entering/exiting fullscreen
+            if not self.fullscreen_log_mode:
+                self.log_scroll_offset = 0
             # Add a notification to the log
             mode_name = "fullscreen log" if self.fullscreen_log_mode else "dashboard"
             self.add_log(f"Switched to {mode_name} mode (press 'L' to toggle)")
 
+        # Handle scrolling in fullscreen log mode
+        elif self.fullscreen_log_mode:
+            total_logs = len(self.log_buffer)
+            available_height = self._get_terminal_size().lines - 2
+            max_scroll = max(0, total_logs - available_height)
+
+            if key.name == "KEY_UP":
+                # Scroll up (show older logs)
+                self.log_scroll_offset = min(self.log_scroll_offset + 1, max_scroll)
+                self.previous_frame = None  # Force redraw
+            elif key.name == "KEY_DOWN":
+                # Scroll down (show newer logs)
+                self.log_scroll_offset = max(self.log_scroll_offset - 1, 0)
+                self.previous_frame = None  # Force redraw
+            elif key.name == "KEY_PGUP":
+                # Page up (scroll by full page)
+                self.log_scroll_offset = min(self.log_scroll_offset + available_height, max_scroll)
+                self.previous_frame = None  # Force redraw
+            elif key.name == "KEY_PGDOWN":
+                # Page down (scroll by full page)
+                self.log_scroll_offset = max(self.log_scroll_offset - available_height, 0)
+                self.previous_frame = None  # Force redraw
+            elif key.name == "KEY_HOME":
+                # Jump to beginning (oldest logs)
+                self.log_scroll_offset = max_scroll
+                self.previous_frame = None  # Force redraw
+            elif key.name == "KEY_END":
+                # Jump to end (newest logs)
+                self.log_scroll_offset = 0
+                self.previous_frame = None  # Force redraw
+
     def _create_fullscreen_log_frame(self):
-        """Create a fullscreen view of the log output."""
+        """Create a fullscreen view of the log output with scrolling support."""
         width, height = self._get_terminal_size()
         frame = []
 
         # Create top border using the same style as main dashboard
         # For fullscreen, we don't need the middle divider, so create a simple top border
         top_border = "╔" + "═" * (width - 2) + "╗"
-        # Insert title in the center of the border
-        title = " LOG VIEW (Press 'L' to return to dashboard) "
+
+        # Calculate scroll info
+        total_logs = len(self.log_buffer)
+        available_height = height - 2  # Subtract top and bottom border lines
+        max_scroll = max(0, total_logs - available_height)
+
+        # Create title with scroll position indicator
+        if total_logs > available_height:
+            # Show position in scrollable content
+            current_position = total_logs - self.log_scroll_offset
+            scroll_info = f" [{current_position}/{total_logs}] "
+            title = f" LOG VIEW {scroll_info}(↑↓ scroll, PgUp/PgDn page, Home/End jump, L return) "
+        else:
+            title = " LOG VIEW (Press 'L' to return to dashboard) "
+
         title_start = (width - len(title)) // 2
         if title_start > 0 and title_start + len(title) < width - 1:
             top_border = (
@@ -553,19 +601,29 @@ class TerminalDashboard:
             )
         frame.append(top_border)
 
-        # Calculate available space for logs (accounting for borders)
-        available_height = height - 2  # Subtract top and bottom border lines
-
         # Calculate content width (accounting for left and right borders)
         content_width = width - 4  # "║ " on left and " ║" on right
 
         # Get recent log entries (they're already in chronological order in the buffer)
         log_entries = list(self.log_buffer)
 
-        # Take the most recent logs that fit on screen
+        # Apply scrolling offset
         if len(log_entries) > available_height:
-            # If we have more logs than screen space, show the most recent ones
-            visible_logs = log_entries[-available_height:]
+            # Calculate which logs to show based on scroll offset
+            # log_scroll_offset=0 means showing the most recent (bottom)
+            # log_scroll_offset=max means showing the oldest (top)
+            start_idx = len(log_entries) - available_height - self.log_scroll_offset
+            end_idx = len(log_entries) - self.log_scroll_offset
+
+            # Ensure indices are within bounds
+            start_idx = max(0, start_idx)
+            end_idx = min(len(log_entries), end_idx)
+
+            visible_logs = log_entries[start_idx:end_idx]
+
+            # Pad if necessary (shouldn't happen with proper calculation)
+            if len(visible_logs) < available_height:
+                visible_logs = visible_logs + [""] * (available_height - len(visible_logs))
         else:
             # If we have fewer logs than screen space, pad at the top with empty lines
             visible_logs = [""] * (available_height - len(log_entries)) + log_entries
