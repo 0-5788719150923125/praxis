@@ -77,10 +77,10 @@ sys.dont_write_bytecode = True
 
 try:
     torch.set_float32_matmul_precision("medium")
-    print("[INIT] Your system will train in 'medium' precision.")
+    print("[INIT] Your system will train with low-precision kernels.")
 except Exception as e:
     print(e)
-    print("[INIT] Your system does not support low-precision training.")
+    print("[INIT] Your system does not support low-precision kernels.")
 
 
 def setup_environment():
