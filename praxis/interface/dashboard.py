@@ -59,6 +59,7 @@ class TerminalDashboard:
         # Correlation animation state
         self.correlation_frame = 0  # Frame counter for animations
         self.correlation_phase = 0.0  # Phase for oscillations
+        self.correlation_twisted = False  # Whether to show twisted/mixed polarity
 
         # I/O management
         self.original_stdout = sys.stdout
@@ -453,6 +454,10 @@ class TerminalDashboard:
                 if random.random() < 0.1:
                     self.state.sign = -1 * self.state.sign
 
+                # Toggle twisted mode - 10% chance
+                if random.random() < 0.1:
+                    self.correlation_twisted = not self.correlation_twisted
+
                 # Create oscillating patterns with varying frequencies
                 # Primary wave - slow expansion/contraction
                 primary_wave = math.sin(self.correlation_frame * 0.05)
@@ -477,9 +482,31 @@ class TerminalDashboard:
                 # Map to 1-10 symbols
                 num_symbols = 1 + int(weighted * 9)
 
-                # Build the symbol string
-                symbol = "+" if self.state.sign == 1 else "-"
-                value = symbol * num_symbols
+                # Build the symbol string based on twisted mode
+                if self.correlation_twisted:
+                    # Twisted mode - show mixed polarity
+                    # Calculate the boundary position between + and -
+                    # Use a different oscillation for the boundary shift
+                    boundary_wave = math.sin(self.correlation_frame * 0.08) * 0.5
+                    boundary_wave += math.sin(self.correlation_frame * 0.03) * 0.3
+                    # Normalize boundary position to 0-1
+                    boundary_pos = (boundary_wave + 1.0) / 2.0
+
+                    # Calculate how many symbols are positive vs negative
+                    num_positive = int(boundary_pos * num_symbols + 0.5)
+                    num_negative = num_symbols - num_positive
+
+                    # Determine primary polarity based on state.sign
+                    if self.state.sign == 1:
+                        # Positive dominant
+                        value = "+" * num_positive + "-" * num_negative
+                    else:
+                        # Negative dominant
+                        value = "-" * num_positive + "+" * num_negative
+                else:
+                    # Regular mode - single polarity
+                    symbol = "+" if self.state.sign == 1 else "-"
+                    value = symbol * num_symbols
 
                 # Split the left section into two parts
                 attention_label = f" CORRELATION: {value}"
