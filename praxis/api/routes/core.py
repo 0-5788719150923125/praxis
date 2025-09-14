@@ -46,7 +46,7 @@ def get_spec():
 
         # Try to get CLI args, but handle the case where they're not available
         try:
-            from cli import get_cli_args
+            from praxis.cli import get_cli_args
             args = get_cli_args()
         except:
             # If CLI args aren't available (e.g., in tests), use empty namespace

@@ -90,7 +90,7 @@ def get_datamodules(
             )
         # Load any module-provided datasets
         try:
-            from cli import integration_loader
+            from praxis.cli import integration_loader
 
             available_datasets = integration_loader.integration_registry.get(
                 "datasets", {}
@@ -148,7 +148,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
     """
     # Check if this is a module-provided dataset
     try:
-        from cli import integration_loader
+        from praxis.cli import integration_loader
 
         dataset_provider = integration_loader.get_dataset(format)
         if dataset_provider:

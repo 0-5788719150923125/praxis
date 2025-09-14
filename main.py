@@ -32,7 +32,7 @@ import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
 
-from cli import (
+from praxis.cli import (
     create_praxis_config,
     get_cli_args,
     get_processed_args,

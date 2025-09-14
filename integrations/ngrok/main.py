@@ -310,7 +310,7 @@ class Integration(BaseIntegration):
 
         # Check if ngrok is actually enabled
         try:
-            from cli import get_cli_args
+            from praxis.cli import get_cli_args
 
             args = get_cli_args()
             if not getattr(args, "ngrok", False):

@@ -11,24 +11,25 @@ from praxis.integrations.base import BaseIntegration, IntegrationSpec
 
 def add_cli_args(parser):
     """Add wandb CLI arguments to the parser."""
-    other_group = None
+    logging_group = None
 
-    # Find the 'other' argument group
+    # Find the 'logging' argument group
     for group in parser._action_groups:
-        if group.title == "other":
-            other_group = group
+        if group.title == "logging":
+            logging_group = group
             break
 
-    if other_group is None:
-        other_group = parser.add_argument_group("other")
+    # If no logging group exists, create it
+    if logging_group is None:
+        logging_group = parser.add_argument_group("logging")
 
-    other_group.add_argument(
+    logging_group.add_argument(
         "--wandb",
         action="store_true",
         default=False,
         help="Log metrics to Weights and Biases (https://wandb.ai)",
     )
-    other_group.add_argument(
+    logging_group.add_argument(
         "--wandb-run-name",
         type=str,
         default=None,

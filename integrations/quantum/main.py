@@ -19,7 +19,18 @@ _quantum_path = None
 
 def add_cli_args(parser: argparse.ArgumentParser) -> None:
     """Add quantum module arguments to the parser."""
-    parser.add_argument(
+    # Add to the data group
+    data_group = None
+    for group in parser._action_groups:
+        if group.title == "data":
+            data_group = group
+            break
+
+    # If no data group exists, create it
+    if data_group is None:
+        data_group = parser.add_argument_group("data")
+
+    data_group.add_argument(
         "--quantum",
         action="store_true",
         help="Enable quantum code training data from qoblib repository",
