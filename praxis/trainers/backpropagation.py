@@ -44,10 +44,12 @@ class BackpropagationTrainer(LightningModule):
     def get_metrics(self):
         """Get metrics from the underlying model if available."""
         # Check if the model has get_metrics (handles both compiled and uncompiled)
-        if hasattr(self.model, 'get_metrics'):
+        if hasattr(self.model, "get_metrics"):
             return self.model.get_metrics()
         # For torch.compile wrapped models, check _orig_mod
-        elif hasattr(self.model, '_orig_mod') and hasattr(self.model._orig_mod, 'get_metrics'):
+        elif hasattr(self.model, "_orig_mod") and hasattr(
+            self.model._orig_mod, "get_metrics"
+        ):
             return self.model._orig_mod.get_metrics()
         return {}
 

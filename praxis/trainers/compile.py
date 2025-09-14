@@ -1,6 +1,7 @@
 """Model and optimizer compilation utilities for torch.compile."""
 
 import torch
+from praxis.environments import EnvironmentFeatures
 
 
 def try_compile(obj, hparams):
@@ -13,8 +14,13 @@ def try_compile(obj, hparams):
         hparams: Hyperparameters object or dict with configuration
 
     Returns:
-        Compiled object or original object if compilation fails
+        Compiled object or original object if compilation fails or skip_compilation is enabled
     """
+    # Check if compilation should be skipped via environment feature
+    if EnvironmentFeatures.is_enabled("skip_compilation"):
+        print("[COMPILER] Skipping compilation (skip_compilation feature enabled)")
+        return obj
+
     try:
         print("[COMPILER] Generating optimized kernel...")
         return torch.compile(

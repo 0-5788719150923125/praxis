@@ -122,12 +122,10 @@ class SMEAR(nn.Module):
         router_input = inputs.mean(dim=1)  # Average across sequence length
         router_input = self.router_norm(router_input)  # Layer norm on input
 
-        # Get logits and normalize weight matrix rows
-        logits = self.router(router_input)
-
-        # Normalize rows of weight matrix (as mentioned in paper)
-        with torch.no_grad():
-            self.router.weight.data = F.normalize(self.router.weight.data, dim=1)
+        # Get logits with normalized router weights
+        # Apply weight normalization without modifying in-place
+        normalized_weight = F.normalize(self.router.weight, dim=1)
+        logits = F.linear(router_input, normalized_weight, self.router.bias)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
@@ -320,12 +318,10 @@ class SMEAR(nn.Module):
         router_input = inputs.mean(dim=1)  # Average across sequence length
         router_input = self.router_norm(router_input)  # Layer norm on input
 
-        # Get logits and normalize weight matrix rows
-        logits = self.router(router_input)
-
-        # Normalize rows of weight matrix (as mentioned in paper)
-        with torch.no_grad():
-            self.router.weight.data = F.normalize(self.router.weight.data, dim=1)
+        # Get logits with normalized router weights
+        # Apply weight normalization without modifying in-place
+        normalized_weight = F.normalize(self.router.weight, dim=1)
+        logits = F.linear(router_input, normalized_weight, self.router.bias)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
