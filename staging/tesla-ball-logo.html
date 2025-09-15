@@ -175,7 +175,7 @@
                 this.baseDirection.z /= mag;
 
                 this.lifetime = 0;
-                this.maxLifetime = 40 + Math.random() * 60; // Shorter lifetimes for massive spawns
+                this.maxLifetime = 30 + Math.random() * 40; // Even shorter lifetimes for better performance
                 this.opacity = 0;
                 this.growing = true;
                 this.thickness = 0.5 + Math.random() * 1.5; // Thinner for mass spawns
@@ -254,39 +254,48 @@
 
             // Ray-tetrahedron intersection in LOCAL space (before rotation)
             findPyramidIntersection(direction) {
-                let maxT = 1.0;
+                // Cache the result for this direction
+                if (this.cachedIntersection &&
+                    this.cachedDirection === direction) {
+                    return this.cachedIntersection;
+                }
 
-                // Simplified trace - fewer steps for performance
-                for (let t = 0.02; t <= 2.0; t += 0.04) { // Doubled step size
+                let maxT = 0.8; // Reduced max distance to keep tendrils more contained
+
+                // More accurate intersection test with tighter bounds
+                for (let t = 0.02; t <= 1.5; t += 0.03) { // Slightly finer steps
                     const point = {
                         x: this.origin.x + direction.x * t,
                         y: this.origin.y + direction.y * t,
                         z: this.origin.z + direction.z * t
                     };
 
-                    // Check if point is outside tetrahedron (centered version)
-                    if (point.y < -0.5 || point.y > 0.5) {
-                        maxT = t;
+                    // Stricter tetrahedron bounds check
+                    if (point.y < -0.48 || point.y > 0.48) { // Slightly tighter bounds
+                        maxT = Math.min(maxT, t * 0.9); // Scale down to keep inside
                         break;
                     }
 
-                    // Check if inside triangular base (centered tetrahedron)
+                    // More accurate triangular base check
                     const height = (point.y + 0.5); // 0 at apex, 1 at base
-                    if (height > 0) {
-                        const scale = height; // Scale factor for the triangle at this height
+                    if (height > 0.01) { // Small epsilon to avoid division issues
+                        const scale = height * 0.95; // Slightly smaller scale for better containment
                         const scaledX = point.x / scale;
                         const scaledZ = point.z / scale;
 
-                        // Triangular boundary check for centered tetrahedron
-                        if (scaledZ < -0.577 || scaledZ > 0.289 ||
-                            Math.abs(scaledX) > 0.5) {
-                            maxT = t;
+                        // Tighter triangular boundary for better containment
+                        if (scaledZ < -0.55 || scaledZ > 0.27 ||
+                            Math.abs(scaledX) > 0.48) {
+                            maxT = Math.min(maxT, t * 0.85); // Further reduce to stay inside
                             break;
                         }
                     }
                 }
 
-                return Math.min(maxT, 1.0);
+                // Cache the result
+                this.cachedDirection = direction;
+                this.cachedIntersection = Math.min(maxT, 0.8);
+                return this.cachedIntersection;
             }
 
             update() {
@@ -388,33 +397,25 @@
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
 
-                // Enhanced glow for edges, especially during surges
-                const isSurge = tendrils.length > 50; // surge threshold
-                const surgeBoost = isSurge ? 2.0 : 1.0;
-                const edgeGlowBoost = 1 + maxEdgeGlow * 2 * surgeBoost;
-
-                ctx.shadowBlur = 8 * edgeGlowBoost;
-                ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.3 * edgeGlowBoost})`;
-                ctx.stroke();
-
-                // Additional edge diffusion effect during surges
-                if (maxEdgeGlow > 0.3 && isSurge) {
-                    ctx.shadowBlur = 20 + maxEdgeGlow * 25;
-                    ctx.shadowColor = `rgba(255, 255, 255, ${this.opacity * maxEdgeGlow * 0.5})`;
+                // Reduced shadow effects for better performance
+                const isSurge = tendrils.length > 50;
+                if (isSurge && maxEdgeGlow > 0.5) {
+                    // Only apply shadow during significant edge proximity
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.4})`;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                } else {
                     ctx.stroke();
                 }
 
-                // Endpoint bright spot
-                if (this.lengthProgress > 0.9 && this.thickness > 1) {
+                // Simplified endpoint spot without shadow
+                if (this.lengthProgress > 0.9 && this.thickness > 1 && this.opacity > 0.3) {
                     ctx.beginPath();
                     ctx.arc(last.x, last.y, 1.5, 0, Math.PI * 2);
                     ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity * 0.4})`;
-                    ctx.shadowBlur = 10;
-                    ctx.shadowColor = `rgba(255, 255, 255, ${this.opacity * 0.2})`;
                     ctx.fill();
                 }
-
-                ctx.shadowBlur = 0;
             }
         }
 
@@ -481,30 +482,36 @@
             }
 
             let illumination = 0;
-            const proximityThreshold = 0.3; // Slightly increased for better visibility
+            const proximityThreshold = 0.4; // Increased for better visibility
             let totalContribution = 0;
 
-            // Sample fewer tendrils when there are many
-            const skipFactor = tendrils.length > 50 ? 2 : 1;
+            // Sample tendrils for edge illumination
+            const skipFactor = tendrils.length > 150 ? 3 : tendrils.length > 75 ? 2 : 1;
+            const maxSamples = 50; // Increased for better edge coverage
+            let sampledCount = 0;
 
-            for (let idx = 0; idx < tendrils.length; idx += skipFactor) {
+            for (let idx = 0; idx < tendrils.length && sampledCount < maxSamples; idx += skipFactor) {
+                sampledCount++;
                 const tendril = tendrils[idx];
 
                 // Skip invisible tendrils
                 if (tendril.opacity < 0.1) continue;
 
                 // Simplified proximity check - just check tendril endpoint
-                const maxLength = tendril.findPyramidIntersection(tendril.baseDirection);
+                // Use cached intersection if available
+                const maxLength = tendril.cachedIntersection || 0.8;
                 const endT = tendril.lengthProgress;
 
-                // Check a few key points along the tendril
+                // Check multiple points along tendril for edge proximity
                 for (let sample = 0; sample <= 2; sample++) {
-                    const t = sample * 0.5 * endT;
+                    const t = sample * 0.4 * endT;
 
+                    // Calculate position from tendril origin (default to 0,0,0 if not set)
+                    const origin = tendril.origin || {x: 0, y: 0, z: 0};
                     const pos = {
-                        x: tendril.baseDirection.x * t * maxLength,
-                        y: tendril.baseDirection.y * t * maxLength,
-                        z: tendril.baseDirection.z * t * maxLength
+                        x: origin.x + tendril.baseDirection.x * t * maxLength,
+                        y: origin.y + tendril.baseDirection.y * t * maxLength,
+                        z: origin.z + tendril.baseDirection.z * t * maxLength
                     };
 
                     // Quick distance check
@@ -513,7 +520,7 @@
                     if (dist < proximityThreshold * proximityThreshold) {
                         const actualDist = Math.sqrt(dist);
                         const proximity = 1 - (actualDist / proximityThreshold);
-                        totalContribution += proximity * tendril.opacity * 0.3;
+                        totalContribution += proximity * tendril.opacity * 0.5; // Increased contribution
                     }
                 }
             }
@@ -747,23 +754,36 @@
             ctx.fillStyle = coreGradient;
             ctx.fill();
 
-            // Core glow intensifies with surges
-            ctx.shadowBlur = 20 + Math.min(30, surgeMultiplier * 2);
-            ctx.shadowColor = `rgba(180, 140, 255, ${0.3 + Math.min(0.7, surgeMultiplier * 0.02)})`;
-            ctx.fill();
-            ctx.shadowBlur = 0;
+            // Simplified core glow for better performance
+            if (surgeMultiplier > 5) {
+                ctx.shadowBlur = 25;
+                ctx.shadowColor = `rgba(180, 140, 255, 0.5)`;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
 
             // Get morphed pyramid edges and draw them with proximity-based illumination
             const pyramidEdges = getPyramidEdges(0.15); // 15% morphing strength
             drawPyramidEdges(pyramidEdges, tendrils, frameCount);
             frameCount++;
 
-            // Sort tendrils by z-depth
-            tendrils.sort((a, b) => {
-                const aRotated = a.rotate3D(a.baseDirection, globalRotX, globalRotY, globalRotZ);
-                const bRotated = b.rotate3D(b.baseDirection, globalRotX, globalRotY, globalRotZ);
-                return aRotated.z - bRotated.z;
-            });
+            // Sort tendrils by z-depth only every few frames for performance
+            if (frameCount % 3 === 0) {
+                tendrils.sort((a, b) => {
+                    // Use cached z-values if available
+                    if (!a.sortZ || frameCount !== a.lastSortFrame) {
+                        const aRotated = a.rotate3D(a.baseDirection, globalRotX, globalRotY, globalRotZ);
+                        a.sortZ = aRotated.z;
+                        a.lastSortFrame = frameCount;
+                    }
+                    if (!b.sortZ || frameCount !== b.lastSortFrame) {
+                        const bRotated = b.rotate3D(b.baseDirection, globalRotX, globalRotY, globalRotZ);
+                        b.sortZ = bRotated.z;
+                        b.lastSortFrame = frameCount;
+                    }
+                    return a.sortZ - b.sortZ;
+                });
+            }
 
             // Update and draw all tendrils
             for (let i = 0; i < tendrils.length; i++) {
