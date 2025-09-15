@@ -609,7 +609,12 @@ class TerminalInterface(Callback):
     def on_exception(self, trainer, pl_module, exception):
         """Called when an exception occurs - clean up dashboard."""
         if self.dashboard:
-            self.dashboard.stop()
-            # Use context manager's __exit__ to ensure terminal restoration
-            self.dashboard.__exit__(None, None, None)
-            self.dashboard = None
+            try:
+                self.dashboard.stop()
+                # Use context manager's __exit__ to ensure terminal restoration
+                self.dashboard.__exit__(None, None, None)
+            except AttributeError:
+                # Dashboard might already be None or partially cleaned up
+                pass
+            finally:
+                self.dashboard = None
