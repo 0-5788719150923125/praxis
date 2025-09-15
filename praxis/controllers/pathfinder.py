@@ -28,11 +28,11 @@ class Pathfinder(BaseController):
                 nn.Sequential(
                     nn.LayerNorm(config.hidden_size),
                     nn.Linear(
-                        config.hidden_size, self.num_experts + self.extra_vectors
+                        config.hidden_size, self.num_layers + self.extra_vectors
                     ),
                     nn.Dropout(config.dropout),
                 )
-                for _ in range(self.num_experts)
+                for _ in range(self.num_layers)
             ]
         )
 
@@ -67,12 +67,12 @@ class Pathfinder(BaseController):
 
         # Find the most common vote (mode) across the batch
         vote_counts = torch.bincount(
-            batch_votes, minlength=self.num_experts + self.extra_vectors
+            batch_votes, minlength=self.num_layers + self.extra_vectors
         )
         next_expert_idx = torch.argmax(vote_counts).item()
 
         # Allow early exits
-        if next_expert_idx == self.num_experts:
+        if next_expert_idx == self.num_layers:
             return hidden_states, controller_state, loss_container, None
 
         return hidden_states, controller_state, loss_container, next_expert_idx

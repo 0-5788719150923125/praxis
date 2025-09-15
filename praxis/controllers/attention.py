@@ -41,14 +41,14 @@ class AttentionChanneler(BaseController):
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
             [
-                nn.Embedding(self.num_experts, hidden_size)
-                for _ in range(self.num_experts)
+                nn.Embedding(self.num_layers, hidden_size)
+                for _ in range(self.num_layers)
             ]
         )
 
         # Attention mechanism operating in hidden_size space
         self.attention_norm = nn.ModuleList(
-            [nn.LayerNorm(hidden_size) for _ in range(self.num_experts)]
+            [nn.LayerNorm(hidden_size) for _ in range(self.num_layers)]
         )
         self.attention = nn.ModuleList(
             [
@@ -59,7 +59,7 @@ class AttentionChanneler(BaseController):
                     dropout=config.dropout,
                     add_zero_attn=True,
                 )
-                for _ in range(self.num_experts)
+                for _ in range(self.num_layers)
             ]
         )
 
@@ -71,7 +71,7 @@ class AttentionChanneler(BaseController):
                 nn.Linear(hidden_size // 2, 1),
                 nn.Softmax(dim=1),
             )
-            for _ in range(self.num_experts)
+            for _ in range(self.num_layers)
         )
 
         # Final output projection for routing decisions
@@ -87,7 +87,7 @@ class AttentionChanneler(BaseController):
         self.router_projection = nn.Linear(hidden_size, self.num_experts)
         self.logits_projection = nn.ModuleList(
             nn.Linear(self.num_experts, self.channel_size)
-            for _ in range(self.num_experts)
+            for _ in range(self.num_layers)
         )
 
         # Project expert probs through a bottleneck
@@ -99,7 +99,7 @@ class AttentionChanneler(BaseController):
                     ACT2FN["relu"],
                     nn.Linear(self.channel_size // 2, self.channel_size),
                 )
-                for _ in range(self.num_experts)
+                for _ in range(self.num_layers)
             ]
         )
 

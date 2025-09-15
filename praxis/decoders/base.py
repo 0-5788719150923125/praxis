@@ -10,11 +10,7 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
-from praxis.orchestration import (
-    EXPERT_REGISTRY,
-    LocalExpert,
-    RemoteExpert,
-)
+from praxis.orchestration import EXPERT_REGISTRY, LocalExpert, RemoteExpert
 from praxis.sorting import SORTING_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -49,32 +45,8 @@ class BaseDecoder(nn.Module):
             expert = LocalExpert(config, block=block)
             for i in range(self.num_experts):
                 self.locals.append(expert)
-        elif config.router_type == "smear" and hasattr(config, "num_smear"):
-            # For SMEAR with explicit num_smear, create exactly that many expert blocks
-            from praxis.routers import ROUTER_REGISTRY
-
-            # Create the expert blocks based on num_smear
-            expert_blocks = []
-            for i in range(config.num_smear):
-                if self.manager:
-                    block = self.manager.register_expert(config)
-                else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
-                expert_blocks.append(block)
-
-            # Create a single SMEAR router with all blocks
-            smear_router = ROUTER_REGISTRY["smear"](config, experts=expert_blocks)
-
-            # Create a single LocalExpert with the SMEAR router
-            # The SMEAR router will handle merging and routing internally
-            expert = LocalExpert(config, block=expert_blocks[0], router=smear_router)
-
-            # Add it multiple times to match num_experts for compatibility
-            for i in range(self.num_experts):
-                self.locals.append(expert)
         elif config.router_type == "smear":
-            # Original SMEAR implementation for backward compatibility
-            # For SMEAR, we need to create all blocks first, then pass them to each expert
+            # For SMEAR, create all expert blocks and share them via a single LocalExpert
             expert_blocks = []
             for i in range(self.num_experts):
                 if self.manager:
@@ -83,11 +55,14 @@ class BaseDecoder(nn.Module):
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
 
-            # Now create LocalExperts with access to all blocks
+            # Create a single LocalExpert with all blocks for SMEAR
+            # The first block is used as the base, but SMEAR will merge all experts
+            expert = LocalExpert(
+                config, block=expert_blocks[0], expert_blocks=expert_blocks
+            )
+
+            # Add the same expert instance multiple times for compatibility with decoder iteration
             for i in range(self.num_experts):
-                expert = LocalExpert(
-                    config, block=expert_blocks[i], expert_blocks=expert_blocks
-                )
                 self.locals.append(expert)
         else:
             for i in range(self.num_experts):

@@ -57,9 +57,17 @@ class ConfigBuilder:
             config_kwargs["num_heads"] = int(parts[0])
             config_kwargs["num_queries"] = int(parts[1]) if len(parts) > 1 else int(parts[0])
 
-        # num_experts defaults to depth if not specified
-        if "num_experts" not in config_kwargs or config_kwargs.get("num_experts") is None:
-            config_kwargs["num_experts"] = config_kwargs.get("depth", 2)
+        # Handle the new defaulting logic:
+        # num_layers defaults to 2 (set in CLI)
+        # num_experts defaults to 1 (set in CLI) - no MoE by default
+        # depth defaults to num_layers if not specified
+
+        # Get num_layers (should always be present from CLI defaults)
+        num_layers = config_kwargs.get("num_layers", 2)
+
+        # depth defaults to num_layers if not specified
+        if "depth" not in config_kwargs or config_kwargs.get("depth") is None:
+            config_kwargs["depth"] = num_layers
 
         # Handle byte_latent encoding
         byte_latent = hasattr(args, "encoder_type") and args.encoder_type == "byte_latent"

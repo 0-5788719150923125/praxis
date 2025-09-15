@@ -26,8 +26,8 @@ class GRUBlock(nn.Module):
             config: Model configuration
         """
         super().__init__()
-        # Use num_smear if available, otherwise default to 3
-        num_smear = getattr(config, "num_smear", 3)
+        # Use num_experts for SMEAR routing
+        num_experts_for_smear = getattr(config, "num_experts", 3)
 
         self.norm = nn.RMSNorm(config.hidden_size, eps=config.epsilon)
         self.dropout = nn.Dropout(config.dropout)
@@ -38,7 +38,7 @@ class GRUBlock(nn.Module):
                     RECURRENT_REGISTRY["gru"](
                         config.hidden_size, expansion_factor=1.5, proj_out=True
                     )
-                    for _ in range(num_smear)
+                    for _ in range(num_experts_for_smear)
                 ]
             ),
         )

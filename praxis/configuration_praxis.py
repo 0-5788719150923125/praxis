@@ -15,9 +15,9 @@ class PraxisConfig(PretrainedConfig):
         head_size: Optional[int] = None,
         k_heads: Optional[int] = None,
         kv_rank: Optional[int] = None,
-        depth: int = 2,
-        num_experts: int = 2,
-        num_smear: int = 1,
+        depth: Optional[int] = None,
+        num_experts: int = 1,
+        num_layers: int = 2,
         dropout: float = 0.0,
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
@@ -78,9 +78,11 @@ class PraxisConfig(PretrainedConfig):
         self.head_size = head_size
         self.k_heads = k_heads
         self.kv_rank = kv_rank
-        self.depth = depth
         self.num_experts = num_experts
-        self.num_smear = num_smear
+        # num_layers represents the number of layer-specific components controllers should create
+        self.num_layers = num_layers
+        # depth defaults to num_layers if not explicitly provided
+        self.depth = depth if depth is not None else num_layers
         self.attention_type = attention_type
         self.encoder_type = encoder_type
         self.decoder_type = decoder_type

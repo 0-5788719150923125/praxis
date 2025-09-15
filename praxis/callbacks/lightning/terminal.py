@@ -17,6 +17,7 @@ class TerminalInterface(Callback):
     def __init__(
         self,
         tokenizer,
+        model_info,  # Required: dict with all model information
         generator=None,
         use_dashboard=False,
         url=None,
@@ -28,23 +29,7 @@ class TerminalInterface(Callback):
         debug=False,
         get_memory_info=None,
         api_server=None,
-        model_info=None,
         dashboard=None,  # Accept existing dashboard
-        # Legacy parameters for backward compatibility
-        optimizer_config=None,
-        strategy=None,
-        rl_type=None,
-        vocab_size=None,
-        depth=None,
-        hidden_size=None,
-        embed_size=None,
-        dropout=None,
-        use_source_code=False,
-        dev=False,
-        seed=None,
-        truncated_hash=None,
-        total_params=None,
-        target_batch_size=None,
     ):
         super().__init__()
         self.alpha = 1e-2
@@ -69,39 +54,22 @@ class TerminalInterface(Callback):
         self.get_memory_info = get_memory_info
         self.api_server = api_server
 
-        # Use model_info dict if provided, otherwise fall back to individual params
-        if model_info is not None:
-            # Modern usage: single dict with all model info
-            self.optimizer_config = model_info.get("optimizer_config", {})
-            self.strategy = model_info.get("strategy")
-            self.rl_type = model_info.get("rl_type")
-            self.vocab_size = model_info.get("vocab_size")
-            self.depth = model_info.get("depth")
-            self.hidden_size = model_info.get("hidden_size")
-            self.embed_size = model_info.get("embed_size")
-            self.dropout = model_info.get("dropout")
-            self.use_source_code = model_info.get("use_source_code", False)
-            self.dev = model_info.get("dev", False)
-            self.seed = model_info.get("seed")
-            self.truncated_hash = model_info.get("truncated_hash")
-            self.total_params = model_info.get("total_params")
-            self.target_batch_size = model_info.get("target_batch_size")
-        else:
-            # Legacy usage: individual parameters
-            self.optimizer_config = optimizer_config or {}
-            self.strategy = strategy
-            self.rl_type = rl_type
-            self.vocab_size = vocab_size
-            self.depth = depth
-            self.hidden_size = hidden_size
-            self.embed_size = embed_size
-            self.dropout = dropout
-            self.use_source_code = use_source_code
-            self.dev = dev
-            self.seed = seed
-            self.truncated_hash = truncated_hash
-            self.total_params = total_params
-            self.target_batch_size = target_batch_size
+        # Extract model info from the required dict
+        self.optimizer_config = model_info.get("optimizer_config", {})
+        self.strategy = model_info.get("strategy")
+        self.rl_type = model_info.get("rl_type")
+        self.vocab_size = model_info.get("vocab_size")
+        self.depth = model_info.get("depth")
+        self.num_layers = model_info.get("num_layers")  # Number of layer components for controllers
+        self.hidden_size = model_info.get("hidden_size")
+        self.embed_size = model_info.get("embed_size")
+        self.dropout = model_info.get("dropout")
+        self.use_source_code = model_info.get("use_source_code", False)
+        self.dev = model_info.get("dev", False)
+        self.seed = model_info.get("seed")
+        self.truncated_hash = model_info.get("truncated_hash")
+        self.total_params = model_info.get("total_params")
+        self.target_batch_size = model_info.get("target_batch_size")
 
         # Track inference timing to detect when it's too slow
         self.inference_time_ema = None
@@ -317,6 +285,7 @@ class TerminalInterface(Callback):
             lm.hparams, "target_batch_size", batch_size
         )
         info_dict["depth"] = self.depth
+        info_dict["num_layers"] = self.num_layers
         info_dict["hidden_size"] = self.hidden_size
         info_dict["embed_size"] = self.embed_size
         info_dict["dropout"] = self.dropout

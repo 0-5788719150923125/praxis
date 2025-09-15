@@ -3,7 +3,7 @@
 
 overrides:
   depth: 3
-  num_experts: 3
+  num_layers: 3
   batch_size: 1
   phi: false
   quantum: false

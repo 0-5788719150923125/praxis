@@ -1,4 +1,4 @@
-"""Test SMEAR integration with sequential decoder and num_smear > 1."""
+"""Test SMEAR integration with sequential decoder and multiple experts."""
 
 import pytest
 import torch
@@ -17,8 +17,8 @@ class MockConfig:
     # Core configuration
     hidden_size: int = 256
     depth: int = 6
-    num_experts: int = 3
-    num_smear: int = 3  # Number of experts for SMEAR to manage
+    num_experts: int = 3  # Number of experts for SMEAR to manage
+    num_layers: int = 3  # Number of layer components for controllers
     epsilon: float = 1e-6
     dropout: float = 0.1
 
@@ -51,9 +51,9 @@ class MockConfig:
 class TestSMEARIntegration:
     """Test suite for SMEAR integration with decoders."""
 
-    def test_smear_with_num_smear_greater_than_one(self):
-        """Test that SMEAR works correctly when num_smear > 1."""
-        config = MockConfig(num_smear=4)
+    def test_smear_with_multiple_experts(self):
+        """Test that SMEAR works correctly with multiple experts."""
+        config = MockConfig(num_experts=4, num_layers=4)
 
         # Create decoder - should use our new SMEAR logic
         decoder = DECODER_REGISTRY["sequential"](config)
@@ -61,7 +61,7 @@ class TestSMEARIntegration:
         # Verify that locals were created correctly
         assert len(decoder.locals) == config.num_experts
 
-        # All locals should point to the same expert (for SMEAR with num_smear > 1)
+        # All locals should point to the same expert (for SMEAR with multiple experts)
         first_expert = decoder.locals[0]
         for expert in decoder.locals[1:]:
             assert (
@@ -87,29 +87,28 @@ class TestSMEARIntegration:
         assert isinstance(loss_container, LossContainer)
 
     def test_smear_backward_compatibility(self):
-        """Test that SMEAR still works without num_smear or with num_smear=1."""
-        # Test without num_smear attribute
+        """Test that SMEAR works with default configuration."""
+        # Test with default configuration
         config = MockConfig()
-        delattr(config, "num_smear")
 
         decoder = DECODER_REGISTRY["sequential"](config)
         assert len(decoder.locals) == config.num_experts
 
-        # Test with num_smear = 1
-        config = MockConfig(num_smear=1)
+        # Test with single expert
+        config = MockConfig(num_experts=1, num_layers=1)
         decoder = DECODER_REGISTRY["sequential"](config)
         assert len(decoder.locals) == config.num_experts
 
     def test_smear_expert_merging(self):
         """Test that SMEAR properly merges expert parameters."""
-        config = MockConfig(num_smear=3)
+        config = MockConfig(num_experts=3, num_layers=3)
         decoder = DECODER_REGISTRY["sequential"](config)
 
         # Get the SMEAR router
         smear_router = decoder.locals[0].router
 
         # Verify it has the correct number of experts
-        assert len(smear_router.experts) == config.num_smear
+        assert len(smear_router.experts) == config.num_experts
 
         # Test parameter merging
         batch_size = 2
@@ -123,7 +122,7 @@ class TestSMEARIntegration:
         routing_probs = torch.nn.functional.softmax(logits, dim=-1)
 
         # Verify routing probabilities shape
-        assert routing_probs.shape == (batch_size, config.num_smear)
+        assert routing_probs.shape == (batch_size, config.num_experts)
 
         # Test that probabilities sum to 1
         assert torch.allclose(routing_probs.sum(dim=-1), torch.ones(batch_size))
@@ -132,7 +131,7 @@ class TestSMEARIntegration:
         """Test SMEAR with different block types."""
         # Only test block types that work with minimal config
         for block_type in ["recurrent", "gru", "min"]:
-            config = MockConfig(num_smear=3, block_type=block_type)
+            config = MockConfig(num_experts=3, num_layers=3, block_type=block_type)
 
             decoder = DECODER_REGISTRY["sequential"](config)
 
@@ -147,7 +146,7 @@ class TestSMEARIntegration:
 
     def test_smear_gradient_flow(self):
         """Test that gradients flow through SMEAR properly."""
-        config = MockConfig(num_smear=3)
+        config = MockConfig(num_experts=3, num_layers=3)
         decoder = DECODER_REGISTRY["sequential"](config)
 
         # Create input with requires_grad

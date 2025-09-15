@@ -167,22 +167,22 @@ class ArchitectureGroup:
         group.add_argument(
             "--depth",
             type=int,
-            default=2,
-            help="The max number of experts to route through",
+            default=None,
+            help="The max number of experts to route through (defaults to num_layers)",
         )
 
         group.add_argument(
             "--num-experts",
             type=int,
-            default=None,
-            help="Number of experts to host (defaults to depth)",
+            default=1,
+            help="Number of experts per layer (1 = no MoE)",
         )
 
         group.add_argument(
-            "--num-smear",
+            "--num-layers",
             type=int,
-            default=3,
-            help="Number of SMEAR expert copies for GRU/recurrent blocks (default: 3)",
+            default=2,
+            help="Number of layer components for controllers",
         )
 
         group.add_argument(

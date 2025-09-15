@@ -18,7 +18,7 @@ class TransitionVisualizer:
 
     def __init__(
         self,
-        num_experts: int,
+        num_experts: int,  # Actually num_layers for tracking layer transitions
         save_dir: str = "build",
         max_depth: int = 4,
         window_size: int = 1000,
@@ -27,7 +27,7 @@ class TransitionVisualizer:
         fig_width: int = 20,  # Adjustable figure width
         fig_height: int = 10,  # Adjustable figure height
     ) -> None:
-        self.num_experts = num_experts
+        self.num_experts = num_experts  # Keeping name for backward compatibility, but represents layers
         self.save_dir = save_dir
         self.max_depth = max_depth - 1  # Fix off-by-one issue
         self.window_size = window_size

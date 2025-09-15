@@ -516,9 +516,29 @@ def main():
         "terminal_output_length", block_size * 2
     )
 
+    # Create model_info dict for TerminalInterface
+    model_info = {
+        "optimizer_config": optimizer_config,
+        "strategy": strategy,
+        "rl_type": rl_type,
+        "vocab_size": vocab_size,
+        "depth": config.depth,
+        "num_layers": config.num_layers,  # Number of layer components for controllers
+        "hidden_size": config.hidden_size,
+        "embed_size": config.embed_size,
+        "dropout": dropout,
+        "use_source_code": use_source_code,
+        "dev": EnvironmentFeatures.get_active_environment() == "dev",
+        "seed": seed,
+        "truncated_hash": truncated_hash,
+        "total_params": total_params,
+        "target_batch_size": target_batch_size,
+    }
+
     train_params["callbacks"].append(
         TerminalInterface(
             tokenizer=tokenizer,
+            model_info=model_info,
             generator=generator,
             use_dashboard=use_dashboard,
             url=api_server.get_api_addr() if api_server else None,
@@ -530,22 +550,7 @@ def main():
             debug=debug,
             get_memory_info=get_memory_info,
             api_server=api_server,
-            seed=seed,
-            truncated_hash=truncated_hash,
-            total_params=total_params,  # Pass the actual number, not the string
             dashboard=dashboard if local_rank == 0 else None,  # Pass existing dashboard
-            # Additional parameters for info panel
-            optimizer_config=optimizer_config,
-            strategy=strategy,
-            rl_type=rl_type,
-            vocab_size=vocab_size,
-            depth=config.depth,
-            hidden_size=config.hidden_size,
-            embed_size=config.embed_size,
-            dropout=dropout,
-            use_source_code=use_source_code,
-            dev=(EnvironmentFeatures.get_active_environment() == "dev"),
-            target_batch_size=target_batch_size,
         )
     )
 

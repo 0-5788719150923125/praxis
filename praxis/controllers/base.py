@@ -25,11 +25,14 @@ class BaseController(nn.Module):
         super().__init__()
         self.debug = config.debug
         self.depth = config.depth
-        self.num_experts = config.num_experts
+        # Use num_layers for controller components (backward compatible)
+        self.num_layers = getattr(config, 'num_layers', config.num_experts)
+        # Keep num_experts for backward compatibility
+        self.num_experts = self.num_layers
         self.visualizer = (
             TransitionVisualizer(
                 save_dir="./",
-                num_experts=self.num_experts,
+                num_experts=self.num_layers,  # Actually tracking layers
                 max_depth=self.depth,
                 save_every=300,  # 15 minutes
             )
