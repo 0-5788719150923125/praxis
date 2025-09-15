@@ -34,20 +34,76 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
-        // Set canvas resolution
-        const size = 300; // Higher resolution for smooth rendering
-        canvas.width = size;
-        canvas.height = size;
+        // High-DPI canvas setup for zoom resistance
+        const dpr = window.devicePixelRatio || 1;
+        const displaySize = 300; // Display size in CSS pixels
 
-        const centerX = size / 2;
-        const centerY = size / 2;
-        const maxRadius = size * 0.42;
+        // Set actual size in memory (scaled up for retina displays)
+        canvas.width = displaySize * dpr;
+        canvas.height = displaySize * dpr;
+
+        // Scale the context to ensure correct drawing operations
+        ctx.scale(dpr, dpr);
+
+        // Set display size (CSS pixels)
+        canvas.style.width = displaySize + 'px';
+        canvas.style.height = displaySize + 'px';
+
+        // Use displaySize for all drawing coordinates
+        const centerX = displaySize / 2;
+        const centerY = displaySize / 2;
+        const maxRadius = displaySize * 0.42;
 
         // 3D rotation angles - GLOBAL for proper pyramid rotation
         let globalRotX = 0;
         let globalRotY = 0;
         let globalRotZ = 0;
         let time = 0;
+
+        // Wind system for directional surges
+        let windState = {
+            direction: { x: 0, y: 0, z: 0 },
+            strength: 0,
+            gustTime: 0,
+            gustDuration: 0,
+            targetDirection: { x: 0, y: 0, z: 0 },
+            currentDirection: { x: 0, y: 0, z: 0 }
+        };
+
+        function updateWind(time) {
+            // Random gusts every few seconds
+            if (time - windState.gustTime > windState.gustDuration) {
+                // New gust
+                windState.gustTime = time;
+                windState.gustDuration = 2 + Math.random() * 3; // 2-5 seconds
+
+                // Random direction (favoring horizontal for dandelion effect)
+                const angle = Math.random() * Math.PI * 2;
+                windState.targetDirection = {
+                    x: Math.cos(angle),
+                    y: (Math.random() - 0.5) * 0.2, // less vertical movement
+                    z: Math.sin(angle)
+                };
+                windState.strength = 0.3 + Math.random() * 0.7;
+            }
+
+            // Smooth transition between wind directions
+            const transitionSpeed = 0.05;
+            windState.currentDirection.x += (windState.targetDirection.x - windState.currentDirection.x) * transitionSpeed;
+            windState.currentDirection.y += (windState.targetDirection.y - windState.currentDirection.y) * transitionSpeed;
+            windState.currentDirection.z += (windState.targetDirection.z - windState.currentDirection.z) * transitionSpeed;
+
+            // Fade in/out wind strength
+            const gustProgress = (time - windState.gustTime) / windState.gustDuration;
+            const envelope = Math.sin(gustProgress * Math.PI); // smooth in/out
+
+            return {
+                x: windState.currentDirection.x * windState.strength * envelope,
+                y: windState.currentDirection.y * windState.strength * envelope,
+                z: windState.currentDirection.z * windState.strength * envelope,
+                strength: windState.strength * envelope
+            };
+        }
 
         // Tendril class for each electric beam
         class Tendril {
@@ -57,15 +113,44 @@
             }
 
             reset() {
-                // Generate random 3D direction for tendril
-                const phi = Math.random() * Math.PI * 2; // Azimuth
-                const theta = (Math.random() - 0.5) * Math.PI; // Full sphere coverage
+                // 25% chance to target edges/vertices for better tetrahedron definition (reduced for performance)
+                if (Math.random() < 0.25) {
+                    // Target tetrahedron vertices and edges
+                    const targets = [
+                        // Base triangle corners (equilateral triangle in xz plane)
+                        {x: 0, y: 1, z: -1},      // back vertex
+                        {x: -0.866, y: 1, z: 0.5}, // left vertex
+                        {x: 0.866, y: 1, z: 0.5},  // right vertex
+                        // Apex
+                        {x: 0, y: -1, z: 0},
+                        // Edge midpoints for better edge coverage
+                        {x: -0.433, y: 1, z: -0.25}, // back-left edge
+                        {x: 0.433, y: 1, z: -0.25},  // back-right edge
+                        {x: 0, y: 1, z: 0.5},        // left-right edge
+                        {x: 0, y: 0, z: -0.5},       // apex edges
+                        {x: -0.433, y: 0, z: 0.25},
+                        {x: 0.433, y: 0, z: 0.25}
+                    ];
 
-                this.baseDirection = {
-                    x: Math.cos(theta) * Math.cos(phi),
-                    y: Math.sin(theta),
-                    z: Math.cos(theta) * Math.sin(phi)
-                };
+                    const target = targets[Math.floor(Math.random() * targets.length)];
+
+                    // Add some noise to avoid perfect lines
+                    this.baseDirection = {
+                        x: target.x + (Math.random() - 0.5) * 0.3,
+                        y: target.y + (Math.random() - 0.5) * 0.3,
+                        z: target.z + (Math.random() - 0.5) * 0.3
+                    };
+                } else {
+                    // Generate random 3D direction for organic look
+                    const phi = Math.random() * Math.PI * 2; // Azimuth
+                    const theta = (Math.random() - 0.5) * Math.PI; // Full sphere coverage
+
+                    this.baseDirection = {
+                        x: Math.cos(theta) * Math.cos(phi),
+                        y: Math.sin(theta),
+                        z: Math.cos(theta) * Math.sin(phi)
+                    };
+                }
 
                 // Normalize direction
                 const mag = Math.sqrt(
@@ -102,6 +187,30 @@
                 return colors[Math.floor(Math.random() * colors.length)];
             }
 
+            // Detect proximity to pyramid edges for enhanced glow
+            detectEdgeProximity(point3D) {
+                // Calculate distance to pyramid boundaries
+                const yNorm = point3D.y;
+                const maxExtent = (yNorm + 1) / 2; // pyramid width at this height
+
+                // Distance to nearest edge in x and z directions
+                const xEdgeDist = maxExtent - Math.abs(point3D.x);
+                const zEdgeDist = maxExtent - Math.abs(point3D.z);
+                const minEdgeDist = Math.min(xEdgeDist, zEdgeDist);
+
+                // Also check distance to apex edges
+                const distToApex = Math.sqrt(point3D.x * point3D.x + point3D.z * point3D.z);
+                const apexEdgeDist = Math.abs(distToApex - Math.abs(yNorm + 1) * 0.5);
+
+                const finalDist = Math.min(minEdgeDist, apexEdgeDist);
+
+                return {
+                    distance: finalDist,
+                    isNearEdge: finalDist < 0.15, // threshold for "near edge"
+                    glowIntensity: Math.max(0, 1 - finalDist / 0.15)
+                };
+            }
+
             // Rotate a 3D point
             rotate3D(point, rotX, rotY, rotZ) {
                 let { x, y, z } = point;
@@ -131,31 +240,33 @@
                 return { x: x2, y: y2, z: z2 };
             }
 
-            // Ray-pyramid intersection in LOCAL space (before rotation)
+            // Ray-tetrahedron intersection in LOCAL space (before rotation)
             findPyramidIntersection(direction) {
                 let maxT = 1.0;
 
-                // Trace along the ray direction
-                for (let t = 0.01; t <= 2.0; t += 0.02) {
-                    // Point along ray in LOCAL space
+                // Simplified trace - fewer steps for performance
+                for (let t = 0.02; t <= 2.0; t += 0.04) { // Doubled step size
                     const point = {
                         x: direction.x * t,
                         y: direction.y * t,
                         z: direction.z * t
                     };
 
-                    // Check if point is outside pyramid (in LOCAL space)
-                    // Pyramid: apex at (0, -1, 0), base at y = 1
+                    // Check if point is outside tetrahedron
                     const yNorm = point.y;
-
                     if (yNorm < -1 || yNorm > 1) {
                         maxT = t;
                         break;
                     }
 
-                    const maxExtent = (yNorm + 1) / 2; // 0 at apex, 1 at base
+                    // Check if inside triangular base (simplified)
+                    const height = (yNorm + 1) / 2; // 0 at apex, 1 at base
+                    const scaledX = point.x / height;
+                    const scaledZ = point.z / height;
 
-                    if (Math.abs(point.x) > maxExtent || Math.abs(point.z) > maxExtent) {
+                    // Simple triangular boundary check
+                    if (scaledZ < -1 || scaledZ > 0.5 ||
+                        Math.abs(scaledX) > 0.866 * (1 + scaledZ)) {
                         maxT = t;
                         break;
                     }
@@ -192,7 +303,8 @@
 
                 // Generate the tendril path
                 const segments = [];
-                const segmentCount = 25; // Fewer segments for performance with many tendrils
+                const segmentCount = 15; // Reduced for better performance
+                let maxEdgeGlow = 0; // Track maximum edge proximity for this tendril
 
                 for (let i = 0; i <= segmentCount; i++) {
                     const t = i / segmentCount;
@@ -209,6 +321,10 @@
                         z: this.baseDirection.z * adjustedT * maxLength + wave1 * 0.3 * (1 - t * 0.5)
                     };
 
+                    // Check edge proximity for enhanced effects
+                    const edgeInfo = this.detectEdgeProximity(localPos);
+                    maxEdgeGlow = Math.max(maxEdgeGlow, edgeInfo.glowIntensity);
+
                     // Apply GLOBAL pyramid rotation
                     const rotated = this.rotate3D(localPos, globalRotX, globalRotY, globalRotZ);
 
@@ -221,7 +337,8 @@
                         x: x2D,
                         y: y2D,
                         z: rotated.z,
-                        t: t
+                        t: t,
+                        edgeGlow: edgeInfo.glowIntensity
                     });
                 }
 
@@ -257,10 +374,21 @@
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
 
-                // Glow
-                ctx.shadowBlur = 8;
-                ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.3})`;
+                // Enhanced glow for edges, especially during surges
+                const isSurge = tendrils.length > 50; // surge threshold
+                const surgeBoost = isSurge ? 2.0 : 1.0;
+                const edgeGlowBoost = 1 + maxEdgeGlow * 2 * surgeBoost;
+
+                ctx.shadowBlur = 8 * edgeGlowBoost;
+                ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.3 * edgeGlowBoost})`;
                 ctx.stroke();
+
+                // Additional edge diffusion effect during surges
+                if (maxEdgeGlow > 0.3 && isSurge) {
+                    ctx.shadowBlur = 20 + maxEdgeGlow * 25;
+                    ctx.shadowColor = `rgba(255, 255, 255, ${this.opacity * maxEdgeGlow * 0.5})`;
+                    ctx.stroke();
+                }
 
                 // Endpoint bright spot
                 if (this.lengthProgress > 0.9 && this.thickness > 1) {
@@ -276,11 +404,11 @@
             }
         }
 
-        // Tendril management
-        const minTendrils = 5;
-        const normalTendrils = 20;
-        const surgeTendrils = 100;
-        const maxTendrils = 1000;
+        // Tendril management (reduced for performance)
+        const minTendrils = 3;
+        const normalTendrils = 12;
+        const surgeTendrils = 50;
+        const maxTendrils = 400;
         const tendrils = [];
 
         // Initialize with a few tendrils
@@ -290,13 +418,235 @@
 
         let tendrilIndex = minTendrils;
         let lastSurgeTime = -1000;
+        let frameCount = 0;
+
+        // Tetrahedron edge definitions
+        function getPyramidEdges() {
+            // Define tetrahedron vertices (triangular pyramid)
+            const vertices = {
+                // Base triangle (equilateral)
+                b1: {x: 0, y: 1, z: -1},      // back vertex
+                b2: {x: -0.866, y: 1, z: 0.5}, // left vertex
+                b3: {x: 0.866, y: 1, z: 0.5},  // right vertex
+                // Apex
+                apex: {x: 0, y: -1, z: 0}
+            };
+
+            // Define edges (only 6 edges for tetrahedron)
+            return [
+                // Base edges (3)
+                {start: vertices.b1, end: vertices.b2, type: 'base'},
+                {start: vertices.b2, end: vertices.b3, type: 'base'},
+                {start: vertices.b3, end: vertices.b1, type: 'base'},
+                // Apex edges (3)
+                {start: vertices.b1, end: vertices.apex, type: 'apex'},
+                {start: vertices.b2, end: vertices.apex, type: 'apex'},
+                {start: vertices.b3, end: vertices.apex, type: 'apex'}
+            ];
+        }
+
+        // Optimized edge illumination calculation
+        let edgeIlluminationCache = new Map();
+        let lastCacheFrame = -1;
+
+        function calculateEdgeIllumination(edge, tendrils, frameCount) {
+            // Cache illumination values per frame
+            if (frameCount !== lastCacheFrame) {
+                edgeIlluminationCache.clear();
+                lastCacheFrame = frameCount;
+            }
+
+            const cacheKey = `${edge.start.x},${edge.start.y},${edge.start.z}-${edge.end.x},${edge.end.y},${edge.end.z}`;
+            if (edgeIlluminationCache.has(cacheKey)) {
+                return edgeIlluminationCache.get(cacheKey);
+            }
+
+            let illumination = 0;
+            const proximityThreshold = 0.3; // Slightly increased for better visibility
+            let totalContribution = 0;
+
+            // Sample fewer tendrils when there are many
+            const skipFactor = tendrils.length > 50 ? 2 : 1;
+
+            for (let idx = 0; idx < tendrils.length; idx += skipFactor) {
+                const tendril = tendrils[idx];
+
+                // Skip invisible tendrils
+                if (tendril.opacity < 0.1) continue;
+
+                // Simplified proximity check - just check tendril endpoint
+                const maxLength = tendril.findPyramidIntersection(tendril.baseDirection);
+                const endT = tendril.lengthProgress;
+
+                // Check a few key points along the tendril
+                for (let sample = 0; sample <= 2; sample++) {
+                    const t = sample * 0.5 * endT;
+
+                    const pos = {
+                        x: tendril.baseDirection.x * t * maxLength,
+                        y: tendril.baseDirection.y * t * maxLength,
+                        z: tendril.baseDirection.z * t * maxLength
+                    };
+
+                    // Quick distance check
+                    const dist = pointToLineDistanceSquared(pos, edge.start, edge.end);
+
+                    if (dist < proximityThreshold * proximityThreshold) {
+                        const actualDist = Math.sqrt(dist);
+                        const proximity = 1 - (actualDist / proximityThreshold);
+                        totalContribution += proximity * tendril.opacity * 0.3;
+                    }
+                }
+            }
+
+            illumination = Math.min(1, totalContribution);
+            edgeIlluminationCache.set(cacheKey, illumination);
+            return illumination;
+        }
+
+        // Optimized squared distance calculation (avoids sqrt)
+        function pointToLineDistanceSquared(point, lineStart, lineEnd) {
+            const line = {
+                x: lineEnd.x - lineStart.x,
+                y: lineEnd.y - lineStart.y,
+                z: lineEnd.z - lineStart.z
+            };
+
+            const toPoint = {
+                x: point.x - lineStart.x,
+                y: point.y - lineStart.y,
+                z: point.z - lineStart.z
+            };
+
+            const lineLengthSq = line.x * line.x + line.y * line.y + line.z * line.z;
+            if (lineLengthSq === 0) return toPoint.x * toPoint.x + toPoint.y * toPoint.y + toPoint.z * toPoint.z;
+
+            const t = Math.max(0, Math.min(1, (toPoint.x * line.x + toPoint.y * line.y + toPoint.z * line.z) / lineLengthSq));
+
+            const closest = {
+                x: lineStart.x + t * line.x - point.x,
+                y: lineStart.y + t * line.y - point.y,
+                z: lineStart.z + t * line.z - point.z
+            };
+
+            return closest.x * closest.x + closest.y * closest.y + closest.z * closest.z;
+        }
+
+        // Get t parameter for closest point on line
+        function getClosestPointOnLineT(point, lineStart, lineEnd) {
+            const line = {
+                x: lineEnd.x - lineStart.x,
+                y: lineEnd.y - lineStart.y,
+                z: lineEnd.z - lineStart.z
+            };
+
+            const toPoint = {
+                x: point.x - lineStart.x,
+                y: point.y - lineStart.y,
+                z: point.z - lineStart.z
+            };
+
+            const lineLengthSq = line.x * line.x + line.y * line.y + line.z * line.z;
+            if (lineLengthSq === 0) return 0;
+
+            return Math.max(0, Math.min(1, (toPoint.x * line.x + toPoint.y * line.y + toPoint.z * line.z) / lineLengthSq));
+        }
+
+        // Calculate distance from point to line segment
+        function pointToLineDistance(point, lineStart, lineEnd) {
+            const line = {
+                x: lineEnd.x - lineStart.x,
+                y: lineEnd.y - lineStart.y,
+                z: lineEnd.z - lineStart.z
+            };
+
+            const toPoint = {
+                x: point.x - lineStart.x,
+                y: point.y - lineStart.y,
+                z: point.z - lineStart.z
+            };
+
+            const lineLengthSq = line.x * line.x + line.y * line.y + line.z * line.z;
+            if (lineLengthSq === 0) return Math.sqrt(toPoint.x * toPoint.x + toPoint.y * toPoint.y + toPoint.z * toPoint.z);
+
+            const t = Math.max(0, Math.min(1, (toPoint.x * line.x + toPoint.y * line.y + toPoint.z * line.z) / lineLengthSq));
+
+            const closest = {
+                x: lineStart.x + t * line.x,
+                y: lineStart.y + t * line.y,
+                z: lineStart.z + t * line.z
+            };
+
+            const dx = point.x - closest.x;
+            const dy = point.y - closest.y;
+            const dz = point.z - closest.z;
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        // Draw pyramid edges with illumination
+        function drawPyramidEdges(edges, tendrils, frameCount) {
+            ctx.save();
+
+            for (let edge of edges) {
+                // Calculate illumination for this edge
+                const illumination = calculateEdgeIllumination(edge, tendrils, frameCount);
+
+                // Only draw if there's some illumination
+                if (illumination > 0.01) {
+                    // Rotate edge vertices
+                    const rotatedStart = tendrils[0].rotate3D(edge.start, globalRotX, globalRotY, globalRotZ);
+                    const rotatedEnd = tendrils[0].rotate3D(edge.end, globalRotX, globalRotY, globalRotZ);
+
+                    // Project to 2D
+                    const perspectiveStart = 2 / (2 - rotatedStart.z * 0.3);
+                    const perspectiveEnd = 2 / (2 - rotatedEnd.z * 0.3);
+
+                    const x1 = centerX + rotatedStart.x * maxRadius * perspectiveStart;
+                    const y1 = centerY + rotatedStart.y * maxRadius * perspectiveStart * 0.8;
+                    const x2 = centerX + rotatedEnd.x * maxRadius * perspectiveEnd;
+                    const y2 = centerY + rotatedEnd.y * maxRadius * perspectiveEnd * 0.8;
+
+                    // Draw edge with illumination-based opacity
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+
+                    // Create gradient along edge
+                    const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+                    const baseOpacity = illumination * 0.6;
+                    const glowOpacity = illumination * 0.3;
+
+                    // Edge type affects color
+                    if (edge.type === 'apex') {
+                        gradient.addColorStop(0, `rgba(147, 112, 219, ${baseOpacity})`);
+                        gradient.addColorStop(0.5, `rgba(180, 140, 255, ${baseOpacity * 1.2})`);
+                        gradient.addColorStop(1, `rgba(200, 162, 255, ${baseOpacity})`);
+                    } else {
+                        gradient.addColorStop(0, `rgba(138, 43, 226, ${baseOpacity})`);
+                        gradient.addColorStop(0.5, `rgba(147, 112, 219, ${baseOpacity * 1.2})`);
+                        gradient.addColorStop(1, `rgba(138, 43, 226, ${baseOpacity})`);
+                    }
+
+                    ctx.strokeStyle = gradient;
+                    ctx.lineWidth = 1 + illumination * 1.5;
+
+                    // Add glow effect
+                    ctx.shadowBlur = 5 + illumination * 15;
+                    ctx.shadowColor = `rgba(180, 140, 255, ${glowOpacity})`;
+
+                    ctx.stroke();
+                }
+            }
+
+            ctx.restore();
+        }
 
         // Animation loop
         function animate() {
             requestAnimationFrame(animate);
 
             // Clear canvas
-            ctx.clearRect(0, 0, size, size);
+            ctx.clearRect(0, 0, displaySize, displaySize);
 
             // Update time
             time += 0.012;
@@ -338,11 +688,11 @@
             // Calculate target tendril count
             let targetCount;
             if (surgeMultiplier > 10) {
-                // MASSIVE surge - spawn hundreds
-                targetCount = Math.floor(200 + Math.random() * 800);
+                // Large surge - spawn moderately
+                targetCount = Math.floor(80 + Math.random() * 120);
             } else if (surgeMultiplier > 3) {
                 // Medium surge
-                targetCount = Math.floor(50 + Math.random() * 50);
+                targetCount = Math.floor(30 + Math.random() * 30);
             } else {
                 // Normal oscillation
                 targetCount = Math.floor(minTendrils + (normalTendrils - minTendrils) * baseIntensity);
@@ -350,7 +700,7 @@
 
             // Spawn tendrils aggressively during surges
             if (tendrils.length < targetCount) {
-                const spawnRate = surgeMultiplier > 10 ? 20 : 3; // Spawn many at once during massive surges
+                const spawnRate = surgeMultiplier > 10 ? 8 : 2; // Moderate spawn rate
                 for (let i = 0; i < spawnRate && tendrils.length < Math.min(targetCount, maxTendrils); i++) {
                     tendrils.push(new Tendril(tendrilIndex++));
                 }
@@ -376,6 +726,11 @@
             ctx.shadowColor = `rgba(180, 140, 255, ${0.3 + Math.min(0.7, surgeMultiplier * 0.02)})`;
             ctx.fill();
             ctx.shadowBlur = 0;
+
+            // Get pyramid edges and draw them with proximity-based illumination
+            const pyramidEdges = getPyramidEdges();
+            drawPyramidEdges(pyramidEdges, tendrils, frameCount);
+            frameCount++;
 
             // Sort tendrils by z-depth
             tendrils.sort((a, b) => {
