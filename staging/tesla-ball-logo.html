@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tesla Pyramid Logo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a; /* Dark background to see the effect - you can remove this */
+            display: flex;
+            align-items: flex-start;
+        }
+
+        #tesla-pyramid {
+            width: 150px;
+            height: 150px;
+            position: relative;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div id="tesla-pyramid">
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas resolution
+        const size = 300; // Higher resolution for smooth rendering
+        canvas.width = size;
+        canvas.height = size;
+
+        const centerX = size / 2;
+        const centerY = size / 2;
+        const maxRadius = size * 0.42;
+
+        // 3D rotation angles - GLOBAL for proper pyramid rotation
+        let globalRotX = 0;
+        let globalRotY = 0;
+        let globalRotZ = 0;
+        let time = 0;
+
+        // Tendril class for each electric beam
+        class Tendril {
+            constructor(index) {
+                this.index = index;
+                this.reset();
+            }
+
+            reset() {
+                // Generate random 3D direction for tendril
+                const phi = Math.random() * Math.PI * 2; // Azimuth
+                const theta = (Math.random() - 0.5) * Math.PI; // Full sphere coverage
+
+                this.baseDirection = {
+                    x: Math.cos(theta) * Math.cos(phi),
+                    y: Math.sin(theta),
+                    z: Math.cos(theta) * Math.sin(phi)
+                };
+
+                // Normalize direction
+                const mag = Math.sqrt(
+                    this.baseDirection.x ** 2 +
+                    this.baseDirection.y ** 2 +
+                    this.baseDirection.z ** 2
+                );
+                this.baseDirection.x /= mag;
+                this.baseDirection.y /= mag;
+                this.baseDirection.z /= mag;
+
+                this.lifetime = 0;
+                this.maxLifetime = 40 + Math.random() * 60; // Shorter lifetimes for massive spawns
+                this.opacity = 0;
+                this.growing = true;
+                this.thickness = 0.5 + Math.random() * 1.5; // Thinner for mass spawns
+                this.waveSpeed = 0.02 + Math.random() * 0.02;
+                this.waveAmount = 0.02 + Math.random() * 0.02;
+                this.color = this.generateColor();
+                this.phaseOffset = Math.random() * Math.PI * 2;
+                this.lengthProgress = 0;
+            }
+
+            generateColor() {
+                const colors = [
+                    { r: 138, g: 43, b: 226 },  // Blue violet
+                    { r: 147, g: 112, b: 219 }, // Medium purple
+                    { r: 123, g: 104, b: 238 }, // Medium slate blue
+                    { r: 186, g: 85, b: 211 },  // Medium orchid
+                    { r: 255, g: 182, b: 193 }, // Light pink
+                    { r: 180, g: 140, b: 255 }, // Light purple
+                    { r: 200, g: 162, b: 255 }, // Lighter purple
+                ];
+                return colors[Math.floor(Math.random() * colors.length)];
+            }
+
+            // Rotate a 3D point
+            rotate3D(point, rotX, rotY, rotZ) {
+                let { x, y, z } = point;
+
+                // Rotate around X axis
+                const cosX = Math.cos(rotX);
+                const sinX = Math.sin(rotX);
+                const y1 = y * cosX - z * sinX;
+                const z1 = y * sinX + z * cosX;
+                y = y1;
+                z = z1;
+
+                // Rotate around Y axis
+                const cosY = Math.cos(rotY);
+                const sinY = Math.sin(rotY);
+                const x1 = x * cosY + z * sinY;
+                const z2 = -x * sinY + z * cosY;
+                x = x1;
+                z = z2;
+
+                // Rotate around Z axis
+                const cosZ = Math.cos(rotZ);
+                const sinZ = Math.sin(rotZ);
+                const x2 = x * cosZ - y * sinZ;
+                const y2 = x * sinZ + y * cosZ;
+
+                return { x: x2, y: y2, z: z2 };
+            }
+
+            // Ray-pyramid intersection in LOCAL space (before rotation)
+            findPyramidIntersection(direction) {
+                let maxT = 1.0;
+
+                // Trace along the ray direction
+                for (let t = 0.01; t <= 2.0; t += 0.02) {
+                    // Point along ray in LOCAL space
+                    const point = {
+                        x: direction.x * t,
+                        y: direction.y * t,
+                        z: direction.z * t
+                    };
+
+                    // Check if point is outside pyramid (in LOCAL space)
+                    // Pyramid: apex at (0, -1, 0), base at y = 1
+                    const yNorm = point.y;
+
+                    if (yNorm < -1 || yNorm > 1) {
+                        maxT = t;
+                        break;
+                    }
+
+                    const maxExtent = (yNorm + 1) / 2; // 0 at apex, 1 at base
+
+                    if (Math.abs(point.x) > maxExtent || Math.abs(point.z) > maxExtent) {
+                        maxT = t;
+                        break;
+                    }
+                }
+
+                return Math.min(maxT, 1.0);
+            }
+
+            update() {
+                this.lifetime++;
+
+                // Grow the tendril quickly
+                if (this.lengthProgress < 1) {
+                    this.lengthProgress = Math.min(1, this.lengthProgress + 0.1);
+                }
+
+                // Faster fade in/out for mass spawns
+                if (this.growing) {
+                    this.opacity = Math.min(0.6, this.opacity + 0.05);
+                    if (this.lifetime > this.maxLifetime * 0.6) {
+                        this.growing = false;
+                    }
+                } else {
+                    this.opacity = Math.max(0, this.opacity - 0.03);
+                    if (this.opacity <= 0) {
+                        this.reset();
+                    }
+                }
+            }
+
+            draw() {
+                // Find intersection with pyramid in LOCAL space
+                const maxLength = this.findPyramidIntersection(this.baseDirection);
+
+                // Generate the tendril path
+                const segments = [];
+                const segmentCount = 25; // Fewer segments for performance with many tendrils
+
+                for (let i = 0; i <= segmentCount; i++) {
+                    const t = i / segmentCount;
+                    const adjustedT = t * this.lengthProgress;
+
+                    // Add subtle wave motion
+                    const wave1 = Math.sin(this.lifetime * this.waveSpeed + t * 5 + this.phaseOffset) * this.waveAmount;
+                    const wave2 = Math.cos(this.lifetime * this.waveSpeed * 0.7 + t * 4) * this.waveAmount * 0.7;
+
+                    // Calculate position in LOCAL space
+                    const localPos = {
+                        x: this.baseDirection.x * adjustedT * maxLength + wave1 * (1 - t * 0.5),
+                        y: this.baseDirection.y * adjustedT * maxLength + wave2 * (1 - t * 0.5),
+                        z: this.baseDirection.z * adjustedT * maxLength + wave1 * 0.3 * (1 - t * 0.5)
+                    };
+
+                    // Apply GLOBAL pyramid rotation
+                    const rotated = this.rotate3D(localPos, globalRotX, globalRotY, globalRotZ);
+
+                    // Project to 2D with perspective
+                    const perspective = 2 / (2 - rotated.z * 0.3);
+                    const x2D = centerX + rotated.x * maxRadius * perspective;
+                    const y2D = centerY + rotated.y * maxRadius * perspective * 0.8;
+
+                    segments.push({
+                        x: x2D,
+                        y: y2D,
+                        z: rotated.z,
+                        t: t
+                    });
+                }
+
+                // Draw the tendril
+                if (segments.length < 2) return;
+
+                ctx.beginPath();
+                ctx.moveTo(segments[0].x, segments[0].y);
+
+                // Draw smooth curve
+                for (let i = 1; i < segments.length - 1; i++) {
+                    const xc = (segments[i].x + segments[i + 1].x) / 2;
+                    const yc = (segments[i].y + segments[i + 1].y) / 2;
+                    ctx.quadraticCurveTo(segments[i].x, segments[i].y, xc, yc);
+                }
+
+                const last = segments[segments.length - 1];
+                ctx.lineTo(last.x, last.y);
+
+                // Gradient
+                const gradient = ctx.createLinearGradient(
+                    segments[0].x, segments[0].y,
+                    last.x, last.y
+                );
+
+                gradient.addColorStop(0, `rgba(255, 255, 255, ${this.opacity * 0.9})`);
+                gradient.addColorStop(0.3, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity})`);
+                gradient.addColorStop(0.8, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.7})`);
+                gradient.addColorStop(1, `rgba(255, 255, 255, ${this.opacity * 0.5})`);
+
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = this.thickness * (1 - last.t * 0.3);
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                // Glow
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.3})`;
+                ctx.stroke();
+
+                // Endpoint bright spot
+                if (this.lengthProgress > 0.9 && this.thickness > 1) {
+                    ctx.beginPath();
+                    ctx.arc(last.x, last.y, 1.5, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity * 0.4})`;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = `rgba(255, 255, 255, ${this.opacity * 0.2})`;
+                    ctx.fill();
+                }
+
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // Tendril management
+        const minTendrils = 5;
+        const normalTendrils = 20;
+        const surgeTendrils = 100;
+        const maxTendrils = 1000;
+        const tendrils = [];
+
+        // Initialize with a few tendrils
+        for (let i = 0; i < minTendrils; i++) {
+            tendrils.push(new Tendril(i));
+        }
+
+        let tendrilIndex = minTendrils;
+        let lastSurgeTime = -1000;
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Clear canvas
+            ctx.clearRect(0, 0, size, size);
+
+            // Update time
+            time += 0.012;
+
+            // Update GLOBAL pyramid rotation - complex tumbling motion
+            globalRotX = Math.sin(time * 0.3) * 0.4 +
+                       Math.sin(time * 0.7) * 0.2 +
+                       Math.sin(time * 1.1) * 0.1;
+
+            globalRotY = time * 0.2 + // Continuous rotation
+                       Math.sin(time * 0.4) * 0.3 +
+                       Math.cos(time * 0.9) * 0.15;
+
+            globalRotZ = Math.sin(time * 0.25) * 0.3 +
+                       Math.cos(time * 0.6) * 0.2 +
+                       Math.sin(time * 1.3) * 0.1;
+
+            // Calculate spawn intensity with MASSIVE surges
+            const baseWave = Math.sin(time * 0.3) * 0.5 + 0.5;
+            const mediumWave = Math.sin(time * 0.7 + Math.PI/4) * 0.3 + 0.3;
+            const fastWave = Math.sin(time * 1.5 - Math.PI/3) * 0.2 + 0.2;
+
+            // HUGE surge events - rare but massive
+            let surgeMultiplier = 1;
+            const surgeProbability = Math.sin(time * 0.15); // Slow wave for surge timing
+
+            if (surgeProbability > 0.95 && time - lastSurgeTime > 5) {
+                // MASSIVE surge event!
+                surgeMultiplier = 20 + Math.random() * 30; // 20x to 50x multiplier
+                lastSurgeTime = time;
+            } else if (surgeProbability > 0.7) {
+                // Medium surge
+                surgeMultiplier = 3 + Math.random() * 5;
+            }
+
+            const baseIntensity = (baseWave + mediumWave + fastWave) / 3;
+            const spawnIntensity = Math.min(1, baseIntensity * surgeMultiplier);
+
+            // Calculate target tendril count
+            let targetCount;
+            if (surgeMultiplier > 10) {
+                // MASSIVE surge - spawn hundreds
+                targetCount = Math.floor(200 + Math.random() * 800);
+            } else if (surgeMultiplier > 3) {
+                // Medium surge
+                targetCount = Math.floor(50 + Math.random() * 50);
+            } else {
+                // Normal oscillation
+                targetCount = Math.floor(minTendrils + (normalTendrils - minTendrils) * baseIntensity);
+            }
+
+            // Spawn tendrils aggressively during surges
+            if (tendrils.length < targetCount) {
+                const spawnRate = surgeMultiplier > 10 ? 20 : 3; // Spawn many at once during massive surges
+                for (let i = 0; i < spawnRate && tendrils.length < Math.min(targetCount, maxTendrils); i++) {
+                    tendrils.push(new Tendril(tendrilIndex++));
+                }
+            }
+
+            // Draw central core that responds to surges
+            const coreSize = 8 + Math.sin(time * 2) * 1 + Math.min(15, surgeMultiplier);
+            const coreGlow = 0.5 + Math.min(0.5, surgeMultiplier * 0.02);
+
+            const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreSize * 1.5);
+            coreGradient.addColorStop(0, `rgba(255, 255, 255, ${coreGlow})`);
+            coreGradient.addColorStop(0.3, `rgba(220, 200, 255, ${coreGlow * 0.8})`);
+            coreGradient.addColorStop(0.6, `rgba(147, 112, 219, ${coreGlow * 0.5})`);
+            coreGradient.addColorStop(1, 'rgba(138, 43, 226, 0.05)');
+
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, coreSize, 0, Math.PI * 2);
+            ctx.fillStyle = coreGradient;
+            ctx.fill();
+
+            // Core glow intensifies with surges
+            ctx.shadowBlur = 20 + Math.min(30, surgeMultiplier * 2);
+            ctx.shadowColor = `rgba(180, 140, 255, ${0.3 + Math.min(0.7, surgeMultiplier * 0.02)})`;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Sort tendrils by z-depth
+            tendrils.sort((a, b) => {
+                const aRotated = a.rotate3D(a.baseDirection, globalRotX, globalRotY, globalRotZ);
+                const bRotated = b.rotate3D(b.baseDirection, globalRotX, globalRotY, globalRotZ);
+                return aRotated.z - bRotated.z;
+            });
+
+            // Update and draw all tendrils
+            for (let i = 0; i < tendrils.length; i++) {
+                tendrils[i].update();
+                tendrils[i].draw();
+            }
+
+            // Clean up dead tendrils - aggressive cleanup after surges
+            if (surgeMultiplier <= 1 && tendrils.length > targetCount + 10) {
+                // Fast cleanup after surge
+                const removeCount = Math.min(10, tendrils.length - targetCount);
+                for (let i = 0; i < removeCount; i++) {
+                    tendrils.shift();
+                }
+            } else if (tendrils.length > maxTendrils) {
+                // Hard limit
+                tendrils.splice(0, tendrils.length - maxTendrils);
+            }
+        }
+
+        animate();
+    </script>
+</body>
+</html>
