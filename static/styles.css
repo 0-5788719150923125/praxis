@@ -74,7 +74,7 @@ body, html {
     height: 100dvh;
     max-width: 900px;
     margin: 0 auto;
-    padding: 0 30px;
+    padding: 0 22px;
     overflow: hidden;
 }
 
@@ -83,7 +83,7 @@ body, html {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 5px 0 2px 0;
+    padding: 4px 0 1px 0;
     background-color: var(--background);
     z-index: 10;
 }
@@ -94,13 +94,13 @@ body, html {
     color: var(--primary-dark);
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 7px;
     flex: 1;
 }
 
 .tesla-logo {
-    width: 150px;
-    height: 150px;
+    width: 112px;
+    height: 112px;
     display: flex;
     align-items: center;
     justify-content: center;

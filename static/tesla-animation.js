@@ -7,7 +7,7 @@
 
     // High-DPI canvas setup for zoom resistance
     // Always render at very high resolution to prevent pixelation
-    const baseSize = 150; // Display size
+    const baseSize = 112; // Display size (reduced by 25%)
     const renderScale = 4; // Render at 4x resolution for crisp zooming
     const renderSize = baseSize * renderScale;
 
@@ -167,13 +167,13 @@
 
         generateColor() {
             const colors = [
-                { r: 138, g: 43, b: 226 },  // Blue violet
-                { r: 147, g: 112, b: 219 }, // Medium purple
-                { r: 123, g: 104, b: 238 }, // Medium slate blue
-                { r: 186, g: 85, b: 211 },  // Medium orchid
-                { r: 255, g: 182, b: 193 }, // Light pink
-                { r: 180, g: 140, b: 255 }, // Light purple
-                { r: 200, g: 162, b: 255 }, // Lighter purple
+                { r: 34, g: 139, b: 34 },   // Forest green
+                { r: 0, g: 255, b: 127 },    // Spring green
+                { r: 50, g: 205, b: 50 },    // Lime green
+                { r: 124, g: 252, b: 0 },    // Lawn green
+                { r: 173, g: 255, b: 47 },   // Green yellow
+                { r: 144, g: 238, b: 144 },  // Light green
+                { r: 152, g: 251, b: 152 },  // Pale green
             ];
             return colors[Math.floor(Math.random() * colors.length)];
         }
@@ -634,13 +634,13 @@
 
                 // Edge type affects color
                 if (edge.type === 'apex') {
-                    gradient.addColorStop(0, `rgba(147, 112, 219, ${baseOpacity})`);
-                    gradient.addColorStop(0.5, `rgba(180, 140, 255, ${baseOpacity * 1.2})`);
-                    gradient.addColorStop(1, `rgba(200, 162, 255, ${baseOpacity})`);
+                    gradient.addColorStop(0, `rgba(50, 205, 50, ${baseOpacity})`);
+                    gradient.addColorStop(0.5, `rgba(144, 238, 144, ${baseOpacity * 1.2})`);
+                    gradient.addColorStop(1, `rgba(152, 251, 152, ${baseOpacity})`);
                 } else {
-                    gradient.addColorStop(0, `rgba(138, 43, 226, ${baseOpacity})`);
-                    gradient.addColorStop(0.5, `rgba(147, 112, 219, ${baseOpacity * 1.2})`);
-                    gradient.addColorStop(1, `rgba(138, 43, 226, ${baseOpacity})`);
+                    gradient.addColorStop(0, `rgba(34, 139, 34, ${baseOpacity})`);
+                    gradient.addColorStop(0.5, `rgba(50, 205, 50, ${baseOpacity * 1.2})`);
+                    gradient.addColorStop(1, `rgba(34, 139, 34, ${baseOpacity})`);
                 }
 
                 ctx.strokeStyle = gradient;
@@ -648,7 +648,7 @@
 
                 // Add glow effect
                 ctx.shadowBlur = 5 + illumination * 15;
-                ctx.shadowColor = `rgba(180, 140, 255, ${glowOpacity})`;
+                ctx.shadowColor = `rgba(144, 238, 144, ${glowOpacity})`;
 
                 ctx.stroke();
             }
@@ -735,9 +735,9 @@
 
         const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreSize * 1.5);
         coreGradient.addColorStop(0, `rgba(255, 255, 255, ${coreGlow})`);
-        coreGradient.addColorStop(0.3, `rgba(220, 200, 255, ${coreGlow * 0.8})`);
-        coreGradient.addColorStop(0.6, `rgba(147, 112, 219, ${coreGlow * 0.5})`);
-        coreGradient.addColorStop(1, 'rgba(138, 43, 226, 0.05)');
+        coreGradient.addColorStop(0.3, `rgba(200, 255, 200, ${coreGlow * 0.8})`);
+        coreGradient.addColorStop(0.6, `rgba(50, 205, 50, ${coreGlow * 0.5})`);
+        coreGradient.addColorStop(1, 'rgba(34, 139, 34, 0.05)');
 
         ctx.beginPath();
         ctx.arc(centerX, centerY, coreSize, 0, Math.PI * 2);
@@ -747,7 +747,7 @@
         // Core glow during surges
         if (surgeMultiplier > 5) {
             ctx.shadowBlur = 20;
-            ctx.shadowColor = `rgba(180, 140, 255, 0.5)`;
+            ctx.shadowColor = `rgba(144, 238, 144, 0.5)`;
             ctx.fill();
             ctx.shadowBlur = 0;
         }
