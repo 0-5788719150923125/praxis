@@ -60,6 +60,15 @@
         let globalRotZ = 0;
         let time = 0;
 
+        // Rotation velocities for full 3D rotation
+        let rotVelX = 0.003 + Math.random() * 0.002;
+        let rotVelY = 0.005 + Math.random() * 0.002;
+        let rotVelZ = 0.002 + Math.random() * 0.001;
+
+        // Morphing parameters for gentle tetrahedron distortion
+        let morphPhase = 0;
+        let morphSpeed = 0.01;
+
         // Wind system for directional surges
         let windState = {
             direction: { x: 0, y: 0, z: 0 },
@@ -113,23 +122,26 @@
             }
 
             reset() {
+                // Origin at the true center of the tetrahedron (0, 0, 0)
+                this.origin = {x: 0, y: 0, z: 0};
+
                 // 25% chance to target edges/vertices for better tetrahedron definition (reduced for performance)
                 if (Math.random() < 0.25) {
-                    // Target tetrahedron vertices and edges
+                    // Target tetrahedron vertices and edges (centered at origin)
                     const targets = [
-                        // Base triangle corners (equilateral triangle in xz plane)
-                        {x: 0, y: 1, z: -1},      // back vertex
-                        {x: -0.866, y: 1, z: 0.5}, // left vertex
-                        {x: 0.866, y: 1, z: 0.5},  // right vertex
+                        // Base triangle corners (centered tetrahedron)
+                        {x: 0, y: 0.5, z: -0.577},      // back vertex
+                        {x: -0.5, y: 0.5, z: 0.289},     // left vertex
+                        {x: 0.5, y: 0.5, z: 0.289},      // right vertex
                         // Apex
-                        {x: 0, y: -1, z: 0},
+                        {x: 0, y: -0.5, z: 0},
                         // Edge midpoints for better edge coverage
-                        {x: -0.433, y: 1, z: -0.25}, // back-left edge
-                        {x: 0.433, y: 1, z: -0.25},  // back-right edge
-                        {x: 0, y: 1, z: 0.5},        // left-right edge
-                        {x: 0, y: 0, z: -0.5},       // apex edges
-                        {x: -0.433, y: 0, z: 0.25},
-                        {x: 0.433, y: 0, z: 0.25}
+                        {x: -0.25, y: 0.5, z: -0.144},   // back-left edge
+                        {x: 0.25, y: 0.5, z: -0.144},    // back-right edge
+                        {x: 0, y: 0.5, z: 0.289},        // left-right edge
+                        {x: 0, y: 0, z: -0.289},         // apex edges
+                        {x: -0.25, y: 0, z: 0.144},
+                        {x: 0.25, y: 0, z: 0.144}
                     ];
 
                     const target = targets[Math.floor(Math.random() * targets.length)];
@@ -247,28 +259,30 @@
                 // Simplified trace - fewer steps for performance
                 for (let t = 0.02; t <= 2.0; t += 0.04) { // Doubled step size
                     const point = {
-                        x: direction.x * t,
-                        y: direction.y * t,
-                        z: direction.z * t
+                        x: this.origin.x + direction.x * t,
+                        y: this.origin.y + direction.y * t,
+                        z: this.origin.z + direction.z * t
                     };
 
-                    // Check if point is outside tetrahedron
-                    const yNorm = point.y;
-                    if (yNorm < -1 || yNorm > 1) {
+                    // Check if point is outside tetrahedron (centered version)
+                    if (point.y < -0.5 || point.y > 0.5) {
                         maxT = t;
                         break;
                     }
 
-                    // Check if inside triangular base (simplified)
-                    const height = (yNorm + 1) / 2; // 0 at apex, 1 at base
-                    const scaledX = point.x / height;
-                    const scaledZ = point.z / height;
+                    // Check if inside triangular base (centered tetrahedron)
+                    const height = (point.y + 0.5); // 0 at apex, 1 at base
+                    if (height > 0) {
+                        const scale = height; // Scale factor for the triangle at this height
+                        const scaledX = point.x / scale;
+                        const scaledZ = point.z / scale;
 
-                    // Simple triangular boundary check
-                    if (scaledZ < -1 || scaledZ > 0.5 ||
-                        Math.abs(scaledX) > 0.866 * (1 + scaledZ)) {
-                        maxT = t;
-                        break;
+                        // Triangular boundary check for centered tetrahedron
+                        if (scaledZ < -0.577 || scaledZ > 0.289 ||
+                            Math.abs(scaledX) > 0.5) {
+                            maxT = t;
+                            break;
+                        }
                     }
                 }
 
@@ -314,11 +328,11 @@
                     const wave1 = Math.sin(this.lifetime * this.waveSpeed + t * 5 + this.phaseOffset) * this.waveAmount;
                     const wave2 = Math.cos(this.lifetime * this.waveSpeed * 0.7 + t * 4) * this.waveAmount * 0.7;
 
-                    // Calculate position in LOCAL space
+                    // Calculate position in LOCAL space (from origin at center)
                     const localPos = {
-                        x: this.baseDirection.x * adjustedT * maxLength + wave1 * (1 - t * 0.5),
-                        y: this.baseDirection.y * adjustedT * maxLength + wave2 * (1 - t * 0.5),
-                        z: this.baseDirection.z * adjustedT * maxLength + wave1 * 0.3 * (1 - t * 0.5)
+                        x: this.origin.x + this.baseDirection.x * adjustedT * maxLength + wave1 * (1 - t * 0.5),
+                        y: this.origin.y + this.baseDirection.y * adjustedT * maxLength + wave2 * (1 - t * 0.5),
+                        z: this.origin.z + this.baseDirection.z * adjustedT * maxLength + wave1 * 0.3 * (1 - t * 0.5)
                     };
 
                     // Check edge proximity for enhanced effects
@@ -420,16 +434,21 @@
         let lastSurgeTime = -1000;
         let frameCount = 0;
 
-        // Tetrahedron edge definitions
-        function getPyramidEdges() {
-            // Define tetrahedron vertices (triangular pyramid)
+        // Tetrahedron edge definitions with morphing
+        function getPyramidEdges(morphFactor = 0) {
+            // Morphing distortion factors
+            const morph1 = Math.sin(morphPhase) * morphFactor;
+            const morph2 = Math.cos(morphPhase * 1.3) * morphFactor;
+            const morph3 = Math.sin(morphPhase * 0.7) * morphFactor;
+
+            // Define tetrahedron vertices (centered at 0,0,0 for proper rotation)
             const vertices = {
-                // Base triangle (equilateral)
-                b1: {x: 0, y: 1, z: -1},      // back vertex
-                b2: {x: -0.866, y: 1, z: 0.5}, // left vertex
-                b3: {x: 0.866, y: 1, z: 0.5},  // right vertex
-                // Apex
-                apex: {x: 0, y: -1, z: 0}
+                // Base triangle vertices (at y = 0.5)
+                b1: {x: 0 + morph1 * 0.1, y: 0.5, z: -0.577 + morph2 * 0.05},      // back vertex
+                b2: {x: -0.5 + morph2 * 0.08, y: 0.5, z: 0.289 + morph3 * 0.05},   // left vertex
+                b3: {x: 0.5 + morph3 * 0.08, y: 0.5, z: 0.289 + morph1 * 0.05},    // right vertex
+                // Apex (at y = -0.5 for centering)
+                apex: {x: 0 + morph2 * 0.05, y: -0.5 + morph1 * 0.1, z: 0 + morph3 * 0.05}
             };
 
             // Define edges (only 6 edges for tetrahedron)
@@ -651,18 +670,25 @@
             // Update time
             time += 0.012;
 
-            // Update GLOBAL pyramid rotation - complex tumbling motion
-            globalRotX = Math.sin(time * 0.3) * 0.4 +
-                       Math.sin(time * 0.7) * 0.2 +
-                       Math.sin(time * 1.1) * 0.1;
+            // Update full 3D rotation (continuous rotation on all axes)
+            globalRotX += rotVelX;
+            globalRotY += rotVelY;
+            globalRotZ += rotVelZ;
 
-            globalRotY = time * 0.2 + // Continuous rotation
-                       Math.sin(time * 0.4) * 0.3 +
-                       Math.cos(time * 0.9) * 0.15;
+            // Occasionally change rotation velocities for variety
+            if (Math.random() < 0.002) {
+                rotVelX += (Math.random() - 0.5) * 0.002;
+                rotVelY += (Math.random() - 0.5) * 0.002;
+                rotVelZ += (Math.random() - 0.5) * 0.001;
 
-            globalRotZ = Math.sin(time * 0.25) * 0.3 +
-                       Math.cos(time * 0.6) * 0.2 +
-                       Math.sin(time * 1.3) * 0.1;
+                // Keep velocities in reasonable range
+                rotVelX = Math.max(-0.01, Math.min(0.01, rotVelX));
+                rotVelY = Math.max(-0.01, Math.min(0.01, rotVelY));
+                rotVelZ = Math.max(-0.008, Math.min(0.008, rotVelZ));
+            }
+
+            // Update morphing phase
+            morphPhase += morphSpeed;
 
             // Calculate spawn intensity with MASSIVE surges
             const baseWave = Math.sin(time * 0.3) * 0.5 + 0.5;
@@ -727,8 +753,8 @@
             ctx.fill();
             ctx.shadowBlur = 0;
 
-            // Get pyramid edges and draw them with proximity-based illumination
-            const pyramidEdges = getPyramidEdges();
+            // Get morphed pyramid edges and draw them with proximity-based illumination
+            const pyramidEdges = getPyramidEdges(0.15); // 15% morphing strength
             drawPyramidEdges(pyramidEdges, tendrils, frameCount);
             frameCount++;
 
