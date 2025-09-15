@@ -184,6 +184,9 @@
                 this.color = this.generateColor();
                 this.phaseOffset = Math.random() * Math.PI * 2;
                 this.lengthProgress = 0;
+                this.state = 'growing';
+                this.escapeWorldAnchor = null;
+                this.willEscape = Math.random() < 0.3; // 30% chance of escaping
             }
 
             generateColor() {
@@ -250,6 +253,36 @@
                 const y2 = x * sinZ + y * cosZ;
 
                 return { x: x2, y: y2, z: z2 };
+            }
+
+            unrotate3D(point, rotX, rotY, rotZ) {
+                let { x, y, z } = point;
+
+                // Reverse Z-axis rotation
+                let cos = Math.cos(-rotZ);
+                let sin = Math.sin(-rotZ);
+                let tempX = x * cos - y * sin;
+                let tempY = x * sin + y * cos;
+                x = tempX;
+                y = tempY;
+
+                // Reverse Y-axis rotation
+                cos = Math.cos(-rotY);
+                sin = Math.sin(-rotY);
+                tempX = x * cos + z * sin;
+                let tempZ = -x * sin + z * cos;
+                x = tempX;
+                z = tempZ;
+
+                // Reverse X-axis rotation
+                cos = Math.cos(-rotX);
+                sin = Math.sin(-rotX);
+                tempY = y * cos - z * sin;
+                tempZ = y * sin + z * cos;
+                y = tempY;
+                z = tempZ;
+
+                return { x, y, z };
             }
 
             // Ray-tetrahedron intersection in LOCAL space (before rotation)
@@ -324,14 +357,44 @@
                 // Find intersection with pyramid in LOCAL space
                 const maxLength = this.findPyramidIntersection(this.baseDirection);
 
+                // AT ESCAPE: Capture anchor point
+                if (this.state === 'growing' && this.lengthProgress >= 1 && this.willEscape) {
+                    this.state = 'escaped';
+                    const localTip = {
+                        x: this.origin.x + this.baseDirection.x * maxLength,
+                        y: this.origin.y + this.baseDirection.y * maxLength,
+                        z: this.origin.z + this.baseDirection.z * maxLength
+                    };
+                    // The crucial step: transform to world space and store it
+                    this.escapeWorldAnchor = this.rotate3D(localTip, globalRotX, globalRotY, globalRotZ);
+                }
+
                 // Generate the tendril path
                 const segments = [];
                 const segmentCount = 15; // Reduced for better performance
                 let maxEdgeGlow = 0; // Track maximum edge proximity for this tendril
 
+                let pathDirection = this.baseDirection;
+                let pathLength = maxLength * this.lengthProgress;
+
+                if (this.state === 'escaped' && this.escapeWorldAnchor) {
+                    const localAnchor = this.unrotate3D(this.escapeWorldAnchor, globalRotX, globalRotY, globalRotZ);
+                    const dirToAnchor = {
+                        x: localAnchor.x - this.origin.x,
+                        y: localAnchor.y - this.origin.y,
+                        z: localAnchor.z - this.origin.z
+                    };
+                    const mag = Math.sqrt(dirToAnchor.x ** 2 + dirToAnchor.y ** 2 + dirToAnchor.z ** 2);
+                    if (mag > 0) {
+                        pathDirection = { x: dirToAnchor.x / mag, y: dirToAnchor.y / mag, z: dirToAnchor.z / mag };
+                    }
+                    pathLength = mag;
+                }
+
+
                 for (let i = 0; i <= segmentCount; i++) {
                     const t = i / segmentCount;
-                    const adjustedT = t * this.lengthProgress;
+                    const adjustedT = t;
 
                     // Add subtle wave motion
                     const wave1 = Math.sin(this.lifetime * this.waveSpeed + t * 5 + this.phaseOffset) * this.waveAmount;
@@ -339,29 +402,33 @@
 
                     // Calculate position in LOCAL space (from origin at center)
                     const localPos = {
-                        x: this.origin.x + this.baseDirection.x * adjustedT * maxLength + wave1 * (1 - t * 0.5),
-                        y: this.origin.y + this.baseDirection.y * adjustedT * maxLength + wave2 * (1 - t * 0.5),
-                        z: this.origin.z + this.baseDirection.z * adjustedT * maxLength + wave1 * 0.3 * (1 - t * 0.5)
+                        x: this.origin.x + pathDirection.x * adjustedT * pathLength + wave1 * (1 - t * 0.5),
+                        y: this.origin.y + pathDirection.y * adjustedT * pathLength + wave2 * (1 - t * 0.5),
+                        z: this.origin.z + pathDirection.z * adjustedT * pathLength + wave1 * 0.3 * (1 - t * 0.5)
                     };
 
-                    // Check edge proximity for enhanced effects
-                    const edgeInfo = this.detectEdgeProximity(localPos);
-                    maxEdgeGlow = Math.max(maxEdgeGlow, edgeInfo.glowIntensity);
+                    let edgeGlow = 0;
+                    if (this.state !== 'escaped') {
+                        // Check edge proximity for enhanced effects
+                        const edgeInfo = this.detectEdgeProximity(localPos);
+                        maxEdgeGlow = Math.max(maxEdgeGlow, edgeInfo.glowIntensity);
+                        edgeGlow = edgeInfo.glowIntensity;
+                    }
 
                     // Apply GLOBAL pyramid rotation
-                    const rotated = this.rotate3D(localPos, globalRotX, globalRotY, globalRotZ);
+                    const worldPos = this.rotate3D(localPos, globalRotX, globalRotY, globalRotZ);
 
                     // Project to 2D with perspective
-                    const perspective = 2 / (2 - rotated.z * 0.3);
-                    const x2D = centerX + rotated.x * maxRadius * perspective;
-                    const y2D = centerY + rotated.y * maxRadius * perspective * 0.8;
+                    const perspective = 2 / (2 - worldPos.z * 0.3);
+                    const x2D = centerX + worldPos.x * maxRadius * perspective;
+                    const y2D = centerY + worldPos.y * maxRadius * perspective * 0.8;
 
                     segments.push({
                         x: x2D,
                         y: y2D,
-                        z: rotated.z,
+                        z: worldPos.z,
                         t: t,
-                        edgeGlow: edgeInfo.glowIntensity
+                        edgeGlow: edgeGlow
                     });
                 }
 
