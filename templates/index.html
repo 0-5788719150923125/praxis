@@ -12,9 +12,10 @@
 <body>
     <div class="app-container">
         <header class="header">
-            <div class="logo"> 
-                <div class="logo-icon"></div>
-                <span class="logo-text">Chat</span>
+            <div class="logo">
+                <div class="tesla-logo">
+                    <canvas id="tesla-canvas"></canvas>
+                </div>
                 <span class="logo-separator">|</span>
                 <span class="system-prompt-header" id="developer-prompt" contenteditable="true" spellcheck="false">Write thy wrong.</span>
             </div>
@@ -138,5 +139,6 @@
     <!-- Socket.IO for live reload -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ url_for('static', filename='tesla-animation.js') }}"></script>
 </body>
 </html>
