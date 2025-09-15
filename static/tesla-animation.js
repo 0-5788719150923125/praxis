@@ -7,7 +7,7 @@
 
     // High-DPI canvas setup for zoom resistance
     // Always render at very high resolution to prevent pixelation
-    const baseSize = 112; // Display size (reduced by 25%)
+    const baseSize = 140; // Canvas render size (25% larger than container)
     const renderScale = 4; // Render at 4x resolution for crisp zooming
     const renderSize = baseSize * renderScale;
 
@@ -15,20 +15,17 @@
     canvas.width = renderSize;
     canvas.height = renderSize;
 
-    // Set display size (CSS will scale it down)
+    // Set display size to match the larger canvas (will overflow container slightly)
     canvas.style.width = baseSize + 'px';
     canvas.style.height = baseSize + 'px';
 
     // Scale context to match high resolution
     ctx.scale(renderScale, renderScale);
 
-    // Use baseSize for all drawing coordinates (will be scaled by context)
-    const displaySize = baseSize;
-
-    // Use displaySize for all drawing coordinates
-    const centerX = displaySize / 2;
-    const centerY = displaySize / 2;
-    const maxRadius = displaySize * 0.42;
+    // Use baseSize for all drawing coordinates (the actual canvas size)
+    const centerX = baseSize / 2;
+    const centerY = baseSize / 2;
+    const maxRadius = baseSize * 0.42;
 
     // 3D rotation angles - GLOBAL for proper pyramid rotation
     let globalRotX = 0;
@@ -662,7 +659,7 @@
         requestAnimationFrame(animate);
 
         // Clear canvas
-        ctx.clearRect(0, 0, displaySize, displaySize);
+        ctx.clearRect(0, 0, baseSize, baseSize);
 
         // Update time
         time += 0.012;

@@ -107,11 +107,16 @@ body, html {
     flex-shrink: 0;
     flex-grow: 0;
     position: relative;
+    overflow: visible;
 }
 
 .tesla-logo canvas {
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 140px;
+    height: 140px;
     image-rendering: auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -162,11 +167,11 @@ body, html {
     line-height: 1;
 }
 
-.logo-separator {
+/* .logo-separator {
     color: var(--border);
     font-weight: 300;
     margin: 0 10px;
-}
+} */
 
 .system-prompt-header {
     font-size: 14px;
