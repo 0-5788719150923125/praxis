@@ -14,7 +14,7 @@ Run an experiment:
 ```bash
 ./launch --alpha
 # or
-python main.py --alpha --batch-size 32  # Override individual settings
+./launch --alpha --batch-size 32  # Override individual settings
 ```
 
 ## Creating Experiments
