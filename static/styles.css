@@ -167,11 +167,11 @@ body, html {
     line-height: 1;
 }
 
-/* .logo-separator {
+.logo-separator {
     color: var(--border);
     font-weight: 300;
     margin: 0 10px;
-} */
+}
 
 .system-prompt-header {
     font-size: 14px;

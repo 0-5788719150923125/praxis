@@ -38,6 +38,29 @@
     let rotVelY = 0.005 + Math.random() * 0.002;
     let rotVelZ = 0.002 + Math.random() * 0.001;
 
+    // Motion behavior system
+    const motionBehaviors = {
+        SPINNING: 'spinning',      // Current default behavior
+        FLYING: 'flying',          // Smooth forward motion with banking
+        SOARING: 'soaring',        // Gentle gliding with lift
+        SWOOPING: 'swooping',      // Dramatic diving and climbing
+        PEACEFUL: 'peaceful',      // Slow, stable rotation
+        HOVERING: 'hovering',      // Nearly still with micro-movements
+        TUMBLING: 'tumbling'       // Chaotic tumbling motion
+    };
+
+    let currentBehavior = motionBehaviors.SPINNING;
+    let behaviorStartTime = 0;
+    let behaviorDuration = 5 + Math.random() * 5; // 5-10 seconds per behavior
+    let nextBehavior = null;
+    let transitionProgress = 0;
+    let transitionDuration = 1.5; // 1.5 second transitions
+
+    // Target velocities for smooth transitions
+    let targetVelX = rotVelX;
+    let targetVelY = rotVelY;
+    let targetVelZ = rotVelZ;
+
     // Morphing parameters for gentle tetrahedron distortion
     let morphPhase = 0;
     let morphSpeed = 0.01;
@@ -682,6 +705,108 @@
         return document.documentElement.getAttribute('data-theme') !== 'dark';
     }
 
+    // Select next random behavior with weighted probabilities
+    function selectNextBehavior() {
+        const weights = {
+            [motionBehaviors.SPINNING]: 15,
+            [motionBehaviors.FLYING]: 20,
+            [motionBehaviors.SOARING]: 20,
+            [motionBehaviors.SWOOPING]: 10,
+            [motionBehaviors.PEACEFUL]: 20,
+            [motionBehaviors.HOVERING]: 10,
+            [motionBehaviors.TUMBLING]: 5
+        };
+
+        // Don't repeat the same behavior immediately
+        weights[currentBehavior] = 0;
+
+        const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
+        let random = Math.random() * totalWeight;
+
+        for (const [behavior, weight] of Object.entries(weights)) {
+            random -= weight;
+            if (random <= 0) {
+                return behavior;
+            }
+        }
+        return motionBehaviors.PEACEFUL; // Fallback
+    }
+
+    // Calculate target velocities based on behavior
+    function calculateBehaviorVelocities(behavior, elapsed) {
+        const t = elapsed / 1000; // Convert to seconds
+
+        switch (behavior) {
+            case motionBehaviors.SPINNING:
+                // Original spinning behavior
+                return {
+                    x: 0.003 + Math.random() * 0.002,
+                    y: 0.005 + Math.random() * 0.002,
+                    z: 0.002 + Math.random() * 0.001
+                };
+
+            case motionBehaviors.FLYING:
+                // Smooth forward motion with banking turns
+                const flyAngle = t * 0.3;
+                return {
+                    x: 0.002 + Math.sin(flyAngle) * 0.003,
+                    y: 0.008, // Steady forward rotation
+                    z: Math.cos(flyAngle * 0.7) * 0.002
+                };
+
+            case motionBehaviors.SOARING:
+                // Gentle gliding with occasional lift
+                const soarPhase = t * 0.2;
+                return {
+                    x: Math.sin(soarPhase) * 0.002,
+                    y: 0.003 + Math.sin(soarPhase * 0.5) * 0.002,
+                    z: Math.cos(soarPhase * 0.3) * 0.001
+                };
+
+            case motionBehaviors.SWOOPING:
+                // Dramatic diving and climbing
+                const swoopPhase = t * 0.5;
+                return {
+                    x: Math.sin(swoopPhase) * 0.01,
+                    y: 0.005 + Math.cos(swoopPhase) * 0.008,
+                    z: Math.sin(swoopPhase * 1.5) * 0.003
+                };
+
+            case motionBehaviors.PEACEFUL:
+                // Very slow, stable rotation
+                return {
+                    x: 0.0005,
+                    y: 0.001,
+                    z: 0.0003
+                };
+
+            case motionBehaviors.HOVERING:
+                // Nearly still with micro-movements
+                const hoverPhase = t * 2;
+                return {
+                    x: Math.sin(hoverPhase) * 0.0003,
+                    y: 0.0002 + Math.cos(hoverPhase * 0.7) * 0.0002,
+                    z: Math.sin(hoverPhase * 1.3) * 0.0001
+                };
+
+            case motionBehaviors.TUMBLING:
+                // Chaotic tumbling
+                return {
+                    x: (Math.random() - 0.5) * 0.02,
+                    y: (Math.random() - 0.5) * 0.02,
+                    z: (Math.random() - 0.5) * 0.015
+                };
+
+            default:
+                return { x: rotVelX, y: rotVelY, z: rotVelZ };
+        }
+    }
+
+    // Smooth interpolation function
+    function smoothInterpolate(current, target, factor) {
+        return current + (target - current) * factor;
+    }
+
     // Animation loop
     function animate() {
         requestAnimationFrame(animate);
@@ -692,22 +817,49 @@
         // Update time
         time += 0.012;
 
-        // Update full 3D rotation (continuous rotation on all axes)
+        // Behavior system update
+        const behaviorElapsed = time - behaviorStartTime;
+
+        // Check if it's time to transition to a new behavior
+        if (behaviorElapsed > behaviorDuration && !nextBehavior) {
+            nextBehavior = selectNextBehavior();
+            transitionProgress = 0;
+        }
+
+        // Handle behavior transitions
+        if (nextBehavior) {
+            transitionProgress += 0.012 / transitionDuration;
+
+            if (transitionProgress >= 1) {
+                // Complete the transition
+                currentBehavior = nextBehavior;
+                nextBehavior = null;
+                behaviorStartTime = time;
+                behaviorDuration = 4 + Math.random() * 8; // 4-12 seconds
+                transitionProgress = 0;
+            }
+        }
+
+        // Calculate target velocities based on current behavior
+        const behaviorVels = calculateBehaviorVelocities(
+            nextBehavior || currentBehavior,
+            behaviorElapsed * 1000
+        );
+
+        // Smoothly interpolate to target velocities
+        const smoothFactor = nextBehavior ? transitionProgress * 0.1 : 0.05;
+        targetVelX = behaviorVels.x;
+        targetVelY = behaviorVels.y;
+        targetVelZ = behaviorVels.z;
+
+        rotVelX = smoothInterpolate(rotVelX, targetVelX, smoothFactor);
+        rotVelY = smoothInterpolate(rotVelY, targetVelY, smoothFactor);
+        rotVelZ = smoothInterpolate(rotVelZ, targetVelZ, smoothFactor);
+
+        // Apply rotation velocities
         globalRotX += rotVelX;
         globalRotY += rotVelY;
         globalRotZ += rotVelZ;
-
-        // Occasionally change rotation velocities for variety
-        if (Math.random() < 0.002) {
-            rotVelX += (Math.random() - 0.5) * 0.002;
-            rotVelY += (Math.random() - 0.5) * 0.002;
-            rotVelZ += (Math.random() - 0.5) * 0.001;
-
-            // Keep velocities in reasonable range
-            rotVelX = Math.max(-0.01, Math.min(0.01, rotVelX));
-            rotVelY = Math.max(-0.01, Math.min(0.01, rotVelY));
-            rotVelZ = Math.max(-0.008, Math.min(0.008, rotVelZ));
-        }
 
         // Update morphing phase
         morphPhase += morphSpeed;
