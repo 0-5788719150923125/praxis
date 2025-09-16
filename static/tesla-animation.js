@@ -326,7 +326,7 @@
             }
         }
 
-        draw() {
+        draw(shadowPass = false) {
             // Find intersection with pyramid in LOCAL space
             const maxLength = this.findPyramidIntersection(this.baseDirection);
 
@@ -420,40 +420,54 @@
             const last = segments[segments.length - 1];
             ctx.lineTo(last.x, last.y);
 
-            // Gradient
-            const gradient = ctx.createLinearGradient(
-                segments[0].x, segments[0].y,
-                last.x, last.y
-            );
+            if (shadowPass) {
+                // Shadow rendering for light mode - very subtle dark glow
+                ctx.strokeStyle = `rgba(0, 0, 0, ${this.opacity * 0.25})`; // Much more transparent
+                ctx.lineWidth = (this.thickness * (1 - last.t * 0.3)) + 1.5; // Much thinner outline
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
 
-            gradient.addColorStop(0, `rgba(255, 255, 255, ${this.opacity * 0.9})`);
-            gradient.addColorStop(0.3, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity})`);
-            gradient.addColorStop(0.8, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.7})`);
-            gradient.addColorStop(1, `rgba(255, 255, 255, ${this.opacity * 0.5})`);
-
-            ctx.strokeStyle = gradient;
-            ctx.lineWidth = this.thickness * (1 - last.t * 0.3);
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-
-            // Shadow effects for edge proximity
-            const isSurge = tendrils.length > 30;
-            if (isSurge && maxEdgeGlow > 0.5) {
-                // Only apply shadow during significant edge proximity
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.4})`;
+                // Softer, subtler blur
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = `rgba(0, 0, 0, ${this.opacity * 0.15})`; // Very light shadow
                 ctx.stroke();
                 ctx.shadowBlur = 0;
             } else {
-                ctx.stroke();
-            }
+                // Normal rendering
+                const gradient = ctx.createLinearGradient(
+                    segments[0].x, segments[0].y,
+                    last.x, last.y
+                );
 
-            // Endpoint spot
-            if (this.lengthProgress > 0.9 && this.thickness > 1 && this.opacity > 0.3) {
-                ctx.beginPath();
-                ctx.arc(last.x, last.y, 1.5, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity * 0.4})`;
-                ctx.fill();
+                gradient.addColorStop(0, `rgba(255, 255, 255, ${this.opacity * 0.9})`);
+                gradient.addColorStop(0.3, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity})`);
+                gradient.addColorStop(0.8, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.7})`);
+                gradient.addColorStop(1, `rgba(255, 255, 255, ${this.opacity * 0.5})`);
+
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = this.thickness * (1 - last.t * 0.3);
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                // Shadow effects for edge proximity
+                const isSurge = tendrils.length > 30;
+                if (isSurge && maxEdgeGlow > 0.5) {
+                    // Only apply shadow during significant edge proximity
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.opacity * 0.4})`;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                } else {
+                    ctx.stroke();
+                }
+
+                // Endpoint spot
+                if (this.lengthProgress > 0.9 && this.thickness > 1 && this.opacity > 0.3) {
+                    ctx.beginPath();
+                    ctx.arc(last.x, last.y, 1.5, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity * 0.4})`;
+                    ctx.fill();
+                }
             }
         }
     }
@@ -597,7 +611,7 @@
     }
 
     // Draw pyramid edges with illumination
-    function drawPyramidEdges(edges, tendrils, frameCount) {
+    function drawPyramidEdges(edges, tendrils, frameCount, shadowPass = false) {
         ctx.save();
 
         for (let edge of edges) {
@@ -624,34 +638,48 @@
                 ctx.moveTo(x1, y1);
                 ctx.lineTo(x2, y2);
 
-                // Create gradient along edge
-                const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
-                const baseOpacity = illumination * 0.6;
-                const glowOpacity = illumination * 0.3;
-
-                // Edge type affects color
-                if (edge.type === 'apex') {
-                    gradient.addColorStop(0, `rgba(50, 205, 50, ${baseOpacity})`);
-                    gradient.addColorStop(0.5, `rgba(144, 238, 144, ${baseOpacity * 1.2})`);
-                    gradient.addColorStop(1, `rgba(152, 251, 152, ${baseOpacity})`);
+                if (shadowPass) {
+                    // Shadow rendering for light mode - very subtle
+                    ctx.strokeStyle = `rgba(0, 0, 0, ${illumination * 0.5})`; // Much lighter
+                    ctx.lineWidth = 3 + illumination * 2; // Thinner lines
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = `rgba(0, 0, 0, ${illumination * 0.3})`; // Very subtle shadow
+                    ctx.stroke();
                 } else {
-                    gradient.addColorStop(0, `rgba(34, 139, 34, ${baseOpacity})`);
-                    gradient.addColorStop(0.5, `rgba(50, 205, 50, ${baseOpacity * 1.2})`);
-                    gradient.addColorStop(1, `rgba(34, 139, 34, ${baseOpacity})`);
+                    // Normal rendering
+                    const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
+                    const baseOpacity = illumination * 0.6;
+                    const glowOpacity = illumination * 0.3;
+
+                    // Edge type affects color
+                    if (edge.type === 'apex') {
+                        gradient.addColorStop(0, `rgba(50, 205, 50, ${baseOpacity})`);
+                        gradient.addColorStop(0.5, `rgba(144, 238, 144, ${baseOpacity * 1.2})`);
+                        gradient.addColorStop(1, `rgba(152, 251, 152, ${baseOpacity})`);
+                    } else {
+                        gradient.addColorStop(0, `rgba(34, 139, 34, ${baseOpacity})`);
+                        gradient.addColorStop(0.5, `rgba(50, 205, 50, ${baseOpacity * 1.2})`);
+                        gradient.addColorStop(1, `rgba(34, 139, 34, ${baseOpacity})`);
+                    }
+
+                    ctx.strokeStyle = gradient;
+                    ctx.lineWidth = 1 + illumination * 1.5;
+
+                    // Add glow effect
+                    ctx.shadowBlur = 5 + illumination * 15;
+                    ctx.shadowColor = `rgba(144, 238, 144, ${glowOpacity})`;
+
+                    ctx.stroke();
                 }
-
-                ctx.strokeStyle = gradient;
-                ctx.lineWidth = 1 + illumination * 1.5;
-
-                // Add glow effect
-                ctx.shadowBlur = 5 + illumination * 15;
-                ctx.shadowColor = `rgba(144, 238, 144, ${glowOpacity})`;
-
-                ctx.stroke();
             }
         }
 
         ctx.restore();
+    }
+
+    // Check if we're in light mode
+    function isLightMode() {
+        return document.documentElement.getAttribute('data-theme') !== 'dark';
     }
 
     // Animation loop
@@ -726,9 +754,65 @@
             }
         }
 
+        // Sort tendrils by z-depth occasionally for performance
+        if (frameCount % 3 === 0) {
+            tendrils.sort((a, b) => {
+                // Use cached z-values if available
+                if (!a.sortZ || frameCount !== a.lastSortFrame) {
+                    const aRotated = a.rotate3D(a.baseDirection, globalRotX, globalRotY, globalRotZ);
+                    a.sortZ = aRotated.z;
+                    a.lastSortFrame = frameCount;
+                }
+                if (!b.sortZ || frameCount !== b.lastSortFrame) {
+                    const bRotated = b.rotate3D(b.baseDirection, globalRotX, globalRotY, globalRotZ);
+                    b.sortZ = bRotated.z;
+                    b.lastSortFrame = frameCount;
+                }
+                return a.sortZ - b.sortZ;
+            });
+        }
+
+        // Update all tendrils first
+        for (let i = 0; i < tendrils.length; i++) {
+            tendrils[i].update();
+        }
+
+        // Get morphed pyramid edges
+        const pyramidEdges = getPyramidEdges(0.15); // 15% morphing strength
+
+        // SHADOW PASS: Draw shadows first if in light mode
+        if (isLightMode()) {
+            ctx.save();
+            ctx.globalAlpha = 0.5; // Even more subtle overall transparency
+
+            // Draw shadow tendrils
+            for (let i = 0; i < tendrils.length; i++) {
+                tendrils[i].draw(true); // shadowPass = true
+            }
+
+            // Draw shadow pyramid edges
+            drawPyramidEdges(pyramidEdges, tendrils, frameCount, true); // shadowPass = true
+
+            ctx.restore();
+        }
+
+        // NORMAL PASS: Draw actual elements on top
+
         // Draw central core that responds to surges
         const coreSize = 5 + Math.sin(time * 2) * 1 + Math.min(10, surgeMultiplier);
         const coreGlow = 0.5 + Math.min(0.5, surgeMultiplier * 0.02);
+
+        // Core shadow in light mode
+        if (isLightMode()) {
+            ctx.save();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, coreSize + 2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fill();
+            ctx.restore();
+        }
 
         const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreSize * 1.5);
         coreGradient.addColorStop(0, `rgba(255, 255, 255, ${coreGlow})`);
@@ -749,33 +833,13 @@
             ctx.shadowBlur = 0;
         }
 
-        // Get morphed pyramid edges and draw them with proximity-based illumination
-        const pyramidEdges = getPyramidEdges(0.15); // 15% morphing strength
-        drawPyramidEdges(pyramidEdges, tendrils, frameCount);
+        // Draw pyramid edges with proximity-based illumination
+        drawPyramidEdges(pyramidEdges, tendrils, frameCount, false); // shadowPass = false
         frameCount++;
 
-        // Sort tendrils by z-depth occasionally for performance
-        if (frameCount % 3 === 0) {
-            tendrils.sort((a, b) => {
-                // Use cached z-values if available
-                if (!a.sortZ || frameCount !== a.lastSortFrame) {
-                    const aRotated = a.rotate3D(a.baseDirection, globalRotX, globalRotY, globalRotZ);
-                    a.sortZ = aRotated.z;
-                    a.lastSortFrame = frameCount;
-                }
-                if (!b.sortZ || frameCount !== b.lastSortFrame) {
-                    const bRotated = b.rotate3D(b.baseDirection, globalRotX, globalRotY, globalRotZ);
-                    b.sortZ = bRotated.z;
-                    b.lastSortFrame = frameCount;
-                }
-                return a.sortZ - b.sortZ;
-            });
-        }
-
-        // Update and draw all tendrils
+        // Draw all tendrils
         for (let i = 0; i < tendrils.length; i++) {
-            tendrils[i].update();
-            tendrils[i].draw();
+            tendrils[i].draw(false); // shadowPass = false
         }
 
         // Clean up dead tendrils - aggressive cleanup after surges
