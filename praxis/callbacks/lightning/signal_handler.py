@@ -70,23 +70,38 @@ class SignalHandlerCallback(Callback):
                 # Defer all cleanup to a thread outside signal context
                 threading.Thread(target=self._deferred_cleanup, daemon=True).start()
 
-                # CRITICAL: Restore the original handler and re-raise the signal
-                # This allows the signal to propagate properly without us interfering
-                if self.original_sigint is not None:
-                    signal.signal(signal.SIGINT, self.original_sigint)
-                    # Re-send the signal to the process to let original handler run
-                    os.kill(os.getpid(), signal.SIGINT)
-                return  # Let the original handler take over
+                # DON'T re-send the signal - just return and let Lightning handle shutdown
+                return
 
             elif self.signal_count == 2:
                 # Second signal: Still try to be gentle
                 print(f"\n⚠️  Forcing shutdown...")
+                # Perform immediate cleanup before exit
+                self._immediate_cleanup()
                 sys.exit(130)
 
             else:
                 # Third+ signal: immediate hard exit
                 print(f"\n💀 Emergency exit!")
                 os._exit(130)
+
+    def _immediate_cleanup(self):
+        """Perform immediate critical cleanup before forced exit."""
+        # Always try to restore cursor visibility
+        try:
+            sys.stderr.write("\033[?25h")
+            sys.stderr.flush()
+        except:
+            pass
+
+        # Stop dashboard if running
+        if self.terminal_interface and hasattr(self.terminal_interface, "dashboard"):
+            try:
+                dashboard = self.terminal_interface.dashboard
+                if dashboard:
+                    dashboard.stop()
+            except:
+                pass
 
     def _deferred_cleanup(self):
         """Perform cleanup operations outside of signal handler context."""
@@ -131,6 +146,18 @@ class SignalHandlerCallback(Callback):
                 wandb.finish(quiet=True)
         except:
             pass
+
+        # 5. Start a watchdog timer to force exit if Lightning doesn't stop
+        def force_exit_watchdog():
+            """Force exit if Lightning doesn't stop within timeout."""
+            import time
+            time.sleep(5.0)  # Give Lightning 5 seconds to stop gracefully
+            if self.signal_count == 1:  # Only if still on first signal
+                print("\n⏱️  Timeout waiting for graceful shutdown, forcing exit...")
+                os._exit(130)
+
+        watchdog = threading.Thread(target=force_exit_watchdog, daemon=True)
+        watchdog.start()
 
     def on_train_end(self, trainer, pl_module):
         """Called when training ends, before final validation."""
@@ -181,19 +208,24 @@ class SignalHandlerCallback(Callback):
             # Ensure no validation will run after stopping
             trainer.limit_val_batches = 0
             trainer.check_val_every_n_epoch = float("inf")  # Never validate
-            # Don't raise exception - let Lightning handle it naturally
+            # Return -1 to signal Lightning to stop this batch
+            return -1
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         """Check for shutdown after each batch."""
-        if self.signal_count > 0 and not trainer.should_stop:
-            trainer.should_stop = True
+        if self.signal_count > 0:
+            if not trainer.should_stop:
+                trainer.should_stop = True
+            # Force Lightning to check the flag immediately
+            return -1
 
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
         """Check for shutdown before optimizer step (most frequent check)."""
-        if self.signal_count > 0 and not trainer.should_stop:
-            trainer.should_stop = True
-            # Skip this optimizer step
-            return
+        if self.signal_count > 0:
+            if not trainer.should_stop:
+                trainer.should_stop = True
+            # Skip this optimizer step by returning -1
+            return -1
 
     def on_validation_start(self, trainer, pl_module):
         """Check if we should skip validation entirely."""

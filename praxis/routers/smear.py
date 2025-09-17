@@ -87,7 +87,7 @@ class SMEAR(nn.Module):
 
         Supports two modes:
         1. Direct mode: Used by RecurrentBlock with (inputs, current_state)
-        2. Router mode: Used as a router in LocalExpert with full signature
+        2. Router mode: Used as a router in LocalLayer with full signature
 
         Returns:
             Appropriate tuple based on the mode

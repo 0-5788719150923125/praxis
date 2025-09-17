@@ -84,9 +84,9 @@ class LayerWithOptimizer(nn.Module):
         hidden_states.requires_grad_(True)
 
         # Forward through the wrapped layer
-        # Handle LocalExpert which expects positional arguments
+        # Handle LocalLayer which expects positional arguments
         if hasattr(self.layer, "_forward"):
-            # This is likely a LocalExpert
+            # This is likely a LocalLayer
             current_state = kwargs.get("current_state", None)
             past_key_values = kwargs.get("past_key_values", None)
             current_depth = kwargs.get("current_depth", 0)

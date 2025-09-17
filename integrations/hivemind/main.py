@@ -107,11 +107,11 @@ class HivemindOrchestrator:
         self.backends = {}
         self.active_local_experts = []
 
-        # Import RemoteExpert from orchestration
-        from praxis.orchestration import RemoteExpert
+        # Import RemoteLayer from layers
+        from praxis.layers import RemoteLayer
         from praxis.routers import ROUTER_REGISTRY
 
-        self.RemoteExpert = RemoteExpert
+        self.RemoteLayer = RemoteLayer
 
         router_cls = ROUTER_REGISTRY.get("mixture_of_depths")
         self.router = router_cls(
@@ -285,7 +285,7 @@ class HivemindOrchestrator:
             if new_name in self.expert_uids:
                 continue
             new_expert = get_experts(self.dht, [new_name])[0]
-            if isinstance(new_expert, self.RemoteExpert) and not run_once:
+            if isinstance(new_expert, self.RemoteLayer) and not run_once:
                 continue
             else:
                 return new_name, new_expert
@@ -298,7 +298,7 @@ class HivemindOrchestrator:
         if new_expert is None:
             return
         if new_expert.uid not in self.expert_uids:
-            expert = self.RemoteExpert(
+            expert = self.RemoteLayer(
                 self.config,
                 HivemindWrapper(new_expert),
                 self.router,

@@ -53,9 +53,22 @@ class ConfigBuilder:
 
         # num_heads and num_queries from "num_heads:num_queries" format
         if hasattr(args, "num_heads") and args.num_heads:
-            parts = args.num_heads.split(":")
-            config_kwargs["num_heads"] = int(parts[0])
-            config_kwargs["num_queries"] = int(parts[1]) if len(parts) > 1 else int(parts[0])
+            # Handle both string "X:Y" format and direct integer
+            if isinstance(args.num_heads, str) and ":" in args.num_heads:
+                parts = args.num_heads.split(":")
+                config_kwargs["num_heads"] = int(parts[0])
+                config_kwargs["num_queries"] = int(parts[1]) if len(parts) > 1 else int(parts[0])
+            elif isinstance(args.num_heads, int):
+                # If it's already an integer, use it directly
+                config_kwargs["num_heads"] = args.num_heads
+                # num_queries defaults to 1 if not specified separately
+                if "num_queries" not in config_kwargs:
+                    config_kwargs["num_queries"] = 1
+            else:
+                # It's a string but without ":", try to parse as integer
+                config_kwargs["num_heads"] = int(args.num_heads)
+                if "num_queries" not in config_kwargs:
+                    config_kwargs["num_queries"] = 1
 
         # Handle the new defaulting logic:
         # num_layers defaults to 2 (set in CLI)

@@ -10,7 +10,8 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
-from praxis.orchestration import EXPERT_REGISTRY, LocalExpert, RemoteExpert
+from praxis.layers import LocalLayer, RemoteLayer
+from praxis.orchestration import EXPERT_REGISTRY
 from praxis.sorting import SORTING_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -29,6 +30,8 @@ class BaseDecoder(nn.Module):
         self.depth = config.depth
         self.checkpoint_every = config.checkpoint_every
         self.num_experts = config.num_experts
+        # Use num_layers for the actual number of layer components in the model
+        self.num_layers = getattr(config, 'num_layers', config.num_experts)
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
@@ -42,35 +45,32 @@ class BaseDecoder(nn.Module):
         self._call_integration_hooks(config)
         if "scatter" in config.meta or config.expert in ["scatter"]:
             block = BLOCK_REGISTRY[config.block_type](config)
-            expert = LocalExpert(config, block=block)
-            for i in range(self.num_experts):
+            expert = LocalLayer(config, block=block)
+            for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "smear":
-            # For SMEAR, create all expert blocks and share them via a single LocalExpert
-            expert_blocks = []
-            for i in range(self.num_experts):
-                if self.manager:
-                    block = self.manager.register_expert(config)
-                else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
-                expert_blocks.append(block)
+            # For SMEAR, create num_layers LocalLayers, each managing num_experts blocks
+            for layer_idx in range(self.num_layers):
+                expert_blocks = []
+                for expert_idx in range(self.num_experts):
+                    if self.manager:
+                        block = self.manager.register_expert(config)
+                    else:
+                        block = BLOCK_REGISTRY[config.block_type](config)
+                    expert_blocks.append(block)
 
-            # Create a single LocalExpert with all blocks for SMEAR
-            # The first block is used as the base, but SMEAR will merge all experts
-            expert = LocalExpert(
-                config, block=expert_blocks[0], expert_blocks=expert_blocks
-            )
-
-            # Add the same expert instance multiple times for compatibility with decoder iteration
-            for i in range(self.num_experts):
+                # Create a LocalLayer with all blocks for this layer
+                expert = LocalLayer(
+                    config, block=expert_blocks[0], expert_blocks=expert_blocks
+                )
                 self.locals.append(expert)
         else:
-            for i in range(self.num_experts):
+            for i in range(self.num_layers):
                 if self.manager:
                     block = self.manager.register_expert(config)
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
-                expert = LocalExpert(config, block=block)
+                expert = LocalLayer(config, block=block)
                 self.locals.append(expert)
         self.norm = (
             nn.LayerNorm(config.hidden_size, bias=True)

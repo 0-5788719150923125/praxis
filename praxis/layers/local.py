@@ -1,3 +1,5 @@
+"""Local layer implementation for Praxis."""
+
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import torch
@@ -10,9 +12,9 @@ from praxis.routers import ROUTER_REGISTRY
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
 
-class LocalExpert(nn.Module):
+class LocalLayer(nn.Module):
     """
-    A module for handling local experts in a mixture-of-experts architecture.
+    A module for handling local layers in a mixture-of-experts architecture.
     """
 
     __version__ = "0.2.0"
@@ -25,7 +27,7 @@ class LocalExpert(nn.Module):
         expert_blocks: Optional[List[nn.Module]] = None,
     ) -> None:
         """
-        Initialize local expert wrapper.
+        Initialize local layer wrapper.
 
         Args:
             config: Configuration object with model parameters
@@ -56,7 +58,7 @@ class LocalExpert(nn.Module):
         Optional[bool],
     ]:
         """
-        Forward pass through local expert.
+        Forward pass through local layer.
 
         Args:
             inputs: Input tensor
@@ -98,7 +100,7 @@ class LocalExpert(nn.Module):
         Optional[bool],
     ]:
         """
-        Forward pass implementation for local experts.
+        Forward pass implementation for local layers.
 
         Args:
             inputs: Input tensor
@@ -151,7 +153,7 @@ class LocalExpert(nn.Module):
                     and inputs.shape[0] == 1
                 ):
                     print(
-                        f"DEBUG: LocalExpert depth {current_depth}: exit_signal_value={exit_signal_value.item():.3f}, exit_signal={exit_signal}"
+                        f"DEBUG: LocalLayer depth {current_depth}: exit_signal_value={exit_signal_value.item():.3f}, exit_signal={exit_signal}"
                     )
 
         elif isinstance(self.block, nn.Module):
@@ -167,96 +169,3 @@ class LocalExpert(nn.Module):
             raise ValueError("Neither router nor block is a valid module")
 
         return hidden_states, layer_kv, state_update, aux_loss, exit_signal
-
-
-class RemoteExpert(LocalExpert):
-    """
-    A module for handling remote experts in a mixture-of-experts architecture.
-    This extends LocalExpert with additional functionality for remote execution.
-    """
-
-    def __init__(
-        self,
-        config: ConfigType,
-        block: Union[nn.Module, bool] = False,
-        router: Union[nn.Module, bool] = False,
-    ) -> None:
-        """
-        Initialize remote expert wrapper.
-
-        Args:
-            config: Configuration object with model parameters
-            block: Block module to wrap
-            router: Router module (or False to use default router)
-        """
-        super().__init__(config, block, router)
-
-    def forward(
-        self,
-        inputs: Tensor,
-        attention_mask: Optional[Tensor],
-        past_key_values: Optional[Tensor] = None,
-        current_state: Optional[Tensor] = None,
-        current_depth: int = 0,
-        block_ids: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, float]:
-        """
-        Forward pass through remote expert.
-
-        Args:
-            inputs: Input tensor
-            attention_mask: Optional attention mask tensor
-            past_key_values: Optional cached key/value tensors (not used in remote)
-            current_state: Optional current state tensor (not used in remote)
-            current_depth: Current depth in the network (not used in remote)
-            block_ids: Optional block IDs for structured attention (not used in remote)
-
-        Returns:
-            Tuple containing:
-                - Hidden states tensor
-                - Auxiliary loss value
-        """
-        return self._remote_forward(inputs, attention_mask)
-
-    def _remote_forward(
-        self, inputs: Tensor, attention_mask: Optional[Tensor]
-    ) -> Tuple[Tensor, float]:
-        """
-        Forward pass implementation for remote experts.
-
-        Args:
-            inputs: Input tensor
-            attention_mask: Optional attention mask tensor
-
-        Returns:
-            Tuple containing:
-                - Hidden states tensor
-                - Auxiliary loss value
-        """
-        # because we would otherwise break gradient flow
-        residual = inputs
-        aux_losses: List[float] = []
-
-        # Move to CPU for remote execution
-        inputs = inputs.to("cpu")
-        if attention_mask is not None:
-            attention_mask = attention_mask.to("cpu")
-
-        if self.router and isinstance(self.router, nn.Module):
-            hidden_states, aux_loss = self.router(self.block, inputs, attention_mask)
-            aux_losses.append(aux_loss)
-        elif isinstance(self.block, nn.Module):
-            # because hivemind cannot receive undefined arguments in the forward pass
-            dummy_router_weights = torch.zeros_like(inputs)
-            # because we do not backpropagate through remote experts
-            hidden_states = self.block(
-                inputs,
-                attention_mask,
-                dummy_router_weights,
-            )
-        else:
-            raise ValueError("Neither router nor block is a valid module")
-
-        # TODO: we could possibly add some differentiable noise here; perhaps as a penalty on slow experts?
-        hidden_states = hidden_states.to(residual.device) + residual
-        return hidden_states, sum(aux_losses)

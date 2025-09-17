@@ -176,14 +176,14 @@ class LayerWorkerProcess:
                 # CRITICAL: Detach inputs to prevent gradient flow from previous layers
                 hidden_states = hidden_states.detach().requires_grad_(True)
 
-                # Create dummy arguments for LocalExpert
+                # Create dummy arguments for LocalLayer
                 batch_size, seq_len = hidden_states.shape[:2]
                 attention_mask = torch.ones(
                     batch_size, seq_len, dtype=torch.long, device=self.device
                 )
 
                 # Forward pass through layer with all required arguments
-                # LocalExpert expects: inputs, current_state, attention_mask, past_key_values, current_depth, block_ids
+                # LocalLayer expects: inputs, current_state, attention_mask, past_key_values, current_depth, block_ids
                 output = self.layer(
                     hidden_states,
                     current_state=None,  # No state tracking in MonoForward
@@ -193,9 +193,9 @@ class LayerWorkerProcess:
                     block_ids=None,  # Not used in MonoForward
                 )
 
-                # Handle different output types - LocalExpert returns tuple
+                # Handle different output types - LocalLayer returns tuple
                 if isinstance(output, tuple):
-                    # LocalExpert returns: (hidden_states, key_values, state_update, aux_loss, exit_signal)
+                    # LocalLayer returns: (hidden_states, key_values, state_update, aux_loss, exit_signal)
                     hidden_output, new_key_values, new_state, aux_loss, exit_signal = (
                         output
                     )

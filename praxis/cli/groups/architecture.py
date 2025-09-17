@@ -337,8 +337,10 @@ class ArchitectureGroup:
     @classmethod
     def process_args(cls, args):
         """Process architecture arguments after parsing."""
-        # Parse num_heads format
+        # Parse num_heads format - handle both string "X:Y" and integer formats
         if hasattr(args, "num_heads") and args.num_heads:
-            parts = args.num_heads.split(":")
-            # Note: We don't override the original num_heads string here
-            # That's handled in processors/config.py
+            # Only process if it's a string with the "X:Y" format
+            if isinstance(args.num_heads, str) and ":" in args.num_heads:
+                parts = args.num_heads.split(":")
+                # Note: We don't override the original num_heads string here
+                # That's handled in processors/config.py
