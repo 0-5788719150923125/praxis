@@ -45,26 +45,18 @@ The launch script automatically manages the virtual environment for you. Simply 
 ./launch
 ```
 
+To view all supported command-line arguments:
+
+```sh
+./launch --help
+```
+
 ## run tests
 
 To run unit testing:
 
 ```sh
 pytest tests -x
-```
-
-## contribute to the swarm
-
-To run with default settings:
-
-```sh
-./launch
-```
-
-To view all supported command-line arguments:
-
-```sh
-./launch --help
 ```
 
 For development with quick iteration:
@@ -83,10 +75,16 @@ We also recommend using an Nvidia GPU.
 ./launch --batch-size 16 --device cuda
 ```
 
-To run the alpha experiment:
+To apply [alpha](experiments/alpha.yml) settings to your [experiment](experiments/README.md):
 
 ```sh
 ./launch --alpha
+```
+
+To apply [dev](environments/dev.yml) settings within your [environment](environments/README.md), with device overrides:
+
+```sh
+./launch --alpha --dev --device cuda:8 --quiet
 ```
 
 </details>
