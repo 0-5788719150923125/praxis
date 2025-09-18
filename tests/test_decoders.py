@@ -32,11 +32,14 @@ PARAM_KEYS = list(TEST_PARAMS.keys())
 def get_decoder_configs() -> List[PraxisConfig]:
     """Generate valid configurations."""
     param_value_lists = [TEST_PARAMS[key] for key in PARAM_KEYS]
-    return [
-        PraxisConfig(**dict(zip(PARAM_KEYS, combo)))
-        for combo in itertools.product(*param_value_lists)
-        if combo[PARAM_KEYS.index("block_type")] != "mru"
-    ]
+    configs = []
+    for combo in itertools.product(*param_value_lists):
+        if combo[PARAM_KEYS.index("block_type")] != "mru":
+            params = dict(zip(PARAM_KEYS, combo))
+            # Set num_layers to match num_experts for these tests
+            params['num_layers'] = params['num_experts']
+            configs.append(PraxisConfig(**params))
+    return configs
 
 
 @pytest.fixture(params=get_decoder_configs())

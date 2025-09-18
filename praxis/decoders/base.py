@@ -31,7 +31,7 @@ class BaseDecoder(nn.Module):
         self.checkpoint_every = config.checkpoint_every
         self.num_experts = config.num_experts
         # Use num_layers for the actual number of layer components in the model
-        self.num_layers = getattr(config, 'num_layers', config.num_experts)
+        self.num_layers = getattr(config, "num_layers", config.num_experts)
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
@@ -49,20 +49,22 @@ class BaseDecoder(nn.Module):
             for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "smear":
-            # For SMEAR, create num_layers LocalLayers, each managing num_experts blocks
-            for layer_idx in range(self.num_layers):
-                expert_blocks = []
-                for expert_idx in range(self.num_experts):
-                    if self.manager:
-                        block = self.manager.register_expert(config)
-                    else:
-                        block = BLOCK_REGISTRY[config.block_type](config)
-                    expert_blocks.append(block)
+            # For SMEAR with multiple experts, create a single LocalLayer that manages all experts
+            # and reuse it across all positions (similar to scatter)
+            expert_blocks = []
+            for expert_idx in range(self.num_experts):
+                if self.manager:
+                    block = self.manager.register_expert(config)
+                else:
+                    block = BLOCK_REGISTRY[config.block_type](config)
+                expert_blocks.append(block)
 
-                # Create a LocalLayer with all blocks for this layer
-                expert = LocalLayer(
-                    config, block=expert_blocks[0], expert_blocks=expert_blocks
-                )
+            # Create a single LocalLayer with all expert blocks
+            expert = LocalLayer(
+                config, block=expert_blocks[0], expert_blocks=expert_blocks
+            )
+            # Reuse the same expert for all layer positions
+            for i in range(self.num_layers):
                 self.locals.append(expert)
         else:
             for i in range(self.num_layers):
