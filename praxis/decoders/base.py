@@ -10,12 +10,8 @@ from praxis.blocks import BLOCK_REGISTRY
 from praxis.compression import COMPRESSION_REGISTRY
 from praxis.controllers import CONTROLLER_REGISTRY
 from praxis.experimental.evolution import GenomicBottleneck
-from praxis.orchestration import (
-    EXPERT_REGISTRY,
-    LocalExpert,
-    PraxisManagement,
-    RemoteExpert,
-)
+from praxis.layers import LocalLayer, RemoteLayer
+from praxis.orchestration import EXPERT_REGISTRY
 from praxis.sorting import SORTING_REGISTRY
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
@@ -34,6 +30,8 @@ class BaseDecoder(nn.Module):
         self.depth = config.depth
         self.checkpoint_every = config.checkpoint_every
         self.num_experts = config.num_experts
+        # Use num_layers for the actual number of layer components in the model
+        self.num_layers = getattr(config, "num_layers", config.num_experts)
         self.controller = CONTROLLER_REGISTRY.get(config.controller_type)(config)
         self.genome = GenomicBottleneck(config) if config.evolve else False
         self.compressor = COMPRESSION_REGISTRY.get(config.compression_type)(config)
@@ -41,44 +39,76 @@ class BaseDecoder(nn.Module):
         self.order = SORTING_REGISTRY.get(config.sorting_type)(config)
         self.locals = nn.ModuleList()
         self.remotes: List[nn.Module] = []
-        if config.hivemind:
-            self.manager = PraxisManagement(config)
-            self.remotes = self.manager.active_remote_experts
+
+        # Call integration hooks for decoder initialization
+        # This allows integrations like Hivemind to inject their management systems
+        self._call_integration_hooks(config)
         if "scatter" in config.meta or config.expert in ["scatter"]:
             block = BLOCK_REGISTRY[config.block_type](config)
-            expert = LocalExpert(config, block=block)
-            for i in range(self.num_experts):
+            expert = LocalLayer(config, block=block)
+            for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "smear":
-            # For SMEAR, we need to create all blocks first, then pass them to each expert
+            # For SMEAR with multiple experts, create a single LocalLayer that manages all experts
+            # and reuse it across all positions (similar to scatter)
             expert_blocks = []
-            for i in range(self.num_experts):
+            for expert_idx in range(self.num_experts):
                 if self.manager:
                     block = self.manager.register_expert(config)
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
 
-            # Now create LocalExperts with access to all blocks
-            for i in range(self.num_experts):
-                expert = LocalExpert(
-                    config, block=expert_blocks[i], expert_blocks=expert_blocks
-                )
+            # Create a single LocalLayer with all expert blocks
+            expert = LocalLayer(
+                config, block=expert_blocks[0], expert_blocks=expert_blocks
+            )
+            # Reuse the same expert for all layer positions
+            for i in range(self.num_layers):
                 self.locals.append(expert)
         else:
-            for i in range(self.num_experts):
+            for i in range(self.num_layers):
                 if self.manager:
                     block = self.manager.register_expert(config)
                 else:
                     block = BLOCK_REGISTRY[config.block_type](config)
-                expert = LocalExpert(config, block=block)
+                expert = LocalLayer(config, block=block)
                 self.locals.append(expert)
         self.norm = (
             nn.LayerNorm(config.hidden_size, bias=True)
             if config.block_type == "mru"
             else False
         )
-        if self.manager:
+
+    def _call_integration_hooks(self, config: ConfigType) -> None:
+        """Call integration hooks for decoder initialization.
+
+        This allows integrations to modify the decoder during initialization.
+        For example, the Hivemind integration uses this to inject its management system.
+
+        Args:
+            config: Model configuration
+        """
+        try:
+            # Try to get the integration loader if available
+            # We import it this way to avoid circular imports and other issues
+            import sys
+
+            if "cli" in sys.modules and hasattr(
+                sys.modules["cli"], "integration_loader"
+            ):
+                integration_loader = sys.modules["cli"].integration_loader
+
+                # Call on_decoder_init for all active integrations
+                for integration in integration_loader.loaded_integrations.values():
+                    if hasattr(integration, "on_decoder_init"):
+                        integration.on_decoder_init(self, config)
+        except (ImportError, AttributeError, RuntimeError):
+            # Integration loader not available or other issues, skip hooks
+            pass
+
+        # If manager was injected by integration, start serving experts
+        if self.manager and hasattr(self.manager, "serve_experts"):
             self.manager.serve_experts()
 
     def post_layer(self, states: Tensor, current_depth: int) -> Tensor:

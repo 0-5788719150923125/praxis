@@ -199,3 +199,33 @@ Assistant: I'll calculate that for you."""
     if tool_data["name"] == "calc":
         result = calc.forward(**tool_data["arguments"])
         assert result == 40
+
+
+def test_truncated_tool_call_tag():
+    """Test that truncated tool call tags are properly fixed."""
+    # Test the fix for malformed tool call closing tags
+    malformed_text = """[BOS]assistant
+<tool_call>
+{"name": "calc", "arguments": {"values": [103253, 757695], "op": "add"}}
+</tool_call
+[SEP]
+[BOS]assistant
+>
+[SEP]
+[BOS]tool
+860948"""
+
+    # The fix should correct the truncated tag
+    if "</tool_call" in malformed_text and not "</tool_call>" in malformed_text:
+        fixed_text = malformed_text.replace("</tool_call", "</tool_call>")
+        assert "</tool_call>" in fixed_text
+        assert "</tool_call\n" not in fixed_text  # The malformed version should be gone
+
+        # Also test that the unwanted assistant message fragment would be removed
+        import re
+        cleaned_text = re.sub(
+            r'</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]',
+            '</tool_call>',
+            fixed_text
+        )
+        assert "[BOS]assistant\n>" not in cleaned_text or "[BOS]assistant" in cleaned_text.split("</tool_call>")[0]

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "praxis"
-version = "0.1.0"
-description = "as above, so below"
+version = "0.2.0"
+description = "for all, none"
 authors = [{ name = "Ryan Brooks", email = "ryan@src.eco" }]
 urls = { label = "https://src.eco" }
 license = { text = "MIT" }
@@ -22,7 +22,6 @@ dependencies = [
     "flask",
     "flask-cors",
     "flask-socketio",
-    "hivemind",
     "isort",
     # "lighteval[math]",
     "lightning",

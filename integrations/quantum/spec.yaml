@@ -1,0 +1,14 @@
+name: quantum
+version: 0.1.0
+description: Quantum computing code dataset from qoblib
+author: Praxis Team
+
+# Module provides these integrations
+provides:
+  - cli_args  # Adds CLI arguments
+  - datasets  # Provides training data
+  - lifecycle  # Has initialize function
+
+# Conditions when this module should be loaded
+conditions:
+  - "args.quantum"

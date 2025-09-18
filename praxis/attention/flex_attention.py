@@ -50,8 +50,7 @@ class FlexAttention(nn.Module):
         )
 
         # Dropout layers
-        self.attn_dropout = nn.Dropout(self.dropout)
-        self.resid_dropout = nn.Dropout(self.dropout)
+        self.dropout = nn.Dropout(self.dropout)
 
         # Try to import FlexAttention components
         self.flex_attention = None
@@ -70,18 +69,11 @@ class FlexAttention(nn.Module):
         )
 
     def _import_flex_attention(self) -> None:
-        """Import FlexAttention with fallback to standard attention."""
-        try:
-            from torch.nn.attention.flex_attention import (
-                create_block_mask,
-                flex_attention,
-            )
+        """Import FlexAttention components."""
+        from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
-            self.flex_attention = flex_attention
-            self.create_block_mask = create_block_mask
-        except ImportError:
-            # FlexAttention not available, will fall back to standard attention
-            pass
+        self.flex_attention = flex_attention
+        self.create_block_mask = create_block_mask
 
     def _get_alibi_slopes(self, num_heads: int) -> torch.Tensor:
         """
@@ -111,40 +103,7 @@ class FlexAttention(nn.Module):
 
         return slopes[:num_heads]
 
-    def _create_alibi_bias(
-        self, q_len: int, kv_len: int, device: torch.device
-    ) -> torch.Tensor:
-        """
-        Create ALiBi bias matrix for standard attention.
-
-        Args:
-            q_len: Query sequence length
-            kv_len: Key/value sequence length
-            device: Device to create bias on
-
-        Returns:
-            Bias tensor of shape (num_heads, q_len, kv_len)
-        """
-        # Create position indices
-        q_pos = torch.arange(q_len, device=device).unsqueeze(1)  # (q_len, 1)
-        kv_pos = torch.arange(kv_len, device=device).unsqueeze(0)  # (1, kv_len)
-
-        # Calculate relative positions (kv_pos - q_pos)
-        relative_pos = kv_pos - q_pos  # (q_len, kv_len)
-
-        # Get slopes and reshape for broadcasting
-        slopes = (
-            self.alibi_slopes.to(device).unsqueeze(1).unsqueeze(2)
-        )  # (num_heads, 1, 1)
-
-        # Apply slopes to relative positions
-        alibi_bias = slopes * relative_pos.unsqueeze(0)  # (num_heads, q_len, kv_len)
-
-        return alibi_bias
-
-    def _create_causal_mask(
-        self, seq_len: int, device: torch.device
-    ) -> Optional[torch.Tensor]:
+    def _create_causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
         """
         Create a causal block mask for the given sequence length.
 
@@ -153,10 +112,8 @@ class FlexAttention(nn.Module):
             device: Device to create mask on
 
         Returns:
-            Block mask for causal attention or None if FlexAttention not available
+            Block mask for causal attention
         """
-        if self.create_block_mask is None or not self.causal:
-            return None
 
         # Create cache key using device string representation
         cache_key = (seq_len, str(device))
@@ -233,85 +190,32 @@ class FlexAttention(nn.Module):
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
-        # Use FlexAttention if available, otherwise fall back to standard attention
-        # Note: FlexAttention with score_mod doesn't work well with torch.compile currently,
-        # so we skip it when running under compilation
-        use_flex = (
-            self.flex_attention is not None
-            and self.causal
-            and not torch.compiler.is_compiling()
+        # Create or retrieve causal mask
+        block_mask = (
+            self._create_causal_mask(seq_len, inputs.device) if self.causal else None
         )
 
-        if use_flex:
-            # Create or retrieve causal mask
-            block_mask = self._create_causal_mask(seq_len, inputs.device)
+        # Create ALiBi score modification function
+        alibi_slopes = self.alibi_slopes.to(inputs.device)
 
-            # Create ALiBi score modification function
-            alibi_slopes = self.alibi_slopes.to(inputs.device)
+        def alibi_score_mod(score, b, h, q_idx, kv_idx):
+            """Apply ALiBi positional bias to attention scores."""
+            # Calculate position difference (q_idx - kv_idx)
+            # This will be negative or zero for causal attention
+            bias = alibi_slopes[h] * (kv_idx - q_idx)
+            return score + bias
 
-            def alibi_score_mod(score, b, h, q_idx, kv_idx):
-                """Apply ALiBi positional bias to attention scores."""
-                # Calculate position difference (q_idx - kv_idx)
-                # This will be negative or zero for causal attention
-                bias = alibi_slopes[h] * (kv_idx - q_idx)
-                return score + bias
-
-            # Apply FlexAttention with causal mask, ALiBi, and GQA support
-            # Note: scale defaults to 1/sqrt(head_dim) which is what we want
-            attn_output = self.flex_attention(
-                q,
-                k,
-                v,
-                block_mask=block_mask,
-                score_mod=alibi_score_mod,
-                enable_gqa=is_gqa,
-                scale=None,  # Use default: 1.0 / sqrt(head_dim)
-            )
-        else:
-            # Fallback to standard PyTorch scaled dot-product attention with ALiBi
-            batch_size_attn = q.shape[0]
-
-            # Handle GQA manually for fallback path
-            if is_gqa:
-                # Repeat K and V for grouped queries
-                k = k.repeat_interleave(self.num_queries, dim=1)
-                v = v.repeat_interleave(self.num_queries, dim=1)
-
-            # Create ALiBi bias matrix for standard attention
-            position_bias = self._create_alibi_bias(seq_len, seq_len, inputs.device)
-
-            # Add head dimension and expand for batch
-            position_bias = position_bias.unsqueeze(0).expand(
-                batch_size_attn, -1, -1, -1
-            )
-
-            # Compute attention scores manually to add ALiBi
-            scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-            scores = scores + position_bias
-
-            # Apply causal mask if needed
-            if self.causal:
-                causal_mask = torch.triu(
-                    torch.ones(seq_len, seq_len, device=inputs.device), diagonal=1
-                ).bool()
-                scores = scores.masked_fill(
-                    causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
-                )
-
-            # Apply attention mask if provided
-            if attention_mask is not None:
-                scores = scores.masked_fill(
-                    attention_mask.unsqueeze(1).unsqueeze(2), float("-inf")
-                )
-
-            # Compute attention weights
-            attn_weights = F.softmax(scores, dim=-1)
-            attn_weights = F.dropout(
-                attn_weights, p=self.dropout if self.training else 0.0
-            )
-
-            # Apply attention to values
-            attn_output = torch.matmul(attn_weights, v)
+        # Apply FlexAttention with causal mask, ALiBi, and GQA support
+        # Note: scale defaults to 1/sqrt(head_dim) which is what we want
+        attn_output = self.flex_attention(
+            q,
+            k,
+            v,
+            block_mask=block_mask,
+            score_mod=alibi_score_mod,
+            enable_gqa=is_gqa,
+            scale=None,  # Use default: 1.0 / sqrt(head_dim)
+        )
 
         # Reshape back: (B, num_heads, T, head_dim) -> (B, T, num_heads * head_dim)
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -319,7 +223,7 @@ class FlexAttention(nn.Module):
 
         # Output projection
         output = self.output(attn_output)
-        output = self.resid_dropout(output)
+        output = self.dropout(output)
 
         # Return output, cache (None for now), and aux_loss (0)
         return output, past_key_values, 0.0

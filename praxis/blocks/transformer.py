@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional, OrderedDict, Tuple, TypeVar, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from hivemind.moe.server.layers.custom_experts import register_expert_class
 from torch import Tensor
 
 from praxis.attention import ATTENTION_REGISTRY
@@ -11,6 +10,22 @@ from praxis.normalization import NORMALIZATION_REGISTRY
 from praxis.orchestration import EXPERT_REGISTRY
 from praxis.residuals import RESIDUAL_REGISTRY
 from praxis.utils import norm_scaling
+
+# Conditional hivemind import - only used if hivemind integration is loaded
+try:
+    from hivemind.moe.server.layers.custom_experts import register_expert_class
+
+    HIVEMIND_AVAILABLE = True
+except ImportError:
+    HIVEMIND_AVAILABLE = False
+
+    # Create a no-op decorator when hivemind is not available
+    def register_expert_class(name, shape_fn):
+        def decorator(cls):
+            return cls
+
+        return decorator
+
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 input_shape = lambda batch_size, hidden_dim: torch.empty((batch_size, hidden_dim))

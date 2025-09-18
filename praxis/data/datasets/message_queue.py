@@ -1,0 +1,207 @@
+"""Message queue manager for efficient batching."""
+
+import torch
+from typing import Dict, List, Any, Optional
+from collections import deque
+from transformers import PreTrainedTokenizer
+
+
+class MessageQueueManager:
+    """
+    Manages a queue of messages and efficiently batches them.
+    
+    Simply queues and tokenizes messages without modifying their structure.
+    """
+
+    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
+        """
+        Initialize the message queue manager.
+
+        Args:
+            tokenizer: The tokenizer to use for converting messages to tokens
+            block_size: The sequence length for each training example
+        """
+        self.tokenizer = tokenizer
+        self.block_size = block_size
+
+        # Message queue stores structured message data
+        self.message_queue = deque()
+
+        # Token buffer stores already tokenized content
+        self.token_buffer = torch.tensor([], dtype=torch.long)
+
+        # Metadata buffer parallel to token buffer
+        self.metadata_buffer = []
+
+    def add_document(self, document_data: Dict[str, Any]):
+        """
+        Add a document (with messages and metadata) to the queue.
+
+        Args:
+            document_data: Dict with 'messages' and 'metadata' keys
+        """
+        messages = document_data.get("messages", [])
+        metadata = document_data.get("metadata", {})
+
+        if not messages:
+            return
+
+        # Simply add the messages as-is, no filtering or modification
+        self.message_queue.append(
+            {"messages": messages, "metadata": metadata}
+        )
+
+    def _refill_token_buffer(self):
+        """Refill the token buffer from the message queue."""
+        # Process messages in chunks for efficiency
+        messages_to_process = []
+        metadata_to_process = []
+
+        initial_queue_size = len(self.message_queue)
+        initial_buffer_size = len(self.token_buffer)
+
+        # Collect up to 50 documents or until queue is empty
+        while len(messages_to_process) < 50 and self.message_queue:
+            doc = self.message_queue.popleft()
+            messages_to_process.extend(doc["messages"])
+            # Extend metadata for each message
+            for _ in doc["messages"]:
+                metadata_to_process.append(doc["metadata"])
+
+        if not messages_to_process:
+            return
+
+        # Tokenize all messages at once (preserving their complete structure)
+        try:
+            text = self.tokenizer.apply_chat_template(
+                messages_to_process, tokenize=False, add_generation_prompt=False
+            )
+        except Exception as e:
+            print(
+                f"[ERROR] MessageQueue._refill_token_buffer failed to apply chat template: {e}"
+            )
+            print(
+                f"[ERROR] Messages: {messages_to_process[:2]}..."
+            )  # Show first 2 messages
+            import traceback
+
+            traceback.print_exc()
+            return
+
+        new_tokens = self.tokenizer(
+            text, return_tensors="pt", padding=False, truncation=False
+        )["input_ids"].squeeze(0)
+
+        # Append to buffers
+        self.token_buffer = torch.cat([self.token_buffer, new_tokens])
+        self.metadata_buffer.extend(metadata_to_process)
+
+        # Trim metadata buffer to match token buffer size
+        while len(self.metadata_buffer) > len(self.token_buffer):
+            self.metadata_buffer.pop()
+
+        docs_processed = initial_queue_size - len(self.message_queue)
+
+    def get_batch(self, batch_size: int) -> Dict[str, Any]:
+        """
+        Get a batch of sequences.
+
+        Args:
+            batch_size: Number of sequences in the batch
+
+        Returns:
+            Dictionary with 'batch' tensor and metadata
+        """
+        tokens_needed = batch_size * self.block_size
+
+        # Ensure we have enough tokens
+        refill_attempts = 0
+        max_refill_attempts = 100
+        while len(self.token_buffer) < tokens_needed:
+            prev_buffer_size = len(self.token_buffer)
+            self._refill_token_buffer()
+
+            # Check if buffer didn't grow (no new tokens added)
+            if len(self.token_buffer) == prev_buffer_size:
+                refill_attempts += 1
+                if refill_attempts > max_refill_attempts:
+                    print(
+                        f"[ERROR] MessageQueue.get_batch: Unable to refill token buffer after {max_refill_attempts} attempts"
+                    )
+                    print(
+                        f"[ERROR] Buffer size: {len(self.token_buffer)}, needed: {tokens_needed}"
+                    )
+                    print(f"[ERROR] Message queue size: {len(self.message_queue)}")
+                    raise RuntimeError(
+                        "Failed to refill token buffer - possible data loading issue"
+                    )
+
+            # Check if we've run out of data
+            if len(self.message_queue) == 0 and len(self.token_buffer) < tokens_needed:
+                # Pad with zeros if we don't have enough data
+                padding_needed = tokens_needed - len(self.token_buffer)
+                self.token_buffer = torch.cat(
+                    [self.token_buffer, torch.zeros(padding_needed, dtype=torch.long)]
+                )
+                # Add empty metadata for padding
+                self.metadata_buffer.extend([{}] * padding_needed)
+                break
+
+        sequences = []
+        batch_metadata = []
+
+        for i in range(batch_size):
+            # Extract tokens for this sequence
+            start_idx = i * self.block_size
+            end_idx = start_idx + self.block_size
+            sequence = self.token_buffer[start_idx:end_idx]
+
+            # Ensure exactly block_size tokens
+            if len(sequence) > self.block_size:
+                sequence = sequence[: self.block_size]
+            elif len(sequence) < self.block_size:
+                padding = torch.zeros(
+                    self.block_size - len(sequence), dtype=torch.long
+                )
+                sequence = torch.cat([sequence, padding])
+
+            sequences.append(sequence)
+
+            # Collect metadata for this sequence (from the dominant source)
+            if start_idx < len(self.metadata_buffer):
+                batch_metadata.append(self.metadata_buffer[start_idx])
+            else:
+                batch_metadata.append({})
+
+        # Remove consumed tokens and metadata
+        self.token_buffer = self.token_buffer[tokens_needed:]
+        self.metadata_buffer = self.metadata_buffer[tokens_needed:]
+
+        return {
+            "batch": sequences,  # Return as list for WeightedIterableDataset to stack
+            "metadata": batch_metadata,
+        }
+
+    def get_batch_with_rewards(self, batch_size: int) -> Dict[str, Any]:
+        """
+        Get a batch with reward information preserved.
+
+        Args:
+            batch_size: Number of sequences in the batch
+
+        Returns:
+            Dictionary with batch, rewards, and metadata
+        """
+        result = self.get_batch(batch_size)
+
+        # Extract rewards from metadata if available
+        rewards = []
+        for meta in result["metadata"]:
+            reward = meta.get("reward", 0.0)
+            rewards.append(reward)
+
+        result["rewards"] = (
+            torch.tensor(rewards, dtype=torch.float32) if rewards else None
+        )
+
+        return result

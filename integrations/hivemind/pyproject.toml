@@ -1,0 +1,7 @@
+[project]
+name = "praxis-integration-hivemind"
+version = "0.1.0"
+dependencies = [
+    "hivemind>=1.1.0",
+    "requests",
+]

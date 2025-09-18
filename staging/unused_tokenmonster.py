@@ -51,7 +51,7 @@ class TokenMonsterTokenizer(PreTrainedTokenizer):
         self.add_bos_token = config.add_bos_token
         self.add_eos_token = config.add_eos_token
 
-        tokenmonster.set_local_directory("./data/tokenmonster")
+        tokenmonster.set_local_directory("./build/tokenmonster")
         self.tokenizer = self.load_vocab(self.vocab_file)
 
         self.pad_token = config.pad_token

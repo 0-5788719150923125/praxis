@@ -95,6 +95,31 @@ def get_tools() -> str:
 
 
 @tool
+def read_file(file_path: str) -> str:
+    """Read the contents of a file.
+    
+    Args:
+        file_path: Path to the file to read
+        
+    Returns:
+        The contents of the file
+    """
+    try:
+        from pathlib import Path
+        path = Path(file_path)
+        
+        # Read the file content
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        return content
+    except FileNotFoundError:
+        return f"Error: File not found: {file_path}"
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+@tool
 def calc(values: List[float], op: str = "add") -> float:
     """Perform a basic algebraic operation on a list of values.
 
@@ -140,7 +165,7 @@ def calc(values: List[float], op: str = "add") -> float:
 
 
 # Registry of available tools
-AVAILABLE_TOOLS = [get_tools, calc]
+AVAILABLE_TOOLS = [get_tools, read_file, calc]
 
 # Registry for dynamically loaded tools (from JSON)
 DYNAMIC_TOOLS: Dict[str, Any] = {}
@@ -182,14 +207,21 @@ def get_tools_json_schema() -> List[Dict[str, Any]]:
 
 def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
     """Call a tool by name with arguments (backward compatibility)."""
+    if name is None:
+        raise ValueError("Tool name cannot be None")
+
     tools = get_all_tools()
+    available_names = []
     for tool in tools:
         tool_name = (
             tool.name if isinstance(tool, Tool) else getattr(tool, "__name__", None)
         )
+        available_names.append(tool_name)
         if tool_name == name:
             if isinstance(tool, Tool):
                 return tool(**arguments)
             elif callable(tool):
                 return tool(**arguments)
-    raise ValueError(f"Tool '{name}' not found")
+
+    # Provide helpful error message with available tools
+    raise ValueError(f"Tool '{name}' not found. Available tools: {available_names}")

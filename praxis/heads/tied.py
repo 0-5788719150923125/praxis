@@ -54,7 +54,9 @@ class TiedWeights(BaseHead):
         # hidden_states: [batch, seq_len, embed_size]
         # embedding_weight: [vocab_size, embed_size]
         # We need to transpose the embedding weight for the linear transformation
-        logits = F.linear(hidden_states, self.embedding_weight)
+        # Ensure embedding weight is on the same device as hidden_states
+        embedding_weight = self.embedding_weight.to(hidden_states.device)
+        logits = F.linear(hidden_states, embedding_weight)
 
         return logits
 

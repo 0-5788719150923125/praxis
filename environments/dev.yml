@@ -1,0 +1,18 @@
+# Development environment configuration
+# Applied when using --dev flag
+
+overrides:
+  depth: 3
+  num_layers: 3
+  batch_size: 1
+  phi: false
+  quantum: false
+  ngrok: false
+  wandb: false
+  debug: true
+
+features:
+  force_reset: true # Always start from a new model (skip checkpoint loading)
+  detect_anomaly: true # Enable PyTorch anomaly detection for debugging
+  skip_compilation: true # Skip torch.compile for faster startup
+  minimal_data: true # Use minimal datasets for quick testing

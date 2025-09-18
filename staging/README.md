@@ -1,41 +1,32 @@
 # staging/
 
-Welcome to the junkyard! This is where we dump code that don't belong in core Praxis.
+Welcome to the junkyard! This is where we dump experimental code that doesn't belong in core Praxis.
 
 ## What goes here?
 
-Anything that adds functionality without cluttering the main codebase:
+**Experimental and temporary code only:**
 
-- **External integrations** (wandb, tensorboard, whatever)
 - **Experimental features** that might break things
-- **Third-party adapters** (like our funky GUN chat thing)
-- **Plugin-style modules** that some people want but others don't
-- **Random, orphaned code** can go here as well
+- **Work-in-progress implementations** not ready for prime time
+- **Test scripts and prototypes** for trying out ideas
+- **Random, orphaned code** that needs a temporary home
+- **Old implementations** kept for reference but not actively used
 
-## How it works
+## What DOESN'T go here anymore?
 
-Each module is a folder with a `module.yaml` manifest. Praxis discovers and loads them automatically based on CLI flags or conditions.
-
-```
-staging/
-├── wandb/
-│   ├── module.yaml    # "I provide --wandb args and logging"
-│   └── __init__.py    # The actual code
-└── your_thing/
-    ├── module.yaml    # "I do X when Y is enabled"
-    └── __init__.py
-```
-
-Your module can hook into:
-
-- **CLI args** - Add your own `--flags`
-- **Loggers** - Custom logging implementations
-- **Datasets** - New data sources
-- **Lifecycle** - Init/cleanup when things start/stop
-- **Cleanup** - Directories to nuke on `--reset`
+**Integrations have moved!** External integrations (wandb, ngrok, gun, quantum, etc.) now live in `/integrations/` at the project root. They're no longer experimental - they're first-class features with proper discovery and loading.
 
 ## The deal
 
-Keep your mess contained. If it's useful enough, maybe it graduates to core. If not, at least it's not breaking anyone else's stuff.
+This is truly a staging area now - code here is either:
+1. On its way IN (being developed for eventual inclusion in core)
+2. On its way OUT (deprecated but kept temporarily for reference)
+3. Perpetually experimental (useful for specific cases but too niche for core)
 
-Questions? Check the wandb module as an example. It's probably the least broken thing in here.
+Keep your experiments contained. Clean up after yourself. And when something becomes stable and useful, promote it to either:
+- Core Praxis (if it's essential)
+- `/integrations/` (if it's an optional extension)
+
+## Note on old references
+
+If you're looking for the integration system that used to be here, check `/integrations/` instead. The module loading system now uses `spec.yaml` files and the `IntegrationLoader` class.

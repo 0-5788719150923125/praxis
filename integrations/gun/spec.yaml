@@ -1,0 +1,12 @@
+name: gun
+version: 0.1.0
+description: Gun.js decentralized data adapter for live chat integration
+author: Praxis Team
+
+conditions:
+  - "args.gun" # Only load when --gun flag is present
+
+provides:
+  - cli_args
+  - datasets
+  - lifecycle

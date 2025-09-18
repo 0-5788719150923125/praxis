@@ -10,9 +10,7 @@ _Praxis is the process by which a theory, lesson, or skill is enacted, embodied,
 
 ## description
 
-The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). With [Hivemind](https://github.com/learning-at-home/hivemind) integrated directly into its core (and constantly broken), we are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at a scale of a hundred or a thousand peers. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
-
-In short: Praxis is a robust, open-source AI that can be anything, and do everything.
+The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, modular, extensible and decentralized framework for the practice of [computational alchemy](https://www.reddit.com/r/MachineLearning/comments/1b6ggpz/comment/ktc2ujd). We are building a multi-modal fleet of AI agents that are small and simple, easy to parallelize, fault-tolerant, portable, and performant at any scale. We will achieve this via a remote mixture of experts, user-weighted multipath routing, symbolic decision-making and prayer (asynchronous).
 
 <details>
 
@@ -41,18 +39,10 @@ In short: Praxis is a robust, open-source AI that can be anything, and do everyt
 
 ## install
 
-Setup a virtual environment:
+The launch script automatically manages the virtual environment for you. Simply run:
 
 ```sh
-source venv.sh
-```
-
-Or, you may use the VSCode command (`Ctrl + Shift + P`), and choose: `Python: Create Environment...`
-
-Then, install dependencies:
-
-```sh
-pip install -e .
+./launch
 ```
 
 ## run tests
@@ -68,13 +58,19 @@ pytest tests -x
 To run with default settings:
 
 ```sh
-python run.py
+./launch
 ```
 
 To view all supported command-line arguments:
 
 ```sh
-python run.py --help
+./launch --help
+```
+
+For development with quick iteration:
+
+```sh
+./launch --dev --no-dashboard
 ```
 
 ## recommendations
@@ -84,7 +80,13 @@ We recommend you use a `batch-size` of at least 16, if possible. We have impleme
 We also recommend using an Nvidia GPU.
 
 ```sh
-python run.py --batch-size 16 --device cuda
+./launch --batch-size 16 --device cuda
+```
+
+To run the alpha experiment:
+
+```sh
+./launch --alpha
 ```
 
 </details>
@@ -95,13 +97,13 @@ python run.py --batch-size 16 --device cuda
 
 ## do inference
 
-Send a JSON-encoded payload via POST to:
+### String-based generation
+
+For simple string prompts, send a JSON-encoded payload via POST to:
 
 ```
 http://localhost:2100/input
 ```
-
-This payload should support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
 
 Example request:
 
@@ -116,6 +118,37 @@ response = requests.post(url, json=payload)
 print(response.status_code)
 print(response.json())
 ```
+
+### Message-based generation (recommended)
+
+For conversation-style generation with support for system prompts and tool calls, use:
+
+```
+http://localhost:2100/messages
+```
+
+Example request:
+
+```py
+import requests
+
+url = "http://localhost:2100/messages"
+payload = {
+    "messages": [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "do_sample": True,
+    "temperature": 0.7
+}
+
+response = requests.post(url, json=payload)
+
+print(response.status_code)
+print(response.json())
+```
+
+Both endpoints support all arguments in the [Transformers text generation API](https://huggingface.co/docs/transformers/en/main_classes/text_generation).
 
 ## local web chat
 

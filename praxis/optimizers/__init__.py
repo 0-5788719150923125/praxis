@@ -1,6 +1,12 @@
 from pytorch_optimizer import create_optimizer
 from pytorch_optimizer.optimizer import TRAC, Lookahead, OrthoGrad, ScheduleFreeWrapper
 
+from praxis.optimizers.param_counter import (
+    count_model_parameters,
+    count_optimizer_parameters,
+    get_parameter_stats,
+)
+
 
 def get_optimizer_profile(name="AdamW", disable_schedule=False):
     profiles = {k.lower(): v for k, v in OPTIMIZER_PROFILES.items()}

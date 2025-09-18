@@ -1,0 +1,4 @@
+[project]
+name = "praxis-integration-quantum"
+version = "0.1.0"
+dependencies = []  # No external dependencies

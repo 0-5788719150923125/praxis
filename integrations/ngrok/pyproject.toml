@@ -1,0 +1,7 @@
+[project]
+name = "praxis-integration-ngrok"
+version = "0.1.0"
+dependencies = [
+    "ngrok",
+    "python-dotenv",
+]

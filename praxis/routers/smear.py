@@ -87,7 +87,7 @@ class SMEAR(nn.Module):
 
         Supports two modes:
         1. Direct mode: Used by RecurrentBlock with (inputs, current_state)
-        2. Router mode: Used as a router in LocalExpert with full signature
+        2. Router mode: Used as a router in LocalLayer with full signature
 
         Returns:
             Appropriate tuple based on the mode
@@ -122,12 +122,10 @@ class SMEAR(nn.Module):
         router_input = inputs.mean(dim=1)  # Average across sequence length
         router_input = self.router_norm(router_input)  # Layer norm on input
 
-        # Get logits and normalize weight matrix rows
-        logits = self.router(router_input)
-
-        # Normalize rows of weight matrix (as mentioned in paper)
-        with torch.no_grad():
-            self.router.weight.data = F.normalize(self.router.weight.data, dim=1)
+        # Get logits with normalized router weights
+        # Apply weight normalization without modifying in-place
+        normalized_weight = F.normalize(self.router.weight, dim=1)
+        logits = F.linear(router_input, normalized_weight, self.router.bias)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 
@@ -232,6 +230,10 @@ class SMEAR(nn.Module):
                         f"Parameter '{param_name}' not found in expert {expert_idx}."
                     )
 
+                # Ensure param is on the same device as expert_weights before multiplication
+                if param.device != expert_weights.device:
+                    param = param.to(expert_weights.device)
+
                 # Weight the parameter by the expert's routing probability
                 weighted_param = param * expert_weights[expert_idx]
 
@@ -316,12 +318,10 @@ class SMEAR(nn.Module):
         router_input = inputs.mean(dim=1)  # Average across sequence length
         router_input = self.router_norm(router_input)  # Layer norm on input
 
-        # Get logits and normalize weight matrix rows
-        logits = self.router(router_input)
-
-        # Normalize rows of weight matrix (as mentioned in paper)
-        with torch.no_grad():
-            self.router.weight.data = F.normalize(self.router.weight.data, dim=1)
+        # Get logits with normalized router weights
+        # Apply weight normalization without modifying in-place
+        normalized_weight = F.normalize(self.router.weight, dim=1)
+        logits = F.linear(router_input, normalized_weight, self.router.bias)
 
         routing_probs = F.softmax(logits, dim=-1)  # [batch_size, num_experts]
 

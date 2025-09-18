@@ -12,12 +12,10 @@
   },
   "latex-workshop.formatting.latex": "latexindent",
   "editor.formatOnSave": true,
-  "isort.args":[
-    "--profile", 
-    "black"
-  ],
+  "isort.args": ["--profile", "black"],
   "isort.check": true,
   "workbench.editor.limit.value": 5,
   "workbench.editor.limit.enabled": true,
   "terminal.integrated.scrollback": 10000,
+  "python-envs.pythonProjects": []
 }

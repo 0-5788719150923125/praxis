@@ -15,11 +15,11 @@ import torch.nn.functional as F
 
 from praxis.containers import LossContainer
 
-# Import COT tags from builders
+# Import COT tags from data formatters
 try:
-    from builders import COT_TAGS
+    from praxis.data.formatters import COT_TAGS
 except ImportError:
-    # Fallback for when builders is not in path (e.g., during testing)
+    # Fallback for when data module is not in path (e.g., during testing)
     COT_TAGS = None
 
 

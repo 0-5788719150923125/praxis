@@ -5,7 +5,7 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
-from builders import (
+from praxis.data import (
     HUGGINGFACE_DATASETS,
     HuggingfaceDataset,
     InterleaveDataManager,

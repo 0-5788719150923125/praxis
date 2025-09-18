@@ -332,7 +332,7 @@ if __name__ == "__main__":
     # Create mock config and sequential experts
     config = AutoConfig()
     sequential_experts = [
-        nn.Linear(hidden_size, hidden_size) for _ in range(config.num_experts)
+        nn.Linear(hidden_size, hidden_size) for _ in range(getattr(config, 'num_layers', config.num_experts))
     ]
     ordered_experts = sequential_experts.copy()
 

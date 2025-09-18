@@ -1,0 +1,14 @@
+name: "ngrok"
+version: "0.1.0"
+description: "Ngrok tunnel integration for exposing API server"
+conditions:
+  - "args.ngrok"
+integrations:
+  cli:
+    function: "add_cli_args"
+  api_server_hooks:
+    function: "api_server_hook"
+  request_middleware:
+    function: "request_middleware"
+  lifecycle:
+    cleanup: "cleanup"

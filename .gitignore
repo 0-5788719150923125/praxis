@@ -17,9 +17,22 @@
 .venv
 __pycache__
 build
-data
 dist
 node_modules
 tmp
 wandb
 !*/wandb
+!integrations/wandb*
+
+# Experiments - only commit alpha.yml, ignore user custom experiments
+experiments/*.yml
+!experiments/alpha.yml
+
+# Environments - only commit dev.yml, ignore user custom environments
+environments/*.yml
+!environments/dev.yml
+!environments/README.md
+
+# AI - ignore common agents
+CLAUDE.md
+GEMINI.md

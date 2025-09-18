@@ -42,7 +42,7 @@ if (pathPrefix === '/') {
     pathPrefix = '';
 }
 const API_BASE_URL = window.location.origin + pathPrefix;
-let apiUrl = API_BASE_URL + '/input/';
+let apiUrl = API_BASE_URL + '/messages/';
 
 // ==================== Live Reload Setup ====================
 function setupLiveReload() {
@@ -189,7 +189,10 @@ async function testApiConnection(url) {
     try {
         let baseUrl = url;
         
-        if (baseUrl.endsWith('/input/')) {
+        if (baseUrl.endsWith('/messages/')) {
+            baseUrl = baseUrl.substring(0, baseUrl.length - 10);
+        } else if (baseUrl.endsWith('/input/')) {
+            // Handle old saved URLs
             baseUrl = baseUrl.substring(0, baseUrl.length - 7);
         }
         
@@ -808,9 +811,22 @@ function connectTerminal() {
         appendTerminalOutput(data.data);
     });
     
-    terminalSocket.on('dashboard_frame', (data) => {
-        if (data.frame && Array.isArray(data.frame)) {
-            renderDashboardFrame(data.frame);
+    // Handle new differential updates
+    terminalSocket.on('dashboard_update', (data) => {
+        // Debug: Log update type and size
+        if (window.dashboardDebug) {
+            const size = JSON.stringify(data).length;
+            console.log(`Dashboard update: type=${data.type}, size=${size} bytes, changes=${data.changes ? data.changes.length : 0}`);
+        }
+        
+        if (data.type === 'full') {
+            // Full frame update - render entire dashboard
+            if (data.frame && Array.isArray(data.frame)) {
+                renderDashboardFrame(data.frame);
+            }
+        } else if (data.type === 'diff') {
+            // Differential update - apply only changes
+            applyDashboardDiff(data.changes);
         }
     });
     
@@ -859,9 +875,17 @@ function startTerminalCapture() {
     }
 }
 
+// Dashboard frame buffer for differential updates
+let dashboardFrameBuffer = [];
+let dashboardInitialized = false;
+
 function renderDashboardFrame(frame) {
     const terminalDisplay = document.getElementById('terminal-display');
     terminalDisplay.innerHTML = '';
+    
+    // Store frame in buffer for differential updates
+    dashboardFrameBuffer = frame.slice();
+    dashboardInitialized = true;
     
     const wrapperDiv = document.createElement('div');
     wrapperDiv.style.position = 'relative';
@@ -869,15 +893,20 @@ function renderDashboardFrame(frame) {
     wrapperDiv.style.backgroundColor = '#0d0d0d';
     wrapperDiv.style.display = 'block';
     wrapperDiv.style.margin = '0 auto';
+    wrapperDiv.style.userSelect = 'text';  // Enable text selection
+    wrapperDiv.style.cursor = 'text';      // Show text cursor
     
     const frameContainer = document.createElement('div');
     frameContainer.className = 'dashboard-frame';
+    frameContainer.style.userSelect = 'text';  // Enable text selection
     
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
-    frame.forEach(line => {
+    frame.forEach((line, index) => {
         const lineDiv = document.createElement('div');
         lineDiv.className = 'dashboard-line';
+        lineDiv.setAttribute('data-line-index', index);
+        lineDiv.style.userSelect = 'text';  // Enable text selection per line
         
         if (isMobileDevice) {
             // Replace Unicode box drawing characters with ASCII on mobile
@@ -916,6 +945,98 @@ function renderDashboardFrame(frame) {
     } else if (dashboardScale) {
         applyDashboardScale();
     }
+}
+
+function applyDashboardDiff(changes) {
+    if (!dashboardInitialized || !currentFrameContainer) {
+        // No frame to update yet, wait for full frame
+        return;
+    }
+    
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // Apply each change
+    changes.forEach(change => {
+        const { row, col, text, length } = change;
+        
+        // Update buffer
+        if (row < dashboardFrameBuffer.length) {
+            const line = dashboardFrameBuffer[row];
+            const before = line.substring(0, col);
+            const after = line.substring(col + length);
+            dashboardFrameBuffer[row] = before + text + after;
+            
+            // Update DOM
+            const lineDiv = currentFrameContainer.querySelector(`[data-line-index="${row}"]`);
+            if (lineDiv) {
+                let updatedLine = dashboardFrameBuffer[row];
+                
+                if (isMobileDevice) {
+                    // Apply mobile character replacements
+                    updatedLine = updatedLine.replace(/[█▓▒░]/g, '#')
+                              .replace(/[▀▄]/g, '=')
+                              .replace(/[▌▐]/g, '|')
+                              .replace(/[■□▪▫◼◻◾◽▬▭▮▯]/g, '#')
+                              .replace(/[═]/g, '=')
+                              .replace(/[─━╌╍┄┅┈┉⎯⎼⎽]/g, '-')
+                              .replace(/[▁▂▃▄▅▆▇]/g, '_')
+                              .replace(/[⌐¬]/g, '-')
+                              .replace(/[·•◦]/g, '*')
+                              .replace(/[◯○]/g, 'o')
+                              .replace(/[●◉]/g, '*')
+                              .replace(/[║┃│|╎╏┆┇┊┋]/g, '|')
+                              .replace(/[┏┌┍┎╔╒╓╭┓┐┑┒╗╕╖╮┗└┕┖╚╘╙╰┛┘┙┚╝╛╜╯]/g, '+')
+                              .replace(/[┣├┝┞┟┠┡┢╟╞╠┫┤┥┦┧┨┩┪╢╡╣]/g, '+')
+                              .replace(/[┳┬┭┮┯┰┱┲╦╤╥┻┴┵┶┷┸┹┺╩╧╨]/g, '+')
+                              .replace(/[╋┼┽┾┿╀╁╂╬╪╫]/g, '+');
+                }
+                
+                // Only update if text actually changed to preserve selection
+                if (lineDiv.textContent !== updatedLine) {
+                    // Save any existing text selection
+                    const selection = window.getSelection();
+                    const hasSelection = selection.rangeCount > 0 && !selection.isCollapsed;
+                    let savedRange = null;
+                    
+                    // Check if selection intersects with this line
+                    if (hasSelection) {
+                        const range = selection.getRangeAt(0);
+                        if (lineDiv.contains(range.commonAncestorContainer)) {
+                            // Save selection relative to line start
+                            savedRange = {
+                                startOffset: range.startOffset,
+                                endOffset: range.endOffset
+                            };
+                        }
+                    }
+                    
+                    // Update the text content
+                    lineDiv.textContent = updatedLine;
+                    
+                    // Restore selection if it was in this line
+                    if (savedRange && lineDiv.firstChild) {
+                        try {
+                            const newRange = document.createRange();
+                            const textNode = lineDiv.firstChild;
+                            const maxOffset = textNode.textContent.length;
+                            
+                            // Clamp offsets to valid range
+                            const startOffset = Math.min(savedRange.startOffset, maxOffset);
+                            const endOffset = Math.min(savedRange.endOffset, maxOffset);
+                            
+                            newRange.setStart(textNode, startOffset);
+                            newRange.setEnd(textNode, endOffset);
+                            
+                            selection.removeAllRanges();
+                            selection.addRange(newRange);
+                        } catch (e) {
+                            // Selection restoration failed, ignore
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 function calculateDashboardScale() {
@@ -1023,40 +1144,26 @@ async function loadSpec() {
             html += '<div class="spec-title">Commands</div>';
             html += '<div class="spec-code-block">';
             html += 'Clone it from the source:'
-            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">git clone ${data.git_url} praxis</code></div>`;
+            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">git clone ${data.git_url}</code></div>`;
             html += `Move into the directory:`
             html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">cd praxis</code></div>`;
-                        html += `Install dependencies:`
-            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">pip install -e .</code></div>`;
             html += `Reproduce the experiment:`
-            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command}</code></div>`;
+            html += `<div class="spec-metadata"><code style="background: #f5f5f5; color: #333; padding: 2px 4px; border-radius: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace;">${data.command.replace('python main.py', './launch')}</code></div>`;
             html += '</div>';
             html += '</div>';
         }
         
-        // Parameter statistics
+        // Parameter statistics (simplified)
         if (data.param_stats) {
             html += '<div class="spec-section">';
-            html += '<div class="spec-title">Parameter Statistics</div>';
+            html += '<div class="spec-title">Parameters</div>';
             
-            if (data.param_stats.total_params) {
-                html += `<div class="spec-metadata">Model Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.total_params.toLocaleString()}</span></div>`;
+            if (data.param_stats.model_parameters) {
+                html += `<div class="spec-metadata">Model Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.model_parameters.toLocaleString()}</span></div>`;
             }
             
-            if (data.param_stats.activation_params) {
-                const config = data.param_stats.config || {};
-                html += `<div class="spec-metadata">Activation Estimate: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.activation_params.toLocaleString()}</span>`;
-                if (config.batch_size || config.block_size || config.hidden_size || config.depth) {
-                    html += ` <span style="color: var(--light-text); font-size: 12px;">(batch=${config.batch_size || '?'}, seq=${config.block_size || '?'}, hidden=${config.hidden_size || '?'}, depth=${config.depth || '?'}, experts=${config.num_experts || '?'})</span>`;
-                }
-                html += '</div>';
-            }
-            
-            if (data.param_stats.total_params && data.param_stats.activation_params) {
-                const totalActive = data.param_stats.total_params + data.param_stats.activation_params;
-                html += `<div class="spec-metadata" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">`;
-                html += `Total Active Parameters: <span style="color: #4caf50; font-weight: 600; font-size: 16px;">${totalActive.toLocaleString()}</span>`;
-                html += '</div>';
+            if (data.param_stats.optimizer_parameters) {
+                html += `<div class="spec-metadata">Optimizer Parameters: <span style="color: #4caf50; font-weight: 600;">${data.param_stats.optimizer_parameters.toLocaleString()}</span></div>`;
             }
             
             html += '</div>';

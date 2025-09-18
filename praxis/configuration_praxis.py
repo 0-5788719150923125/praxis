@@ -15,15 +15,15 @@ class PraxisConfig(PretrainedConfig):
         head_size: Optional[int] = None,
         k_heads: Optional[int] = None,
         kv_rank: Optional[int] = None,
-        depth: int = 2,
-        num_experts: int = 2,
-        num_smear: int = 3,
+        depth: Optional[int] = None,
+        num_experts: int = 1,
+        num_layers: int = 2,
         dropout: float = 0.0,
         epsilon: float = 1e-5,
         vocab_size: int = 8192,
         max_length: int = 4096,
         activation: str = "mish",
-        block: str = "transformer",
+        block_type: str = "transformer",
         expert: str = "glu",
         encoding: str = "rope",
         router_type: Optional[str] = None,
@@ -46,6 +46,8 @@ class PraxisConfig(PretrainedConfig):
         scaled: bool = False,
         mla: bool = False,
         hivemind: bool = False,
+        tie_weights: bool = False,
+        bidirectional: bool = False,
         initial_peers: List[str] = [],
         checkpoint_every: int = 0,
         loss_func: str = "cross_entropy",
@@ -76,9 +78,11 @@ class PraxisConfig(PretrainedConfig):
         self.head_size = head_size
         self.k_heads = k_heads
         self.kv_rank = kv_rank
-        self.depth = depth
         self.num_experts = num_experts
-        self.num_smear = num_smear
+        # num_layers represents the number of layer-specific components controllers should create
+        self.num_layers = num_layers
+        # depth defaults to num_layers if not explicitly provided
+        self.depth = depth if depth is not None else num_layers
         self.attention_type = attention_type
         self.encoder_type = encoder_type
         self.decoder_type = decoder_type
@@ -90,7 +94,7 @@ class PraxisConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.max_length = max_length
         self.activation = activation
-        self.block_type = block
+        self.block_type = block_type
         self.expert = expert
         self.encoding = encoding
         self.router_type = router_type
@@ -117,11 +121,14 @@ class PraxisConfig(PretrainedConfig):
         self.debug = debug
         self.meta = meta
         self.causal = False
-        self.bidirectional = kwargs.get("bidirectional", False)
+        self.bidirectional = bidirectional
         self.forward_weight = kwargs.get("forward_weight", 0.666666)
-        self.tie_word_embeddings = kwargs.get("tie_weights", False)
+        self.tie_word_embeddings = tie_weights
         self.rl_type = kwargs.get(
             "rl_type", None
         )  # "reinforce", "grpo", "ppo", or None
         self.rl_weight = kwargs.get("rl_weight", 0.1)
         self.grpo_group_size = kwargs.get("grpo_group_size", 8)  # For GRPO sampling
+
+        # Compatibility with HuggingFace transformers
+        self.num_hidden_layers = self.depth  # Map depth to num_hidden_layers for cache

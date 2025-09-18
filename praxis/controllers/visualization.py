@@ -18,8 +18,8 @@ class TransitionVisualizer:
 
     def __init__(
         self,
-        num_experts: int,
-        save_dir: str = "data",
+        num_experts: int,  # Actually num_layers for tracking layer transitions
+        save_dir: str = "build",
         max_depth: int = 4,
         window_size: int = 1000,
         use_time_weighting: bool = True,
@@ -27,7 +27,7 @@ class TransitionVisualizer:
         fig_width: int = 20,  # Adjustable figure width
         fig_height: int = 10,  # Adjustable figure height
     ) -> None:
-        self.num_experts = num_experts
+        self.num_experts = num_experts  # Keeping name for backward compatibility, but represents layers
         self.save_dir = save_dir
         self.max_depth = max_depth - 1  # Fix off-by-one issue
         self.window_size = window_size
@@ -725,7 +725,7 @@ if __name__ == "__main__":
 
     visualizer = TransitionVisualizer(
         num_experts=num_experts,
-        save_dir="data",
+        save_dir="build",
         max_depth=max_depth,  # No need to adjust here since it's handled in __init__
         window_size=5000,
         use_time_weighting=True,
@@ -816,7 +816,7 @@ if __name__ == "__main__":
     visualizer.visualize_expert_usage(time_weighted=True)  # Recent expert usage
     visualizer.visualize_top_routes()  # Top 10 most common recent routes
 
-    print("Visualizations saved to data/")
+    print("Visualizations saved to build/")
     print("- transition_viz.png: All-time transition patterns")
     print("- transition_viz_recent.png: Recent transition patterns")
     print("- transition_expert_usage.png: All-time expert usage distribution by depth")

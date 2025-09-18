@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "praxis-integration-gun"
+version = "0.1.0"
+dependencies = []  # Gun integration uses JavaScript library, no Python dependencies
+
+[tool.setuptools.packages.find]
+include = []  # Don't include any packages
+exclude = ["*"]  # Exclude everything to avoid the flat-layout error
