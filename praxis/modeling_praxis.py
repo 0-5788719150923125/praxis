@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import GenerationMixin, PreTrainedModel
+from transformers import GenerationConfig, GenerationMixin, PreTrainedModel
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -140,13 +140,23 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         input_ids: torch.Tensor,
     ) -> torch.Tensor:
         """Compute the main loss using the criterion."""
-        return self.criterion(
-            logits=logits[..., :-1, :].contiguous(),
-            embeddings=embeddings,
-            classifier=classifier,
-            labels=labels,
-            input_ids=input_ids,
-        )
+        # Check if encoder outputs are already aligned
+        if self.encoder and getattr(self.encoder, 'outputs_are_aligned', False):
+            return self.criterion(
+                logits=logits.contiguous(),
+                embeddings=embeddings,
+                classifier=classifier,
+                labels=labels,
+                input_ids=input_ids,
+            )
+        else:
+            return self.criterion(
+                logits=logits[..., :-1, :].contiguous(),
+                embeddings=embeddings,
+                classifier=classifier,
+                labels=labels,
+                input_ids=input_ids,
+            )
 
     def _compute_bidirectional_loss(
         self,

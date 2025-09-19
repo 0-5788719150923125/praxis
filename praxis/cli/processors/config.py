@@ -82,18 +82,22 @@ class ConfigBuilder:
         if "depth" not in config_kwargs or config_kwargs.get("depth") is None:
             config_kwargs["depth"] = num_layers
 
-        # Handle byte_latent encoding
-        byte_latent = hasattr(args, "encoder_type") and args.encoder_type == "byte_latent"
+        # Handle byte_latent encoding (check for any byte_latent variant)
+        encoder_type = getattr(args, "encoder_type", None)
+        byte_latent = encoder_type and encoder_type.startswith("byte_latent")
         if byte_latent and "byte_latent" in valid_config_params:
             config_kwargs["byte_latent"] = True
 
         # Handle max_length based on block_size
+        # Note: block_size is already adjusted in args.py if byte_latent
+        # For byte_latent, block_size has already been multiplied by 8 in args.py
         if hasattr(args, "block_size") and "max_length" in valid_config_params:
-            block_size = args.block_size
-            # Adjust for byte_latent if needed
             if byte_latent:
-                block_size = block_size * 8
-            config_kwargs["max_length"] = block_size * 8
+                # Block size is already multiplied by 8, just use it
+                config_kwargs["max_length"] = args.block_size
+            else:
+                # For non-byte_latent, use expanded max_length
+                config_kwargs["max_length"] = args.block_size * 8
 
         # Handle tokenizer IDs if tokenizer is provided
         if tokenizer is not None:

@@ -49,12 +49,15 @@ class ArgumentProcessor:
         processed = vars(args).copy()
 
         # Add computed values
+        # Check if encoder_type starts with "byte_latent" (covers all byte_latent variants)
+        encoder_type = getattr(args, "encoder_type", None)
         processed["byte_latent"] = (
-            args.encoder_type == "byte_latent" if hasattr(args, "encoder_type") else False
+            encoder_type and encoder_type.startswith("byte_latent")
         )
 
-        # Adjust block_size for byte_latent
+        # Adjust block_size for byte_latent encoders
         if processed["byte_latent"] and "block_size" in processed:
+            # Byte-level encoders need 8x the sequence length for UTF-8 sequences
             processed["block_size"] = processed["block_size"] * 8
 
         # Set terminal_output_length

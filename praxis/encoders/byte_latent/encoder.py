@@ -6,32 +6,39 @@ from typing import List, Optional, Tuple, TypeVar, Union
 os.environ["BLT_SUPPRESS_ATTN_ERROR"] = "1"
 os.environ["BLT_ALLOW_MISSING_FLEX_ATTENTION"] = "1"
 
-import bytelatent
 import torch
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn_utils
-from bytelatent.data.ngram_processor import NgramProcessor
-from bytelatent.data.patcher import Patcher, PatcherArgs, calculate_entropies
-from bytelatent.model.blt import (
-    ByteLatentTransformerArgs,
+from torch import nn
+
+from .config import (
+    ByteLatentConfig,
     EmbeddingType,
     compute_hash_embeddings,
-    cross_attn_mask,
-    decoder_patch_ids_from_lengths,
+    create_base_config,
     get_decoder_dim_token_emb,
     get_encoder_dim_patch_emb,
     get_encoder_dim_token_emb,
     init_embeddings,
-    parse_ngram_to_size,
-    patch_ids_from_lengths,
 )
-from bytelatent.model.local_models import LocalDecoder, LocalEncoder, LocalModelArgs
-from bytelatent.model.utils import concat_downsample, patch_reduce
-from bytelatent.tokenizers.constants import BYTE_UNITS, EOS_ID, OFFSET
-from bytelatent.transformer import LMTransformer, LMTransformerArgs
-from torch import nn
+from .constants import BYTE_UNITS, EOS_ID, OFFSET
+from .patcher import (
+    Patcher,
+    PatcherConfig,
+    PatchingMode,
+    calculate_entropies,
+    concat_downsample,
+    cross_attn_mask,
+    decoder_patch_ids_from_lengths,
+    patch_ids_from_lengths,
+    patch_reduce,
+)
 
-from praxis.recurrent import RECURRENT_REGISTRY
+# Import for recurrent model registry if needed
+try:
+    from praxis.recurrent import RECURRENT_REGISTRY
+except ImportError:
+    RECURRENT_REGISTRY = None
 
 ConfigType = TypeVar("ConfigType", bound="AutoConfig")
 
@@ -47,85 +54,143 @@ class ByteLatentEncoder(nn.Module):
 
     __version__ = "0.1.0"
 
-    def __init__(self, config: ConfigType) -> None:
+    def __init__(
+        self,
+        config: ConfigType,
+        *,
+        # Patching configuration
+        patching_mode: str = "space",
+        patching_threshold: float = math.pi,
+        patch_size: int = 6,
+        target_compression_ratio: float = 0.125,
+
+        # Encoder/decoder architecture
+        local_architecture: str = "recurrent",
+        n_layers_encoder: int = 3,
+        n_layers_decoder: int = 3,
+
+        # Hash embeddings
+        use_hash_embeddings: bool = True,
+        hash_functions: int = 1,
+        hash_group_sizes: Optional[List[int]] = None,
+
+        # Entropy model (for entropy patching)
+        entropy_model_layers: int = 2,
+
+        # Cross attention (advanced)
+        cross_attn_encoder: bool = False,
+        cross_attn_decoder: bool = False,
+
+        # Other options
+        downsampling_method: str = "max",
+    ) -> None:
         """
         Initialize byte latent encoder/decoder.
 
         Args:
             config: Configuration object with model parameters
+            patching_mode: How to create patches ("space", "entropy", "static")
+            patching_threshold: Threshold for entropy-based patching
+            patch_size: Size of patches for static patching
+            target_compression_ratio: Target compression ratio for entropy patching
+            local_architecture: Architecture for local encoder/decoder ("recurrent", "conv")
+            n_layers_encoder: Number of layers in local encoder
+            n_layers_decoder: Number of layers in local decoder
+            use_hash_embeddings: Whether to use hash-based embeddings
+            hash_functions: Number of hash functions to use
+            hash_group_sizes: List of n-gram sizes for hashing
+            entropy_model_layers: Number of layers in entropy model
+            cross_attn_encoder: Enable cross-attention in encoder
+            cross_attn_decoder: Enable cross-attention in decoder
+            downsampling_method: Downsampling method ("max", "mean", "min", "topk:N")
         """
         super().__init__()
-        self.debug: bool = config.debug
+        self.debug: bool = getattr(config, 'debug', False)
         self.log_rate: float = 0.005
-        self.device_map = config.device_map
-        self.args = create_base_args(config)
-        self.args.dim_token_emb = config.embed_size
+        self.device_map = getattr(config, 'device_map', 'cpu')
 
+        # Create byte config with explicit parameters
+        self.byte_config = create_base_config(config)
+        self.byte_config.dim_token_emb = config.embed_size
+        self.byte_config.patching_mode = patching_mode
+        self.byte_config.patching_threshold = patching_threshold
+        self.byte_config.patch_size = patch_size
+        self.byte_config.n_layers_local_encoder = n_layers_encoder
+        self.byte_config.n_layers_local_decoder = n_layers_decoder
+        self.byte_config.cross_attn_encoder = cross_attn_encoder
+        self.byte_config.cross_attn_decoder = cross_attn_decoder
+        self.byte_config.downsampling_by_pooling = downsampling_method
+        self.byte_config.encoder_hash_byte_group_nb_functions = hash_functions
+        if hash_group_sizes is not None:
+            self.byte_config.encoder_hash_byte_group_size = hash_group_sizes
+
+        # Setup entropy model for entropy-based patching
         self.entropy_model: Optional[nn.Module] = None
-        self.args.patching_mode = "entropy" if "entropy" in config.meta else "space"
-        self.args.patching_threshold = math.pi
-        self.args.patch_size = 6
-        if self.args.patching_mode == "entropy":
-            self.args.monotonicity = True
-            if "original" in config.meta:
-                self.entropy_model = LMTransformer(create_entropy_model_args(self.args))
-            elif "conv" in config.meta:
+        if patching_mode == "entropy":
+            self.byte_config.monotonicity = True
+            if local_architecture == "conv":
                 self.entropy_model = ConvEntropyModel(
-                    self.args.vocab_size, config.hidden_size, config.dropout, n_layers=2
+                    self.byte_config.vocab_size, config.hidden_size, config.dropout,
+                    n_layers=entropy_model_layers
                 )
             else:
                 self.entropy_model = RecurrentEntropyModel(
-                    self.args.vocab_size, config.hidden_size, config.dropout, n_layers=1
+                    self.byte_config.vocab_size, config.hidden_size, config.dropout,
+                    n_layers=entropy_model_layers
                 )
+
             # Threshold optimization parameters
             self.loss_scale: float = 1.0
-            self.target_ratio: float = 0.125  # reduction of original length
-            # Register buffers for both current and EMA thresholds
+            self.target_ratio: float = target_compression_ratio
             self.register_buffer(
                 "optimal_threshold",
-                torch.tensor(self.args.patching_threshold, dtype=torch.float32),
+                torch.tensor(patching_threshold, dtype=torch.float32),
             )
 
+        # Setup patcher
         self.patcher: Patcher = Patcher(
-            PatcherArgs(
+            PatcherConfig(
                 realtime_patching=False,
                 device=self.device_map,
-                patch_size=self.args.patch_size,
-                patching_mode=self.args.patching_mode,
-                threshold=self.args.patching_threshold,
-                threshold_add=None,
-                monotonicity=self.args.monotonicity,
+                patch_size=patch_size,
+                patching_mode=PatchingMode(patching_mode),
+                threshold=patching_threshold,
+                monotonicity=getattr(self.byte_config, 'monotonicity', False),
             )
         )
         self.patcher.entropy_model = self.entropy_model
+
+        # Setup hash embeddings
         self.hash_embeds: Optional[nn.Module] = None
-        if "no_hash" in config.meta:
-            self.hash_embeds = None
-        else:
+        if use_hash_embeddings:
             self.hash_embeds = init_embeddings(
-                self.args,
+                self.byte_config,
                 EmbeddingType.HASH_TOK,
-                local_encoder_dim=self.args.dim_token_emb,
-                encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
+                local_encoder_dim=self.byte_config.dim_token_emb,
+                encoder_hash_byte_group_size=self.byte_config.encoder_hash_byte_group_size,
             )
+
+        # Setup token projection if needed
         self.token_proj: Optional[nn.Linear] = None
-        if self.args.dim_token_emb != self.args.dim:
+        if self.byte_config.dim_token_emb != config.hidden_size:
             self.token_proj = nn.Linear(
-                self.args.dim_token_emb,
+                self.byte_config.dim_token_emb,
                 config.hidden_size,
                 bias=False,
             )
-        if "original" in config.meta:
-            self.encoder = LocalEncoder(create_local_encoder_args(self.args))
-            self.decoder = LocalDecoder(create_local_decoder_args(self.args))
-        elif "conv" in config.meta:
-            self.args.n_layers_local_encoder = 3
-            self.args.n_layers_local_decoder = 3
-            self.encoder = ConvEncoder(create_local_encoder_args(self.args))
-            self.decoder = ConvDecoder(create_local_decoder_args(self.args))
+
+        # Setup local encoder/decoder based on architecture
+        # ByteLatent always uses its internal vocab size (262 = 256 bytes + 6 special tokens)
+        if local_architecture == "conv":
+            self.encoder = ConvEncoder(self.byte_config)
+            self.decoder = ConvDecoder(self.byte_config)
+        elif local_architecture == "recurrent":
+            self.encoder = RecurrentEncoder(self.byte_config)
+            self.decoder = RecurrentDecoder(self.byte_config)
         else:
-            self.encoder = RecurrentEncoder(create_local_encoder_args(self.args))
-            self.decoder = RecurrentDecoder(create_local_decoder_args(self.args))
+            raise ValueError(f"Unknown local_architecture: {local_architecture}")
+
+        self.local_architecture = local_architecture
 
     def __repr__(self) -> str:
         """
@@ -136,10 +201,29 @@ class ByteLatentEncoder(nn.Module):
         """
         return (
             f"{self.__class__.__name__}("
-            + f"type='byte_latent', "
+            + f"architecture='{self.local_architecture}', "
+            + f"patching='{self.byte_config.patching_mode}', "
             + f"n_encoders={len(self.encoder.layers)}, "
             + f"n_decoders={len(self.decoder.layers)})"
         )
+
+    @property
+    def outputs_are_aligned(self) -> bool:
+        """
+        Indicates that ByteLatent outputs are already aligned for loss computation.
+        The decoder handles sequence alignment internally, so no shifting is needed.
+        """
+        return True
+
+    @property
+    def sequence_length_multiplier(self) -> int:
+        """
+        Return the factor by which sequence length should be multiplied
+        when using this encoder. For byte-level encoders, this is 8 to handle
+        UTF-8 byte sequences (since each UTF-8 character can be up to 4 bytes,
+        and we need some headroom for multi-byte sequences).
+        """
+        return 8
 
     def encode(
         self, input_ids: torch.Tensor
@@ -265,31 +349,31 @@ class ByteLatentEncoder(nn.Module):
                 patch_lengths, _ = self.patcher.patch(
                     input_ids,
                     include_next_token=True,
-                    threshold=float(self.optimal_threshold.item()),
+                    threshold=self.optimal_threshold.float(),  # Avoid .item() for torch.compile
                     entropies=modified_entropy_scores,
                 )
 
         if self.training:
             if self.debug and random.random() < self.log_rate:
-                avg_patch_size = patch_lengths.float().mean().item()
+                avg_patch_size = float(patch_lengths.float().mean())  # Avoid .item() for torch.compile
                 print(
                     f"DEBUG: length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, "
                     f"avg patch size={avg_patch_size:.2f}, "
-                    f"patching threshold={best_threshold or self.args.patching_threshold:.4f}"
+                    f"patching threshold={best_threshold or self.byte_config.patching_threshold:.4f}"
                 )
 
         patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
-        if self.args.cross_attn_encoder:
+        if self.byte_config.cross_attn_encoder:
             cross_attn_mask_enc = cross_attn_mask(
                 patch_ids,
                 patch_lengths,
                 input_ids.shape[-1],  # N
                 patches_as_queries=True,
-                cross_attn_k=self.args.cross_attn_k,
-                window=self.args.cross_attn_window_encoder,
+                cross_attn_k=self.byte_config.cross_attn_k,
+                window=self.byte_config.cross_attn_window_encoder,
                 block_mask=False,
             )
 
@@ -298,9 +382,6 @@ class ByteLatentEncoder(nn.Module):
             local_encoder_tokens=input_ids,
             local_encoder=self.encoder,
             encoder_hash_tok_embedding=self.hash_embeds,
-            encoder_hash_byte_group_nb_functions=self.args.encoder_hash_byte_group_nb_functions,
-            encoder_hash_byte_group_size=self.args.encoder_hash_byte_group_size,
-            encoder_hash_byte_group_vocab=self.args.encoder_hash_byte_group_vocab,
         )
 
         # Local encoder with cross attention
@@ -315,7 +396,7 @@ class ByteLatentEncoder(nn.Module):
         )
 
         # Downsampling
-        if self.args.cross_attn_encoder:
+        if self.byte_config.cross_attn_encoder:
             h = h_cross.view(h_encoder.shape[0], -1, h_encoder.shape[-1])
         else:
             h = downsample(
@@ -323,8 +404,8 @@ class ByteLatentEncoder(nn.Module):
                 patch_lengths.shape[1],
                 patch_lengths,
                 patch_ids,
-                downsampling_by_pooling=self.args.downsampling_by_pooling,
-                patch_size=self.args.patch_size,
+                downsampling_by_pooling=self.byte_config.downsampling_by_pooling,
+                patch_size=self.byte_config.patch_size,
             )
 
         block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
@@ -360,19 +441,19 @@ class ByteLatentEncoder(nn.Module):
 
         # Upsampling
         cross_mask = None
-        if self.args.cross_attn_decoder:
+        if self.byte_config.cross_attn_decoder:
             h = (
                 h
-                if self.args.cross_attn_encoder
-                else h.repeat_interleave(self.args.cross_attn_k, dim=1)
+                if self.byte_config.cross_attn_encoder
+                else h.repeat_interleave(self.byte_config.cross_attn_k, dim=1)
             )
             cross_mask = cross_attn_mask(
                 decoder_patch_ids,
                 patch_lengths,
                 input_ids.shape[-1],
                 patches_as_queries=False,
-                cross_attn_k=self.args.cross_attn_k,
-                window=self.args.cross_attn_window_decoder,
+                cross_attn_k=self.byte_config.cross_attn_k,
+                window=self.byte_config.cross_attn_window_decoder,
                 block_mask=False,
             )
         else:
@@ -407,7 +488,7 @@ class ByteLatentEncoder(nn.Module):
             ValueError: If a working threshold cannot be found
         """
         # Start with current threshold
-        threshold = float(self.optimal_threshold.item())
+        threshold = self.optimal_threshold.float()  # Avoid .item() for torch.compile
         target_len = int(input_ids.shape[1] * self.target_ratio)
 
         # First, find any working threshold by doubling until we succeed
@@ -811,7 +892,7 @@ def packed_rnn_block(
         eos_positions = (input_ids[i] == eos_token_id).nonzero(as_tuple=True)[0]
         if len(eos_positions) > 0:
             # +1 to include the EOS token in the sequence
-            lengths[i] = min(eos_positions[0].item() + 1, seq_len)
+            lengths[i] = min(int(eos_positions[0]) + 1, seq_len)  # Avoid .item() for torch.compile
 
     # Create packed sequence
     packed_x = nn.utils.rnn.pack_padded_sequence(
@@ -884,7 +965,7 @@ class RecurrentBlock(nn.Module):
 #         return out + x
 
 
-class RecurrentEncoder(LocalEncoder):
+class RecurrentEncoder(nn.Module):
     """
     Recurrent encoder implementation using RecurrentBlock layers.
 
@@ -892,16 +973,23 @@ class RecurrentEncoder(LocalEncoder):
     for more efficient processing of long sequences.
     """
 
-    def __init__(self, args: LocalModelArgs):
+    def __init__(self, config: ByteLatentConfig):
         """
         Initialize RecurrentEncoder.
 
         Args:
-            args: Local model arguments containing configuration
+            config: Byte-latent configuration
         """
-        super().__init__(args)
+        super().__init__()
+        self.config = config
+        self.dropout = config.dropout
+        self.training = False
+
+        # Token embeddings
+        self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
+
         self.layers = nn.ModuleList(
-            [RecurrentBlock(dim=args.dim) for _ in range(args.n_layers)]
+            [RecurrentBlock(dim=config.dim_token_emb) for _ in range(config.n_layers_local_encoder)]
         )
 
     def forward(
@@ -923,7 +1011,13 @@ class RecurrentEncoder(LocalEncoder):
                 - Tuple of (hidden states, None)
                 - None (for API compatibility)
         """
-        h = self.apply_embedding(tokens, embeds)
+        # Apply embeddings
+        if embeds is not None:
+            h = embeds
+        else:
+            h = self.tok_emb(tokens)
+
+
         h = F.dropout(h, p=self.dropout, training=self.training)
         for i, layer in enumerate(self.layers):
             h = layer(h, input_ids=tokens)
@@ -931,7 +1025,7 @@ class RecurrentEncoder(LocalEncoder):
         return (h, None), None
 
 
-class RecurrentDecoder(LocalDecoder):
+class RecurrentDecoder(nn.Module):
     """
     Recurrent decoder implementation using RecurrentBlock layers.
 
@@ -939,16 +1033,34 @@ class RecurrentDecoder(LocalDecoder):
     for more efficient processing of long sequences.
     """
 
-    def __init__(self, args: LocalModelArgs):
+    def __init__(self, config: ByteLatentConfig):
         """
         Initialize RecurrentDecoder.
 
         Args:
-            args: Local model arguments containing configuration
+            config: Byte-latent configuration
         """
-        super().__init__(args)
+        super().__init__()
+        self.config = config
+        self.dropout = config.dropout
+        self.training = False
+        self.cross_attn_decoder = config.cross_attn_decoder
+        self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
+        self.dim = config.dim_token_emb
+
+        # Output projection and normalization
+        self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
+        self.output = nn.Linear(config.dim_token_emb, config.vocab_size, bias=False)
+
+        # Patch embedding projection
+        self.patch_embedding_projection = None
+        if config.dim_global != config.dim_token_emb:
+            self.patch_embedding_projection = nn.Linear(
+                config.dim_global, config.dim_token_emb, bias=False
+            )
+
         self.layers = nn.ModuleList(
-            [RecurrentBlock(dim=args.dim_token_emb) for _ in range(args.n_layers)]
+            [RecurrentBlock(dim=config.dim_token_emb) for _ in range(config.n_layers_local_decoder)]
         )
 
     def forward(
@@ -1125,7 +1237,7 @@ class ConvBlock(nn.Module):
         return self.activation(out) + x
 
 
-class ConvEncoder(LocalEncoder):
+class ConvEncoder(nn.Module):
     """
     Convolutional encoder implementation using ConvBlock layers with dilated convolutions.
 
@@ -1134,29 +1246,34 @@ class ConvEncoder(LocalEncoder):
     while maintaining efficiency.
     """
 
-    def __init__(self, args: LocalModelArgs):
+    def __init__(self, config: ByteLatentConfig):
         """
         Initialize ConvEncoder.
 
         Args:
-            args: Local model arguments containing configuration
+            config: Byte-latent configuration
         """
-        super().__init__(args)
+        super().__init__()
+        self.config = config
+
+        # Token embeddings
+        self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
+
         self.layers = nn.ModuleList()
-        for i in range(args.n_layers):
+        for i in range(config.n_layers_local_encoder):
             kernel_size = 3
             dilation = 2**i
             padding = (kernel_size - 1) * dilation  # Causal padding
             self.layers.append(
                 ConvBlock(
-                    args.dim,
-                    args.norm_eps,
+                    config.dim_token_emb,
+                    config.norm_eps,
                     dilation,
                     padding,
                     kernel_size,
                 ),
             )
-        self.dropout = nn.Dropout(args.dropout)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(
         self,
@@ -1177,7 +1294,12 @@ class ConvEncoder(LocalEncoder):
                 - Tuple of (hidden states, None)
                 - None (for API compatibility)
         """
-        h = self.apply_embedding(tokens, embeds)
+        # Apply embeddings
+        if embeds is not None:
+            h = embeds
+        else:
+            h = self.tok_emb(tokens)
+
 
         for layer in self.layers:
             h = self.dropout(h)
@@ -1186,7 +1308,7 @@ class ConvEncoder(LocalEncoder):
         return (h, None), None
 
 
-class ConvDecoder(LocalDecoder):
+class ConvDecoder(nn.Module):
     """
     Convolutional decoder implementation using ConvBlock layers.
 
@@ -1194,29 +1316,44 @@ class ConvDecoder(LocalDecoder):
     while maintaining autoregressive properties.
     """
 
-    def __init__(self, args: LocalModelArgs):
+    def __init__(self, config: ByteLatentConfig):
         """
         Initialize ConvDecoder.
 
         Args:
-            args: Local model arguments containing configuration
+            config: Byte-latent configuration
         """
-        super().__init__(args)
+        super().__init__()
+        self.config = config
+        self.cross_attn_decoder = config.cross_attn_decoder
+        self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
+
+        # Output projection and normalization
+        self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
+        self.output = nn.Linear(config.dim_token_emb, config.vocab_size, bias=False)
+
+        # Patch embedding projection
+        self.patch_embedding_projection = None
+        if config.dim_global != config.dim_token_emb:
+            self.patch_embedding_projection = nn.Linear(
+                config.dim_global, config.dim_token_emb, bias=False
+            )
+
         self.layers = nn.ModuleList()
-        for i in range(args.n_layers):
+        for i in range(config.n_layers_local_decoder):
             kernel_size = 3
             dilation = 2**i
             padding = (kernel_size - 1) * dilation  # Causal padding
             self.layers.append(
                 ConvBlock(
-                    args.dim,
-                    args.norm_eps,
+                    config.dim_token_emb,
+                    config.norm_eps,
                     dilation,
                     padding,
                     kernel_size,
                 ),
             )
-        self.dropout = nn.Dropout(args.dropout)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(
         self,
@@ -1346,162 +1483,13 @@ class ConvEntropyModel(nn.Module):
         return self.output(self.norm(x))
 
 
-def create_base_args(config: ConfigType) -> ByteLatentTransformerArgs:
-    """
-    Create base arguments for the ByteLatent model.
-
-    Uses defaults from the original Facebook code:
-    https://github.com/facebookresearch/blt/blob/main/bytelatent/test_blt.py
-
-    Args:
-        config: Model configuration object
-
-    Returns:
-        ByteLatentTransformerArgs with the configured parameters
-    """
-    downsampling_method = "max"
-    if "min" in config.meta:
-        downsampling_method = "min"
-    elif "mean" in config.meta:
-        downsampling_method = "mean"
-    elif any(flag.startswith("topk:") for flag in config.meta):
-        downsampling_method = next(x for x in config.meta if x.startswith("topk:"))
-
-    return ByteLatentTransformerArgs(
-        # stuff to care about
-        vocab_size=BYTE_UNITS + OFFSET,  # 256 bytes + 4 special tokens
-        norm_eps=config.epsilon,
-        dim=config.hidden_size,
-        dim_token_emb=config.embed_size,
-        dim_global=config.hidden_size,
-        encoder_hash_byte_group_nb_functions=1,
-        encoder_hash_byte_group_size=[3, 4, 5],
-        encoder_hash_byte_group_vocab=config.vocab_size,
-        n_layers_local_encoder=1,
-        n_layers_local_decoder=1,
-        # stuff to probably ignore
-        dim_local_encoder=config.hidden_size,
-        dim_local_decoder=config.hidden_size,
-        cross_attn_encoder=False,  # the authors found that using cross-attention in the decoder is most effective.
-        cross_attn_decoder=False,
-        cross_attn_window_encoder=512,
-        cross_attn_window_decoder=512,
-        cross_attn_k=1,  # is a multiplier for token and patch embedding
-        cross_attn_nheads=1,  # num heads used in cross attn
-        cross_attn_all_layers_encoder=False,
-        cross_attn_all_layers_decoder=False,
-        cross_attn_use_flex_attention=False,  # not supported on CPU and older GPUs
-        cross_attn_init_by_pooling=True,
-        use_rope=True,
-        downsampling_by_pooling=downsampling_method,
-        share_encoder_decoder_emb=False,
-        dropout=config.dropout,
-        entropy_model_checkpoint_dir=None,
-        attn_impl="xformers",
-        local_attention_window_len=512,  # sliding window
-        n_heads=4,
-        n_heads_local_encoder=4,
-        n_heads_local_decoder=4,
-        max_seqlen=config.max_length,
-        eos_id=2,  # currently we split packed sequences with the sep_token ID
-        # max_encoder_seq_length=8192,
-    )
+# create_base_args function removed - now using create_base_config from byte_config.py
 
 
-def create_local_encoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
-    """
-    Create arguments for the local encoder model.
-
-    Args:
-        args: Base ByteLatent transformer arguments
-
-    Returns:
-        LocalModelArgs configured for the encoder
-    """
-    return LocalModelArgs(
-        # Updated args
-        dim=args.dim_token_emb,
-        n_layers=args.n_layers_local_encoder,
-        n_heads=args.n_heads_local_encoder,
-        dim_token_emb=get_encoder_dim_token_emb(args),
-        dim_patch_emb=get_encoder_dim_patch_emb(args),
-        cross_attn_encoder=args.cross_attn_encoder,
-        cross_attn_decoder=False,
-        cross_attn_k=args.cross_attn_k if args.cross_attn_encoder else None,
-        cross_attn_init_by_pooling=args.cross_attn_init_by_pooling,
-        # Defaults
-        dropout=args.dropout,
-        vocab_size=args.vocab_size + args.pm_size,
-        patch_size=args.patch_size,
-        sliding_window=args.local_attention_window_len,
-        use_rope=args.use_rope,
-        patching_mode=args.patching_mode,
-        use_local_encoder_transformer=args.use_local_encoder_transformer,
-        downsampling_by_pooling=args.downsampling_by_pooling,
-        encoder_hash_byte_group_size=args.encoder_hash_byte_group_size,
-        cross_attn_nheads=args.cross_attn_nheads,
-        max_seqlen=args.max_seqlen,
-        attn_impl=args.attn_impl,
-        eos_id=args.eos_id,
-    )
+# create_local_encoder_args function removed - now using ByteLatentConfig directly
 
 
-def create_local_decoder_args(args: ByteLatentTransformerArgs) -> LocalModelArgs:
-    """
-    Create arguments for the local decoder model.
-
-    Args:
-        args: Base ByteLatent transformer arguments
-
-    Returns:
-        LocalModelArgs configured for the decoder
-    """
-    return LocalModelArgs(
-        # Updated args
-        dim=args.dim_token_emb,
-        n_layers=args.n_layers_local_decoder,
-        n_heads=args.n_heads_local_decoder,
-        dim_token_emb=args.dim_token_emb,
-        dim_patch_emb=args.dim,
-        cross_attn_encoder=False,
-        cross_attn_decoder=args.cross_attn_decoder,
-        cross_attn_init_by_pooling=False,
-        cross_attn_k=args.cross_attn_k if args.cross_attn_decoder else None,
-        # Defaults
-        dropout=args.dropout,
-        vocab_size=args.vocab_size + args.pm_size,
-        patch_size=args.patch_size,
-        sliding_window=args.local_attention_window_len,
-        use_rope=args.use_rope,
-        patching_mode=args.patching_mode,
-        use_local_encoder_transformer=args.use_local_encoder_transformer,
-        downsampling_by_pooling=args.downsampling_by_pooling,
-        cross_attn_nheads=args.cross_attn_nheads,
-        max_seqlen=args.max_seqlen,
-        attn_impl=args.attn_impl,
-        eos_id=args.eos_id,
-    )
+# create_local_decoder_args function removed - now using ByteLatentConfig directly
 
 
-def create_entropy_model_args(args: ByteLatentTransformerArgs) -> LMTransformerArgs:
-    """
-    Create arguments for the entropy prediction model.
-
-    Args:
-        args: Base ByteLatent transformer arguments
-
-    Returns:
-        LMTransformerArgs configured for the entropy model
-    """
-    return LMTransformerArgs(
-        # Updated args
-        dim=args.dim,
-        n_layers=args.n_layers_local_decoder,
-        n_heads=args.n_heads_local_decoder,
-        # Defaults
-        vocab_size=args.vocab_size + args.pm_size,
-        sliding_window=args.local_attention_window_len,
-        max_seqlen=args.max_seqlen,
-        attn_impl=args.attn_impl,
-        eos_id=args.eos_id,
-    )
+# create_entropy_model_args function removed - not needed in decoupled version

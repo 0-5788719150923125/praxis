@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Type, Union
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
 from .base import PraxisTokenizerBase
-from .byte_level import ByteLevelTokenizer
 from .standard import StandardTokenizer
 
 # Check if ByteLevelTokenizer is available
@@ -43,8 +42,8 @@ def create_tokenizer(
     Returns:
         Tokenizer instance
     """
-    # 1. Special case: byte_latent encoder uses ByteLevelTokenizer
-    if encoder_type == "byte_latent":
+    # 1. Special case: byte_latent encoders use ByteLevelTokenizer
+    if encoder_type and encoder_type.startswith("byte_latent"):
         if HAS_BYTE_LEVEL:
             return ByteLevelTokenizer(**kwargs)
         else:

@@ -25,7 +25,11 @@ class BackpropagationTrainer(LightningModule):
         self.last_train_step_time = None
         self.train_step_ema = None
         self.tokenizer = tokenizer
-        self.byte_latent = byte_latent
+        # Check if model has an encoder with aligned outputs
+        self.outputs_are_aligned = (
+            hasattr(model, 'encoder') and
+            getattr(model.encoder, 'outputs_are_aligned', False)
+        ) or byte_latent  # Keep byte_latent for backward compatibility
         self.last_logged_step = -1  # Track last step we logged a document
         self.save_hyperparameters(
             ignore=["model", "optimizer", "scheduler", "tokenizer"]
@@ -67,7 +71,12 @@ class BackpropagationTrainer(LightningModule):
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
 
-        labels = input_ids[..., 1:].contiguous()
+        # Check if encoder outputs are already aligned
+        if self.outputs_are_aligned:
+            labels = input_ids.contiguous()
+        else:
+            labels = input_ids[..., 1:].contiguous()
+
         outputs = self.model(
             input_ids=input_ids,
             labels=labels,
@@ -350,7 +359,12 @@ class BackpropagationTrainer(LightningModule):
         if should_skip:
             return torch.tensor(0.0, requires_grad=True)
 
-        labels = input_ids[..., 1:].contiguous()
+        # Check if encoder outputs are already aligned
+        if self.outputs_are_aligned:
+            labels = input_ids.contiguous()
+        else:
+            labels = input_ids[..., 1:].contiguous()
+
         outputs = self.model(
             input_ids=input_ids,
             labels=labels,
@@ -363,7 +377,7 @@ class BackpropagationTrainer(LightningModule):
         loss = outputs.loss
         stats["val_loss"] = loss
 
-        if self.byte_latent:
+        if self.outputs_are_aligned:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
             stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :], labels)

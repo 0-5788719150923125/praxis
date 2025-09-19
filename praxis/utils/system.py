@@ -294,7 +294,22 @@ def initialize_lazy_modules(model, device):
 
         # Create dummy batch for initialization
         dummy_input = torch.ones((batch_size, seq_length), dtype=torch.long).to(device)
-        dummy_labels = dummy_input[..., 1:].contiguous()
+
+        # Check if model uses ByteLatent encoder (no label shifting needed)
+        encoder = None
+        if hasattr(model, 'encoder'):
+            encoder = model.encoder
+        elif hasattr(model, 'model') and hasattr(model.model, 'encoder'):
+            encoder = model.model.encoder
+
+        is_bytelatent = (encoder is not None and
+                        hasattr(encoder, '__class__') and
+                        'ByteLatent' in encoder.__class__.__name__)
+
+        if is_bytelatent:
+            dummy_labels = dummy_input.contiguous()  # No shifting for ByteLatent
+        else:
+            dummy_labels = dummy_input[..., 1:].contiguous()  # Standard shifting
 
         # Do a dummy forward pass to initialize lazy parameters
         model.train()
@@ -458,5 +473,5 @@ def show_launch_animation(model, truncated_hash):
     print(f"[HASH] {truncated_hash}")
     time.sleep(2)
     elapsed_time = time.time() - start_time
-    print(f"[RATE] {elapsed_time:.3f}\s")
+    print(f"[RATE] {elapsed_time:.3f}s")
     time.sleep(1)

@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from praxis import ENCODER_REGISTRY
-from praxis.encoders.byte_latent import (
+from praxis.encoders.byte_latent.encoder import (
     create_patch_block_ids,
     mask_entropy_preds_at_special_tokens,
     packed_rnn_block,
@@ -40,8 +40,10 @@ def test_forward_pass(module_setup):
     # Create sample input
     batch_size = 32
     seq_len = 16  # Should be less than max_seq_len (512)
-    vocab_size = 260
-    input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
+    # For ByteLatent encoder, vocab_size is 262 (256 bytes + 6 special tokens)
+    # Use a smaller value for input_ids to avoid out of bounds
+    input_vocab_size = 256  # Max value for input IDs
+    input_ids = torch.randint(0, input_vocab_size, (batch_size, seq_len))
 
     # Step 1: Encode
     h, h_encoder, patch_lengths, block_ids, entropy_loss = module.encode(
@@ -59,7 +61,10 @@ def test_forward_pass(module_setup):
     # Basic shape assertions
     assert len(decoder_output.shape) == 3, "Expected 3D output from decoder"
     assert decoder_output.shape[0] == batch_size, "Batch size mismatch in output"
-    assert decoder_output.shape == (batch_size, seq_len, vocab_size)
+    # The output vocab size depends on the encoder configuration
+    # ByteLatent has vocab_size = 262 (256 + 6 special tokens)
+    expected_vocab_size = module.byte_config.vocab_size if hasattr(module, 'byte_config') else 260
+    assert decoder_output.shape == (batch_size, seq_len, expected_vocab_size)
 
 
 def test_create_patch_block_ids():

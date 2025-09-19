@@ -200,3 +200,48 @@ class PraxisTokenizerBase(PreTrainedTokenizer, ABC):
             + ([0] * (len(token_ids_1) - 1))
             + [1]
         )
+
+    def apply_chat_template(
+        self,
+        messages: List[Dict[str, str]],
+        add_generation_prompt: bool = False,
+        **kwargs
+    ) -> str:
+        """
+        Apply chat template to format messages.
+
+        Args:
+            messages: List of message dictionaries with 'role' and 'content' keys
+            add_generation_prompt: Whether to add generation prompt
+            **kwargs: Additional template variables
+
+        Returns:
+            Formatted chat string
+
+        Raises:
+            ValueError: If no chat template is available
+        """
+        if self.chat_template is None:
+            raise ValueError("No chat template available for this tokenizer")
+
+        from jinja2 import Template
+
+        # Create template
+        template = Template(self.chat_template)
+
+        # Prepare template variables
+        template_vars = {
+            'messages': messages,
+            'add_generation_prompt': add_generation_prompt,
+            'bos_token': getattr(self, 'bos_token', '[BOS]'),
+            'eos_token': getattr(self, 'eos_token', '[EOS]'),
+            'sep_token': getattr(self, 'sep_token', '[SEP]'),
+            'pad_token': getattr(self, 'pad_token', '[PAD]'),
+            **kwargs
+        }
+
+        # Render template
+        try:
+            return template.render(**template_vars)
+        except Exception as e:
+            raise ValueError(f"Failed to render chat template: {e}") from e

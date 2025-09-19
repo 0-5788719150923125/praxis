@@ -8,6 +8,7 @@ from queue import Queue
 from typing import Any, Dict, Optional
 
 import torch
+from transformers import GenerationConfig
 
 from praxis.generation.request import GenerationRequest
 
@@ -181,10 +182,13 @@ class Generator:
 
         with self._eval_mode():
             while attempts < max_attempts:
+                # Create GenerationConfig to avoid repeated warnings
+                generation_config = GenerationConfig(**combined)
+
                 # Direct model access - no branching needed
                 outputs = self.model.generate(
                     generated_tokens,
-                    **combined,
+                    generation_config=generation_config,
                     tokenizer=self.tokenizer,
                     return_dict_in_generate=True,
                 )
