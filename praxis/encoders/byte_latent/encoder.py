@@ -63,24 +63,19 @@ class ByteLatentEncoder(nn.Module):
         patching_threshold: float = math.pi,
         patch_size: int = 6,
         target_compression_ratio: float = 0.125,
-
         # Encoder/decoder architecture
         local_architecture: str = "recurrent",
         n_layers_encoder: int = 3,
         n_layers_decoder: int = 3,
-
         # Hash embeddings
         use_hash_embeddings: bool = True,
         hash_functions: int = 1,
         hash_group_sizes: Optional[List[int]] = None,
-
         # Entropy model (for entropy patching)
         entropy_model_layers: int = 2,
-
         # Cross attention (advanced)
         cross_attn_encoder: bool = False,
         cross_attn_decoder: bool = False,
-
         # Other options
         downsampling_method: str = "max",
     ) -> None:
@@ -105,9 +100,9 @@ class ByteLatentEncoder(nn.Module):
             downsampling_method: Downsampling method ("max", "mean", "min", "topk:N")
         """
         super().__init__()
-        self.debug: bool = getattr(config, 'debug', False)
+        self.debug: bool = getattr(config, "debug", False)
         self.log_rate: float = 0.005
-        self.device_map = getattr(config, 'device_map', 'cpu')
+        self.device_map = getattr(config, "device_map", "cpu")
 
         # Create byte config with explicit parameters
         self.byte_config = create_base_config(config)
@@ -130,13 +125,24 @@ class ByteLatentEncoder(nn.Module):
             self.byte_config.monotonicity = True
             if local_architecture == "conv":
                 self.entropy_model = ConvEntropyModel(
-                    self.byte_config.vocab_size, config.hidden_size, config.dropout,
-                    n_layers=entropy_model_layers
+                    self.byte_config.vocab_size,
+                    config.hidden_size,
+                    config.dropout,
+                    n_layers=entropy_model_layers,
+                )
+            elif local_architecture == "transformer":
+                self.entropy_model = TransformerEntropyModel(
+                    self.byte_config.vocab_size,
+                    config.hidden_size,
+                    config.dropout,
+                    n_layers=entropy_model_layers,
                 )
             else:
                 self.entropy_model = RecurrentEntropyModel(
-                    self.byte_config.vocab_size, config.hidden_size, config.dropout,
-                    n_layers=entropy_model_layers
+                    self.byte_config.vocab_size,
+                    config.hidden_size,
+                    config.dropout,
+                    n_layers=entropy_model_layers,
                 )
 
             # Threshold optimization parameters
@@ -155,7 +161,7 @@ class ByteLatentEncoder(nn.Module):
                 patch_size=patch_size,
                 patching_mode=PatchingMode(patching_mode),
                 threshold=patching_threshold,
-                monotonicity=getattr(self.byte_config, 'monotonicity', False),
+                monotonicity=getattr(self.byte_config, "monotonicity", False),
             )
         )
         self.patcher.entropy_model = self.entropy_model
@@ -187,6 +193,9 @@ class ByteLatentEncoder(nn.Module):
         elif local_architecture == "recurrent":
             self.encoder = RecurrentEncoder(self.byte_config)
             self.decoder = RecurrentDecoder(self.byte_config)
+        elif local_architecture == "transformer":
+            self.encoder = TransformerEncoder(self.byte_config)
+            self.decoder = TransformerDecoder(self.byte_config)
         else:
             raise ValueError(f"Unknown local_architecture: {local_architecture}")
 
@@ -355,7 +364,9 @@ class ByteLatentEncoder(nn.Module):
 
         if self.training:
             if self.debug and random.random() < self.log_rate:
-                avg_patch_size = float(patch_lengths.float().mean())  # Avoid .item() for torch.compile
+                avg_patch_size = float(
+                    patch_lengths.float().mean()
+                )  # Avoid .item() for torch.compile
                 print(
                     f"DEBUG: length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, "
                     f"avg patch size={avg_patch_size:.2f}, "
@@ -892,7 +903,9 @@ def packed_rnn_block(
         eos_positions = (input_ids[i] == eos_token_id).nonzero(as_tuple=True)[0]
         if len(eos_positions) > 0:
             # +1 to include the EOS token in the sequence
-            lengths[i] = min(int(eos_positions[0]) + 1, seq_len)  # Avoid .item() for torch.compile
+            lengths[i] = min(
+                int(eos_positions[0]) + 1, seq_len
+            )  # Avoid .item() for torch.compile
 
     # Create packed sequence
     packed_x = nn.utils.rnn.pack_padded_sequence(
@@ -989,7 +1002,10 @@ class RecurrentEncoder(nn.Module):
         self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
 
         self.layers = nn.ModuleList(
-            [RecurrentBlock(dim=config.dim_token_emb) for _ in range(config.n_layers_local_encoder)]
+            [
+                RecurrentBlock(dim=config.dim_token_emb)
+                for _ in range(config.n_layers_local_encoder)
+            ]
         )
 
     def forward(
@@ -1016,7 +1032,6 @@ class RecurrentEncoder(nn.Module):
             h = embeds
         else:
             h = self.tok_emb(tokens)
-
 
         h = F.dropout(h, p=self.dropout, training=self.training)
         for i, layer in enumerate(self.layers):
@@ -1060,7 +1075,10 @@ class RecurrentDecoder(nn.Module):
             )
 
         self.layers = nn.ModuleList(
-            [RecurrentBlock(dim=config.dim_token_emb) for _ in range(config.n_layers_local_decoder)]
+            [
+                RecurrentBlock(dim=config.dim_token_emb)
+                for _ in range(config.n_layers_local_decoder)
+            ]
         )
 
     def forward(
@@ -1300,7 +1318,6 @@ class ConvEncoder(nn.Module):
         else:
             h = self.tok_emb(tokens)
 
-
         for layer in self.layers:
             h = self.dropout(h)
             h = layer(h, input_ids=tokens)
@@ -1483,13 +1500,322 @@ class ConvEntropyModel(nn.Module):
         return self.output(self.norm(x))
 
 
-# create_base_args function removed - now using create_base_config from byte_config.py
+class TransformerBlock(nn.Module):
+    """
+    Transformer block with sliding window attention using proper praxis components.
+
+    This block uses the SlidingWindowFlexAttention and MultiLayerPerceptron
+    from the praxis registry for proper integration.
+    """
+
+    def __init__(
+        self,
+        config,
+        window_size: int = 512,
+    ):
+        """
+        Initialize TransformerBlock.
+
+        Args:
+            config: Configuration object with model parameters
+            window_size: Size of sliding attention window
+        """
+        super().__init__()
+
+        # Import proper components from praxis
+        from praxis.attention import SlidingWindowFlexAttention
+        from praxis.dense import MultiLayerPerceptron
+
+        # Create attention config
+        class AttentionConfig:
+            def __init__(self, base_config, window_size):
+                self.hidden_size = base_config.dim_token_emb
+                self.num_heads = getattr(base_config, "num_heads", 8)
+                self.num_queries = 1  # Standard MHA
+                self.dropout = base_config.dropout
+                self.causal = True
+                self.head_size = None  # Will use default: hidden_size // num_heads
+
+        # Sliding window attention
+        attn_config = AttentionConfig(config, window_size)
+        self.attention = SlidingWindowFlexAttention(
+            attn_config, window_size=window_size
+        )
+
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
+        self.norm2 = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
+
+        # Feed-forward network using praxis MLP
+        class MLPConfig:
+            def __init__(self, base_config):
+                self.hidden_size = base_config.dim_token_emb
+                self.dropout = base_config.dropout
+                self.activation = getattr(base_config, "activation", "relu")
+
+        mlp_config = MLPConfig(config)
+        self.feedforward = MultiLayerPerceptron(
+            mlp_config,
+            input_dim=config.dim_token_emb,
+            hidden_dim=config.dim_token_emb * 4,
+        )
+
+    def forward(
+        self, x: torch.Tensor, input_ids: Optional[torch.Tensor] = None, *args, **kwargs
+    ) -> torch.Tensor:
+        """
+        Process input through sliding window attention and feed-forward.
+
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, dim]
+            input_ids: Token IDs (unused, kept for API compatibility)
+
+        Returns:
+            Output tensor of shape [batch_size, seq_len, dim]
+        """
+        # Self-attention with residual connection
+        norm_x = self.norm1(x)
+        attn_output, _, _ = self.attention(norm_x)
+        attn_output = x + attn_output
+
+        # Feed-forward with residual connection
+        norm_attn = self.norm2(attn_output)
+        ff_output = self.feedforward(norm_attn)
+        output = attn_output + ff_output
+
+        return output
 
 
-# create_local_encoder_args function removed - now using ByteLatentConfig directly
+class TransformerEncoder(nn.Module):
+    """
+    Transformer encoder implementation using TransformerBlock layers with sliding window attention.
+
+    This encoder replaces convolutional/recurrent blocks with transformer blocks
+    for the original BLT vision while maintaining efficiency through sliding window attention.
+    """
+
+    def __init__(self, config: ByteLatentConfig):
+        """
+        Initialize TransformerEncoder.
+
+        Args:
+            config: Byte-latent configuration
+        """
+        super().__init__()
+        self.config = config
+        self.dropout = config.dropout
+        self.training = False
+
+        # Token embeddings
+        self.tok_emb = nn.Embedding(config.vocab_size, config.dim_token_emb)
+
+        # Transformer layers with sliding window attention
+        window_size = getattr(config, "sliding_window_size", 512)
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(config, window_size=window_size)
+                for _ in range(config.n_layers_local_encoder)
+            ]
+        )
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: Optional[torch.Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> Tuple[Tuple[torch.Tensor, None], None]:
+        """
+        Forward pass through the transformer encoder.
+
+        Args:
+            tokens: Input token IDs of shape [batch_size, seq_len]
+            embeds: Optional pre-computed embeddings
+
+        Returns:
+            Tuple containing:
+                - Tuple of (hidden states, None)
+                - None (for API compatibility)
+        """
+        # Apply embeddings
+        if embeds is not None:
+            h = embeds
+        else:
+            h = self.tok_emb(tokens)
+
+        h = F.dropout(h, p=self.dropout, training=self.training)
+
+        for layer in self.layers:
+            h = layer(h, input_ids=tokens)
+
+        return (h, None), None
 
 
-# create_local_decoder_args function removed - now using ByteLatentConfig directly
+class TransformerDecoder(nn.Module):
+    """
+    Transformer decoder implementation using TransformerBlock layers with sliding window attention.
+
+    This decoder replaces convolutional/recurrent blocks with transformer blocks
+    for efficient processing of long sequences.
+    """
+
+    def __init__(self, config: ByteLatentConfig):
+        """
+        Initialize TransformerDecoder.
+
+        Args:
+            config: Byte-latent configuration
+        """
+        super().__init__()
+        self.config = config
+        self.dropout = config.dropout
+        self.training = False
+        self.cross_attn_decoder = config.cross_attn_decoder
+        self.cross_attn_k = config.cross_attn_k if config.cross_attn_decoder else None
+        self.dim = config.dim_token_emb
+
+        # Output projection and normalization
+        self.norm = nn.LayerNorm(config.dim_token_emb, eps=config.norm_eps)
+        self.output = nn.Linear(config.dim_token_emb, config.vocab_size, bias=False)
+
+        # Patch embedding projection
+        self.patch_embedding_projection = None
+        if config.dim_global != config.dim_token_emb:
+            self.patch_embedding_projection = nn.Linear(
+                config.dim_global, config.dim_token_emb, bias=False
+            )
+
+        # Transformer layers with sliding window attention
+        window_size = getattr(config, "sliding_window_size", 512)
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(config, window_size=window_size)
+                for _ in range(config.n_layers_local_decoder)
+            ]
+        )
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        embeds: torch.Tensor,
+        patch_embeds: Optional[torch.Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, None]:
+        """
+        Forward pass through the transformer decoder.
+
+        Args:
+            tokens: Input token IDs of shape [batch_size, seq_len]
+            embeds: Pre-computed embeddings from encoder
+            patch_embeds: Optional patch embeddings
+
+        Returns:
+            Tuple containing:
+                - Output predictions of shape [batch_size, seq_len, vocab_size]
+                - None (for API compatibility)
+
+        Raises:
+            AssertionError: If required embeddings are not provided
+        """
+        bs, seqlen = tokens.shape
+        assert embeds is not None, "Embeddings must be provided"
+
+        h = embeds
+
+        if self.patch_embedding_projection is not None:
+            assert patch_embeds is not None, "Patch embeddings must be passed."
+            patch_embeds = self.patch_embedding_projection(patch_embeds)
+            if self.cross_attn_k is not None:
+                patch_embeds = patch_embeds.reshape(
+                    bs, patch_embeds.shape[1] * self.cross_attn_k, self.dim
+                )
+
+        if patch_embeds is not None and not self.cross_attn_decoder:
+            h = h + patch_embeds
+
+        h = F.dropout(h, p=self.dropout, training=self.training)
+
+        for layer in self.layers:
+            h = layer(h, input_ids=tokens)
+
+        h_preds = self.norm(h)
+        h_preds = F.dropout(h_preds, p=self.dropout, training=self.training)
+        h_preds = self.output(h_preds)
+        h_preds = h_preds.float()
+        return h_preds, None
 
 
-# create_entropy_model_args function removed - not needed in decoupled version
+class TransformerEntropyModel(nn.Module):
+    """
+    Transformer model for entropy prediction.
+
+    Uses transformer blocks with sliding window attention to efficiently model
+    token sequences for entropy-based patching.
+    """
+
+    def __init__(
+        self,
+        vocab_size: int = 256,
+        dim: int = 256,
+        dropout: float = 0,
+        n_layers: int = 1,
+        num_heads: int = 8,
+        window_size: int = 512,
+    ):
+        """
+        Initialize TransformerEntropyModel.
+
+        Args:
+            vocab_size: Size of the vocabulary
+            dim: Hidden dimension size
+            dropout: Dropout probability
+            n_layers: Number of transformer layers
+            num_heads: Number of attention heads
+            window_size: Size of sliding attention window
+        """
+        super().__init__()
+
+        self.embedding = nn.Embedding(vocab_size, dim)
+
+        # Create a minimal config for TransformerBlock
+        class EntropyConfig:
+            def __init__(self):
+                self.dim_token_emb = dim
+                self.dropout = dropout
+                self.norm_eps = 1e-5
+                self.num_heads = num_heads
+                self.activation = "relu"
+
+        entropy_config = EntropyConfig()
+        self.blocks = nn.ModuleList(
+            [
+                TransformerBlock(entropy_config, window_size=window_size)
+                for _ in range(n_layers)
+            ]
+        )
+
+        # Project to byte probabilities
+        self.norm = nn.LayerNorm(dim)
+        self.output = nn.Linear(dim, vocab_size)
+
+    def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        """
+        Forward pass through the transformer entropy model.
+
+        Args:
+            x: Input token IDs of shape [batch_size, seq_len]
+
+        Returns:
+            Output logits of shape [batch_size, seq_len, vocab_size]
+        """
+        # x: [batch, seq_len]
+        input_ids = x
+        x = self.embedding(x)  # [batch, seq_len, dim]
+
+        for block in self.blocks:
+            x = block(x, input_ids=input_ids)
+
+        return self.output(self.norm(x))

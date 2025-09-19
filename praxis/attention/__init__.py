@@ -7,6 +7,7 @@ from praxis.attention.base import ModularAttention
 from praxis.attention.components import VanillaMHA
 from praxis.attention.flex_attention import FlexAttention
 from praxis.attention.pk_attention import ProductKeyAttention
+from praxis.attention.sliding_window import SlidingWindowFlexAttention
 from praxis.attention.syntaxes import SyntaxesAttention
 
 # Registry of available attention mechanisms
@@ -16,4 +17,5 @@ ATTENTION_REGISTRY: Dict[str, Type[nn.Module]] = {
     "pk": ProductKeyAttention,
     "syntaxes": SyntaxesAttention,
     "flex_attention": FlexAttention,
+    "sliding_window": SlidingWindowFlexAttention,
 }
