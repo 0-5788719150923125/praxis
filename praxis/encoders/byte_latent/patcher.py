@@ -27,9 +27,12 @@ class PatcherConfig:
     patching_mode: PatchingMode = PatchingMode.entropy
     patch_size: int = 6
     threshold: float = 3.14159  # Default to pi
+    threshold_add: Optional[float] = None
+    max_patch_length: Optional[int] = None
     monotonicity: bool = False
     device: str = "cuda"
     realtime_patching: bool = False
+    log_time: bool = False
 
 
 class Patcher:
@@ -120,7 +123,7 @@ class Patcher:
         # Calculate patch lengths from boundaries
         patch_lengths = self._boundaries_to_lengths(boundaries, include_next_token)
 
-        return patch_lengths, boundaries
+        return self._postprocess_patch_lengths(patch_lengths, tokens, include_next_token, scores=entropies)
 
     def _space_patching(
         self, tokens: torch.Tensor, include_next_token: bool
@@ -151,7 +154,87 @@ class Patcher:
                     if start_pos < tokens.shape[1]:
                         boundaries[b, start_pos] = True
 
-        return patch_lengths, boundaries
+        return self._postprocess_patch_lengths(patch_lengths, tokens, include_next_token, scores=None)
+
+    def _postprocess_patch_lengths(
+        self,
+        patch_lengths: torch.Tensor,
+        tokens: torch.Tensor,
+        include_next_token: bool,
+        scores: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Post-process patch lengths following BLT reference logic.
+
+        Args:
+            patch_lengths: Raw patch lengths
+            tokens: Original tokens
+            include_next_token: Whether next token was included
+            scores: Optional scores (entropy, etc.)
+
+        Returns:
+            Tuple of (processed_patch_lengths, scores)
+        """
+        # Apply max_patch_length processing if needed
+        if self.config.max_patch_length is not None:
+            # Convert to list for processing (following BLT TODO note)
+            patch_lengths_list = [
+                self._split_large_patches(pl.tolist(), self.config.max_patch_length)
+                for pl in patch_lengths
+            ]
+            max_len = max(len(pl) for pl in patch_lengths_list)
+            patch_lengths_list = [
+                pl + [0] * (max_len - len(pl)) for pl in patch_lengths_list  # Right pad with zeros
+            ]
+            patch_lengths = torch.tensor(
+                patch_lengths_list, dtype=tokens.dtype, device=tokens.device
+            )
+
+        # Ensure no non-zero values after zero values (BLT validation)
+        assert not self._check_non_zero_after_zero(patch_lengths), "Non-zero values found after zero values"
+
+        # Trim trailing zero columns (BLT reference logic)
+        if patch_lengths.numel() > 0:
+            last_non_zero_col_reversed = (
+                (patch_lengths != 0).flip(dims=[1]).int().argmax(dim=1).min()
+            )
+            patch_lengths = patch_lengths[
+                :, : patch_lengths.shape[1] - last_non_zero_col_reversed
+            ]
+
+        # Critical validation (BLT reference)
+        expected_total = tokens.numel() + include_next_token * tokens.shape[0]
+        actual_total = torch.sum(patch_lengths)
+        assert actual_total == expected_total, \
+            f"Patch length sum mismatch: {actual_total} != {expected_total}"
+
+        return patch_lengths, scores
+
+    def _split_large_patches(self, patch_lengths: list, max_length: int) -> list:
+        """Split patches that exceed max_length."""
+        result = []
+        for length in patch_lengths:
+            if length <= max_length:
+                result.append(length)
+            else:
+                # Split into chunks of max_length
+                while length > max_length:
+                    result.append(max_length)
+                    length -= max_length
+                if length > 0:
+                    result.append(length)
+        return result
+
+    def _check_non_zero_after_zero(self, patch_lengths: torch.Tensor) -> bool:
+        """Check if there are non-zero values after zero values (should not happen)."""
+        for row in patch_lengths:
+            found_zero = False
+            for val in row:
+                if val == 0:
+                    found_zero = True
+                elif found_zero and val != 0:
+                    return True
+        return False
 
     def _static_patching(
         self, tokens: torch.Tensor, patch_size: int
@@ -187,7 +270,7 @@ class Patcher:
         for i in range(patch_size - 1, seq_len, patch_size):
             boundaries[:, i] = True
 
-        return patch_lengths, boundaries
+        return self._postprocess_patch_lengths(patch_lengths, tokens, include_next_token, scores=None)
 
     def _boundaries_to_lengths(
         self, boundaries: torch.Tensor, include_next_token: bool
@@ -329,28 +412,46 @@ def decoder_patch_ids_from_lengths(
     patch_lengths: torch.Tensor, nb_boe: int, seq_len: int
 ) -> torch.Tensor:
     """
-    Create patch IDs for decoder with optional beginning-of-entity tokens.
+    Create patch IDs for decoder using exact BLT reference logic.
+
+    BLT removes the first patch for decoder inputs and adjusts subsequent patches.
+    This is critical for proper alignment between encoder and decoder.
 
     Args:
         patch_lengths: Tensor of patch lengths [batch_size, num_patches]
-        nb_boe: Number of BOE tokens to prepend
+        nb_boe: Number of BOE tokens (used for validation)
         seq_len: Original sequence length
 
     Returns:
-        Tensor of decoder patch IDs [batch_size, seq_len + nb_boe]
+        Tensor of decoder patch IDs [batch_size, seq_len]
     """
-    batch_size = patch_lengths.shape[0]
-    device = patch_lengths.device
+    # BLT reference validation
+    first_patch_length = patch_lengths[0, 0]
+    assert torch.all(
+        first_patch_length == patch_lengths[:, 0]
+    ), "first patch should always be the same size (1 for dynamic, patch_size for static)."
 
-    # Get regular patch IDs
-    patch_ids = patch_ids_from_lengths(patch_lengths, seq_len)
+    assert (
+        first_patch_length - nb_boe == 1
+    ), f"First patch (patch length: {first_patch_length}) should have one non-boe token (boe toks: {nb_boe})"
 
-    # Add BOE tokens if needed
-    if nb_boe > 0:
-        boe_ids = torch.zeros(batch_size, nb_boe, device=device, dtype=torch.long)
-        patch_ids = torch.cat([boe_ids, patch_ids], dim=1)
+    # Remove first patch from patch_ids for local decoder inputs (BLT reference logic)
+    decoder_patch_lengths = patch_lengths[:, 1:]
 
-    return patch_ids
+    # Validation that sums work out correctly
+    assert (
+        decoder_patch_lengths.sum() + (nb_boe + 1) * patch_lengths.shape[0]
+        == patch_lengths.sum()
+    ), f"{decoder_patch_lengths.sum() + (nb_boe + 1) * patch_lengths.shape[0]} != {patch_lengths.sum()}"
+
+    assert torch.all(decoder_patch_lengths >= 0), f"{decoder_patch_lengths}"
+
+    # Generate patch IDs from reduced patch lengths
+    decoder_patch_ids = patch_ids_from_lengths(
+        patch_lengths=decoder_patch_lengths, seq_len=seq_len
+    )
+
+    return decoder_patch_ids
 
 
 def cross_attn_mask(

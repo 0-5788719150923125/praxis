@@ -254,8 +254,8 @@ class ByteLatentEncoder(nn.Module):
 
         Returns:
             Tuple containing:
-                - Encoded hidden states for global transformer
-                - Encoder output hidden states (for decoder)
+                - Patch embeddings (for global transformer processing)
+                - Encoder output hidden states (for decoder, token-level)
                 - Patch lengths tensor
                 - Block IDs tensor
                 - Auxiliary loss value
@@ -276,7 +276,7 @@ class ByteLatentEncoder(nn.Module):
         # Patching on encoder tokens
         if self.entropy_model is None:
             # Space patching mode
-            patch_lengths, _ = self.patcher.patch(local_encoder_tokens, include_next_token=True)
+            patch_lengths, scores = self.patcher.patch(local_encoder_tokens, include_next_token=True)
         else:
             # Entropy patching mode
             entropy_scores, entropy_preds = calculate_entropies(
@@ -295,7 +295,7 @@ class ByteLatentEncoder(nn.Module):
                     local_encoder_tokens, modified_entropy_scores
                 )
                 # Simplified threshold optimization for now
-                patch_lengths, _ = self.patcher.patch(
+                patch_lengths, scores = self.patcher.patch(
                     local_encoder_tokens,
                     include_next_token=True,
                     threshold=safe_threshold,
@@ -317,7 +317,7 @@ class ByteLatentEncoder(nn.Module):
                 aux_loss = F.cross_entropy(flattened_preds, flattened_targets) * self.loss_scale
             else:
                 # During inference, use stored optimal threshold
-                patch_lengths, _ = self.patcher.patch(
+                patch_lengths, scores = self.patcher.patch(
                     local_encoder_tokens,
                     include_next_token=True,
                     threshold=self.optimal_threshold.float(),
@@ -371,21 +371,15 @@ class ByteLatentEncoder(nn.Module):
                 patch_size=self.byte_config.patch_size,
             )
 
-        # Create global tokens for main transformer (filled with BOE, EOS preserved)
-        if self.nb_boe > 0:
-            global_tokens = torch.full(
-                (bs, h.shape[1]), BOE_ID, dtype=input_ids.dtype, device=input_ids.device
-            )
-            # Mark EOS positions in global tokens following BLT reference
-            rows, cols = torch.where(local_encoder_tokens == EOS_ID)
-            if len(rows) > 0:
-                eos_patch_ids = patch_ids[rows, cols]
-                global_tokens[rows, eos_patch_ids] = EOS_ID
-        else:
-            # For space patching, use simple BOE tokens
-            global_tokens = torch.full(
-                (bs, h.shape[1]), BOE_ID, dtype=input_ids.dtype, device=input_ids.device
-            )
+        # Create global tokens exactly like BLT reference
+        # Note: global_tokens shape matches h.shape (patch-level, not token-level)
+        global_tokens = input_ids.new(h.shape[0], h.shape[1]).fill_(BOE_ID)
+
+        # Mark EOS positions in global tokens following BLT reference logic
+        rows, cols = torch.where(local_encoder_tokens == EOS_ID)
+        if len(rows) > 0:
+            eos_patch_ids = patch_ids[rows, cols]
+            global_tokens[rows, eos_patch_ids] = EOS_ID
 
         # Create block IDs for attention (based on original input_ids)
         block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
@@ -394,6 +388,8 @@ class ByteLatentEncoder(nn.Module):
         if self.token_proj is not None:
             h = self.token_proj(h)
 
+        # Return patch embeddings for PraxisModel to process as global transformer
+        # PraxisModel will process these patch embeddings like a regular sequence
         return h, h_encoder, patch_lengths, block_ids, aux_loss, local_decoder_tokens
 
     def decode(
@@ -430,9 +426,14 @@ class ByteLatentEncoder(nn.Module):
             patch_lengths, self.nb_boe, local_decoder_tokens.shape[-1]
         )
 
-        # Ensure patch IDs are within bounds
-        assert torch.max(decoder_patch_ids) + 1 <= h.shape[1], \
-            f"{torch.max(decoder_patch_ids) + 1} > {h.shape[1]}"
+        # CRITICAL BLT ALIGNMENT: decoder uses patches 1, 2, 3, ... (skipping patch 0)
+        # The decoder_patch_ids are already calculated for the reduced patch set,
+        # but we need to gather from the correct patches in h (which includes patch 0)
+        h_for_decoder = h[:, 1:, :]  # Skip first patch following BLT reference
+
+        # Ensure patch IDs are within bounds (check against reduced patch set)
+        assert torch.max(decoder_patch_ids) + 1 <= h_for_decoder.shape[1], \
+            f"{torch.max(decoder_patch_ids) + 1} > {h_for_decoder.shape[1]}"
         assert decoder_patch_ids.shape[1] == dec_embeds.shape[1], \
             f"{decoder_patch_ids.shape[1]} != {dec_embeds.shape[1]}"
 
@@ -442,7 +443,7 @@ class ByteLatentEncoder(nn.Module):
             # Use cross-attention between bytes and patches
             cross_mask = cross_attn_mask(
                 decoder_patch_ids,
-                patch_lengths,
+                patch_lengths[:, 1:],  # Use decoder patch lengths (first patch removed)
                 N,
                 patches_as_queries=False,
                 cross_attn_k=self.byte_config.cross_attn_k,
@@ -450,12 +451,13 @@ class ByteLatentEncoder(nn.Module):
                 block_mask=False,
             )
         else:
-            # Gather patch embeddings for each byte position
-            h = torch.gather(
-                h, 1, decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1])
+            # Gather patch embeddings for each byte position from the reduced patch set
+            h_aligned = torch.gather(
+                h_for_decoder, 1, decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h_for_decoder.shape[-1])
             )
-            assert local_decoder_tokens.shape == h.shape[:-1], \
-                f"Shape mismatch: {local_decoder_tokens.shape} != {h.shape[:-1]}"
+            assert local_decoder_tokens.shape == h_aligned.shape[:-1], \
+                f"Shape mismatch: {local_decoder_tokens.shape} != {h_aligned.shape[:-1]}"
+            h = h_aligned
 
         # Local decoder forward pass
         output, _ = self.decoder(
