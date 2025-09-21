@@ -126,11 +126,7 @@ class Patcher:
         self, tokens: torch.Tensor, include_next_token: bool
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Create patches at space boundaries using BLT reference logic.
-
-        This implementation matches the BLT reference which creates patch boundaries
-        at "space-like" bytes defined as any byte that is not a latin character,
-        digit, or UTF-8 continuation byte.
+        Create patches at space boundaries using exact BLT reference logic.
 
         Args:
             tokens: Input tokens [batch_size, seq_len]
@@ -139,86 +135,23 @@ class Patcher:
         Returns:
             Tuple of patch lengths and boundaries
         """
-        batch_size, seq_len = tokens.shape
-        device = tokens.device
+        # Use exact BLT reference implementation
+        patch_start_ids = find_space_patch_start_ids(tokens)
+        seq_len_with_next = tokens.shape[1] + (1 if include_next_token else 0)
+        patch_lengths = patch_lengths_from_start_ids(patch_start_ids, seq_len_with_next)
 
-        # Convert tokens to raw bytes by removing offset
-        tokens_no_offset = tokens - OFFSET
+        # Create boundaries for compatibility (though not used in BLT)
+        boundaries = torch.zeros_like(tokens, dtype=torch.bool)
+        # Mark first positions as boundaries for visualization
+        boundaries[:, 0] = True
+        if patch_start_ids.shape[1] > 1 and patch_start_ids[0, 1] < tokens.shape[1]:
+            for b in range(tokens.shape[0]):
+                for p in range(1, patch_start_ids.shape[1]):
+                    start_pos = patch_start_ids[b, p].item()
+                    if start_pos < tokens.shape[1]:
+                        boundaries[b, start_pos] = True
 
-        # Create patch end mask for "space-like" bytes (non-alphanumeric characters)
-        # This matches the BLT reference implementation logic
-        patch_end_mask = (
-            (tokens_no_offset < ord("0"))  # Before digits
-            | ((ord("9") < tokens_no_offset) & (tokens_no_offset < ord("A")))  # Between digits and uppercase
-            | ((ord("Z") < tokens_no_offset) & (tokens_no_offset < ord("a")))  # Between upper and lowercase
-            | ((ord("z") < tokens_no_offset) & (tokens_no_offset < 0b1000_0000))  # After lowercase, before high bit
-            | (0b1100_0000 <= tokens_no_offset)  # UTF-8 start bytes
-        )
-
-        # Ensure we don't have consecutive patch ends (only first in sequence)
-        patch_end_mask[:, 1:] &= patch_end_mask[:, :-1].bitwise_not()
-
-        # Handle special tokens (those below OFFSET) as patch boundaries
-        patch_end_mask |= tokens < OFFSET
-
-        # Create patch start mask following BLT logic
-        # Start with first position and position after each patch end
-        patch_start_mask = torch.zeros_like(tokens, dtype=torch.bool)
-        patch_start_mask[:, 0] = True  # Always start at position 0
-
-        # Start new patches after space-like characters
-        if seq_len > 1:
-            patch_start_mask[:, 1:] = patch_end_mask[:, :-1]
-
-        # Convert to patch start IDs and then to lengths using BLT method
-        patch_start_ids = self._patch_start_mask_to_ids(patch_start_mask)
-        seq_len_with_next = seq_len + (1 if include_next_token else 0)
-        patch_lengths = self._patch_lengths_from_start_ids(patch_start_ids, seq_len_with_next)
-
-        return patch_lengths, patch_start_mask
-
-    def _patch_start_mask_to_ids(self, patch_start_mask: torch.Tensor) -> torch.Tensor:
-        """Convert patch start mask to start IDs following BLT logic."""
-        batch_size, seq_len = patch_start_mask.shape
-        device = patch_start_mask.device
-
-        # Find patch start positions for each batch
-        patch_start_ids_list = []
-        max_patches = 0
-
-        for b in range(batch_size):
-            start_positions = torch.where(patch_start_mask[b])[0]
-            if len(start_positions) == 0:
-                start_positions = torch.tensor([0], device=device)
-            patch_start_ids_list.append(start_positions)
-            max_patches = max(max_patches, len(start_positions))
-
-        # Pad to same length (fill with seq_len for unused positions)
-        patch_start_ids = torch.full(
-            (batch_size, max_patches), seq_len, device=device, dtype=torch.long
-        )
-        for b, positions in enumerate(patch_start_ids_list):
-            patch_start_ids[b, :len(positions)] = positions
-
-        return patch_start_ids
-
-    def _patch_lengths_from_start_ids(self, patch_start_ids: torch.Tensor, seq_len: int) -> torch.Tensor:
-        """Calculate patch lengths from start IDs (BLT reference method)."""
-        batch_size, max_patches = patch_start_ids.shape
-        device = patch_start_ids.device
-
-        # Calculate end positions: next start position - 1, or seq_len - 1 for last patch
-        patch_end_ids = torch.full_like(patch_start_ids, seq_len - 1)
-        patch_end_ids[:, :-1] = patch_start_ids[:, 1:] - 1
-
-        # Calculate lengths
-        patch_lengths = patch_end_ids - patch_start_ids + 1
-
-        # Zero out invalid patches (where start_id >= seq_len)
-        valid_mask = patch_start_ids < seq_len
-        patch_lengths = patch_lengths * valid_mask.long()
-
-        return patch_lengths
+        return patch_lengths, boundaries
 
     def _static_patching(
         self, tokens: torch.Tensor, patch_size: int
@@ -566,3 +499,69 @@ def get_blt_input(
             global_tokens = torch.cat([global_tokens, pad_tokens], dim=1)
 
     return local_encoder_tokens, global_tokens, local_decoder_tokens
+
+
+def find_space_patch_start_ids(tokens: torch.Tensor) -> torch.Tensor:
+    """
+    Find space patch start IDs using exact BLT reference logic.
+
+    Args:
+        tokens: Input tokens [batch_size, seq_len]
+
+    Returns:
+        Patch start IDs [batch_size, max_patches]
+    """
+    bs, seq_len = tokens.shape
+    tokens_no_offset = tokens - OFFSET
+    patch_end_mask = (
+        (tokens_no_offset < ord("0"))
+        | ((ord("9") < tokens_no_offset) & (tokens_no_offset < ord("A")))
+        | ((ord("Z") < tokens_no_offset) & (tokens_no_offset < ord("a")))
+        | ((ord("z") < tokens_no_offset) & (tokens_no_offset < 0b1000_0000))
+        | (0b1100_0000 <= tokens_no_offset)
+    )
+    patch_end_mask[:, 1:] &= patch_end_mask[:, :-1].bitwise_not()
+    patch_end_mask |= tokens < OFFSET
+
+    patch_start_mask = torch.cat(
+        [
+            torch.tensor([1, 1], device=tokens.device, dtype=torch.bool)
+            .unsqueeze(0)
+            .repeat(bs, 1),
+            patch_end_mask[:, 1:],
+        ],
+        dim=1,
+    )
+    max_patches = patch_start_mask.sum(dim=1).max()
+
+    patch_ids = (
+        torch.arange(seq_len + 1, device=tokens.device).unsqueeze(0).repeat(bs, 1)
+    )
+    extra_patch_ids = torch.full(
+        (bs, seq_len + 1), seq_len + 1, dtype=torch.long, device=tokens.device
+    )
+    all_patch_ids = torch.cat((patch_ids, extra_patch_ids), dim=1)
+    patch_start_mask_padded = torch.cat((patch_start_mask, ~patch_start_mask), dim=1)
+
+    patch_start_ids = all_patch_ids[patch_start_mask_padded].reshape(bs, -1)[
+        :, :max_patches
+    ]
+    return patch_start_ids
+
+
+def patch_lengths_from_start_ids(patch_start_ids: torch.Tensor, seq_len: int) -> torch.Tensor:
+    """
+    Calculate patch lengths from start IDs using exact BLT reference logic.
+
+    Args:
+        patch_start_ids: Patch start IDs [batch_size, max_patches]
+        seq_len: Sequence length
+
+    Returns:
+        Patch lengths [batch_size, max_patches]
+    """
+    last_ids = torch.full_like(patch_start_ids[:, :1], seq_len - 1)
+    patch_end_ids = torch.cat((patch_start_ids[:, 1:] - 1, last_ids), dim=1)
+    patch_lengths = patch_end_ids - patch_start_ids + 1
+    assert torch.all(patch_lengths >= 0), f"{patch_lengths}"
+    return patch_lengths
