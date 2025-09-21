@@ -1,7 +1,7 @@
 """Constants for byte-level tokenization and encoding."""
 
 # Token type IDs
-BOE_ID: int = 0  # Beginning of entity
+BOE_ID: int = 0  # Beginning of entropy
 PAD_ID: int = 0  # Padding (shares ID with BOE)
 BOS_ID: int = 1  # Beginning of sequence
 EOS_ID: int = 2  # End of sequence

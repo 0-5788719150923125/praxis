@@ -14,8 +14,6 @@ dependencies = [
     "asciichartpy",
     "attrs",
     "blessed",
-    # "bytelatent @ git+https://github.com/facebookresearch/blt@6ffeb66b534e8af62692383fdc49d2c22148ea4a#egg=bytelatent",
-    # "blt @ file:///home/crow/repos/blt",
     "cmake",
     "datasets",
     "evaluate",
