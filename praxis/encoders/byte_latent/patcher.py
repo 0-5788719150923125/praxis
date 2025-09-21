@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .constants import BPE_ID, EOS_ID, OFFSET
+from .constants import BOE_ID, BPE_ID, EOS_ID, OFFSET, PAD_ID
 
 
 class PatchingMode(str, Enum):
@@ -507,3 +507,62 @@ def patch_reduce(
     reduced_embs = reduced_embs[:, :max_num_patches, :]
 
     return reduced_embs
+
+
+def get_blt_input(
+    tokens: torch.Tensor,
+    enforce_patch_size_multiple: bool,
+    nb_boe: int,
+    patch_size: int,
+    boe_id: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Create proper token streams for BLT encoder, global, and decoder.
+
+    This function replicates the BLT reference logic for creating separate
+    token streams with proper BOE token handling and lag compensation.
+
+    Args:
+        tokens: Input tokens [batch_size, seq_len]
+        enforce_patch_size_multiple: Whether to enforce patch size multiple
+        nb_boe: Number of BOE tokens to prepend
+        patch_size: Size of patches (for static patching)
+        boe_id: BOE token ID
+
+    Returns:
+        Tuple of (local_encoder_tokens, global_tokens, local_decoder_tokens)
+    """
+    bs, N = tokens.shape
+    device = tokens.device
+
+    if nb_boe > 0:
+        # Create BOE tokens to prepend
+        boe_tokens = torch.full((bs, nb_boe), boe_id, dtype=tokens.dtype, device=device)
+
+        # Local encoder tokens: BOE + original tokens
+        local_encoder_tokens = torch.cat([boe_tokens, tokens], dim=1)
+
+        # Global tokens: same as encoder tokens initially
+        global_tokens = local_encoder_tokens.clone()
+
+        # Local decoder tokens: original tokens (no BOE)
+        local_decoder_tokens = tokens
+    else:
+        # No BOE tokens needed
+        local_encoder_tokens = tokens
+        global_tokens = tokens
+        local_decoder_tokens = tokens
+
+    # Handle padding if needed for patch size multiple
+    if enforce_patch_size_multiple and patch_size > 1:
+        encoder_len = local_encoder_tokens.shape[1]
+        padding_needed = (patch_size - (encoder_len % patch_size)) % patch_size
+
+        if padding_needed > 0:
+            pad_tokens = torch.full(
+                (bs, padding_needed), PAD_ID, dtype=tokens.dtype, device=device
+            )
+            local_encoder_tokens = torch.cat([local_encoder_tokens, pad_tokens], dim=1)
+            global_tokens = torch.cat([global_tokens, pad_tokens], dim=1)
+
+    return local_encoder_tokens, global_tokens, local_decoder_tokens

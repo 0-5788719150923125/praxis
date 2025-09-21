@@ -48,13 +48,14 @@ class PraxisModel(PreTrainedModel):
         patch_lengths = None
 
         if self.encoder:
-            inputs, h_encoder, patch_lengths, block_ids, encoder_loss = (
+            inputs, h_encoder, patch_lengths, block_ids, encoder_loss, local_decoder_tokens = (
                 self.encoder.encode(input_ids)
             )
             losses.add_loss("encoder", encoder_loss)
         else:
             block_ids = create_block_ids(input_ids, self.config.eos_token_id)
             inputs = self.embeds(input_ids)
+            local_decoder_tokens = None
 
         last_hidden_state, new_key_values, new_state, losses = self.decoder(
             inputs,
@@ -74,6 +75,7 @@ class PraxisModel(PreTrainedModel):
             current_state=new_state,
             h_encoder=h_encoder,
             patch_lengths=patch_lengths,
+            local_decoder_tokens=local_decoder_tokens,
             losses=losses,
         )
 
@@ -272,6 +274,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
                 outputs.h_encoder,
                 input_ids,
                 outputs.patch_lengths,
+                outputs.local_decoder_tokens,
             )
         elif hidden_states.size(-1) != self.config.vocab_size:
             """Needs projection/classification:"""
@@ -428,4 +431,5 @@ class PraxisModelOutput(BaseModelOutputWithPast):
     current_state: Optional[torch.LongTensor] = None
     h_encoder: Optional[torch.FloatTensor] = None
     patch_lengths: Optional[torch.LongTensor] = None
+    local_decoder_tokens: Optional[torch.LongTensor] = None
     losses: List[torch.LongTensor] = None

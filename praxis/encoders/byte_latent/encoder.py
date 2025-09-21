@@ -21,7 +21,7 @@ from .config import (
     get_encoder_dim_token_emb,
     init_embeddings,
 )
-from .constants import BYTE_UNITS, EOS_ID, OFFSET
+from .constants import BOE_ID, BYTE_UNITS, EOS_ID, OFFSET
 from .patcher import (
     Patcher,
     PatcherConfig,
@@ -30,6 +30,7 @@ from .patcher import (
     concat_downsample,
     cross_attn_mask,
     decoder_patch_ids_from_lengths,
+    get_blt_input,
     patch_ids_from_lengths,
     patch_reduce,
 )
@@ -201,6 +202,14 @@ class ByteLatentEncoder(nn.Module):
 
         self.local_architecture = local_architecture
 
+    @property
+    def nb_boe(self) -> int:
+        """Number of BOE tokens based on patching mode."""
+        if self.byte_config.patching_mode == "space":
+            return 0
+        else:
+            return max(0, self.byte_config.patch_size - 1)
+
     def __repr__(self) -> str:
         """
         String representation of the encoder module.
@@ -236,144 +245,87 @@ class ByteLatentEncoder(nn.Module):
 
     def encode(
         self, input_ids: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float, torch.Tensor]:
         """
-        Encode input tokens into latent representation.
+        Encode input tokens into latent representation using BLT reference logic.
 
         Args:
             input_ids: Input token IDs of shape [batch_size, seq_len]
 
         Returns:
             Tuple containing:
-                - Encoded hidden states
-                - Encoder output hidden states
+                - Encoded hidden states for global transformer
+                - Encoder output hidden states (for decoder)
                 - Patch lengths tensor
                 - Block IDs tensor
                 - Auxiliary loss value
+                - Local decoder tokens (for proper decode alignment)
         """
+        bs, N = input_ids.shape
         aux_loss: float = 0
-        best_threshold = None
+
+        # Create proper token streams following BLT reference
+        local_encoder_tokens, global_tokens, local_decoder_tokens = get_blt_input(
+            tokens=input_ids,
+            enforce_patch_size_multiple=False,
+            nb_boe=self.nb_boe,
+            patch_size=self.byte_config.patch_size,
+            boe_id=BOE_ID,
+        )
+
+        # Patching on encoder tokens
         if self.entropy_model is None:
             # Space patching mode
-            patch_lengths, _ = self.patcher.patch(input_ids, include_next_token=True)
+            patch_lengths, _ = self.patcher.patch(local_encoder_tokens, include_next_token=True)
         else:
             # Entropy patching mode
             entropy_scores, entropy_preds = calculate_entropies(
-                tokens=input_ids,
+                tokens=local_encoder_tokens,
                 entropy_model=self.entropy_model,
-                patching_batch_size=input_ids.size(0),
+                patching_batch_size=bs,
                 device=self.device_map,
                 enable_grad=True,
             )
             modified_entropy_scores = patch_entropies_for_special_tokens(
-                input_ids, entropy_scores
+                local_encoder_tokens, entropy_scores
             )
             if self.training:
-                # First, find a safe threshold that guarantees we're under target length
+                # Find optimal threshold
                 safe_threshold = self._find_safe_threshold(
-                    input_ids, modified_entropy_scores
+                    local_encoder_tokens, modified_entropy_scores
                 )
-                # Now sample thresholds that are guaranteed to be safe
-                n_samples = 30
-                min_candidates = 15
-                # Sample only multipliers >= 1.0 to stay above safe_threshold
-                multipliers = 1.0 + torch.abs(
-                    torch.normal(
-                        mean=0.0,
-                        std=1.0,
-                        size=(n_samples - 1,),
-                        device=input_ids.device,
-                    )
-                )
-
-                # Always include the safe threshold itself
-                multipliers = torch.cat(
-                    [multipliers, torch.tensor([1.0], device=input_ids.device)]
-                )
-
-                candidates = safe_threshold * multipliers
-
-                # Rest proceeds as before, but now we're guaranteed safe
-                best_threshold = safe_threshold
-                best_ratio = float("inf")
-                best_patch_lengths = None
-                target_ratio = self.target_ratio
-
-                # Try each candidate
-                for i, threshold in enumerate(candidates):
-
-                    # early exit
-                    if i > min_candidates and best_patch_lengths is not None:
-                        break
-
-                    # create the patches
-                    patch_lengths, _ = self.patcher.patch(
-                        input_ids,
-                        include_next_token=False,
-                        threshold=abs(threshold),
-                        entropies=modified_entropy_scores,
-                    )
-
-                    actual_ratio = patch_lengths.shape[1] / input_ids.shape[1]
-                    distance = abs(actual_ratio - target_ratio)
-
-                    if distance < best_ratio and actual_ratio <= target_ratio:
-                        best_ratio = distance
-                        best_threshold = abs(threshold)
-                        best_patch_lengths = patch_lengths
-
-                # Use best values
-                self.optimal_threshold.fill_(best_threshold)
-                patch_lengths = best_patch_lengths
-
-                # Compute cross entropy loss
-                modified_entropy_preds = mask_entropy_preds_at_special_tokens(
-                    input_ids, entropy_preds
-                )
-
-                # Calculate vocab_size
-                batch_size, seq_len = input_ids.shape
-                _, total_size = modified_entropy_preds.shape
-                vocab_size = total_size // seq_len
-
-                # Reshape entropy_preds to [batch_size, seq_len, vocab_size] for easier handling
-                reshaped_preds = modified_entropy_preds.view(
-                    batch_size, seq_len, vocab_size
-                )
-
-                # Reshape to [batch_size * (seq_len-1), vocab_size]
-                flattened_preds = reshaped_preds[:, :-1].reshape(-1, vocab_size)
-
-                # Flatten the target tokens (positions 1 to seq_len-1)
-                flattened_targets = input_ids[:, 1:].reshape(-1)
-
-                # Calculate the loss
-                aux_loss = (
-                    F.cross_entropy(flattened_preds, flattened_targets)
-                    * self.loss_scale
-                )
-
-            else:
-                # During inference, use stored optimal threshold
+                # Simplified threshold optimization for now
                 patch_lengths, _ = self.patcher.patch(
-                    input_ids,
+                    local_encoder_tokens,
                     include_next_token=True,
-                    threshold=self.optimal_threshold.float(),  # Avoid .item() for torch.compile
+                    threshold=safe_threshold,
                     entropies=modified_entropy_scores,
                 )
 
-        if self.training:
-            if self.debug and random.random() < self.log_rate:
-                avg_patch_size = float(
-                    patch_lengths.float().mean()
-                )  # Avoid .item() for torch.compile
-                print(
-                    f"DEBUG: length={input_ids.size(1)}, reduced length={patch_lengths.shape[1]}, "
-                    f"avg patch size={avg_patch_size:.2f}, "
-                    f"patching threshold={best_threshold or self.byte_config.patching_threshold:.4f}"
+                # Compute entropy loss (simplified)
+                modified_entropy_preds = mask_entropy_preds_at_special_tokens(
+                    local_encoder_tokens, entropy_preds
+                )
+                batch_size, seq_len = local_encoder_tokens.shape
+                _, total_size = modified_entropy_preds.shape
+                vocab_size = total_size // seq_len
+
+                reshaped_preds = modified_entropy_preds.view(batch_size, seq_len, vocab_size)
+                flattened_preds = reshaped_preds[:, :-1].reshape(-1, vocab_size)
+                flattened_targets = local_encoder_tokens[:, 1:].reshape(-1)
+
+                aux_loss = F.cross_entropy(flattened_preds, flattened_targets) * self.loss_scale
+            else:
+                # During inference, use stored optimal threshold
+                patch_lengths, _ = self.patcher.patch(
+                    local_encoder_tokens,
+                    include_next_token=True,
+                    threshold=self.optimal_threshold.float(),
+                    entropies=modified_entropy_scores,
                 )
 
-        patch_ids = patch_ids_from_lengths(patch_lengths, input_ids.shape[-1])
+        # Create patch IDs from encoder token length
+        patch_ids = patch_ids_from_lengths(patch_lengths, local_encoder_tokens.shape[-1])
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -381,23 +333,23 @@ class ByteLatentEncoder(nn.Module):
             cross_attn_mask_enc = cross_attn_mask(
                 patch_ids,
                 patch_lengths,
-                input_ids.shape[-1],  # N
+                local_encoder_tokens.shape[-1],
                 patches_as_queries=True,
                 cross_attn_k=self.byte_config.cross_attn_k,
                 window=self.byte_config.cross_attn_window_encoder,
                 block_mask=False,
             )
 
-        # Compute embeddings
+        # Compute hash embeddings
         hash_embeds = compute_hash_embeddings(
-            local_encoder_tokens=input_ids,
+            local_encoder_tokens=local_encoder_tokens,
             local_encoder=self.encoder,
             encoder_hash_tok_embedding=self.hash_embeds,
         )
 
-        # Local encoder with cross attention
+        # Local encoder
         (h_encoder, h_cross), _ = self.encoder(
-            tokens=input_ids,
+            tokens=local_encoder_tokens,
             embeds=hash_embeds,
             patch_embeds=None,
             cross_mask=cross_attn_mask_enc,
@@ -406,9 +358,9 @@ class ByteLatentEncoder(nn.Module):
             mask=None,
         )
 
-        # Downsampling
+        # Downsampling to create patch representations
         if self.byte_config.cross_attn_encoder:
-            h = h_cross.view(h_encoder.shape[0], -1, h_encoder.shape[-1])
+            h = h_cross.view(bs, patch_lengths.shape[1], -1)
         else:
             h = downsample(
                 h_encoder,
@@ -419,12 +371,30 @@ class ByteLatentEncoder(nn.Module):
                 patch_size=self.byte_config.patch_size,
             )
 
+        # Create global tokens for main transformer (filled with BOE, EOS preserved)
+        if self.nb_boe > 0:
+            global_tokens = torch.full(
+                (bs, h.shape[1]), BOE_ID, dtype=input_ids.dtype, device=input_ids.device
+            )
+            # Mark EOS positions in global tokens following BLT reference
+            rows, cols = torch.where(local_encoder_tokens == EOS_ID)
+            if len(rows) > 0:
+                eos_patch_ids = patch_ids[rows, cols]
+                global_tokens[rows, eos_patch_ids] = EOS_ID
+        else:
+            # For space patching, use simple BOE tokens
+            global_tokens = torch.full(
+                (bs, h.shape[1]), BOE_ID, dtype=input_ids.dtype, device=input_ids.device
+            )
+
+        # Create block IDs for attention (based on original input_ids)
         block_ids = create_patch_block_ids(input_ids, patch_lengths, patch_ids)
 
+        # Project to global dimension if needed
         if self.token_proj is not None:
             h = self.token_proj(h)
 
-        return h, h_encoder, patch_lengths, block_ids, aux_loss
+        return h, h_encoder, patch_lengths, block_ids, aux_loss, local_decoder_tokens
 
     def decode(
         self,
@@ -432,50 +402,66 @@ class ByteLatentEncoder(nn.Module):
         h_encoder: torch.Tensor,
         input_ids: torch.Tensor,
         patch_lengths: torch.Tensor,
+        local_decoder_tokens: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Decode latent representation back to token space.
+        Decode latent representation back to token space using BLT reference logic.
 
         Args:
-            h: Hidden states to decode
-            h_encoder: Encoder output hidden states
+            h: Hidden states from global transformer (patch representations)
+            h_encoder: Encoder output hidden states (byte-level)
             input_ids: Original input token IDs
             patch_lengths: Lengths of patches
+            local_decoder_tokens: Decoder token sequence from encode()
 
         Returns:
             Decoded output tensor
         """
-        nb_boe: int = 0
+        N = input_ids.shape[-1]  # Original sequence length
+
+        # Trim encoder embeddings to exclude BOE tokens (BLT reference logic)
+        if self.nb_boe > 0:
+            dec_embeds = h_encoder[:, self.nb_boe:self.nb_boe + N, :]
+        else:
+            dec_embeds = h_encoder
+
+        # Generate decoder patch IDs for the decoder token sequence
         decoder_patch_ids = decoder_patch_ids_from_lengths(
-            patch_lengths, nb_boe, input_ids.shape[-1]
+            patch_lengths, self.nb_boe, local_decoder_tokens.shape[-1]
         )
 
-        # Upsampling
+        # Ensure patch IDs are within bounds
+        assert torch.max(decoder_patch_ids) + 1 <= h.shape[1], \
+            f"{torch.max(decoder_patch_ids) + 1} > {h.shape[1]}"
+        assert decoder_patch_ids.shape[1] == dec_embeds.shape[1], \
+            f"{decoder_patch_ids.shape[1]} != {dec_embeds.shape[1]}"
+
+        # Cross-attention decoder handling
         cross_mask = None
         if self.byte_config.cross_attn_decoder:
-            h = (
-                h
-                if self.byte_config.cross_attn_encoder
-                else h.repeat_interleave(self.byte_config.cross_attn_k, dim=1)
-            )
+            # Use cross-attention between bytes and patches
             cross_mask = cross_attn_mask(
                 decoder_patch_ids,
                 patch_lengths,
-                input_ids.shape[-1],
+                N,
                 patches_as_queries=False,
                 cross_attn_k=self.byte_config.cross_attn_k,
                 window=self.byte_config.cross_attn_window_decoder,
                 block_mask=False,
             )
         else:
+            # Gather patch embeddings for each byte position
             h = torch.gather(
                 h, 1, decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1])
             )
+            assert local_decoder_tokens.shape == h.shape[:-1], \
+                f"Shape mismatch: {local_decoder_tokens.shape} != {h.shape[:-1]}"
 
+        # Local decoder forward pass
         output, _ = self.decoder(
-            tokens=input_ids,
+            tokens=local_decoder_tokens,
+            embeds=dec_embeds,
             patch_embeds=h,
-            embeds=h_encoder,
             cross_mask=cross_mask,
             mask=None,
         )
