@@ -45,8 +45,8 @@ def test_forward_pass(module_setup):
     input_vocab_size = 256  # Max value for input IDs
     input_ids = torch.randint(0, input_vocab_size, (batch_size, seq_len))
 
-    # Step 1: Encode
-    h, h_encoder, patch_lengths, block_ids, entropy_loss = module.encode(
+    # Step 1: Encode (returns 6 values)
+    h, h_encoder, patch_lengths, block_ids, entropy_loss, local_decoder_tokens = module.encode(
         input_ids=input_ids
     )
 
@@ -56,6 +56,7 @@ def test_forward_pass(module_setup):
         h_encoder,
         input_ids,
         patch_lengths,
+        local_decoder_tokens,
     )
 
     # Basic shape assertions
