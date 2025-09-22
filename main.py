@@ -635,8 +635,9 @@ def main():
         from datetime import datetime
 
         now = datetime.now()
-        year_start = datetime(now.year, 1, 1)
-        year_end = datetime(now.year + 1, 1, 1)
+        current_year = now.year
+        year_start = datetime(current_year, 1, 1)
+        year_end = datetime(current_year + 1, 1, 1)
 
         elapsed = (now - year_start).total_seconds()
         total = (year_end - year_start).total_seconds()
@@ -646,16 +647,13 @@ def main():
         with open("LICENSE", "r") as f:
             lines = f.readlines()
 
-        # Update line 3 with the new timestamp
+        # Update line 3 with the current year and timestamp
         if len(lines) >= 3 and "Copyright (c)" in lines[2]:
-            # Extract the year and replace the float
-            parts = lines[2].split()
-            if len(parts) >= 4:
-                # Format: "Copyright (c) YEAR FLOAT\n"
-                lines[2] = f"Copyright (c) {parts[2]} {year_progress}\n"
+            # Format: "Copyright (c) YEAR FLOAT\n"
+            lines[2] = f"Copyright (c) {current_year} {year_progress}\n"
 
-                with open("LICENSE", "w") as f:
-                    f.writelines(lines)
+            with open("LICENSE", "w") as f:
+                f.writelines(lines)
 
     update_license_timestamp()
 

@@ -1,5 +1,5 @@
 services:
-  praxis:
+  agent:
     build: .
     runtime: nvidia
     stdin_open: true
