@@ -53,8 +53,8 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         tokenizer_object: Optional[Tokenizer] = None,
         vocab_size_unit_1: int = 256,
         bpe_delim: bool = False,
-        add_bos: bool = True,  # Changed default to True
-        add_eos: bool = True,  # Changed default to True
+        add_bos: bool = False,  # Don't add BOS by default for byte-level
+        add_eos: bool = False,  # Don't add EOS by default for byte-level
         chat_template: Optional[str] = None,
         **kwargs,
     ):
