@@ -4,21 +4,37 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Ensure we have a virtual environment and activate it
-if [ ! -d "$SCRIPT_DIR/.venv" ]; then
+# Check if first argument is 'compose' for Docker Compose execution
+# We short-circuit, if using Docker, to re-run the script within our container
+if [ "$1" = "compose" ]; then
+    shift  # Remove 'compose' from arguments
+
+    echo "[DOCKER] Starting Praxis in Docker Compose environment..."
+
+    # Run in Docker Compose with all remaining arguments
+    docker compose -f "$SCRIPT_DIR/compose.yml" run --rm -it praxis ./launch "$@"
+    exit $?
+fi
+
+# Check if we're running inside a Docker container
+if [ -f /.dockerenv ] || [ -n "${CONTAINER:-}" ]; then
+    echo "[DOCKER] Running inside container..."
+
+    # Ensure .venv directory exists and is writable
+    mkdir -p "$SCRIPT_DIR/.venv"
+fi
+
+# Ensure we have a functional virtual environment and activate it
+if [ ! -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$SCRIPT_DIR/.venv"
 fi
 
 echo "[SYSTEM] Activated virtual environment."
-
-# Always activate the venv (we'll deactivate at the end)
 . "$SCRIPT_DIR/.venv/bin/activate"
 
 # Install praxis package if not already installed
-# The pyproject.toml should always exist in the project root
 if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
-    # Quick check if praxis is installed
     if ! python -c "import praxis" 2>/dev/null; then
         echo "[ENV] Installing Praxis in development mode..."
         pip install -e "$SCRIPT_DIR"

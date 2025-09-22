@@ -1,0 +1,26 @@
+services:
+  praxis:
+    build: .
+    runtime: nvidia
+    stdin_open: true
+    tty: true
+    ipc: host
+    working_dir: /workspace
+    command: ["./launch"]
+    volumes:
+      - .:/workspace:rw
+      - venv:/workspace/.venv
+      - cache:/root/.cache
+    ports:
+      - "2100:2100"
+    env_file:
+      - .env
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      PYTHONUNBUFFERED: 1
+      DEBIAN_FRONTEND: noninteractive
+
+volumes:
+  venv:
+  cache:
