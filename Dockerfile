@@ -7,5 +7,8 @@ RUN apt-get update -qq && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
+# Configure git to trust the workspace directory
+RUN git config --global --add safe.directory /workspace
+
 # Set working directory
 WORKDIR /workspace
