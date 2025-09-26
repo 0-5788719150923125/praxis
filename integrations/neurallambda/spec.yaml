@@ -1,0 +1,9 @@
+name: neurallambda
+version: 0.1.0
+description: Differentiable stack-based memory and neural reasoning tools for advanced routing
+author: Praxis Team
+
+provides:
+  - neural_controller
+  - stack_memory
+  - tool_selection

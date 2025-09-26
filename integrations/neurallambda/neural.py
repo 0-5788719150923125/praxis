@@ -1,5 +1,7 @@
+"""NeuralController implementation for the neurallambda integration."""
+
 import random
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
 import torch
 import torch.nn as nn
@@ -300,81 +302,8 @@ class NeuralController(BaseController):
         if tool_name == "<lambda>":
             tool_name = "identity"
 
-        # Get stack pointer
-        # pointer = stack_state.pointer[batch_idx].detach().cpu().numpy()
-
         # Return visualization data
         return {
             "tool": tool_name,
             "sharpness": self.sharpen_pointer.item(),
         }
-
-
-# Simple test for the module
-if __name__ == "__main__":
-    # Mock AutoConfig class for testing
-    class AutoConfig:
-        def __init__(self):
-            self.debug = True
-            self.hidden_size = 256
-            self.dropout = 0.1
-            self.depth = 8
-            self.num_experts = 8
-
-    # Parameters
-    batch_size = 2
-    seq_len = 5
-    hidden_size = 256
-
-    # Create sample input (simulating hidden states)
-    hidden_states = torch.randn(batch_size, seq_len, hidden_size)
-
-    # Create mock config and sequential experts
-    config = AutoConfig()
-    sequential_experts = [
-        nn.Linear(hidden_size, hidden_size) for _ in range(getattr(config, 'num_layers', config.num_experts))
-    ]
-    ordered_experts = sequential_experts.copy()
-
-    # Create the router module
-    router = NeuralController(config)
-
-    # Print available tools
-    print(f"Available tools: {router.tool_names}")
-
-    # Test the router
-    print("\nTesting NeuralController:")
-
-    # Simulate routing through layers
-    controller_state = None
-    current_route = []
-    current_depth = 0
-
-    for step in range(10):  # Test routing for 10 steps
-        print(f"Step {step}, Current Depth: {current_depth}")
-
-        hidden_states, controller_state, loss_container, next_expert_idx = (
-            router.get_next_expert(
-                hidden_states,
-                controller_state,
-                sequential_experts,
-                ordered_experts,
-                current_route,
-                current_depth,
-            )
-        )
-
-        if next_expert_idx is None:
-            print("Early exit taken")
-            break
-
-        # Get visualization data
-        viz_data = router.visualize_operation(controller_state)
-        print(f"  Selected Expert: {next_expert_idx}")
-        print(f"  Selected Tool: {viz_data.get('tool', 'Unknown')}")
-        print(f"  Gating Loss: {loss_container.get_loss('gating').item():.6f}")
-        print(f"  Current Route: {current_route}")
-
-        current_depth = next_expert_idx
-
-    print("\nFinal route:", current_route)

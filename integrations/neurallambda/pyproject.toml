@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "praxis-integration-neurallambda"
+version = "0.1.0"
+dependencies = [
+    "neurallambda @ git+https://github.com/neurallambda/neurallambda",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+
+[tool.setuptools]
+py-modules = ["main", "neural"]
