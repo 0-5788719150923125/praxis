@@ -153,7 +153,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         """
         pass  # ByteLevel tokenizer doesn't need training
 
-    def encode(self, text: str, add_special_tokens: bool = True, **kwargs) -> List[int]:
+    def encode(self, text: str, add_special_tokens: bool = False, **kwargs) -> List[int]:
         """
         Encode text to token IDs using BLT-compatible offset system.
 
@@ -196,9 +196,11 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
 
         # Add BOS/EOS if requested (and not already present)
         if add_special_tokens:
-            if self.add_bos and (not tokens or tokens[0] != self.BOS_ID):
+            # When add_special_tokens=True, always add special tokens
+            # (this overrides the tokenizer's default settings)
+            if not tokens or tokens[0] != self.BOS_ID:
                 tokens.insert(0, self.BOS_ID)
-            if self.add_eos and (not tokens or tokens[-1] != self.EOS_ID):
+            if not tokens or tokens[-1] != self.EOS_ID:
                 tokens.append(self.EOS_ID)
 
         return tokens
