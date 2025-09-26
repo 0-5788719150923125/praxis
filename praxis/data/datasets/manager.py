@@ -106,13 +106,17 @@ class InterleaveDataManager:
         """
         # Adjust batch size and sequence length for oversampling
         current_batch_size = batch_size
+        sequence_multiplier = 1
+
         if hypersample and batch_size >= 64:
             current_batch_size = batch_size // 64
-            # Note: The sequence length adjustment is handled by using multiple sequences
+            sequence_multiplier = 8  # 8x sequence length
         elif supersample and batch_size >= 16:
             current_batch_size = batch_size // 16
+            sequence_multiplier = 4  # 4x sequence length
         elif oversample and batch_size >= 4:
             current_batch_size = batch_size // 4
+            sequence_multiplier = 2  # 2x sequence length
 
         # Update weights if using dynamic weighting
         if self.use_dynamic_weights:
@@ -126,11 +130,15 @@ class InterleaveDataManager:
         # Ensure message queue has enough documents
         self._refill_message_queue()
 
-        # Get batch from message queue
+        # Get batch from message queue with adjusted sequence length
         if self.rl_type:
-            batch = self.message_queue.get_batch_with_rewards(current_batch_size)
+            batch = self.message_queue.get_batch_with_rewards(
+                current_batch_size, sequence_multiplier=sequence_multiplier
+            )
         else:
-            batch = self.message_queue.get_batch(current_batch_size)
+            batch = self.message_queue.get_batch(
+                current_batch_size, sequence_multiplier=sequence_multiplier
+            )
 
         # Add sampler weights to result if using dynamic weighting
         if self.use_dynamic_weights:

@@ -102,17 +102,19 @@ class MessageQueueManager:
 
         docs_processed = initial_queue_size - len(self.message_queue)
 
-    def get_batch(self, batch_size: int) -> Dict[str, Any]:
+    def get_batch(self, batch_size: int, sequence_multiplier: int = 1) -> Dict[str, Any]:
         """
         Get a batch of sequences.
 
         Args:
             batch_size: Number of sequences in the batch
+            sequence_multiplier: Factor to multiply the sequence length by (for oversampling)
 
         Returns:
             Dictionary with 'batch' tensor and metadata
         """
-        tokens_needed = batch_size * self.block_size
+        effective_block_size = self.block_size * sequence_multiplier
+        tokens_needed = batch_size * effective_block_size
 
         # Ensure we have enough tokens
         refill_attempts = 0
@@ -152,16 +154,16 @@ class MessageQueueManager:
 
         for i in range(batch_size):
             # Extract tokens for this sequence
-            start_idx = i * self.block_size
-            end_idx = start_idx + self.block_size
+            start_idx = i * effective_block_size
+            end_idx = start_idx + effective_block_size
             sequence = self.token_buffer[start_idx:end_idx]
 
-            # Ensure exactly block_size tokens
-            if len(sequence) > self.block_size:
-                sequence = sequence[: self.block_size]
-            elif len(sequence) < self.block_size:
+            # Ensure exactly effective_block_size tokens
+            if len(sequence) > effective_block_size:
+                sequence = sequence[:effective_block_size]
+            elif len(sequence) < effective_block_size:
                 padding = torch.zeros(
-                    self.block_size - len(sequence), dtype=torch.long
+                    effective_block_size - len(sequence), dtype=torch.long
                 )
                 sequence = torch.cat([sequence, padding])
 
@@ -182,17 +184,18 @@ class MessageQueueManager:
             "metadata": batch_metadata,
         }
 
-    def get_batch_with_rewards(self, batch_size: int) -> Dict[str, Any]:
+    def get_batch_with_rewards(self, batch_size: int, sequence_multiplier: int = 1) -> Dict[str, Any]:
         """
         Get a batch with reward information preserved.
 
         Args:
             batch_size: Number of sequences in the batch
+            sequence_multiplier: Factor to multiply the sequence length by (for oversampling)
 
         Returns:
             Dictionary with batch, rewards, and metadata
         """
-        result = self.get_batch(batch_size)
+        result = self.get_batch(batch_size, sequence_multiplier)
 
         # Extract rewards from metadata if available
         rewards = []
