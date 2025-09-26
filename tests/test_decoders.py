@@ -37,7 +37,7 @@ def get_decoder_configs() -> List[PraxisConfig]:
         if combo[PARAM_KEYS.index("block_type")] != "mru":
             params = dict(zip(PARAM_KEYS, combo))
             # Set num_layers to match num_experts for these tests
-            params['num_layers'] = params['num_experts']
+            params["num_layers"] = params["num_experts"]
             configs.append(PraxisConfig(**params))
     return configs
 

@@ -11,6 +11,7 @@ from .chat_templates import get_chat_template
 # Try to import BltTokenizer, but make it optional
 try:
     from bytelatent.tokenizers.blt_tokenizer import BltTokenizer
+
     HAS_BLT = True
 except ImportError:
     HAS_BLT = False
@@ -135,7 +136,9 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
             vocab[byte_char] = i + OFFSET
 
         # Create BPE model with vocab and empty merges
-        tokenizer = Tokenizer(models.BPE(vocab=vocab, merges=merges, byte_fallback=False))
+        tokenizer = Tokenizer(
+            models.BPE(vocab=vocab, merges=merges, byte_fallback=False)
+        )
 
         # Use simple pre-tokenizer that preserves everything
         tokenizer.pre_tokenizer = pre_tokenizers.Sequence([])
@@ -153,7 +156,9 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         """
         pass  # ByteLevel tokenizer doesn't need training
 
-    def encode(self, text: str, add_special_tokens: bool = False, **kwargs) -> List[int]:
+    def encode(
+        self, text: str, add_special_tokens: bool = False, **kwargs
+    ) -> List[int]:
         """
         Encode text to token IDs using BLT-compatible offset system.
 
@@ -182,7 +187,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
             # Check if we're at a special token string
             found_special = False
             for token_str, token_id in special_token_map.items():
-                if text[i:i+len(token_str)] == token_str:
+                if text[i : i + len(token_str)] == token_str:
                     tokens.append(token_id)
                     i += len(token_str)
                     found_special = True
@@ -190,7 +195,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
 
             if not found_special:
                 # Regular character - convert to byte and add offset
-                byte_val = ord(text[i]) if ord(text[i]) < 256 else ord('?')
+                byte_val = ord(text[i]) if ord(text[i]) < 256 else ord("?")
                 tokens.append(byte_val + OFFSET)
                 i += 1
 
@@ -205,7 +210,12 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
 
         return tokens
 
-    def decode(self, token_ids: Union[List[int], int], skip_special_tokens: bool = False, **kwargs) -> str:
+    def decode(
+        self,
+        token_ids: Union[List[int], int],
+        skip_special_tokens: bool = False,
+        **kwargs,
+    ) -> str:
         """
         Decode token IDs back to text using BLT-compatible offset system.
 
@@ -220,7 +230,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
             Decoded text
         """
         # Handle tensors
-        if hasattr(token_ids, 'tolist'):
+        if hasattr(token_ids, "tolist"):
             token_ids = token_ids.tolist()
         elif isinstance(token_ids, int):
             token_ids = [token_ids]
@@ -245,7 +255,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
                 if 0 <= byte_val < 256:
                     result.append(chr(byte_val))
 
-        return ''.join(result)
+        return "".join(result)
 
     def tokenize(self, text: str, **kwargs) -> List[str]:
         """
@@ -290,7 +300,7 @@ class ByteLevelTokenizer(PreTrainedTokenizerFast):
         Returns:
             Reconstructed string
         """
-        return ''.join(tokens)
+        return "".join(tokens)
 
     @property
     def vocab_size(self) -> int:

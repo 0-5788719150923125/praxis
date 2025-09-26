@@ -37,7 +37,9 @@ def test_standard_tokenizer():
 
         # Test with special tokens
         encoded_with_special = tokenizer.encode(test_text, add_special_tokens=True)
-        decoded_with_special = tokenizer.decode(encoded_with_special, skip_special_tokens=False)
+        decoded_with_special = tokenizer.decode(
+            encoded_with_special, skip_special_tokens=False
+        )
 
         # Check that special tokens were added
         assert len(encoded_with_special) > len(encoded), "Special tokens not added"
@@ -106,7 +108,9 @@ def test_tokenizer_full(tokenizer_setup) -> None:
 
         # Decode each sequence
         for i, text in enumerate(batch_texts):
-            decoded = tokenizer.decode(batch_encoded["input_ids"][i], skip_special_tokens=False)
+            decoded = tokenizer.decode(
+                batch_encoded["input_ids"][i], skip_special_tokens=False
+            )
             assert text in decoded, f"Batch processing failed for: {text}"
 
         print("✓ Batch processing tests passed\n")

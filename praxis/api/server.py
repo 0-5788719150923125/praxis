@@ -18,7 +18,11 @@ from .config import (
 from .utils import find_available_port
 from .utils.file_watcher import TemplateWatcher
 from .websocket import setup_live_reload, setup_terminal_namespace
-from .middleware import apply_wsgi_middleware, register_request_middleware, register_response_middleware
+from .middleware import (
+    apply_wsgi_middleware,
+    register_request_middleware,
+    register_response_middleware,
+)
 from .routes import register_routes
 
 
@@ -92,9 +96,12 @@ class APIServer:
             # When dashboard is active, route logs through dashboard handler
             from praxis.interface.io.handlers import DashboardStreamHandler
 
-            for logger in [api_logger, werkzeug_logger,
-                          logging.getLogger("socketio"),
-                          logging.getLogger("engineio")]:
+            for logger in [
+                api_logger,
+                werkzeug_logger,
+                logging.getLogger("socketio"),
+                logging.getLogger("engineio"),
+            ]:
                 logger.handlers = []
                 dashboard_handler = DashboardStreamHandler(self.dashboard)
                 dashboard_handler.setFormatter(
@@ -111,10 +118,12 @@ class APIServer:
             werkzeug_logger.setLevel(logging.WARNING)
 
             # SocketIO/EngineIO should only log errors
-            for logger in [logging.getLogger("socketio"),
-                          logging.getLogger("engineio"),
-                          logging.getLogger("socketio.server"),
-                          logging.getLogger("engineio.server")]:
+            for logger in [
+                logging.getLogger("socketio"),
+                logging.getLogger("engineio"),
+                logging.getLogger("socketio.server"),
+                logging.getLogger("engineio.server"),
+            ]:
                 logger.setLevel(logging.ERROR)
 
             if self.dev_mode:
@@ -128,10 +137,12 @@ class APIServer:
             werkzeug_logger.setLevel(logging.WARNING)
 
             # SocketIO/EngineIO should only log errors
-            for logger in [logging.getLogger("socketio"),
-                          logging.getLogger("engineio"),
-                          logging.getLogger("socketio.server"),
-                          logging.getLogger("engineio.server")]:
+            for logger in [
+                logging.getLogger("socketio"),
+                logging.getLogger("engineio"),
+                logging.getLogger("socketio.server"),
+                logging.getLogger("engineio.server"),
+            ]:
                 logger.setLevel(logging.ERROR)
 
             if self.dev_mode:
@@ -167,7 +178,7 @@ class APIServer:
         # Register routes FIRST (before any requests)
         with app.app_context():
             # Only register routes if not already registered
-            if not hasattr(app, '_routes_registered'):
+            if not hasattr(app, "_routes_registered"):
                 register_routes(app)
                 app._routes_registered = True
 
@@ -221,10 +232,14 @@ class APIServer:
             with app.app_context():
                 # Register integration middleware
                 if self.integration_loader:
-                    for middleware_func in self.integration_loader.get_request_middleware():
+                    for (
+                        middleware_func
+                    ) in self.integration_loader.get_request_middleware():
+
                         def create_wrapper(func):
                             def request_wrapper(req, resp):
                                 return func(req, resp)
+
                             return request_wrapper
 
                         wrapper = create_wrapper(middleware_func)
@@ -247,7 +262,9 @@ class APIServer:
                         allow_unsafe_werkzeug=True,
                     )
                 else:
-                    api_logger.info(f"Starting production mode server on port {self.port}")
+                    api_logger.info(
+                        f"Starting production mode server on port {self.port}"
+                    )
                     app.debug = False
                     socketio.run(
                         app,

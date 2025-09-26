@@ -47,10 +47,12 @@ def get_spec():
         # Try to get CLI args, but handle the case where they're not available
         try:
             from praxis.cli import get_cli_args
+
             args = get_cli_args()
         except:
             # If CLI args aren't available (e.g., in tests), use empty namespace
             import argparse
+
             args = argparse.Namespace()
 
         # Convert args to dict, filtering out non-serializable items
@@ -94,6 +96,7 @@ def get_spec():
         if not param_stats:
             try:
                 from praxis.optimizers import get_parameter_stats
+
                 generator = current_app.config.get("generator")
                 if generator and hasattr(generator, "model"):
                     model = generator.model

@@ -40,10 +40,7 @@ class AttentionChanneler(BaseController):
 
         # Layer embeddings directly in hidden_size dimension
         self.expert_embeddings = nn.ModuleList(
-            [
-                nn.Embedding(self.num_layers, hidden_size)
-                for _ in range(self.num_layers)
-            ]
+            [nn.Embedding(self.num_layers, hidden_size) for _ in range(self.num_layers)]
         )
 
         # Attention mechanism operating in hidden_size space

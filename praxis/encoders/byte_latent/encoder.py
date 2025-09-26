@@ -245,7 +245,9 @@ class ByteLatentEncoder(nn.Module):
 
     def encode(
         self, input_ids: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float, torch.Tensor]:
+    ) -> Tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float, torch.Tensor
+    ]:
         """
         Encode input tokens into latent representation using BLT reference logic.
 
@@ -276,7 +278,9 @@ class ByteLatentEncoder(nn.Module):
         # Patching on encoder tokens
         if self.entropy_model is None:
             # Space patching mode
-            patch_lengths, scores = self.patcher.patch(local_encoder_tokens, include_next_token=True)
+            patch_lengths, scores = self.patcher.patch(
+                local_encoder_tokens, include_next_token=True
+            )
         else:
             # Entropy patching mode
             entropy_scores, entropy_preds = calculate_entropies(
@@ -310,11 +314,16 @@ class ByteLatentEncoder(nn.Module):
                 _, total_size = modified_entropy_preds.shape
                 vocab_size = total_size // seq_len
 
-                reshaped_preds = modified_entropy_preds.view(batch_size, seq_len, vocab_size)
+                reshaped_preds = modified_entropy_preds.view(
+                    batch_size, seq_len, vocab_size
+                )
                 flattened_preds = reshaped_preds[:, :-1].reshape(-1, vocab_size)
                 flattened_targets = local_encoder_tokens[:, 1:].reshape(-1)
 
-                aux_loss = F.cross_entropy(flattened_preds, flattened_targets) * self.loss_scale
+                aux_loss = (
+                    F.cross_entropy(flattened_preds, flattened_targets)
+                    * self.loss_scale
+                )
             else:
                 # During inference, use stored optimal threshold
                 patch_lengths, scores = self.patcher.patch(
@@ -325,7 +334,9 @@ class ByteLatentEncoder(nn.Module):
                 )
 
         # Create patch IDs from encoder token length
-        patch_ids = patch_ids_from_lengths(patch_lengths, local_encoder_tokens.shape[-1])
+        patch_ids = patch_ids_from_lengths(
+            patch_lengths, local_encoder_tokens.shape[-1]
+        )
 
         # Create cross attention mask if needed
         cross_attn_mask_enc = None
@@ -417,7 +428,7 @@ class ByteLatentEncoder(nn.Module):
 
         # Trim encoder embeddings to exclude BOE tokens (BLT reference logic)
         if self.nb_boe > 0:
-            dec_embeds = h_encoder[:, self.nb_boe:self.nb_boe + N, :]
+            dec_embeds = h_encoder[:, self.nb_boe : self.nb_boe + N, :]
         else:
             dec_embeds = h_encoder
 
@@ -432,10 +443,12 @@ class ByteLatentEncoder(nn.Module):
         h_for_decoder = h[:, 1:, :]  # Skip first patch following BLT reference
 
         # Ensure patch IDs are within bounds (check against reduced patch set)
-        assert torch.max(decoder_patch_ids) + 1 <= h_for_decoder.shape[1], \
-            f"{torch.max(decoder_patch_ids) + 1} > {h_for_decoder.shape[1]}"
-        assert decoder_patch_ids.shape[1] == dec_embeds.shape[1], \
-            f"{decoder_patch_ids.shape[1]} != {dec_embeds.shape[1]}"
+        assert (
+            torch.max(decoder_patch_ids) + 1 <= h_for_decoder.shape[1]
+        ), f"{torch.max(decoder_patch_ids) + 1} > {h_for_decoder.shape[1]}"
+        assert (
+            decoder_patch_ids.shape[1] == dec_embeds.shape[1]
+        ), f"{decoder_patch_ids.shape[1]} != {dec_embeds.shape[1]}"
 
         # Cross-attention decoder handling
         cross_mask = None
@@ -453,10 +466,13 @@ class ByteLatentEncoder(nn.Module):
         else:
             # Gather patch embeddings for each byte position from the reduced patch set
             h_aligned = torch.gather(
-                h_for_decoder, 1, decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h_for_decoder.shape[-1])
+                h_for_decoder,
+                1,
+                decoder_patch_ids.unsqueeze(-1).expand(-1, -1, h_for_decoder.shape[-1]),
             )
-            assert local_decoder_tokens.shape == h_aligned.shape[:-1], \
-                f"Shape mismatch: {local_decoder_tokens.shape} != {h_aligned.shape[:-1]}"
+            assert (
+                local_decoder_tokens.shape == h_aligned.shape[:-1]
+            ), f"Shape mismatch: {local_decoder_tokens.shape} != {h_aligned.shape[:-1]}"
             h = h_aligned
 
         # Local decoder forward pass

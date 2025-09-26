@@ -81,7 +81,10 @@ class Patcher:
             if entropies is None:
                 raise ValueError("Entropy scores required for entropy patching mode")
             return self._entropy_patching(
-                tokens, entropies, threshold or self.config.threshold, include_next_token
+                tokens,
+                entropies,
+                threshold or self.config.threshold,
+                include_next_token,
             )
         elif self.config.patching_mode == PatchingMode.space:
             return self._space_patching(tokens, include_next_token)
@@ -123,7 +126,9 @@ class Patcher:
         # Calculate patch lengths from boundaries
         patch_lengths = self._boundaries_to_lengths(boundaries, include_next_token)
 
-        return self._postprocess_patch_lengths(patch_lengths, tokens, include_next_token, scores=entropies)
+        return self._postprocess_patch_lengths(
+            patch_lengths, tokens, include_next_token, scores=entropies
+        )
 
     def _space_patching(
         self, tokens: torch.Tensor, include_next_token: bool
@@ -154,14 +159,16 @@ class Patcher:
                     if start_pos < tokens.shape[1]:
                         boundaries[b, start_pos] = True
 
-        return self._postprocess_patch_lengths(patch_lengths, tokens, include_next_token, scores=None)
+        return self._postprocess_patch_lengths(
+            patch_lengths, tokens, include_next_token, scores=None
+        )
 
     def _postprocess_patch_lengths(
         self,
         patch_lengths: torch.Tensor,
         tokens: torch.Tensor,
         include_next_token: bool,
-        scores: Optional[torch.Tensor] = None
+        scores: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Post-process patch lengths following BLT reference logic.
@@ -184,14 +191,17 @@ class Patcher:
             ]
             max_len = max(len(pl) for pl in patch_lengths_list)
             patch_lengths_list = [
-                pl + [0] * (max_len - len(pl)) for pl in patch_lengths_list  # Right pad with zeros
+                pl + [0] * (max_len - len(pl))
+                for pl in patch_lengths_list  # Right pad with zeros
             ]
             patch_lengths = torch.tensor(
                 patch_lengths_list, dtype=tokens.dtype, device=tokens.device
             )
 
         # Ensure no non-zero values after zero values (BLT validation)
-        assert not self._check_non_zero_after_zero(patch_lengths), "Non-zero values found after zero values"
+        assert not self._check_non_zero_after_zero(
+            patch_lengths
+        ), "Non-zero values found after zero values"
 
         # Trim trailing zero columns (BLT reference logic)
         if patch_lengths.numel() > 0:
@@ -205,8 +215,9 @@ class Patcher:
         # Critical validation (BLT reference)
         expected_total = tokens.numel() + include_next_token * tokens.shape[0]
         actual_total = torch.sum(patch_lengths)
-        assert actual_total == expected_total, \
-            f"Patch length sum mismatch: {actual_total} != {expected_total}"
+        assert (
+            actual_total == expected_total
+        ), f"Patch length sum mismatch: {actual_total} != {expected_total}"
 
         return patch_lengths, scores
 
@@ -270,7 +281,9 @@ class Patcher:
         for i in range(patch_size - 1, seq_len, patch_size):
             boundaries[:, i] = True
 
-        return self._postprocess_patch_lengths(patch_lengths, tokens, include_next_token, scores=None)
+        return self._postprocess_patch_lengths(
+            patch_lengths, tokens, include_next_token, scores=None
+        )
 
     def _boundaries_to_lengths(
         self, boundaries: torch.Tensor, include_next_token: bool
@@ -305,7 +318,9 @@ class Patcher:
 
         # Calculate patch lengths
         max_patches = max(len(pos) for pos in boundary_positions)
-        patch_lengths = torch.zeros(batch_size, max_patches, device=device, dtype=torch.long)
+        patch_lengths = torch.zeros(
+            batch_size, max_patches, device=device, dtype=torch.long
+        )
 
         for b in range(batch_size):
             positions = boundary_positions[b]
@@ -363,9 +378,7 @@ def calculate_entropies(
     return entropy_scores, entropy_preds
 
 
-def patch_ids_from_lengths(
-    patch_lengths: torch.Tensor, seq_len: int
-) -> torch.Tensor:
+def patch_ids_from_lengths(patch_lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
     """
     Convert patch lengths to patch IDs for each token.
 
@@ -384,14 +397,15 @@ def patch_ids_from_lengths(
     cumsum = torch.cumsum(patch_lengths, dim=1)  # [batch_size, num_patches]
 
     # Create position indices
-    positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)  # [batch_size, seq_len]
+    positions = (
+        torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
+    )  # [batch_size, seq_len]
 
     # For each position, find which patch it belongs to by comparing with cumsum
     # We add a leading zero to cumsum for the comparison
-    cumsum_with_zero = torch.cat([
-        torch.zeros(batch_size, 1, device=device, dtype=cumsum.dtype),
-        cumsum
-    ], dim=1)  # [batch_size, num_patches + 1]
+    cumsum_with_zero = torch.cat(
+        [torch.zeros(batch_size, 1, device=device, dtype=cumsum.dtype), cumsum], dim=1
+    )  # [batch_size, num_patches + 1]
 
     # Expand dimensions for broadcasting
     positions_expanded = positions.unsqueeze(2)  # [batch_size, seq_len, 1]
@@ -399,10 +413,14 @@ def patch_ids_from_lengths(
 
     # Find which patch each position belongs to
     # A position belongs to patch p if cumsum[p-1] <= position < cumsum[p]
-    patch_ids = (positions_expanded >= cumsum_expanded[..., :-1]) & (positions_expanded < cumsum_expanded[..., 1:])
+    patch_ids = (positions_expanded >= cumsum_expanded[..., :-1]) & (
+        positions_expanded < cumsum_expanded[..., 1:]
+    )
 
     # Convert boolean mask to patch indices
-    patch_indices = torch.arange(num_patches, device=device).unsqueeze(0).unsqueeze(0)  # [1, 1, num_patches]
+    patch_indices = (
+        torch.arange(num_patches, device=device).unsqueeze(0).unsqueeze(0)
+    )  # [1, 1, num_patches]
     patch_ids = (patch_ids * patch_indices).sum(dim=2)  # [batch_size, seq_len]
 
     return patch_ids
@@ -483,7 +501,9 @@ def cross_attn_mask(
     return None
 
 
-def concat_downsample(h: torch.Tensor, patch_lengths: torch.Tensor, patch_size: int) -> torch.Tensor:
+def concat_downsample(
+    h: torch.Tensor, patch_lengths: torch.Tensor, patch_size: int
+) -> torch.Tensor:
     """
     Downsample by concatenating embeddings within patches.
 
@@ -650,7 +670,9 @@ def find_space_patch_start_ids(tokens: torch.Tensor) -> torch.Tensor:
     return patch_start_ids
 
 
-def patch_lengths_from_start_ids(patch_start_ids: torch.Tensor, seq_len: int) -> torch.Tensor:
+def patch_lengths_from_start_ids(
+    patch_start_ids: torch.Tensor, seq_len: int
+) -> torch.Tensor:
     """
     Calculate patch lengths from start IDs using exact BLT reference logic.
 

@@ -46,8 +46,8 @@ def test_forward_pass(module_setup):
     input_ids = torch.randint(0, input_vocab_size, (batch_size, seq_len))
 
     # Step 1: Encode (returns 6 values)
-    h, h_encoder, patch_lengths, block_ids, entropy_loss, local_decoder_tokens = module.encode(
-        input_ids=input_ids
+    h, h_encoder, patch_lengths, block_ids, entropy_loss, local_decoder_tokens = (
+        module.encode(input_ids=input_ids)
     )
 
     # Step 2: Decode
@@ -64,7 +64,9 @@ def test_forward_pass(module_setup):
     assert decoder_output.shape[0] == batch_size, "Batch size mismatch in output"
     # The output vocab size depends on the encoder configuration
     # ByteLatent has vocab_size = 262 (256 + 6 special tokens)
-    expected_vocab_size = module.byte_config.vocab_size if hasattr(module, 'byte_config') else 260
+    expected_vocab_size = (
+        module.byte_config.vocab_size if hasattr(module, "byte_config") else 260
+    )
     assert decoder_output.shape == (batch_size, seq_len, expected_vocab_size)
 
 

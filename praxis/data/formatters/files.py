@@ -45,10 +45,7 @@ def format_file_as_messages(
 
     # Assistant calls the read_file tool
     tool_call = {
-        "function": {
-            "name": "read_file",
-            "arguments": {"file_path": sample_path}
-        }
+        "function": {"name": "read_file", "arguments": {"file_path": sample_path}}
     }
 
     # Assistant message with tool call (no content needed, just the tool call)

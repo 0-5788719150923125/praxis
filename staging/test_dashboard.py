@@ -6,6 +6,7 @@ import random
 import math
 from praxis.interface import TerminalDashboard
 
+
 def test_dashboard():
     """Run the dashboard with simulated data."""
     # Create dashboard
@@ -56,7 +57,9 @@ def test_dashboard():
                 dashboard.update_fitness(fitness)
 
             if step % 15 == 0:
-                memory_churn = max(0, 50 + 30 * math.sin(step * 0.05) + random.uniform(-10, 10))
+                memory_churn = max(
+                    0, 50 + 30 * math.sin(step * 0.05) + random.uniform(-10, 10)
+                )
                 dashboard.update_memory(memory_churn)
 
             # Update token count
@@ -116,6 +119,7 @@ def test_dashboard():
     finally:
         dashboard.stop()
         print("Dashboard test completed!")
+
 
 if __name__ == "__main__":
     test_dashboard()

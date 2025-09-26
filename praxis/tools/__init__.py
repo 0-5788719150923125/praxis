@@ -97,21 +97,22 @@ def get_tools() -> str:
 @tool
 def read_file(file_path: str) -> str:
     """Read the contents of a file.
-    
+
     Args:
         file_path: Path to the file to read
-        
+
     Returns:
         The contents of the file
     """
     try:
         from pathlib import Path
+
         path = Path(file_path)
-        
+
         # Read the file content
-        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-        
+
         return content
     except FileNotFoundError:
         return f"Error: File not found: {file_path}"

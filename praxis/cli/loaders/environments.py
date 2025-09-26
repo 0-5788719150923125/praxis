@@ -70,7 +70,9 @@ class EnvironmentLoader:
                         "features": config.get("features", {}),
                     }
             except Exception as e:
-                print(f"Warning: Failed to load environment '{environment_file.name}': {e}")
+                print(
+                    f"Warning: Failed to load environment '{environment_file.name}': {e}"
+                )
                 continue
 
         return self.configs

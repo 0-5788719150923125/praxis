@@ -26,7 +26,7 @@ def find_free_port(start_port=8080, max_attempts=20):
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('', port))
+                s.bind(("", port))
                 return port
         except OSError:
             continue
@@ -130,9 +130,7 @@ def run_server():
     try:
         httpd = ReusableTCPServer(("", PORT), LiveReloadHandler)
         # Open browser after a short delay
-        threading.Timer(
-            1.0, lambda: webbrowser.open(f"http://{HOST}:{PORT}")
-        ).start()
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n\n🛑 Server stopped")

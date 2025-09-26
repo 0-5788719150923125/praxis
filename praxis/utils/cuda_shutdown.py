@@ -1,10 +1,11 @@
 """CUDA-aware shutdown utilities for faster, safer termination."""
 
-import torch
 import threading
 import time
 import warnings
-from typing import Optional, List
+from typing import List, Optional
+
+import torch
 
 
 class CUDAShutdownManager:
@@ -48,7 +49,7 @@ class CUDAShutdownManager:
         try:
             # Just clear cache immediately - most important operation
             torch.cuda.empty_cache()
-            
+
             # Only try quick sync if we have time
             if timeout > 0.1:
                 for device_id in range(torch.cuda.device_count()):
@@ -120,4 +121,5 @@ def disable_fast_cuda_shutdown():
     """Disable fast CUDA shutdown mode."""
     manager = get_cuda_shutdown_manager()
     manager.restore_synchronize()
+    return manager
     return manager

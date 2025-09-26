@@ -18,8 +18,6 @@ from transformers import PreTrainedTokenizerFast
 from .standard import StandardTokenizer
 
 
-
-
 def test_chat_template(tokenizer: PreTrainedTokenizerFast):
     """Test the chat template with a sample conversation."""
     print("\n" + "=" * 60)
@@ -206,5 +204,3 @@ def upload_to_hub(
             print(f"  ✗ Failed to upload to {repo_id}: {e}")
 
     print("\n✓ Chat template upload complete!")
-
-

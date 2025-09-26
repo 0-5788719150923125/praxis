@@ -138,13 +138,22 @@ class Generator:
         )
 
         # Add stop tokens if tokenizer has them
-        if hasattr(self.tokenizer, 'eos_token_id') and self.tokenizer.eos_token_id is not None:
-            if hasattr(self.tokenizer, 'sep_token_id') and self.tokenizer.sep_token_id is not None:
+        if (
+            hasattr(self.tokenizer, "eos_token_id")
+            and self.tokenizer.eos_token_id is not None
+        ):
+            if (
+                hasattr(self.tokenizer, "sep_token_id")
+                and self.tokenizer.sep_token_id is not None
+            ):
                 # Use both EOS and SEP as stop tokens
-                defaults['eos_token_id'] = [self.tokenizer.eos_token_id, self.tokenizer.sep_token_id]
+                defaults["eos_token_id"] = [
+                    self.tokenizer.eos_token_id,
+                    self.tokenizer.sep_token_id,
+                ]
             else:
                 # Use only EOS as stop token
-                defaults['eos_token_id'] = self.tokenizer.eos_token_id
+                defaults["eos_token_id"] = self.tokenizer.eos_token_id
         combined = {**defaults, **request.kwargs}
 
         # These values are largely an extension of the Huggingface `generate()` method, and
@@ -245,15 +254,13 @@ class Generator:
             # Look for patterns like "</tool_call>[SEP][BOS]assistant>"
             # Remove assistant message with just ">" or similar fragments after tool call
             return_text = re.sub(
-                r'</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]',
-                '</tool_call>',
-                return_text
+                r"</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]",
+                "</tool_call>",
+                return_text,
             )
             # Also handle cases without the special tokens
             return_text = re.sub(
-                r'</tool_call>\s*assistant\s*>\s*',
-                '</tool_call>',
-                return_text
+                r"</tool_call>\s*assistant\s*>\s*", "</tool_call>", return_text
             )
 
         # Check if the generated text contains an unprocessed tool call
@@ -302,8 +309,10 @@ class Generator:
 
                 # Clean up any fragments like lone ">" that might be in the content
                 # Remove patterns like "[SEP][BOS]assistant>[SEP]" or just ">"
-                assistant_content = re.sub(r'\[SEP\]\[BOS\]assistant\s*>\s*\[SEP\]', '', assistant_content)
-                assistant_content = re.sub(r'^\s*>\s*$', '', assistant_content)
+                assistant_content = re.sub(
+                    r"\[SEP\]\[BOS\]assistant\s*>\s*\[SEP\]", "", assistant_content
+                )
+                assistant_content = re.sub(r"^\s*>\s*$", "", assistant_content)
                 assistant_content = assistant_content.strip()
 
                 # Add assistant message if there's content

@@ -142,7 +142,7 @@ class DataLoaderManager:
                 try:
                     # Set shutdown flag directly for speed
                     dl._shutdown_requested = True
-                    if hasattr(dl, '_shutdown_event'):
+                    if hasattr(dl, "_shutdown_event"):
                         dl._shutdown_event.set()
                     # Quick force cleanup if there are workers
                     if dl.num_workers > 0:

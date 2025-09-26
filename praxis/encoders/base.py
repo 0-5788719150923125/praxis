@@ -30,6 +30,7 @@ class EncoderOutput:
         is_aligned: If True, logits are already aligned for loss computation (no shifting needed)
         handles_loss: If True, encoder computes its own loss internally
     """
+
     logits: torch.Tensor
     hidden_states: Optional[torch.Tensor] = None
     is_aligned: bool = False

@@ -39,7 +39,6 @@ TRAINER_CAPABILITIES: Dict[str, TrainerCapabilities] = {
     "backpropagation": TrainerCapabilities(
         is_lightning_module=True,
     ),
-
     "mono_forward": TrainerCapabilities(
         supports_automatic_optimization=False,
         supports_gradient_clipping=False,
@@ -48,7 +47,6 @@ TRAINER_CAPABILITIES: Dict[str, TrainerCapabilities] = {
         requires_optimizer_config=True,
         uses_manual_optimization=True,
     ),
-
     "pipeline": TrainerCapabilities(
         supports_automatic_optimization=False,
         supports_gradient_clipping=False,
@@ -56,7 +54,6 @@ TRAINER_CAPABILITIES: Dict[str, TrainerCapabilities] = {
         requires_custom_init=True,
         uses_manual_optimization=True,
     ),
-
     # Default capabilities for unknown trainer types
     "default": TrainerCapabilities(),
 }

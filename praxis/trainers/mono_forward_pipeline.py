@@ -231,7 +231,9 @@ class LayerWorkerProcess:
                         labels_flat = labels
 
                     # Compute cross-entropy loss on goodness scores (key to Mono-Forward)
-                    loss = F.cross_entropy(goodness_flat, labels_flat, ignore_index=-100)
+                    loss = F.cross_entropy(
+                        goodness_flat, labels_flat, ignore_index=-100
+                    )
 
                     # IMMEDIATE WEIGHT UPDATE (key to MonoForward)
                     self.optimizer.zero_grad()
@@ -393,7 +395,9 @@ class MonoForwardPipelineModule(LightningModule):
     def on_train_start(self):
         """Start worker processes when training begins."""
         print(f"[MonoForwardPipeline] Starting {self.num_layers} worker processes")
-        print(f"[MonoForwardPipeline] Mono-Forward training with {self.prediction_mode.upper()} prediction mode")
+        print(
+            f"[MonoForwardPipeline] Mono-Forward training with {self.prediction_mode.upper()} prediction mode"
+        )
 
         # Get the layers from the decoder
         layers = self.decoder.locals
@@ -611,7 +615,9 @@ class MonoForwardPipelineModule(LightningModule):
 
         print("[MonoForwardPipeline] Worker shutdown initiated")
 
-    def compute_goodness_scores(self, hidden_states: torch.Tensor, layer_idx: int) -> torch.Tensor:
+    def compute_goodness_scores(
+        self, hidden_states: torch.Tensor, layer_idx: int
+    ) -> torch.Tensor:
         """Compute goodness scores for a specific layer using its projection matrix.
 
         Args:

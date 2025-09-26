@@ -205,7 +205,7 @@ class PraxisTokenizerBase(PreTrainedTokenizer, ABC):
         self,
         messages: List[Dict[str, str]],
         add_generation_prompt: bool = False,
-        **kwargs
+        **kwargs,
     ) -> str:
         """
         Apply chat template to format messages.
@@ -231,13 +231,13 @@ class PraxisTokenizerBase(PreTrainedTokenizer, ABC):
 
         # Prepare template variables
         template_vars = {
-            'messages': messages,
-            'add_generation_prompt': add_generation_prompt,
-            'bos_token': getattr(self, 'bos_token', '[BOS]'),
-            'eos_token': getattr(self, 'eos_token', '[EOS]'),
-            'sep_token': getattr(self, 'sep_token', '[SEP]'),
-            'pad_token': getattr(self, 'pad_token', '[PAD]'),
-            **kwargs
+            "messages": messages,
+            "add_generation_prompt": add_generation_prompt,
+            "bos_token": getattr(self, "bos_token", "[BOS]"),
+            "eos_token": getattr(self, "eos_token", "[EOS]"),
+            "sep_token": getattr(self, "sep_token", "[SEP]"),
+            "pad_token": getattr(self, "pad_token", "[PAD]"),
+            **kwargs,
         }
 
         # Render template

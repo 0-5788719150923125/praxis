@@ -36,7 +36,9 @@ class SlidingWindowFlexAttention(FlexAttention):
         # Key is (seq_len, window_size, device_str) tuple
         self.sliding_window_cache = {}
 
-    def _create_sliding_window_causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
+    def _create_sliding_window_causal_mask(
+        self, seq_len: int, device: torch.device
+    ) -> torch.Tensor:
         """
         Create a sliding window + causal block mask for the given sequence length.
 

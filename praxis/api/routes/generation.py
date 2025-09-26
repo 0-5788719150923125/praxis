@@ -37,7 +37,9 @@ def generate_messages():
             generator = current_app.config["generator"]
         else:
             error_response = jsonify(
-                {"error": "Generator not initialized yet. Please wait for training to start."}
+                {
+                    "error": "Generator not initialized yet. Please wait for training to start."
+                }
             )
             error_response.headers.add("Access-Control-Allow-Origin", "*")
             return error_response, 503
@@ -55,10 +57,12 @@ def generate_messages():
             )
         except Exception as e:
             api_logger.error(f"Error formatting messages: {e}")
-            formatted_prompt = "\n".join([
-                f"{msg.get('role', 'user')}: {msg.get('content', '')}"
-                for msg in messages
-            ])
+            formatted_prompt = "\n".join(
+                [
+                    f"{msg.get('role', 'user')}: {msg.get('content', '')}"
+                    for msg in messages
+                ]
+            )
 
         # Extract generation parameters
         kwargs = {
@@ -67,7 +71,7 @@ def generate_messages():
             "repetition_penalty": data.get("repetition_penalty", 1.15),
             "do_sample": data.get("do_sample", True),
             "use_cache": data.get("use_cache", False),
-            "skip_special_tokens": data.get("skip_special_tokens", False)
+            "skip_special_tokens": data.get("skip_special_tokens", False),
         }
 
         # Request generation
@@ -134,7 +138,9 @@ def generate():
             generator = current_app.config["generator"]
         else:
             error_response = jsonify(
-                {"error": "Generator not initialized yet. Please wait for training to start."}
+                {
+                    "error": "Generator not initialized yet. Please wait for training to start."
+                }
             )
             error_response.headers.add("Access-Control-Allow-Origin", "*")
             return error_response, 503

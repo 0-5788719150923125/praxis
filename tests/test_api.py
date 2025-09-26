@@ -44,7 +44,9 @@ class MockTokenizer:
         self.sep_token = "[SEP]"
         self.pad_token = "[PAD]"
 
-    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
+    def apply_chat_template(
+        self, messages, tokenize=False, add_generation_prompt=False
+    ):
         """Mock chat template application."""
         result = ""
         for msg in messages:
@@ -80,7 +82,7 @@ def api_server(mock_generator, mock_tokenizer):
         truncated_hash="test12345",
         full_hash="test1234567890abcdef",
         dev_mode=True,
-        launch_command="python test.py"
+        launch_command="python test.py",
     )
 
     # Start server in a thread
@@ -172,11 +174,7 @@ class TestGenerationRoutes:
 
     def test_input_generation(self, api_url):
         """Test /input endpoint for string-based generation."""
-        payload = {
-            "prompt": "Hello, world!",
-            "max_new_tokens": 50,
-            "temperature": 0.7
-        }
+        payload = {"prompt": "Hello, world!", "max_new_tokens": 50, "temperature": 0.7}
         response = requests.post(f"{api_url}/input", json=payload)
         assert response.status_code == 200
         data = response.json()
@@ -194,10 +192,7 @@ class TestGenerationRoutes:
 
     def test_input_with_messages_error(self, api_url):
         """Test /input endpoint rejects messages."""
-        payload = {
-            "prompt": "test",
-            "messages": [{"role": "user", "content": "test"}]
-        }
+        payload = {"prompt": "test", "messages": [{"role": "user", "content": "test"}]}
         response = requests.post(f"{api_url}/input", json=payload)
         assert response.status_code == 400
         data = response.json()
@@ -209,9 +204,9 @@ class TestGenerationRoutes:
         payload = {
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Hello!"}
+                {"role": "user", "content": "Hello!"},
             ],
-            "max_new_tokens": 50
+            "max_new_tokens": 50,
         }
         response = requests.post(f"{api_url}/messages", json=payload)
         assert response.status_code == 200
@@ -243,14 +238,14 @@ class TestGenerationRoutes:
 class TestAgentsRoute:
     """Test agent discovery route."""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_agents_endpoint(self, mock_run, api_url):
         """Test /api/agents endpoint."""
         # Mock git commands
         mock_run.return_value = Mock(
             returncode=0,
             stdout="origin\thttps://github.com/test/repo.git\t(fetch)\n",
-            stderr=""
+            stderr="",
         )
 
         response = requests.get(f"{api_url}/api/agents")
@@ -290,18 +285,16 @@ class TestStaticRoutes:
 class TestGitRoutes:
     """Test Git HTTP backend routes."""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_git_info_refs(self, mock_run, api_url):
         """Test git info/refs endpoint."""
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout=b"abc123\tHEAD\n",
-            stderr=b""
-        )
+        mock_run.return_value = Mock(returncode=0, stdout=b"abc123\tHEAD\n", stderr=b"")
 
         response = requests.get(f"{api_url}/praxis/info/refs?service=git-upload-pack")
         assert response.status_code == 200
-        assert "application/x-git-upload-pack-advertisement" in response.headers.get("Content-Type", "")
+        assert "application/x-git-upload-pack-advertisement" in response.headers.get(
+            "Content-Type", ""
+        )
 
     def test_git_invalid_service(self, api_url):
         """Test git endpoint with invalid service."""
@@ -340,6 +333,7 @@ class TestMiddleware:
 
         # Headers should be registered
         from praxis.api.middleware import get_response_headers
+
         headers = get_response_headers()
         assert ("X-Test-Header", "test-value") in headers
 
@@ -353,7 +347,7 @@ class TestServerManagement:
             generator=mock_generator,
             host="localhost",
             port=9998,  # Different port from fixture
-            tokenizer=mock_tokenizer
+            tokenizer=mock_tokenizer,
         )
 
         # Start server
@@ -385,7 +379,7 @@ class TestServerManagement:
             generator=mock_generator,
             host="localhost",
             port=9997,
-            tokenizer=mock_tokenizer
+            tokenizer=mock_tokenizer,
         )
 
         # Actually start the first server so it binds to the port
@@ -401,7 +395,7 @@ class TestServerManagement:
             generator=mock_generator,
             host="localhost",
             port=9997,  # Same port
-            tokenizer=mock_tokenizer
+            tokenizer=mock_tokenizer,
         )
 
         # Second server should have different port

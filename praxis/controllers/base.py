@@ -26,7 +26,7 @@ class BaseController(nn.Module):
         self.debug = config.debug
         self.depth = config.depth
         # Use num_layers for controller components (backward compatible)
-        self.num_layers = getattr(config, 'num_layers', config.num_experts)
+        self.num_layers = getattr(config, "num_layers", config.num_experts)
         # Keep num_experts for backward compatibility
         self.num_experts = self.num_layers
         self.visualizer = (

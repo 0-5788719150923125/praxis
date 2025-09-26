@@ -297,14 +297,16 @@ def initialize_lazy_modules(model, device):
 
         # Check if model uses ByteLatent encoder (no label shifting needed)
         encoder = None
-        if hasattr(model, 'encoder'):
+        if hasattr(model, "encoder"):
             encoder = model.encoder
-        elif hasattr(model, 'model') and hasattr(model.model, 'encoder'):
+        elif hasattr(model, "model") and hasattr(model.model, "encoder"):
             encoder = model.model.encoder
 
-        is_bytelatent = (encoder is not None and
-                        hasattr(encoder, '__class__') and
-                        'ByteLatent' in encoder.__class__.__name__)
+        is_bytelatent = (
+            encoder is not None
+            and hasattr(encoder, "__class__")
+            and "ByteLatent" in encoder.__class__.__name__
+        )
 
         if is_bytelatent:
             dummy_labels = dummy_input.contiguous()  # No shifting for ByteLatent

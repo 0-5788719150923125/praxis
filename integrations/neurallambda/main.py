@@ -9,16 +9,19 @@ def _register_controller():
     try:
         from praxis.controllers import CONTROLLER_REGISTRY
         from .neural import NeuralController
+
         CONTROLLER_REGISTRY["neural"] = NeuralController
     except ImportError:
         # Fallback for when imported directly
         import sys
         import os
+
         integration_dir = os.path.dirname(os.path.abspath(__file__))
         sys.path.insert(0, integration_dir)
         try:
             from praxis.controllers import CONTROLLER_REGISTRY
             from neural import NeuralController
+
             CONTROLLER_REGISTRY["neural"] = NeuralController
         except ImportError:
             # Silently fail if registry not available yet

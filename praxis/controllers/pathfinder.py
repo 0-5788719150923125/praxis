@@ -27,9 +27,7 @@ class Pathfinder(BaseController):
             [
                 nn.Sequential(
                     nn.LayerNorm(config.hidden_size),
-                    nn.Linear(
-                        config.hidden_size, self.num_layers + self.extra_vectors
-                    ),
+                    nn.Linear(config.hidden_size, self.num_layers + self.extra_vectors),
                     nn.Dropout(config.dropout),
                 )
                 for _ in range(self.num_layers)

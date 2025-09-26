@@ -31,10 +31,13 @@ logging.getLogger("engineio.server").setLevel(logging.ERROR)
 
 # Create Flask app with proper template and static paths
 import os
+
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-app = Flask(__name__,
-            template_folder=os.path.join(project_root, "templates"),
-            static_folder=os.path.join(project_root, "static"))
+app = Flask(
+    __name__,
+    template_folder=os.path.join(project_root, "templates"),
+    static_folder=os.path.join(project_root, "static"),
+)
 app.debug = False
 
 # Enable CORS

@@ -5,7 +5,9 @@ from typing import Optional, Any
 from flask_socketio import Namespace, emit, SocketIO
 
 
-def setup_terminal_namespace(socketio: SocketIO, dashboard: Optional[Any] = None) -> None:
+def setup_terminal_namespace(
+    socketio: SocketIO, dashboard: Optional[Any] = None
+) -> None:
     """Set up terminal WebSocket namespace for dashboard streaming.
 
     Args:
@@ -15,6 +17,7 @@ def setup_terminal_namespace(socketio: SocketIO, dashboard: Optional[Any] = None
     # Try to import interface module for dashboard streaming
     try:
         from praxis import interface
+
         terminal_available = True
     except ImportError:
         terminal_available = False

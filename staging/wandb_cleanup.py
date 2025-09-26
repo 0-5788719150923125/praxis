@@ -53,10 +53,7 @@ def get_run_info(run: Run) -> dict:
 
 
 def find_runs_to_delete(
-    entity: str,
-    project: str,
-    min_steps: int,
-    state_filter: Optional[str] = None
+    entity: str, project: str, min_steps: int, state_filter: Optional[str] = None
 ) -> List[dict]:
     """
     Find all runs with fewer than min_steps.
@@ -102,10 +99,7 @@ def find_runs_to_delete(
 
 
 def delete_runs(
-    entity: str,
-    project: str,
-    run_ids: List[str],
-    delete_artifacts: bool = False
+    entity: str, project: str, run_ids: List[str], delete_artifacts: bool = False
 ) -> int:
     """
     Delete the specified runs.
@@ -157,9 +151,9 @@ def format_run_table(runs: List[dict], max_rows: int = 20) -> str:
     truncated = len(runs_sorted) > max_rows
 
     lines = []
-    lines.append("\n" + "="*80)
+    lines.append("\n" + "=" * 80)
     lines.append(f"{'Run Name':<30} {'State':<12} {'Steps':<10} {'Created':<20}")
-    lines.append("-"*80)
+    lines.append("-" * 80)
 
     for run in display_runs:
         name = run["name"][:29] if len(run["name"]) > 29 else run["name"]
@@ -173,7 +167,7 @@ def format_run_table(runs: List[dict], max_rows: int = 20) -> str:
     if truncated:
         lines.append(f"... and {len(runs_sorted) - max_rows} more runs")
 
-    lines.append("="*80)
+    lines.append("=" * 80)
     return "\n".join(lines)
 
 
@@ -185,46 +179,46 @@ def main():
         "--entity",
         type=str,
         default="unsafe",
-        help="WandB entity/username (default: unsafe)"
+        help="WandB entity/username (default: unsafe)",
     )
     parser.add_argument(
         "--project",
         type=str,
         default="praxis",
-        help="WandB project name (default: praxis)"
+        help="WandB project name (default: praxis)",
     )
     parser.add_argument(
         "--min-steps",
         type=int,
         required=True,
-        help="Minimum number of steps to keep a run"
+        help="Minimum number of steps to keep a run",
     )
     parser.add_argument(
         "--state",
         type=str,
         choices=["finished", "crashed", "failed", "running"],
-        help="Only consider runs in this state"
+        help="Only consider runs in this state",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be deleted without actually deleting"
+        help="Show what would be deleted without actually deleting",
     )
     parser.add_argument(
         "--no-confirm",
         action="store_true",
-        help="Skip confirmation prompt (use with caution!)"
+        help="Skip confirmation prompt (use with caution!)",
     )
     parser.add_argument(
         "--delete-artifacts",
         action="store_true",
-        help="Also delete artifacts associated with the runs"
+        help="Also delete artifacts associated with the runs",
     )
     parser.add_argument(
         "--max-display",
         type=int,
         default=20,
-        help="Maximum number of runs to display in the table (default: 20)"
+        help="Maximum number of runs to display in the table (default: 20)",
     )
 
     args = parser.parse_args()
@@ -235,10 +229,7 @@ def main():
         print(f"Filtering for runs in state: {args.state}")
 
     runs_to_delete = find_runs_to_delete(
-        args.entity,
-        args.project,
-        args.min_steps,
-        args.state
+        args.entity, args.project, args.min_steps, args.state
     )
 
     if not runs_to_delete:
@@ -256,7 +247,9 @@ def main():
 
     # Confirm deletion
     if not args.no_confirm:
-        print(f"\nYou are about to DELETE {len(runs_to_delete)} runs from {args.entity}/{args.project}")
+        print(
+            f"\nYou are about to DELETE {len(runs_to_delete)} runs from {args.entity}/{args.project}"
+        )
         if args.delete_artifacts:
             print("WARNING: This will also delete associated artifacts!")
 
@@ -269,10 +262,7 @@ def main():
     print(f"\nDeleting {len(runs_to_delete)} runs...")
     run_ids = [run["id"] for run in runs_to_delete]
     deleted_count = delete_runs(
-        args.entity,
-        args.project,
-        run_ids,
-        args.delete_artifacts
+        args.entity, args.project, run_ids, args.delete_artifacts
     )
 
     print(f"\nSuccessfully deleted {deleted_count} runs.")

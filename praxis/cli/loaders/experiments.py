@@ -66,7 +66,9 @@ class ExperimentLoader:
                 with open(experiment_file, "r") as f:
                     self.configs[name] = yaml.safe_load(f)
             except Exception as e:
-                print(f"Warning: Failed to load experiment '{experiment_file.name}': {e}")
+                print(
+                    f"Warning: Failed to load experiment '{experiment_file.name}': {e}"
+                )
                 continue
 
         return self.configs
@@ -92,7 +94,10 @@ class ExperimentLoader:
                     attr_name = key.replace("-", "_")
 
                     # Check if this argument was explicitly provided by the user
-                    if key in explicitly_provided or key.replace("_", "-") in explicitly_provided:
+                    if (
+                        key in explicitly_provided
+                        or key.replace("_", "-") in explicitly_provided
+                    ):
                         continue  # User override takes precedence
 
                     # Apply the experiment default

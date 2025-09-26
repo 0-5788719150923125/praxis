@@ -27,8 +27,8 @@ class BackpropagationTrainer(LightningModule):
         self.tokenizer = tokenizer
         # Check if model has an encoder with aligned outputs
         self.outputs_are_aligned = (
-            hasattr(model, 'encoder') and
-            getattr(model.encoder, 'outputs_are_aligned', False)
+            hasattr(model, "encoder")
+            and getattr(model.encoder, "outputs_are_aligned", False)
         ) or byte_latent  # Keep byte_latent for backward compatibility
         self.last_logged_step = -1  # Track last step we logged a document
         self.save_hyperparameters(

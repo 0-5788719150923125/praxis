@@ -142,6 +142,7 @@ class SignalHandlerCallback(Callback):
         # 4. Signal wandb to finish
         try:
             import wandb
+
             if wandb.run is not None:
                 wandb.finish(quiet=True)
         except:
@@ -151,6 +152,7 @@ class SignalHandlerCallback(Callback):
         def force_exit_watchdog():
             """Force exit if Lightning doesn't stop within timeout."""
             import time
+
             time.sleep(5.0)  # Give Lightning 5 seconds to stop gracefully
             if self.signal_count == 1:  # Only if still on first signal
                 print("\n⏱️  Timeout waiting for graceful shutdown, forcing exit...")

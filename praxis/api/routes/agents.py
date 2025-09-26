@@ -9,7 +9,12 @@ from concurrent.futures import ThreadPoolExecutor
 from flask import Blueprint, jsonify, request, current_app
 
 from praxis.utils import mask_git_url
-from ..config import PORT_RANGE_START, PORT_RANGE_END, PORT_CHECK_TIMEOUT, GIT_COMMAND_TIMEOUT
+from ..config import (
+    PORT_RANGE_START,
+    PORT_RANGE_END,
+    PORT_CHECK_TIMEOUT,
+    GIT_COMMAND_TIMEOUT,
+)
 
 agents_bp = Blueprint("agents", __name__)
 
@@ -91,7 +96,9 @@ def get_agents():
 
                     spec_url = f"http://localhost:{port}/api/spec"
                     req = urllib.request.Request(spec_url)
-                    with urllib.request.urlopen(req, timeout=PORT_CHECK_TIMEOUT) as response:
+                    with urllib.request.urlopen(
+                        req, timeout=PORT_CHECK_TIMEOUT
+                    ) as response:
                         if response.status == 200:
                             spec_data = json.loads(response.read())
                             if spec_data.get("git_url"):

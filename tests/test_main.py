@@ -44,13 +44,15 @@ class TestMainScript:
         # Basic sanity checks on output - check for expected output patterns
         stdout_lower = result.stdout.lower()
         # Check for successful completion message or model/parameter information
-        assert any([
-            "[train] completed successfully" in stdout_lower,
-            "training completed" in stdout_lower,
-            "[init]" in stdout_lower,
-            "model" in stdout_lower,
-            "parameters" in stdout_lower,
-        ]), f"Expected output patterns not found in:\n{result.stdout}"
+        assert any(
+            [
+                "[train] completed successfully" in stdout_lower,
+                "training completed" in stdout_lower,
+                "[init]" in stdout_lower,
+                "model" in stdout_lower,
+                "parameters" in stdout_lower,
+            ]
+        ), f"Expected output patterns not found in:\n{result.stdout}"
 
     def test_main_help_argument(self):
         """Test that --help works correctly."""
@@ -176,7 +178,10 @@ class TestMainScript:
                 ), f"Training with --block-type {block_type} failed:\n{result.stderr}"
             except subprocess.TimeoutExpired:
                 import warnings
-                warnings.warn(f"Test for block type {block_type} timed out after 60s - skipping")
+
+                warnings.warn(
+                    f"Test for block type {block_type} timed out after 60s - skipping"
+                )
                 continue
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")

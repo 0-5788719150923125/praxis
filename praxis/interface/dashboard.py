@@ -469,7 +469,9 @@ class TerminalDashboard:
                 tertiary_wave = math.sin(self.correlation_frame * 0.25) * 0.2
 
                 # Combine waves with phase shifting for more complex patterns
-                self.correlation_phase += 0.02 + (math.sin(self.correlation_frame * 0.01) * 0.01)
+                self.correlation_phase += 0.02 + (
+                    math.sin(self.correlation_frame * 0.01) * 0.01
+                )
                 phase_shift = math.sin(self.correlation_phase) * 0.5
 
                 # Calculate final amplitude (1-10 symbols, weighted towards fewer)
@@ -478,7 +480,7 @@ class TerminalDashboard:
                 normalized = (combined + 2.0) / 4.0
                 # Use a power function to bias towards lower values
                 # Squaring makes lower values more common
-                weighted = normalized ** 1.5  # Power of 1.5 gives nice distribution
+                weighted = normalized**1.5  # Power of 1.5 gives nice distribution
                 # Map to 1-10 symbols
                 num_symbols = 1 + int(weighted * 9)
 
@@ -618,11 +620,15 @@ class TerminalDashboard:
                 self.previous_frame = None  # Force redraw
             elif key.name == "KEY_PGUP":
                 # Page up (scroll by full page)
-                self.log_scroll_offset = min(self.log_scroll_offset + available_height, max_scroll)
+                self.log_scroll_offset = min(
+                    self.log_scroll_offset + available_height, max_scroll
+                )
                 self.previous_frame = None  # Force redraw
             elif key.name == "KEY_PGDOWN":
                 # Page down (scroll by full page)
-                self.log_scroll_offset = max(self.log_scroll_offset - available_height, 0)
+                self.log_scroll_offset = max(
+                    self.log_scroll_offset - available_height, 0
+                )
                 self.previous_frame = None  # Force redraw
             elif key.name == "KEY_HOME":
                 # Jump to beginning (oldest logs)
@@ -687,7 +693,9 @@ class TerminalDashboard:
 
             # Pad if necessary (shouldn't happen with proper calculation)
             if len(visible_logs) < available_height:
-                visible_logs = visible_logs + [""] * (available_height - len(visible_logs))
+                visible_logs = visible_logs + [""] * (
+                    available_height - len(visible_logs)
+                )
         else:
             # If we have fewer logs than screen space, pad at the top with empty lines
             visible_logs = [""] * (available_height - len(log_entries)) + log_entries

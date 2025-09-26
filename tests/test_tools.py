@@ -223,9 +223,13 @@ def test_truncated_tool_call_tag():
 
         # Also test that the unwanted assistant message fragment would be removed
         import re
+
         cleaned_text = re.sub(
-            r'</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]',
-            '</tool_call>',
-            fixed_text
+            r"</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]",
+            "</tool_call>",
+            fixed_text,
         )
-        assert "[BOS]assistant\n>" not in cleaned_text or "[BOS]assistant" in cleaned_text.split("</tool_call>")[0]
+        assert (
+            "[BOS]assistant\n>" not in cleaned_text
+            or "[BOS]assistant" in cleaned_text.split("</tool_call>")[0]
+        )

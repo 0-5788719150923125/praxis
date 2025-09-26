@@ -23,7 +23,10 @@ class ConfigBuilder:
 
         # Get PraxisConfig's __init__ parameters to know what it accepts
         config_signature = inspect.signature(PraxisConfig.__init__)
-        valid_config_params = set(config_signature.parameters.keys()) - {"self", "kwargs"}
+        valid_config_params = set(config_signature.parameters.keys()) - {
+            "self",
+            "kwargs",
+        }
 
         # Extract and transform arguments
         config_kwargs = {}
@@ -57,7 +60,9 @@ class ConfigBuilder:
             if isinstance(args.num_heads, str) and ":" in args.num_heads:
                 parts = args.num_heads.split(":")
                 config_kwargs["num_heads"] = int(parts[0])
-                config_kwargs["num_queries"] = int(parts[1]) if len(parts) > 1 else int(parts[0])
+                config_kwargs["num_queries"] = (
+                    int(parts[1]) if len(parts) > 1 else int(parts[0])
+                )
             elif isinstance(args.num_heads, int):
                 # If it's already an integer, use it directly
                 config_kwargs["num_heads"] = args.num_heads
@@ -108,7 +113,10 @@ class ConfigBuilder:
                 ("sep_token_id", "sep_token_id"),
             ]
             for tokenizer_attr, config_param in token_id_mappings:
-                if hasattr(tokenizer, tokenizer_attr) and config_param in valid_config_params:
+                if (
+                    hasattr(tokenizer, tokenizer_attr)
+                    and config_param in valid_config_params
+                ):
                     config_kwargs[config_param] = getattr(tokenizer, tokenizer_attr)
 
         # Handle optimizer configuration
@@ -123,7 +131,9 @@ class ConfigBuilder:
                 ]
             )
 
-            optimizer_config, _ = get_optimizer_profile(args.optimizer, disable_schedule)
+            optimizer_config, _ = get_optimizer_profile(
+                args.optimizer, disable_schedule
+            )
 
             if "optimizer_config" in valid_config_params:
                 config_kwargs["optimizer_config"] = optimizer_config
@@ -138,6 +148,8 @@ class ConfigBuilder:
                 }
 
         # Filter out any kwargs that aren't valid for PraxisConfig
-        filtered_kwargs = {k: v for k, v in config_kwargs.items() if k in valid_config_params}
+        filtered_kwargs = {
+            k: v for k, v in config_kwargs.items() if k in valid_config_params
+        }
 
         return PraxisConfig(**filtered_kwargs)

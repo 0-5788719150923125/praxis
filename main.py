@@ -227,7 +227,9 @@ def main():
     no_compile = processed_args.get("no_compile", False)
     # Automatically set byte_latent if using any ByteLatent encoder variant
     encoder_type = processed_args.get("encoder_type")
-    byte_latent = processed_args.get("byte_latent", False) or (encoder_type and "byte_latent" in encoder_type)
+    byte_latent = processed_args.get("byte_latent", False) or (
+        encoder_type and "byte_latent" in encoder_type
+    )
     host_name = processed_args.get("host_name", "localhost")
     port = processed_args.get("port", 2100)
     disable_schedule = processed_args.get("disable_schedule", False)

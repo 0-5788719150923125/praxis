@@ -448,7 +448,7 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
             tool_call = {
                 "function": {
                     "name": "read_file",
-                    "arguments": {"file_path": relative_path}
+                    "arguments": {"file_path": relative_path},
                 }
             }
 

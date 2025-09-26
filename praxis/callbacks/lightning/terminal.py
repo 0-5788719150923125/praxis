@@ -60,7 +60,9 @@ class TerminalInterface(Callback):
         self.rl_type = model_info.get("rl_type")
         self.vocab_size = model_info.get("vocab_size")
         self.depth = model_info.get("depth")
-        self.num_layers = model_info.get("num_layers")  # Number of layer components for controllers
+        self.num_layers = model_info.get(
+            "num_layers"
+        )  # Number of layer components for controllers
         self.hidden_size = model_info.get("hidden_size")
         self.embed_size = model_info.get("embed_size")
         self.dropout = model_info.get("dropout")

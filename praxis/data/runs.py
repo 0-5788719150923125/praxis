@@ -37,8 +37,13 @@ class RunManager:
         """
         return self.runs_dir / truncated_hash
 
-    def setup_run(self, truncated_hash: str, full_command: str, args_hash: str,
-                  preserve: bool = False) -> Tuple[Path, bool]:
+    def setup_run(
+        self,
+        truncated_hash: str,
+        full_command: str,
+        args_hash: str,
+        preserve: bool = False,
+    ) -> Tuple[Path, bool]:
         """Set up a run directory and return its path.
 
         Args:
@@ -62,26 +67,28 @@ class RunManager:
         # Load existing config if present
         config_path = run_dir / "config.json"
         if config_path.exists():
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 config = json.load(f)
         else:
             config = {}
 
         # Update config (preserve existing preserve flag if set)
-        config.update({
-            "truncated_hash": truncated_hash,
-            "full_hash": args_hash,
-            "command": full_command,
-            "last_updated": datetime.now().isoformat(),
-            "preserve": config.get("preserve", False) or preserve
-        })
+        config.update(
+            {
+                "truncated_hash": truncated_hash,
+                "full_hash": args_hash,
+                "command": full_command,
+                "last_updated": datetime.now().isoformat(),
+                "preserve": config.get("preserve", False) or preserve,
+            }
+        )
 
         # If this is a new run, add creation time
         if not is_existing:
             config["created"] = datetime.now().isoformat()
 
         # Save config
-        with open(config_path, 'w') as f:
+        with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
 
         # Update symlink to current run
@@ -122,29 +129,26 @@ class RunManager:
 
             config_path = run_path / "config.json"
             if config_path.exists():
-                with open(config_path, 'r') as f:
+                with open(config_path, "r") as f:
                     config = json.load(f)
             else:
                 # Basic info for runs without config
-                config = {
-                    "truncated_hash": run_path.name,
-                    "preserve": False
-                }
+                config = {"truncated_hash": run_path.name, "preserve": False}
 
             # Add directory size
-            size = sum(f.stat().st_size for f in run_path.rglob('*') if f.is_file())
-            config['size_bytes'] = size
-            config['size_human'] = self._format_bytes(size)
+            size = sum(f.stat().st_size for f in run_path.rglob("*") if f.is_file())
+            config["size_bytes"] = size
+            config["size_human"] = self._format_bytes(size)
 
             # Check if this is the current run
             if self.current_link.exists():
                 try:
                     current_target = self.current_link.resolve().name
-                    config['is_current'] = (current_target == run_path.name)
+                    config["is_current"] = current_target == run_path.name
                 except:
-                    config['is_current'] = False
+                    config["is_current"] = False
             else:
-                config['is_current'] = False
+                config["is_current"] = False
 
             runs.append(config)
 
@@ -175,7 +179,7 @@ class RunManager:
             config_path = run_dir / "config.json"
             is_preserved = False
             if config_path.exists():
-                with open(config_path, 'r') as f:
+                with open(config_path, "r") as f:
                     config = json.load(f)
                     is_preserved = config.get("preserve", False)
 
@@ -249,7 +253,7 @@ class RunManager:
 
         config_path = run_dir / "config.json"
         if config_path.exists():
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 config = json.load(f)
         else:
             config = {}
@@ -257,7 +261,7 @@ class RunManager:
         config["preserve"] = preserve
         config["preserve_updated"] = datetime.now().isoformat()
 
-        with open(config_path, 'w') as f:
+        with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
 
         status = "preserved" if preserve else "unpreserved"

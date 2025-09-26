@@ -9,7 +9,7 @@ from transformers import PreTrainedTokenizer
 class MessageQueueManager:
     """
     Manages a queue of messages and efficiently batches them.
-    
+
     Simply queues and tokenizes messages without modifying their structure.
     """
 
@@ -47,9 +47,7 @@ class MessageQueueManager:
             return
 
         # Simply add the messages as-is, no filtering or modification
-        self.message_queue.append(
-            {"messages": messages, "metadata": metadata}
-        )
+        self.message_queue.append({"messages": messages, "metadata": metadata})
 
     def _refill_token_buffer(self):
         """Refill the token buffer from the message queue."""
@@ -102,7 +100,9 @@ class MessageQueueManager:
 
         docs_processed = initial_queue_size - len(self.message_queue)
 
-    def get_batch(self, batch_size: int, sequence_multiplier: int = 1) -> Dict[str, Any]:
+    def get_batch(
+        self, batch_size: int, sequence_multiplier: int = 1
+    ) -> Dict[str, Any]:
         """
         Get a batch of sequences.
 
@@ -184,7 +184,9 @@ class MessageQueueManager:
             "metadata": batch_metadata,
         }
 
-    def get_batch_with_rewards(self, batch_size: int, sequence_multiplier: int = 1) -> Dict[str, Any]:
+    def get_batch_with_rewards(
+        self, batch_size: int, sequence_multiplier: int = 1
+    ) -> Dict[str, Any]:
         """
         Get a batch with reward information preserved.
 

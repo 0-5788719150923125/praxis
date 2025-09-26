@@ -48,9 +48,14 @@ class PraxisModel(PreTrainedModel):
         patch_lengths = None
 
         if self.encoder:
-            inputs, h_encoder, patch_lengths, block_ids, encoder_loss, local_decoder_tokens = (
-                self.encoder.encode(input_ids)
-            )
+            (
+                inputs,
+                h_encoder,
+                patch_lengths,
+                block_ids,
+                encoder_loss,
+                local_decoder_tokens,
+            ) = self.encoder.encode(input_ids)
             losses.add_loss("encoder", encoder_loss)
         else:
             block_ids = create_block_ids(input_ids, self.config.eos_token_id)
@@ -143,7 +148,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
     ) -> torch.Tensor:
         """Compute the main loss using the criterion."""
         # Check if encoder outputs are already aligned
-        if self.encoder and getattr(self.encoder, 'outputs_are_aligned', False):
+        if self.encoder and getattr(self.encoder, "outputs_are_aligned", False):
             return self.criterion(
                 logits=logits.contiguous(),
                 embeddings=embeddings,
@@ -331,8 +336,11 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
             # Check if trainer already computed layer-wise losses (e.g., MonoForward trainer)
             if "_layer_wise_complete" in outputs.losses.loss_dict:
                 # Trainer handled its own training, use strategy to combine losses
-                layer_losses = [v for k, v in outputs.losses.loss_dict.items()
-                               if k != "_layer_wise_complete" and k != "main"]
+                layer_losses = [
+                    v
+                    for k, v in outputs.losses.loss_dict.items()
+                    if k != "_layer_wise_complete" and k != "main"
+                ]
                 if layer_losses:
                     loss = self.strategy(layer_losses)
             elif self.config.bidirectional:

@@ -51,8 +51,8 @@ class ArgumentProcessor:
         # Add computed values
         # Check if encoder_type starts with "byte_latent" (covers all byte_latent variants)
         encoder_type = getattr(args, "encoder_type", None)
-        processed["byte_latent"] = (
-            encoder_type and encoder_type.startswith("byte_latent")
+        processed["byte_latent"] = encoder_type and encoder_type.startswith(
+            "byte_latent"
         )
 
         # Adjust block_size for byte_latent encoders
@@ -76,7 +76,9 @@ class ArgumentProcessor:
         return processed
 
     @staticmethod
-    def apply_defaults_for_scripts(parser, defaults_dict, experiment_configs, environment_configs):
+    def apply_defaults_for_scripts(
+        parser, defaults_dict, experiment_configs, environment_configs
+    ):
         """
         Apply custom defaults for scripts like run_alpha.py.
 
@@ -89,7 +91,11 @@ class ArgumentProcessor:
         Returns:
             tuple: (args, computed_hash)
         """
-        from praxis.cli.core import compute_args_hash, log_command, DEFAULT_EXCLUDE_FROM_HASH
+        from praxis.cli.core import (
+            compute_args_hash,
+            log_command,
+            DEFAULT_EXCLUDE_FROM_HASH,
+        )
         from praxis.environments import EnvironmentFeatures
 
         # Store original command for logging
@@ -164,13 +170,17 @@ class ArgumentProcessor:
         while i < len(equivalent_args):
             if equivalent_args[i] not in user_arg_names:
                 filtered_defaults.append(equivalent_args[i])
-                if i + 1 < len(equivalent_args) and not equivalent_args[i + 1].startswith("-"):
+                if i + 1 < len(equivalent_args) and not equivalent_args[
+                    i + 1
+                ].startswith("-"):
                     filtered_defaults.append(equivalent_args[i + 1])
                     i += 2
                 else:
                     i += 1
             else:
-                if i + 1 < len(equivalent_args) and not equivalent_args[i + 1].startswith("-"):
+                if i + 1 < len(equivalent_args) and not equivalent_args[
+                    i + 1
+                ].startswith("-"):
                     i += 2
                 else:
                     i += 1

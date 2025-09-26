@@ -80,7 +80,9 @@ class TestBackpropagationTrainer:
         assert trainer.optimizer is not None
         assert trainer.scheduler is not None
         assert trainer.tokenizer is tokenizer
-        assert trainer.outputs_are_aligned is False  # byte_latent=False means outputs_are_aligned=False
+        assert (
+            trainer.outputs_are_aligned is False
+        )  # byte_latent=False means outputs_are_aligned=False
 
     def test_trainer_forward_with_kwargs(self, setup_model, setup_tokenizer):
         """Test that BackpropagationTrainer forward accepts keyword arguments."""
