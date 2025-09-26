@@ -412,6 +412,25 @@ class Integration(BaseIntegration):
 
         path = request.path
 
+        # Allow git-specific paths without authentication
+        # Git clients need these exact paths to work
+        # Check if this is a git request based on path patterns
+        if (
+            path.endswith("/info/refs")
+            or path.endswith("/git-upload-pack")
+            or "/info/refs" in path
+            or "/git-upload-pack" in path
+            or path.startswith("/praxis.git")
+            or path.startswith("/praxis/")
+            or path == "/praxis"
+        ):
+            # Check if it looks like a git request (has service parameter or is POST to git-upload-pack)
+            service = request.args.get("service")
+            if service and service.startswith("git-"):
+                return None  # Allow git access
+            if path.endswith("/git-upload-pack") and request.method == "POST":
+                return None  # Allow git upload-pack POST
+
         # Allow requests that start with the secret
         if path.startswith(f"/{ngrok_secret}"):
             return None  # Authorized request
