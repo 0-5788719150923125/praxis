@@ -35,13 +35,14 @@ def get_agents():
         return handle_cors_preflight()
 
     agents = []
+    self_instances = []  # Collect all self instances first
 
-    # Always add the current instance as "self"
+    # Collect the current instance information
     try:
         # Get current port
         current_port = int(request.environ.get("SERVER_PORT", 2100))
 
-        # Always add the current instance first
+        # Get current instance details
         try:
             # Get our git URL - prioritize ngrok if active
             ngrok_url = current_app.config.get("ngrok_url")
@@ -70,9 +71,10 @@ def get_agents():
                 full_hash = "unknown"
                 short_hash = "unknown"
 
-            agents.append(
+            # Add current instance to the list of self instances
+            self_instances.append(
                 {
-                    "name": "self",
+                    "port": current_port,
                     "url": git_url,
                     "masked_url": mask_git_url(git_url),
                     "status": "online",
@@ -81,7 +83,7 @@ def get_agents():
                 }
             )
         except Exception as e:
-            print(f"[WARNING] Failed to add self agent: {e}")
+            print(f"[WARNING] Failed to add current instance: {e}")
 
         # Check if this is in the standard port range
         is_standard_port = PORT_RANGE_START <= current_port < PORT_RANGE_END
@@ -131,26 +133,36 @@ def get_agents():
                     except:
                         pass
 
-            # Sort by port and create additional self agents
-            local_instances = [
-                i for i in local_instances if i and i["port"] != current_port
-            ]
-            local_instances.sort(key=lambda x: x["port"])
-
-            for idx, instance in enumerate(local_instances):
-                name = f"self-{idx + 1}"
-                agents.append(
-                    {
-                        "name": name,
-                        "url": instance["git_url"],
-                        "masked_url": instance["masked_url"],
-                        "status": "online",
-                        "commit_hash": instance["full_hash"],
-                        "short_hash": instance["truncated_hash"],
-                    }
-                )
+            # Add other local instances to self_instances list
+            for instance in local_instances:
+                if instance and instance["port"] != current_port:
+                    self_instances.append(
+                        {
+                            "port": instance["port"],
+                            "url": instance["git_url"],
+                            "masked_url": instance["masked_url"],
+                            "status": "online",
+                            "commit_hash": instance["full_hash"],
+                            "short_hash": instance["truncated_hash"],
+                        }
+                    )
     except Exception as e:
         print(f"[DEBUG] Error in self agent detection: {e}")
+
+    # Sort all self instances by port and assign consistent names
+    self_instances.sort(key=lambda x: x["port"])
+    for idx, instance in enumerate(self_instances):
+        name = f"self-{idx + 1}"
+        agents.append(
+            {
+                "name": name,
+                "url": instance["url"],
+                "masked_url": instance["masked_url"],
+                "status": instance["status"],
+                "commit_hash": instance["commit_hash"],
+                "short_hash": instance["short_hash"],
+            }
+        )
 
     try:
         # Get git remotes

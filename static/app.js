@@ -17,6 +17,12 @@ let dashboardScale = null;
 let currentTab = 'chat';
 let currentFrameContainer = null;
 let currentWrapperDiv = null;
+let terminalReconnectTimeout = null;
+let terminalReconnectAttempts = 0;
+let lastFrameHash = null;
+let frameStuckCounter = 0;
+let lastFrameUpdateTime = Date.now();
+let frameValidationInterval = null;
 let specLoaded = false;
 let agentsLoaded = false;
 let agentsRefreshInterval = null;
@@ -728,13 +734,34 @@ function switchTab(tabName) {
     if (tabName === 'chat') {
         document.getElementById('chat-content').classList.add('active');
         updateConnectionStatus();
+
+        // Clean up terminal monitoring when leaving terminal tab
+        if (frameValidationInterval) {
+            clearInterval(frameValidationInterval);
+            frameValidationInterval = null;
+        }
     } else if (tabName === 'terminal') {
         document.getElementById('terminal-content').classList.add('active');
         dashboardScale = null;
+
+        // Ensure terminal display is ready
+        const terminalDisplay = document.getElementById('terminal-display');
+        if (terminalDisplay && !terminalDisplay.hasChildNodes()) {
+            terminalDisplay.innerHTML = '<div class="terminal-line">Connecting to terminal...</div>';
+        }
+
         if (!terminalConnected) {
             connectTerminal();
+        } else {
+            // If already connected, start capture immediately
+            startTerminalCapture();
         }
+
         updateConnectionStatus();
+
+        // Start frame validation monitoring
+        startFrameValidation();
+
         setTimeout(() => {
             if (terminalConnected) {
                 startTerminalCapture();
@@ -745,10 +772,22 @@ function switchTab(tabName) {
         }, 100);
     } else if (tabName === 'spec') {
         document.getElementById('spec-content').classList.add('active');
+
+        // Clean up terminal monitoring when leaving terminal tab
+        if (frameValidationInterval) {
+            clearInterval(frameValidationInterval);
+            frameValidationInterval = null;
+        }
         loadSpec();
         updateConnectionStatus();
     } else if (tabName === 'agents') {
         document.getElementById('agents-content').classList.add('active');
+
+        // Clean up terminal monitoring when leaving terminal tab
+        if (frameValidationInterval) {
+            clearInterval(frameValidationInterval);
+            frameValidationInterval = null;
+        }
         if (!agentsLoaded) {
             loadAgents();
         }
@@ -774,8 +813,14 @@ function connectTerminal() {
     if (terminalSocket && terminalSocket.connected) {
         return;
     }
-    
-    console.log('Connecting to terminal WebSocket');
+
+    // Clear any pending reconnection attempts
+    if (terminalReconnectTimeout) {
+        clearTimeout(terminalReconnectTimeout);
+        terminalReconnectTimeout = null;
+    }
+
+    console.log('Connecting to terminal WebSocket (attempt', terminalReconnectAttempts + 1, ')');
     
     const pathname = window.location.pathname;
     let socketPath = '/socket.io';
@@ -788,37 +833,93 @@ function connectTerminal() {
     console.log('Using socket.io path:', socketPath);
     
     terminalSocket = io.connect('/terminal', {
-        path: socketPath
+        path: socketPath,
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5
     });
     
     terminalSocket.on('connect', () => {
         console.log('Terminal WebSocket connected');
         terminalConnected = true;
+        terminalReconnectAttempts = 0;
+        frameStuckCounter = 0;
+        lastFrameUpdateTime = Date.now();
         updateConnectionStatus();
+
+        // Request initial frame after successful connection
+        setTimeout(() => {
+            if (terminalSocket && terminalConnected && currentTab === 'terminal') {
+                startTerminalCapture();
+            }
+        }, 100);
     });
     
     terminalSocket.on('disconnect', () => {
         console.log('Terminal WebSocket disconnected');
         terminalConnected = false;
         updateConnectionStatus();
+
+        // Attempt reconnection if we're still on the terminal tab
+        if (currentTab === 'terminal' && terminalReconnectAttempts < 5) {
+            terminalReconnectAttempts++;
+            terminalReconnectTimeout = setTimeout(() => {
+                console.log('Attempting to reconnect terminal...');
+                connectTerminal();
+            }, Math.min(1000 * Math.pow(2, terminalReconnectAttempts), 10000));
+        }
     });
     
     terminalSocket.on('connect_error', (error) => {
         console.error('Terminal WebSocket connection error:', error);
+
+        // If connection fails and we're on terminal tab, show error message
+        if (currentTab === 'terminal') {
+            const terminalDisplay = document.getElementById('terminal-display');
+            if (terminalDisplay && terminalDisplay.children.length === 0) {
+                terminalDisplay.innerHTML = '<div class="terminal-line">Connection error. Retrying...</div>';
+            }
+        }
     });
     
     terminalSocket.on('terminal_output', (data) => {
         appendTerminalOutput(data.data);
     });
     
-    // Handle new differential updates
+    // Handle new differential updates with validation
     terminalSocket.on('dashboard_update', (data) => {
         // Debug: Log update type and size
         if (window.dashboardDebug) {
             const size = JSON.stringify(data).length;
             console.log(`Dashboard update: type=${data.type}, size=${size} bytes, changes=${data.changes ? data.changes.length : 0}`);
         }
-        
+
+        // Compute frame hash for stuck detection
+        const frameContent = JSON.stringify(data.frame || data.changes || []);
+        const currentHash = simpleHash(frameContent);
+
+        // Check if frame is stuck (same content repeatedly)
+        if (currentHash === lastFrameHash) {
+            frameStuckCounter++;
+
+            // If frame has been stuck for too long, force a refresh
+            if (frameStuckCounter > 50) {
+                console.log('Frame appears stuck, requesting full refresh');
+                frameStuckCounter = 0;
+                lastFrameHash = null;
+
+                // Request fresh frame
+                if (terminalSocket && terminalConnected) {
+                    forceTerminalRefresh();
+                }
+            }
+        } else {
+            frameStuckCounter = 0;
+            lastFrameHash = currentHash;
+            lastFrameUpdateTime = Date.now();
+        }
+
         if (data.type === 'full') {
             // Full frame update - render entire dashboard
             if (data.frame && Array.isArray(data.frame)) {
@@ -872,6 +973,79 @@ function startTerminalCapture() {
         terminalSocket.emit('start_capture', {
             command: 'connect_existing'
         });
+    }
+}
+
+// Helper function to compute simple hash for frame comparison
+function simpleHash(str) {
+    let hash = 0;
+    if (str.length === 0) return hash;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash;
+}
+
+// Force terminal refresh when stuck
+function forceTerminalRefresh() {
+    console.log('Forcing terminal refresh...');
+    const terminalDisplay = document.getElementById('terminal-display');
+    if (terminalDisplay) {
+        terminalDisplay.innerHTML = '<div class="terminal-line">Refreshing display...</div>';
+    }
+
+    // Stop and restart capture
+    if (terminalSocket && terminalConnected) {
+        terminalSocket.emit('stop_capture');
+        setTimeout(() => {
+            startTerminalCapture();
+        }, 500);
+    }
+}
+
+// Start frame validation monitoring
+function startFrameValidation() {
+    // Clear any existing interval
+    if (frameValidationInterval) {
+        clearInterval(frameValidationInterval);
+    }
+
+    // Monitor frame updates every 5 seconds
+    frameValidationInterval = setInterval(() => {
+        if (currentTab !== 'terminal') {
+            clearInterval(frameValidationInterval);
+            frameValidationInterval = null;
+            return;
+        }
+
+        // Check if we haven't received updates in a while
+        const timeSinceLastUpdate = Date.now() - lastFrameUpdateTime;
+        if (timeSinceLastUpdate > 10000 && terminalConnected) {
+            console.log('No frame updates received for 10s, refreshing...');
+            forceTerminalRefresh();
+            lastFrameUpdateTime = Date.now(); // Reset to prevent rapid refreshes
+        }
+    }, 5000);
+}
+
+// Validate terminal rendering state
+function validateTerminalRendering() {
+    const terminalDisplay = document.getElementById('terminal-display');
+    if (!terminalDisplay) return;
+
+    // Check if display is empty when it shouldn't be
+    if (terminalConnected && terminalDisplay.children.length === 0) {
+        console.log('Terminal display is empty, initializing...');
+        terminalDisplay.innerHTML = '<div class="terminal-line">Initializing terminal display...</div>';
+        startTerminalCapture();
+    }
+
+    // Check if frame container exists but is not visible
+    if (currentFrameContainer && currentFrameContainer.offsetHeight === 0) {
+        console.log('Frame container is hidden, recalculating scale...');
+        recalculateDashboardScale();
     }
 }
 
@@ -952,22 +1126,37 @@ function applyDashboardDiff(changes) {
         // No frame to update yet, wait for full frame
         return;
     }
-    
+
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
+
+    // Track if we're updating important regions and if changes are actually happening
+    let hasImportantUpdates = false;
+    let actualChanges = 0;
+
     // Apply each change
     changes.forEach(change => {
         const { row, col, text, length } = change;
-        
+
         // Update buffer
         if (row < dashboardFrameBuffer.length) {
             const line = dashboardFrameBuffer[row];
             const before = line.substring(0, col);
             const after = line.substring(col + length);
-            dashboardFrameBuffer[row] = before + text + after;
-            
-            // Update DOM
-            const lineDiv = currentFrameContainer.querySelector(`[data-line-index="${row}"]`);
+            const oldContent = line.substring(col, col + length);
+
+            // Check if this is an important region (HASH/CONTEXT sections)
+            if (line.includes('HASH') || line.includes('CONTEXT') ||
+                line.includes('TOKEN') || line.includes('STEP')) {
+                hasImportantUpdates = true;
+            }
+
+            // Only update if content actually changed
+            if (oldContent !== text) {
+                actualChanges++;
+                dashboardFrameBuffer[row] = before + text + after;
+
+                // Update DOM
+                const lineDiv = currentFrameContainer.querySelector(`[data-line-index="${row}"]`);
             if (lineDiv) {
                 let updatedLine = dashboardFrameBuffer[row];
                 
@@ -1035,8 +1224,22 @@ function applyDashboardDiff(changes) {
                     }
                 }
             }
+            }
         }
     });
+
+    // If we had important updates but no actual changes, the display might be stuck
+    if (hasImportantUpdates && actualChanges === 0) {
+        frameStuckCounter++;
+        if (frameStuckCounter > 20) {
+            console.log('Important regions not updating despite changes, forcing refresh...');
+            forceTerminalRefresh();
+            frameStuckCounter = 0;
+        }
+    } else if (actualChanges > 0) {
+        // Reset counter when we have actual changes
+        frameStuckCounter = 0;
+    }
 }
 
 function calculateDashboardScale() {
