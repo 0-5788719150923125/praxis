@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Test script for dashboard visualization without training."""
 
-import time
-import random
 import math
+import random
+import time
+
 from praxis.interface import TerminalDashboard
 
 
-def test_dashboard():
+def run_dashboard():
     """Run the dashboard with simulated data."""
     # Create dashboard
     dashboard = TerminalDashboard(seed=42, arg_hash="TEST123")
@@ -122,4 +123,4 @@ def test_dashboard():
 
 
 if __name__ == "__main__":
-    test_dashboard()
+    run_dashboard()

@@ -254,9 +254,9 @@ class TestAgentsRoute:
         assert "agents" in data
         assert isinstance(data["agents"], list)
 
-        # Should at least have "self" agent
+        # Should at least have a "self-*" agent
         agent_names = [agent["name"] for agent in data["agents"]]
-        assert "self" in agent_names
+        assert any(name.startswith("self-") for name in agent_names)
 
     def test_agents_options(self, api_url):
         """Test /api/agents with OPTIONS method."""

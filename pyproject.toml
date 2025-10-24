@@ -45,3 +45,8 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["praxis"]
+
+[tool.pytest.ini_options]
+# Exclude staging directory from test collection (manual demonstration scripts)
+norecursedirs = ["staging", ".git", ".venv", "build", "dist"]
+testpaths = ["tests"]
