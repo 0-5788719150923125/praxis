@@ -38,37 +38,74 @@ def text_formatter(text):
         text,
     )
 
-    # Special case for lines ending with triple backticks
-    # This specifically handles code block endings
-    backtick_pattern = r"(```)\n(?![ \t]|[-*•+] |[0-9]+[.\)] )([\"\'" "'']*[A-Z])"
-    backtick_replacement = r"\1\n\n\2"
-    text = re.sub(backtick_pattern, backtick_replacement, text)
+    # What can start a new paragraph (optional quotes + uppercase letter)
+    para_start = r"([\"'" + "'']*[A-Z])"
 
-    # Define the pattern for paragraph boundaries
-    # Look for:
-    # 1. Lines ending with sentence-ending punctuation (., !, ?) - these are likely complete thoughts
-    # 2. Followed by a single newline
-    # 3. NOT followed by indentation, list markers, or code keywords
-    # 4. Followed by an optional quotation mark and then an uppercase letter
-    pattern_basic = (
-        r"([.!?][\"\'"
-        "'']*[)\\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[.\\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )([\"'"
-        "'']*[A-Z])"
+    # Define what should NOT trigger paragraph breaks in the next line
+    # (indentation, list markers, code keywords)
+    # Note: We removed "[A-Za-z][^:\n]*: " from here because we DO want double newlines
+    # before structured data blocks like "Name: John Doe"
+    no_break_lookahead_basic = r"(?![ \t]|[-*•+] |[0-9]+[.\\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await )"
+
+    # For colons specifically, we want to exclude structured data in the SAME block
+    # (consecutive "Key: Value" lines), so we keep the structured data check
+    no_break_lookahead_colon = r"(?![ \t]|[-*•+] |[0-9]+[.\\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await |[A-Za-z][^:\n]*: )"
+
+    # Pattern 1: Lines ending with sentence-ending punctuation (., !, ?)
+    # Captures: (1) punctuation with quotes/brackets, (2) newline, (3) next line start
+    pattern_punctuation = (
+        r"([.!?][\"\'" + "'']*[)\\]]*)(\n)" + no_break_lookahead_basic + para_start
     )
 
-    # Separate pattern for colons: Include them but exclude structured data patterns (word: value)
+    # Pattern 2: Lines ending with colons (but exclude structured data like "Key: Value")
+    # Captures: (1) colon with quotes/brackets, (2) newline, (3) next line start
     pattern_colon = (
-        r"(:[\"\'"
-        "'']*[)\\]]*)(\n)(?![ \t]|[-*•+] |[0-9]+[.\\)] |def |class |if |for |while |import |from |try |except |finally |with |async |await |[A-Za-z][^:\n]*: )([\"'"
-        "'']*[A-Z])"
+        r"(:[\"\'" + "'']*[)\\]]*)(\n)" + no_break_lookahead_colon + para_start
     )
 
-    # Replace with the same characters but with double newline
-    replacement = r"\1\n\n\3"
+    # Pattern 3: Lines ending with letters/numbers (for headers/titles without punctuation)
+    # Captures: (1) line start marker, (2) line content, (3) newline, (4) next line start
+    # This should be more conservative - only trigger if:
+    # - The ENTIRE line does NOT contain ":" (not structured data like "Key: Value")
+    # - The next line doesn't start with lowercase, indentation, list markers, code keywords, or structured data
+    # - Structured data in next line is identified by "Word:" or "Multi Word:" pattern (allows spaces)
+    # Match from start of string or previous newline to ensure the whole line has no colons
+    pattern_header = (
+        r"(^|\n)([^:\n]+[a-zA-Z0-9])(\n)" + no_break_lookahead_basic + r"(?![a-z]|[A-Z][a-zA-Z ]*:)" + para_start
+    )
 
-    # Perform the replacements - first basic punctuation, then colons
-    reformatted_text = re.sub(pattern_basic, replacement, text)
-    reformatted_text = re.sub(pattern_colon, replacement, reformatted_text)
+    # Pattern 4: After list items - list item followed by non-list content
+    # Captures: (1) full list item, (2) newline, (3) next line start
+    pattern_after_list = (
+        r"(^[ \t]*[-*•+] .+[.!?a-zA-Z0-9])(\n)(?![ \t]*[-*•+] |[ \t]*[0-9]+[.\\)] |[ \t]*$)" + para_start
+    )
+
+    # Pattern 5: After numbered list items
+    # Captures: (1) full numbered item, (2) newline, (3) next line start
+    pattern_after_numbered_list = (
+        r"(^[ \t]*[0-9]+[.\\)] .+[.!?a-zA-Z0-9])(\n)(?![ \t]*[-*•+] |[ \t]*[0-9]+[.\\)] |[ \t]*$)" + para_start
+    )
+
+    # Pattern 6: Special case for code blocks ending with backticks
+    # Captures: (1) backticks, (2) next line start
+    pattern_backtick = (
+        r"(```)\n" + no_break_lookahead_basic + para_start
+    )
+
+    # Perform the replacements in order
+    # Most patterns have 3 groups: (1) end of line, (2) newline, (3) start of next line
+    # Standard replacement: \1\n\n\3 (skip the newline group, add double newline)
+    reformatted_text = text
+    reformatted_text = re.sub(pattern_punctuation, r"\1\n\n\3", reformatted_text)
+    reformatted_text = re.sub(pattern_colon, r"\1\n\n\3", reformatted_text)
+    # Header pattern has 4 groups: (1) line start, (2) content, (3) newline, (4) next line start
+    reformatted_text = re.sub(pattern_header, r"\1\2\n\n\4", reformatted_text, flags=re.MULTILINE)
+    # Backtick pattern only has 2 groups: (1) backticks, (2) start of next line
+    reformatted_text = re.sub(pattern_backtick, r"\1\n\n\2", reformatted_text)
+
+    # Handle list patterns with multiline flag since they use ^
+    reformatted_text = re.sub(pattern_after_list, r"\1\n\n\3", reformatted_text, flags=re.MULTILINE)
+    reformatted_text = re.sub(pattern_after_numbered_list, r"\1\n\n\3", reformatted_text, flags=re.MULTILINE)
 
     # Restore original multiple newlines, but collapse 3+ newlines to 2
     reformatted_text = re.sub(

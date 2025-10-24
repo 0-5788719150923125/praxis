@@ -55,7 +55,7 @@ TEST_CASES = [
     # Case 9: Mixed cases
     (
         "Regular paragraph.\nNew paragraph starts here.\n- List item 1\n- List item 2\nAnother paragraph after list.\ndef code():\n    return True\nFinal paragraph.",
-        "Regular paragraph.\n\nNew paragraph starts here.\n\n- List item 1\n- List item 2\nAnother paragraph after list.\ndef code():\n    return True\nFinal paragraph.",
+        "Regular paragraph.\n\nNew paragraph starts here.\n\n- List item 1\n- List item 2\n\nAnother paragraph after list.\ndef code():\n    return True\n\nFinal paragraph.",
         "Mixed content test",
     ),
     # Case 10: List with capitalized items (should not convert)
@@ -276,6 +276,42 @@ TEST_CASES = [
         'She said: "This is important."\nThe next paragraph continues the thought.',
         'She said: "This is important."\n\nThe next paragraph continues the thought.',
         "Colon with quotes test",
+    ),
+    # Case 45: Header/title without punctuation followed by paragraph
+    (
+        "Diagnosis of HIVE infection\nHIVE infection is often associated with kidney disease.",
+        "Diagnosis of HIVE infection\n\nHIVE infection is often associated with kidney disease.",
+        "Header without punctuation test",
+    ),
+    # Case 46: Multiple headers without punctuation
+    (
+        "First Section Title\nThis is content for the first section.\nSecond Section Title\nThis is content for the second section.",
+        "First Section Title\n\nThis is content for the first section.\n\nSecond Section Title\n\nThis is content for the second section.",
+        "Multiple headers without punctuation test",
+    ),
+    # Case 47: List items followed by paragraph
+    (
+        "Common types of HIVE infection include:\n- Type 1 diabetes\n- Alcohol consumption\n- Variations in blood sugar\nYou can also be treated with medicine based on your child's health history.",
+        "Common types of HIVE infection include:\n\n- Type 1 diabetes\n- Alcohol consumption\n- Variations in blood sugar\n\nYou can also be treated with medicine based on your child's health history.",
+        "List items followed by paragraph test",
+    ),
+    # Case 48: Ordered list followed by paragraph
+    (
+        "Steps to follow:\n1. First step\n2. Second step\n3. Third step\nThese steps are important for success.",
+        "Steps to follow:\n\n1. First step\n2. Second step\n3. Third step\n\nThese steps are important for success.",
+        "Ordered list followed by paragraph test",
+    ),
+    # Case 49: Curly quotes after list items
+    (
+        'Key points:\n- First point\n- Second point\n"This is a quoted statement after the list."',
+        'Key points:\n\n- First point\n- Second point\n\n"This is a quoted statement after the list."',
+        "Curly quotes after list items test",
+    ),
+    # Case 50: Header ending with lowercase letter followed by curly quote paragraph
+    (
+        'What Are HIVE Early Childhood\n"Common types of HIVE infection include the following."',
+        'What Are HIVE Early Childhood\n\n"Common types of HIVE infection include the following."',
+        "Header with lowercase ending followed by curly quote test",
     ),
 ]
 

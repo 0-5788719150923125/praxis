@@ -151,10 +151,21 @@ class MessageQueueManager:
 
         sequences = []
         batch_metadata = []
+        total_offset = 0  # Track cumulative offset from BOS adjustments
 
         for i in range(batch_size):
             # Extract tokens for this sequence
-            start_idx = i * effective_block_size
+            start_idx = i * effective_block_size + total_offset
+
+            # BOS-safe slicing: avoid splitting right after BOS token
+            # If we're slicing immediately after a BOS token, move back to include it
+            # This creates a small overlap but preserves the BOS-role pairing
+            if start_idx > 0 and start_idx < len(self.token_buffer):
+                if self.token_buffer[start_idx - 1] == self.tokenizer.bos_token_id:
+                    # Move start position back to include the BOS token
+                    start_idx = start_idx - 1
+                    total_offset -= 1
+
             end_idx = start_idx + effective_block_size
             sequence = self.token_buffer[start_idx:end_idx]
 
@@ -175,9 +186,10 @@ class MessageQueueManager:
             else:
                 batch_metadata.append({})
 
-        # Remove consumed tokens and metadata
-        self.token_buffer = self.token_buffer[tokens_needed:]
-        self.metadata_buffer = self.metadata_buffer[tokens_needed:]
+        # Remove consumed tokens and metadata (including offset from BOS adjustments)
+        actual_tokens_consumed = tokens_needed + total_offset
+        self.token_buffer = self.token_buffer[actual_tokens_consumed:]
+        self.metadata_buffer = self.metadata_buffer[actual_tokens_consumed:]
 
         return {
             "batch": sequences,  # Return as list for WeightedIterableDataset to stack
