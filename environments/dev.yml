@@ -7,7 +7,7 @@ overrides:
   batch_size: 1
   phi: false
   quantum: false
-  ngrok: true
+  ngrok: false
   wandb: false
   debug: true
 
