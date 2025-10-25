@@ -251,7 +251,8 @@ async function handleClick(e) {
                 loadAgents();
                 break;
             case 'research':
-                loadResearchMetrics();
+                // Always refresh metrics when Research tab is clicked
+                loadResearchMetrics(true);
                 break;
         }
 
