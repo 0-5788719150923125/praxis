@@ -89,6 +89,10 @@ class ExperimentLoader:
 
         for experiment_name, config in self.configs.items():
             if getattr(args, experiment_name.replace("-", "_"), False):
+                # Store the experiment config file path
+                config_file_path = self.experiments_dir / f"{experiment_name}.yml"
+                args.config_file = str(config_file_path)
+
                 # Apply experiment defaults (but don't override user-provided values)
                 for key, value in config.items():
                     attr_name = key.replace("-", "_")

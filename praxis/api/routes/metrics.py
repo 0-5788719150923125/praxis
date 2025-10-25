@@ -1,11 +1,12 @@
 """Metrics API routes with intelligent downsampling and caching."""
 
-import json
 import hashlib
-from pathlib import Path
-from flask import Blueprint, jsonify, request, current_app
-from typing import List, Dict, Any, Optional
+import json
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from flask import Blueprint, current_app, jsonify, request
 
 metrics_bp = Blueprint("metrics", __name__)
 

@@ -1,11 +1,13 @@
 """Core API routes."""
 
-import json
 import hashlib
 import io
+import json
+import yaml
 from contextlib import redirect_stdout
 from datetime import datetime
-from flask import Blueprint, jsonify, request, render_template, make_response
+
+from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
 from ..config import CSP_POLICY
 
@@ -150,3 +152,61 @@ def get_spec():
         error_response = jsonify({"error": str(e)})
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
+
+
+@core_bp.route("/api/config", methods=["GET", "OPTIONS"])
+def get_config():
+    """Get current experiment configuration as YAML.
+
+    Returns the active, running experiment config file from disk.
+    No parameters accepted - returns only the current published config.
+    """
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        return response
+
+    try:
+        from pathlib import Path
+        from flask import current_app
+
+        # Get the config file path from app config
+        config_file = current_app.config.get("config_file")
+
+        if not config_file:
+            return Response("No experiment config file found", status=404)
+
+        # Read the actual YAML file from disk
+        config_path = Path(config_file)
+        if not config_path.exists():
+            return Response(f"Config file not found: {config_file}", status=404)
+
+        # Load YAML and sort keys recursively
+        with open(config_path, 'r') as f:
+            config_data = yaml.safe_load(f)
+
+        def sort_dict_recursively(obj):
+            """Recursively sort dictionary keys alphabetically."""
+            if isinstance(obj, dict):
+                return {k: sort_dict_recursively(v) for k, v in sorted(obj.items())}
+            elif isinstance(obj, list):
+                return [sort_dict_recursively(item) for item in obj]
+            else:
+                return obj
+
+        sorted_config = sort_dict_recursively(config_data)
+
+        # Dump back to YAML with sorted keys
+        yaml_content = yaml.dump(sorted_config, default_flow_style=False, sort_keys=False)
+
+        response = Response(yaml_content, mimetype='text/yaml')
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Content-Disposition", f"attachment; filename={config_path.name}")
+        return response
+
+    except Exception as e:
+        error_response = Response(f"Error reading config: {str(e)}", status=500)
+        error_response.headers.add("Access-Control-Allow-Origin", "*")
+        return error_response

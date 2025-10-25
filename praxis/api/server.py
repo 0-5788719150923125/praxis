@@ -43,6 +43,7 @@ class APIServer:
         dev_mode: bool = False,
         dashboard=None,
         launch_command=None,
+        config_file=None,
     ):
         """Initialize the API server.
 
@@ -59,6 +60,7 @@ class APIServer:
             dev_mode: Whether to run in development mode
             dashboard: Dashboard instance for terminal streaming
             launch_command: Command used to launch the model
+            config_file: Path to experiment config file
         """
         self.generator = generator
         self.dashboard = dashboard
@@ -72,6 +74,7 @@ class APIServer:
         self.truncated_hash = truncated_hash
         self.full_hash = full_hash
         self.launch_command = launch_command
+        self.config_file = config_file
         self.dev_mode = dev_mode
         self.launch_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -193,6 +196,7 @@ class APIServer:
         app.config["launch_command"] = self.launch_command
         app.config["launch_timestamp"] = self.launch_timestamp
         app.config["param_stats"] = self.param_stats
+        app.config["config_file"] = self.config_file
 
         # Start the server thread
         self.server_thread = Thread(target=self._run_server)

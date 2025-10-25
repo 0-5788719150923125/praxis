@@ -427,6 +427,7 @@ def main():
             dev_mode=(EnvironmentFeatures.get_active_environment() == "dev"),
             dashboard=dashboard,
             launch_command=full_command,
+            config_file=getattr(args, 'config_file', None),
         )
         api_server.start()
 

@@ -88,13 +88,32 @@ function renderSpec(data, container) {
         html += '<div class="spec-section">';
         html += '<div class="spec-title">Commands</div>';
         html += '<div style="margin-bottom: 1rem;">';
-        html += '<div class="spec-metadata">Clone from source:</div>';
+
+        // Step 1: Clone
+        html += '<div class="spec-metadata">1. Clone from source:</div>';
         html += `<div class="spec-code" style="margin-bottom: 1rem;">git clone ${data.git_url}</div>`;
-        html += '<div class="spec-metadata">Move into directory:</div>';
+
+        // Step 2: Move into directory
+        html += '<div class="spec-metadata">2. Move into directory:</div>';
         html += '<div class="spec-code" style="margin-bottom: 1rem;">cd praxis</div>';
-        html += '<div class="spec-metadata">Reproduce experiment:</div>';
+
+        // Step 3: Download experiment config from API
+        // Extract experiment name from command to create matching filename
         const command = data.command ? data.command.replace('python main.py', './launch') : './launch';
-        html += `<div class="spec-code">${escapeHtml(command)}</div>`;
+        const expMatch = command.match(/--([a-z0-9\-]+)/);
+        const expName = expMatch ? expMatch[1] : 'reproduce';
+        const configFilename = `experiments/${expName}.yml`;
+
+        // Link to API endpoint for config download
+        const configUrl = '/api/config';
+
+        html += `<div class="spec-metadata" style="margin-bottom: 1rem;">3. <a href="${configUrl}" download="${expName}.yml" style="color: #0B9A6D; font-weight: 600; text-decoration: none;">Download</a> config, save it to: <code style="background: rgba(11, 154, 109, 0.1); padding: 2px 6px; border-radius: 3px;">${escapeHtml(configFilename)}</code></div>`;
+
+        // Step 4: Reproduce
+        html += '<div class="spec-metadata">4. Reproduce experiment:</div>';
+        const reproduceCommand = command + (command.includes('--reset') ? '' : ' --reset');
+        html += `<div class="spec-code">${escapeHtml(reproduceCommand)}</div>`;
+
         html += '</div>';
         html += '</div>';
     }
