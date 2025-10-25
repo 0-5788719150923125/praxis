@@ -1,0 +1,73 @@
+/* Praxis Web - Layout
+ * Main app container and grid layout
+ */
+
+.app-container {
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    height: 100vh;
+    height: 100dvh;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 22px;  /* Precise 22px padding */
+    overflow: hidden;
+}
+
+/* Tab Content Layout */
+.tab-content {
+    display: none;
+    height: 100%;
+    overflow: hidden;
+}
+
+.tab-content.active {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+/* Chat Layout */
+.chat-container {
+    overflow-y: auto;
+    padding: var(--spacing-md) var(--spacing-lg) 0 var(--spacing-lg);
+    display: flex;
+    flex-direction: column;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
+.input-container {
+    display: flex;
+    padding: 0 0 var(--spacing-xl) 0;
+    padding-bottom: calc(var(--spacing-xl) + env(safe-area-inset-bottom));
+    background-color: var(--background);
+    z-index: 10;
+}
+
+.input-container.with-messages {
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--border);
+    margin-top: 0;
+}
+
+.message-input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    font-size: 16px;
+    resize: none;
+    min-height: 44px;
+    max-height: 200px;
+    overflow-y: hidden;
+    transition: border-color 0.2s;
+    font-family: inherit;
+    background-color: var(--input-bg, var(--background));
+    color: var(--input-text, var(--text));
+    line-height: 1.5;
+}
+
+.message-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}

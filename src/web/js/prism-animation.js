@@ -1,6 +1,6 @@
-// Tesla Ball Animation for Logo - Full Featured Version
+// Prism Ball Animation for Logo - Full Featured Version
 (function() {
-    const canvas = document.getElementById('tesla-canvas');
+    const canvas = document.getElementById('prism-canvas');
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');

@@ -1,0 +1,7 @@
+/* Praxis Web - Theme System
+ * Theme-specific overrides beyond variables
+ * Most theming is handled via CSS variables in variables.css
+ */
+
+/* This file is intentionally minimal - most theming happens through CSS variables */
+/* Add theme-specific overrides here only when CSS variables aren't sufficient */

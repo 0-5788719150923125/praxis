@@ -36,3 +36,8 @@ environments/*.yml
 # AI - ignore common agents
 CLAUDE.md
 GEMINI.md
+
+# Static - ignore build artifacts
+static
+!static/*.png
+!static/*.webp

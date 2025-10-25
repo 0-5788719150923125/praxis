@@ -48,8 +48,8 @@ socketio = SocketIO(
     app,
     async_mode=SOCKETIO_ASYNC_MODE,
     cors_allowed_origins=CORS_ORIGINS,
-    logger=True,
-    engineio_logger=True,
+    logger=False,
+    engineio_logger=False,
 )
 
 

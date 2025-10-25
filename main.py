@@ -408,6 +408,15 @@ def main():
         importlib.reload(api)
         from praxis.api import APIServer
 
+        # Build web frontend before starting API server
+        try:
+            from src.web.build import build_dev
+            print("[WEB] Building frontend...")
+            build_dev()
+        except Exception as e:
+            print(f"[WEB] Warning: Could not build frontend: {e}")
+            print("[WEB] Continuing without rebuild - static files may be outdated")
+
         api_server = APIServer(
             generator,
             host_name,

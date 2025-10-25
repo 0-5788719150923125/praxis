@@ -11,11 +11,12 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
+    <!-- Main App Container - Everything rendered by JS -->
     <div class="app-container">
         <header class="header">
             <div class="logo">
-                <div class="tesla-logo">
-                    <canvas id="tesla-canvas"></canvas>
+                <div class="prism-logo">
+                    <canvas id="prism-canvas"></canvas>
                 </div>
                 <span class="logo-separator">|</span>
                 <span class="system-prompt-header" id="developer-prompt" contenteditable="true" spellcheck="false">Write thy wrong.</span>
@@ -23,7 +24,6 @@
             <div class="header-actions">
                 <button class="theme-toggle-button" id="theme-toggle">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" id="theme-icon">
-                        <!-- Moon icon (default for light mode) -->
                         <path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>
                     </svg>
                 </button>
@@ -36,54 +36,48 @@
                 </button>
             </div>
         </header>
-        
-        <!-- Tab navigation -->
+
+        <!-- Tab Navigation -->
         <div class="tab-nav">
-            <div class="tab-buttons">
-                <button class="tab-button active" data-tab="chat" id="chat-tab">Gymnasium</button>
-                <button class="tab-button" data-tab="terminal" id="terminal-tab">Terminal</button>
-                <button class="tab-button" data-tab="agents" id="agents-tab">Agents</button>
-                <button class="tab-button" data-tab="research" id="research-tab">Research</button>
-                <button class="tab-button" data-tab="spec" id="spec-tab">Identity</button>
+            <div class="tab-buttons" id="tab-buttons">
+                <!-- Rendered by JS -->
             </div>
             <div class="terminal-status">
-                <span class="status-indicator" id="status-indicator"></span>
-                <span id="terminal-status">Disconnected</span>
+                <!-- Rendered by JS -->
             </div>
         </div>
-        
-        <!-- Chat tab content -->
+
+        <!-- Chat Tab -->
         <div class="tab-content active" id="chat-content">
             <div class="chat-container" id="chat-container">
+                <!-- Messages rendered by JS -->
             </div>
-            
+
             <div class="input-container">
-                <textarea class="message-input" id="message-input" placeholder="> Shoot" rows="1"></textarea>
+                <textarea class="message-input" id="message-input" rows="1"></textarea>
             </div>
         </div>
-        
-        <!-- Terminal tab content -->
+
+        <!-- Terminal Tab -->
         <div class="tab-content" id="terminal-content">
             <div class="terminal-container" id="terminal-display">
                 <div class="terminal-line">Terminal ready. Dashboard will connect automatically when available.</div>
             </div>
         </div>
-        
-        <!-- Spec tab content -->
+
+        <!-- Other Tabs (Spec, Agents, Research) -->
         <div class="tab-content" id="spec-content">
             <div class="spec-container" id="spec-container">
                 <div class="loading-placeholder">Loading specification...</div>
             </div>
         </div>
-        
-        <!-- Agents tab content -->
+
         <div class="tab-content" id="agents-content">
             <div class="agents-container" id="agents-container">
                 <div class="loading-placeholder">Loading agents...</div>
             </div>
         </div>
 
-        <!-- Research tab content -->
         <div class="tab-content" id="research-content">
             <div class="research-container" id="research-container">
                 <div class="loading-placeholder">Loading metrics...</div>
@@ -91,63 +85,20 @@
         </div>
     </div>
 
+    <!-- Settings Modal -->
     <div class="settings-modal" id="settings-modal">
         <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">Settings</h3>
-                <button class="close-button" id="close-modal">&times;</button>
-            </div>
-            <div class="form-group">
-                <label for="api-url">API Server URL</label>
-                <input type="text" id="api-url" placeholder="Enter API URL" value="">
-            </div>
-            
-            <h4 class="modal-subheading">Generation Parameters</h4>
-            
-            <div class="form-group">
-                <label for="max-tokens">Max New Tokens (50-1000)</label>
-                <input type="number" id="max-tokens" min="50" max="1000" value="256">
-            </div>
-            
-            <div class="form-group">
-                <label for="temperature">Temperature (0.1-2.0)</label>
-                <input type="range" id="temperature" min="0.1" max="2.0" step="0.05" value="0.4">
-                <span id="temperature-value">0.4</span>
-            </div>
-            
-            <div class="form-group">
-                <label for="repetition-penalty">Repetition Penalty (1.0-2.0)</label>
-                <input type="range" id="repetition-penalty" min="1.0" max="2.0" step="0.05" value="1.15">
-                <span id="repetition-penalty-value">1.15</span>
-            </div>
-            
-            <div class="form-group">
-                <label for="do-sample">
-                    <input type="checkbox" id="do-sample" checked>
-                    Enable Sampling
-                </label>
-            </div>
-            
-            <h4 class="modal-subheading">Developer Options</h4>
-            
-            <div class="form-group">
-                <label for="debug-logging">
-                    <input type="checkbox" id="debug-logging">
-                    Debug Logging
-                </label>
-            </div>
-            
-            <div class="button-group">
-                <button class="save-button" id="save-settings">Save Settings</button>
-                <button class="reset-button" id="reset-settings">Reset All</button>
-            </div>
-            <div class="save-confirmation" id="save-confirmation">Settings saved! Refreshing...</div>
+            <!-- Rendered by JS when opened -->
         </div>
     </div>
 
-    <!-- Socket.IO for live reload -->
+    <!-- External Dependencies -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
-    <script src="{{ url_for('static', filename='tesla-animation.js') }}"></script>
+
+    <!-- Prism Animation (separate, not module) -->
+    <script src="{{ url_for('static', filename='js/prism-animation.js') }}"></script>
+
+    <!-- Main App (ES6 Module) -->
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

@@ -9,10 +9,14 @@ static_bp = Blueprint("static_files", __name__)
 @static_bp.route("/favicon.ico")
 def favicon():
     """Serve favicon.ico from static folder if it exists."""
+    from flask import make_response
+
     if os.path.exists(os.path.join(current_app.static_folder, "favicon.ico")):
         return send_from_directory(current_app.static_folder, "favicon.ico")
     else:
-        return "", 204
+        # Properly return a 204 No Content response
+        response = make_response("", 204)
+        return response
 
 
 @static_bp.route("/static/<path:filename>")
@@ -27,6 +31,8 @@ def serve_static_files(filename):
 @static_bp.route("/<path:filename>", methods=["GET", "POST", "OPTIONS", "HEAD"])
 def serve_static(filename):
     """Catch-all route for serving static files and handling special cases."""
+    from flask import make_response
+
     # Import generation routes to handle special cases
     from .generation import generate, generate_messages
 
@@ -38,8 +44,21 @@ def serve_static(filename):
     if filename in ["messages", "messages/"] and request.method in ["POST", "OPTIONS"]:
         return generate_messages()
 
+    # Handle OPTIONS properly
+    if request.method == "OPTIONS":
+        response = make_response("", 204)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
     # Otherwise, serve static files only for GET/HEAD
     if request.method not in ["GET", "HEAD"]:
         abort(405)
 
-    return send_from_directory(current_app.static_folder, filename)
+    try:
+        return send_from_directory(current_app.static_folder, filename)
+    except Exception as e:
+        # If file not found, return 404 properly
+        response = make_response("Not Found", 404)
+        return response

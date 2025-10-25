@@ -1,0 +1,55 @@
+/* Praxis Web - CSS Variables
+ * All color, spacing, and size tokens
+ */
+
+:root {
+    /* Brand Colors */
+    --primary: #18453B;
+    --primary-light: #0B9A6D;
+    --primary-dark: #18453B;
+
+    /* Light Theme */
+    --background: #f9f9f9;
+    --text: #333333;
+    --light-text: #666666;
+    --user-message-bg: #e8f5e9;
+    --assistant-message-bg: #ffffff;
+    --border: #d0d0d0;
+    --shadow: rgba(0, 0, 0, 0.05);
+
+    /* Unified spacing variables - carefully calibrated */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 0.75rem;
+    --spacing-lg: 1.25rem;
+    --spacing-xl: 1.5rem;
+
+    /* Unified border radius - consistent curves */
+    --radius-small: 6px;
+    --radius-medium: 6px;
+    --radius-large: 6px;
+    --radius-round: 50%;
+
+    /* Icon and element sizes - pixel-perfect */
+    --icon-size: 1.5em;
+    --icon-font-size: 0.85em;
+    --icon-element-size: 0.85em;  /* Size of the "P" element symbol */
+    --icon-padding: 0.5em;
+    --seed-font-size: 0.2em;
+}
+
+/* Dark Theme Overrides */
+[data-theme="dark"] {
+    --primary: #18453B;
+    --primary-light: #0B9A6D;
+    --primary-dark: #0B9A6D;
+    --background: #121212;
+    --text: #e0e0e0;
+    --light-text: #b0b0b0;
+    --user-message-bg: #18453B;
+    --assistant-message-bg: #1e1e1e;
+    --border: #333333;
+    --shadow: rgba(0, 0, 0, 0.3);
+    --input-bg: #1e1e1e;
+    --input-text: #e0e0e0;
+}

@@ -1,0 +1,48 @@
+/* Praxis Web - Animations
+ * All keyframe animations
+ */
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+@keyframes pulse-harsh {
+    0% { opacity: 1; }
+    50% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+/* Subtle glow animation for dark mode tabs */
+@keyframes subtleGlow {
+    0% {
+        text-shadow:
+            0 0 6px rgba(255, 255, 255, 0.4),
+            0 0 12px rgba(255, 255, 255, 0.2);
+    }
+    100% {
+        text-shadow:
+            0 0 8px rgba(255, 255, 255, 0.5),
+            0 0 14px rgba(255, 255, 255, 0.3);
+    }
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
