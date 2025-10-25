@@ -234,7 +234,7 @@ def main():
     port = processed_args.get("port", 2100)
     disable_schedule = processed_args.get("disable_schedule", False)
     strategy = processed_args.get("strategy")
-    dropout = processed_args.get("dropout", 0.1)
+    dropout = processed_args.get("dropout", 0.0)
     trainer_type = processed_args.get("trainer_type", "backpropagation")
     pipeline_depth = processed_args.get("pipeline_depth", 4)
     preserve = processed_args.get("preserve", False)
@@ -527,7 +527,7 @@ def main():
         "rl_type": rl_type,
         "vocab_size": vocab_size,
         "depth": config.depth,
-        "num_layers": config.num_layers,  # Number of layer components for controllers
+        "num_layers": config.num_layers,
         "hidden_size": config.hidden_size,
         "embed_size": config.embed_size,
         "dropout": dropout,

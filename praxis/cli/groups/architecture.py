@@ -201,8 +201,8 @@ class ArchitectureGroup:
 
         group.add_argument(
             "--dropout",
-            type=int,
-            default=0.1,
+            type=float,
+            default=0.0,
             help="The percentage of neurons to drop-out during training",
         )
 
