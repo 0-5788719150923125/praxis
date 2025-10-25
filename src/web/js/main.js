@@ -344,7 +344,7 @@ function handleInputChange(e) {
 /**
  * Handle input focus
  */
-function handleInputFocus(e) {
+function handleInputFocus() {
     hidePlaceholder();
 }
 
