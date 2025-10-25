@@ -26,6 +26,13 @@ let frameValidationInterval = null;
 let specLoaded = false;
 let agentsLoaded = false;
 let agentsRefreshInterval = null;
+let researchLoaded = false;
+let charts = {};  // Store Chart.js instances
+let metricsETag = null;  // For caching
+let lastMetricsStep = 0;  // Track last received step
+let availableAgents = [];  // List of available agents from /api/agents
+let selectedAgents = [];  // Currently selected agents for display
+let agentSelectorOpen = false;  // Track dropdown state
 let isShowingPlaceholder = true;
 
 // ==================== Constants ====================
@@ -33,6 +40,20 @@ const MAX_HISTORY_LENGTH = 21;
 const PREFIX = "> ";
 const PLACEHOLDER_TEXT = "Shoot";
 const SYSTEM_PROMPT = "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation.";
+
+// Color palette for different runs (distinct, colorblind-friendly)
+const RUN_COLORS = [
+    '#0B9A6D',  // Teal (default/current run)
+    '#FF6B6B',  // Red
+    '#4ECDC4',  // Cyan
+    '#FFD93D',  // Yellow
+    '#A8E6CF',  // Mint
+    '#C77DFF',  // Purple
+    '#FF9A8B',  // Pink
+    '#6A89CC',  // Blue
+    '#F8B500',  // Orange
+    '#95E1D3',  // Aqua
+];
 
 // Theme icons
 const sunIcon = `<path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/>`;
@@ -790,6 +811,18 @@ function switchTab(tabName) {
         }
         if (!agentsLoaded) {
             loadAgents();
+        }
+        updateConnectionStatus();
+    } else if (tabName === 'research') {
+        document.getElementById('research-content').classList.add('active');
+
+        // Clean up terminal monitoring when leaving terminal tab
+        if (frameValidationInterval) {
+            clearInterval(frameValidationInterval);
+            frameValidationInterval = null;
+        }
+        if (!researchLoaded) {
+            loadResearchMetrics();
         }
         updateConnectionStatus();
     }
@@ -1803,6 +1836,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const terminalTab = document.getElementById('terminal-tab');
     const specTab = document.getElementById('spec-tab');
     const agentsTab = document.getElementById('agents-tab');
+    const researchTab = document.getElementById('research-tab');
     
     // Initialize message input
     messageInput.value = PREFIX + PLACEHOLDER_TEXT;
@@ -1939,6 +1973,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 30000);
         }
     });
+    researchTab.addEventListener('click', () => {
+        switchTab('research');
+        if (!researchLoaded) {
+            loadResearchMetrics();
+        }
+    });
     
     // Visual Viewport API for mobile keyboard detection
     if (window.visualViewport) {
@@ -1971,3 +2011,616 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 250);
     });
 });
+
+// ==================== Research Tab Functions ====================
+
+async function refreshMetrics() {
+    const btn = document.getElementById('refresh-metrics-btn');
+    if (!btn) return;
+
+    // Add loading state
+    btn.disabled = true;
+    btn.classList.add('refreshing');
+
+    try {
+        await loadResearchMetrics(true);
+    } finally {
+        // Remove loading state after animation completes
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.classList.remove('refreshing');
+        }, 600);
+    }
+}
+
+async function loadAvailableAgents() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/api/agents`);
+        const data = await response.json();
+
+        if (data.agents) {
+            // Filter to only online agents (active instances)
+            availableAgents = data.agents.filter(a => a.status === 'online');
+
+            // Default to selecting all online agents
+            if (selectedAgents.length === 0) {
+                selectedAgents = availableAgents.map(a => a.name);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading agents:', error);
+    }
+}
+
+function toggleAgentSelector() {
+    agentSelectorOpen = !agentSelectorOpen;
+    const dropdown = document.getElementById('agent-selector-dropdown');
+    if (dropdown) {
+        dropdown.style.display = agentSelectorOpen ? 'block' : 'none';
+    }
+}
+
+function toggleAgentSelection(name) {
+    const index = selectedAgents.indexOf(name);
+    if (index > -1) {
+        // Deselect
+        selectedAgents.splice(index, 1);
+    } else {
+        // Select
+        selectedAgents.push(name);
+    }
+
+    // Update checkbox state
+    const checkbox = document.getElementById(`agent-check-${name}`);
+    if (checkbox) {
+        checkbox.checked = selectedAgents.includes(name);
+    }
+
+    // Reload metrics
+    loadResearchMetrics(true);
+}
+
+async function loadResearchMetrics(force = false) {
+    if (researchLoaded && !force) {
+        return;
+    }
+
+    const container = document.getElementById('research-container');
+
+    try {
+        // Load available agents first
+        await loadAvailableAgents();
+
+        if (selectedAgents.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h3>No Agents Selected</h3>
+                    <p>Select at least one active agent to display metrics.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Fetch metrics from each selected agent in parallel
+        const agentMetricsPromises = selectedAgents.map(async (agentName) => {
+            const agent = availableAgents.find(a => a.name === agentName);
+            if (!agent) return null;
+
+            try {
+                // Get base URL from agent URL (remove /praxis if present)
+                let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
+
+                // Fetch metrics from this agent
+                const response = await fetch(`${baseUrl}/api/metrics?since=0&limit=1000&downsample=uniform`);
+
+                if (!response.ok) {
+                    console.warn(`Failed to fetch metrics from ${agentName}: ${response.status}`);
+                    return null;
+                }
+
+                const data = await response.json();
+
+                if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
+                    return null;
+                }
+
+                // Return the first run's data with agent name
+                return {
+                    name: agentName,
+                    url: agent.url,
+                    masked_url: agent.masked_url,
+                    metrics: data.runs[0].metrics,
+                    metadata: data.runs[0].metadata
+                };
+            } catch (error) {
+                console.warn(`Error fetching metrics from ${agentName}:`, error);
+                return null;
+            }
+        });
+
+        const agentMetricsResults = await Promise.all(agentMetricsPromises);
+
+        // Filter out null results
+        const agentMetrics = agentMetricsResults.filter(r => r !== null);
+
+        if (agentMetrics.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h3>No Metrics Available</h3>
+                    <p>None of the selected agents have training metrics available.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Build data structure for rendering
+        const data = {
+            agents: agentMetrics,
+            metadata: {
+                num_agents: agentMetrics.length
+            }
+        };
+
+        renderMetricsCharts(data);
+        researchLoaded = true;
+
+    } catch (error) {
+        console.error('Error loading metrics:', error);
+        container.innerHTML = `
+            <div class="error-message">
+                <h3>Error Loading Metrics</h3>
+                <p>${error.message}</p>
+                <button onclick="loadResearchMetrics(true)" class="retry-button">Retry</button>
+            </div>
+        `;
+    }
+}
+
+function renderMetricsCharts(data) {
+    const container = document.getElementById('research-container');
+    const agents = data.agents || [];
+
+    if (agents.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <h3>No Data Available</h3>
+                <p>No metrics found for selected agents.</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Build agent selector dropdown HTML
+    let selectorHTML = '';
+    if (availableAgents.length > 0) {
+        selectorHTML = `
+            <div class="run-selector-wrapper">
+                <button class="run-selector-button" onclick="toggleAgentSelector()" id="agent-selector-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/>
+                    </svg>
+                    Agents (${selectedAgents.length}/${availableAgents.length})
+                </button>
+                <div class="run-selector-dropdown" id="agent-selector-dropdown" style="display: none;">
+                    <div class="run-selector-header">Select Agents to Compare</div>
+                    <div class="run-selector-list">
+                        ${availableAgents.map((agent, idx) => {
+                            const isSelected = selectedAgents.includes(agent.name);
+                            const color = RUN_COLORS[idx % RUN_COLORS.length];
+                            return `
+                                <label class="run-selector-item">
+                                    <input
+                                        type="checkbox"
+                                        id="agent-check-${agent.name}"
+                                        ${isSelected ? 'checked' : ''}
+                                        onchange="toggleAgentSelection('${agent.name}')"
+                                    >
+                                    <span class="run-color-indicator" style="background: ${color};"></span>
+                                    <span class="run-label">${agent.name}</span>
+                                    <span class="run-steps">online</span>
+                                </label>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Build header
+    let headerHTML = `
+        <div class="research-header">
+            <div class="research-title-row">
+                <h2>Training Metrics</h2>
+                <div class="research-controls">
+                    ${selectorHTML}
+                    <button class="refresh-button" onclick="refreshMetrics()" id="refresh-metrics-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="metadata">
+                <span><strong>Comparing:</strong> ${agents.length} agent${agents.length > 1 ? 's' : ''}</span>
+                <span><strong>Total Data Points:</strong> ${agents.reduce((sum, a) => sum + a.metadata.num_points, 0)}</span>
+            </div>
+        </div>
+    `;
+
+    // Check which metrics are available across all agents
+    const hasLoss = agents.some(a => a.metrics.loss && a.metrics.loss.some(v => v !== null));
+    const hasValLoss = agents.some(a => a.metrics.val_loss && a.metrics.val_loss.some(v => v !== null));
+    const hasPerplexity = agents.some(a => a.metrics.val_perplexity && a.metrics.val_perplexity.some(v => v !== null));
+    const hasLearningRate = agents.some(a => a.metrics.learning_rate && a.metrics.learning_rate.some(v => v !== null));
+    const hasTokens = agents.some(a => a.metrics.num_tokens && a.metrics.num_tokens.some(v => v !== null));
+    const hasSoftmax = agents.some(a => a.metrics.softmax_collapse && a.metrics.softmax_collapse.some(v => v !== null));
+
+    // Build chart cards (vertical layout)
+    let chartsHTML = '';
+
+    if (hasLoss) {
+        chartsHTML += `
+            <div class="chart-card">
+                <div class="chart-title">Training Loss</div>
+                <div class="chart-wrapper">
+                    <canvas id="chart-train-loss"></canvas>
+                </div>
+            </div>
+        `;
+    }
+
+    if (hasValLoss) {
+        chartsHTML += `
+            <div class="chart-card">
+                <div class="chart-title">Validation Loss</div>
+                <div class="chart-wrapper">
+                    <canvas id="chart-val-loss"></canvas>
+                </div>
+            </div>
+        `;
+    }
+
+    if (hasPerplexity) {
+        chartsHTML += `
+            <div class="chart-card">
+                <div class="chart-title">Perplexity</div>
+                <div class="chart-wrapper">
+                    <canvas id="chart-perplexity"></canvas>
+                </div>
+            </div>
+        `;
+    }
+
+    if (hasLearningRate) {
+        chartsHTML += `
+            <div class="chart-card">
+                <div class="chart-title">Learning Rate</div>
+                <div class="chart-wrapper">
+                    <canvas id="chart-lr"></canvas>
+                </div>
+            </div>
+        `;
+    }
+
+    if (hasTokens) {
+        chartsHTML += `
+            <div class="chart-card">
+                <div class="chart-title">Tokens Processed (Billions)</div>
+                <div class="chart-wrapper">
+                    <canvas id="chart-tokens"></canvas>
+                </div>
+            </div>
+        `;
+    }
+
+    if (hasSoftmax) {
+        chartsHTML += `
+            <div class="chart-card">
+                <div class="chart-title">Softmax Collapse</div>
+                <div class="chart-wrapper">
+                    <canvas id="chart-softmax"></canvas>
+                </div>
+            </div>
+        `;
+    }
+
+    container.innerHTML = headerHTML + chartsHTML;
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        const selector = document.getElementById('agent-selector-btn');
+        const dropdown = document.getElementById('agent-selector-dropdown');
+        if (selector && dropdown && agentSelectorOpen) {
+            if (!selector.contains(e.target) && !dropdown.contains(e.target)) {
+                agentSelectorOpen = false;
+                dropdown.style.display = 'none';
+            }
+        }
+    });
+
+    // Render charts after DOM update
+    setTimeout(() => {
+        if (hasLoss) {
+            createMultiAgentChart('chart-train-loss', 'Training Loss', agents, 'loss');
+        }
+
+        if (hasValLoss) {
+            createMultiAgentChart('chart-val-loss', 'Validation Loss', agents, 'val_loss');
+        }
+
+        if (hasPerplexity) {
+            createMultiAgentChart('chart-perplexity', 'Perplexity', agents, 'val_perplexity');
+        }
+
+        if (hasLearningRate) {
+            createMultiAgentChart('chart-lr', 'Learning Rate', agents, 'learning_rate');
+        }
+
+        if (hasTokens) {
+            createMultiAgentChart('chart-tokens', 'Tokens (B)', agents, 'num_tokens');
+        }
+
+        if (hasSoftmax) {
+            createMultiAgentChart('chart-softmax', 'Softmax Collapse', agents, 'softmax_collapse');
+        }
+    }, 10);
+}
+
+function createLineChart(canvasId, label, steps, values, color) {
+    const ctx = document.getElementById(canvasId);
+
+    if (!ctx) return;
+
+    // Destroy existing chart if it exists
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+
+    // Filter out null values
+    const data = steps.map((step, i) => ({
+        x: step,
+        y: values[i]
+    })).filter(point => point.y !== null);
+
+    // Determine text color based on theme
+    const isDark = currentTheme === 'dark';
+    const textColor = isDark ? '#e0e0e0' : '#333333';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            datasets: [{
+                label: label,
+                data: data,
+                borderColor: color,
+                backgroundColor: color + '20',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                pointHoverBackgroundColor: color,
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 2,
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: false,
+                    callbacks: {
+                        title: function(context) {
+                            return `Step ${context[0].parsed.x}`;
+                        },
+                        label: function(context) {
+                            return `${label}: ${context.parsed.y.toFixed(4)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Training Step',
+                        color: textColor,
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        }
+                    },
+                    ticks: {
+                        color: textColor,
+                        maxTicksLimit: 10
+                    },
+                    grid: {
+                        color: gridColor
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: label,
+                        color: textColor,
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        }
+                    },
+                    ticks: {
+                        color: textColor,
+                        callback: function(value) {
+                            // Format large numbers
+                            if (Math.abs(value) >= 1000) {
+                                return value.toExponential(2);
+                            }
+                            return value.toFixed(3);
+                        }
+                    },
+                    grid: {
+                        color: gridColor
+                    }
+                }
+            }
+        }
+    });
+}
+
+function createMultiAgentChart(canvasId, label, agents, metricKey) {
+    const ctx = document.getElementById(canvasId);
+
+    if (!ctx) return;
+
+    // Destroy existing chart if it exists
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+
+    // Determine text color based on theme
+    const isDark = currentTheme === 'dark';
+    const textColor = isDark ? '#e0e0e0' : '#333333';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+
+    // Build datasets for each agent
+    const datasets = agents.map((agent, agentIndex) => {
+        const metrics = agent.metrics;
+        const steps = metrics.steps || [];
+        const values = metrics[metricKey] || [];
+
+        // Filter out null values
+        const data = steps.map((step, i) => ({
+            x: step,
+            y: values[i]
+        })).filter(point => point.y !== null);
+
+        // Get color from palette
+        const agentIdx = availableAgents.findIndex(a => a.name === agent.name);
+        const color = RUN_COLORS[agentIdx % RUN_COLORS.length];
+
+        return {
+            label: agent.name,
+            data: data,
+            borderColor: color,
+            backgroundColor: color + '20',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: color,
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            tension: 0.3,
+            fill: false
+        };
+    });
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    display: agents.length > 1,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        padding: 15,
+                        font: {
+                            size: 11
+                        }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                    callbacks: {
+                        title: function(context) {
+                            return `Step ${context[0].parsed.x}`;
+                        },
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.y.toFixed(4)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Training Step',
+                        color: textColor,
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        }
+                    },
+                    ticks: {
+                        color: textColor,
+                        maxTicksLimit: 10
+                    },
+                    grid: {
+                        color: gridColor
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: label,
+                        color: textColor,
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        }
+                    },
+                    ticks: {
+                        color: textColor,
+                        callback: function(value) {
+                            // Format large numbers
+                            if (Math.abs(value) >= 1000) {
+                                return value.toExponential(2);
+                            }
+                            return value.toFixed(3);
+                        }
+                    },
+                    grid: {
+                        color: gridColor
+                    }
+                }
+            }
+        }
+    });
+}

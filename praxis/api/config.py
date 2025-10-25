@@ -32,7 +32,7 @@ CORS_HEADERS = ["Content-Type"]
 # Content Security Policy
 CSP_POLICY = (
     "default-src 'self' https:; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://*.ngrok-free.app https://*.ngrok.io; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://*.ngrok-free.app https://*.ngrok.io; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com; "
     "connect-src 'self' wss: ws: https: http:;"

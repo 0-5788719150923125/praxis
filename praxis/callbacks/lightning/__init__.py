@@ -6,6 +6,7 @@ These callbacks are designed to work with PyTorch Lightning training framework.
 from praxis.callbacks.lightning.accumulation import AccumulationSchedule
 from praxis.callbacks.lightning.checkpoint import TimeBasedCheckpoint
 from praxis.callbacks.lightning.evaluation import PeriodicEvaluation
+from praxis.callbacks.lightning.metrics import MetricsLoggerCallback
 from praxis.callbacks.lightning.terminal import TerminalInterface
 
 # Registry for Lightning callbacks
@@ -14,6 +15,7 @@ LIGHTNING_CALLBACK_REGISTRY = {
     "terminal_interface": TerminalInterface,
     "time_based_checkpoint": TimeBasedCheckpoint,
     "accumulation_schedule": AccumulationSchedule,
+    "metrics_logger": MetricsLoggerCallback,
 }
 
 __all__ = [
@@ -21,5 +23,6 @@ __all__ = [
     "TerminalInterface",
     "TimeBasedCheckpoint",
     "AccumulationSchedule",
+    "MetricsLoggerCallback",
     "LIGHTNING_CALLBACK_REGISTRY",
 ]

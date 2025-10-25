@@ -17,6 +17,7 @@ from praxis.callbacks.printing_progress import (
 try:
     from praxis.callbacks.lightning import (
         AccumulationSchedule,
+        MetricsLoggerCallback,
         PeriodicEvaluation,
         TerminalInterface,
         TimeBasedCheckpoint,
@@ -72,6 +73,7 @@ if _HAS_LIGHTNING:
     __all__.extend(
         [
             "AccumulationSchedule",
+            "MetricsLoggerCallback",
             "PeriodicEvaluation",
             "TerminalInterface",
             "TimeBasedCheckpoint",

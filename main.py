@@ -38,6 +38,7 @@ from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 from praxis.api import APIServer
 from praxis.callbacks import (
     AccumulationSchedule,
+    MetricsLoggerCallback,
     PeriodicEvaluation,
     SignalHandlerCallback,
     TerminalInterface,
@@ -507,6 +508,11 @@ def main():
             vocab_size=vocab_size,
             debug=debug,
         )
+    )
+
+    # Add metrics logger callback for web visualization
+    train_params["callbacks"].append(
+        MetricsLoggerCallback(run_dir=cache_dir)
     )
 
     # Add progress bar if not using dashboard
