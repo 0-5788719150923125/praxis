@@ -5,7 +5,29 @@
  */
 
 import { state, CONSTANTS } from './state.js';
-import { createMessage, createThinkingIndicator, createTab, createSettingsModal, createTerminalStatus } from './components.js';
+import {
+    createMessage,
+    createThinkingIndicator,
+    createTab,
+    createSettingsModal,
+    createTerminalStatus,
+    createAppStructure
+} from './components.js';
+
+/**
+ * Initial render - builds entire app structure from scratch
+ * Called once on initialization
+ */
+export function renderAppStructure() {
+    const appContainer = document.querySelector('.app-container');
+    if (!appContainer) {
+        console.error('[Render] No .app-container found');
+        return;
+    }
+
+    // Generate entire UI structure from state
+    appContainer.innerHTML = createAppStructure(state);
+}
 
 /**
  * Main render function - updates entire UI based on state

@@ -4,7 +4,7 @@
  */
 
 import { state, CONSTANTS } from './state.js';
-import { fetchAgents, fetchMetrics } from './api.js';
+import { fetchAPI } from './api.js';
 
 // Chart instances storage
 const charts = {};
@@ -14,7 +14,7 @@ const charts = {};
  */
 export async function loadAvailableAgents() {
     try {
-        const data = await fetchAgents();
+        const data = await fetchAPI('agents');
 
         if (data.agents) {
             // Filter to only online agents (active instances)

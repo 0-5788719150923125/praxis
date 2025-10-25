@@ -49,37 +49,29 @@ export async function sendMessage(messages) {
 }
 
 /**
- * Fetch model specification
- * @returns {Promise<Object>} Spec data
+ * API endpoint configuration - pure data
  */
-export async function fetchSpec() {
-    const response = await fetch(`${state.settings.apiUrl}/api/spec`);
-    if (!response.ok) {
-        throw new Error('Failed to load specification');
-    }
-    return response.json();
-}
+const ENDPOINTS = {
+    spec: { path: '/api/spec', error: 'Failed to load specification' },
+    agents: { path: '/api/agents', error: 'Failed to load agents' },
+    metrics: { path: '/api/metrics', error: 'Failed to load metrics' },
+    ping: { path: '/api/ping', error: 'Failed to ping API' }
+};
 
 /**
- * Fetch agents list
- * @returns {Promise<Array>} Agents data
+ * Generic API fetch - fully data-driven
+ * @param {string} endpointKey - Key from ENDPOINTS config
+ * @returns {Promise<Object>} Parsed JSON response
  */
-export async function fetchAgents() {
-    const response = await fetch(`${state.settings.apiUrl}/api/agents`);
-    if (!response.ok) {
-        throw new Error('Failed to load agents');
+export async function fetchAPI(endpointKey) {
+    const endpoint = ENDPOINTS[endpointKey];
+    if (!endpoint) {
+        throw new Error(`Unknown endpoint: ${endpointKey}`);
     }
-    return response.json();
-}
 
-/**
- * Fetch metrics for research tab
- * @returns {Promise<Object>} Metrics data
- */
-export async function fetchMetrics() {
-    const response = await fetch(`${state.settings.apiUrl}/api/metrics`);
+    const response = await fetch(`${state.settings.apiUrl}${endpoint.path}`);
     if (!response.ok) {
-        throw new Error('Failed to load metrics');
+        throw new Error(endpoint.error);
     }
     return response.json();
 }
@@ -90,8 +82,8 @@ export async function fetchMetrics() {
  */
 export async function ping() {
     try {
-        const response = await fetch(`${state.settings.apiUrl}/api/ping`);
-        return response.ok;
+        await fetchAPI('ping');
+        return true;
     } catch (e) {
         return false;
     }

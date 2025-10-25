@@ -4,31 +4,62 @@
  */
 
 import { state } from './state.js';
-import { fetchSpec, fetchAgents } from './api.js';
+import { fetchAPI } from './api.js';
 import { loadResearchMetricsWithCharts } from './charts.js';
+
+/**
+ * Generic tab data loader - DRY pattern for all tab loading
+ * @param {Object} config - Tab loading configuration
+ * @param {string} config.stateKey - Key in state object (e.g., 'spec', 'agents')
+ * @param {string} config.containerId - DOM container ID
+ * @param {string} config.loadingMessage - Message to show while loading
+ * @param {Function} config.fetchFn - Async function to fetch data
+ * @param {Function} config.renderFn - Function to render data
+ * @param {Function} [config.processData] - Optional function to process fetched data before storing
+ */
+async function loadTabData(config) {
+    const stateObj = state[config.stateKey];
+    if (stateObj.loaded) return;
+
+    const container = document.getElementById(config.containerId);
+    if (!container) return;
+
+    container.innerHTML = `<div class="loading-placeholder">${config.loadingMessage}</div>`;
+
+    try {
+        const data = await config.fetchFn();
+
+        // Process data if processor provided, otherwise use raw data
+        const processedData = config.processData ? config.processData(data) : data;
+
+        // Store data in state
+        if (config.processData) {
+            Object.assign(stateObj, processedData);
+        } else {
+            stateObj.data = data;
+        }
+
+        stateObj.loaded = true;
+        stateObj.error = null;
+
+        config.renderFn(data, container);
+    } catch (error) {
+        stateObj.error = error.message;
+        container.innerHTML = `<div class="loading-placeholder" style="color: #cc0000;">Error: ${error.message}</div>`;
+    }
+}
 
 /**
  * Load Spec tab content
  */
 export async function loadSpec() {
-    if (state.spec.loaded) return;
-
-    const container = document.getElementById('spec-container');
-    if (!container) return;
-
-    container.innerHTML = '<div class="loading-placeholder">Loading specification...</div>';
-
-    try {
-        const data = await fetchSpec();
-        state.spec.data = data;
-        state.spec.loaded = true;
-        state.spec.error = null;
-
-        renderSpec(data, container);
-    } catch (error) {
-        state.spec.error = error.message;
-        container.innerHTML = `<div class="loading-placeholder" style="color: #cc0000;">Error: ${error.message}</div>`;
-    }
+    await loadTabData({
+        stateKey: 'spec',
+        containerId: 'spec-container',
+        loadingMessage: 'Loading specification...',
+        fetchFn: () => fetchAPI('spec'),
+        renderFn: renderSpec
+    });
 }
 
 /**
@@ -113,24 +144,14 @@ function renderSpec(data, container) {
  * Load Agents tab content
  */
 export async function loadAgents() {
-    if (state.agents.loaded) return;
-
-    const container = document.getElementById('agents-container');
-    if (!container) return;
-
-    container.innerHTML = '<div class="loading-placeholder">Loading agents...</div>';
-
-    try {
-        const data = await fetchAgents();
-        state.agents.availableAgents = data.agents || [];
-        state.agents.loaded = true;
-        state.agents.error = null;
-
-        renderAgents(data.agents || [], container);
-    } catch (error) {
-        state.agents.error = error.message;
-        container.innerHTML = `<div class="loading-placeholder" style="color: #cc0000;">Error: ${error.message}</div>`;
-    }
+    await loadTabData({
+        stateKey: 'agents',
+        containerId: 'agents-container',
+        loadingMessage: 'Loading agents...',
+        fetchFn: () => fetchAPI('agents'),
+        processData: (data) => ({ availableAgents: data.agents || [] }),
+        renderFn: (data, container) => renderAgents(data.agents || [], container)
+    });
 }
 
 /**

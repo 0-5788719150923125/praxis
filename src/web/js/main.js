@@ -5,7 +5,7 @@
  */
 
 import { state, CONSTANTS } from './state.js';
-import { render, updateInputContainerStyling } from './render.js';
+import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
 import { sendMessage, testApiConnection } from './api.js';
 import { connectTerminal, setupLiveReload, recalculateDashboardScale } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
@@ -25,7 +25,10 @@ function init() {
     // Load saved settings from localStorage
     loadSettings();
 
-    // Initial render
+    // Build entire app structure from JavaScript (UI = render(state))
+    renderAppStructure();
+
+    // Initial render of dynamic content
     render();
 
     // Set up event listeners
