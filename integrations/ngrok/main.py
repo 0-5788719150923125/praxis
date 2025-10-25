@@ -171,6 +171,35 @@ class NgrokTunnel:
 _tunnel = None
 
 
+def create_socketio_path_middleware(wsgi_app, ngrok_secret):
+    """WSGI middleware to handle Socket.IO WebSocket paths with ngrok secret.
+
+    This only strips the prefix for Socket.IO paths, leaving all other paths alone
+    for Flask routing to handle.
+
+    Args:
+        wsgi_app: The WSGI application
+        ngrok_secret: The ngrok secret prefix
+
+    Returns:
+        Wrapped WSGI application
+    """
+    def middleware(environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        prefix = f'/{ngrok_secret}'
+
+        # Only strip prefix for socket.io paths (WebSocket upgrades)
+        if path.startswith(prefix + '/socket.io'):
+            # Remove the secret prefix for Socket.IO
+            new_path = path[len(prefix):]
+            environ['PATH_INFO'] = new_path
+            environ['SCRIPT_NAME'] = environ.get('SCRIPT_NAME', '') + prefix
+
+        return wsgi_app(environ, start_response)
+
+    return middleware
+
+
 def setup_ngrok_routes(app, ngrok_secret):
     """Setup catch-all routes for ngrok secret-prefixed paths.
 
@@ -179,6 +208,9 @@ def setup_ngrok_routes(app, ngrok_secret):
         ngrok_secret: The secret to use for the URL prefix
     """
     from flask import request as flask_request
+
+    # Add WSGI middleware to handle Socket.IO WebSocket upgrades
+    app.wsgi_app = create_socketio_path_middleware(app.wsgi_app, ngrok_secret)
 
     # Create a catch-all route for the secret prefix
     @app.route(
