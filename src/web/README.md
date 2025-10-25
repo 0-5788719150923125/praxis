@@ -1,256 +1,127 @@
+# Praxis Web Frontend
 
-# Praxis Web Frontend - Functional Architecture
+Clean, data-driven web UI with zero frameworks. Just vanilla JavaScript modules.
 
-**Clean, data-driven, maintainable web UI with zero frameworks.**
+## Architecture
 
-## Philosophy: UI = render(data)
+**Philosophy**: `UI = render(state)`
 
-Everything is data. The UI is a pure function of state. No frameworks, no complexity - just vanilla JavaScript with ES6 modules.
+Everything is data. The UI is a pure function of state.
 
-```javascript
-// The entire architecture in 3 lines:
+```
 Events → Update State → render(state) → DOM
 ```
 
-## Directory Structure
+## Structure
 
 ```
 src/web/
 ├── js/
-│   ├── state.js          # Single source of truth - all data lives here
-│   ├── components.js     # Pure functions: data → DOM strings
-│   ├── render.js         # Main render function (UI = render(state))
-│   ├── api.js            # API communication
+│   ├── state.js          # Single source of truth
+│   ├── components.js     # Pure functions: data → HTML
+│   ├── render.js         # Main render loop
+│   ├── tabs.js           # Tab loading (Spec, Agents, Research)
+│   ├── charts.js         # Chart.js integration + LTTB downsampling
+│   ├── api.js            # REST API calls
 │   ├── websocket.js      # WebSocket for terminal
-│   └── main.js           # Entry point, event handlers
+│   ├── mobile.js         # Mobile-specific behaviors
+│   └── main.js           # Entry point + event handlers
 ├── css/
-│   ├── variables.css     # Colors, spacing, design tokens
+│   ├── variables.css     # Design tokens
 │   ├── base.css          # Resets, typography
 │   ├── layout.css        # Grid, containers
-│   ├── components.css    # All component styles (carefully preserved)
-│   ├── themes.css        # Theme overrides
-│   ├── animations.css    # Keyframe animations
+│   ├── components.css    # Component styles
+│   ├── themes.css        # Light/dark themes
+│   ├── animations.css    # Keyframes
 │   └── responsive.css    # Mobile breakpoints
-└── build.py              # Simple Python build system
-```
-
-## How It Works
-
-### 1. State (The Data)
-
-Everything lives in one place:
-
-```javascript
-// state.js
-export const state = {
-    theme: 'light',
-    messages: [],
-    tabs: [...],
-    settings: {...},
-    // etc.
-};
-```
-
-### 2. Components (Pure Functions)
-
-Components are just functions that take data and return DOM:
-
-```javascript
-// components.js
-export function createMessage({ role, content }) {
-    return `<div class="message ${role}">${content}</div>`;
-}
-```
-
-No classes, no lifecycle hooks, no magic - just `data → HTML`.
-
-### 3. Render (UI = render(state))
-
-One function updates the entire UI:
-
-```javascript
-// render.js
-export function render() {
-    renderMessages();
-    renderTabs();
-    renderTheme();
-    // ...
-}
-```
-
-### 4. Events → State Updates → Render
-
-```javascript
-// main.js
-document.addEventListener('click', (e) => {
-    if (e.target.matches('.tab-button')) {
-        state.tabs.forEach(t => t.active = t.id === e.target.dataset.tab);
-        render();  // That's it!
-    }
-});
+└── build.py              # Python build system
 ```
 
 ## Build System
 
-### Automatic Build (Default)
+### Automatic (Default)
 
-The frontend **builds automatically** when you start Praxis:
+Frontend builds automatically when you start Praxis:
 
 ```bash
 ./launch --dev
 # [WEB] Building frontend...
-#   ✓ Copied state.js
-#   ✓ Copied components.js
-#   ...
 ```
 
-No manual build needed! The web app is always up-to-date.
+No manual build needed.
 
-### Manual Build (Optional)
+### Manual
 
 ```bash
 python src/web/build.py          # Build once
-python src/web/build.py --watch  # Watch mode (rebuilds on file change)
+python src/web/build.py --watch  # Watch mode
+python src/web/build.py --prod   # Production (concatenated)
 ```
 
-Copies modules to `static/js/` - browser loads them natively with `import`/`export`.
+**No bundler needed!** Modern browsers support ES6 modules natively.
 
-**No bundler needed!** Modern browsers support ES6 modules out of the box.
+## Features
 
-### Production (Concatenated)
+- **Functional**: Pure data flow, no hidden state
+- **Modular**: ES6 modules, ~100-200 lines each
+- **Fast**: Native browser module loading
+- **LTTB Downsampling**: Perceptually-aware chart sampling
+- **Live Terminal**: WebSocket-powered command output
+- **Multi-Agent**: Compare metrics across remote agents
+- **Responsive**: Mobile-first design
+- **Themeable**: Light/dark mode with CSS variables
+- **Zero Dependencies**: No npm, no node_modules
+
+## Development
+
+### Normal Workflow
 
 ```bash
-python src/web/build.py --prod
-```
-
-Concatenates all modules into single `static/app.js` for deployment.
-
-## Usage
-
-### Adding a New Component
-
-1. Add data to `state.js`:
-```javascript
-export const state = {
-    myFeature: { enabled: true, data: [] }
-};
-```
-
-2. Create component in `components.js`:
-```javascript
-export function createMyFeature(data) {
-    return `<div class="my-feature">${data}</div>`;
-}
-```
-
-3. Render it in `render.js`:
-```javascript
-function renderMyFeature() {
-    const container = document.getElementById('my-feature');
-    container.innerHTML = createMyFeature(state.myFeature.data);
-}
-```
-
-4. Call from event handler in `main.js`:
-```javascript
-if (e.target.matches('.my-button')) {
-    state.myFeature.data.push('new item');
-    render();
-}
-```
-
-That's it! No configuration, no registration, no framework ceremony.
-
-### Adding Styles
-
-Just add CSS to `src/web/css/components.css`:
-
-```css
-.my-feature {
-    padding: var(--spacing-md);
-    background: var(--background);
-    /* Use existing design tokens! */
-}
-```
-
-Run build, styles are automatically included.
-
-## Visual Design Preservation
-
-All the carefully-crafted visual details are preserved:
-
-- ✅ Pixel-perfect spacing (7px gaps, 22px padding, etc.)
-- ✅ Beautiful glowing tab effects in dark mode
-- ✅ Curved edges (6px radius throughout)
-- ✅ Subtle shadows and transitions
-- ✅ Theme system with CSS variables
-
-**Nothing was lost in the refactor** - just made maintainable.
-
-## Development Workflow
-
-### Option 1: Normal Workflow (Recommended)
-
-```bash
-./launch --dev                    # Builds automatically on startup
+./launch --dev              # Auto-builds on startup
 # Edit src/web/js/state.js
-./launch --dev                    # Rebuilds on next startup
+./launch --dev              # Rebuilds on next startup
 ```
 
-Simple! Just restart Praxis to rebuild.
-
-### Option 2: Watch Mode (Advanced)
+### Watch Mode
 
 ```bash
-# Terminal 1: Watch and auto-rebuild
+# Terminal 1
 python src/web/build.py --watch
 
-# Terminal 2: Run Praxis
+# Terminal 2
 ./launch --dev
-
-# Edit src/web/js/state.js → auto-rebuilds → refresh browser
 ```
 
-For rapid iteration without restarting Praxis.
+## Key Patterns
 
-### Production Build
+### Data Flow
 
-```bash
-python src/web/build.py --prod   # Single concatenated file
+```javascript
+// 1. All data lives in state.js
+export const state = {
+    theme: 'light',
+    messages: [],
+    tabs: [...]
+};
+
+// 2. Components are pure functions
+export function createMessage({ role, content }) {
+    return `<div class="message ${role}">${content}</div>`;
+}
+
+// 3. Events update state, then render
+document.addEventListener('click', (e) => {
+    if (e.target.matches('.tab-button')) {
+        state.activeTab = e.target.dataset.tab;
+        render();  // UI updates
+    }
+});
 ```
 
-## Why This Approach?
+## Metrics & Charts
 
-1. **Simple**: No frameworks, no build complexity
-2. **Fast**: ES6 modules load instantly in dev
-3. **Maintainable**: Each file is ~100-200 lines, easy to understand
-4. **Testable**: Pure functions are trivial to test
-5. **Functional**: Clear data flow, no hidden state
-6. **Python-Native**: Build system is just Python code
-7. **Zero Dependencies**: No npm, no node_modules
-
-## Migration Notes
-
-The old `static/app.js` (2,625 lines) has been split into:
-- `state.js` (96 lines) - Data
-- `components.js` (147 lines) - UI functions
-- `render.js` (112 lines) - Rendering logic
-- `api.js` (68 lines) - API calls
-- `websocket.js` (99 lines) - WebSocket handling
-- `main.js` (198 lines) - Events and initialization
-
-**Total: ~720 lines** (72% reduction) with better organization.
-
-CSS similarly organized from 1,700 lines into logical modules.
-
-## Next Steps
-
-- [ ] Migrate Spec tab to data-driven rendering
-- [ ] Migrate Agents tab to data-driven rendering
-- [ ] Migrate Research tab to data-driven rendering
-- [ ] Add unit tests for pure functions
-- [ ] Consider adding JSDoc types for better IDE support
+Uses **LTTB (Largest Triangle Three Buckets)** downsampling algorithm for smooth, perceptually-accurate training charts. Handles sparse early data and dense later data without visual artifacts.
 
 ---
 
-**Built with ❤️ for the Praxis AI ecosystem**
+**~720 lines total** (vs 2,625 in old monolithic app.js)

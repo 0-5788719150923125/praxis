@@ -106,7 +106,7 @@ export async function loadResearchMetricsWithCharts(force = false) {
             // No need to preemptively filter URLs; let CORS/network errors happen naturally
             try {
                 let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
-                const response = await fetch(`${baseUrl}/api/metrics?since=0&limit=1000&downsample=uniform`);
+                const response = await fetch(`${baseUrl}/api/metrics?since=0&limit=1000&downsample=lttb`);
 
                 if (!response.ok) return null;
 
@@ -280,7 +280,8 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
         const data = steps.map((step, i) => ({
             x: step,
             y: values[i]
-        })).filter(point => point.y !== null);
+        })).filter(point => point.y !== null)
+          .sort((a, b) => a.x - b.x);  // Ensure monotonic x-values
 
         const agentIdx = state.agents.availableAgents.findIndex(a => a.name === agent.name);
         const color = CONSTANTS.RUN_COLORS[agentIdx % CONSTANTS.RUN_COLORS.length];
@@ -296,7 +297,7 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
             pointHoverBackgroundColor: color,
             pointHoverBorderColor: '#fff',
             pointHoverBorderWidth: 2,
-            tension: 0.3,
+            tension: 0,  // Use straight lines, no Bezier interpolation
             fill: false
         };
     });

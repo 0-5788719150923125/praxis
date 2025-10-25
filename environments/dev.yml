@@ -5,6 +5,7 @@ overrides:
   depth: 3
   num_layers: 3
   batch_size: 1
+  target_batch_size: 16
   phi: false
   quantum: false
   ngrok: false

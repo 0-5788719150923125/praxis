@@ -12,16 +12,20 @@ metrics_bp = Blueprint("metrics", __name__)
 
 @metrics_bp.route("/api/metrics", methods=["GET", "OPTIONS"])
 def get_metrics():
-    """Get training metrics with smart downsampling and caching.
+    """Get training metrics with LTTB downsampling and caching.
 
     Query Parameters:
         since: Only return metrics after this step (default: 0)
         limit: Maximum number of data points to return (default: 1000)
-        downsample: Downsampling method - 'uniform', 'last', 'none' (default: 'uniform')
+        downsample: Downsampling method - 'lttb' (default: 'lttb')
 
     Response Headers:
         ETag: Hash of metrics file for caching
         Cache-Control: max-age=5 (cache for 5 seconds)
+
+    Downsampling:
+        Uses LTTB (Largest Triangle Three Buckets) algorithm which preserves
+        visual fidelity by selecting points that maintain curve shape.
 
     Returns:
         200: Metrics data
@@ -40,7 +44,7 @@ def get_metrics():
         # Get query parameters
         since_step = int(request.args.get('since', 0))
         limit = int(request.args.get('limit', 1000))
-        downsample_method = request.args.get('downsample', 'uniform')
+        downsample_method = request.args.get('downsample', 'lttb')
         runs_param = request.args.get('runs', '')  # Comma-separated hashes
 
         # Get current run directory
@@ -141,7 +145,7 @@ def _read_metrics_file(filepath: Path, since_step: int = 0) -> List[Dict[str, An
         since_step: Only include metrics after this step
 
     Returns:
-        List of metric dictionaries
+        List of metric dictionaries, sorted by step
     """
     metrics = []
 
@@ -159,52 +163,137 @@ def _read_metrics_file(filepath: Path, since_step: int = 0) -> List[Dict[str, An
                 # Skip malformed lines
                 continue
 
-    return metrics
+    # CRITICAL: Sort by step to ensure chronological order
+    # Metrics file may have out-of-order steps due to async logging
+    metrics.sort(key=lambda m: m.get('step', 0))
+
+    # Deduplicate by step - keep last occurrence
+    # Multiple writes to same step can happen with async logging
+    seen_steps = {}
+    for metric in metrics:
+        step = metric.get('step', 0)
+        seen_steps[step] = metric
+
+    deduplicated = list(seen_steps.values())
+    deduplicated.sort(key=lambda m: m.get('step', 0))
+
+    return deduplicated
 
 
 def _downsample_metrics(
     metrics: List[Dict[str, Any]],
     target_size: int,
-    method: str = 'uniform'
+    method: str = 'lttb'
 ) -> List[Dict[str, Any]]:
-    """Downsample metrics to target size.
+    """Downsample metrics using LTTB (Largest Triangle Three Buckets).
+
+    LTTB preserves visual fidelity by selecting points that maintain the shape
+    of the time-series curve, avoiding the temporal distortion of index-based sampling.
 
     Args:
         metrics: List of metric dictionaries
         target_size: Target number of points
-        method: Downsampling method ('uniform', 'last', 'none')
+        method: Downsampling method (only 'lttb' supported now)
 
     Returns:
-        Downsampled list of metrics
+        Downsampled list of metrics using LTTB algorithm
     """
-    if len(metrics) <= target_size or method == 'none':
+    if len(metrics) <= target_size:
         return metrics
 
-    if method == 'last':
-        # Keep only the last N points
-        return metrics[-target_size:]
+    # LTTB Algorithm (Largest Triangle Three Buckets)
+    # Select points that maximize the area of triangles formed with neighbors
+    # This preserves visual shape and trends better than uniform sampling
 
-    elif method == 'uniform':
-        # Uniform sampling: always keep first and last, sample uniformly in between
-        if target_size < 2:
+    if target_size < 3:
+        # For very small target sizes, just return first, middle, last
+        if target_size == 1:
             return [metrics[-1]]
+        return [metrics[0], metrics[-1]]
 
-        downsampled = [metrics[0]]  # Always keep first
+    # Store selected indices instead of points directly
+    selected_indices = [0]  # Always include first point
 
-        # Calculate indices for uniform sampling
-        step_size = (len(metrics) - 1) / (target_size - 1)
-        indices = [int(i * step_size) for i in range(1, target_size - 1)]
+    # Bucket size (average number of points per bucket)
+    bucket_size = (len(metrics) - 2) / (target_size - 2)
 
-        for idx in indices:
-            downsampled.append(metrics[idx])
+    for bucket_idx in range(target_size - 2):
+        # Calculate bucket range
+        bucket_start = int((bucket_idx + 0) * bucket_size) + 1
+        bucket_end = int((bucket_idx + 1) * bucket_size) + 1
 
-        downsampled.append(metrics[-1])  # Always keep last
+        # Calculate the next bucket's average point (for triangle calculation)
+        next_bucket_start = int((bucket_idx + 1) * bucket_size) + 1
+        next_bucket_end = min(int((bucket_idx + 2) * bucket_size) + 1, len(metrics))
 
-        return downsampled
+        # Calculate average point in next bucket
+        next_avg_x = 0
+        next_avg_y = 0
+        next_count = 0
 
-    else:
-        # Default to uniform
-        return _downsample_metrics(metrics, target_size, 'uniform')
+        for i in range(next_bucket_start, next_bucket_end):
+            if i >= len(metrics):
+                break
+            next_avg_x += metrics[i].get('step', i)
+            # Use 'loss' as primary metric for area calculation
+            next_avg_y += metrics[i].get('loss', metrics[i].get('val_loss', 0))
+            next_count += 1
+
+        if next_count > 0:
+            next_avg_x /= next_count
+            next_avg_y /= next_count
+
+        # Find point in current bucket that maximizes triangle area
+        prev_idx = selected_indices[-1]
+        prev_point = metrics[prev_idx]
+        prev_x = prev_point.get('step', prev_idx)
+        prev_y = prev_point.get('loss', prev_point.get('val_loss', 0))
+
+        max_area = -1
+        max_area_point = None
+
+        for i in range(bucket_start, bucket_end):
+            if i >= len(metrics):
+                break
+
+            curr_x = metrics[i].get('step', i)
+            curr_y = metrics[i].get('loss', metrics[i].get('val_loss', 0))
+
+            # Calculate triangle area
+            area = abs(
+                (prev_x - next_avg_x) * (curr_y - prev_y) -
+                (prev_x - curr_x) * (next_avg_y - prev_y)
+            ) * 0.5
+
+            if area > max_area:
+                max_area = area
+                max_area_point = i
+
+        if max_area_point is not None:
+            selected_indices.append(max_area_point)
+
+    selected_indices.append(len(metrics) - 1)  # Always include last point
+
+    # Sort indices to maintain chronological order, then extract points
+    selected_indices.sort()
+    downsampled = [metrics[i] for i in selected_indices]
+
+    # CRITICAL: Sort by actual step values to ensure monotonic time progression
+    # This prevents Chart.js from drawing backwards/zigzag lines
+    downsampled.sort(key=lambda m: m.get('step', 0))
+
+    # CRITICAL: Deduplicate by step - keep only the last occurrence of each step
+    # This prevents vertical lines when multiple points share the same step value
+    seen_steps = {}
+    for metric in downsampled:
+        step = metric.get('step', 0)
+        seen_steps[step] = metric  # Overwrites earlier occurrences
+
+    # Return deduplicated list, sorted by step
+    deduplicated = list(seen_steps.values())
+    deduplicated.sort(key=lambda m: m.get('step', 0))
+
+    return deduplicated
 
 
 def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
