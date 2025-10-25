@@ -96,15 +96,14 @@ export async function loadResearchMetricsWithCharts(force = false) {
             const agent = state.agents.availableAgents.find(a => a.name === agentName);
             if (!agent) return null;
 
-            // Skip remote agents (GitHub, external URLs) to avoid CORS spam
-            const isRemote = agent.url.includes('github.com') ||
-                           agent.url.includes('https://') && !agent.url.includes(window.location.hostname);
-
-            if (isRemote) {
-                // Silently skip remote agents
+            // Skip archived agents - backend already categorizes git hosts as "archived"
+            // This trusts backend's single source of truth instead of duplicating logic
+            if (agent.status === 'archived') {
                 return null;
             }
 
+            // Try to fetch metrics - errors are caught gracefully below
+            // No need to preemptively filter URLs; let CORS/network errors happen naturally
             try {
                 let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
                 const response = await fetch(`${baseUrl}/api/metrics?since=0&limit=1000&downsample=uniform`);
@@ -124,7 +123,8 @@ export async function loadResearchMetricsWithCharts(force = false) {
                     metadata: data.runs[0].metadata
                 };
             } catch (error) {
-                // Silently ignore fetch errors (likely CORS or network issues)
+                // Silently handle all errors (CORS, network, timeout, etc.)
+                // This gracefully handles any URL type without hardcoded filtering
                 return null;
             }
         });

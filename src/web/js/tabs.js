@@ -174,9 +174,23 @@ function renderAgents(agents, container) {
         html += '<div class="agent-row">';
         html += '<div class="agent-info">';
         html += `<div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>`;
-        if (agent.url) {
-            html += `<div class="agent-url">${escapeHtml(agent.url)}</div>`;
+
+        // Build inline display: masked_url | short_hash | url
+        let infoLine = '';
+        const displayUrl = agent.masked_url || agent.url;
+        if (displayUrl) {
+            infoLine += escapeHtml(displayUrl);
         }
+        if (agent.short_hash) {
+            infoLine += ` | ${escapeHtml(agent.short_hash)}`;
+        }
+        if (agent.url) {
+            infoLine += ` | ${escapeHtml(agent.url)}`;
+        }
+        if (infoLine) {
+            html += `<div class="agent-url">${infoLine}</div>`;
+        }
+
         html += '</div>';
         html += `<div class="agent-status ${statusClass}">`;
         html += `<span class="status-dot ${statusClass}"></span>`;
