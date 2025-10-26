@@ -280,11 +280,20 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
         const steps = metrics.steps || [];
         const values = metrics[metricKey] || [];
 
-        const data = steps.map((step, i) => ({
+        let data = steps.map((step, i) => ({
             x: step,
             y: values[i]
         })).filter(point => point.y !== null)
           .sort((a, b) => a.x - b.x);  // Ensure monotonic x-values
+
+        // For validation metrics, remove consecutive duplicate values
+        // This prevents "staircase" rendering when validation only updates every N steps
+        if (metricKey === 'val_loss' || metricKey === 'val_perplexity') {
+            data = data.filter((point, i) => {
+                if (i === 0) return true;  // Always keep first point
+                return point.y !== data[i - 1].y;  // Keep only when value changes
+            });
+        }
 
         const agentIdx = state.agents.availableAgents.findIndex(a => a.name === agent.name);
         const color = CONSTANTS.RUN_COLORS[agentIdx % CONSTANTS.RUN_COLORS.length];
