@@ -275,6 +275,10 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
 
         logits = hidden_states
 
+        # Check if we're using cut_cross_entropy to optimize logits computation
+        is_cut_ce = self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
+        skip_logits_for_training = is_cut_ce and self.training and labels is not None
+
         if self.encoder:
             """Needs encoding:"""
 
@@ -288,11 +292,16 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         elif hidden_states.size(-1) != self.config.vocab_size:
             """Needs projection/classification:"""
 
-            logits = self.head(hidden_states)
+            # Skip logits computation during training with cut_cross_entropy
+            # The loss function will compute it internally without materializing the full matrix
+            if not skip_logits_for_training:
+                logits = self.head(hidden_states)
+            # Always get classifier reference (needed for cut_cross_entropy)
             classifier = self.head.classifier
 
             # Compute backward logits if we have a separate backward head
-            if self.backward_head is not None:
+            # (only when we need them - not during cut_ce training)
+            if self.backward_head is not None and not skip_logits_for_training:
                 backward_logits = self.backward_head(hidden_states)
 
         # Apply RL policy if enabled
