@@ -25,10 +25,21 @@ def get_run_info(run: Run) -> dict:
     """Extract relevant information from a run."""
     try:
         # Get the step count - wandb tracks this in summary
-        steps = run.summary.get("_step", 0) if run.summary else 0
+        # Check if summary is a dict-like object before calling .get()
+        steps = 0
+        if run.summary and isinstance(run.summary, dict):
+            steps = run.summary.get("_step", 0)
+
+        # Alternative: try to get step from the run's lastHistoryStep if available
+        if steps == 0:
+            try:
+                if hasattr(run, "lastHistoryStep") and run.lastHistoryStep is not None:
+                    steps = run.lastHistoryStep
+            except:
+                pass
 
         # Alternative ways to get step count if _step is not available
-        if steps == 0 and run.history_keys:
+        if steps == 0 and hasattr(run, "history_keys") and run.history_keys:
             # Try to get the last step from history
             try:
                 # This might be slow for runs with long history
@@ -44,7 +55,7 @@ def get_run_info(run: Run) -> dict:
             "state": run.state,
             "steps": steps,
             "created_at": run.created_at,
-            "tags": run.tags,
+            "tags": run.tags if hasattr(run, "tags") else [],
             "url": run.url,
         }
     except Exception as e:
@@ -157,8 +168,16 @@ def format_run_table(runs: List[dict], max_rows: int = 20) -> str:
 
     for run in display_runs:
         name = run["name"][:29] if len(run["name"]) > 29 else run["name"]
-        created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
-        created_str = created.strftime("%Y-%m-%d %H:%M")
+
+        # Handle created_at formatting safely
+        try:
+            if isinstance(run["created_at"], str):
+                created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+                created_str = created.strftime("%Y-%m-%d %H:%M")
+            else:
+                created_str = str(run["created_at"])[:16] if run["created_at"] else "N/A"
+        except:
+            created_str = "N/A"
 
         lines.append(
             f"{name:<30} {run['state']:<12} {run['steps']:<10} {created_str:<20}"

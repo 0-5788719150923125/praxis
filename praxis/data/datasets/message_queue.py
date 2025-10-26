@@ -1,8 +1,9 @@
 """Message queue manager for efficient batching."""
 
-import torch
-from typing import Dict, List, Any, Optional
 from collections import deque
+from typing import Any, Dict, List, Optional
+
+import torch
 from transformers import PreTrainedTokenizer
 
 
@@ -51,54 +52,63 @@ class MessageQueueManager:
 
     def _refill_token_buffer(self):
         """Refill the token buffer from the message queue."""
-        # Process messages in chunks for efficiency
-        messages_to_process = []
-        metadata_to_process = []
-
-        initial_queue_size = len(self.message_queue)
-        initial_buffer_size = len(self.token_buffer)
+        # Process documents individually to preserve BOS -> role constraints
+        documents_to_process = []
 
         # Collect up to 50 documents or until queue is empty
-        while len(messages_to_process) < 50 and self.message_queue:
+        while len(documents_to_process) < 50 and self.message_queue:
             doc = self.message_queue.popleft()
-            messages_to_process.extend(doc["messages"])
-            # Extend metadata for each message
-            for _ in doc["messages"]:
-                metadata_to_process.append(doc["metadata"])
+            documents_to_process.append(doc)
 
-        if not messages_to_process:
+        if not documents_to_process:
             return
 
-        # Tokenize all messages at once (preserving their complete structure)
-        try:
-            text = self.tokenizer.apply_chat_template(
-                messages_to_process, tokenize=False, add_generation_prompt=False
-            )
-        except Exception as e:
-            print(
-                f"[ERROR] MessageQueue._refill_token_buffer failed to apply chat template: {e}"
-            )
-            print(
-                f"[ERROR] Messages: {messages_to_process[:2]}..."
-            )  # Show first 2 messages
-            import traceback
+        # Tokenize each document separately, then concatenate
+        all_tokens = []
+        all_metadata = []
 
-            traceback.print_exc()
+        for doc in documents_to_process:
+            messages = doc["messages"]
+            metadata = doc["metadata"]
+
+            if not messages:
+                continue
+
+            # Apply chat template to this document only
+            try:
+                text = self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=False
+                )
+            except Exception as e:
+                print(
+                    f"[ERROR] MessageQueue._refill_token_buffer failed to apply chat template: {e}"
+                )
+                print(f"[ERROR] Messages: {messages}")
+                import traceback
+
+                traceback.print_exc()
+                continue
+
+            # Tokenize this document
+            doc_tokens = self.tokenizer(
+                text, return_tensors="pt", padding=False, truncation=False
+            )["input_ids"].squeeze(0)
+
+            all_tokens.append(doc_tokens)
+
+            # Add metadata for each token in this document
+            for _ in range(len(doc_tokens)):
+                all_metadata.append(metadata)
+
+        if not all_tokens:
             return
 
-        new_tokens = self.tokenizer(
-            text, return_tensors="pt", padding=False, truncation=False
-        )["input_ids"].squeeze(0)
+        # Concatenate all document tokens
+        new_tokens = torch.cat(all_tokens)
 
         # Append to buffers
         self.token_buffer = torch.cat([self.token_buffer, new_tokens])
-        self.metadata_buffer.extend(metadata_to_process)
-
-        # Trim metadata buffer to match token buffer size
-        while len(self.metadata_buffer) > len(self.token_buffer):
-            self.metadata_buffer.pop()
-
-        docs_processed = initial_queue_size - len(self.message_queue)
+        self.metadata_buffer.extend(all_metadata)
 
     def get_batch(
         self, batch_size: int, sequence_multiplier: int = 1
@@ -151,28 +161,15 @@ class MessageQueueManager:
 
         sequences = []
         batch_metadata = []
-        total_offset = 0  # Track cumulative offset from BOS adjustments
 
         for i in range(batch_size):
             # Extract tokens for this sequence
-            start_idx = i * effective_block_size + total_offset
-
-            # BOS-safe slicing: avoid splitting right after BOS token
-            # If we're slicing immediately after a BOS token, move back to include it
-            # This creates a small overlap but preserves the BOS-role pairing
-            if start_idx > 0 and start_idx < len(self.token_buffer):
-                if self.token_buffer[start_idx - 1] == self.tokenizer.bos_token_id:
-                    # Move start position back to include the BOS token
-                    start_idx = start_idx - 1
-                    total_offset -= 1
-
+            start_idx = i * effective_block_size
             end_idx = start_idx + effective_block_size
             sequence = self.token_buffer[start_idx:end_idx]
 
             # Ensure exactly effective_block_size tokens
-            if len(sequence) > effective_block_size:
-                sequence = sequence[:effective_block_size]
-            elif len(sequence) < effective_block_size:
+            if len(sequence) < effective_block_size:
                 padding = torch.zeros(
                     effective_block_size - len(sequence), dtype=torch.long
                 )
@@ -186,10 +183,9 @@ class MessageQueueManager:
             else:
                 batch_metadata.append({})
 
-        # Remove consumed tokens and metadata (including offset from BOS adjustments)
-        actual_tokens_consumed = tokens_needed + total_offset
-        self.token_buffer = self.token_buffer[actual_tokens_consumed:]
-        self.metadata_buffer = self.metadata_buffer[actual_tokens_consumed:]
+        # Remove consumed tokens and metadata
+        self.token_buffer = self.token_buffer[tokens_needed:]
+        self.metadata_buffer = self.metadata_buffer[tokens_needed:]
 
         return {
             "batch": sequences,  # Return as list for WeightedIterableDataset to stack

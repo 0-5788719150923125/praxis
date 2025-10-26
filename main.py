@@ -35,7 +35,7 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_N
 from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 
 # Local application imports
-from praxis.api import APIServer
+# APIServer is imported locally where needed to avoid starting Flask/SocketIO at import time
 from praxis.callbacks import (
     AccumulationSchedule,
     MetricsLoggerCallback,
@@ -118,12 +118,18 @@ def setup_environment():
 
 def main():
     """Main training function."""
-    # Set up environment
-    setup_environment()
+    # Get processed arguments from CLI first (so --help works immediately)
+    from praxis.cli import initialize_cli
 
-    # Get processed arguments from CLI
     args = get_cli_args()
+    if args is None:
+        # Initialize CLI if not already done (e.g., when --help is used)
+        _parser, args, _loader = initialize_cli()
+
     processed_args = get_processed_args(args)
+
+    # Set up environment (after arg parsing, so --help doesn't trigger heavy operations)
+    setup_environment()
 
     # Extract all processed arguments as local variables
     locals().update(processed_args)

@@ -149,7 +149,8 @@ def get_cli_args():
 # Initialize CLI on module import (for backward compatibility)
 if __name__ != "__main__":
     # Only auto-initialize if imported as a module
-    if len(sys.argv) > 1:  # Don't initialize if no args provided
+    # Skip if --help or -h to avoid hanging (argparse will handle it later)
+    if len(sys.argv) > 1 and "--help" not in sys.argv and "-h" not in sys.argv:
         parser, args, integration_loader = initialize_cli()
 
 # Export public API

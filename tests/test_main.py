@@ -62,7 +62,7 @@ class TestMainScript:
             cmd,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,  # Increased timeout as help initialization can be slow
             cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         )
 

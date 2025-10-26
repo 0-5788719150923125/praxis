@@ -247,8 +247,9 @@ class APIServer:
                             return request_wrapper
 
                         wrapper = create_wrapper(middleware_func)
+                        # Only register as request middleware (not response)
+                        # Registering as both causes "write() before start_response" errors
                         register_request_middleware(wrapper)
-                        register_response_middleware(wrapper)
 
                 # Signal that the server will start
                 self.started.set()
