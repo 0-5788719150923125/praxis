@@ -25,31 +25,35 @@ class MetricsLoggerCallback(Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         """Log metrics after each training batch."""
-        # Extract metrics from trainer.callback_metrics
+        # Extract ALL metrics from trainer.callback_metrics
         metrics = {}
 
         for key, value in trainer.callback_metrics.items():
-            if key in ['loss', 'learning_rate', 'num_tokens', 'softmax_collapse',
-                      'rl_reward_mean', 'rl_reward_max', 'avg_step_time']:
-                try:
-                    # Convert tensor to float
-                    metrics[key] = float(value)
-                except (TypeError, ValueError):
-                    pass
+            try:
+                # Convert tensor to float
+                metrics[key] = float(value)
+            except (TypeError, ValueError):
+                # Skip non-numeric values
+                pass
 
         if metrics:
             self.metrics_logger.log(step=trainer.global_step, **metrics)
 
     def on_validation_end(self, trainer, pl_module):
-        """Log validation metrics."""
+        """Log ALL metrics at validation time.
+
+        This ensures validation metrics don't overwrite training metrics when
+        the API deduplicates entries by step, and allows any metric to flow through.
+        """
         metrics = {}
 
+        # Log ALL metrics without filtering
         for key, value in trainer.callback_metrics.items():
-            if key.startswith('val_'):
-                try:
-                    metrics[key] = float(value)
-                except (TypeError, ValueError):
-                    pass
+            try:
+                metrics[key] = float(value)
+            except (TypeError, ValueError):
+                # Skip non-numeric values
+                pass
 
         if metrics:
             self.metrics_logger.log(step=trainer.global_step, **metrics)

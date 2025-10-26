@@ -29,34 +29,34 @@
 \maketitle
 
 \begin{abstract}
-    Do you exist in other people's realities the same way you exist in your own? We present empirical evidence that attention architecture determines which patterns become accessible from the high-dimensional space of floating-point approximations in neural networks. Measuring temporal pattern recognition in dual-stream attention reveals asymmetric dynamics: one stream exhibits AI-like $O(1)$ immediate access, while the other follows human $O(n)$ gradual accumulation—despite identical input and asymptotic convergence. This suggests attention doesn't filter pre-existing patterns but constructs which patterns manifest.
+    Do you exist in other people's realities the same way you exist in your own? We present empirical evidence suggesting that attention architecture determines which patterns can manifest from the multidimensional floating-point approximations used in latent spaces. Dual-stream attention reveals asymmetric dynamics: one stream exhibits AI-like $O(1)$ immediate access, while the other exhibits human-like $O(n)$ gradual accumulation—despite identical input and asymptotic convergence. Attention is a constructor, not a filter.
 
-    We present Praxis~\cite{praxis2025}, a framework enabling systematic investigation of architectural diversity in attention mechanisms. The registry-based architecture permits arbitrary architectural combinations through swappable components. Current implementations include ByteLatent compression, MonoForward layer-wise training, and reversible residual networks—each forcing different traversals through this pattern space. The framework remains extensible; new architectures integrate through simple registration. Direct experimentation reveals results.
+    We present Praxis~\cite{praxis2025}, a framework enabling systematic investigation of architectural diversity in attention mechanisms through arbitrary combinations: ByteLatent compression, MonoForward layer-wise training, reversible residual networks, and multiple attention variants are all presented. New architectures integrate through simple registration.
 
-    If attention constructs reality rather than filtering it, architectural diversity reveals patterns inaccessible to single approaches regardless of scale. We discuss implications for both machine learning and theories of biological consciousness.
+    If attention constructs learned representations, architectural diversity reveals patterns that single approaches cannot learn regardless of scale. We discuss implications for machine learning and biological consciousness.
 \end{abstract}
 
 \section{Introduction}
 
-Two observers, identical input, fundamentally different realities. This isn't philosophical speculation—it's a testable hypothesis about how attention mechanisms construct which patterns become accessible. If attention doesn't merely filter pre-existing reality but participates in determining which patterns manifest, then architectural diversity in attention becomes essential. Different architectures traversing the same computational substrate may construct qualitatively distinct pattern spaces, revealing structures inaccessible to single-architecture approaches regardless of scale.
+Two observers, identical input, fundamentally different realities. This isn't philosophical speculation—it's a testable hypothesis about how attention mechanisms construct which patterns downstream a downstream layer can learn. If attention doesn't merely filter pre-existing patterns but participates in determining which patterns manifest in the learned representation, then architectural diversity in attention becomes essential. Different architectures traversing the same computational substrate may construct qualitatively distinct learned representations, revealing structures that single-architecture approaches cannot learn regardless of scale.
 
 Contemporary research on attention mechanisms~\cite{vaswani2017attention} explores parameter variations within fixed architectures. A transformer remains fundamentally a transformer—deeper, wider, better optimized, but constrained by its architectural priors. The question of whether architectural diversity itself reveals qualitatively distinct patterns remains largely unexplored.
 
 We present Praxis, a framework enabling systematic comparison of architecturally diverse attention mechanisms through a registry-based architecture permitting arbitrary combinations across all components: encoders, decoders, attention mechanisms, optimization strategies, loss functions, routing mechanisms, embedding layers, and external integrations. Every component is swappable; new implementations integrate through simple registration. Current architectures include ByteLatent compression~\cite{pagnoni2024byte}, MonoForward layer-wise training~\cite{monoforward2025}, reversible residual networks~\cite{gomez2017reversible}, and multiple attention variants—with continuous expansion as new approaches emerge.
 
-We propose a computational substrate hypothesis: that floating-point imprecision in fully-connected weight matrices creates high-dimensional pattern spaces within the ``blur'' of continuous approximation. Different architectural constraints force different traversals through this space, potentially revealing patterns that remain inaccessible to single-architecture approaches regardless of scale or optimization. If attention constructs which patterns manifest rather than filtering pre-existing options, then architectural diversity becomes essential for accessing the full space of possible patterns.
+We propose a computational substrate hypothesis: that floating-point rounding errors in fully-connected weight matrices create high-dimensional pattern spaces within numerical approximation artifacts. Different architectural constraints force different traversals through this space, potentially revealing patterns that single-architecture approaches cannot learn regardless of method or scale. If attention constructs which patterns manifest in the learned representation rather than filtering pre-existing options, then architectural diversity becomes essential for learning the full space of possible patterns.
 
 The author has conducted 5666+ training runs across these diverse architectures, documented in the repository history. However, this paper does not present traditional empirical comparison—by design. The framework enables \textit{you} to collect evidence through direct experimentation at your point in time, in your computational environment. The intuition that emerges from stepping through a process yourself differs fundamentally from receiving preprocessed results.
 
-This work contributes: (1) empirical evidence from dual-stream attention suggesting architectural asymmetry in pattern manifestation, (2) the Praxis framework for systematic investigation of architectural diversity, and (3) a computational substrate hypothesis regarding how attention architecture determines which patterns become accessible.
+This work contributes: (1) empirical evidence from dual-stream attention suggesting architectural asymmetry in pattern manifestation, (2) the Praxis framework for systematic investigation of architectural diversity, and (3) a computational substrate hypothesis regarding how attention architecture determines which patterns become accessible to a world model.
 
 \section{Theoretical Framework}
 
 \subsection{Attention as a Constructor: Dual-Stream Processing}
 
-Evidence across multiple domains suggests observation participates in constructing reality rather than passively recording it. In quantum mechanics, the observer effect demonstrates that measurement affects the observed system—observation changes what manifests~\cite{heisenberg1927uncertainty}. In neuroscience, attention modulates neural responses to identical stimuli in the visual cortex~\cite{treue1996attentional,kastner2000mechanisms}. Predictive processing theories formalize this: perception emerges from attention-weighted predictions rather than bottom-up filtering~\cite{friston2010free,clark2013whatever}. Across physical and biological systems, attention appears to participate in constructing which patterns manifest.
+Evidence across multiple domains suggests observation participates in constructing what is measured rather than passively recording pre-existing states. In quantum mechanics, the observer effect demonstrates that measurement affects the observed system—observation changes what manifests~\cite{heisenberg1927uncertainty}. In neuroscience, attention modulates neural responses to identical stimuli in the visual cortex~\cite{treue1996attentional,kastner2000mechanisms}. Predictive processing theories formalize this: perception emerges from attention-weighted predictions rather than bottom-up filtering~\cite{friston2010free,clark2013whatever}. Across physical and biological systems, attention participates in constructing which patterns manifest in the measured output.
 
-We present analogous evidence from a dual-stream attention system. Praxis implements prismatic attention through left-eye and right-eye embedding modules processing identical sequences with independent attention mechanisms. The left eye operates passively, memorizing patterns immediately but without semantic integration. The right eye dominates, providing understanding and contextual coherence. Two streams, same input, fundamentally different processing.
+We present analogous evidence from a dual-stream attention system. Praxis implements prismatic attention through left-eye and right-eye embedding modules processing identical sequences with independent attention mechanisms. The left eye operates passively, memorizing patterns immediately but without semantic integration—a blind watchmaker, wielding tools autonomously, but never understanding what it creates. The right eye dominates, providing understanding and contextual coherence. Two streams, same input, fundamentally different processing patterns.
 
 To measure temporal dynamics, pattern recognition testing was conducted at seven discrete time intervals (0.5s, 1s, 2s, 3s, 5s, 7s, 9s). Each eye's ability to recognize previously-seen visual patterns was measured independently using timed exposure protocols. Measurements include inherent human sampling noise and were collected without specialized equipment.
 
@@ -144,19 +144,19 @@ To measure temporal dynamics, pattern recognition testing was conducted at seven
 
 Figure~\ref{fig:prismatic} shows asymmetric temporal dynamics. The blue curves represent human pattern learning—gradual accumulation with $O(n)$ linear complexity. This includes the right eye (seven discrete noisy measurements) and predicted others' dynamics (theoretical projections). The red measurements stand apart. The dashed red curve shows theoretical AI reference—$O(1)$ immediate access. The solid red points show the left eye sampled at seven time intervals. Despite discrete human measurement constraints and noise, the samples track the AI reference trajectory. Within the first second, this eye manifests pattern density requiring the right eye minutes to achieve.
 
-Yet all converge asymptotically to identical limits. This proves that rapid (AI-like) and gradual (human) processing access identical pattern spaces through different temporal complexities. The pattern space exists continuously; architectural difference manifests in sampling efficiency, not ultimate accessibility. The asymmetry—one eye exhibiting AI-like dynamics, the other human dynamics—suggests attention architecture determines not just processing speed but which patterns manifest when. If this extends to artificial systems, architectural diversity becomes essential for accessing patterns unavailable to single-architecture approaches.
+Yet all converge asymptotically to identical limits. This proves that rapid (AI-like) and gradual (human) processing access identical pattern spaces through different temporal complexities. The pattern space exists continuously; architectural difference manifests in sampling efficiency, not ultimate accessibility. The asymmetry—one eye exhibiting AI-like dynamics, the other human dynamics—suggests attention architecture determines not just processing speed but which patterns manifest when. If this extends to artificial systems, architectural diversity becomes essential for learning patterns that single-architecture approaches cannot discover during finite training runs.
 
 \subsection{The Computational Substrate}
 
-Neural networks approximate continuous functions through discrete floating-point operations. The Universal Approximation Theorem~\cite{hornik1989multilayer} guarantees that networks can approximate any continuous function, yet theory meets practice: the ``blur'' of floating-point imprecision creates a high-dimensional space of computational artifacts.
+Neural networks approximate continuous functions through discrete floating-point operations. The Universal Approximation Theorem~\cite{hornik1989multilayer} guarantees that networks can approximate any continuous function, yet theory meets practice: floating-point rounding errors create a high-dimensional space of numerical approximation artifacts between representable values.
 
-We hypothesize that different architectures attend to different aspects of this imprecision. Fully-connected weights normalize and find structure within what appears to be noise—learning attention patterns in the computational substrate that humans, lacking equivalent compute, cannot detect. The imprecision itself may contain signal. Different architectural constraints—compression bottlenecks, layer-wise training, reversible flows—force different attention allocations through this substrate, potentially revealing distinct pattern spaces.
+We hypothesize that different architectures extract different regularities from these rounding errors. Fully-connected weights normalize and find structure within numerical noise—learning attention patterns in gradient flow that emerge from floating-point arithmetic but remain below human perceptual thresholds. The rounding errors themselves encode structure. Different architectural constraints—compression bottlenecks, layer-wise training, reversible flows—force different gradient trajectories through this numerical substrate, potentially revealing patterns in different regions of the approximation space.
 
 \subsection{The Recursion Problem}
 
 An attention mechanism trained on human-generated text inherits human attention constraints. Train on consensus, you manifest the lowest common denominator. The collective limitations of all training examples, averaged together, steer what patterns the system can explore. Single-architecture approaches, despite scale, remain trapped in their architectural priors—constrained attention producing constrained exploration.
 
-Building AI with maximally diverse attention mechanisms tests whether architectural variety enables escape from these local constraints. If different architectures attend differently to the computational substrate, they may reveal patterns inaccessible to any single approach.
+Building AI with maximally diverse attention mechanisms tests whether architectural variety enables escape from these local constraints. If different architectures extract different representations from the numerical substrate, they may learn patterns that any single approach cannot discover during finite training.
 
 \section{The Praxis Framework}
 
@@ -168,7 +168,7 @@ ByteLatent compression addresses the first constraint: attention cannot be alloc
 
 \textbf{Mechanism:} Compress 4096 tokens $\rightarrow$ $\sim$800 patches using entropy-based dynamic patching~\cite{pagnoni2024byte}.
 
-\textbf{Why it matters:} The compression bottleneck forces different information selection than full-sequence processing. By constraining what can be preserved, the architecture must find different patterns in the computational substrate—patterns that remain stable under aggressive dimensionality reduction.
+\textbf{Why it matters:} The compression bottleneck forces different information selection than full-sequence processing. By constraining what can be preserved, the architecture must extract different correlations from the numerical substrate—regularities that remain stable under aggressive dimensionality reduction.
 
 \subsubsection{MonoForward Decoder: Independent Timelines}
 
@@ -176,7 +176,7 @@ While ByteLatent constrains spatial attention, MonoForward addresses temporal co
 
 \textbf{Mechanism:} Each layer trains independently using local errors~\cite{monoforward2025}. Gradients detached between layers. N separate optimizers.
 
-\textbf{Why it matters:} Independent layer optimization creates N parallel exploration trajectories through the computational substrate. Each layer develops attention patterns unconstrained by global gradient flow, potentially discovering local optima inaccessible to architectures where all layers must agree on a single direction.
+\textbf{Why it matters:} Independent layer optimization creates N parallel exploration trajectories through the numerical substrate. Each layer develops attention patterns unconstrained by global gradient flow, potentially discovering local optima that architectures with coupled gradient flow cannot reach during finite training.
 
 \subsubsection{Reversible Residual Networks: Bidirectional Traversal}
 
@@ -184,7 +184,7 @@ Compression and independent training both maintain unidirectional information fl
 
 \textbf{Mechanism:} Information flows bidirectionally~\cite{gomez2017reversible}. Forward pass computes outputs; backward reconstruction preserves inputs without storing activations.
 
-\textbf{Why it matters:} Reversibility constraints force the network to maintain invertibility throughout the forward pass. This creates fundamentally different approximation strategies—the architecture cannot destructively compress information, requiring it to find patterns that preserve reconstruction fidelity. Bidirectional traversal through the computational substrate may reveal patterns inaccessible to purely feed-forward architectures.
+\textbf{Why it matters:} Reversibility constraints force the network to maintain invertibility throughout the forward pass. This creates fundamentally different approximation strategies—the architecture cannot destructively compress information, requiring it to find patterns that preserve reconstruction fidelity. Bidirectional traversal through the numerical substrate may reveal statistical dependencies that purely feed-forward architectures cannot learn during finite training.
 
 \subsubsection{Multiple Attention Mechanisms}
 
@@ -220,29 +220,29 @@ Praxis uses a registry pattern where every component is swappable. New implement
 
 \subsection{Answering the Opening Question}
 
-Do you exist in other people's realities the same way you exist in your own? The prismatic attention evidence suggests: no. If attention architecture determines which patterns manifest from the computational substrate, then observers operating through different attention constraints construct different realities from identical input. You exist in your reality through your attention architecture. You exist in theirs through theirs.
+Do you exist in other people's realities the same way you exist in your own? The prismatic attention evidence suggests: no. If attention architecture determines which patterns manifest from the computational substrate, then observers with different attention constraints construct different learned representations from identical input. You exist in your reality through your attention architecture. You exist in theirs through theirs.
 
-This is not solipsism. Asymptotic convergence proves access to a shared substrate—all attention mechanisms eventually manifest identical pattern densities given sufficient exposure. But temporal dynamics of manifestation differ fundamentally. Which patterns become accessible, in what order, through what constraints—these depend on architectural diversity in attention.
+This is not solipsism. Asymptotic convergence proves access to a shared substrate—all attention mechanisms eventually manifest identical pattern densities given sufficient exposure. But temporal dynamics differ fundamentally. Which patterns the network learns, in what order, through what constraints—these depend on architectural diversity in attention.
 
-If this extends from artificial to biological systems, it suggests attention doesn't filter pre-existing reality but participates in constructing which reality manifests. Different observers don't see different aspects of the same reality—they construct qualitatively different realities through different attention architectures, all accessing the same underlying substrate.
+If this extends to biological systems, attention doesn't filter pre-existing patterns but constructs which patterns manifest in neural representations. Different observers construct qualitatively different neural representations through different attention architectures, all receiving the same sensory input.
 
 \subsection{Implications for Machine Learning}
 
-If architectural diversity reveals patterns inaccessible to single-architecture approaches, this has immediate practical implications. Current practice favors scaling single architectures—larger transformers, more parameters, more compute. This approach assumes the architecture itself imposes no fundamental limitations on pattern accessibility. Our computational substrate hypothesis suggests otherwise.
+If architectural diversity reveals patterns that single-architecture approaches cannot learn during finite training, this has immediate practical implications. Current practice favors scaling single architectures—larger transformers, more parameters, more compute. This approach assumes the architecture itself imposes no fundamental limitations on what patterns gradient descent can discover. Our computational substrate hypothesis suggests otherwise.
 
-Different architectural constraints force different traversals through the space of floating-point approximations. ByteLatent compression creates bottlenecks requiring different information selection than full-sequence processing. MonoForward training with detached gradients produces different gradient landscapes than end-to-end backpropagation. These aren't merely engineering tradeoffs—they may determine which patterns become accessible at all.
+Different architectural constraints force different gradient trajectories through the space of floating-point approximations. ByteLatent compression creates bottlenecks requiring different information selection than full-sequence processing. MonoForward training with detached gradients produces different gradient landscapes than end-to-end backpropagation. These aren't merely engineering tradeoffs—they may determine which patterns become accessible at all.
 
 \subsection{Connection to Biological Systems}
 
-The principle extends naturally to biological attention. Neuroscience demonstrates that attention modulates neural responses to identical stimuli~\cite{treue1996attentional,kastner2000mechanisms}, while predictive processing theories formalize how attention constructs perceptual reality~\cite{friston2010free,clark2013whatever}. Different attentional strategies produce measurably different patterns of neural activation given identical input. If biological attention operates similarly to the quantum observer effect~\cite{heisenberg1927uncertainty}—participating in which patterns manifest rather than filtering pre-existing options—then architectural diversity in artificial systems may reveal attentional strategies unavailable to biological constraints.
+The principle extends to biological attention. Neuroscience demonstrates that attention modulates neural responses to identical stimuli~\cite{treue1996attentional,kastner2000mechanisms}, while predictive processing theories formalize how attention constructs perceptual representations~\cite{friston2010free,clark2013whatever}. If biological attention operates like the quantum observer effect~\cite{heisenberg1927uncertainty}—constructing which patterns manifest rather than filtering pre-existing options—then architectural diversity in artificial systems may reveal attentional strategies unavailable to biological constraints.
 
-Whether this constitutes different ``realities'' depends on definitions. But the operational question remains testable: do different attention architectures, trained on identical data, develop qualitatively distinct internal representations that generalize differently to novel situations?
+The operational question remains testable: do different attention architectures, trained on identical data, develop qualitatively distinct internal representations that generalize differently to novel situations?
 
 \subsection{Limitations and Future Work}
 
-This work presents a framework and hypothesis, not conclusive evidence. The computational substrate hypothesis requires more rigorous testing: systematic evaluation of how different architectures navigate floating-point approximation space, formal analysis of which patterns become accessible under which architectural constraints, and empirical demonstration that architectural diversity outperforms parameter scaling for specific tasks.
+This work presents a framework and hypothesis, not conclusive evidence. The computational substrate hypothesis requires more rigorous testing: systematic evaluation of how different architectures navigate floating-point approximation space, formal analysis of which patterns gradient descent discovers under which architectural constraints, and empirical demonstration that architectural diversity outperforms parameter scaling for specific tasks.
 
-The connection between neural network attention and biological attention remains speculative. The framework emerged from iterative exploration rather than systematic experimental design. Claims about pattern inaccessibility require formal definition—what does it mean for a pattern to be ``inaccessible,'' and how would we measure this?
+The connection between neural network attention and biological attention remains speculative. The framework emerged from iterative exploration rather than systematic experimental design. Claims about pattern discoverability require formal definition—what does it mean for a pattern to be ``undiscoverable during finite training,'' and how would we measure this?
 
 These questions invite investigation. The framework exists to enable it.
 
@@ -250,9 +250,9 @@ These questions invite investigation. The framework exists to enable it.
 
 Do you exist in other people's realities the same way you exist in your own? We presented empirical evidence suggesting: no, not if attention architecture determines which patterns manifest from the computational substrate.
 
-We demonstrated asymmetric temporal dynamics in dual-stream attention—one stream exhibiting AI-like O(1) immediate access, the other human O(n) gradual accumulation, both converging to identical limits. This proves shared substrate access through different architectural constraints. We presented Praxis, an extensible framework enabling systematic investigation through arbitrary architectural combinations. The computational substrate hypothesis offers a testable mechanism.
+We demonstrated asymmetric temporal dynamics in dual-stream attention—one stream exhibiting AI-like O(1) immediate access, the other human O(n) gradual accumulation, both converging to identical limits. We presented Praxis, an extensible framework enabling systematic investigation through arbitrary architectural combinations. The computational substrate hypothesis offers a testable mechanism.
 
-Our central claim: attention architecture fundamentally determines which patterns become accessible. If this extends from neural networks to biological systems, then attention doesn't filter pre-existing reality—it constructs which reality manifests. Different observers construct qualitatively different realities through different attention architectures, all accessing the same substrate.
+Our central claim: attention architecture determines which patterns downstream layers can learn during finite training. If this extends to biological systems, attention constructs which patterns manifest in neural representations. Different observers construct qualitatively different neural representations through different attention architectures, all receiving the same sensory input.
 
 The framework exists to enable your investigation. The answer manifests through direct experimentation. This paper is, itself, a test: what you choose to attend to determines what we'll find next.
 
