@@ -193,7 +193,7 @@ function renderAgents(agents, container) {
     }
 
     let html = '<div class="agents-section">';
-    html += '<div class="agents-title">Available Agents</div>';
+    html += '<div class="agents-title">Git</div>';
     html += '<div class="agents-table"><div class="agents-list">';
 
     agents.forEach(agent => {
@@ -204,17 +204,14 @@ function renderAgents(agents, container) {
         html += '<div class="agent-info">';
         html += `<div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>`;
 
-        // Build inline display: masked_url | short_hash | url
+        // Build inline display: repo: masked_url | head: short_hash
         let infoLine = '';
         const displayUrl = agent.masked_url || agent.url;
         if (displayUrl) {
-            infoLine += escapeHtml(displayUrl);
+            infoLine += `repo: ${escapeHtml(displayUrl)}`;
         }
         if (agent.short_hash) {
-            infoLine += ` | ${escapeHtml(agent.short_hash)}`;
-        }
-        if (agent.url) {
-            infoLine += ` | ${escapeHtml(agent.url)}`;
+            infoLine += ` | head: ${escapeHtml(agent.short_hash)}`;
         }
         if (infoLine) {
             html += `<div class="agent-url">${infoLine}</div>`;
