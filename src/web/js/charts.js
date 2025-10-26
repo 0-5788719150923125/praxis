@@ -203,7 +203,7 @@ function renderMetricsCharts(data, container) {
     let html = `
         <div class="research-header">
             <div class="research-title-row">
-                <h2>Training Metrics</h2>
+                <h2>Metrics</h2>
                 <div class="research-controls">
                     ${selectorHTML}
                     <button class="refresh-button" id="refresh-metrics-btn">
@@ -229,6 +229,7 @@ function renderMetricsCharts(data, container) {
     const hasLR = agents.some(a => a.metrics.learning_rate?.some(v => v !== null));
     const hasTokens = agents.some(a => a.metrics.num_tokens?.some(v => v !== null));
     const hasSoftmax = agents.some(a => a.metrics.softmax_collapse?.some(v => v !== null));
+    const hasAvgStepTime = agents.some(a => a.metrics.avg_step_time?.some(v => v !== null));
 
     // Build chart cards with spacing
     html += '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
@@ -238,6 +239,7 @@ function renderMetricsCharts(data, container) {
     if (hasPerplexity) html += '<div class="chart-card"><div class="chart-title">Perplexity</div><div class="chart-wrapper"><canvas id="chart-perplexity"></canvas></div></div>';
     if (hasLR) html += '<div class="chart-card"><div class="chart-title">Learning Rate</div><div class="chart-wrapper"><canvas id="chart-lr"></canvas></div></div>';
     if (hasTokens) html += '<div class="chart-card"><div class="chart-title">Tokens (Billions)</div><div class="chart-wrapper"><canvas id="chart-tokens"></canvas></div></div>';
+    if (hasAvgStepTime) html += '<div class="chart-card"><div class="chart-title">Average Step Time</div><div class="chart-wrapper"><canvas id="chart-avg-step-time"></canvas></div></div>';
     if (hasSoftmax) html += '<div class="chart-card"><div class="chart-title">Softmax Collapse</div><div class="chart-wrapper"><canvas id="chart-softmax"></canvas></div></div>';
 
     html += '</div>';
@@ -250,7 +252,8 @@ function renderMetricsCharts(data, container) {
         if (hasValLoss) createMultiAgentChart('chart-val-loss', 'Validation Loss', agents, 'val_loss');
         if (hasPerplexity) createMultiAgentChart('chart-perplexity', 'Perplexity', agents, 'val_perplexity');
         if (hasLR) createMultiAgentChart('chart-lr', 'Learning Rate', agents, 'learning_rate');
-        if (hasTokens) createMultiAgentChart('chart-tokens', 'Tokens (B)', agents, 'num_tokens');
+        if (hasTokens) createTokensBarChart('chart-tokens', 'Tokens (B)', agents, 'num_tokens');
+        if (hasAvgStepTime) createMultiAgentChart('chart-avg-step-time', 'Avg Step Time (s)', agents, 'avg_step_time');
         if (hasSoftmax) createMultiAgentChart('chart-softmax', 'Softmax Collapse', agents, 'softmax_collapse');
     }, 10);
 }
@@ -272,7 +275,7 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
     const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
 
     // Build datasets
-    const datasets = agents.map((agent, agentIndex) => {
+    const datasets = agents.map((agent) => {
         const metrics = agent.metrics;
         const steps = metrics.steps || [];
         const values = metrics[metricKey] || [];
@@ -369,6 +372,109 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
                         }
                     },
                     grid: { color: gridColor }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create bar chart for token counts
+ */
+function createTokensBarChart(canvasId, label, agents, metricKey) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Destroy existing
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+
+    const isDark = state.theme === 'dark';
+    const textColor = isDark ? '#e0e0e0' : '#333333';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+
+    // Extract latest token count for each agent
+    const data = agents.map((agent) => {
+        const metrics = agent.metrics;
+        const values = metrics[metricKey] || [];
+
+        // Get the last non-null value (latest token count)
+        let latestValue = null;
+        for (let i = values.length - 1; i >= 0; i--) {
+            if (values[i] !== null) {
+                latestValue = values[i];
+                break;
+            }
+        }
+
+        const agentIdx = state.agents.availableAgents.findIndex(a => a.name === agent.name);
+        const color = CONSTANTS.RUN_COLORS[agentIdx % CONSTANTS.RUN_COLORS.length];
+
+        return {
+            label: agent.name,
+            value: latestValue,
+            color: color
+        };
+    }).filter(d => d.value !== null);
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.label),
+            datasets: [{
+                label: label,
+                data: data.map(d => d.value),
+                backgroundColor: data.map(d => d.color + '80'),
+                borderColor: data.map(d => d.color),
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',  // Horizontal bars
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        label: (ctx) => `${ctx.parsed.x.toFixed(6)} billion tokens`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Tokens (Billions)',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => {
+                            if (value >= 1) {
+                                return value.toFixed(2);
+                            }
+                            return value.toFixed(6);
+                        }
+                    },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    ticks: {
+                        color: textColor,
+                        font: { size: 12 }
+                    },
+                    grid: { display: false }
                 }
             }
         }
