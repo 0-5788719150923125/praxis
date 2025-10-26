@@ -29,6 +29,9 @@ class MetricsLoggerCallback(Callback):
         metrics = {}
 
         for key, value in trainer.callback_metrics.items():
+            # Skip 'step' as we pass it explicitly
+            if key == "step":
+                continue
             try:
                 # Convert tensor to float
                 metrics[key] = float(value)
@@ -49,6 +52,9 @@ class MetricsLoggerCallback(Callback):
 
         # Log ALL metrics without filtering
         for key, value in trainer.callback_metrics.items():
+            # Skip 'step' as we pass it explicitly
+            if key == "step":
+                continue
             try:
                 metrics[key] = float(value)
             except (TypeError, ValueError):
