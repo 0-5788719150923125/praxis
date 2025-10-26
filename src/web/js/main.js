@@ -216,10 +216,26 @@ async function handleClick(e) {
 
     // Reset settings
     if (e.target.matches('#reset-settings')) {
-        if (confirm('Reset all settings to defaults?')) {
-            localStorage.clear();
-            location.reload();
+        // Clear all praxis-related settings
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('praxis_') || key === 'theme' || key === 'chatHistory')) {
+                keysToRemove.push(key);
+            }
         }
+
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+
+        // Show confirmation message
+        const confirmationDiv = document.getElementById('save-confirmation');
+        if (confirmationDiv) {
+            confirmationDiv.textContent = 'All settings cleared! Refreshing...';
+            confirmationDiv.classList.add('show');
+        }
+
+        // Reload after brief delay
+        setTimeout(() => window.location.reload(), 1500);
         return;
     }
 

@@ -6,7 +6,7 @@
 // Application state - all data lives here
 export const state = {
     // Theme
-    theme: 'light',
+    theme: 'dark',
 
     // Conversation
     messages: [],
