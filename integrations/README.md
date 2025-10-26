@@ -4,7 +4,7 @@ This directory contains optional integrations that extend Praxis with additional
 
 ## Available Integrations
 
-Each subdirectory contains an integration with its own README.md describing its purpose and usage. Run the following to see available integrations:
+Each subdirectory contains an integration with its own README.md describing its purpose and usage.
 
 ## Integration Structure
 
