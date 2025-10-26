@@ -73,8 +73,9 @@ class TiedWeights(BaseHead):
 
         # Create a simple wrapper that holds the embedding weight
         class TiedClassifier(nn.Module):
-            def __init__(self, weight):
+            def __init__(self, weight, pre_projection):
                 super().__init__()
                 self.weight = weight
+                self.pre_projection = pre_projection
 
-        return TiedClassifier(self.embedding_weight)
+        return TiedClassifier(self.embedding_weight, self.pre_projection)

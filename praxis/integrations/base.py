@@ -240,6 +240,16 @@ class BaseIntegration(ABC):
         """
         pass
 
+    def register_loss_functions(self) -> Dict[str, Any]:
+        """Register loss functions provided by this integration.
+
+        Returns:
+            Dictionary mapping loss function names to loss function classes
+
+        Note: Override this method if your integration provides loss functions.
+        """
+        return {}
+
     @property
     def is_initialized(self) -> bool:
         """Check if the integration has been initialized."""

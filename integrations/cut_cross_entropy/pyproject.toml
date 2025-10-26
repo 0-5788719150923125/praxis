@@ -1,0 +1,7 @@
+[project]
+name = "praxis-integration-cut-cross-entropy"
+version = "0.1.0"
+dependencies = [
+    "cut-cross-entropy",
+    "triton",
+]

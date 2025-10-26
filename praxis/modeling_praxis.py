@@ -147,11 +147,15 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         input_ids: torch.Tensor,
     ) -> torch.Tensor:
         """Compute the main loss using the criterion."""
+        # cut_cross_entropy needs FULL UNSHIFTED embeddings to avoid materializing shifted tensors
+        # Check by class name to avoid hard dependency on integration
+        is_cut_ce = self.criterion.__class__.__name__ == "CutCrossEntropyLoss"
+
         # Check if encoder outputs are already aligned
         if self.encoder and getattr(self.encoder, "outputs_are_aligned", False):
             return self.criterion(
                 logits=logits.contiguous(),
-                embeddings=embeddings,
+                embeddings=embeddings if is_cut_ce else embeddings,
                 classifier=classifier,
                 labels=labels,
                 input_ids=input_ids,
@@ -159,7 +163,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         else:
             return self.criterion(
                 logits=logits[..., :-1, :].contiguous(),
-                embeddings=embeddings,
+                embeddings=embeddings if is_cut_ce else embeddings[..., :-1, :].contiguous(),
                 classifier=classifier,
                 labels=labels,
                 input_ids=input_ids,
@@ -204,7 +208,7 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         # Compute backward loss
         backward_loss = self.criterion(
             logits=back_logits,
-            embeddings=embeddings,
+            embeddings=embeddings[..., 1:, :].contiguous(),
             classifier=back_classifier,
             labels=backward_labels,
             input_ids=input_ids,

@@ -1,0 +1,13 @@
+name: "cut_cross_entropy"
+version: "0.1.0"
+description: "Apple's memory-efficient cut cross-entropy loss integration for Praxis"
+
+integrations:
+  loss_functions:
+    function: "register_loss_functions"
+
+  lifecycle:
+    init: "initialize"
+
+# No conditions - always available if installed
+conditions: []

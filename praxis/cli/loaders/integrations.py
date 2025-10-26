@@ -98,8 +98,18 @@ class IntegrationBridge:
         for integration_manifest in self.integrations:
             self.loader.load_integration(integration_manifest, args, verbose=False)
 
+        # Register integration-provided loss functions
+        self._register_loss_functions()
+
         # Print summary
         self.loader.print_summary()
+
+    def _register_loss_functions(self):
+        """Register loss functions from integrations into Praxis LOSS_REGISTRY."""
+        loss_functions = self.loader.get_loss_functions()
+        if loss_functions:
+            from praxis.losses import LOSS_REGISTRY
+            LOSS_REGISTRY.update(loss_functions)
 
     def get_loader(self):
         """Get the underlying integration loader."""

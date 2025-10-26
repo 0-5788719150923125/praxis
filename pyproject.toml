@@ -25,7 +25,6 @@ dependencies = [
     "lightning",
     "lsprotocol",
     "matplotlib",
-    "cut-cross-entropy @ git+https://github.com/apple/ml-cross-entropy",
     "networkx",
     "pygls",
     "psutil",

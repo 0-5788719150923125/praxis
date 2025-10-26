@@ -31,6 +31,7 @@ class IntegrationLoader:
             "logger_providers": [],  # Functions that provide loggers
             "api_server_hooks": [],  # Functions called when API server starts
             "request_middleware": [],  # Functions that modify request/response headers
+            "loss_functions": {},  # Loss functions provided by integrations
         }
 
     def bootstrap_integrations(self, args=None) -> None:
@@ -324,6 +325,16 @@ class IntegrationLoader:
                 self.integration_registry["cleanup_dirs"].append(cleanup_dirs)
                 registered.append(f"cleanup dir ({cleanup_dirs})")
 
+        # Register loss functions
+        if hasattr(integration, "register_loss_functions"):
+            try:
+                loss_functions = integration.register_loss_functions()
+                if loss_functions:
+                    self.integration_registry["loss_functions"].update(loss_functions)
+                    registered.append(f"loss functions ({', '.join(loss_functions.keys())})")
+            except Exception as e:
+                print(f"[INTEGRATIONS] Failed to register loss functions from {integration_name}: {e}")
+
         return registered
 
     # Legacy compatibility methods
@@ -374,6 +385,10 @@ class IntegrationLoader:
     def get_request_middleware(self) -> List:
         """Get all request middleware functions."""
         return self.integration_registry["request_middleware"]
+
+    def get_loss_functions(self) -> Dict:
+        """Get all loss functions provided by integrations."""
+        return self.integration_registry["loss_functions"]
 
     def create_logger(self, cache_dir, ckpt_path=None, truncated_hash=None, **kwargs):
         """Create logger using loaded modules."""
