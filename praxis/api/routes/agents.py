@@ -66,7 +66,7 @@ def get_agents():
                 full_hash = (
                     result.stdout.strip() if result.returncode == 0 else "unknown"
                 )
-                short_hash = full_hash[:9] if len(full_hash) >= 9 else full_hash
+                short_hash = full_hash[:7] if len(full_hash) >= 7 else full_hash
             except:
                 full_hash = "unknown"
                 short_hash = "unknown"
