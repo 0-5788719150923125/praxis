@@ -578,6 +578,7 @@ def provide_dataset(tokenizer, seed, config=None, *args):
 
         def __init__(self, tokenizer):
             super().__init__(tokenizer)
+            self.dataset_path = "quantum"  # Set name for metrics tracking
             self.tokenizer = tokenizer
             self.weight = QUANTUM_WEIGHT
             self.examples_cache = []

@@ -8,6 +8,7 @@ from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.message_queue import MessageQueueManager
 from praxis.data.formatters import _rl_logger
+from praxis.logging.data_metrics_logger import DataMetricsLogger
 
 
 class InterleaveDataManager:
@@ -33,6 +34,8 @@ class InterleaveDataManager:
         tokenizer,
         block_size,
         rl_type=None,
+        run_dir=None,
+        data_metrics_log_interval=50,
     ):
         """
         Initialize the data manager with message queue.
@@ -43,6 +46,8 @@ class InterleaveDataManager:
             tokenizer: Tokenizer to use
             block_size: Sequence length for training
             rl_type: Type of RL training if applicable
+            run_dir: Directory for logging data metrics (optional)
+            data_metrics_log_interval: Log data metrics every N samples (default: 50)
         """
         self.samplers = samplers
         self.static_weights = weights.copy()
@@ -52,6 +57,16 @@ class InterleaveDataManager:
 
         # Initialize message queue manager
         self.message_queue = MessageQueueManager(tokenizer, block_size)
+
+        # Initialize data metrics logging
+        self.data_metrics_logger = None
+        self.data_metrics_log_interval = data_metrics_log_interval
+        self.samples_since_last_log = 0
+        if run_dir is not None and self.use_dynamic_weights:
+            try:
+                self.data_metrics_logger = DataMetricsLogger(run_dir=run_dir)
+            except Exception as e:
+                print(f"[WARNING] Failed to initialize data metrics logger: {e}")
 
         # Dynamic weighting setup
         if self.use_dynamic_weights:
@@ -218,6 +233,7 @@ class InterleaveDataManager:
         # Update total counts
         metrics["total_samples"] += 1
         metrics["total_tokens"] += doc_length
+        self.sampling_count += 1
 
         # Update average document length with EMA
         if metrics["avg_doc_length"] is None:
@@ -250,6 +266,13 @@ class InterleaveDataManager:
             else True
         ):
             InterleaveDataManager.shared_weights = self.dynamic_weights.copy()
+
+        # Log data metrics periodically
+        if self.data_metrics_logger is not None:
+            self.samples_since_last_log += 1
+            if self.samples_since_last_log >= self.data_metrics_log_interval:
+                self._log_data_metrics()
+                self.samples_since_last_log = 0
 
     def _calculate_target_weights(self):
         """Calculate target weights based on current metrics."""
@@ -308,4 +331,23 @@ class InterleaveDataManager:
             return [w / total for w in target_weights]
         else:
             return self.static_weights
-            return self.static_weights
+
+    def _log_data_metrics(self):
+        """Log current sampling weights and metrics to data metrics file."""
+        if self.data_metrics_logger is None:
+            return
+
+        # Build sampling weights dictionary with dataset names
+        sampling_weights = {}
+        for i, weight in enumerate(self.dynamic_weights):
+            dataset_name = self.sampler_metrics[i]["name"]
+            sampling_weights[dataset_name] = round(weight, 6)
+
+        # Log to file
+        try:
+            self.data_metrics_logger.log(
+                step=self.sampling_count,
+                sampling_weights=sampling_weights
+            )
+        except Exception as e:
+            print(f"[WARNING] Failed to log data metrics: {e}")

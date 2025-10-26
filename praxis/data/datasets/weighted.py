@@ -26,10 +26,18 @@ class WeightedIterableDataset(IterableDataset):
         supersample_chance: float = 0,
         hypersample_chance: float = 0,
         rl_type: Optional[str] = None,
+        run_dir: Optional[str] = None,
+        data_metrics_log_interval: int = 50,
     ):
         # Always use the new message queue system
         self.data_manager = InterleaveDataManager(
-            datasets, weights, tokenizer, block_size, rl_type=rl_type
+            datasets,
+            weights,
+            tokenizer,
+            block_size,
+            rl_type=rl_type,
+            run_dir=run_dir,
+            data_metrics_log_interval=data_metrics_log_interval,
         )
 
         self.batch_size = batch_size

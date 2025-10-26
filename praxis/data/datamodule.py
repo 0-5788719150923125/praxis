@@ -24,9 +24,13 @@ class PraxisDataModule(LightningDataModule):
         supersample_chance: float = 0,
         hypersample_chance: float = 0,
         rl_type: Optional[str] = None,
+        run_dir: Optional[str] = None,
+        data_metrics_log_interval: int = 50,
     ):
         super().__init__()
         self.rl_type = rl_type
+        self.run_dir = run_dir
+        self.data_metrics_log_interval = data_metrics_log_interval
         self.dataloader_manager = DataLoaderManager()  # Track dataloaders for shutdown
         self.train_datasets = self.create_datasets(
             train_datasets,
@@ -69,6 +73,8 @@ class PraxisDataModule(LightningDataModule):
             supersample_chance,
             hypersample_chance,
             rl_type=self.rl_type,
+            run_dir=self.run_dir,
+            data_metrics_log_interval=self.data_metrics_log_interval,
         )
 
     def train_dataloader(self):

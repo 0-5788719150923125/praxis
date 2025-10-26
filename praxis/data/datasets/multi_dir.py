@@ -21,8 +21,11 @@ class MultiDirectoryDataset(PraxisSampler):
         directories: List[str],
         allowed_extensions: Optional[List[str]] = [],
         excluded_dirs: Optional[List[str]] = None,
+        name: str = "files",
     ):
         super().__init__(tokenizer)
+        # Set dataset_path for proper identification in metrics
+        self.dataset_path = name
         # Normalize and resolve all directory paths
         self.cwd = os.getcwd()
         self.directories = []

@@ -462,6 +462,8 @@ def main():
         hparams,
         data_path,
         rl_type,
+        run_dir=cache_dir,
+        data_metrics_log_interval=50,
     )
 
     # create the optimizer

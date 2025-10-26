@@ -27,6 +27,8 @@ def get_datamodules(
     hparams,
     data_path,
     rl_type: Optional[str] = None,
+    run_dir: Optional[str] = None,
+    data_metrics_log_interval: int = 50,
     *args,
 ):
     """Create and configure data modules for training and validation.
@@ -128,6 +130,8 @@ def get_datamodules(
         hparams["supersample_chance"],
         hparams["hypersample_chance"],
         rl_type=rl_type,
+        run_dir=run_dir,
+        data_metrics_log_interval=data_metrics_log_interval,
     )
 
     return train_dataloader
@@ -171,13 +175,18 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         dataset.weight = args[0].get("weight", 1.0)
         return dataset
     elif format == "directory":
-        dataset = MultiDirectoryDataset(tokenizer, directories=kwargs.get("data_path"))
+        dataset = MultiDirectoryDataset(
+            tokenizer,
+            directories=kwargs.get("data_path"),
+            name="custom-files"
+        )
         dataset.weight = DIR_WEIGHT
         return dataset
     elif format == "self":
         dataset = MultiDirectoryDataset(
             tokenizer,
             directories="./",
+            name="src",
             allowed_extensions=[
                 ".bib",
                 ".cfg",

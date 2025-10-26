@@ -34,6 +34,37 @@ export async function loadAvailableAgents() {
 }
 
 /**
+ * Load data metrics for selected agents (sampling weights, etc.)
+ */
+async function loadAgentDataMetrics(agentName) {
+    const agent = state.agents.availableAgents.find(a => a.name === agentName);
+    if (!agent || agent.status === 'archived') return null;
+
+    try {
+        let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
+        const response = await fetch(`${baseUrl}/api/data-metrics?since=0&limit=1000&downsample=lttb`);
+
+        if (!response.ok) return null;
+
+        const data = await response.json();
+
+        if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
+            return null;
+        }
+
+        return {
+            name: agentName,
+            url: agent.url,
+            data_metrics: data.runs[0].data_metrics,
+            metadata: data.runs[0].metadata
+        };
+    } catch (error) {
+        // Silently handle errors (CORS, network, etc.)
+        return null;
+    }
+}
+
+/**
  * Toggle agent selector dropdown
  */
 export function toggleAgentSelector() {
@@ -142,7 +173,14 @@ export async function loadResearchMetricsWithCharts(force = false) {
             return;
         }
 
-        renderMetricsCharts({ agents: agentMetrics }, container);
+        // Also fetch data metrics (sampling weights, etc.) for each agent
+        const dataMetricsPromises = state.agents.selectedAgents.map(agentName =>
+            loadAgentDataMetrics(agentName)
+        );
+        const dataMetricsResults = await Promise.all(dataMetricsPromises);
+        const agentDataMetrics = dataMetricsResults.filter(r => r !== null);
+
+        renderMetricsCharts({ agents: agentMetrics, dataMetrics: agentDataMetrics }, container);
         state.research.loaded = true;
 
     } catch (error) {
@@ -161,6 +199,7 @@ export async function loadResearchMetricsWithCharts(force = false) {
  */
 function renderMetricsCharts(data, container) {
     const agents = data.agents || [];
+    const dataMetrics = data.dataMetrics || [];
 
     if (agents.length === 0) {
         container.innerHTML = `<div class="empty-state"><p>No data available</p></div>`;
@@ -231,6 +270,12 @@ function renderMetricsCharts(data, container) {
     const hasSoftmax = agents.some(a => a.metrics.softmax_collapse?.some(v => v !== null));
     const hasAvgStepTime = agents.some(a => a.metrics.avg_step_time?.some(v => v !== null));
 
+    // Check which data metrics exist
+    const hasSamplingWeights = dataMetrics.some(a =>
+        a.data_metrics?.sampling_weights &&
+        Object.keys(a.data_metrics.sampling_weights).length > 0
+    );
+
     // Build chart cards with spacing
     html += '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
 
@@ -241,6 +286,7 @@ function renderMetricsCharts(data, container) {
     if (hasTokens) html += '<div class="chart-card"><div class="chart-title">Tokens (Billions)</div><div class="chart-wrapper"><canvas id="chart-tokens"></canvas></div></div>';
     if (hasAvgStepTime) html += '<div class="chart-card"><div class="chart-title">Average Step Time</div><div class="chart-wrapper"><canvas id="chart-avg-step-time"></canvas></div></div>';
     if (hasSoftmax) html += '<div class="chart-card"><div class="chart-title">Softmax Collapse</div><div class="chart-wrapper"><canvas id="chart-softmax"></canvas></div></div>';
+    if (hasSamplingWeights) html += '<div class="chart-card"><div class="chart-title">Document Sampling Weights (EMA α=0.1)</div><div class="chart-wrapper"><canvas id="chart-sampling-weights"></canvas></div></div>';
 
     html += '</div>';
 
@@ -255,6 +301,7 @@ function renderMetricsCharts(data, container) {
         if (hasTokens) createTokensBarChart('chart-tokens', 'Tokens (B)', agents, 'num_tokens');
         if (hasAvgStepTime) createMultiAgentChart('chart-avg-step-time', 'Avg Step Time (s)', agents, 'avg_step_time');
         if (hasSoftmax) createMultiAgentChart('chart-softmax', 'Softmax Collapse', agents, 'softmax_collapse');
+        if (hasSamplingWeights) createSamplingWeightsChart('chart-sampling-weights', 'Weight', dataMetrics);
     }, 10);
 }
 
@@ -484,6 +531,139 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
                         font: { size: 12 }
                     },
                     grid: { display: false }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create sampling weights chart showing document weight evolution over time
+ */
+function createSamplingWeightsChart(canvasId, label, dataMetrics) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Destroy existing
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+
+    const isDark = state.theme === 'dark';
+    const textColor = isDark ? '#e0e0e0' : '#333333';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+
+    // Collect all unique document names across all agents
+    const allDocumentNames = new Set();
+    dataMetrics.forEach(agent => {
+        if (agent.data_metrics?.sampling_weights) {
+            Object.keys(agent.data_metrics.sampling_weights).forEach(name => {
+                allDocumentNames.add(name);
+            });
+        }
+    });
+
+    // Assign colors to each document dataset (not agent)
+    const documentColors = {};
+    Array.from(allDocumentNames).forEach((name, idx) => {
+        documentColors[name] = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
+    });
+
+    // Build datasets - one line per document across all agents
+    const datasets = [];
+
+    // For each agent, create lines for their documents
+    dataMetrics.forEach((agent, agentIdx) => {
+        if (!agent.data_metrics?.sampling_weights) return;
+
+        const steps = agent.data_metrics.steps || [];
+        const samplingWeights = agent.data_metrics.sampling_weights;
+
+        // Create a dataset for each document in this agent
+        Object.keys(samplingWeights).forEach(docName => {
+            const weights = samplingWeights[docName];
+
+            const data = steps.map((step, i) => ({
+                x: step,
+                y: weights[i]
+            })).filter(point => point.y !== null);
+
+            if (data.length === 0) return;
+
+            const color = documentColors[docName];
+            const agentLabel = dataMetrics.length > 1 ? ` (${agent.name})` : '';
+
+            datasets.push({
+                label: `${docName}${agentLabel}`,
+                data: data,
+                borderColor: color,
+                backgroundColor: color + '20',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                tension: 0.1,
+                fill: false
+            });
+        });
+    });
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        boxWidth: 6
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: (context) => {
+                            return `${context.dataset.label}: ${context.parsed.y.toFixed(4)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Sample Count',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: {
+                        color: textColor,
+                        maxTicksLimit: 10
+                    },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: label,
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    min: 0,
+                    max: 1,
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => value.toFixed(2)
+                    },
+                    grid: { color: gridColor }
                 }
             }
         }

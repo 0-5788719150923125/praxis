@@ -271,6 +271,7 @@ class Integration(BaseIntegration):
 
             def __init__(dataset_self, tokenizer):
                 super().__init__(tokenizer)
+                dataset_self.dataset_path = "gun"  # Set name for metrics tracking
                 dataset_self.gun = self.gun_adapter  # Use the integration's adapter
                 dataset_self.weight = 0.1
                 dataset_self.tokenizer = tokenizer
