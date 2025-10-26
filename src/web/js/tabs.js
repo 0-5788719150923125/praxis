@@ -68,6 +68,15 @@ export async function loadSpec() {
 function renderSpec(data, container) {
     let html = '';
 
+    // Peer button (floated right, before everything)
+    if (data.git_url && data.truncated_hash) {
+        const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
+        html += '<div style="float: right; margin-bottom: 1rem; position: relative;">';
+        html += `<button class="refresh-button copy-git-remote-btn" data-command="${escapeHtml(gitRemoteCmd)}">Peer with agent</button>`;
+        html += '</div>';
+        html += '<div style="clear: both;"></div>';
+    }
+
     // Hashes section
     if (data.full_hash && data.truncated_hash) {
         html += '<div class="spec-section">';
@@ -102,12 +111,13 @@ function renderSpec(data, container) {
         const command = data.command ? data.command.replace('python main.py', './launch') : './launch';
         const expMatch = command.match(/--([a-z0-9\-]+)/);
         const expName = expMatch ? expMatch[1] : 'reproduce';
-        const configFilename = `experiments/${expName}.yml`;
+        const configFilename = `./experiments/${expName}.yml`;
 
         // Link to API endpoint for config download
         const configUrl = '/api/config';
 
-        html += `<div class="spec-metadata" style="margin-bottom: 1rem;">3. <a href="${configUrl}" download="${expName}.yml" style="color: #0B9A6D; font-weight: 600; text-decoration: none;">Download</a> config, save it to: <code style="background: rgba(11, 154, 109, 0.1); padding: 2px 6px; border-radius: 3px;">${escapeHtml(configFilename)}</code></div>`;
+        html += `<div class="spec-metadata">3. <a href="${configUrl}" download="${expName}.yml" style="color: #0B9A6D; font-weight: 600; text-decoration: none;">Download</a> config, save it to:</div>`;
+        html += `<div class="spec-code" style="margin-bottom: 1rem;">${escapeHtml(configFilename)}</div>`;
 
         // Step 4: Reproduce
         html += '<div class="spec-metadata">4. Reproduce experiment:</div>';

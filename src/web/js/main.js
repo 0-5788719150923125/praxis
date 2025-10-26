@@ -279,6 +279,16 @@ async function handleClick(e) {
         }
         return;
     }
+
+    // Copy git remote command button
+    if (e.target.closest('.copy-git-remote-btn')) {
+        const button = e.target.closest('.copy-git-remote-btn');
+        const command = button.dataset.command;
+        if (command) {
+            copyToClipboard(command, button);
+        }
+        return;
+    }
 }
 
 /**
@@ -574,6 +584,44 @@ async function handleSaveSettings() {
             state.modals.settingsOpen = false;
             render();
         }, 1500);
+    }
+}
+
+/**
+ * Copy text to clipboard with visual feedback
+ */
+async function copyToClipboard(text, button) {
+    try {
+        await navigator.clipboard.writeText(text);
+
+        // Create notification positioned absolutely
+        const notification = document.createElement('div');
+        notification.textContent = 'Copied git remote to clipboard.';
+        notification.style.cssText = `
+            position: absolute;
+            top: 0;
+            right: 100%;
+            margin-right: 1rem;
+            padding: 0.5rem 1rem;
+            background: var(--success-bg, #0B9A6D);
+            color: white;
+            border-radius: 4px;
+            font-size: 14px;
+            white-space: nowrap;
+            animation: fadeIn 0.2s ease-in;
+        `;
+
+        // Insert notification into parent container
+        button.parentNode.appendChild(notification);
+
+        // Remove after 2 seconds
+        setTimeout(() => {
+            notification.style.animation = 'fadeOut 0.2s ease-out';
+            setTimeout(() => notification.remove(), 200);
+        }, 2000);
+    } catch (err) {
+        console.error('[Clipboard] Failed to copy:', err);
+        alert('Failed to copy to clipboard. Please copy manually.');
     }
 }
 
