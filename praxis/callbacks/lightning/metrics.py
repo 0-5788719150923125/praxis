@@ -1,6 +1,7 @@
 """Lightning callback to integrate with MetricsLogger."""
 
 from lightning.pytorch.callbacks import Callback
+
 from praxis.logging.metrics_logger import MetricsLogger
 
 

@@ -3,10 +3,10 @@
 import hashlib
 import io
 import json
-import yaml
 from contextlib import redirect_stdout
 from datetime import datetime
 
+import yaml
 from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
 from ..config import CSP_POLICY
@@ -170,6 +170,7 @@ def get_config():
 
     try:
         from pathlib import Path
+
         from flask import current_app
 
         # Get the config file path from app config
@@ -184,7 +185,7 @@ def get_config():
             return Response(f"Config file not found: {config_file}", status=404)
 
         # Load YAML and sort keys recursively
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config_data = yaml.safe_load(f)
 
         def sort_dict_recursively(obj):
@@ -199,11 +200,15 @@ def get_config():
         sorted_config = sort_dict_recursively(config_data)
 
         # Dump back to YAML with sorted keys
-        yaml_content = yaml.dump(sorted_config, default_flow_style=False, sort_keys=False)
+        yaml_content = yaml.dump(
+            sorted_config, default_flow_style=False, sort_keys=False
+        )
 
-        response = Response(yaml_content, mimetype='text/yaml')
+        response = Response(yaml_content, mimetype="text/yaml")
         response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Content-Disposition", f"attachment; filename={config_path.name}")
+        response.headers.add(
+            "Content-Disposition", f"attachment; filename={config_path.name}"
+        )
         return response
 
     except Exception as e:

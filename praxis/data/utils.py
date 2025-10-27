@@ -180,9 +180,7 @@ def get_dataset(format, tokenizer, seed, *args, **kwargs):
         return dataset
     elif format == "directory":
         dataset = MultiDirectoryDataset(
-            tokenizer,
-            directories=kwargs.get("data_path"),
-            name="custom-files"
+            tokenizer, directories=kwargs.get("data_path"), name="custom-files"
         )
         dataset.weight = DIR_WEIGHT
         return dataset

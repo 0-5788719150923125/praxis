@@ -355,8 +355,7 @@ class InterleaveDataManager:
         # Log to file
         try:
             self.data_metrics_logger.log(
-                step=self.sampling_count,
-                sampling_weights=sampling_weights
+                step=self.sampling_count, sampling_weights=sampling_weights
             )
         except Exception as e:
             print(f"[WARNING] Failed to log data metrics: {e}")

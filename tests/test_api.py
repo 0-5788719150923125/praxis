@@ -3,12 +3,13 @@
 import json
 import os
 import sys
-import time
 import threading
-from unittest.mock import Mock, MagicMock, patch
+import time
+from typing import Any, Generator
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
 import requests
-from typing import Generator, Any
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

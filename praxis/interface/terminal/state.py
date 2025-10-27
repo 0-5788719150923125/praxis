@@ -1,6 +1,7 @@
 """Terminal state management and restoration."""
 
 import sys
+
 import blessed
 
 

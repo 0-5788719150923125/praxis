@@ -4,8 +4,8 @@ from typing import List
 import pytest
 import torch
 
-from praxis.tokenizers.byte_level import ByteLevelTokenizer
 from praxis.tokenizers import create_tokenizer
+from praxis.tokenizers.byte_level import ByteLevelTokenizer
 
 # Only test ByteLevelTokenizer directly, StandardTokenizer needs to be loaded
 TOKENIZER_TYPES = [ByteLevelTokenizer]

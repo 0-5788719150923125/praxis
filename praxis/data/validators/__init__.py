@@ -6,4 +6,4 @@ including chat template validation, token sequence validation, and more.
 
 from .chat_template_validator import ChatTemplateValidator
 
-__all__ = ['ChatTemplateValidator']
+__all__ = ["ChatTemplateValidator"]

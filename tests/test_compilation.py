@@ -2,13 +2,14 @@
 Test suite for torch.compile functionality.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
 import torch.nn as nn
-from unittest.mock import patch, MagicMock
 
-from praxis.trainers.compile import try_compile
 from praxis import PraxisConfig, PraxisForCausalLM
+from praxis.trainers.compile import try_compile
 
 
 class TestCompilation:

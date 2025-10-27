@@ -2,22 +2,23 @@
 
 import hashlib
 from typing import Dict
+
 from transformers import PreTrainedTokenizer
 
-from praxis.data.formats import DataFormat
 from praxis.data.datasets.base import PraxisSampler, load_dataset_smart
+from praxis.data.formats import DataFormat
 from praxis.data.formatters import (
-    format_simple,
-    format_instruction,
-    format_conversation,
-    format_personachat,
-    format_messages,
-    format_soda,
-    format_wiki,
-    format_rl,
-    format_cot,
-    format_tool_calling,
     _rl_logger,
+    format_conversation,
+    format_cot,
+    format_instruction,
+    format_messages,
+    format_personachat,
+    format_rl,
+    format_simple,
+    format_soda,
+    format_tool_calling,
+    format_wiki,
 )
 
 # Format handlers mapping

@@ -1,8 +1,8 @@
 """Base trainer interface for framework-agnostic training."""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
-import logging
 
 
 class BaseTrainer(ABC):
@@ -166,6 +166,7 @@ class TrainerConfig:
 def set_seed(seed: int) -> None:
     """Set random seed for reproducibility."""
     import random
+
     import numpy as np
     import torch
 

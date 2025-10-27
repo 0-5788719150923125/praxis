@@ -1,12 +1,13 @@
 """Reinforcement learning data formatting."""
 
 import json
-import torch
 from collections import defaultdict
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import torch
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
+from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 from praxis.data.formatters.base import text_formatter
 
 

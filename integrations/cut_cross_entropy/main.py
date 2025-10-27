@@ -44,7 +44,10 @@ class CutCrossEntropyLoss(nn.Module):
         targets = kwargs.get("input_ids", labels)
 
         # Apply pre-projection if the classifier has one (e.g., TiedClassifier with different hidden/embed sizes)
-        if hasattr(classifier, "pre_projection") and classifier.pre_projection is not None:
+        if (
+            hasattr(classifier, "pre_projection")
+            and classifier.pre_projection is not None
+        ):
             embeddings = classifier.pre_projection(embeddings)
 
         return linear_cross_entropy(

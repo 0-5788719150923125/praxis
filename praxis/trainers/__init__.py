@@ -1,40 +1,44 @@
 """Trainer modules for Praxis."""
 
+from praxis.trainers.backpropagation import BackpropagationTrainer
 from praxis.trainers.base import (
-    BaseTrainer,
     BaseCallback,
     BaseLogger,
+    BaseTrainer,
     TrainerConfig,
-    set_seed,
     reset_random_state,
+    set_seed,
 )
 from praxis.trainers.compile import try_compile
-from praxis.trainers.backpropagation import BackpropagationTrainer
-from praxis.trainers.module import BaseTrainingModule
 from praxis.trainers.datamodule import BaseDataModule
-from praxis.trainers.seed import seed_everything, reset_seed
-from praxis.trainers.trainer import Trainer
 from praxis.trainers.factory import (
-    create_logger,
     create_checkpoint_callback,
+    create_logger,
     create_progress_callback,
-    disable_warnings,
     create_trainer_with_module,
+    disable_warnings,
 )
+from praxis.trainers.module import BaseTrainingModule
 from praxis.trainers.progress import BaseProgressBar, get_progress_bar_base
+from praxis.trainers.seed import reset_seed, seed_everything
+from praxis.trainers.trainer import Trainer
 
 # Framework-specific imports with graceful fallback
 try:
     from praxis.trainers.lightning_trainer import (
         LightningModule,
         LightningTrainerWrapper,
-        create_lightning_trainer,
         create_csv_logger,
+        create_lightning_trainer,
         create_model_checkpoint,
         create_progress_bar,
+    )
+    from praxis.trainers.lightning_trainer import (
         disable_warnings as disable_warnings_lightning,
-        seed_everything_lightning,
+    )
+    from praxis.trainers.lightning_trainer import (
         reset_seed_lightning,
+        seed_everything_lightning,
     )
 
     _HAS_LIGHTNING = True

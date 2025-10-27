@@ -15,10 +15,11 @@ def test_dynamic_weights_with_different_doc_sizes():
     tokenizer.bos_token = "[BOS]"
     tokenizer.sep_token = "[SEP]"
     tokenizer.pad_token = "[PAD]"
-    tokenizer.add_special_tokens({
-        'additional_special_tokens': ['[BOS]', '[SEP]', '[PAD]']
-    })
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["[BOS]", "[SEP]", "[PAD]"]}
+    )
     from praxis.tokenizers.chat_templates import DEFAULT_CHAT_TEMPLATE
+
     tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
     # Create mock samplers
@@ -39,9 +40,9 @@ def test_dynamic_weights_with_different_doc_sizes():
         return {
             "messages": [
                 {"role": "user", "content": f"Question {small_doc_call_count[0]}"},
-                {"role": "assistant", "content": f"Answer {small_doc_call_count[0]}"}
+                {"role": "assistant", "content": f"Answer {small_doc_call_count[0]}"},
             ],
-            "metadata": {"source": "small"}
+            "metadata": {"source": "small"},
         }
 
     def get_huge_doc():
@@ -49,12 +50,14 @@ def test_dynamic_weights_with_different_doc_sizes():
         # Simulate open-phi style huge documents with 50 messages
         messages = []
         for i in range(50):
-            messages.append({"role": "user", "content": f"Part {i} of huge document {huge_doc_call_count[0]}"})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Part {i} of huge document {huge_doc_call_count[0]}",
+                }
+            )
             messages.append({"role": "assistant", "content": f"Response to part {i}"})
-        return {
-            "messages": messages,
-            "metadata": {"source": "huge"}
-        }
+        return {"messages": messages, "metadata": {"source": "huge"}}
 
     sampler1.get_document = get_small_doc
     sampler2.get_document = get_huge_doc
@@ -65,7 +68,7 @@ def test_dynamic_weights_with_different_doc_sizes():
         weights=[0.5, 0.5],  # Start equal
         tokenizer=tokenizer,
         block_size=128,
-        rl_type=None
+        rl_type=None,
     )
 
     # Verify dynamic weights are enabled
@@ -74,7 +77,9 @@ def test_dynamic_weights_with_different_doc_sizes():
     print(f"\nInitial weights: {manager.weights}")
     print(f"Initial metrics:")
     for idx, metrics in manager.sampler_metrics.items():
-        print(f"  Sampler {idx} ({metrics['name']}): avg_doc_length={metrics['avg_doc_length']}")
+        print(
+            f"  Sampler {idx} ({metrics['name']}): avg_doc_length={metrics['avg_doc_length']}"
+        )
 
     # Trigger some document sampling
     # This will call _refill_message_queue which updates weights
@@ -86,8 +91,14 @@ def test_dynamic_weights_with_different_doc_sizes():
             print(f"  Current weights: {manager.weights}")
             print(f"  Metrics:")
             for idx, metrics in manager.sampler_metrics.items():
-                avg_len = f"{metrics['avg_doc_length']:.1f}" if metrics['avg_doc_length'] else 'None'
-                print(f"    {metrics['name']}: avg_doc_length={avg_len}, total_samples={metrics['total_samples']}")
+                avg_len = (
+                    f"{metrics['avg_doc_length']:.1f}"
+                    if metrics["avg_doc_length"]
+                    else "None"
+                )
+                print(
+                    f"    {metrics['name']}: avg_doc_length={avg_len}, total_samples={metrics['total_samples']}"
+                )
 
     # Check final state
     print(f"\n{'='*60}")
@@ -97,7 +108,9 @@ def test_dynamic_weights_with_different_doc_sizes():
 
     for idx, metrics in manager.sampler_metrics.items():
         print(f"\nSampler {idx} ({metrics['name']}):")
-        avg_len = f"{metrics['avg_doc_length']:.1f}" if metrics['avg_doc_length'] else 'None'
+        avg_len = (
+            f"{metrics['avg_doc_length']:.1f}" if metrics["avg_doc_length"] else "None"
+        )
         print(f"  Average doc length (estimate): {avg_len}")
         print(f"  Total samples: {metrics['total_samples']}")
         print(f"  Total tokens (estimate): {metrics['total_tokens']}")
@@ -114,13 +127,15 @@ def test_dynamic_weights_with_different_doc_sizes():
     print(f"{'='*60}")
 
     # The small-doc dataset should have higher weight (it gets sampled more)
-    assert small_weight > huge_weight, \
-        f"Small docs should have higher weight! small={small_weight:.4f}, huge={huge_weight:.4f}"
+    assert (
+        small_weight > huge_weight
+    ), f"Small docs should have higher weight! small={small_weight:.4f}, huge={huge_weight:.4f}"
 
     # Check that the ratio is significant (at least 1.5x)
     ratio = small_weight / huge_weight
-    assert ratio >= 1.5, \
-        f"Weight ratio should be significant (>=1.5x), got {ratio:.2f}x"
+    assert (
+        ratio >= 1.5
+    ), f"Weight ratio should be significant (>=1.5x), got {ratio:.2f}x"
 
     print(f"\n✓ Dynamic weighting correctly downweights huge documents!")
     print(f"✓ Small docs get {ratio:.2f}x more weight than huge docs")
@@ -134,10 +149,11 @@ def test_current_estimate_accuracy():
     tokenizer.bos_token = "[BOS]"
     tokenizer.sep_token = "[SEP]"
     tokenizer.pad_token = "[PAD]"
-    tokenizer.add_special_tokens({
-        'additional_special_tokens': ['[BOS]', '[SEP]', '[PAD]']
-    })
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["[BOS]", "[SEP]", "[PAD]"]}
+    )
     from praxis.tokenizers.chat_templates import DEFAULT_CHAT_TEMPLATE
+
     tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
     # Test documents of varying sizes
@@ -146,26 +162,35 @@ def test_current_estimate_accuracy():
             "name": "Small (2 msgs, short content)",
             "messages": [
                 {"role": "user", "content": "Hi"},
-                {"role": "assistant", "content": "Hello"}
-            ]
+                {"role": "assistant", "content": "Hello"},
+            ],
         },
         {
             "name": "Medium (4 msgs, medium content)",
             "messages": [
                 {"role": "user", "content": "Can you explain quantum mechanics?"},
-                {"role": "assistant", "content": "Quantum mechanics is the study of matter at atomic scales."},
+                {
+                    "role": "assistant",
+                    "content": "Quantum mechanics is the study of matter at atomic scales.",
+                },
                 {"role": "user", "content": "What about wave-particle duality?"},
-                {"role": "assistant", "content": "It describes how particles exhibit both wave and particle properties."}
-            ]
+                {
+                    "role": "assistant",
+                    "content": "It describes how particles exhibit both wave and particle properties.",
+                },
+            ],
         },
         {
             "name": "Huge (100 msgs, typical open-phi)",
             "messages": [
-                {"role": "user", "content": f"Question {i}"} if i % 2 == 0
-                else {"role": "assistant", "content": f"Answer to question {i//2}"}
+                (
+                    {"role": "user", "content": f"Question {i}"}
+                    if i % 2 == 0
+                    else {"role": "assistant", "content": f"Answer to question {i//2}"}
+                )
                 for i in range(100)
-            ]
-        }
+            ],
+        },
     ]
 
     print(f"\n{'='*70}")
@@ -179,8 +204,12 @@ def test_current_estimate_accuracy():
         estimate = len(messages) * 50
 
         # Actual token count
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-        tokens = tokenizer(text, return_tensors="pt", padding=False, truncation=False)["input_ids"]
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=False
+        )
+        tokens = tokenizer(text, return_tensors="pt", padding=False, truncation=False)[
+            "input_ids"
+        ]
         actual = tokens.shape[1]
 
         error_pct = abs(actual - estimate) / actual * 100

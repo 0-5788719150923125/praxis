@@ -416,6 +416,7 @@ def main():
 
         # Build web frontend before starting API server
         from src.web.build import build_dev
+
         print("[WEB] Building frontend...")
         build_dev()
         print("[WEB] ✓ Frontend build complete")
@@ -433,7 +434,7 @@ def main():
             dev_mode=(EnvironmentFeatures.get_active_environment() == "dev"),
             dashboard=dashboard,
             launch_command=full_command,
-            config_file=getattr(args, 'config_file', None),
+            config_file=getattr(args, "config_file", None),
         )
         api_server.start()
 
@@ -528,9 +529,7 @@ def main():
     )
 
     # Add metrics logger callback for web visualization
-    train_params["callbacks"].append(
-        MetricsLoggerCallback(run_dir=cache_dir)
-    )
+    train_params["callbacks"].append(MetricsLoggerCallback(run_dir=cache_dir))
 
     # Add progress bar if not using dashboard
     if progress_bar is not None:

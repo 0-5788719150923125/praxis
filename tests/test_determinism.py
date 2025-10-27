@@ -5,14 +5,14 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
+from praxis.controllers import CONTROLLER_REGISTRY
+from praxis.controllers.base import BaseController
 from praxis.data import (
     HUGGINGFACE_DATASETS,
     HuggingfaceDataset,
     InterleaveDataManager,
     text_formatter,
 )
-from praxis.controllers import CONTROLLER_REGISTRY
-from praxis.controllers.base import BaseController
 
 
 class MockConfig:

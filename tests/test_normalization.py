@@ -2,12 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from praxis.normalization import (
-    NORMALIZATION_REGISTRY,
-    LayerNorm,
-    NoNorm,
-    RMSNorm,
-)
+from praxis.normalization import NORMALIZATION_REGISTRY, LayerNorm, NoNorm, RMSNorm
 
 MODULE_CLASSES = list(NORMALIZATION_REGISTRY.values())
 

@@ -1,6 +1,6 @@
 """Message formatting utilities."""
 
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 
 def format_messages_to_chatml(messages: List[Dict[str, str]], tokenizer: Any) -> str:

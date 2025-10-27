@@ -33,7 +33,9 @@ def test_forward_pass(module_setup):
 
     embeddings = torch.randn(batch_size, seq_len, hidden_size, device=device)
     logits = classifier(embeddings)
-    labels = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len), device=device)
+    labels = torch.randint(
+        low=0, high=vocab_size, size=(batch_size, seq_len), device=device
+    )
 
     # cut_cross_entropy uses UNSHIFTED embeddings with shift=1 internally
     # Other loss functions use pre-shifted embeddings
@@ -83,7 +85,9 @@ def test_cut_cross_entropy_with_tied_weights():
     loss_function = CutCrossEntropyLoss()
     # Use FULL UNSHIFTED embeddings - cut_cross_entropy handles shifting with shift=1
     embeddings = torch.randn(batch_size, seq_len, hidden_size, device=device)
-    labels = torch.randint(low=0, high=vocab_size, size=(batch_size, seq_len), device=device)
+    labels = torch.randint(
+        low=0, high=vocab_size, size=(batch_size, seq_len), device=device
+    )
 
     # Should not raise AttributeError for missing bias
     # Pass full unshifted tensors - shift=1 handles it internally

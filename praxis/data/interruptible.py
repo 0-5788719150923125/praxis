@@ -3,9 +3,10 @@
 import signal
 import threading
 import time
-from typing import Optional, Any
-from torch.utils.data import DataLoader
+from typing import Any, Optional
+
 import torch.multiprocessing as mp
+from torch.utils.data import DataLoader
 
 
 class InterruptibleDataLoader(DataLoader):

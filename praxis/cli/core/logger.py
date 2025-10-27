@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime
 
-from .hasher import compute_args_hash, DEFAULT_EXCLUDE_FROM_HASH
+from .hasher import DEFAULT_EXCLUDE_FROM_HASH, compute_args_hash
 
 
 def log_command(exclude_from_hash=None, custom_command=None, custom_hash=None):

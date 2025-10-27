@@ -2,7 +2,8 @@
 
 import os
 import subprocess
-from flask import Blueprint, request, Response, stream_with_context
+
+from flask import Blueprint, Response, request, stream_with_context
 
 from ..config import GIT_ALLOWED_SERVICES, GIT_READ_ONLY_SERVICE
 

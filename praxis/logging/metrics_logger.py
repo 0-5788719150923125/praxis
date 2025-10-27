@@ -4,8 +4,8 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
 from threading import Lock
+from typing import Any, Dict, Optional
 
 
 class MetricsLogger:
@@ -42,7 +42,7 @@ class MetricsLogger:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Open file in append mode
-        self._file_handle = open(self.filepath, 'a', buffering=1)  # Line buffered
+        self._file_handle = open(self.filepath, "a", buffering=1)  # Line buffered
 
     def log(self, step: int, **metrics: Any) -> None:
         """Log metrics for a training step.
@@ -58,18 +58,14 @@ class MetricsLogger:
         with self.lock:
             if self._file_handle is None or self._file_handle.closed:
                 # Reopen if closed
-                self._file_handle = open(self.filepath, 'a', buffering=1)
+                self._file_handle = open(self.filepath, "a", buffering=1)
 
             # Build log entry
-            entry = {
-                "step": step,
-                "ts": datetime.now().isoformat(),
-                **metrics
-            }
+            entry = {"step": step, "ts": datetime.now().isoformat(), **metrics}
 
             # Write as single line
-            json.dump(entry, self._file_handle, separators=(',', ':'))
-            self._file_handle.write('\n')
+            json.dump(entry, self._file_handle, separators=(",", ":"))
+            self._file_handle.write("\n")
             # Note: buffering=1 means line-buffered, so flush happens automatically
 
     def close(self) -> None:

@@ -1,4 +1,4 @@
-from .base import NoSort, SORTING_REGISTRY
+from .base import SORTING_REGISTRY, NoSort
 from .native import NativeSort
 from .sinkhorn import SinkhornSort
 

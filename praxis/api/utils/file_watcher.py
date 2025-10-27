@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Optional
+
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -49,7 +50,7 @@ class TemplateChangeHandler(FileSystemEventHandler):
                             ["python", str(build_script)],
                             capture_output=True,
                             text=True,
-                            timeout=30
+                            timeout=30,
                         )
                         if result.returncode == 0:
                             print("[WEB] ✓ Build complete, reloading browser...")

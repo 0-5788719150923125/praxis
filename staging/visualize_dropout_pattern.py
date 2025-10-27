@@ -1,8 +1,9 @@
 """Visualize chaotic oscillating dropout pattern for SMEAR experts."""
 
-import numpy as np
 import matplotlib.pyplot as plt
-from praxis.distributions import chaotic_dropout_pattern, DISTRIBUTION_PROFILES
+import numpy as np
+
+from praxis.distributions import DISTRIBUTION_PROFILES, chaotic_dropout_pattern
 
 
 def plot_dropout_patterns():

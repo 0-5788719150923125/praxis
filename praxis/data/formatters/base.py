@@ -2,9 +2,10 @@
 
 import re
 from typing import Dict, List
+
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
+from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 
 
 def text_formatter(text):
@@ -71,26 +72,29 @@ def text_formatter(text):
     # - Structured data in next line is identified by "Word:" or "Multi Word:" pattern (allows spaces)
     # Match from start of string or previous newline to ensure the whole line has no colons
     pattern_header = (
-        r"(^|\n)([^:\n]+[a-zA-Z0-9])(\n)" + no_break_lookahead_basic + r"(?![a-z]|[A-Z][a-zA-Z ]*:)" + para_start
+        r"(^|\n)([^:\n]+[a-zA-Z0-9])(\n)"
+        + no_break_lookahead_basic
+        + r"(?![a-z]|[A-Z][a-zA-Z ]*:)"
+        + para_start
     )
 
     # Pattern 4: After list items - list item followed by non-list content
     # Captures: (1) full list item, (2) newline, (3) next line start
     pattern_after_list = (
-        r"(^[ \t]*[-*•+] .+[.!?a-zA-Z0-9])(\n)(?![ \t]*[-*•+] |[ \t]*[0-9]+[.\\)] |[ \t]*$)" + para_start
+        r"(^[ \t]*[-*•+] .+[.!?a-zA-Z0-9])(\n)(?![ \t]*[-*•+] |[ \t]*[0-9]+[.\\)] |[ \t]*$)"
+        + para_start
     )
 
     # Pattern 5: After numbered list items
     # Captures: (1) full numbered item, (2) newline, (3) next line start
     pattern_after_numbered_list = (
-        r"(^[ \t]*[0-9]+[.\\)] .+[.!?a-zA-Z0-9])(\n)(?![ \t]*[-*•+] |[ \t]*[0-9]+[.\\)] |[ \t]*$)" + para_start
+        r"(^[ \t]*[0-9]+[.\\)] .+[.!?a-zA-Z0-9])(\n)(?![ \t]*[-*•+] |[ \t]*[0-9]+[.\\)] |[ \t]*$)"
+        + para_start
     )
 
     # Pattern 6: Special case for code blocks ending with backticks
     # Captures: (1) backticks, (2) next line start
-    pattern_backtick = (
-        r"(```)\n" + no_break_lookahead_basic + para_start
-    )
+    pattern_backtick = r"(```)\n" + no_break_lookahead_basic + para_start
 
     # Perform the replacements in order
     # Most patterns have 3 groups: (1) end of line, (2) newline, (3) start of next line
@@ -99,13 +103,19 @@ def text_formatter(text):
     reformatted_text = re.sub(pattern_punctuation, r"\1\n\n\3", reformatted_text)
     reformatted_text = re.sub(pattern_colon, r"\1\n\n\3", reformatted_text)
     # Header pattern has 4 groups: (1) line start, (2) content, (3) newline, (4) next line start
-    reformatted_text = re.sub(pattern_header, r"\1\2\n\n\4", reformatted_text, flags=re.MULTILINE)
+    reformatted_text = re.sub(
+        pattern_header, r"\1\2\n\n\4", reformatted_text, flags=re.MULTILINE
+    )
     # Backtick pattern only has 2 groups: (1) backticks, (2) start of next line
     reformatted_text = re.sub(pattern_backtick, r"\1\n\n\2", reformatted_text)
 
     # Handle list patterns with multiline flag since they use ^
-    reformatted_text = re.sub(pattern_after_list, r"\1\n\n\3", reformatted_text, flags=re.MULTILINE)
-    reformatted_text = re.sub(pattern_after_numbered_list, r"\1\n\n\3", reformatted_text, flags=re.MULTILINE)
+    reformatted_text = re.sub(
+        pattern_after_list, r"\1\n\n\3", reformatted_text, flags=re.MULTILINE
+    )
+    reformatted_text = re.sub(
+        pattern_after_numbered_list, r"\1\n\n\3", reformatted_text, flags=re.MULTILINE
+    )
 
     # Restore original multiple newlines, but collapse 3+ newlines to 2
     reformatted_text = re.sub(

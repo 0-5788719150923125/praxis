@@ -51,8 +51,7 @@ class MessageQueueManager:
         self.chat_validator = None
         if self.enable_chat_validation:
             self.chat_validator = ChatTemplateValidator(
-                tokenizer=tokenizer,
-                strict_mode=strict_chat_validation
+                tokenizer=tokenizer, strict_mode=strict_chat_validation
             )
 
         # Statistics for validation
@@ -126,9 +125,7 @@ class MessageQueueManager:
             if self.chat_validator is not None:
                 self.validation_stats["documents_validated"] += 1
                 is_valid, report = self.chat_validator.validate_and_report(
-                    doc_tokens,
-                    messages=messages,
-                    formatted_text=text
+                    doc_tokens, messages=messages, formatted_text=text
                 )
 
                 if not is_valid:
@@ -139,7 +136,9 @@ class MessageQueueManager:
                         raise ValueError(f"Chat template validation failed:\n{report}")
                     else:
                         # Log warning and skip this document
-                        print(f"[WARNING] Chat template validation failed, skipping document:")
+                        print(
+                            f"[WARNING] Chat template validation failed, skipping document:"
+                        )
                         print(report)
                         self.validation_stats["documents_skipped"] += 1
                         continue

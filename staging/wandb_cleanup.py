@@ -14,11 +14,12 @@ Usage:
 
 import argparse
 import sys
+import time
+from datetime import datetime
 from typing import List, Optional
+
 import wandb
 from wandb.apis.public import Run
-from datetime import datetime
-import time
 
 
 def get_run_info(run: Run) -> dict:
@@ -172,10 +173,14 @@ def format_run_table(runs: List[dict], max_rows: int = 20) -> str:
         # Handle created_at formatting safely
         try:
             if isinstance(run["created_at"], str):
-                created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+                created = datetime.fromisoformat(
+                    run["created_at"].replace("Z", "+00:00")
+                )
                 created_str = created.strftime("%Y-%m-%d %H:%M")
             else:
-                created_str = str(run["created_at"])[:16] if run["created_at"] else "N/A"
+                created_str = (
+                    str(run["created_at"])[:16] if run["created_at"] else "N/A"
+                )
         except:
             created_str = "N/A"
 

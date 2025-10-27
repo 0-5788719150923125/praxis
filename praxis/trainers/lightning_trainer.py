@@ -1,20 +1,16 @@
 """PyTorch Lightning trainer implementation."""
 
-from typing import Any, Dict, List, Optional, Union
 import warnings
+from typing import Any, Dict, List, Optional, Union
 
 # Lightning imports - centralized here
 from lightning.fabric.utilities.seed import reset_seed, seed_everything
 from lightning.pytorch import LightningModule, Trainer
-from lightning.pytorch.callbacks import (
-    Callback,
-    ModelCheckpoint,
-    TQDMProgressBar,
-)
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.utilities import disable_possible_user_warnings
 
-from praxis.trainers.base import BaseTrainer, BaseCallback, BaseLogger, TrainerConfig
+from praxis.trainers.base import BaseCallback, BaseLogger, BaseTrainer, TrainerConfig
 
 
 class LightningTrainerWrapper(BaseTrainer):

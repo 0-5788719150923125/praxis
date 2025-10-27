@@ -1,13 +1,14 @@
 """PyTorch Lightning DataModule for Praxis."""
 
 import multiprocessing as mp
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from lightning.pytorch.core.datamodule import LightningDataModule
 from torch.utils.data import DataLoader
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets import WeightedIterableDataset
-from praxis.data.interruptible import InterruptibleDataLoader, DataLoaderManager
+from praxis.data.interruptible import DataLoaderManager, InterruptibleDataLoader
 
 
 class PraxisDataModule(LightningDataModule):

@@ -109,6 +109,7 @@ class IntegrationBridge:
         loss_functions = self.loader.get_loss_functions()
         if loss_functions:
             from praxis.losses import LOSS_REGISTRY
+
             LOSS_REGISTRY.update(loss_functions)
 
     def get_loader(self):

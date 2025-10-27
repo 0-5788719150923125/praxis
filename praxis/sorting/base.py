@@ -1,6 +1,7 @@
+from typing import Dict, Optional, Type
+
 import torch
 import torch.nn as nn
-from typing import Dict, Type, Optional
 
 
 class NoSort(nn.Module):

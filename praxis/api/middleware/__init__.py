@@ -1,6 +1,7 @@
 """Middleware registration and management."""
 
-from typing import List, Tuple, Callable, Any
+from typing import Any, Callable, List, Tuple
+
 from flask import Request, Response
 
 # Global middleware registries

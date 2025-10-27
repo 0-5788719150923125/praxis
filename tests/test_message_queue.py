@@ -15,12 +15,13 @@ def test_bos_token_constraint():
     tokenizer.pad_token = "[PAD]"
 
     # Add special tokens
-    tokenizer.add_special_tokens({
-        'additional_special_tokens': ['[BOS]', '[SEP]', '[PAD]']
-    })
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["[BOS]", "[SEP]", "[PAD]"]}
+    )
 
     # Set chat template
     from praxis.tokenizers.chat_templates import DEFAULT_CHAT_TEMPLATE
+
     tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
     # Create message queue manager
@@ -35,7 +36,7 @@ def test_bos_token_constraint():
                 {"role": "user", "content": f"Hello {i}"},
                 {"role": "assistant", "content": f"Hi there {i}!"},
             ],
-            "metadata": {"doc_id": i}
+            "metadata": {"doc_id": i},
         }
         queue_manager.add_document(document)
 
@@ -51,7 +52,9 @@ def test_bos_token_constraint():
 
     # Valid role tokens that can follow BOS
     valid_roles = ["system", "developer", "assistant", "user"]
-    valid_role_ids = [tokenizer.encode(role, add_special_tokens=False)[0] for role in valid_roles]
+    valid_role_ids = [
+        tokenizer.encode(role, add_special_tokens=False)[0] for role in valid_roles
+    ]
 
     # Check each sequence
     for seq_idx, sequence in enumerate(batch_tensor):
@@ -67,7 +70,9 @@ def test_bos_token_constraint():
                 next_token = sequence[pos + 1].item()
                 next_token_str = tokenizer.decode([next_token])
 
-                print(f"  BOS at position {pos} -> next token: '{next_token_str}' (id={next_token})")
+                print(
+                    f"  BOS at position {pos} -> next token: '{next_token_str}' (id={next_token})"
+                )
 
                 # Check if next token is a valid role
                 is_valid = next_token in valid_role_ids
@@ -75,8 +80,7 @@ def test_bos_token_constraint():
                 if not is_valid:
                     # Check if it's part of a role word (tokenizer may split roles)
                     is_role_prefix = any(
-                        next_token_str.lower().strip() in role
-                        for role in valid_roles
+                        next_token_str.lower().strip() in role for role in valid_roles
                     )
 
                     if not is_role_prefix:
@@ -101,11 +105,12 @@ def test_per_document_tokenization():
     tokenizer.sep_token = "[SEP]"
     tokenizer.pad_token = "[PAD]"
 
-    tokenizer.add_special_tokens({
-        'additional_special_tokens': ['[BOS]', '[SEP]', '[PAD]']
-    })
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": ["[BOS]", "[SEP]", "[PAD]"]}
+    )
 
     from praxis.tokenizers.chat_templates import DEFAULT_CHAT_TEMPLATE
+
     tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
     # Create message queue manager
@@ -118,7 +123,7 @@ def test_per_document_tokenization():
             {"role": "user", "content": "DOCUMENT_ONE"},
             {"role": "assistant", "content": "Response one"},
         ],
-        "metadata": {"doc_id": 1}
+        "metadata": {"doc_id": 1},
     }
 
     doc2 = {
@@ -126,7 +131,7 @@ def test_per_document_tokenization():
             {"role": "user", "content": "DOCUMENT_TWO"},
             {"role": "assistant", "content": "Response two"},
         ],
-        "metadata": {"doc_id": 2}
+        "metadata": {"doc_id": 2},
     }
 
     queue_manager.add_document(doc1)

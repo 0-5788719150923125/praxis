@@ -1,8 +1,9 @@
 """Parameter counting utilities for models and optimizers."""
 
+from typing import Any, Dict, Optional
+
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
 
 
 def count_model_parameters(model: nn.Module) -> int:

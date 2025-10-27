@@ -3,14 +3,15 @@
 import json
 import random
 from typing import Dict, List
+
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
+from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 from praxis.data.formatters.base import (
-    text_formatter,
-    repair_text_punctuation,
     repair_broken_emoticons,
+    repair_text_punctuation,
     simple_truecase,
+    text_formatter,
 )
 
 

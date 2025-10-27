@@ -37,23 +37,25 @@ def get_metrics():
     if request.method == "OPTIONS":
         response = jsonify({"status": "ok"})
         response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type, If-None-Match")
+        response.headers.add(
+            "Access-Control-Allow-Headers", "Content-Type, If-None-Match"
+        )
         response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
         return response
 
     try:
         # Get query parameters
-        since_step = int(request.args.get('since', 0))
-        limit = int(request.args.get('limit', 1000))
-        downsample_method = request.args.get('downsample', 'lttb')
-        runs_param = request.args.get('runs', '')  # Comma-separated hashes
+        since_step = int(request.args.get("since", 0))
+        limit = int(request.args.get("limit", 1000))
+        downsample_method = request.args.get("downsample", "lttb")
+        runs_param = request.args.get("runs", "")  # Comma-separated hashes
 
         # Get current run directory
         current_hash = current_app.config.get("truncated_hash", "unknown")
 
         # Parse runs to fetch
         if runs_param:
-            run_hashes = [h.strip() for h in runs_param.split(',') if h.strip()]
+            run_hashes = [h.strip() for h in runs_param.split(",") if h.strip()]
         else:
             run_hashes = [current_hash]
 
@@ -85,33 +87,40 @@ def get_metrics():
             # Transform to API format
             metrics_data = _transform_metrics(raw_metrics)
 
-            all_runs_data.append({
-                "hash": run_hash,
-                "is_current": run_hash == current_hash,
-                "metrics": metrics_data,
-                "metadata": {
-                    "model_hash": run_hash,
-                    "last_updated": stat.st_mtime,
-                    "num_points": len(raw_metrics),
-                    "downsampled": len(raw_metrics) < limit,
-                    "first_step": raw_metrics[0]["step"] if raw_metrics else 0,
-                    "last_step": raw_metrics[-1]["step"] if raw_metrics else 0
+            all_runs_data.append(
+                {
+                    "hash": run_hash,
+                    "is_current": run_hash == current_hash,
+                    "metrics": metrics_data,
+                    "metadata": {
+                        "model_hash": run_hash,
+                        "last_updated": stat.st_mtime,
+                        "num_points": len(raw_metrics),
+                        "downsampled": len(raw_metrics) < limit,
+                        "first_step": raw_metrics[0]["step"] if raw_metrics else 0,
+                        "last_step": raw_metrics[-1]["step"] if raw_metrics else 0,
+                    },
                 }
-            })
+            )
 
         if not all_runs_data:
-            return jsonify({
-                "status": "no_data",
-                "message": "No metrics found for the requested runs"
-            }), 404
+            return (
+                jsonify(
+                    {
+                        "status": "no_data",
+                        "message": "No metrics found for the requested runs",
+                    }
+                ),
+                404,
+            )
 
         # Calculate combined ETag
-        etag = hashlib.md5('|'.join(etag_parts).encode()).hexdigest()
+        etag = hashlib.md5("|".join(etag_parts).encode()).hexdigest()
 
         # Check if client has cached version
-        if request.headers.get('If-None-Match') == etag:
+        if request.headers.get("If-None-Match") == etag:
             response = jsonify({"status": "not_modified"})
-            response.headers['ETag'] = etag
+            response.headers["ETag"] = etag
             return response, 304
 
         # Build response
@@ -122,13 +131,13 @@ def get_metrics():
             "metadata": {
                 "total_params": current_app.config.get("total_params", "N/A"),
                 "current_hash": current_hash,
-                "num_runs": len(all_runs_data)
-            }
+                "num_runs": len(all_runs_data),
+            },
         }
 
         response = jsonify(response_data)
-        response.headers['ETag'] = etag
-        response.headers['Cache-Control'] = 'max-age=5'  # Cache for 5 seconds
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = "max-age=5"  # Cache for 5 seconds
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
@@ -150,7 +159,7 @@ def _read_metrics_file(filepath: Path, since_step: int = 0) -> List[Dict[str, An
     """
     metrics = []
 
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -166,25 +175,23 @@ def _read_metrics_file(filepath: Path, since_step: int = 0) -> List[Dict[str, An
 
     # CRITICAL: Sort by step to ensure chronological order
     # Metrics file may have out-of-order steps due to async logging
-    metrics.sort(key=lambda m: m.get('step', 0))
+    metrics.sort(key=lambda m: m.get("step", 0))
 
     # Deduplicate by step - keep last occurrence
     # Multiple writes to same step can happen with async logging
     seen_steps = {}
     for metric in metrics:
-        step = metric.get('step', 0)
+        step = metric.get("step", 0)
         seen_steps[step] = metric
 
     deduplicated = list(seen_steps.values())
-    deduplicated.sort(key=lambda m: m.get('step', 0))
+    deduplicated.sort(key=lambda m: m.get("step", 0))
 
     return deduplicated
 
 
 def _downsample_metrics(
-    metrics: List[Dict[str, Any]],
-    target_size: int,
-    method: str = 'lttb'
+    metrics: List[Dict[str, Any]], target_size: int, method: str = "lttb"
 ) -> List[Dict[str, Any]]:
     """Downsample metrics using LTTB (Largest Triangle Three Buckets).
 
@@ -235,9 +242,9 @@ def _downsample_metrics(
         for i in range(next_bucket_start, next_bucket_end):
             if i >= len(metrics):
                 break
-            next_avg_x += metrics[i].get('step', i)
+            next_avg_x += metrics[i].get("step", i)
             # Use 'loss' as primary metric for area calculation
-            next_avg_y += metrics[i].get('loss', metrics[i].get('val_loss', 0))
+            next_avg_y += metrics[i].get("loss", metrics[i].get("val_loss", 0))
             next_count += 1
 
         if next_count > 0:
@@ -247,8 +254,8 @@ def _downsample_metrics(
         # Find point in current bucket that maximizes triangle area
         prev_idx = selected_indices[-1]
         prev_point = metrics[prev_idx]
-        prev_x = prev_point.get('step', prev_idx)
-        prev_y = prev_point.get('loss', prev_point.get('val_loss', 0))
+        prev_x = prev_point.get("step", prev_idx)
+        prev_y = prev_point.get("loss", prev_point.get("val_loss", 0))
 
         max_area = -1
         max_area_point = None
@@ -257,14 +264,17 @@ def _downsample_metrics(
             if i >= len(metrics):
                 break
 
-            curr_x = metrics[i].get('step', i)
-            curr_y = metrics[i].get('loss', metrics[i].get('val_loss', 0))
+            curr_x = metrics[i].get("step", i)
+            curr_y = metrics[i].get("loss", metrics[i].get("val_loss", 0))
 
             # Calculate triangle area
-            area = abs(
-                (prev_x - next_avg_x) * (curr_y - prev_y) -
-                (prev_x - curr_x) * (next_avg_y - prev_y)
-            ) * 0.5
+            area = (
+                abs(
+                    (prev_x - next_avg_x) * (curr_y - prev_y)
+                    - (prev_x - curr_x) * (next_avg_y - prev_y)
+                )
+                * 0.5
+            )
 
             if area > max_area:
                 max_area = area
@@ -281,18 +291,18 @@ def _downsample_metrics(
 
     # CRITICAL: Sort by actual step values to ensure monotonic time progression
     # This prevents Chart.js from drawing backwards/zigzag lines
-    downsampled.sort(key=lambda m: m.get('step', 0))
+    downsampled.sort(key=lambda m: m.get("step", 0))
 
     # CRITICAL: Deduplicate by step - keep only the last occurrence of each step
     # This prevents vertical lines when multiple points share the same step value
     seen_steps = {}
     for metric in downsampled:
-        step = metric.get('step', 0)
+        step = metric.get("step", 0)
         seen_steps[step] = metric  # Overwrites earlier occurrences
 
     # Return deduplicated list, sorted by step
     deduplicated = list(seen_steps.values())
-    deduplicated.sort(key=lambda m: m.get('step', 0))
+    deduplicated.sort(key=lambda m: m.get("step", 0))
 
     return deduplicated
 
@@ -329,8 +339,8 @@ def _transform_metrics(raw_metrics: List[Dict[str, Any]]) -> Dict[str, List[Any]
             result[key].append(entry.get(key, None))
 
     # Rename 'step' to 'steps' for consistency
-    if 'step' in result:
-        result['steps'] = result.pop('step')
+    if "step" in result:
+        result["steps"] = result.pop("step")
 
     return result
 
@@ -354,10 +364,7 @@ def get_runs():
         runs_dir = Path("build/runs")
 
         if not runs_dir.exists():
-            return jsonify({
-                "status": "ok",
-                "runs": []
-            })
+            return jsonify({"status": "ok", "runs": []})
 
         runs = []
         current_hash = current_app.config.get("truncated_hash", "unknown")
@@ -379,7 +386,7 @@ def get_runs():
             config = {}
             if config_file.exists():
                 try:
-                    with open(config_file, 'r') as f:
+                    with open(config_file, "r") as f:
                         config = json.load(f)
                 except:
                     pass
@@ -390,30 +397,28 @@ def get_runs():
             # Count lines in metrics file to get step count
             num_steps = 0
             try:
-                with open(metrics_file, 'r') as f:
+                with open(metrics_file, "r") as f:
                     num_steps = sum(1 for line in f if line.strip())
             except:
                 pass
 
-            runs.append({
-                "hash": truncated_hash,
-                "is_current": truncated_hash == current_hash,
-                "command": config.get("command", "unknown"),
-                "created": config.get("created"),
-                "last_updated": config.get("last_updated"),
-                "metrics_updated": stat.st_mtime,
-                "num_steps": num_steps,
-                "has_metrics": metrics_file.exists()
-            })
+            runs.append(
+                {
+                    "hash": truncated_hash,
+                    "is_current": truncated_hash == current_hash,
+                    "command": config.get("command", "unknown"),
+                    "created": config.get("created"),
+                    "last_updated": config.get("last_updated"),
+                    "metrics_updated": stat.st_mtime,
+                    "num_steps": num_steps,
+                    "has_metrics": metrics_file.exists(),
+                }
+            )
 
         # Sort by last updated (most recent first)
         runs.sort(key=lambda x: x.get("metrics_updated", 0), reverse=True)
 
-        response_data = {
-            "status": "ok",
-            "runs": runs,
-            "current_hash": current_hash
-        }
+        response_data = {"status": "ok", "runs": runs, "current_hash": current_hash}
 
         response = jsonify(response_data)
         response.headers.add("Access-Control-Allow-Origin", "*")

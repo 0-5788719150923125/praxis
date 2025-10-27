@@ -1,14 +1,14 @@
 import itertools
 import time
-from typing import List, Tuple, Dict
+from typing import Dict, List, Tuple
 
 import pytest
 import torch
 import torch.nn as nn
 
 from praxis import PraxisConfig
-from praxis.attention.syntaxes import SyntaxesAttention
 from praxis.attention.components import VanillaMHA
+from praxis.attention.syntaxes import SyntaxesAttention
 
 
 class TestSyntaxesAttention:

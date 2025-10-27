@@ -9,9 +9,9 @@ sequence lengths.
 Uses straight-through estimation for backpropagation through complex operations.
 """
 
+import math
 from typing import Dict, Optional, Tuple
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

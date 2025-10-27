@@ -4,8 +4,8 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
-from praxis.data.validators import ChatTemplateValidator
 from praxis.data.datasets.message_queue import MessageQueueManager
+from praxis.data.validators import ChatTemplateValidator
 from praxis.tokenizers.standard import StandardTokenizer
 
 
@@ -91,7 +91,9 @@ def test_invalid_random_text_after_bos(tokenizer, validator):
     """Test that random text after BOS fails validation."""
     # Manually construct invalid sequence: [BOS] + "random text"
     bos_id = validator.bos_token_id
-    random_text_ids = tokenizer("random text here", return_tensors="pt")["input_ids"].squeeze(0)
+    random_text_ids = tokenizer("random text here", return_tensors="pt")[
+        "input_ids"
+    ].squeeze(0)
 
     # Create invalid sequence
     invalid_sequence = torch.cat([torch.tensor([bos_id]), random_text_ids])
@@ -161,7 +163,7 @@ def test_validation_report_formatting(tokenizer, validator):
         violations,
         messages=messages,
         formatted_text="[BOS]xyz123",
-        token_ids=invalid_sequence
+        token_ids=invalid_sequence,
     )
 
     # Check report contains key information
@@ -188,7 +190,7 @@ def test_message_queue_integration(tokenizer):
             {"role": "user", "content": "Hello!"},
             {"role": "assistant", "content": "Hi!"},
         ],
-        "metadata": {"source": "test"}
+        "metadata": {"source": "test"},
     }
 
     queue.add_document(valid_doc)
@@ -216,10 +218,7 @@ def test_message_queue_validation_disabled(tokenizer):
     assert queue.chat_validator is None
 
     # Add document
-    doc = {
-        "messages": [{"role": "user", "content": "test"}],
-        "metadata": {}
-    }
+    doc = {"messages": [{"role": "user", "content": "test"}], "metadata": {}}
     queue.add_document(doc)
     queue._refill_token_buffer()
 
@@ -236,7 +235,9 @@ def test_all_roles_recognized(tokenizer, validator):
         messages = [{"role": role, "content": "Test content"}]
 
         # Apply chat template
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=False
+        )
         token_ids = tokenizer(text, return_tensors="pt")["input_ids"].squeeze(0)
 
         # Validate
@@ -288,8 +289,9 @@ def test_bos_in_content_ignored(tokenizer, validator):
         is_valid, violations = validator.validate_token_sequence(token_ids, messages)
 
         # Even if there's a BOS in content, it should be ignored
-        assert is_valid or len(violations) == 0, \
-            f"BOS in content was incorrectly validated: {violations}"
+        assert (
+            is_valid or len(violations) == 0
+        ), f"BOS in content was incorrectly validated: {violations}"
 
 
 def test_structural_vs_content_bos(tokenizer, validator):
@@ -303,22 +305,32 @@ def test_structural_vs_content_bos(tokenizer, validator):
     bos_id = validator.bos_token_id
 
     # Build: [BOS] + "assistant" + "Hello" + [BOS] + "World" + [SEP]
-    assistant_ids = tokenizer("assistant", add_special_tokens=False, return_tensors="pt")["input_ids"].squeeze(0)
-    hello_ids = tokenizer("Hello", add_special_tokens=False, return_tensors="pt")["input_ids"].squeeze(0)
-    world_ids = tokenizer("World", add_special_tokens=False, return_tensors="pt")["input_ids"].squeeze(0)
+    assistant_ids = tokenizer(
+        "assistant", add_special_tokens=False, return_tensors="pt"
+    )["input_ids"].squeeze(0)
+    hello_ids = tokenizer("Hello", add_special_tokens=False, return_tensors="pt")[
+        "input_ids"
+    ].squeeze(0)
+    world_ids = tokenizer("World", add_special_tokens=False, return_tensors="pt")[
+        "input_ids"
+    ].squeeze(0)
 
-    sequence = torch.cat([
-        torch.tensor([bos_id]),  # Structural BOS (position 0)
-        assistant_ids,
-        hello_ids,
-        torch.tensor([bos_id]),  # Content BOS (not after SEP)
-        world_ids,
-        torch.tensor([sep_id]),
-    ])
+    sequence = torch.cat(
+        [
+            torch.tensor([bos_id]),  # Structural BOS (position 0)
+            assistant_ids,
+            hello_ids,
+            torch.tensor([bos_id]),  # Content BOS (not after SEP)
+            world_ids,
+            torch.tensor([sep_id]),
+        ]
+    )
 
     # Validate
     is_valid, violations = validator.validate_token_sequence(sequence)
 
     # Should be valid - only the first BOS is validated, and it's followed by "assistant"
-    assert is_valid, f"Structural validation incorrectly flagged content BOS: {violations}"
+    assert (
+        is_valid
+    ), f"Structural validation incorrectly flagged content BOS: {violations}"
     assert len(violations) == 0

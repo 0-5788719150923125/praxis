@@ -194,8 +194,8 @@ def create_trainer_with_module(
     capabilities = get_trainer_capabilities(trainer_type)
 
     if capabilities.requires_custom_init and trainer_type == "mono_forward":
-        from praxis.trainers.trainer import Trainer
         from praxis.trainers.mono_forward_pipeline import MonoForwardPipelineModule
+        from praxis.trainers.trainer import Trainer
 
         # Extract optimizer config from model
         optimizer_config = {}

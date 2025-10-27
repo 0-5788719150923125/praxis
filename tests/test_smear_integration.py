@@ -1,13 +1,14 @@
 """Test SMEAR integration with sequential decoder and multiple experts."""
 
-import pytest
-import torch
-import torch.nn as nn
 from dataclasses import dataclass
 from typing import Optional
 
-from praxis.decoders import DECODER_REGISTRY
+import pytest
+import torch
+import torch.nn as nn
+
 from praxis.containers import LossContainer
+from praxis.decoders import DECODER_REGISTRY
 
 
 @dataclass

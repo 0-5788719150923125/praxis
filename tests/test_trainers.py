@@ -6,13 +6,13 @@ from transformers import AutoTokenizer
 
 from praxis import PraxisConfig, PraxisForCausalLM
 from praxis.optimizers import get_optimizer, get_optimizer_profile
-from praxis.trainers import (
-    BackpropagationTrainer,
-    try_compile,
-    create_trainer_with_module,
-    TRAINER_REGISTRY,
-)
 from praxis.schedulers import get_scheduler_func
+from praxis.trainers import (
+    TRAINER_REGISTRY,
+    BackpropagationTrainer,
+    create_trainer_with_module,
+    try_compile,
+)
 
 
 class TestBackpropagationTrainer:

@@ -1,9 +1,10 @@
 """Wikipedia article formatting."""
 
 from typing import Dict, List
+
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
+from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 
 
 def format_wiki(

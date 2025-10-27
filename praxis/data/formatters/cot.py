@@ -1,11 +1,11 @@
 """Chain of Thought formatting."""
 
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import SYSTEM_PROMPT, DEVELOPER_PROMPTS
+from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
 from praxis.data.formatters.base import text_formatter
-
 
 # Chain of Thought tag definitions
 COT_TAGS = {

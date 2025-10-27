@@ -1,6 +1,7 @@
 """Model and optimizer compilation utilities for torch.compile."""
 
 import torch
+
 from praxis.environments import EnvironmentFeatures
 
 

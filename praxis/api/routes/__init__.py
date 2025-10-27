@@ -1,12 +1,13 @@
 """API route modules."""
 
 from flask import Flask
-from .core import core_bp
-from .generation import generation_bp
+
 from .agents import agents_bp
+from .core import core_bp
+from .data_metrics import data_metrics_bp
+from .generation import generation_bp
 from .git import git_bp
 from .metrics import metrics_bp
-from .data_metrics import data_metrics_bp
 from .static import static_bp
 
 

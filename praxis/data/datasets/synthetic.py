@@ -1,6 +1,7 @@
 """Synthetic dataset generation."""
 
 from typing import Dict
+
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.base import PraxisSampler

@@ -92,9 +92,9 @@ class ArgumentProcessor:
             tuple: (args, computed_hash)
         """
         from praxis.cli.core import (
+            DEFAULT_EXCLUDE_FROM_HASH,
             compute_args_hash,
             log_command,
-            DEFAULT_EXCLUDE_FROM_HASH,
         )
         from praxis.environments import EnvironmentFeatures
 

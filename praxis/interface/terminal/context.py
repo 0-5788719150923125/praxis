@@ -1,6 +1,7 @@
 """Terminal context management."""
 
 from contextlib import contextmanager
+
 import blessed
 
 

@@ -1,11 +1,12 @@
 """Smoke tests for the main training script."""
 
+import os
+import signal
 import subprocess
 import sys
-import pytest
-import os
 import time
-import signal
+
+import pytest
 import torch
 
 
@@ -187,8 +188,9 @@ class TestMainScript:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_main_cuda_initialization(self):
         """Test that CUDA initialization works if available."""
-        import torch
         import warnings
+
+        import torch
 
         cmd = [
             sys.executable,

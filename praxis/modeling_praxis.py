@@ -163,7 +163,9 @@ class PraxisForCausalLM(PraxisModel, GenerationMixin):
         else:
             return self.criterion(
                 logits=logits[..., :-1, :].contiguous(),
-                embeddings=embeddings if is_cut_ce else embeddings[..., :-1, :].contiguous(),
+                embeddings=(
+                    embeddings if is_cut_ce else embeddings[..., :-1, :].contiguous()
+                ),
                 classifier=classifier,
                 labels=labels,
                 input_ids=input_ids,

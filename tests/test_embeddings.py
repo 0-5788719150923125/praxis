@@ -1,10 +1,11 @@
 """Tests for praxis.embeddings module."""
 
+from dataclasses import dataclass
+from typing import Optional
+
 import pytest
 import torch
 import torch.nn as nn
-from dataclasses import dataclass
-from typing import Optional
 
 from praxis.embeddings import EMBEDDING_REGISTRY
 from praxis.embeddings.positional import PositionalEmbedding

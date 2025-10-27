@@ -1,19 +1,21 @@
 """Agent discovery routes."""
 
+import concurrent.futures
 import os
 import subprocess
-import concurrent.futures
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from flask import Blueprint, jsonify, request, current_app
+
+from flask import Blueprint, current_app, jsonify, request
 
 from praxis.utils import mask_git_url
+
 from ..config import (
-    PORT_RANGE_START,
-    PORT_RANGE_END,
-    PORT_CHECK_TIMEOUT,
     GIT_COMMAND_TIMEOUT,
+    PORT_CHECK_TIMEOUT,
+    PORT_RANGE_END,
+    PORT_RANGE_START,
 )
 
 agents_bp = Blueprint("agents", __name__)

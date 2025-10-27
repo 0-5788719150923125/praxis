@@ -1,29 +1,29 @@
 """API server management."""
 
+import logging
 import os
 import time
-import logging
-from threading import Event, Thread
-from typing import Optional, Any
 from datetime import datetime
+from threading import Event, Thread
+from typing import Any, Optional
 
-from .app import app, socketio, api_logger, werkzeug_logger
+from .app import api_logger, app, socketio, werkzeug_logger
 from .config import (
     DEFAULT_HOST,
-    DEFAULT_PORT,
-    SERVER_START_TIMEOUT,
-    DEV_LOG_LEVEL,
     DEFAULT_LOG_LEVEL,
+    DEFAULT_PORT,
+    DEV_LOG_LEVEL,
+    SERVER_START_TIMEOUT,
 )
-from .utils import find_available_port
-from .utils.file_watcher import TemplateWatcher
-from .websocket import setup_live_reload, setup_terminal_namespace
 from .middleware import (
     apply_wsgi_middleware,
     register_request_middleware,
     register_response_middleware,
 )
 from .routes import register_routes
+from .utils import find_available_port
+from .utils.file_watcher import TemplateWatcher
+from .websocket import setup_live_reload, setup_terminal_namespace
 
 
 class APIServer:

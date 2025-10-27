@@ -1,7 +1,8 @@
 """Static file serving routes."""
 
 import os
-from flask import Blueprint, send_from_directory, current_app, request, abort
+
+from flask import Blueprint, abort, current_app, request, send_from_directory
 
 static_bp = Blueprint("static_files", __name__)
 

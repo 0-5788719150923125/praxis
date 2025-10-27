@@ -5,7 +5,7 @@ Currently supports PyTorch Lightning, with potential for future framework suppor
 """
 
 import warnings
-from typing import Dict, Type, Any
+from typing import Any, Dict, Type
 
 # Generic callbacks (framework-agnostic)
 from praxis.callbacks.printing_progress import (
@@ -16,12 +16,12 @@ from praxis.callbacks.printing_progress import (
 # Framework-specific imports
 try:
     from praxis.callbacks.lightning import (
+        LIGHTNING_CALLBACK_REGISTRY,
         AccumulationSchedule,
         MetricsLoggerCallback,
         PeriodicEvaluation,
         TerminalInterface,
         TimeBasedCheckpoint,
-        LIGHTNING_CALLBACK_REGISTRY,
     )
     from praxis.callbacks.lightning.signal_handler import SignalHandlerCallback
 

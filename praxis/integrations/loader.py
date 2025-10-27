@@ -331,9 +331,13 @@ class IntegrationLoader:
                 loss_functions = integration.register_loss_functions()
                 if loss_functions:
                     self.integration_registry["loss_functions"].update(loss_functions)
-                    registered.append(f"loss functions ({', '.join(loss_functions.keys())})")
+                    registered.append(
+                        f"loss functions ({', '.join(loss_functions.keys())})"
+                    )
             except Exception as e:
-                print(f"[INTEGRATIONS] Failed to register loss functions from {integration_name}: {e}")
+                print(
+                    f"[INTEGRATIONS] Failed to register loss functions from {integration_name}: {e}"
+                )
 
         return registered
 

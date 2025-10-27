@@ -1,8 +1,9 @@
 """Generation endpoint routes."""
 
-import time
 import logging
-from flask import Blueprint, jsonify, request, current_app
+import time
+
+from flask import Blueprint, current_app, jsonify, request
 
 from ..utils import extract_assistant_reply
 

@@ -6,6 +6,7 @@ Two modes:
 
 No Node.js required - pure Python solution.
 """
+
 import os
 import shutil
 import time
@@ -55,7 +56,7 @@ def build_prod():
     ]
 
     output = STATIC_DIR / "app.js"
-    with output.open('w', encoding='utf-8') as out:
+    with output.open("w", encoding="utf-8") as out:
         out.write("// Praxis Web App - Production Build\n")
         out.write("// Auto-generated - do not edit directly\n\n")
 
@@ -71,28 +72,28 @@ def build_prod():
                 print(f"⚠️  Warning: {file} not found, skipping...")
                 continue
 
-            out.write(f'\n// ========== {file.name} ==========\n')
+            out.write(f"\n// ========== {file.name} ==========\n")
 
             # Read and process file
-            content = file.read_text(encoding='utf-8')
+            content = file.read_text(encoding="utf-8")
 
             # Simple transform: remove import/export for concatenated version
             # This is a naive approach - for production you'd want a real bundler
             # But it works for our simple case
-            lines = content.split('\n')
+            lines = content.split("\n")
             processed_lines = []
 
             for line in lines:
                 # Skip import statements
-                if line.strip().startswith('import '):
+                if line.strip().startswith("import "):
                     continue
                 # Convert exports to assignments
-                if line.strip().startswith('export '):
-                    line = line.replace('export ', '')
+                if line.strip().startswith("export "):
+                    line = line.replace("export ", "")
                 processed_lines.append(line)
 
-            out.write('\n'.join(processed_lines))
-            out.write('\n')
+            out.write("\n".join(processed_lines))
+            out.write("\n")
 
         out.write("\n})();\n")
 
@@ -120,7 +121,7 @@ def build_css():
     output = STATIC_DIR / "styles.css"
     STATIC_DIR.mkdir(exist_ok=True)
 
-    with output.open('w', encoding='utf-8') as out:
+    with output.open("w", encoding="utf-8") as out:
         out.write("/* Praxis Web - Compiled Styles */\n")
         out.write("/* Auto-generated - edit src/web/css/ instead */\n\n")
 
@@ -128,15 +129,17 @@ def build_css():
             if not file.exists():
                 continue
 
-            out.write(f'\n/* ========== {file.name} ========== */\n')
-            out.write(file.read_text(encoding='utf-8'))
-            out.write('\n')
+            out.write(f"\n/* ========== {file.name} ========== */\n")
+            out.write(file.read_text(encoding="utf-8"))
+            out.write("\n")
 
     size_kb = output.stat().st_size / 1024
-    print(f"  ✓ Built styles.css ({len([f for f in files if f.exists()])} files, {size_kb:.1f}KB)")
+    print(
+        f"  ✓ Built styles.css ({len([f for f in files if f.exists()])} files, {size_kb:.1f}KB)"
+    )
 
 
-def watch_and_build(mode='dev'):
+def watch_and_build(mode="dev"):
     """Watch source files and rebuild on changes."""
     try:
         from watchdog.events import FileSystemEventHandler
@@ -155,7 +158,7 @@ def watch_and_build(mode='dev'):
             if event.is_directory:
                 return
 
-            if not event.src_path.endswith(('.js', '.css')):
+            if not event.src_path.endswith((".js", ".css")):
                 return
 
             # Debounce
@@ -166,7 +169,7 @@ def watch_and_build(mode='dev'):
             self.last_build = now
             print(f"\n📝 Changed: {Path(event.src_path).relative_to(SRC_DIR)}")
 
-            if mode == 'dev':
+            if mode == "dev":
                 build_dev()
             else:
                 build_prod()
@@ -192,18 +195,18 @@ def watch_and_build(mode='dev'):
 if __name__ == "__main__":
     import sys
 
-    mode = 'dev'  # Default to development
+    mode = "dev"  # Default to development
     watch = False
 
     # Parse args
     for arg in sys.argv[1:]:
-        if arg == '--prod':
-            mode = 'prod'
-        elif arg == '--watch':
+        if arg == "--prod":
+            mode = "prod"
+        elif arg == "--watch":
             watch = True
 
     # Build
-    if mode == 'dev':
+    if mode == "dev":
         build_dev()
     else:
         build_prod()

@@ -1,8 +1,9 @@
 """Terminal/dashboard WebSocket streaming."""
 
 import time
-from typing import Optional, Any
-from flask_socketio import Namespace, emit, SocketIO
+from typing import Any, Optional
+
+from flask_socketio import Namespace, SocketIO, emit
 
 
 def setup_terminal_namespace(

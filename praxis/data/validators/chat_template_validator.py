@@ -5,6 +5,7 @@ by valid role names (system, developer, user, assistant, tool).
 """
 
 from typing import Dict, List, Tuple
+
 import torch
 from transformers import PreTrainedTokenizer
 
@@ -17,7 +18,7 @@ class ChatTemplateValidator:
     """
 
     # Valid role names that can appear after BOS tokens
-    ALLOWED_ROLES = ['system', 'developer', 'user', 'assistant', 'tool']
+    ALLOWED_ROLES = ["system", "developer", "user", "assistant", "tool"]
 
     def __init__(self, tokenizer: PreTrainedTokenizer, strict_mode: bool = False):
         """Initialize the validator.
@@ -31,18 +32,18 @@ class ChatTemplateValidator:
         self.strict_mode = strict_mode
 
         # Get BOS token ID
-        if hasattr(tokenizer, 'bos_token_id') and tokenizer.bos_token_id is not None:
+        if hasattr(tokenizer, "bos_token_id") and tokenizer.bos_token_id is not None:
             self.bos_token_id = tokenizer.bos_token_id
         else:
             # Fallback: try to encode the BOS token string
-            bos_token = tokenizer.special_tokens_map.get('bos_token', '[BOS]')
+            bos_token = tokenizer.special_tokens_map.get("bos_token", "[BOS]")
             self.bos_token_id = tokenizer.convert_tokens_to_ids(bos_token)
 
         # Get SEP token ID for structural validation
-        if hasattr(tokenizer, 'sep_token_id') and tokenizer.sep_token_id is not None:
+        if hasattr(tokenizer, "sep_token_id") and tokenizer.sep_token_id is not None:
             self.sep_token_id = tokenizer.sep_token_id
         else:
-            sep_token = tokenizer.special_tokens_map.get('sep_token', '[SEP]')
+            sep_token = tokenizer.special_tokens_map.get("sep_token", "[SEP]")
             self.sep_token_id = tokenizer.convert_tokens_to_ids(sep_token)
 
         # Pre-tokenize role names for faster checking
@@ -53,9 +54,7 @@ class ChatTemplateValidator:
             self._role_token_prefixes[role] = role_tokens
 
     def validate_token_sequence(
-        self,
-        token_ids: torch.Tensor,
-        messages: List[Dict] = None
+        self, token_ids: torch.Tensor, messages: List[Dict] = None
     ) -> Tuple[bool, List[Dict]]:
         """Validate that structural BOS tokens are only followed by role names.
 
@@ -80,7 +79,9 @@ class ChatTemplateValidator:
             # Only validate structural BOS tokens:
             # 1. At position 0 (start of document)
             # 2. Immediately after a SEP token
-            is_structural = pos == 0 or (pos > 0 and token_ids[pos - 1] == self.sep_token_id)
+            is_structural = pos == 0 or (
+                pos > 0 and token_ids[pos - 1] == self.sep_token_id
+            )
 
             if not is_structural:
                 # This BOS is in content, skip validation
@@ -99,7 +100,7 @@ class ChatTemplateValidator:
             next_text = self.tokenizer.decode(
                 next_tokens,
                 skip_special_tokens=False,
-                clean_up_tokenization_spaces=False
+                clean_up_tokenization_spaces=False,
             ).strip()
 
             # Check if starts with valid role
@@ -107,12 +108,12 @@ class ChatTemplateValidator:
 
             if not valid:
                 violation = {
-                    'position': pos.item(),
-                    'bos_token_id': self.bos_token_id,
-                    'next_tokens': next_tokens.tolist(),
-                    'decoded_text': next_text[:100],  # First 100 chars
-                    'full_sequence_length': len(token_ids),
-                    'is_structural': is_structural,
+                    "position": pos.item(),
+                    "bos_token_id": self.bos_token_id,
+                    "next_tokens": next_tokens.tolist(),
+                    "decoded_text": next_text[:100],  # First 100 chars
+                    "full_sequence_length": len(token_ids),
+                    "is_structural": is_structural,
                 }
                 violations.append(violation)
 
@@ -139,7 +140,9 @@ class ChatTemplateValidator:
         for role, role_tokens in self._role_token_prefixes.items():
             if len(next_tokens) >= len(role_tokens):
                 # Check if first N tokens match the role tokens
-                if torch.all(next_tokens[:len(role_tokens)] == torch.tensor(role_tokens)):
+                if torch.all(
+                    next_tokens[: len(role_tokens)] == torch.tensor(role_tokens)
+                ):
                     return True
 
         return False
@@ -149,7 +152,7 @@ class ChatTemplateValidator:
         violations: List[Dict],
         messages: List[Dict] = None,
         formatted_text: str = None,
-        token_ids: torch.Tensor = None
+        token_ids: torch.Tensor = None,
     ) -> str:
         """Format a detailed violation report for debugging.
 
@@ -171,15 +174,17 @@ class ChatTemplateValidator:
         if messages:
             lines.append("\nOriginal Messages:")
             for i, msg in enumerate(messages):
-                role = msg.get('role', 'unknown')
-                content = msg.get('content', '')
-                content_preview = content[:100] + ('...' if len(content) > 100 else '')
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                content_preview = content[:100] + ("..." if len(content) > 100 else "")
                 lines.append(f"  [{i}] {role}: {content_preview}")
 
         # Show formatted template output if available
         if formatted_text:
             lines.append("\nFormatted Template Output:")
-            preview = formatted_text[:500] + ('...' if len(formatted_text) > 500 else '')
+            preview = formatted_text[:500] + (
+                "..." if len(formatted_text) > 500 else ""
+            )
             lines.append(preview)
 
         # Show violations
@@ -201,10 +206,11 @@ class ChatTemplateValidator:
             # Decode first 100 tokens for context
             lines.append("\nDecoded Sequence (first 100 tokens):")
             decoded_preview = self.tokenizer.decode(
-                token_ids[:100],
-                skip_special_tokens=False
+                token_ids[:100], skip_special_tokens=False
             )
-            lines.append(decoded_preview[:300] + ('...' if len(decoded_preview) > 300 else ''))
+            lines.append(
+                decoded_preview[:300] + ("..." if len(decoded_preview) > 300 else "")
+            )
 
         lines.append("=" * 80)
         return "\n".join(lines)
@@ -213,7 +219,7 @@ class ChatTemplateValidator:
         self,
         token_ids: torch.Tensor,
         messages: List[Dict] = None,
-        formatted_text: str = None
+        formatted_text: str = None,
     ) -> Tuple[bool, str]:
         """Validate token sequence and generate report if invalid.
 
@@ -234,7 +240,7 @@ class ChatTemplateValidator:
                 violations,
                 messages=messages,
                 formatted_text=formatted_text,
-                token_ids=token_ids
+                token_ids=token_ids,
             )
             return False, report
 

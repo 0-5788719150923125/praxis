@@ -144,8 +144,8 @@ def test_tool_calling_during_inference():
 </tool_call>"""
 
     # Simple regex parsing (similar to Generator._parse_tool_call)
-    import re
     import json
+    import re
 
     tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
     match = re.search(tool_pattern, tool_call_text, re.DOTALL)

@@ -184,16 +184,17 @@ def create_socketio_path_middleware(wsgi_app, ngrok_secret):
     Returns:
         Wrapped WSGI application
     """
+
     def middleware(environ, start_response):
-        path = environ.get('PATH_INFO', '')
-        prefix = f'/{ngrok_secret}'
+        path = environ.get("PATH_INFO", "")
+        prefix = f"/{ngrok_secret}"
 
         # Only strip prefix for socket.io paths (WebSocket upgrades)
-        if path.startswith(prefix + '/socket.io'):
+        if path.startswith(prefix + "/socket.io"):
             # Remove the secret prefix for Socket.IO
-            new_path = path[len(prefix):]
-            environ['PATH_INFO'] = new_path
-            environ['SCRIPT_NAME'] = environ.get('SCRIPT_NAME', '') + prefix
+            new_path = path[len(prefix) :]
+            environ["PATH_INFO"] = new_path
+            environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + prefix
 
         return wsgi_app(environ, start_response)
 
