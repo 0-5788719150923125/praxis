@@ -37,9 +37,7 @@ The Praxis platform is an ever-evolving, local-first, peer-to-peer, flexible, mo
 
 <summary>installation, configuration, and usage</summary>
 
-## install
-
-The launch script automatically manages the virtual environment for you. Simply run:
+The launch script will automatically manage the virtual environment. To start, simply run:
 
 ```sh
 ./launch
@@ -51,18 +49,17 @@ To view all supported command-line arguments:
 ./launch --help
 ```
 
-## run tests
-
-To run unit testing:
-
-```sh
-pytest tests -x
-```
-
 For development with quick iteration:
 
 ```sh
 ./launch --dev --no-dashboard
+```
+
+To run unit testing:
+
+```sh
+. .venv/bin/activate
+pytest tests -x
 ```
 
 ## recommendations

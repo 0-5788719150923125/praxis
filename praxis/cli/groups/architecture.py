@@ -208,9 +208,16 @@ class ArchitectureGroup:
 
         group.add_argument(
             "--num-heads",
-            type=cls._validate_num_heads,
-            default="4:2",
-            help="The ratio of heads to queries per-head. (example: '4:2' is equal to 3 heads, with 2 queries per head)",
+            type=int,
+            default=4,
+            help="Number of attention heads",
+        )
+
+        group.add_argument(
+            "--num-queries",
+            type=int,
+            default=2,
+            help="Number of queries per attention head (for GQA/MQA)",
         )
 
         group.add_argument(
@@ -319,28 +326,3 @@ class ArchitectureGroup:
             help="Tie embedding and output projection weights to reduce parameters",
         )
 
-    @staticmethod
-    def _validate_num_heads(x):
-        """Validate num_heads format 'X:Y' where X and Y are positive integers."""
-        if ":" in x:
-            parts = x.split(":")
-            if (
-                len(parts) == 2
-                and all(p.isdigit() for p in parts)
-                and all(int(p) > 0 for p in parts)
-            ):
-                return x
-        raise argparse.ArgumentTypeError(
-            f"'{x}' is not in format 'X:Y', where X and Y are positive integers"
-        )
-
-    @classmethod
-    def process_args(cls, args):
-        """Process architecture arguments after parsing."""
-        # Parse num_heads format - handle both string "X:Y" and integer formats
-        if hasattr(args, "num_heads") and args.num_heads:
-            # Only process if it's a string with the "X:Y" format
-            if isinstance(args.num_heads, str) and ":" in args.num_heads:
-                parts = args.num_heads.split(":")
-                # Note: We don't override the original num_heads string here
-                # That's handled in processors/config.py
