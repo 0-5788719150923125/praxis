@@ -26,11 +26,15 @@ class PraxisDataModule(LightningDataModule):
         rl_type: Optional[str] = None,
         run_dir: Optional[str] = None,
         data_metrics_log_interval: int = 50,
+        enable_chat_validation: bool = True,
+        strict_chat_validation: bool = False,
     ):
         super().__init__()
         self.rl_type = rl_type
         self.run_dir = run_dir
         self.data_metrics_log_interval = data_metrics_log_interval
+        self.enable_chat_validation = enable_chat_validation
+        self.strict_chat_validation = strict_chat_validation
         self.dataloader_manager = DataLoaderManager()  # Track dataloaders for shutdown
         self.train_datasets = self.create_datasets(
             train_datasets,
@@ -44,7 +48,14 @@ class PraxisDataModule(LightningDataModule):
         self.val_datasets = False
         if len(val_datasets) > 0:
             self.val_datasets = self.create_datasets(
-                val_datasets, tokenizer, block_size, batch_size, 0, 0, 0
+                val_datasets,
+                tokenizer,
+                block_size,
+                batch_size,
+                oversample_chance=0,
+                supersample_chance=0,
+                hypersample_chance=0,
+                enable_data_metrics_logging=False,  # Don't log validation metrics
             )
 
     def create_datasets(
@@ -56,6 +67,7 @@ class PraxisDataModule(LightningDataModule):
         oversample_chance=0,
         supersample_chance=0,
         hypersample_chance=0,
+        enable_data_metrics_logging=True,
     ):
         # Get weights and normalize them while preserving relative magnitudes
         raw_weights = [dataset.weight for dataset in datasets]
@@ -73,8 +85,10 @@ class PraxisDataModule(LightningDataModule):
             supersample_chance,
             hypersample_chance,
             rl_type=self.rl_type,
-            run_dir=self.run_dir,
+            run_dir=self.run_dir if enable_data_metrics_logging else None,
             data_metrics_log_interval=self.data_metrics_log_interval,
+            enable_chat_validation=self.enable_chat_validation,
+            strict_chat_validation=self.strict_chat_validation,
         )
 
     def train_dataloader(self):

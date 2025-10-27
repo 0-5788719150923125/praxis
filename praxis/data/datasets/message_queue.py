@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 import torch
 from transformers import PreTrainedTokenizer
 
+from praxis.data.validators import ChatTemplateValidator
+
 
 class MessageQueueManager:
     """
@@ -14,16 +16,27 @@ class MessageQueueManager:
     Simply queues and tokenizes messages without modifying their structure.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, block_size: int):
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        block_size: int,
+        enable_chat_validation: bool = True,
+        strict_chat_validation: bool = False,
+    ):
         """
         Initialize the message queue manager.
 
         Args:
             tokenizer: The tokenizer to use for converting messages to tokens
             block_size: The sequence length for each training example
+            enable_chat_validation: Enable BOS token validation (default: True)
+            strict_chat_validation: If True, raise exception on validation failure.
+                                   If False, log warning and skip document (default: False)
         """
         self.tokenizer = tokenizer
         self.block_size = block_size
+        self.enable_chat_validation = enable_chat_validation
+        self.strict_chat_validation = strict_chat_validation
 
         # Message queue stores structured message data
         self.message_queue = deque()
@@ -33,6 +46,21 @@ class MessageQueueManager:
 
         # Metadata buffer parallel to token buffer
         self.metadata_buffer = []
+
+        # Initialize chat template validator if enabled
+        self.chat_validator = None
+        if self.enable_chat_validation:
+            self.chat_validator = ChatTemplateValidator(
+                tokenizer=tokenizer,
+                strict_mode=strict_chat_validation
+            )
+
+        # Statistics for validation
+        self.validation_stats = {
+            "documents_validated": 0,
+            "documents_failed": 0,
+            "documents_skipped": 0,
+        }
 
     def add_document(self, document_data: Dict[str, Any]):
         """
@@ -93,6 +121,28 @@ class MessageQueueManager:
             doc_tokens = self.tokenizer(
                 text, return_tensors="pt", padding=False, truncation=False
             )["input_ids"].squeeze(0)
+
+            # Validate chat template if enabled
+            if self.chat_validator is not None:
+                self.validation_stats["documents_validated"] += 1
+                is_valid, report = self.chat_validator.validate_and_report(
+                    doc_tokens,
+                    messages=messages,
+                    formatted_text=text
+                )
+
+                if not is_valid:
+                    self.validation_stats["documents_failed"] += 1
+
+                    if self.strict_chat_validation:
+                        # Raise exception and halt training
+                        raise ValueError(f"Chat template validation failed:\n{report}")
+                    else:
+                        # Log warning and skip this document
+                        print(f"[WARNING] Chat template validation failed, skipping document:")
+                        print(report)
+                        self.validation_stats["documents_skipped"] += 1
+                        continue
 
             all_tokens.append(doc_tokens)
 
@@ -218,3 +268,14 @@ class MessageQueueManager:
         )
 
         return result
+
+    def get_validation_stats(self) -> Dict[str, int]:
+        """Get chat template validation statistics.
+
+        Returns:
+            Dictionary with validation statistics:
+            - documents_validated: Total documents validated
+            - documents_failed: Documents that failed validation
+            - documents_skipped: Documents skipped due to validation failure
+        """
+        return self.validation_stats.copy()

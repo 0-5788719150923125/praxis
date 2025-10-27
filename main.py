@@ -464,6 +464,8 @@ def main():
         rl_type,
         run_dir=cache_dir,
         data_metrics_log_interval=50,
+        enable_chat_validation=True,  # Always enabled
+        strict_chat_validation=False,  # Warning mode (skip invalid docs)
     )
 
     # create the optimizer

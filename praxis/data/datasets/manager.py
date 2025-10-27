@@ -36,6 +36,8 @@ class InterleaveDataManager:
         rl_type=None,
         run_dir=None,
         data_metrics_log_interval=50,
+        enable_chat_validation=True,
+        strict_chat_validation=False,
     ):
         """
         Initialize the data manager with message queue.
@@ -48,6 +50,8 @@ class InterleaveDataManager:
             rl_type: Type of RL training if applicable
             run_dir: Directory for logging data metrics (optional)
             data_metrics_log_interval: Log data metrics every N samples (default: 50)
+            enable_chat_validation: Enable BOS token validation (default: True)
+            strict_chat_validation: Raise exception on validation failure (default: False)
         """
         self.samplers = samplers
         self.static_weights = weights.copy()
@@ -55,8 +59,13 @@ class InterleaveDataManager:
         self.block_size = block_size
         self.rl_type = rl_type
 
-        # Initialize message queue manager
-        self.message_queue = MessageQueueManager(tokenizer, block_size)
+        # Initialize message queue manager with validation settings
+        self.message_queue = MessageQueueManager(
+            tokenizer,
+            block_size,
+            enable_chat_validation=enable_chat_validation,
+            strict_chat_validation=strict_chat_validation,
+        )
 
         # Initialize data metrics logging
         self.data_metrics_logger = None

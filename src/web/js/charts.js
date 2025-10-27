@@ -286,7 +286,7 @@ function renderMetricsCharts(data, container) {
     if (hasTokens) html += '<div class="chart-card"><div class="chart-title">Tokens (Billions)</div><div class="chart-wrapper"><canvas id="chart-tokens"></canvas></div></div>';
     if (hasAvgStepTime) html += '<div class="chart-card"><div class="chart-title">Average Step Time</div><div class="chart-wrapper"><canvas id="chart-avg-step-time"></canvas></div></div>';
     if (hasSoftmax) html += '<div class="chart-card"><div class="chart-title">Softmax Collapse</div><div class="chart-wrapper"><canvas id="chart-softmax"></canvas></div></div>';
-    if (hasSamplingWeights) html += '<div class="chart-card"><div class="chart-title">Document Sampling Weights (EMA α=0.1)</div><div class="chart-wrapper"><canvas id="chart-sampling-weights"></canvas></div></div>';
+    if (hasSamplingWeights) html += '<div class="chart-card"><div class="chart-title">Task Sampling Weights</div><div class="chart-wrapper"><canvas id="chart-sampling-weights"></canvas></div></div>';
 
     html += '</div>';
 
@@ -301,7 +301,7 @@ function renderMetricsCharts(data, container) {
         if (hasTokens) createTokensBarChart('chart-tokens', 'Tokens (B)', agents, 'num_tokens');
         if (hasAvgStepTime) createMultiAgentChart('chart-avg-step-time', 'Avg Step Time (s)', agents, 'avg_step_time');
         if (hasSoftmax) createMultiAgentChart('chart-softmax', 'Softmax Collapse', agents, 'softmax_collapse');
-        if (hasSamplingWeights) createSamplingWeightsChart('chart-sampling-weights', 'Weight', dataMetrics);
+        if (hasSamplingWeights) createSamplingWeightsChart('chart-sampling-weights', dataMetrics);
     }, 10);
 }
 
@@ -538,9 +538,9 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
 }
 
 /**
- * Create sampling weights chart showing document weight evolution over time
+ * Create sampling weights chart showing current document weights as horizontal bars
  */
-function createSamplingWeightsChart(canvasId, label, dataMetrics) {
+function createSamplingWeightsChart(canvasId, dataMetrics) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -553,117 +553,107 @@ function createSamplingWeightsChart(canvasId, label, dataMetrics) {
     const textColor = isDark ? '#e0e0e0' : '#333333';
     const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
 
-    // Collect all unique document names across all agents
-    const allDocumentNames = new Set();
-    dataMetrics.forEach(agent => {
-        if (agent.data_metrics?.sampling_weights) {
-            Object.keys(agent.data_metrics.sampling_weights).forEach(name => {
-                allDocumentNames.add(name);
-            });
-        }
-    });
+    // Collect all documents and their latest weights
+    const documentData = [];
 
-    // Assign colors to each document dataset (not agent)
-    const documentColors = {};
-    Array.from(allDocumentNames).forEach((name, idx) => {
-        documentColors[name] = CONSTANTS.RUN_COLORS[idx % CONSTANTS.RUN_COLORS.length];
-    });
-
-    // Build datasets - one line per document across all agents
-    const datasets = [];
-
-    // For each agent, create lines for their documents
     dataMetrics.forEach((agent, agentIdx) => {
         if (!agent.data_metrics?.sampling_weights) return;
 
-        const steps = agent.data_metrics.steps || [];
         const samplingWeights = agent.data_metrics.sampling_weights;
 
-        // Create a dataset for each document in this agent
-        Object.keys(samplingWeights).forEach(docName => {
+        // Get latest weight for each document
+        Object.keys(samplingWeights).forEach((docName, docIdx) => {
             const weights = samplingWeights[docName];
 
-            const data = steps.map((step, i) => ({
-                x: step,
-                y: weights[i]
-            })).filter(point => point.y !== null);
+            // Find the last non-null weight
+            let latestWeight = null;
+            for (let i = weights.length - 1; i >= 0; i--) {
+                if (weights[i] !== null) {
+                    latestWeight = weights[i];
+                    break;
+                }
+            }
 
-            if (data.length === 0) return;
+            if (latestWeight !== null) {
+                const agentLabel = dataMetrics.length > 1 ? ` (${agent.name})` : '';
+                const color = CONSTANTS.RUN_COLORS[docIdx % CONSTANTS.RUN_COLORS.length];
 
-            const color = documentColors[docName];
-            const agentLabel = dataMetrics.length > 1 ? ` (${agent.name})` : '';
-
-            datasets.push({
-                label: `${docName}${agentLabel}`,
-                data: data,
-                borderColor: color,
-                backgroundColor: color + '20',
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-                tension: 0.1,
-                fill: false
-            });
+                documentData.push({
+                    label: `${docName}${agentLabel}`,
+                    value: latestWeight,
+                    color: color
+                });
+            }
         });
     });
 
+    // Sort by weight value (descending) for better visualization
+    documentData.sort((a, b) => b.value - a.value);
+
+    // Calculate max weight for dynamic scaling
+    const maxWeight = Math.max(...documentData.map(d => d.value));
+    const scaledMax = Math.min(maxWeight * 1.1, 1.0);  // Add 10% padding, cap at 1.0
+
     charts[canvasId] = new Chart(ctx, {
-        type: 'line',
-        data: { datasets },
+        type: 'bar',
+        data: {
+            labels: documentData.map(d => d.label),
+            datasets: [{
+                label: 'Sampling Weight',
+                data: documentData.map(d => d.value),
+                backgroundColor: documentData.map(d => d.color + '80'),
+                borderColor: documentData.map(d => d.color),
+                borderWidth: 2
+            }]
+        },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
+            indexAxis: 'y',  // Horizontal bars
             plugins: {
                 legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: textColor,
-                        usePointStyle: true,
-                        boxWidth: 6
-                    }
+                    display: false
                 },
                 tooltip: {
+                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
                     callbacks: {
-                        label: (context) => {
-                            return `${context.dataset.label}: ${context.parsed.y.toFixed(4)}`;
+                        label: (ctx) => {
+                            const percentage = (ctx.parsed.x * 100).toFixed(2);
+                            return `Weight: ${ctx.parsed.x.toFixed(4)} (${percentage}%)`;
                         }
                     }
                 }
             },
             scales: {
                 x: {
-                    type: 'linear',
                     title: {
                         display: true,
-                        text: 'Sample Count',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    ticks: {
-                        color: textColor,
-                        maxTicksLimit: 10
-                    },
-                    grid: { color: gridColor }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: label,
+                        text: 'Sampling Weight',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
                     min: 0,
-                    max: 1,
+                    max: scaledMax,  // Dynamic max based on data
                     ticks: {
                         color: textColor,
-                        callback: (value) => value.toFixed(2)
+                        callback: (value) => {
+                            const percentage = (value * 100).toFixed(0);
+                            return `${percentage}%`;
+                        }
                     },
                     grid: { color: gridColor }
+                },
+                y: {
+                    ticks: {
+                        color: textColor,
+                        font: { size: 12 }
+                    },
+                    grid: { display: false }
                 }
             }
         }

@@ -29,6 +29,8 @@ def get_datamodules(
     rl_type: Optional[str] = None,
     run_dir: Optional[str] = None,
     data_metrics_log_interval: int = 50,
+    enable_chat_validation: bool = True,
+    strict_chat_validation: bool = False,
     *args,
 ):
     """Create and configure data modules for training and validation.
@@ -132,6 +134,8 @@ def get_datamodules(
         rl_type=rl_type,
         run_dir=run_dir,
         data_metrics_log_interval=data_metrics_log_interval,
+        enable_chat_validation=enable_chat_validation,
+        strict_chat_validation=strict_chat_validation,
     )
 
     return train_dataloader
