@@ -261,47 +261,48 @@ function renderMetricsCharts(data, container) {
         </div>
     `;
 
-    // Check which metrics exist
-    const hasLoss = agents.some(a => a.metrics.loss?.some(v => v !== null));
-    const hasValLoss = agents.some(a => a.metrics.val_loss?.some(v => v !== null));
-    const hasPerplexity = agents.some(a => a.metrics.val_perplexity?.some(v => v !== null));
-    const hasLR = agents.some(a => a.metrics.learning_rate?.some(v => v !== null));
-    const hasTokens = agents.some(a => a.metrics.num_tokens?.some(v => v !== null));
-    const hasSoftmax = agents.some(a => a.metrics.softmax_collapse?.some(v => v !== null));
-    const hasAvgStepTime = agents.some(a => a.metrics.avg_step_time?.some(v => v !== null));
+    // Data-driven metric detection - filter configs to find available metrics
+    const availableMetrics = CONSTANTS.METRIC_CONFIGS.filter(config => {
+        if (config.source === 'data_metrics') {
+            // Check data metrics (e.g., sampling weights)
+            return dataMetrics.some(a =>
+                a.data_metrics?.[config.key] &&
+                Object.keys(a.data_metrics[config.key]).length > 0
+            );
+        } else {
+            // Check regular agent metrics
+            return agents.some(a => a.metrics[config.key]?.some(v => v !== null));
+        }
+    });
 
-    // Check which data metrics exist
-    const hasSamplingWeights = dataMetrics.some(a =>
-        a.data_metrics?.sampling_weights &&
-        Object.keys(a.data_metrics.sampling_weights).length > 0
-    );
-
-    // Build chart cards with spacing
+    // Build chart cards with spacing - data-driven loop
     html += '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
 
-    if (hasLoss) html += '<div class="chart-card"><div class="chart-title">Training Loss</div><div class="chart-wrapper"><canvas id="chart-train-loss"></canvas></div></div>';
-    if (hasValLoss) html += '<div class="chart-card"><div class="chart-title">Validation Loss</div><div class="chart-wrapper"><canvas id="chart-val-loss"></canvas></div></div>';
-    if (hasPerplexity) html += '<div class="chart-card"><div class="chart-title">Perplexity</div><div class="chart-wrapper"><canvas id="chart-perplexity"></canvas></div></div>';
-    if (hasLR) html += '<div class="chart-card"><div class="chart-title">Learning Rate</div><div class="chart-wrapper"><canvas id="chart-lr"></canvas></div></div>';
-    if (hasTokens) html += '<div class="chart-card"><div class="chart-title">Tokens (Billions)</div><div class="chart-wrapper"><canvas id="chart-tokens"></canvas></div></div>';
-    if (hasAvgStepTime) html += '<div class="chart-card"><div class="chart-title">Average Step Time</div><div class="chart-wrapper"><canvas id="chart-avg-step-time"></canvas></div></div>';
-    if (hasSoftmax) html += '<div class="chart-card"><div class="chart-title">Softmax Collapse</div><div class="chart-wrapper"><canvas id="chart-softmax"></canvas></div></div>';
-    if (hasSamplingWeights) html += '<div class="chart-card"><div class="chart-title">Task Sampling Weights</div><div class="chart-wrapper"><canvas id="chart-sampling-weights"></canvas></div></div>';
+    html += availableMetrics.map(config => `
+        <div class="chart-card">
+            <div class="chart-title">${config.title}</div>
+            <div class="chart-wrapper">
+                <canvas id="${config.canvasId}"></canvas>
+            </div>
+        </div>
+    `).join('');
 
     html += '</div>';
 
     container.innerHTML = html;
 
-    // Render charts after DOM update
+    // Render charts after DOM update - data-driven loop
     setTimeout(() => {
-        if (hasLoss) createMultiAgentChart('chart-train-loss', 'Training Loss', agents, 'loss');
-        if (hasValLoss) createMultiAgentChart('chart-val-loss', 'Validation Loss', agents, 'val_loss');
-        if (hasPerplexity) createMultiAgentChart('chart-perplexity', 'Perplexity', agents, 'val_perplexity');
-        if (hasLR) createMultiAgentChart('chart-lr', 'Learning Rate', agents, 'learning_rate');
-        if (hasTokens) createTokensBarChart('chart-tokens', 'Tokens (B)', agents, 'num_tokens');
-        if (hasAvgStepTime) createMultiAgentChart('chart-avg-step-time', 'Avg Step Time (s)', agents, 'avg_step_time');
-        if (hasSoftmax) createMultiAgentChart('chart-softmax', 'Softmax Collapse', agents, 'softmax_collapse');
-        if (hasSamplingWeights) createSamplingWeightsChart('chart-sampling-weights', dataMetrics);
+        availableMetrics.forEach(config => {
+            if (config.type === 'bar') {
+                createTokensBarChart(config.canvasId, config.label, agents, config.key);
+            } else if (config.type === 'sampling') {
+                createSamplingWeightsChart(config.canvasId, dataMetrics);
+            } else {
+                // Default: line chart
+                createMultiAgentChart(config.canvasId, config.label, agents, config.key);
+            }
+        });
     }, 10);
 }
 

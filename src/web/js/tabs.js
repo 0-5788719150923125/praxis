@@ -6,6 +6,22 @@
 import { state } from './state.js';
 import { fetchAPI } from './api.js';
 import { loadResearchMetricsWithCharts } from './charts.js';
+import {
+    createSection,
+    createCodeBlock,
+    createPreBlock,
+    createMetadata,
+    createKeyValue,
+    createStepsList,
+    createButton,
+    createWrapper,
+    createHashDisplay,
+    renderIf,
+    formatNumber,
+    formatJSON,
+    escapeHtml
+} from './components.js';
+import { SPEC_CONFIG, extractCommandInfo, AGENT_DISPLAY_FIELDS } from './config.js';
 
 /**
  * Generic tab data loader - DRY pattern for all tab loading
@@ -63,108 +79,80 @@ export async function loadSpec() {
 }
 
 /**
- * Render spec tab content
+ * Spec section renderers - pure functions using generic components
+ * Map section IDs to render functions
+ */
+const renderSpecSections = {
+    'peer-button': (data) => {
+        const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
+        const button = createButton('Peer with agent', 'refresh-button copy-git-remote-btn', { command: gitRemoteCmd });
+        return createWrapper(button, 'spec-peer-button') + createWrapper('', '', 'clear: both;');
+    },
+
+    'hashes': (data) => {
+        const hash = createHashDisplay(data.full_hash, data.truncated_hash.length, '#args-section');
+        return createSection('Hashes', hash);
+    },
+
+    'commands': (data) => {
+        const cmdInfo = extractCommandInfo(data);
+        const downloadLink = `<a href="/api/config" download="${cmdInfo.expName}.yml" class="spec-link">Download</a>`;
+
+        const steps = [
+            { instruction: 'Clone from source:', code: `git clone ${data.git_url}` },
+            { instruction: 'Move into directory:', code: 'cd praxis' },
+            { instruction: `${downloadLink} config, save it to:`, code: cmdInfo.configFilename },
+            { instruction: 'Reproduce experiment:', code: cmdInfo.reproduceCommand }
+        ];
+
+        const stepsHtml = createStepsList(steps);
+        return createSection('Commands', createWrapper(stepsHtml, 'spec-steps'));
+    },
+
+    'parameters': (data) => {
+        const params = [];
+        if (data.param_stats.model_parameters) {
+            params.push(createKeyValue('Model Parameters', formatNumber(data.param_stats.model_parameters)));
+        }
+        if (data.param_stats.optimizer_parameters) {
+            params.push(createKeyValue('Optimizer Parameters', formatNumber(data.param_stats.optimizer_parameters)));
+        }
+        return params.length > 0 ? createSection('Parameters', params.join('')) : '';
+    },
+
+    'architecture': (data) => {
+        return createSection('Architecture', createPreBlock(data.model_architecture));
+    },
+
+    'arguments': (data) => {
+        const content = [
+            renderIf(data.timestamp, () => createMetadata(`Created: ${data.timestamp}`)),
+            renderIf(data.args, () => createPreBlock(formatJSON(data.args)))
+        ].filter(Boolean).join('');
+
+        return createSection('Arguments', content, 'args-section');
+    }
+};
+
+/**
+ * Render spec tab content using generic components
+ * Pure functional approach - configuration drives rendering
  */
 function renderSpec(data, container) {
-    let html = '';
-
-    // Peer button (floated right, before everything)
-    if (data.git_url && data.truncated_hash) {
-        const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
-        html += '<div style="float: right; margin-bottom: 1rem; position: relative;">';
-        html += `<button class="refresh-button copy-git-remote-btn" data-command="${escapeHtml(gitRemoteCmd)}">Peer with agent</button>`;
-        html += '</div>';
-        html += '<div style="clear: both;"></div>';
+    if (!data) {
+        container.innerHTML = '<div class="loading-placeholder">No specification data available.</div>';
+        return;
     }
 
-    // Hashes section
-    if (data.full_hash && data.truncated_hash) {
-        html += '<div class="spec-section">';
-        html += '<div class="spec-title">Hashes</div>';
+    // Filter and sort sections based on configuration
+    const visibleSections = SPEC_CONFIG.sections
+        .filter(section => section.condition(data))
+        .sort((a, b) => a.order - b.order);
 
-        const truncLen = data.truncated_hash.length;
-        const truncPart = data.full_hash.substring(0, truncLen);
-        const restPart = data.full_hash.substring(truncLen);
-        html += '<div class="spec-hash">';
-        html += `<a href="#args-section" style="color: #0B9A6D; font-weight: 600; text-decoration: none;">${truncPart}</a>`;
-        html += `<span style="color: var(--text);">${restPart}</span>`;
-        html += '</div>';
-        html += '</div>';
-    }
-
-    // Commands section
-    if (data.git_url) {
-        html += '<div class="spec-section">';
-        html += '<div class="spec-title">Commands</div>';
-        html += '<div style="margin-bottom: 1rem;">';
-
-        // Step 1: Clone
-        html += '<div class="spec-metadata">1. Clone from source:</div>';
-        html += `<div class="spec-code" style="margin-bottom: 1rem;">git clone ${data.git_url}</div>`;
-
-        // Step 2: Move into directory
-        html += '<div class="spec-metadata">2. Move into directory:</div>';
-        html += '<div class="spec-code" style="margin-bottom: 1rem;">cd praxis</div>';
-
-        // Step 3: Download experiment config from API
-        // Extract experiment name from command to create matching filename
-        const command = data.command ? data.command.replace('python main.py', './launch') : './launch';
-        const expMatch = command.match(/--([a-z0-9\-]+)/);
-        const expName = expMatch ? expMatch[1] : 'reproduce';
-        const configFilename = `./experiments/${expName}.yml`;
-
-        // Link to API endpoint for config download
-        const configUrl = '/api/config';
-
-        html += `<div class="spec-metadata">3. <a href="${configUrl}" download="${expName}.yml" style="color: #0B9A6D; font-weight: 600; text-decoration: none;">Download</a> config, save it to:</div>`;
-        html += `<div class="spec-code" style="margin-bottom: 1rem;">${escapeHtml(configFilename)}</div>`;
-
-        // Step 4: Reproduce
-        html += '<div class="spec-metadata">4. Reproduce experiment:</div>';
-        const reproduceCommand = command + (command.includes('--reset') ? '' : ' --reset');
-        html += `<div class="spec-code">${escapeHtml(reproduceCommand)}</div>`;
-
-        html += '</div>';
-        html += '</div>';
-    }
-
-    // Parameters section
-    if (data.param_stats) {
-        html += '<div class="spec-section">';
-        html += '<div class="spec-title">Parameters</div>';
-
-        if (data.param_stats.model_parameters) {
-            html += `<div class="spec-metadata">Model Parameters: <span style="color: #0B9A6D; font-weight: 600;">${data.param_stats.model_parameters.toLocaleString()}</span></div>`;
-        }
-
-        if (data.param_stats.optimizer_parameters) {
-            html += `<div class="spec-metadata">Optimizer Parameters: <span style="color: #0B9A6D; font-weight: 600;">${data.param_stats.optimizer_parameters.toLocaleString()}</span></div>`;
-        }
-
-        html += '</div>';
-    }
-
-    // Model architecture
-    if (data.model_architecture) {
-        html += '<div class="spec-section">';
-        html += '<div class="spec-title">Architecture</div>';
-        html += `<pre class="spec-code">${escapeHtml(data.model_architecture)}</pre>`;
-        html += '</div>';
-    }
-
-    // Arguments section
-    html += '<div id="args-section" class="spec-section">';
-    html += '<div class="spec-title">Arguments</div>';
-
-    if (data.timestamp) {
-        html += `<div class="spec-metadata">Created: ${data.timestamp}</div>`;
-    }
-
-    if (data.args) {
-        html += '<pre class="spec-code">' + escapeHtml(JSON.stringify(data.args, null, 2)) + '</pre>';
-    }
-
-    html += '</div>';
+    // Render all visible sections using generic components
+    const html = visibleSections
+        .map(section => renderSpecSections[section.id](data))
+        .join('');
 
     container.innerHTML = html;
 }
@@ -186,47 +174,46 @@ export async function loadAgents() {
 /**
  * Render agents tab content
  */
+/**
+ * Render agent card - pure component
+ */
+const renderAgentCard = (agent) => {
+    const statusClass = agent.status || 'offline';
+    const statusText = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
+    
+    // Build info line using configuration
+    const infoLine = AGENT_DISPLAY_FIELDS
+        .filter(field => field.condition(agent))
+        .map(field => `${field.label}: ${escapeHtml(field.getValue(agent))}`)
+        .join(' | ');
+    
+    const infoHtml = infoLine ? `<div class="agent-url">${infoLine}</div>` : '';
+    
+    return `
+        <div class="agent-row">
+            <div class="agent-info">
+                <div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>
+                ${infoHtml}
+            </div>
+            <div class="agent-status ${statusClass}">
+                <span class="status-dot ${statusClass}"></span>
+                <span>${statusText}</span>
+            </div>
+        </div>
+    `;
+};
+
+/**
+ * Render agents tab content using generic components
+ */
 function renderAgents(agents, container) {
     if (!agents || agents.length === 0) {
-        container.innerHTML = '<div class="agents-empty">No agents found.</div>';
+        container.innerHTML = '<div class="loading-placeholder">No agents available.</div>';
         return;
     }
-
-    let html = '<div class="agents-section">';
-    html += '<div class="agents-title">Git</div>';
-    html += '<div class="agents-table"><div class="agents-list">';
-
-    agents.forEach(agent => {
-        const statusClass = agent.status || 'offline';
-        const statusText = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
-
-        html += '<div class="agent-row">';
-        html += '<div class="agent-info">';
-        html += `<div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>`;
-
-        // Build inline display: repo: masked_url | head: short_hash
-        let infoLine = '';
-        const displayUrl = agent.masked_url || agent.url;
-        if (displayUrl) {
-            infoLine += `repo: ${escapeHtml(displayUrl)}`;
-        }
-        if (agent.short_hash) {
-            infoLine += ` | head: ${escapeHtml(agent.short_hash)}`;
-        }
-        if (infoLine) {
-            html += `<div class="agent-url">${infoLine}</div>`;
-        }
-
-        html += '</div>';
-        html += `<div class="agent-status ${statusClass}">`;
-        html += `<span class="status-dot ${statusClass}"></span>`;
-        html += `<span>${statusText}</span>`;
-        html += '</div>';
-        html += '</div>';
-    });
-
-    html += '</div></div></div>';
-    container.innerHTML = html;
+    
+    const agentsHtml = agents.map(renderAgentCard).join('');
+    container.innerHTML = `<div class="agents-list">${agentsHtml}</div>`;
 }
 
 /**
@@ -237,12 +224,3 @@ export async function loadResearchMetrics(force = false) {
     await loadResearchMetricsWithCharts(force);
 }
 
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(str) {
-    if (typeof str !== 'string') return str;
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}

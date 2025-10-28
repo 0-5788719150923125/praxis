@@ -634,6 +634,10 @@
     margin-bottom: 16px;
 }
 
+.spec-hash-rest {
+    color: var(--text);
+}
+
 .spec-code {
     background-color: #f5f5f5;
     border: 1px solid var(--border);
@@ -649,6 +653,41 @@
 [data-theme="dark"] .spec-code {
     background-color: #1e1e1e;
     color: #e0e0e0;
+}
+
+.spec-code-step {
+    margin-bottom: 1rem;
+}
+
+.spec-steps {
+    margin-bottom: 1rem;
+}
+
+.spec-peer-button {
+    float: right;
+    margin-bottom: 1rem;
+    position: relative;
+}
+
+.spec-link {
+    color: #0B9A6D;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.spec-link:hover {
+    text-decoration: underline;
+}
+
+.spec-link-primary {
+    color: #0B9A6D;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.spec-value-highlight {
+    color: #0B9A6D;
+    font-weight: 600;
 }
 
 /* ==================== Agents Tab ==================== */

@@ -10,7 +10,30 @@ import { sendMessage, testApiConnection } from './api.js';
 import { connectTerminal, setupLiveReload, recalculateDashboardScale } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel } from './mobile.js';
-import { toggleAgentSelector, toggleAgentSelection, loadResearchMetricsWithCharts } from './charts.js';
+import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
+import { CLICK_HANDLERS, delegateClick } from './events.js';
+import { executeAction } from './actions.js';
+import './prism.js';
+
+/**
+ * Lifecycle function registry - maps string names to actual functions
+ * This allows tabs to specify activation/deactivation hooks as strings in state.js
+ */
+const lifecycleFunctions = {
+    recalculateDashboardScale,
+    loadSpec,
+    loadAgents,
+    loadResearchMetrics
+};
+
+/**
+ * Resolve lifecycle function by name
+ * @param {string} name - Function name
+ * @returns {Function|null} The function or null if not found
+ */
+function getLifecycleFunction(name) {
+    return lifecycleFunctions[name] || null;
+}
 
 /**
  * Initialize the application
@@ -82,23 +105,23 @@ function setupWindowResizeHandler() {
 }
 
 /**
- * Load settings from localStorage
+ * Load settings from localStorage using centralized storage utilities
  */
 function loadSettings() {
     // Load theme
-    const savedTheme = localStorage.getItem('praxis_theme');
+    const savedTheme = storage.get('theme');
     if (savedTheme) {
         state.theme = savedTheme;
     }
 
     // Load system prompt
-    const savedPrompt = localStorage.getItem('praxis_developer_prompt');
+    const savedPrompt = storage.get('developerPrompt');
     if (savedPrompt) {
         state.settings.systemPrompt = savedPrompt;
     }
 
     // Load API URL
-    const savedApiUrl = localStorage.getItem('praxis_api_url');
+    const savedApiUrl = storage.get('apiUrl');
     if (savedApiUrl) {
         // Skip if we're on ngrok (use dynamic URL)
         if (!window.location.hostname.includes('ngrok')) {
@@ -107,38 +130,33 @@ function loadSettings() {
     }
 
     // Load generation params
-    const savedParams = localStorage.getItem('praxis_gen_params');
+    const savedParams = storage.get('genParams');
     if (savedParams) {
-        try {
-            const params = JSON.parse(savedParams);
-            Object.assign(state.settings, params);
-        } catch (e) {
-            console.error('[Settings] Failed to parse saved params:', e);
-        }
+        Object.assign(state.settings, savedParams);
     }
 
     // Load debug flag
-    const debugLogging = localStorage.getItem('praxis_debug_logging');
-    if (debugLogging) {
-        state.settings.debugLogging = debugLogging === 'true';
+    const debugLogging = storage.get('debugLogging');
+    if (debugLogging !== null) {
+        state.settings.debugLogging = debugLogging === 'true' || debugLogging === true;
     }
 }
 
 /**
- * Save settings to localStorage
+ * Save settings to localStorage using centralized storage utilities
  */
 function saveSettings() {
-    localStorage.setItem('praxis_theme', state.theme);
-    localStorage.setItem('praxis_developer_prompt', state.settings.systemPrompt);
-    localStorage.setItem('praxis_api_url', state.settings.apiUrl);
-    localStorage.setItem('praxis_gen_params', JSON.stringify({
+    storage.set('theme', state.theme);
+    storage.set('developerPrompt', state.settings.systemPrompt);
+    storage.set('apiUrl', state.settings.apiUrl);
+    storage.set('genParams', {
         maxTokens: state.settings.maxTokens,
         temperature: state.settings.temperature,
         repetitionPenalty: state.settings.repetitionPenalty,
         doSample: state.settings.doSample,
         useCache: state.settings.useCache
-    }));
-    localStorage.setItem('praxis_debug_logging', state.settings.debugLogging.toString());
+    });
+    storage.set('debugLogging', state.settings.debugLogging);
 }
 
 /**
@@ -172,138 +190,13 @@ function setupEventListeners() {
 }
 
 /**
- * Handle all click events (delegation)
+ * Handle all click events using declarative event delegation
+ * Pure delegation pattern - configuration in event-handlers.js, logic in actions.js
  */
 async function handleClick(e) {
-    // Reroll button
-    if (e.target.matches('#reroll-button')) {
-        handleReroll();
-        return;
-    }
-
-    // Theme toggle
-    if (e.target.closest('#theme-toggle')) {
-        state.theme = state.theme === 'light' ? 'dark' : 'light';
-        saveSettings();
-        render();
-        return;
-    }
-
-    // Settings button
-    if (e.target.closest('#settings-button')) {
-        state.modals.settingsOpen = true;
-        render();
-        return;
-    }
-
-    // Close modal
-    if (e.target.closest('#close-modal') || e.target.matches('.settings-modal')) {
-        if (e.target.matches('.settings-modal') && !e.target.closest('.modal-content')) {
-            state.modals.settingsOpen = false;
-            render();
-        } else if (e.target.closest('#close-modal')) {
-            state.modals.settingsOpen = false;
-            render();
-        }
-        return;
-    }
-
-    // Save settings
-    if (e.target.matches('#save-settings')) {
-        await handleSaveSettings();
-        return;
-    }
-
-    // Reset settings
-    if (e.target.matches('#reset-settings')) {
-        // Clear all praxis-related settings
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && (key.startsWith('praxis_') || key === 'theme' || key === 'chatHistory')) {
-                keysToRemove.push(key);
-            }
-        }
-
-        keysToRemove.forEach(key => localStorage.removeItem(key));
-
-        // Show confirmation message
-        const confirmationDiv = document.getElementById('save-confirmation');
-        if (confirmationDiv) {
-            confirmationDiv.textContent = 'All settings cleared! Refreshing...';
-            confirmationDiv.classList.add('show');
-        }
-
-        // Reload after brief delay
-        setTimeout(() => window.location.reload(), 1500);
-        return;
-    }
-
-    // Tab switching
-    if (e.target.matches('.tab-button')) {
-        const tabId = e.target.dataset.tab;
-
-        // Update current tab
-        state.currentTab = tabId;
-
-        state.tabs = state.tabs.map(t => ({
-            ...t,
-            active: t.id === tabId
-        }));
-        render();
-
-        // Lazy-load tab content and handle special cases
-        switch (tabId) {
-            case 'terminal':
-                // Recalculate dashboard scale after tab is visible
-                setTimeout(() => {
-                    recalculateDashboardScale();
-                }, 200);
-                break;
-            case 'spec':
-                loadSpec();
-                break;
-            case 'agents':
-                loadAgents();
-                break;
-            case 'research':
-                // Always refresh metrics when Research tab is clicked
-                loadResearchMetrics(true);
-                break;
-        }
-
-        return;
-    }
-
-    // Agent selector toggle
-    if (e.target.closest('#agent-selector-btn')) {
-        toggleAgentSelector();
-        return;
-    }
-
-    // Refresh metrics button
-    if (e.target.closest('#refresh-metrics-btn')) {
-        loadResearchMetricsWithCharts(true);
-        return;
-    }
-
-    // Agent selection checkbox
-    if (e.target.matches('.run-selector-item input[type="checkbox"]')) {
-        const agentName = e.target.dataset.agentName;
-        if (agentName) {
-            toggleAgentSelection(agentName);
-        }
-        return;
-    }
-
-    // Copy git remote command button
-    if (e.target.closest('.copy-git-remote-btn')) {
-        const button = e.target.closest('.copy-git-remote-btn');
-        const command = button.dataset.command;
-        if (command) {
-            copyToClipboard(command, button);
-        }
-        return;
+    const action = delegateClick(e, CLICK_HANDLERS);
+    if (action) {
+        await executeAction(action.type, action.payload, action.meta);
     }
 }
 
@@ -435,17 +328,10 @@ function hidePlaceholder() {
 }
 
 /**
- * Handle range input changes (update display)
+ * Handle range input changes (update display) using form config
  */
 function handleRangeInput(e) {
-    if (e.target.id === 'temperature') {
-        const display = document.getElementById('temperature-value');
-        if (display) display.textContent = e.target.value;
-    }
-    if (e.target.id === 'repetition-penalty') {
-        const display = document.getElementById('repetition-penalty-value');
-        if (display) display.textContent = e.target.value;
-    }
+    updateRangeDisplay(FORM_FIELDS.settings, e.target.id, e.target.value);
 }
 
 /**
@@ -551,22 +437,11 @@ async function handleReroll() {
 }
 
 /**
- * Read settings from modal inputs
+ * Read settings from modal inputs using form config
  */
 function readSettingsFromModal() {
-    const apiUrl = document.getElementById('api-url');
-    const maxTokens = document.getElementById('max-tokens');
-    const temperature = document.getElementById('temperature');
-    const repPenalty = document.getElementById('repetition-penalty');
-    const doSample = document.getElementById('do-sample');
-    const debugLogging = document.getElementById('debug-logging');
-
-    if (apiUrl) state.settings.apiUrl = apiUrl.value;
-    if (maxTokens) state.settings.maxTokens = parseInt(maxTokens.value);
-    if (temperature) state.settings.temperature = parseFloat(temperature.value);
-    if (repPenalty) state.settings.repetitionPenalty = parseFloat(repPenalty.value);
-    if (doSample) state.settings.doSample = doSample.checked;
-    if (debugLogging) state.settings.debugLogging = debugLogging.checked;
+    const updates = readFormValues(FORM_FIELDS.settings);
+    Object.assign(state, updates);
 }
 
 /**

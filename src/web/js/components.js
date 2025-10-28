@@ -6,6 +6,248 @@
 
 import { CONSTANTS } from './state.js';
 
+// ============================================================================
+// GENERIC UI PRIMITIVES
+// ============================================================================
+
+/**
+ * Escape HTML to prevent XSS
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string
+ */
+export const escapeHtml = (str) => {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+};
+
+/**
+ * Create a section container with title
+ * @param {string} title - Section title
+ * @param {string} content - Section content HTML
+ * @param {string} id - Optional section ID
+ * @returns {string} HTML string
+ */
+export const createSection = (title, content, id = '') => `
+    <div class="spec-section"${id ? ` id="${id}"` : ''}>
+        ${title ? `<div class="spec-title">${title}</div>` : ''}
+        ${content}
+    </div>
+`;
+
+/**
+ * Create a code block
+ * @param {string} code - Code to display
+ * @param {string} className - Additional CSS class
+ * @returns {string} HTML string
+ */
+export const createCodeBlock = (code, className = '') => `
+    <div class="spec-code ${className}">${escapeHtml(code)}</div>
+`;
+
+/**
+ * Create a pre-formatted code block
+ * @param {string} code - Code to display
+ * @returns {string} HTML string
+ */
+export const createPreBlock = (code) => `
+    <pre class="spec-code">${escapeHtml(code)}</pre>
+`;
+
+/**
+ * Create a metadata label
+ * @param {string} text - Label text (can include HTML)
+ * @returns {string} HTML string
+ */
+export const createMetadata = (text) => `
+    <div class="spec-metadata">${text}</div>
+`;
+
+/**
+ * Create a key-value pair
+ * @param {string} key - Key label
+ * @param {string|number} value - Value to display
+ * @param {boolean} highlight - Whether to highlight the value
+ * @returns {string} HTML string
+ */
+export const createKeyValue = (key, value, highlight = true) => {
+    const valueClass = highlight ? 'spec-value-highlight' : '';
+    return `
+        <div class="spec-metadata">
+            ${key}: <span class="${valueClass}">${value}</span>
+        </div>
+    `;
+};
+
+/**
+ * Create a numbered steps list
+ * @param {Array} steps - Array of {instruction, code} objects
+ * @returns {string} HTML string
+ */
+export const createStepsList = (steps) => {
+    return steps.map((step, index) => `
+        <div class="spec-metadata">${index + 1}. ${step.instruction}</div>
+        <div class="spec-code spec-code-step">${escapeHtml(step.code)}</div>
+    `).join('');
+};
+
+/**
+ * Create a button
+ * @param {string} text - Button text
+ * @param {string} className - CSS class
+ * @param {Object} dataset - Data attributes as key-value pairs
+ * @returns {string} HTML string
+ */
+export const createButton = (text, className, dataset = {}) => {
+    const dataAttrs = Object.entries(dataset)
+        .map(([key, value]) => `data-${key}="${escapeHtml(value)}"`)
+        .join(' ');
+
+    return `
+        <button class="${className}" ${dataAttrs}>
+            ${text}
+        </button>
+    `;
+};
+
+/**
+ * Create a link
+ * @param {string} text - Link text
+ * @param {string} href - Link URL
+ * @param {string} className - CSS class
+ * @param {Object} attrs - Additional attributes
+ * @returns {string} HTML string
+ */
+export const createLink = (text, href, className = 'spec-link', attrs = {}) => {
+    const attrString = Object.entries(attrs)
+        .map(([key, value]) => `${key}="${escapeHtml(value)}"`)
+        .join(' ');
+
+    return `<a href="${escapeHtml(href)}" class="${className}" ${attrString}>${text}</a>`;
+};
+
+/**
+ * Create a wrapper div
+ * @param {string} content - Content HTML
+ * @param {string} className - CSS class
+ * @param {string} style - Inline styles (use sparingly)
+ * @returns {string} HTML string
+ */
+export const createWrapper = (content, className = '', style = '') => {
+    const styleAttr = style ? ` style="${style}"` : '';
+    const classAttr = className ? ` class="${className}"` : '';
+    return `<div${classAttr}${styleAttr}>${content}</div>`;
+};
+
+/**
+ * Create a list of items from array
+ * @param {Array} items - Array of items
+ * @param {Function} renderFn - Function to render each item
+ * @returns {string} HTML string
+ */
+export const createList = (items, renderFn) => {
+    return items.map(renderFn).join('');
+};
+
+/**
+ * Conditionally render content
+ * @param {boolean} condition - Whether to render
+ * @param {Function|string} content - Content to render (function or string)
+ * @returns {string} HTML string or empty string
+ */
+export const renderIf = (condition, content) => {
+    if (!condition) return '';
+    return typeof content === 'function' ? content() : content;
+};
+
+/**
+ * Create a hash display with highlighted truncated part
+ * @param {string} fullHash - Full hash string
+ * @param {number} truncLength - Length of truncated part
+ * @param {string} linkHref - Optional link for truncated part
+ * @returns {string} HTML string
+ */
+export const createHashDisplay = (fullHash, truncLength, linkHref = '') => {
+    const truncPart = fullHash.substring(0, truncLength);
+    const restPart = fullHash.substring(truncLength);
+
+    const truncHtml = linkHref
+        ? createLink(truncPart, linkHref, 'spec-link-primary')
+        : `<span class="spec-hash-trunc">${truncPart}</span>`;
+
+    return `
+        <div class="spec-hash">
+            ${truncHtml}<span class="spec-hash-rest">${restPart}</span>
+        </div>
+    `;
+};
+
+/**
+ * Format a number with locale-specific separators
+ * @param {number} num - Number to format
+ * @returns {string} Formatted number string
+ */
+export const formatNumber = (num) => num.toLocaleString();
+
+/**
+ * Format JSON for display
+ * @param {Object} obj - Object to format
+ * @param {number} indent - Indentation spaces
+ * @returns {string} Formatted JSON string
+ */
+export const formatJSON = (obj, indent = 2) => JSON.stringify(obj, null, indent);
+
+// ============================================================================
+// TAB TEMPLATE GENERATORS
+// ============================================================================
+
+/**
+ * Create a simple container with loading placeholder
+ * Generic template for lazy-loaded tabs
+ * @param {string} containerClass - CSS class for container
+ * @param {string} containerId - DOM ID for container
+ * @param {string} placeholderText - Loading placeholder text
+ * @returns {string} HTML string
+ */
+export const createSimpleTabContent = (containerClass, containerId, placeholderText) => `
+    <div class="${containerClass}" id="${containerId}">
+        <div class="loading-placeholder">${placeholderText}</div>
+    </div>
+`;
+
+/**
+ * Create container with initial content
+ * @param {string} containerClass - CSS class for container
+ * @param {string} containerId - DOM ID for container
+ * @param {string} initialContent - Initial HTML content
+ * @returns {string} HTML string
+ */
+export const createContainerWithContent = (containerClass, containerId, initialContent) => `
+    <div class="${containerClass}" id="${containerId}">
+        ${initialContent}
+    </div>
+`;
+
+/**
+ * Create chat tab with message container and input
+ * @param {Object} config - Configuration {chatContainerId, inputId, inputRows}
+ * @returns {string} HTML string
+ */
+export const createChatTabContent = (config) => `
+    <div class="chat-container" id="${config.chatContainerId}">
+        <!-- Messages rendered dynamically -->
+    </div>
+    <div class="input-container">
+        <textarea class="message-input" id="${config.inputId}" rows="${config.inputRows}"></textarea>
+    </div>
+`;
+
+// ============================================================================
+// APP-SPECIFIC COMPONENTS
+// ============================================================================
+
+
 /**
  * Create entire app structure - main container for everything
  * @param {Object} state - Application state
@@ -15,7 +257,7 @@ export function createAppStructure(state) {
     return `
         ${createHeader(state)}
         ${createTabNav()}
-        ${createTabContents()}
+        ${createTabContents(state.tabs)}
         ${createSettingsModalContainer()}
     `;
 }
@@ -71,49 +313,22 @@ export function createTabNav() {
 }
 
 /**
- * Create all tab content containers
+ * Create all tab content containers - data-driven from tabs configuration
+ * @param {Array} tabs - Array of tab configurations
  * @returns {string} HTML string
  */
-export function createTabContents() {
-    return `
-        <!-- Chat Tab -->
-        <div class="tab-content active" id="chat-content">
-            <div class="chat-container" id="chat-container">
-                <!-- Messages rendered dynamically -->
-            </div>
-            <div class="input-container">
-                <textarea class="message-input" id="message-input" rows="1"></textarea>
-            </div>
-        </div>
+export function createTabContents(tabs) {
+    return tabs.map(tab => {
+        // Build CSS classes dynamically
+        const classes = ['tab-content', ...tab.customClasses];
+        if (tab.active) classes.push('active');
 
-        <!-- Terminal Tab -->
-        <div class="tab-content" id="terminal-content">
-            <div class="terminal-container" id="terminal-display">
-                <div class="terminal-line">Terminal ready. Dashboard will connect automatically when available.</div>
+        return `
+            <div class="${classes.join(' ')}" id="${tab.id}-content">
+                ${tab.template()}
             </div>
-        </div>
-
-        <!-- Spec Tab -->
-        <div class="tab-content" id="spec-content">
-            <div class="spec-container" id="spec-container">
-                <div class="loading-placeholder">Loading specification...</div>
-            </div>
-        </div>
-
-        <!-- Agents Tab -->
-        <div class="tab-content" id="agents-content">
-            <div class="agents-container" id="agents-container">
-                <div class="loading-placeholder">Loading agents...</div>
-            </div>
-        </div>
-
-        <!-- Research Tab -->
-        <div class="tab-content" id="research-content">
-            <div class="research-container" id="research-container">
-                <div class="loading-placeholder">Loading metrics...</div>
-            </div>
-        </div>
-    `;
+        `;
+    }).join('');
 }
 
 /**
@@ -274,13 +489,3 @@ export function createTerminalLine(text) {
     return `<div class="terminal-line">${escapeHtml(text)}</div>`;
 }
 
-/**
- * Escape HTML to prevent XSS
- * @param {string} str - String to escape
- * @returns {string} Escaped string
- */
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
