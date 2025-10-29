@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -62,7 +63,7 @@ def get_data_metrics():
 
         for run_hash in run_hashes:
             run_dir = Path("build/runs") / run_hash
-            data_metrics_file = run_dir / "data_metrics.jsonl"
+            data_metrics_file = run_dir / "data_metrics.db"
 
             if not data_metrics_file.exists():
                 continue
@@ -141,46 +142,61 @@ def get_data_metrics():
 
 
 def _read_data_metrics_file(
-    filepath: Path, since_step: int = 0
+    db_path: Path, since_step: int = 0
 ) -> List[Dict[str, Any]]:
-    """Read data metrics from JSONL file, filtering by step.
+    """Read data metrics from SQLite database, filtering by step.
 
     Args:
-        filepath: Path to data_metrics.jsonl file
+        db_path: Path to data_metrics.db file
         since_step: Only include metrics after this step
 
     Returns:
         List of metric dictionaries, sorted by step
     """
+    if not db_path.exists():
+        return []
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row  # Access columns by name
+    cursor = conn.cursor()
+
+    # Query with incremental filter - leverages PRIMARY KEY index
+    cursor.execute(
+        """SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
+           FROM data_metrics
+           WHERE step >= ?
+           ORDER BY step""",
+        (since_step,),
+    )
+
     metrics = []
+    for row in cursor.fetchall():
+        # Build metric dict
+        entry = {"step": row["step"], "ts": datetime.fromtimestamp(row["ts"]).isoformat()}
 
-    with open(filepath, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
+        # Parse JSON fields
+        if row["sampling_weights"]:
             try:
-                entry = json.loads(line)
-                if entry.get("step", 0) >= since_step:
-                    metrics.append(entry)
+                entry["sampling_weights"] = json.loads(row["sampling_weights"])
             except json.JSONDecodeError:
-                # Skip malformed lines
-                continue
+                pass
 
-    # Sort by step to ensure chronological order
-    metrics.sort(key=lambda m: m.get("step", 0))
+        if row["dataset_stats"]:
+            try:
+                entry["dataset_stats"] = json.loads(row["dataset_stats"])
+            except json.JSONDecodeError:
+                pass
 
-    # Deduplicate by step - keep last occurrence
-    seen_steps = {}
-    for metric in metrics:
-        step = metric.get("step", 0)
-        seen_steps[step] = metric
+        if row["extra_metrics"]:
+            try:
+                entry.update(json.loads(row["extra_metrics"]))
+            except json.JSONDecodeError:
+                pass
 
-    deduplicated = list(seen_steps.values())
-    deduplicated.sort(key=lambda m: m.get("step", 0))
+        metrics.append(entry)
 
-    return deduplicated
+    conn.close()
+    return metrics
 
 
 def _downsample_data_metrics(

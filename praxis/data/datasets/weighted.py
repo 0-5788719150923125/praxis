@@ -50,12 +50,33 @@ class WeightedIterableDataset(IterableDataset):
         self.hypersample_chance = hypersample_chance
         self.rl_type = rl_type
         self.tokenizer = tokenizer  # Store tokenizer for reward extraction
+        self._first_batch = True  # Track if this is the first batch
 
     def __iter__(self):
         while True:
-            oversample = random.random() < self.oversample_chance
-            supersample = random.random() < self.supersample_chance
-            hypersample = random.random() < self.hypersample_chance
+            # Force first batch to use maximum sequence length to trigger
+            # torch.compile for worst-case scenario, avoiding lazy recompilation
+            if self._first_batch:
+                self._first_batch = False
+                # Use maximum available sampling mode based on batch size
+                if self.batch_size >= 64:
+                    oversample, supersample, hypersample = False, False, True
+                    print(f"[DATA] First batch: forcing hypersample (8x) for batch_size={self.batch_size}")
+                elif self.batch_size >= 16:
+                    oversample, supersample, hypersample = False, True, False
+                    print(f"[DATA] First batch: forcing supersample (4x) for batch_size={self.batch_size}")
+                elif self.batch_size >= 4:
+                    oversample, supersample, hypersample = True, False, False
+                    print(f"[DATA] First batch: forcing oversample (2x) for batch_size={self.batch_size}")
+                else:
+                    # Batch size too small for any sampling mode
+                    oversample, supersample, hypersample = False, False, False
+                    print(f"[DATA] First batch: batch_size={self.batch_size} too small for oversampling")
+            else:
+                # Normal random sampling after first batch
+                oversample = random.random() < self.oversample_chance
+                supersample = random.random() < self.supersample_chance
+                hypersample = random.random() < self.hypersample_chance
 
             result = self.data_manager.get_batch(
                 self.batch_size, oversample, supersample, hypersample

@@ -29,7 +29,7 @@ def get_optimizer(
     weight_decay = kwargs.get("weight_decay", 0.0)
     if schedule_free:
         kwargs["lr"] *= 2.0  # Increase the learning rate by 2-10x
-        # kwargs["weight_decay"] = 0.0  # Disable weight decay in the base optimizer
+        kwargs["weight_decay"] = 0.0  # Disable weight decay in the base optimizer
     optimizer = create_optimizer(model, *args, **kwargs)
     if trac:
         optimizer = TRAC(optimizer, num_coefs=128)
@@ -39,7 +39,7 @@ def get_optimizer(
         optimizer = Lookahead(optimizer, k=5, alpha=0.5, pullback_momentum="none")
     if schedule_free:
         optimizer = ScheduleFreeWrapper(
-            optimizer, momentum=0.9, r=0, weight_decay=weight_decay
+            optimizer, momentum=0.98, r=0, weight_decay=weight_decay
         )
     if hasattr(optimizer, "train"):
         optimizer.train()
@@ -60,7 +60,6 @@ OPTIMIZER_PROFILES = {
         lr=0.0003,
         weight_decay=0.1,
         betas=(0.9, 0.95),
-        r=0.98,
         use_gc=True,
         adanorm=True,
         cautious=True,

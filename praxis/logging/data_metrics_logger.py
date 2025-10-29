@@ -1,15 +1,15 @@
-"""Framework-agnostic data metrics logger for preprocessing and sampling visualization."""
+"""SQLite-based data metrics logger for preprocessing and sampling visualization."""
 
 import json
-import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class DataMetricsLogger:
-    """Logs data preprocessing and sampling metrics to JSONL file for web visualization.
+    """Logs data preprocessing and sampling metrics to SQLite database for web visualization.
 
     This logger tracks metrics related to data processing, such as:
     - Document sampling weights (for dynamic weighting strategies)
@@ -17,8 +17,7 @@ class DataMetricsLogger:
     - Data preprocessing timings
     - Batch composition metrics
 
-    Metrics are written to a JSONL file (one JSON object per line) for efficient
-    append-only writes and incremental reading.
+    Metrics are written to a SQLite database with automatic deduplication.
 
     Usage:
         logger = DataMetricsLogger(run_dir="build/runs/83492c812")
@@ -31,23 +30,46 @@ class DataMetricsLogger:
             logger.log(step=0, sampling_weights={"doc1": 0.5, "doc2": 0.5})
     """
 
-    def __init__(self, run_dir: str, filename: str = "data_metrics.jsonl"):
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS data_metrics (
+        step INTEGER PRIMARY KEY,
+        ts REAL NOT NULL,
+        sampling_weights TEXT,
+        dataset_stats TEXT,
+        extra_metrics TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_data_metrics_ts ON data_metrics(ts);
+    """
+
+    def __init__(self, run_dir: str, filename: str = "data_metrics.db"):
         """Initialize the data metrics logger.
 
         Args:
             run_dir: Directory for the current run (e.g., "build/runs/83492c812")
-            filename: Name of the metrics file (default: "data_metrics.jsonl")
+            filename: Name of the database file (default: "data_metrics.db")
         """
         self.run_dir = Path(run_dir)
         self.filepath = self.run_dir / filename
         self.lock = Lock()
-        self._file_handle = None
+        self._write_counter = 0
+        self._commit_interval = 100  # Commit every 100 writes
 
         # Ensure directory exists
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Open file in append mode
-        self._file_handle = open(self.filepath, "a", buffering=1)  # Line buffered
+        # Open database connection
+        self.conn = sqlite3.connect(
+            self.filepath, check_same_thread=False, timeout=30.0
+        )
+
+        # Enable WAL mode for concurrent reads during training
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        # Use NORMAL synchronous mode for better write performance
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+
+        # Create schema
+        self.conn.executescript(self.SCHEMA)
+        self.conn.commit()
 
     def log(self, step: int, **metrics: Any) -> None:
         """Log data metrics for a training step.
@@ -66,23 +88,66 @@ class DataMetricsLogger:
                       dataset_stats={"total_docs": 1000})
         """
         with self.lock:
-            if self._file_handle is None or self._file_handle.closed:
-                # Reopen if closed
-                self._file_handle = open(self.filepath, "a", buffering=1)
+            # Extract known data metric types
+            sampling_weights = metrics.pop("sampling_weights", None)
+            dataset_stats = metrics.pop("dataset_stats", None)
 
-            # Build log entry
-            entry = {"step": step, "ts": datetime.now().isoformat(), **metrics}
+            # Remaining metrics go to extra
+            extra_metrics = metrics if metrics else None
 
-            # Write as single line
-            json.dump(entry, self._file_handle, separators=(",", ":"))
-            self._file_handle.write("\n")
-            # Note: buffering=1 means line-buffered, so flush happens automatically
+            # Serialize to JSON
+            sampling_weights_json = (
+                json.dumps(sampling_weights, separators=(",", ":"))
+                if sampling_weights
+                else None
+            )
+            dataset_stats_json = (
+                json.dumps(dataset_stats, separators=(",", ":"))
+                if dataset_stats
+                else None
+            )
+            extra_json = (
+                json.dumps(extra_metrics, separators=(",", ":"))
+                if extra_metrics
+                else None
+            )
+
+            # UPSERT query with COALESCE to merge values
+            query = """
+                INSERT INTO data_metrics (step, ts, sampling_weights, dataset_stats, extra_metrics)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(step) DO UPDATE SET
+                ts = excluded.ts,
+                sampling_weights = COALESCE(excluded.sampling_weights, data_metrics.sampling_weights),
+                dataset_stats = COALESCE(excluded.dataset_stats, data_metrics.dataset_stats),
+                extra_metrics = COALESCE(excluded.extra_metrics, data_metrics.extra_metrics)
+            """
+
+            self.conn.execute(
+                query,
+                (
+                    step,
+                    datetime.now().timestamp(),
+                    sampling_weights_json,
+                    dataset_stats_json,
+                    extra_json,
+                ),
+            )
+
+            # Commit only every N writes to reduce WAL bloat
+            self._write_counter += 1
+            if self._write_counter >= self._commit_interval:
+                self.conn.commit()
+                self._write_counter = 0
 
     def close(self) -> None:
-        """Close the file handle."""
+        """Close the database connection."""
         with self.lock:
-            if self._file_handle and not self._file_handle.closed:
-                self._file_handle.close()
+            if self.conn:
+                # Commit any pending writes before closing
+                if self._write_counter > 0:
+                    self.conn.commit()
+                self.conn.close()
 
     def __enter__(self):
         return self
@@ -91,4 +156,7 @@ class DataMetricsLogger:
         self.close()
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except:
+            pass  # Ignore errors during cleanup

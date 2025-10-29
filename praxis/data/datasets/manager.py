@@ -21,7 +21,7 @@ class InterleaveDataManager:
 
     # Dynamic weighting control (hardcoded switch)
     use_dynamic_weights = True  # Set to False to use static weights
-    ema_alpha = 0.1  # EMA smoothing factor
+    ema_alpha = 0.3  # EMA smoothing factor
 
     # Class variable to store shared weights across all instances
     shared_weights = None

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -65,7 +66,7 @@ def get_metrics():
 
         for run_hash in run_hashes:
             run_dir = Path("build/runs") / run_hash
-            metrics_file = run_dir / "metrics.jsonl"
+            metrics_file = run_dir / "metrics.db"
 
             if not metrics_file.exists():
                 continue
@@ -147,47 +148,66 @@ def get_metrics():
         return error_response, 500
 
 
-def _read_metrics_file(filepath: Path, since_step: int = 0) -> List[Dict[str, Any]]:
-    """Read metrics from JSONL file, filtering by step.
+def _read_metrics_file(db_path: Path, since_step: int = 0) -> List[Dict[str, Any]]:
+    """Read metrics from SQLite database, filtering by step.
 
     Args:
-        filepath: Path to metrics.jsonl file
+        db_path: Path to metrics.db file
         since_step: Only include metrics after this step
 
     Returns:
         List of metric dictionaries, sorted by step
     """
+    if not db_path.exists():
+        return []
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row  # Access columns by name
+    cursor = conn.cursor()
+
+    # Query with incremental filter - leverages PRIMARY KEY index
+    cursor.execute(
+        """SELECT step, ts, loss, val_loss, learning_rate, num_tokens,
+                  avg_step_time, softmax_collapse, val_perplexity, batch,
+                  local_experts, remote_experts, extra_metrics
+           FROM metrics
+           WHERE step >= ?
+           ORDER BY step""",
+        (since_step,),
+    )
+
     metrics = []
+    for row in cursor.fetchall():
+        # Build metric dict from native columns
+        entry = {"step": row["step"], "ts": datetime.fromtimestamp(row["ts"]).isoformat()}
 
-    with open(filepath, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+        # Add non-null native columns
+        for col in [
+            "loss",
+            "val_loss",
+            "learning_rate",
+            "num_tokens",
+            "avg_step_time",
+            "softmax_collapse",
+            "val_perplexity",
+            "batch",
+            "local_experts",
+            "remote_experts",
+        ]:
+            if row[col] is not None:
+                entry[col] = row[col]
 
+        # Merge extra metrics from JSON blob
+        if row["extra_metrics"]:
             try:
-                entry = json.loads(line)
-                if entry.get("step", 0) >= since_step:
-                    metrics.append(entry)
+                entry.update(json.loads(row["extra_metrics"]))
             except json.JSONDecodeError:
-                # Skip malformed lines
-                continue
+                pass  # Skip malformed JSON
 
-    # CRITICAL: Sort by step to ensure chronological order
-    # Metrics file may have out-of-order steps due to async logging
-    metrics.sort(key=lambda m: m.get("step", 0))
+        metrics.append(entry)
 
-    # Deduplicate by step - keep last occurrence
-    # Multiple writes to same step can happen with async logging
-    seen_steps = {}
-    for metric in metrics:
-        step = metric.get("step", 0)
-        seen_steps[step] = metric
-
-    deduplicated = list(seen_steps.values())
-    deduplicated.sort(key=lambda m: m.get("step", 0))
-
-    return deduplicated
+    conn.close()
+    return metrics
 
 
 def _downsample_metrics(
