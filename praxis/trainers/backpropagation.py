@@ -380,7 +380,8 @@ class BackpropagationTrainer(LightningModule):
         if self.outputs_are_aligned:
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
-            stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :], labels)
+            # Detach logits to prevent memory accumulation from computation graph
+            stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :].detach(), labels)
 
         self.log_dict(
             stats,
@@ -395,6 +396,10 @@ class BackpropagationTrainer(LightningModule):
     def on_validation_end(self):
         super().on_validation_end()
         self.last_train_step_time = datetime.now()
+
+        # Clear CUDA cache after validation to free memory from logits and intermediate tensors
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def configure_optimizers(self):
         "Create optimizer and scheduler"

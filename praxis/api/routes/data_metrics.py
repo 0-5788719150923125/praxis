@@ -156,7 +156,7 @@ def _read_data_metrics_file(
     if not db_path.exists():
         return []
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row  # Access columns by name
     cursor = conn.cursor()
 

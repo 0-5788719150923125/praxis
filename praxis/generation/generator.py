@@ -18,12 +18,16 @@ class Generator:
     Wraps a model in a simplified generation API with request queuing.
     """
 
+    # Maximum number of results to keep in memory to prevent VRAM leaks
+    MAX_RESULTS = 100
+
     def __init__(self, model, tokenizer, device="cuda"):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.request_queue = Queue()
         self.results = {}
+        self._result_order = []  # Track insertion order for cleanup
 
         from praxis.tools import call_tool, get_tools_json_schema
 
@@ -71,6 +75,8 @@ class Generator:
         result = self.results.get(request_id)
         if result is not None:
             del self.results[request_id]
+            if request_id in self._result_order:
+                self._result_order.remove(request_id)
         return result
 
     def generate_with_messages(self, messages: list, **kwargs) -> str:
@@ -394,6 +400,14 @@ class Generator:
             request = self.request_queue.get()
             result = self._process_single_request(request)
             self.results[request.id] = result
+            self._result_order.append(request.id)
+
+            # Prevent memory leaks by limiting results dictionary size
+            while len(self.results) > self.MAX_RESULTS:
+                oldest_id = self._result_order.pop(0)
+                if oldest_id in self.results:
+                    del self.results[oldest_id]
+
             processed += 1
 
         return processed

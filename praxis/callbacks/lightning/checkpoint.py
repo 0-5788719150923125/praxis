@@ -55,6 +55,11 @@ class TimeBasedCheckpoint(ModelCheckpoint):
                 os.makedirs(model_dir, exist_ok=True)
                 lm.model.save_pretrained(model_dir, safe_serialization=False)
 
+                # Clear CUDA cache after checkpoint saving to prevent memory accumulation
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
     def on_train_epoch_end(self, trainer, pl_module):
         # Disable saving checkpoints at the end of every epoch
         pass

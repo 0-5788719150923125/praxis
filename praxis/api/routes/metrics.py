@@ -161,7 +161,7 @@ def _read_metrics_file(db_path: Path, since_step: int = 0) -> List[Dict[str, Any
     if not db_path.exists():
         return []
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row  # Access columns by name
     cursor = conn.cursor()
 
@@ -396,7 +396,7 @@ def get_runs():
 
             truncated_hash = run_path.name
             config_file = run_path / "config.json"
-            metrics_file = run_path / "metrics.jsonl"
+            metrics_file = run_path / "metrics.db"
 
             # Skip if no metrics file
             if not metrics_file.exists():
@@ -414,11 +414,14 @@ def get_runs():
             # Get metrics file stats
             stat = metrics_file.stat()
 
-            # Count lines in metrics file to get step count
+            # Count rows in SQLite database to get step count
             num_steps = 0
             try:
-                with open(metrics_file, "r") as f:
-                    num_steps = sum(1 for line in f if line.strip())
+                conn = sqlite3.connect(metrics_file, timeout=30.0)
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM metrics")
+                num_steps = cursor.fetchone()[0]
+                conn.close()
             except:
                 pass
 

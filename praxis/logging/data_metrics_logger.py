@@ -52,7 +52,7 @@ class DataMetricsLogger:
         self.filepath = self.run_dir / filename
         self.lock = Lock()
         self._write_counter = 0
-        self._commit_interval = 100  # Commit every 100 writes
+        self._commit_interval = 10  # Commit every 10 writes (data metrics are less frequent)
 
         # Ensure directory exists
         self.run_dir.mkdir(parents=True, exist_ok=True)
