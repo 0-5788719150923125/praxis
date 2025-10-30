@@ -112,6 +112,13 @@ export const ACTION_HANDLERS = {
         state.theme = state.theme === 'light' ? 'dark' : 'light';
         storage.set('theme', state.theme);
         render();
+
+        // Reload research charts if on research tab to update colors
+        if (state.activeTab === 'research') {
+            import('./charts.js').then(({ loadResearchMetricsWithCharts }) => {
+                loadResearchMetricsWithCharts(true);
+            });
+        }
     },
 
     /**

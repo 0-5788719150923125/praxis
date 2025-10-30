@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,22 @@ from typing import Any, Dict, List, Optional
 from flask import Blueprint, current_app, jsonify, request
 
 data_metrics_bp = Blueprint("data_metrics", __name__)
+
+
+def _sanitize_for_json(obj):
+    """Recursively sanitize data structure for JSON serialization.
+
+    Converts NaN and Infinity values to None to prevent JSON encoding errors.
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    return obj
 
 
 @data_metrics_bp.route("/api/data-metrics", methods=["GET", "OPTIONS"])
@@ -42,11 +59,15 @@ def get_data_metrics():
         return response
 
     try:
+        from ..app import api_logger
+
         # Get query parameters
         since_step = int(request.args.get("since", 0))
         limit = int(request.args.get("limit", 1000))
         downsample_method = request.args.get("downsample", "lttb")
         runs_param = request.args.get("runs", "")  # Comma-separated hashes
+
+        api_logger.debug(f"Data metrics request: since={since_step}, limit={limit}")
 
         # Get current run directory
         current_hash = current_app.config.get("truncated_hash", "unknown")
@@ -72,15 +93,19 @@ def get_data_metrics():
             stat = data_metrics_file.stat()
             etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}")
 
-            # Read and parse data metrics
-            raw_metrics = _read_data_metrics_file(data_metrics_file, since_step)
+            # Read and parse data metrics with SQL-level sampling
+            raw_metrics = _read_data_metrics_file(data_metrics_file, since_step, max_rows=limit * 2)
 
             if not raw_metrics:
+                api_logger.debug(f"No data metrics found for run {run_hash}")
                 continue
+
+            api_logger.debug(f"Loaded {len(raw_metrics)} data metrics for run {run_hash}")
 
             # Downsample if needed
             if len(raw_metrics) > limit and downsample_method == "lttb":
                 raw_metrics = _downsample_data_metrics(raw_metrics, limit)
+                api_logger.debug(f"Downsampled to {len(raw_metrics)} data points for run {run_hash}")
 
             # Transform to API format (column-based)
             metrics_data = _transform_data_metrics(raw_metrics)
@@ -129,6 +154,9 @@ def get_data_metrics():
             "metadata": {"current_hash": current_hash, "num_runs": len(all_runs_data)},
         }
 
+        # Sanitize response data to prevent NaN/Infinity JSON encoding errors
+        response_data = _sanitize_for_json(response_data)
+
         response = jsonify(response_data)
         response.headers["ETag"] = etag
         response.headers["Cache-Control"] = "max-age=5"  # Cache for 5 seconds
@@ -136,19 +164,27 @@ def get_data_metrics():
         return response
 
     except Exception as e:
-        error_response = jsonify({"error": str(e), "status": "error"})
+        from ..app import api_logger
+        api_logger.error(f"Error in get_data_metrics endpoint: {e}", exc_info=True)
+
+        error_response = jsonify({
+            "error": str(e),
+            "status": "error",
+            "error_type": type(e).__name__
+        })
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
 
 
 def _read_data_metrics_file(
-    db_path: Path, since_step: int = 0
+    db_path: Path, since_step: int = 0, max_rows: int = None
 ) -> List[Dict[str, Any]]:
     """Read data metrics from SQLite database, filtering by step.
 
     Args:
         db_path: Path to data_metrics.db file
         since_step: Only include metrics after this step
+        max_rows: Maximum rows to fetch (applies intelligent sampling if needed)
 
     Returns:
         List of metric dictionaries, sorted by step
@@ -156,47 +192,78 @@ def _read_data_metrics_file(
     if not db_path.exists():
         return []
 
-    conn = sqlite3.connect(db_path, timeout=30.0)
-    conn.row_factory = sqlite3.Row  # Access columns by name
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row  # Access columns by name
+        cursor = conn.cursor()
 
-    # Query with incremental filter - leverages PRIMARY KEY index
-    cursor.execute(
-        """SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
-           FROM data_metrics
-           WHERE step >= ?
-           ORDER BY step""",
-        (since_step,),
-    )
+        # If max_rows specified, check total count and sample intelligently
+        if max_rows:
+            cursor.execute("SELECT COUNT(*) FROM data_metrics WHERE step >= ?", (since_step,))
+            total_count = cursor.fetchone()[0]
 
-    metrics = []
-    for row in cursor.fetchall():
-        # Build metric dict
-        entry = {"step": row["step"], "ts": datetime.fromtimestamp(row["ts"]).isoformat()}
+            # If dataset is larger than max_rows, use SQL-level sampling
+            if total_count > max_rows * 2:
+                sample_interval = max(1, total_count // max_rows)
+                cursor.execute(
+                    f"""SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
+                       FROM data_metrics
+                       WHERE step >= ? AND (rowid % {sample_interval}) = 0
+                       ORDER BY step
+                       LIMIT ?""",
+                    (since_step, max_rows),
+                )
+            else:
+                cursor.execute(
+                    """SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
+                       FROM data_metrics
+                       WHERE step >= ?
+                       ORDER BY step""",
+                    (since_step,),
+                )
+        else:
+            # No limit specified, query all rows
+            cursor.execute(
+                """SELECT step, ts, sampling_weights, dataset_stats, extra_metrics
+                   FROM data_metrics
+                   WHERE step >= ?
+                   ORDER BY step""",
+                (since_step,),
+            )
 
-        # Parse JSON fields
-        if row["sampling_weights"]:
-            try:
-                entry["sampling_weights"] = json.loads(row["sampling_weights"])
-            except json.JSONDecodeError:
-                pass
+        metrics = []
+        for row in cursor.fetchall():
+            # Build metric dict
+            entry = {"step": row["step"], "ts": datetime.fromtimestamp(row["ts"]).isoformat()}
 
-        if row["dataset_stats"]:
-            try:
-                entry["dataset_stats"] = json.loads(row["dataset_stats"])
-            except json.JSONDecodeError:
-                pass
+            # Parse JSON fields
+            if row["sampling_weights"]:
+                try:
+                    entry["sampling_weights"] = json.loads(row["sampling_weights"])
+                except json.JSONDecodeError:
+                    pass
 
-        if row["extra_metrics"]:
-            try:
-                entry.update(json.loads(row["extra_metrics"]))
-            except json.JSONDecodeError:
-                pass
+            if row["dataset_stats"]:
+                try:
+                    entry["dataset_stats"] = json.loads(row["dataset_stats"])
+                except json.JSONDecodeError:
+                    pass
 
-        metrics.append(entry)
+            if row["extra_metrics"]:
+                try:
+                    entry.update(json.loads(row["extra_metrics"]))
+                except json.JSONDecodeError:
+                    pass
 
-    conn.close()
-    return metrics
+            metrics.append(entry)
+
+        conn.close()
+        return metrics
+
+    except Exception as e:
+        from ..app import api_logger
+        api_logger.error(f"Error reading data metrics from {db_path}: {e}", exc_info=True)
+        return []
 
 
 def _downsample_data_metrics(

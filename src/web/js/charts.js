@@ -139,13 +139,19 @@ export async function loadResearchMetricsWithCharts(force = false) {
                 let baseUrl = agent.url.replace(/\/praxis(\.git)?$/, '');
                 const response = await fetch(`${baseUrl}/api/metrics?since=0&limit=1000&downsample=lttb`);
 
-                if (!response.ok) return null;
+                if (!response.ok) {
+                    console.warn(`[Charts] Metrics fetch failed for ${agentName}: ${response.status}`);
+                    return null;
+                }
 
                 const data = await response.json();
 
                 if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
+                    console.warn(`[Charts] No metrics data for ${agentName}`);
                     return null;
                 }
+
+                console.log(`[Charts] Loaded ${data.runs[0].metadata?.num_points || 0} metrics for ${agentName}`);
 
                 return {
                     name: agentName,
@@ -154,8 +160,8 @@ export async function loadResearchMetricsWithCharts(force = false) {
                     metadata: data.runs[0].metadata
                 };
             } catch (error) {
-                // Silently handle all errors (CORS, network, timeout, etc.)
-                // This gracefully handles any URL type without hardcoded filtering
+                // Log errors for debugging large dataset issues
+                console.error(`[Charts] Error loading metrics for ${agentName}:`, error);
                 return null;
             }
         });
@@ -319,8 +325,8 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
     }
 
     const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#333333';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
 
     // Build datasets
     const datasets = agents.map((agent) => {
@@ -448,8 +454,8 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
     }
 
     const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#333333';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
 
     // Extract latest token count for each agent
     const data = agents.map((agent) => {
@@ -551,8 +557,8 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
     }
 
     const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#333333';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
 
     // Collect all documents and their latest weights
     const documentData = [];
