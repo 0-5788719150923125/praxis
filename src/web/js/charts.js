@@ -5,6 +5,7 @@
 
 import { state, CONSTANTS } from './state.js';
 import { fetchAPI } from './api.js';
+import { createTabHeader } from './components.js';
 
 // Chart instances storage
 const charts = {};
@@ -301,28 +302,32 @@ function renderMetricsCharts(data, container) {
         `;
     }
 
-    // Header
-    let html = `
-        <div class="research-header">
-            <div class="research-title-row">
-                <h2>Metrics</h2>
-                <div class="research-controls">
-                    ${selectorHTML}
-                    <button class="refresh-button" id="refresh-metrics-btn">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
-                            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
-                        </svg>
-                        Refresh
-                    </button>
-                </div>
-            </div>
-            <div class="metadata">
-                <span><strong>Comparing:</strong> ${agents.length} agent${agents.length > 1 ? 's' : ''}</span>
-                <span><strong>Total Points:</strong> ${agents.reduce((sum, a) => sum + (a.metadata?.num_points || 0), 0)}</span>
-            </div>
-        </div>
+    // Build refresh button icon
+    const refreshIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+        </svg>
     `;
+
+    // Create metadata subtitle
+    const metadataHTML = `
+        <span><strong>Comparing:</strong> ${agents.length} agent${agents.length > 1 ? 's' : ''}</span>
+        <span><strong>Total Points:</strong> ${agents.reduce((sum, a) => sum + (a.metadata?.num_points || 0), 0)}</span>
+    `;
+
+    // Header using new component
+    const headerHTML = createTabHeader({
+        title: 'Metrics',
+        additionalContent: selectorHTML,
+        buttons: [{
+            id: 'refresh-metrics-btn',
+            label: 'Refresh',
+            icon: refreshIcon,
+            className: 'tab-header-button'
+        }],
+        metadata: metadataHTML
+    });
 
     // Data-driven metric detection - filter configs to find available metrics
     const availableMetrics = CONSTANTS.METRIC_CONFIGS.filter(config => {
@@ -345,9 +350,9 @@ function renderMetricsCharts(data, container) {
     });
 
     // Build chart cards with spacing - data-driven loop
-    html += '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
+    let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
 
-    html += availableMetrics.map(config => `
+    chartsHTML += availableMetrics.map(config => `
         <div class="chart-card">
             <div class="chart-title">${config.title}</div>
             <div class="chart-wrapper">
@@ -356,9 +361,9 @@ function renderMetricsCharts(data, container) {
         </div>
     `).join('');
 
-    html += '</div>';
+    chartsHTML += '</div>';
 
-    container.innerHTML = html;
+    container.innerHTML = headerHTML + chartsHTML;
 
     // Render charts after DOM update - data-driven loop
     setTimeout(() => {

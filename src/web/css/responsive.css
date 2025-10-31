@@ -172,13 +172,13 @@
         width: 100%;
     }
 
-    .research-title-row {
+    .tab-header-title-row {
         flex-direction: column;
         gap: 0.75rem;
         align-items: flex-start;
     }
 
-    .research-controls {
+    .tab-header-controls {
         width: 100%;
         justify-content: flex-start;
     }

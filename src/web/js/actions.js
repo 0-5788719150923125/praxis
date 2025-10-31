@@ -256,25 +256,62 @@ export const ACTION_HANDLERS = {
         try {
             await navigator.clipboard.writeText(text);
 
-            // Create notification positioned absolutely
+            // Create notification with viewport-aware positioning
             const notification = document.createElement('div');
             notification.textContent = 'Copied git remote to clipboard.';
+            notification.className = 'copy-notification';
+
+            // Get button position
+            const buttonRect = meta.button.getBoundingClientRect();
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+
+            // Notification dimensions (estimate before rendering)
+            const notificationWidth = 240; // approximate width
+            const notificationHeight = 40; // approximate height
+
+            // Calculate position: try to place near button
+            let top = buttonRect.top + (buttonRect.height / 2) - (notificationHeight / 2);
+            let left = buttonRect.left - notificationWidth - 16; // 16px gap
+
+            // Adjust if would overflow left
+            if (left < 16) {
+                left = buttonRect.right + 16; // Place on right instead
+            }
+
+            // Adjust if would overflow right
+            if (left + notificationWidth > viewportWidth - 16) {
+                left = viewportWidth - notificationWidth - 16;
+            }
+
+            // Adjust if would overflow top
+            if (top < 16) {
+                top = 16;
+            }
+
+            // Adjust if would overflow bottom
+            if (top + notificationHeight > viewportHeight - 16) {
+                top = viewportHeight - notificationHeight - 16;
+            }
+
+            // Apply positioning
             notification.style.cssText = `
-                position: absolute;
-                top: 0;
-                right: 100%;
-                margin-right: 1rem;
+                position: fixed;
+                top: ${top}px;
+                left: ${left}px;
                 padding: 0.5rem 1rem;
-                background: var(--success-bg, #0B9A6D);
+                background: #0B9A6D;
                 color: white;
                 border-radius: 4px;
                 font-size: 14px;
                 white-space: nowrap;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+                z-index: 1000;
                 animation: fadeIn 0.2s ease-in;
             `;
 
-            // Insert notification into parent container
-            meta.button.parentNode.appendChild(notification);
+            // Append to body (ignores all container boundaries)
+            document.body.appendChild(notification);
 
             // Remove after 2 seconds
             setTimeout(() => {

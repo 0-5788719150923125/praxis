@@ -16,6 +16,7 @@ import {
     createButton,
     createWrapper,
     createHashDisplay,
+    createTabHeader,
     renderIf,
     formatNumber,
     formatJSON,
@@ -83,10 +84,9 @@ export async function loadSpec() {
  * Map section IDs to render functions
  */
 const renderSpecSections = {
+    // Note: peer-button is now in the header, kept here for backwards compat
     'peer-button': (data) => {
-        const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
-        const button = createButton('Peer with agent', 'refresh-button copy-git-remote-btn', { command: gitRemoteCmd });
-        return createWrapper(button, 'spec-peer-button') + createWrapper('', '', 'clear: both;');
+        return ''; // Moved to header
     },
 
     'hashes': (data) => {
@@ -144,17 +144,34 @@ function renderSpec(data, container) {
         return;
     }
 
+    // Create peer button for header
+    const gitRemoteCmd = `git remote add ${data.truncated_hash} ${data.git_url}`;
+    const peerButton = {
+        id: 'peer-button',
+        label: 'Peer with agent',
+        icon: '',
+        className: 'tab-header-button copy-git-remote-btn',
+        dataAttrs: `data-command="${escapeHtml(gitRemoteCmd)}"`
+    };
+
+    // Create header with button
+    const headerHTML = createTabHeader({
+        title: 'Configuration',
+        buttons: [peerButton],
+        metadata: data.timestamp ? `<span><strong>Created:</strong> ${data.timestamp}</span>` : ''
+    });
+
     // Filter and sort sections based on configuration
     const visibleSections = SPEC_CONFIG.sections
         .filter(section => section.condition(data))
         .sort((a, b) => a.order - b.order);
 
     // Render all visible sections using generic components
-    const html = visibleSections
+    const sectionsHTML = visibleSections
         .map(section => renderSpecSections[section.id](data))
         .join('');
 
-    container.innerHTML = html;
+    container.innerHTML = headerHTML + sectionsHTML;
 }
 
 /**
@@ -224,9 +241,19 @@ function renderAgents(agents, container) {
         return;
     }
 
+    // Create header
+    const headerHTML = createTabHeader({
+        title: 'Grounding',
+        metadata: `<span><strong>Discovered:</strong> ${agents.length} agent${agents.length !== 1 ? 's' : ''}</span>`
+    });
+
     // Pass all agents to each card for color calculation
     const agentsHtml = agents.map(agent => renderAgentCard(agent, agents)).join('');
-    container.innerHTML = `<div class="agents-list">${agentsHtml}</div>`;
+
+    container.innerHTML = `
+        ${headerHTML}
+        <div class="agents-list">${agentsHtml}</div>
+    `;
 }
 
 /**

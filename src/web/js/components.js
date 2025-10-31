@@ -488,3 +488,49 @@ export function createTerminalLine(text) {
     return `<div class="terminal-line">${escapeHtml(text)}</div>`;
 }
 
+/**
+ * Create tab header - pure functional component
+ * Reusable header with title, optional buttons, and optional metadata
+ * @param {Object} config - Header configuration
+ * @param {string} config.title - Main title text
+ * @param {Array} config.buttons - Array of button configs [{id, label, icon, action, dataAttrs, className}]
+ * @param {string} config.metadata - Optional metadata/subtitle below title
+ * @param {Object} config.additionalContent - Optional HTML content to inject into controls
+ * @returns {string} HTML string
+ */
+export function createTabHeader(config) {
+    if (!config || !config.title) return '';
+
+    // Build buttons HTML
+    const buttonsHTML = (config.buttons || []).map(btn => {
+        const iconHTML = btn.icon || '';
+        const className = btn.className || 'tab-header-button';
+        const actionAttr = btn.action ? `data-action="${btn.action}"` : '';
+        const customAttrs = btn.dataAttrs || '';
+
+        return `
+            <button class="${className}" id="${btn.id || ''}" ${actionAttr} ${customAttrs}>
+                ${iconHTML}
+                ${btn.label || ''}
+            </button>
+        `;
+    }).join('');
+
+    // Combine additional content with buttons
+    const controlsContent = (config.additionalContent || '') + buttonsHTML;
+    const controlsHTML = controlsContent ? `<div class="tab-header-controls">${controlsContent}</div>` : '';
+
+    // Build metadata HTML (subtitle below title)
+    const metadataHTML = config.metadata ? `<div class="tab-header-metadata">${config.metadata}</div>` : '';
+
+    return `
+        <div class="tab-header">
+            <div class="tab-header-title-row">
+                <h2>${escapeHtml(config.title)}</h2>
+                ${controlsHTML}
+            </div>
+            ${metadataHTML}
+        </div>
+    `;
+}
+

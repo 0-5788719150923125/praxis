@@ -833,13 +833,30 @@
     color: var(--light-text);
 }
 
-/* ==================== Research Tab ==================== */
-.research-header {
-    margin-bottom: 2rem;
-    max-width: 100%;
+/* ==================== Tab Headers (Generic & Reusable) ==================== */
+
+/* Remove top padding from containers that have headers */
+.tab-container:has(.tab-header) {
+    padding-top: 0 !important;
 }
 
-.research-header h2 {
+.tab-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--background);
+    padding: 0.75rem 0 0.75rem 0;
+    margin-bottom: 1.5rem;
+    max-width: 100%;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .tab-header {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.tab-header h2 {
     font-size: 1.8rem;
     font-weight: 600;
     margin: 0;
@@ -847,20 +864,20 @@
     word-wrap: break-word;
 }
 
-.research-title-row {
+.tab-header-title-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.5rem;
 }
 
-.research-controls {
+.tab-header-controls {
     display: flex;
     gap: 0.75rem;
     align-items: center;
 }
 
-.refresh-button {
+.tab-header-button {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -875,12 +892,17 @@
     transition: background 0.2s, transform 0.1s;
 }
 
-.refresh-button:hover {
+.tab-header-button:hover {
     background: var(--primary-light);
     transform: translateY(-1px);
 }
 
-.metadata {
+.tab-header-button svg {
+    width: 16px;
+    height: 16px;
+}
+
+.tab-header-metadata {
     display: flex;
     flex-wrap: wrap;
     gap: 1.5rem;
@@ -888,6 +910,9 @@
     color: var(--light-text);
     margin-top: 0.5rem;
 }
+
+/* ==================== Research Tab ==================== */
+/* Note: Research now uses generic .tab-header instead */
 
 .training-badge {
     background: var(--primary-light);
