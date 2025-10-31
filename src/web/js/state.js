@@ -199,6 +199,17 @@ export function rgbToString(rgb) {
 }
 
 /**
+ * Convert RGB array to CSS rgba() string with alpha
+ * Pure function: [r, g, b], alpha → "rgba(r, g, b, alpha)"
+ * @param {Array<number>} rgb - RGB array [r, g, b]
+ * @param {number} alpha - Alpha value (0-1)
+ * @returns {string} CSS color string
+ */
+export function rgbToStringAlpha(rgb, alpha) {
+    return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+}
+
+/**
  * Convert hex color to RGB array
  * Pure function: "#RRGGBB" → [r, g, b]
  * @param {string} hex - Hex color string
@@ -227,24 +238,51 @@ export function calculateCommitFreshness(timestamp, oldestTimestamp, newestTimes
 }
 
 /**
- * Get color for agent based on commit freshness
- * Pure function: (agent, allAgents) → { bg, text, dot }
- * @param {Object} agent - Agent data with commit_timestamp
+ * Get base color for agent status type
+ * Pure function: (status, theme) → [r, g, b]
+ * @param {string} status - Agent status (online/archived/offline/ambiguous)
+ * @param {string} theme - Current theme (light/dark)
+ * @returns {Array<number>} RGB array for base color
+ */
+export function getStatusBaseColor(status, theme) {
+    const isDark = theme === 'dark';
+
+    switch (status) {
+        case 'online':
+            return hexToRgb('#0B9A6D'); // green
+        case 'archived':
+            return isDark ? hexToRgb('#5b8fc9') : hexToRgb('#00274c'); // blue
+        case 'offline':
+            return isDark ? hexToRgb('#b0b0b0') : hexToRgb('#666666'); // grey
+        case 'ambiguous':
+            return hexToRgb('#FFCB05'); // yellow
+        default:
+            return hexToRgb('#666666'); // fallback grey
+    }
+}
+
+/**
+ * Get color for agent based on commit step position
+ * Pure function: (agent, allAgents, theme) → { bg, text, dot }
+ * Modulates the status color towards greyscale based on commit position
+ * ALL agents participate - each unique commit gets evenly-spaced color
+ * @param {Object} agent - Agent data with commit_timestamp and status
  * @param {Array<Object>} allAgents - All agents for comparison
+ * @param {string} theme - Current theme (light/dark)
  * @returns {Object} Color palette { background, text, dot }
  */
-export function getAgentFreshnessColor(agent, allAgents) {
-    // Brand primary color
-    const primaryColor = hexToRgb('#0B9A6D'); // var(--primary-light)
-    const greyColor = rgbToGreyscale(...primaryColor);
+export function getAgentFreshnessColor(agent, allAgents, theme) {
+    // Get base color for this agent's status type
+    const baseColor = getStatusBaseColor(agent.status, theme);
+    const greyColor = rgbToGreyscale(...baseColor);
 
-    // Get all valid timestamps
-    const timestamps = allAgents
+    // Get all unique commit timestamps (regardless of status)
+    const allTimestamps = allAgents
         .filter(a => a.commit_timestamp)
         .map(a => a.commit_timestamp);
 
-    if (timestamps.length === 0 || !agent.commit_timestamp) {
-        // No timestamp data - use grey
+    if (allTimestamps.length === 0 || !agent.commit_timestamp) {
+        // No timestamp data - use greyscale version
         return {
             background: rgbToString(greyColor),
             text: rgbToString(greyColor),
@@ -252,12 +290,20 @@ export function getAgentFreshnessColor(agent, allAgents) {
         };
     }
 
-    const oldest = Math.min(...timestamps);
-    const newest = Math.max(...timestamps);
-    const freshness = calculateCommitFreshness(agent.commit_timestamp, oldest, newest);
+    // Get unique timestamps and sort them (oldest to newest)
+    const uniqueTimestamps = [...new Set(allTimestamps)].sort((a, b) => a - b);
 
-    // Interpolate from grey (0) to full color (1)
-    const interpolated = lerpColor(greyColor, primaryColor, freshness);
+    // Find this agent's position in the sorted list
+    const position = uniqueTimestamps.indexOf(agent.commit_timestamp);
+
+    // Calculate freshness based on step position (0 to 1)
+    // If only one commit, freshness = 1.0
+    const freshness = uniqueTimestamps.length === 1
+        ? 1.0
+        : position / (uniqueTimestamps.length - 1);
+
+    // Interpolate from grey (oldest) to full color (newest)
+    const interpolated = lerpColor(greyColor, baseColor, freshness);
 
     return {
         background: rgbToString(interpolated),

@@ -192,8 +192,9 @@ const renderAgentCard = (agent, allAgents) => {
 
     const infoHtml = infoLine ? `<div class="agent-url">${infoLine}</div>` : '';
 
-    // Calculate freshness-based colors (pure function)
-    const colors = getAgentFreshnessColor(agent, allAgents);
+    // Calculate freshness-based colors for ALL agents
+    // Each status type gets its own base color modulated by commit age
+    const colors = getAgentFreshnessColor(agent, allAgents, state.theme);
 
     // Apply dynamic colors via inline styles
     // background with 0.1 opacity, text color, dot color
