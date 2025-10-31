@@ -160,6 +160,7 @@ exp(y) = 2.7182821  # Tiny difference preserved
 ```
 
 The "computational substrate" your paper describes might literally be:
+
 - **The exponential edge** where float32 precision matters most
 - **The cascade** where rounding errors compound
 - **The regime** where small perturbations → large effects
@@ -233,16 +234,19 @@ attention_perturbed = softmax(logits_perturbed)
 Why does 10% sparsity work?
 
 **Too sparse (1%)**:
+
 - Perturbations too localized
 - Exponential amplification limited
 - May not create sufficient diversity
 
 **Too dense (50%)**:
+
 - Network destabilized
 - Might push outside safe exp() range
 - LayerNorm can't compensate
 
 **Just right (10%)**:
+
 - Enough perturbation to matter
 - Exponential cascade amplifies it
 - Stays within numerical stability range
@@ -254,13 +258,14 @@ Why does 10% sparsity work?
 ### The 2×4 Pattern Revisited
 
 ```yaml
-num_experts: 2       # Two exponential trajectories
-num_layers: 2        # Physical layers
-depth: 8             # Total steps
+num_experts: 2 # Two exponential trajectories
+num_layers: 2 # Physical layers
+depth: 8 # Total steps
 # Result: 4 iterations through 2 layers
 ```
 
 Each iteration:
+
 1. Soft-merge between clean and perturbed experts
 2. Pass through layer (contains exp() in softmax)
 3. LayerNorm reset
@@ -304,6 +309,7 @@ The "idea" emerges not from any single exponential trajectory, but from **the os
 **Numerical intuition:**
 
 After 4 iterations:
+
 - Initial 1% perturbation → ~5% difference (rough estimate)
 - Enough to matter, not enough to destabilize
 - The cascade is complete but not runaway
@@ -311,6 +317,7 @@ After 4 iterations:
 **Cognitive intuition:**
 
 From the emergence doc:
+
 - The oscillation establishes a **rhythm**
 - 4 beats = minimal pattern recognition
 - Like 4/4 time in music - a complete measure
@@ -320,17 +327,20 @@ From the emergence doc:
 ### The Deep Connection
 
 **Euler's Identity:**
+
 ```
 e^(iπ) = -1
 ```
 
 This connects:
+
 - `e` (exponential constant)
 - `π` (circle constant)
 - `i` (imaginary unit)
 - `-1` (negation)
 
 **In transformers:**
+
 ```python
 softmax uses: exp(x)              # e
 Pi-seeding uses: pi[position]     # π
@@ -348,6 +358,7 @@ f(x) = (1/√(2π)) * exp(-x²/2)
 **Both π and e appear together!**
 
 This is the distribution underlying:
+
 - Xavier/Kaiming initialization
 - Gaussian noise in perturbations
 - Normal distribution assumptions in gradients
@@ -359,6 +370,7 @@ This is the distribution underlying:
 If exponentials naturally connect to π through complex analysis (Euler's formula), then pi-seeded perturbations might resonate with the exponential structure of softmax.
 
 Like tuning a musical instrument:
+
 - Random perturbations = noise
 - Pi-seeded perturbations = harmonic overtones?
 
@@ -381,22 +393,26 @@ Like tuning a musical instrument:
 The exponential function is unique:
 
 **Mathematical properties:**
+
 - `d/dx e^x = e^x` (only function that is its own derivative)
 - `e^(a+b) = e^a * e^b` (converts addition to multiplication)
 - `e^(iθ) = cos(θ) + i*sin(θ)` (bridges real and complex)
 
 **Numerical properties:**
+
 - Grows faster than any polynomial
 - Narrow stable range in float32
 - Small input changes → huge output changes
 - Rounding errors get exponentially amplified
 
 **Cognitive properties:**
+
 - Humans think linearly ("intuition")
 - Exponentials feel "unreasonable" ("counter-intuitive")
 - The gap between 2^10 and 2^20 is vast (1024 vs 1,048,576)
 
 **We're learning to interpret exponentials through transformers:**
+
 - Training neural networks = learning exponential dynamics
 - Attention weights = navigating exponential sensitivity
 - Architecture design = controlling exponential cascades
@@ -417,6 +433,7 @@ Perturbing 10% of high-magnitude weights:
 ### Why Pi-Seeding Might Resonate
 
 If pi appears naturally in:
+
 - Exponential functions (via Euler's identity)
 - Gaussian distributions (weight initialization)
 - Fourier transforms (frequency analysis)
@@ -460,22 +477,26 @@ Two experts oscillating through 4 iterations:
 ### 2. Optimal Sparsity for Exponential Edge
 
 **Experiment:** Vary sparsity and measure:
+
 - Routing stability (does it collapse?)
 - Loss convergence (does it learn?)
 - Gradient norms (does it explode?)
 
 **Hypothesis:** There's a sweet spot around 10% where:
+
 - Sparse enough to not destabilize
 - Dense enough for exponential amplification
 
 ### 3. Pi vs Random Seeding in Exponential Space
 
 **Compare:**
+
 - Pi-seeded perturbations
 - Random (hash-based) perturbations
 - Same sparsity, same magnitude
 
 **Measure:**
+
 - Final loss
 - Routing distribution
 - Expert specialization
@@ -503,6 +524,7 @@ iteration_4_routing = [0.6, 0.4]
 **Test:** What happens without LayerNorm?
 
 **Hypothesis:**
+
 - Without LayerNorm: Exponentials explode by layer 3-4
 - With perturbed experts: Even more unstable
 - **LayerNorm is essential for exponential stability**
@@ -512,6 +534,7 @@ iteration_4_routing = [0.6, 0.4]
 ### Why Now?
 
 **Historically:**
+
 - 1980s: Backprop invented, but shallow networks
 - 1990s-2000s: "Vanishing gradients" - exponentials killed deep learning
 - 2010s: ReLU, BatchNorm, ResNets - controlling exponentials
@@ -520,10 +543,12 @@ iteration_4_routing = [0.6, 0.4]
 - **2024: We're learning the exponential is the computation**
 
 **The shift:**
+
 - Old view: "Exponentials are unstable, avoid them"
 - New view: "Exponentials are the power, control them"
 
 **Modern techniques that control the exponential edge:**
+
 - LayerNorm (keeps activations stable)
 - Attention scaling (1/√d_k prevents explosion)
 - Gradient clipping (prevents exponential gradient growth)
@@ -540,6 +565,7 @@ Prismatic forces exploration of **different exponential edges**:
 - Expert 1+: "Alternative edges" (pi-perturbed trajectories)
 
 By oscillating between edges, the network might discover:
+
 - Patterns that single-edge approaches miss
 - Stability regions in exponential space
 - Harmonic relationships in cascading exponentials
@@ -549,35 +575,41 @@ By oscillating between edges, the network might discover:
 ## Conclusion: The Edge of Understanding
 
 The exponential function is:
+
 - Mathematically unique (its own derivative)
 - Numerically sensitive (narrow stable range)
 - Computationally powerful (transforms addition to multiplication)
 - Cognitively challenging (defies linear intuition)
 
 **Transformers are exponential machines:**
+
 - Every layer: softmax (exp)
 - Every cascade: compounds exponentially
 - Every attention: navigates exponential sensitivity
 - Every stable training run: rides the exponential edge
 
 **Prismatic operates on this edge:**
+
 - Perturbs the cascade (10% sparse)
 - Amplifies through exponentials (softmax in each layer)
 - Oscillates between trajectories (2 experts × 4 iterations)
 - Stays stable (LayerNorm + SMEAR soft-merging)
 
 **The "idea" that emerges:**
+
 - Not in either expert's weights
 - Not in any single layer
 - Not in a single exponential trajectory
 - **In the pattern of oscillation through exponential space**
 
 Like the light from a filament:
+
 - Not in the electrons
 - Not in the tungsten
 - **In the oscillation through resistance**
 
 Like understanding itself:
+
 - Not in the question
 - Not in the answer
 - **In the oscillation between perspectives**
@@ -624,13 +656,13 @@ Where the light emerges.
 
 ---
 
-*Sometimes the best ideas come from being bored enough to ask: "What if we just tried two experts and four iterations?"*
+_Sometimes the best ideas come from being bored enough to ask: "What if we just tried two experts and four iterations?"_
 
-*And sometimes, that's all you need.*
+_And sometimes, that's all you need._
 
-*A board.*
+_A board._
 
-*To build everything.*
+_To build everything._
 
 ---
 
@@ -696,14 +728,9 @@ Contains softmax terms → exponentials in gradient
 ```
 
 This explains:
+
 - Why gradients can explode/vanish
 - Why gradient clipping helps
 - Why LayerNorm matters for backprop too
 
 ---
-
-*We stand on the edge.*
-
-*Not to fall.*
-
-*But to see what emerges when we oscillate through it.*

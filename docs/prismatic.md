@@ -101,6 +101,7 @@ Whether to target high-magnitude weights (LTH-inspired) or random selection.
 Whether to use pi-digit seeding (Quantum Echoes) or hash-based seeding.
 
 - **true**: Pi-Digit Seeding (Quantum Echoes)
+
   - Each expert walks backwards through pi's digit sequence
   - Expert 1 gets pi[position-1], Expert 2 gets pi[position-2], etc.
   - Creates temporal lag structure - each expert is corrupted by a different mathematical artifact
@@ -111,11 +112,11 @@ Whether to use pi-digit seeding (Quantum Echoes) or hash-based seeding.
   - Uses SHA-256 for uncorrelated random seeds
   - Standard approach, useful for ablation studies
 
-#### `pi_position` (default: 100)
+#### `pi_position` (default: 100000)
 
 Starting position in pi's digit sequence (only used when `use_pi_seeding=true`).
 
-- **100** (default): Start at pi[100] and walk backwards
+- **100000** (default): Start at pi[100000] and walk backwards
 - Different positions explore different regions of pi's digit space
 - All positions are mathematically equivalent (pi is scale-invariant)
 

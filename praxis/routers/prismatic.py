@@ -103,7 +103,7 @@ def get_pi_digits(num_digits: int = 1000) -> str:
         String of pi digits (no decimal point)
     """
     mp.dps = num_digits + 10  # Extra precision for safety
-    pi_str = str(mp.pi).replace('.', '')
+    pi_str = str(mp.pi).replace(".", "")
     return pi_str[:num_digits]
 
 
@@ -141,6 +141,7 @@ class PrismaticConfig:
         use_pi_seeding: If True, use pi-digits for seeding (Quantum Echoes); else use hash
         pi_position: Starting position in pi's digit sequence (default: 100)
     """
+
     hidden_size: int
     num_experts: int
     perturbation_scale: float = 0.01
@@ -148,7 +149,7 @@ class PrismaticConfig:
     perturb_by_magnitude: bool = True
     dropout: float = 0.1
     use_pi_seeding: bool = True
-    pi_position: int = 100
+    pi_position: int = 100000
 
 
 class Prismatic(nn.Module):
@@ -190,11 +191,7 @@ class Prismatic(nn.Module):
     __version__ = "0.1.0"
 
     def __init__(
-        self,
-        config: Any,
-        layout: str = "standard",
-        *args: Any,
-        **kwargs: Any
+        self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
     ):
         """
         Initialize Prismatic attention module.
@@ -214,7 +211,7 @@ class Prismatic(nn.Module):
         self.perturb_by_magnitude = getattr(config, "perturb_by_magnitude", True)
         self.dropout_rate = getattr(config, "dropout", 0.1)
         self.use_pi_seeding = getattr(config, "use_pi_seeding", True)
-        self.pi_position = getattr(config, "pi_position", 100)
+        self.pi_position = getattr(config, "pi_position", 100000)
 
         # Get base expert from kwargs
         # Supports two initialization patterns:
@@ -283,11 +280,7 @@ class Prismatic(nn.Module):
 
         return experts
 
-    def _apply_static_perturbations(
-        self,
-        expert: nn.Module,
-        expert_idx: int
-    ) -> None:
+    def _apply_static_perturbations(self, expert: nn.Module, expert_idx: int) -> None:
         """
         Apply deterministic sparse perturbations to an expert's parameters.
 
@@ -349,7 +342,6 @@ class Prismatic(nn.Module):
             with torch.no_grad():
                 param.add_(perturbation)
 
-
     def _generate_seed(self, expert_idx: int, param_name: str) -> int:
         """
         Generate deterministic seed from expert index and parameter name.
@@ -382,8 +374,8 @@ class Prismatic(nn.Module):
 
             # Combine pi digit with param_name hash for diversity across parameters
             # But the pi digit provides the primary seed structure
-            param_hash = hashlib.sha256(param_name.encode('utf-8')).digest()
-            param_contribution = int.from_bytes(param_hash[:4], byteorder='big')
+            param_hash = hashlib.sha256(param_name.encode("utf-8")).digest()
+            param_contribution = int.from_bytes(param_hash[:4], byteorder="big")
 
             # Seed = pi_digit (primary) + param_hash (secondary variation)
             # This gives us 10 fundamental seeds (0-9 from pi) with per-parameter variation
@@ -392,15 +384,13 @@ class Prismatic(nn.Module):
             return seed
         else:
             # Fallback to hash-based seeding
-            hash_input = f"{expert_idx}||{param_name}".encode('utf-8')
+            hash_input = f"{expert_idx}||{param_name}".encode("utf-8")
             hash_digest = hashlib.sha256(hash_input).digest()
-            seed = int.from_bytes(hash_digest[:8], byteorder='big')
+            seed = int.from_bytes(hash_digest[:8], byteorder="big")
             return seed % (2**63 - 1)
 
     def _create_sparse_mask(
-        self,
-        param: torch.Tensor,
-        generator: torch.Generator
+        self, param: torch.Tensor, generator: torch.Generator
     ) -> torch.Tensor:
         """
         Create sparse mask indicating which parameters to perturb.
@@ -450,10 +440,7 @@ class Prismatic(nn.Module):
         return mask
 
     def _generate_perturbation(
-        self,
-        param: torch.Tensor,
-        mask: torch.Tensor,
-        generator: torch.Generator
+        self, param: torch.Tensor, mask: torch.Tensor, generator: torch.Generator
     ) -> torch.Tensor:
         """
         Generate adaptive perturbation scaled by parameter magnitude.
@@ -483,10 +470,7 @@ class Prismatic(nn.Module):
         """
         # Generate standard normal noise
         noise = torch.randn(
-            param.shape,
-            dtype=param.dtype,
-            device=param.device,
-            generator=generator
+            param.shape, dtype=param.dtype, device=param.device, generator=generator
         )
 
         # Scale by parameter magnitude (adaptive)

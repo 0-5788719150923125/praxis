@@ -197,8 +197,9 @@ class TestPerturbationMechanics:
         expert_0 = prismatic.experts[0]
         for name, param in expert_0.named_parameters():
             original = original_params[name]
-            assert torch.allclose(param, original, atol=1e-6), \
-                f"Expert 0 parameter '{name}' was modified (should be clean)"
+            assert torch.allclose(
+                param, original, atol=1e-6
+            ), f"Expert 0 parameter '{name}' was modified (should be clean)"
 
     def test_experts_are_perturbed(self):
         """
@@ -238,8 +239,9 @@ class TestPerturbationMechanics:
                     has_perturbations = True
                     break
 
-            assert has_perturbations, \
-                f"Expert {expert_idx} should be perturbed but appears identical to base"
+            assert (
+                has_perturbations
+            ), f"Expert {expert_idx} should be perturbed but appears identical to base"
 
     def test_perturbations_are_deterministic(self):
         """
@@ -272,12 +274,12 @@ class TestPerturbationMechanics:
             expert_2 = prismatic_2.experts[expert_idx]
 
             for (name1, param1), (name2, param2) in zip(
-                expert_1.named_parameters(),
-                expert_2.named_parameters()
+                expert_1.named_parameters(), expert_2.named_parameters()
             ):
                 assert name1 == name2
-                assert torch.allclose(param1, param2, atol=1e-6), \
-                    f"Expert {expert_idx} param '{name1}' differs between instances"
+                assert torch.allclose(
+                    param1, param2, atol=1e-6
+                ), f"Expert {expert_idx} param '{name1}' differs between instances"
 
     def test_perturbations_are_sparse(self):
         """
@@ -338,9 +340,10 @@ class TestPerturbationMechanics:
                 # For larger tensors, sparsity should be approximately correct.
                 if total_params > 100:
                     # For larger tensors, enforce sparsity constraint
-                    assert actual_sparsity <= config.sparsity * 1.5, \
-                        f"Expert {expert_idx} param '{name}': " \
+                    assert actual_sparsity <= config.sparsity * 1.5, (
+                        f"Expert {expert_idx} param '{name}': "
                         f"sparsity {actual_sparsity:.3f} exceeds expected {config.sparsity}"
+                    )
                 # For small tensors, we just note they exist and may or may not be perturbed
 
     def test_perturbations_are_magnitude_aware(self):
@@ -364,7 +367,7 @@ class TestPerturbationMechanics:
         # Manually set some weights to different magnitudes
         with torch.no_grad():
             base_expert.fc1.weight[:32, :] *= 10.0  # Large magnitude
-            base_expert.fc1.weight[32:, :] *= 0.1   # Small magnitude
+            base_expert.fc1.weight[32:, :] *= 0.1  # Small magnitude
 
         original_params = {}
         for name, param in base_expert.named_parameters():
@@ -375,7 +378,7 @@ class TestPerturbationMechanics:
         # Check expert 1 (first perturbed expert)
         expert_1 = prismatic.experts[1]
         fc1_weight_perturbed = expert_1.fc1.weight
-        fc1_weight_original = original_params['fc1.weight']
+        fc1_weight_original = original_params["fc1.weight"]
 
         # Calculate perturbation magnitudes
         perturbations = torch.abs(fc1_weight_perturbed - fc1_weight_original)
@@ -390,8 +393,9 @@ class TestPerturbationMechanics:
 
             # Perturbations should scale with magnitude
             # Large magnitude weights should have larger perturbations
-            assert avg_large > avg_small, \
-                "Perturbations should scale with parameter magnitude"
+            assert (
+                avg_large > avg_small
+            ), "Perturbations should scale with parameter magnitude"
 
 
 class TestForwardPass:
@@ -513,8 +517,9 @@ class TestForwardPass:
 
         # Outputs should differ (unless routing puts 100% weight on expert 0,
         # which is unlikely with multiple experts)
-        assert not torch.allclose(prismatic_output, base_output, atol=1e-3), \
-            "Prismatic output should differ from base expert due to perturbed experts"
+        assert not torch.allclose(
+            prismatic_output, base_output, atol=1e-3
+        ), "Prismatic output should differ from base expert due to perturbed experts"
 
 
 class TestParameterMerging:
@@ -599,8 +604,9 @@ class TestParameterMerging:
         )
 
         # Outputs should be different (routing should adapt to inputs)
-        assert not torch.allclose(output_1, output_2, atol=1e-3), \
-            "Different inputs should produce different outputs"
+        assert not torch.allclose(
+            output_1, output_2, atol=1e-3
+        ), "Different inputs should produce different outputs"
 
 
 class TestIntegration:
@@ -680,7 +686,9 @@ class TestIntegration:
 
         batch_size = 2
         seq_length = 16
-        inputs = torch.randn(batch_size, seq_length, config.hidden_size, requires_grad=True)
+        inputs = torch.randn(
+            batch_size, seq_length, config.hidden_size, requires_grad=True
+        )
 
         output, _, _, _ = prismatic(
             layer=base_expert,
@@ -698,8 +706,9 @@ class TestIntegration:
 
         # Check that gradients flow to inputs
         assert inputs.grad is not None, "Gradients should flow to inputs"
-        assert not torch.allclose(inputs.grad, torch.zeros_like(inputs.grad)), \
-            "Input gradients should be non-zero"
+        assert not torch.allclose(
+            inputs.grad, torch.zeros_like(inputs.grad)
+        ), "Input gradients should be non-zero"
 
 
 class TestPiSeeding:
@@ -736,7 +745,9 @@ class TestPiSeeding:
                 if not torch.allclose(param, clean_param, atol=1e-6):
                     has_perturbations = True
                     break
-            assert has_perturbations, f"Expert {expert_idx} should be perturbed with pi-seeding"
+            assert (
+                has_perturbations
+            ), f"Expert {expert_idx} should be perturbed with pi-seeding"
 
     def test_pi_vs_hash_seeding_differ(self):
         """Test that pi-seeding produces different perturbations than hash-seeding."""
@@ -772,8 +783,7 @@ class TestPiSeeding:
         # Should have different perturbations
         params_differ = False
         for (name_pi, param_pi), (name_hash, param_hash) in zip(
-            expert_1_pi.named_parameters(),
-            expert_1_hash.named_parameters()
+            expert_1_pi.named_parameters(), expert_1_hash.named_parameters()
         ):
             if not param_pi.requires_grad:
                 continue
@@ -781,7 +791,9 @@ class TestPiSeeding:
                 params_differ = True
                 break
 
-        assert params_differ, "Pi-seeding and hash-seeding should produce different perturbations"
+        assert (
+            params_differ
+        ), "Pi-seeding and hash-seeding should produce different perturbations"
 
     def test_quantum_echoes_backward_walk(self):
         """
@@ -812,8 +824,9 @@ class TestPiSeeding:
         # All experts should have different perturbations
         for i in range(len(expert_params)):
             for j in range(i + 1, len(expert_params)):
-                assert not torch.allclose(expert_params[i], expert_params[j], atol=1e-6), \
-                    f"Expert {i+1} and Expert {j+1} should have different pi-based perturbations"
+                assert not torch.allclose(
+                    expert_params[i], expert_params[j], atol=1e-6
+                ), f"Expert {i+1} and Expert {j+1} should have different pi-based perturbations"
 
 
 class TestEdgeCases:

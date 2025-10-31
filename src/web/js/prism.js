@@ -1,4 +1,17 @@
 // Prism Ball Animation for Logo - Full Featured Version
+//
+// Shape-shifting based on theme:
+// - DARK MODE: Tetrahedron (prism) - the original quantum echo
+// - LIGHT MODE: 2x4 Board - "We build during the day"
+//
+// The 2x4 pattern references the Delta-8 architecture (2 experts × 4 iterations)
+// and the construction metaphor from docs/exponentials.md:
+//   "You know what carpenters call a 2×4? A board. You know what you build with? Boards."
+//
+// The spinning, flying 2x4 board is both hilarious and profound - it's a literal
+// construction tool oscillating through 3D space, just like the network oscillates
+// between expert perspectives to "build" understanding.
+//
 // Wait for canvas to be available (created by renderAppStructure)
 (function initPrismWhenReady() {
     const canvas = document.getElementById('prism-canvas');
@@ -123,27 +136,54 @@
         }
 
         reset() {
-            // Origin at the true center of the tetrahedron (0, 0, 0)
+            // Origin at the true center of the shape (0, 0, 0)
             this.origin = {x: 0, y: 0, z: 0};
 
-            // 25% chance to target edges/vertices for better tetrahedron definition
+            // Check if we're in light mode for 2x4 board targets
+            const lightMode = isLightMode();
+
+            // 25% chance to target edges/vertices for better shape definition
             if (Math.random() < 0.25) {
-                // Target tetrahedron vertices and edges (centered at origin)
-                const targets = [
-                    // Base triangle corners (centered tetrahedron)
-                    {x: 0, y: 0.5, z: -0.577},      // back vertex
-                    {x: -0.5, y: 0.5, z: 0.289},     // left vertex
-                    {x: 0.5, y: 0.5, z: 0.289},      // right vertex
-                    // Apex
-                    {x: 0, y: -0.5, z: 0},
-                    // Edge midpoints for better edge coverage
-                    {x: -0.25, y: 0.5, z: -0.144},   // back-left edge
-                    {x: 0.25, y: 0.5, z: -0.144},    // back-right edge
-                    {x: 0, y: 0.5, z: 0.289},        // left-right edge
-                    {x: 0, y: 0, z: -0.289},         // apex edges
-                    {x: -0.25, y: 0, z: 0.144},
-                    {x: 0.25, y: 0, z: 0.144}
-                ];
+                let targets;
+
+                if (lightMode) {
+                    // Target 2x4 board vertices and edge midpoints
+                    // Using same dimensions as get2x4Edges
+                    const w = 0.45, h = 1.575, d = 0.225;
+                    targets = [
+                        // 8 corners of the board
+                        {x: -w/2, y: -h/2, z: d/2},   // front top left
+                        {x: w/2, y: -h/2, z: d/2},    // front top right
+                        {x: -w/2, y: h/2, z: d/2},    // front bottom left
+                        {x: w/2, y: h/2, z: d/2},     // front bottom right
+                        {x: -w/2, y: -h/2, z: -d/2},  // back top left
+                        {x: w/2, y: -h/2, z: -d/2},   // back top right
+                        {x: -w/2, y: h/2, z: -d/2},   // back bottom left
+                        {x: w/2, y: h/2, z: -d/2},    // back bottom right
+                        // Edge midpoints for better coverage
+                        {x: 0, y: -h/2, z: d/2},      // front top edge center
+                        {x: 0, y: h/2, z: d/2},       // front bottom edge center
+                        {x: -w/2, y: 0, z: d/2},      // front left edge center
+                        {x: w/2, y: 0, z: d/2}        // front right edge center
+                    ];
+                } else {
+                    // Target tetrahedron vertices and edges (dark mode)
+                    targets = [
+                        // Base triangle corners (centered tetrahedron)
+                        {x: 0, y: 0.5, z: -0.577},      // back vertex
+                        {x: -0.5, y: 0.5, z: 0.289},     // left vertex
+                        {x: 0.5, y: 0.5, z: 0.289},      // right vertex
+                        // Apex
+                        {x: 0, y: -0.5, z: 0},
+                        // Edge midpoints for better edge coverage
+                        {x: -0.25, y: 0.5, z: -0.144},   // back-left edge
+                        {x: 0.25, y: 0.5, z: -0.144},    // back-right edge
+                        {x: 0, y: 0.5, z: 0.289},        // left-right edge
+                        {x: 0, y: 0, z: -0.289},         // apex edges
+                        {x: -0.25, y: 0, z: 0.144},
+                        {x: 0.25, y: 0, z: 0.144}
+                    ];
+                }
 
                 const target = targets[Math.floor(Math.random() * targets.length)];
 
@@ -203,7 +243,40 @@
             return colors[Math.floor(Math.random() * colors.length)];
         }
 
-        // Detect proximity to pyramid edges for enhanced glow
+        // Detect proximity to 2x4 board edges for enhanced glow (light mode)
+        detect2x4EdgeProximity(point3D) {
+            // 2x4 box dimensions - using same dimensions
+            const w = 0.45, h = 1.575, d = 0.225;
+            const bounds = {
+                min: {x: -w/2, y: -h/2, z: -d/2},
+                max: {x: w/2, y: h/2, z: d/2}
+            };
+
+            // Distance to each face of the box
+            const distX = Math.min(
+                Math.abs(point3D.x - bounds.min.x),
+                Math.abs(point3D.x - bounds.max.x)
+            );
+            const distY = Math.min(
+                Math.abs(point3D.y - bounds.min.y),
+                Math.abs(point3D.y - bounds.max.y)
+            );
+            const distZ = Math.min(
+                Math.abs(point3D.z - bounds.min.z),
+                Math.abs(point3D.z - bounds.max.z)
+            );
+
+            // Minimum distance to any face
+            const minDist = Math.min(distX, distY, distZ);
+
+            return {
+                distance: minDist,
+                isNearEdge: minDist < 0.08,
+                glowIntensity: Math.max(0, 1 - minDist / 0.08)
+            };
+        }
+
+        // Detect proximity to pyramid edges for enhanced glow (dark mode)
         detectEdgeProximity(point3D) {
             // Calculate distance to pyramid boundaries
             const yNorm = point3D.y;
@@ -286,7 +359,39 @@
             return { x, y, z };
         }
 
-        // Ray-tetrahedron intersection in LOCAL space (before rotation)
+        // Ray-box intersection for 2x4 board (light mode)
+        find2x4Intersection(direction) {
+            // Simple AABB (axis-aligned bounding box) ray intersection
+            // 2x4 dimensions - long but not TOO unwieldy
+            const w = 0.45, h = 1.575, d = 0.225;
+            const bounds = {
+                min: {x: -w/2, y: -h/2, z: -d/2},
+                max: {x: w/2, y: h/2, z: d/2}
+            };
+
+            let maxT = 0.8; // Max tendril length
+
+            // March along ray and check if we're inside the box
+            for (let t = 0.02; t <= 1.0; t += 0.03) {
+                const point = {
+                    x: this.origin.x + direction.x * t,
+                    y: this.origin.y + direction.y * t,
+                    z: this.origin.z + direction.z * t
+                };
+
+                // Check if outside box bounds
+                if (point.x < bounds.min.x || point.x > bounds.max.x ||
+                    point.y < bounds.min.y || point.y > bounds.max.y ||
+                    point.z < bounds.min.z || point.z > bounds.max.z) {
+                    maxT = Math.min(maxT, t * 0.9);
+                    break;
+                }
+            }
+
+            return Math.min(maxT, 0.8);
+        }
+
+        // Ray-tetrahedron intersection in LOCAL space (dark mode)
         findPyramidIntersection(direction) {
             // Cache the result for this direction
             if (this.cachedIntersection &&
@@ -355,8 +460,12 @@
         }
 
         draw(shadowPass = false) {
-            // Find intersection with pyramid in LOCAL space
-            const maxLength = this.findPyramidIntersection(this.baseDirection);
+            // Find intersection with shape in LOCAL space
+            // Use 2x4 box in light mode, tetrahedron in dark mode
+            const lightMode = isLightMode();
+            const maxLength = lightMode ?
+                this.find2x4Intersection(this.baseDirection) :
+                this.findPyramidIntersection(this.baseDirection);
 
             // AT ESCAPE: Capture anchor point
             if (this.state === 'growing' && this.lengthProgress >= 1 && this.willEscape) {
@@ -410,7 +519,11 @@
                 let edgeGlow = 0;
                 if (this.state !== 'escaped') {
                     // Check edge proximity for enhanced effects
-                    const edgeInfo = this.detectEdgeProximity(localPos);
+                    // Use correct detection based on light mode
+                    const lightMode = isLightMode();
+                    const edgeInfo = lightMode ?
+                        this.detect2x4EdgeProximity(localPos) :
+                        this.detectEdgeProximity(localPos);
                     maxEdgeGlow = Math.max(maxEdgeGlow, edgeInfo.glowIntensity);
                     edgeGlow = edgeInfo.glowIntensity;
                 }
@@ -516,7 +629,59 @@
     let lastSurgeTime = -1000;
     let frameCount = 0;
 
-    // Tetrahedron edge definitions with morphing
+    // 2x4 Board edge definitions (for light mode)
+    // "We build during the day" - a literal construction board
+    function get2x4Edges(morphFactor = 0) {
+        // Gentle morphing for the board (less dramatic than tetrahedron)
+        const morph1 = Math.sin(morphPhase) * morphFactor;
+        const morph2 = Math.cos(morphPhase * 1.3) * morphFactor;
+        const morph3 = Math.sin(morphPhase * 0.7) * morphFactor;
+
+        // 2x4 board dimensions - just right for unwieldiness
+        // Real 2x4: 1.5" x 3.5" (finished dimensions)
+        // Made longer and more board-like for visual impact
+        const w = 0.45;   // Width (the "2" in 2x4)
+        const h = 1.575;  // Height (the "4" in 2x4) - nice long board
+        const d = 0.225;  // Depth (thickness)
+
+        // Define 8 vertices of the rectangular board (centered at origin)
+        const vertices = {
+            // Front face (z = +d/2)
+            ftl: {x: -w/2 + morph1 * 0.03, y: -h/2 + morph2 * 0.03, z: d/2},   // front top left
+            ftr: {x: w/2 + morph2 * 0.03, y: -h/2 + morph3 * 0.03, z: d/2},    // front top right
+            fbl: {x: -w/2 + morph3 * 0.03, y: h/2 + morph1 * 0.03, z: d/2},    // front bottom left
+            fbr: {x: w/2 + morph1 * 0.03, y: h/2 + morph2 * 0.03, z: d/2},     // front bottom right
+
+            // Back face (z = -d/2)
+            btl: {x: -w/2 + morph2 * 0.03, y: -h/2 + morph1 * 0.03, z: -d/2},  // back top left
+            btr: {x: w/2 + morph3 * 0.03, y: -h/2 + morph2 * 0.03, z: -d/2},   // back top right
+            bbl: {x: -w/2 + morph1 * 0.03, y: h/2 + morph3 * 0.03, z: -d/2},   // back bottom left
+            bbr: {x: w/2 + morph2 * 0.03, y: h/2 + morph1 * 0.03, z: -d/2}     // back bottom right
+        };
+
+        // Define 12 edges of the box (the board)
+        return [
+            // Front face edges (4)
+            {start: vertices.ftl, end: vertices.ftr, type: 'top'},
+            {start: vertices.ftr, end: vertices.fbr, type: 'side'},
+            {start: vertices.fbr, end: vertices.fbl, type: 'bottom'},
+            {start: vertices.fbl, end: vertices.ftl, type: 'side'},
+
+            // Back face edges (4)
+            {start: vertices.btl, end: vertices.btr, type: 'top'},
+            {start: vertices.btr, end: vertices.bbr, type: 'side'},
+            {start: vertices.bbr, end: vertices.bbl, type: 'bottom'},
+            {start: vertices.bbl, end: vertices.btl, type: 'side'},
+
+            // Connecting edges (4) - front to back
+            {start: vertices.ftl, end: vertices.btl, type: 'depth'},
+            {start: vertices.ftr, end: vertices.btr, type: 'depth'},
+            {start: vertices.fbl, end: vertices.bbl, type: 'depth'},
+            {start: vertices.fbr, end: vertices.bbr, type: 'depth'}
+        ];
+    }
+
+    // Tetrahedron edge definitions with morphing (for dark mode)
     function getPyramidEdges(morphFactor = 0) {
         // Morphing distortion factors
         const morph1 = Math.sin(morphPhase) * morphFactor;
@@ -934,11 +1099,14 @@
             tendrils[i].update();
         }
 
-        // Get morphed pyramid edges
-        const pyramidEdges = getPyramidEdges(0.15); // 15% morphing strength
+        // Get morphed shape edges (2x4 board in light mode, tetrahedron in dark mode)
+        const lightMode = isLightMode();
+        const shapeEdges = lightMode ?
+            get2x4Edges(0.15) :      // 2x4 board - "We build during the day"
+            getPyramidEdges(0.15);   // Tetrahedron - for dark mode
 
         // SHADOW PASS: Draw shadows first if in light mode
-        if (isLightMode()) {
+        if (lightMode) {
             ctx.save();
             ctx.globalAlpha = 0.5; // Even more subtle overall transparency
 
@@ -947,8 +1115,8 @@
                 tendrils[i].draw(true); // shadowPass = true
             }
 
-            // Draw shadow pyramid edges
-            drawPyramidEdges(pyramidEdges, tendrils, frameCount, true); // shadowPass = true
+            // Draw shadow shape edges
+            drawPyramidEdges(shapeEdges, tendrils, frameCount, true); // shadowPass = true
 
             ctx.restore();
         }
@@ -990,8 +1158,9 @@
             ctx.shadowBlur = 0;
         }
 
-        // Draw pyramid edges with proximity-based illumination
-        drawPyramidEdges(pyramidEdges, tendrils, frameCount, false); // shadowPass = false
+        // Draw shape edges with proximity-based illumination
+        // (2x4 board in light mode, tetrahedron in dark mode)
+        drawPyramidEdges(shapeEdges, tendrils, frameCount, false); // shadowPass = false
         frameCount++;
 
         // Draw all tendrils
