@@ -76,6 +76,7 @@ export const state = {
             active: false,
             containerClass: 'research-container',
             customClasses: ['metrics-view'],
+            hasCharts: true,  // Feature flag: this tab contains Chart.js charts
             template: () => createSimpleTabContent(
                 'research-container',
                 'research-container',

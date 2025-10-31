@@ -10,6 +10,63 @@ import { fetchAPI } from './api.js';
 const charts = {};
 
 /**
+ * Pure function: Get theme-appropriate colors
+ * Always recalculates from current theme state - functional approach
+ * @returns {Object} Color palette for current theme
+ */
+function getThemeColors() {
+    const isDark = state.theme === 'dark';
+    return {
+        textColor: isDark ? '#e0e0e0' : '#1a1a1a',
+        gridColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)',
+        tooltipBg: isDark ? '#1e1e1e' : '#ffffff'
+    };
+}
+
+/**
+ * Update all chart colors dynamically without redrawing
+ * Pure functional approach: applies theme colors to existing charts
+ * Much faster than destroying and recreating charts
+ */
+export function updateChartColors() {
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+
+    Object.values(charts).forEach(chart => {
+        if (!chart) return;
+
+        // Update scale colors (axes)
+        if (chart.options.scales) {
+            Object.values(chart.options.scales).forEach(scale => {
+                if (scale.title) scale.title.color = textColor;
+                if (scale.ticks) scale.ticks.color = textColor;
+                if (scale.grid) scale.grid.color = gridColor;
+            });
+        }
+
+        // Update legend colors
+        if (chart.options.plugins?.legend?.labels) {
+            chart.options.plugins.legend.labels.color = textColor;
+        }
+
+        // Update title colors (for charts with subtitles)
+        if (chart.options.plugins?.title) {
+            chart.options.plugins.title.color = textColor;
+        }
+
+        // Update tooltip colors
+        if (chart.options.plugins?.tooltip) {
+            chart.options.plugins.tooltip.backgroundColor = tooltipBg;
+            chart.options.plugins.tooltip.titleColor = textColor;
+            chart.options.plugins.tooltip.bodyColor = textColor;
+            chart.options.plugins.tooltip.borderColor = gridColor;
+        }
+
+        // Apply updates instantly without animation
+        chart.update('none');
+    });
+}
+
+/**
  * Load available agents for multi-agent comparison
  */
 export async function loadAvailableAgents() {
@@ -333,9 +390,8 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
         charts[canvasId].destroy();
     }
 
-    const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
+    // Get colors from pure function - always recalculates from current theme
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     // Build datasets
     const datasets = agents.map((agent) => {
@@ -399,7 +455,7 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    backgroundColor: tooltipBg,
                     titleColor: textColor,
                     bodyColor: textColor,
                     borderColor: gridColor,
@@ -462,9 +518,8 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
         charts[canvasId].destroy();
     }
 
-    const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
+    // Get colors from pure function - always recalculates from current theme
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     // Extract latest token count for each agent
     const data = agents.map((agent) => {
@@ -511,7 +566,7 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
                     display: false
                 },
                 tooltip: {
-                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    backgroundColor: tooltipBg,
                     titleColor: textColor,
                     bodyColor: textColor,
                     borderColor: gridColor,
@@ -565,9 +620,8 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
         charts[canvasId].destroy();
     }
 
-    const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
+    // Get colors from pure function - always recalculates from current theme
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     // Collect all documents and their latest weights
     const documentData = [];
@@ -631,7 +685,7 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
                     display: false
                 },
                 tooltip: {
-                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    backgroundColor: tooltipBg,
                     titleColor: textColor,
                     bodyColor: textColor,
                     borderColor: gridColor,
@@ -689,9 +743,8 @@ function createExpertRoutingChart(canvasId, agents) {
         charts[canvasId].destroy();
     }
 
-    const isDark = state.theme === 'dark';
-    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
-    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
+    // Get colors from pure function - always recalculates from current theme
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
 
     // Build datasets - one line per expert
     const allDatasets = [];
@@ -774,7 +827,7 @@ function createExpertRoutingChart(canvasId, agents) {
                     padding: { bottom: 10 }
                 },
                 tooltip: {
-                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    backgroundColor: tooltipBg,
                     titleColor: textColor,
                     bodyColor: textColor,
                     borderColor: gridColor,

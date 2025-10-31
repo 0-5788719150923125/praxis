@@ -113,10 +113,12 @@ export const ACTION_HANDLERS = {
         storage.set('theme', state.theme);
         render();
 
-        // Reload research charts if on research tab to update colors
-        if (state.activeTab === 'research') {
-            import('./charts.js').then(({ loadResearchMetricsWithCharts }) => {
-                loadResearchMetricsWithCharts(true);
+        // Data-driven: check if current tab has charts via feature flag
+        const currentTab = state.tabs.find(t => t.active);
+        if (currentTab?.hasCharts) {
+            // Dynamically update chart colors without redrawing
+            import('./charts.js').then(({ updateChartColors }) => {
+                updateChartColors();
             });
         }
     },
