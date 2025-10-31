@@ -66,6 +66,22 @@ class BaseDecoder(nn.Module):
             # Reuse the same expert for all layer positions
             for i in range(self.num_layers):
                 self.locals.append(expert)
+        elif config.router_type == "prismatic":
+            # For Prismatic, create a base expert block
+            # Prismatic will clone and perturb it to create num_experts diverse copies
+            if self.manager:
+                base_block = self.manager.register_expert(config)
+            else:
+                base_block = BLOCK_REGISTRY[config.block_type](config)
+
+            # Pass base block as a single-element list (experts parameter)
+            # Prismatic will use it as the base for creating perturbed clones
+            expert = LocalLayer(
+                config, block=base_block, expert_blocks=[base_block]
+            )
+            # Reuse the same expert for all layer positions
+            for i in range(self.num_layers):
+                self.locals.append(expert)
         else:
             for i in range(self.num_layers):
                 if self.manager:

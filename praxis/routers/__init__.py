@@ -2,6 +2,7 @@ from functools import partial
 from typing import Optional, TypeVar
 
 from praxis.routers.mixture_of_depths import MixtureOfDepths
+from praxis.routers.prismatic import Prismatic
 from praxis.routers.smear import SMEAR
 from praxis.routers.taxus import Taxus
 
@@ -99,6 +100,7 @@ ROUTER_REGISTRY = dict(
     mixture_of_depths_ramped=partial(MixtureOfDepths, layout="ramped"),
     mixture_of_depths_skip_2=partial(MixtureOfDepths, layout="skip_2"),
     smear=SMEAR,
+    prismatic=Prismatic,
     taxus=create_taxus_with_dynamic_budget,
     taxus_aggressive=partial(
         create_taxus_with_dynamic_budget,

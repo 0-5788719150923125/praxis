@@ -25,6 +25,7 @@ dependencies = [
     "lightning",
     "lsprotocol",
     "matplotlib",
+    "mpmath",
     "networkx",
     "pygls",
     "psutil",
