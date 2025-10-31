@@ -39,7 +39,7 @@ import torch
 import torch.nn as nn
 
 from praxis.blocks.transformer import TransformerBlock
-from praxis.configuration_praxis import PraxisConfig
+from praxis.configuration import PraxisConfig
 from praxis.routers.prismatic import Prismatic, PrismaticConfig
 
 

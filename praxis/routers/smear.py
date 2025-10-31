@@ -66,6 +66,9 @@ class SMEAR(nn.Module):
         self.router_norm = nn.LayerNorm(self.hidden_size)
         self.router = nn.Linear(self.hidden_size, len(self.experts))
 
+        # Metrics storage for convergence tracking
+        self._metrics = {}
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(num_experts={len(self.experts)})"
 
@@ -215,6 +218,9 @@ class SMEAR(nn.Module):
         # Compute the mean routing probability across the batch for each expert
         expert_weights = routing_probs.mean(dim=0)  # [num_experts]
 
+        # Log expert convergence metrics for visualization
+        self._log_routing_metrics(expert_weights, routing_probs)
+
         # Iterate over all parameter names
         self.parameter_names = self._collect_parameter_names(self.experts[0])
         for param_name in self.parameter_names:
@@ -268,6 +274,52 @@ class SMEAR(nn.Module):
             else:
                 return None
         return getattr(submodule, parts[-1], None)
+
+    def _log_routing_metrics(
+        self, expert_weights: torch.Tensor, routing_probs: torch.Tensor
+    ) -> None:
+        """
+        Store routing metrics for expert convergence tracking.
+
+        Tracks how routing probabilities evolve over training to visualize
+        convergence patterns similar to Figure 1 in "The Blind Watchmaker" paper.
+
+        Metrics flow: SMEAR router → Decoder.get_metrics() → Model.get_metrics() →
+                     BackpropagationTrainer.log_dict() → MetricsLoggerCallback →
+                     SQLite → API → Web dashboard
+
+        Args:
+            expert_weights: Mean routing probability per expert [num_experts]
+            routing_probs: Full routing probabilities [batch_size, num_experts]
+        """
+        try:
+            # Per-expert routing weights (mean across batch)
+            # These show individual expert convergence trajectories
+            for i, weight in enumerate(expert_weights):
+                self._metrics[f'expert_{i}_routing_weight'] = weight.item()
+
+            # Entropy: H = -Σ(p_i * log(p_i))
+            # Measures routing balance: high = balanced, low = collapsed
+            probs = expert_weights + 1e-10  # Avoid log(0)
+            entropy = -(probs * probs.log()).sum()
+            self._metrics['routing_entropy'] = entropy.item()
+
+            # Concentration: max routing weight
+            # Measures expert collapse: 1.0 = fully collapsed, 1/N = uniform
+            concentration = expert_weights.max()
+            self._metrics['routing_concentration'] = concentration.item()
+
+            # Variance: measures routing stability across experts
+            # High variance = specialized experts, low variance = uniform
+            variance = expert_weights.var()
+            self._metrics['routing_variance'] = variance.item()
+        except Exception:
+            # Silently fail if metric computation fails - don't break training
+            pass
+
+    def get_metrics(self) -> dict:
+        """Return collected metrics for logging."""
+        return self._metrics.copy()
 
     def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
         """Check if we're in router mode based on arguments."""

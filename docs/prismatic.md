@@ -305,6 +305,10 @@ W_perturbed = W_base + perturbation
 - Use pi-digit seeding by default (Quantum Echoes)
 - Apply perturbations once at initialization (static architectural constraint)
 
+## Convergence Tracking
+
+Expert routing weights are automatically tracked and visualized in the Research tab. Metrics include per-expert routing weights, entropy, concentration, and variance. Charts appear automatically when using SMEAR or Prismatic routers.
+
 ## Troubleshooting
 
 ### Router Collapses to Single Expert

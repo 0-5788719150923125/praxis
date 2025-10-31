@@ -178,6 +178,11 @@ export const CONSTANTS = {
         { key: 'num_tokens', canvasId: 'chart-tokens', title: 'Tokens (Billions)', label: 'Tokens (B)', type: 'bar' },
         { key: 'avg_step_time', canvasId: 'chart-avg-step-time', title: 'Average Step Time', label: 'Avg Step Time (s)', type: 'line' },
         { key: 'softmax_collapse', canvasId: 'chart-softmax', title: 'Softmax Collapse', label: 'Softmax Collapse', type: 'line' },
-        { key: 'sampling_weights', canvasId: 'chart-sampling-weights', title: 'Task Sampling Weights', label: 'Sampling Weights', type: 'sampling', source: 'data_metrics' }
+        { key: 'sampling_weights', canvasId: 'chart-sampling-weights', title: 'Task Sampling Weights', label: 'Sampling Weights', type: 'sampling', source: 'data_metrics' },
+        // Expert convergence metrics (SMEAR & Prismatic routers)
+        { key: 'expert_routing_weights', canvasId: 'chart-expert-routing', title: 'Expert Routing Weights (Convergence)', label: 'Routing Weight', type: 'multi_expert_line', isComposite: true },
+        { key: 'routing_entropy', canvasId: 'chart-routing-entropy', title: 'Routing Entropy (Balance)', label: 'Entropy', type: 'line' },
+        { key: 'routing_concentration', canvasId: 'chart-routing-concentration', title: 'Routing Concentration (Collapse)', label: 'Max Weight', type: 'line' },
+        { key: 'routing_variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' }
     ]
 };

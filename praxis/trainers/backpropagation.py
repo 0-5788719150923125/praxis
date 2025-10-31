@@ -120,6 +120,14 @@ class BackpropagationTrainer(LightningModule):
                 if hasattr(outputs, "rl_loss") and outputs.rl_loss is not None:
                     metrics["rl_loss"] = outputs.rl_loss
 
+        # Collect router convergence metrics (SMEAR, Prismatic)
+        model_metrics = self.get_metrics()
+        if model_metrics:
+            # Extract expert convergence metrics and add to logging
+            for key, value in model_metrics.items():
+                if key not in metrics and key not in ["experts"]:  # Skip duplicate keys and nested dicts
+                    metrics[key] = value
+
         self.log_dict(
             metrics,
             on_step=True,

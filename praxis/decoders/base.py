@@ -162,12 +162,24 @@ class BaseDecoder(nn.Module):
         """
         Return current prediction accuracies and other metrics.
 
+        Collects metrics from routers (SMEAR, Prismatic) for convergence tracking.
+
         Returns:
             Dictionary of metrics
         """
         extras: Dict[str, Any] = {}
         if self.genome:
             extras = {**extras, **self.genome.get_metrics()}
+
+        # Collect metrics from routers (expert convergence tracking)
+        # Check first local layer for router metrics (shared across all layers)
+        if self.locals and len(self.locals) > 0:
+            first_local = self.locals[0]
+            if hasattr(first_local, 'router') and hasattr(first_local.router, 'get_metrics'):
+                router_metrics = first_local.router.get_metrics()
+                if router_metrics:
+                    extras = {**extras, **router_metrics}
+
         return {
             "experts": dict(
                 local=len(self.locals),

@@ -275,6 +275,12 @@ function renderMetricsCharts(data, container) {
                 a.data_metrics?.[config.key] &&
                 Object.keys(a.data_metrics[config.key]).length > 0
             );
+        } else if (config.isComposite && config.key === 'expert_routing_weights') {
+            // Check if ANY expert_*_routing_weight metrics exist
+            // This is a composite metric combining all expert routing weights
+            return agents.some(a =>
+                Object.keys(a.metrics).some(k => k.match(/^expert_\d+_routing_weight$/))
+            );
         } else {
             // Check regular agent metrics
             return agents.some(a => a.metrics[config.key]?.some(v => v !== null));
@@ -304,6 +310,9 @@ function renderMetricsCharts(data, container) {
                 createTokensBarChart(config.canvasId, config.label, agents, config.key);
             } else if (config.type === 'sampling') {
                 createSamplingWeightsChart(config.canvasId, dataMetrics);
+            } else if (config.type === 'multi_expert_line') {
+                // Expert routing convergence chart
+                createExpertRoutingChart(config.canvasId, agents);
             } else {
                 // Default: line chart
                 createMultiAgentChart(config.canvasId, config.label, agents, config.key);
@@ -661,6 +670,149 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
                         font: { size: 12 }
                     },
                     grid: { display: false }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create multi-expert routing convergence chart (similar to Figure 1 from paper)
+ * Shows routing weight over time for each expert to visualize convergence patterns
+ */
+function createExpertRoutingChart(canvasId, agents) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Destroy existing
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+
+    const isDark = state.theme === 'dark';
+    const textColor = isDark ? '#e0e0e0' : '#1a1a1a';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)';
+
+    // Build datasets - one line per expert
+    const allDatasets = [];
+    let maxExperts = 0;
+
+    agents.forEach((agent, agentIdx) => {
+        const metrics = agent.metrics;
+        const steps = metrics.steps || [];
+
+        // Find all expert_*_routing_weight metrics
+        const expertKeys = Object.keys(metrics).filter(k => k.match(/^expert_\d+_routing_weight$/));
+        maxExperts = Math.max(maxExperts, expertKeys.length);
+
+        expertKeys.forEach((expertKey) => {
+            const expertNum = expertKey.match(/expert_(\d+)_routing_weight/)[1];
+            const values = metrics[expertKey] || [];
+
+            const data = steps.map((step, i) => ({
+                x: step,
+                y: values[i]
+            })).filter(point => point.y !== null)
+              .sort((a, b) => a.x - b.x);
+
+            // Color scheme: one color per expert (cycling through palette)
+            const color = CONSTANTS.RUN_COLORS[parseInt(expertNum) % CONSTANTS.RUN_COLORS.length];
+
+            const label = agents.length > 1 ? `${agent.name} - Expert ${expertNum}` : `Expert ${expertNum}`;
+
+            allDatasets.push({
+                label: label,
+                data: data,
+                borderColor: color,
+                backgroundColor: color + '20',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                pointHoverBackgroundColor: color,
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 2,
+                tension: 0.3,  // Smooth curves like Figure 1 in the paper
+                fill: false
+            });
+        });
+    });
+
+    if (allDatasets.length === 0) {
+        return;
+    }
+
+    // Calculate uniform distribution for reference (shown in subtitle)
+    const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
+    const uniformPct = (uniformWeight * 100).toFixed(1);
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: allDatasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        padding: 10,
+                        font: { size: 10 }
+                    }
+                },
+                title: {
+                    display: true,
+                    text: `Uniform Distribution: ${uniformPct}% per expert`,
+                    color: textColor,
+                    font: { size: 11, style: 'italic' },
+                    padding: { bottom: 10 }
+                },
+                tooltip: {
+                    backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                    callbacks: {
+                        title: (ctx) => `Step ${ctx[0].parsed.x}`,
+                        label: (ctx) => `${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(2)}%`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Training Step',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: { color: textColor, maxTicksLimit: 10 },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Routing Weight',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    min: 0,
+                    max: 1,
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => `${(value * 100).toFixed(0)}%`
+                    },
+                    grid: { color: gridColor }
                 }
             }
         }
