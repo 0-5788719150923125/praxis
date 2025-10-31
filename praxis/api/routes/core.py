@@ -3,11 +3,20 @@
 import hashlib
 import io
 import json
+import os
+import subprocess
 from contextlib import redirect_stdout
 from datetime import datetime
 
 import yaml
-from flask import Blueprint, Response, jsonify, make_response, render_template, request
+from flask import (
+    Blueprint,
+    Response,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+)
 
 from ..config import CSP_POLICY
 
@@ -131,6 +140,20 @@ def get_spec():
 
         from praxis.utils import mask_git_url
 
+        # Get commit timestamp
+        commit_timestamp = None
+        try:
+            timestamp_result = subprocess.run(
+                ["git", "show", "-s", "--format=%ct", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=os.getcwd(),
+            )
+            if timestamp_result.returncode == 0:
+                commit_timestamp = int(timestamp_result.stdout.strip())
+        except:
+            pass
+
         spec = {
             "truncated_hash": truncated_hash,
             "full_hash": full_hash,
@@ -142,6 +165,7 @@ def get_spec():
             "git_url": git_url,
             "masked_git_url": mask_git_url(git_url) if git_url else None,
             "seed": current_app.config.get("seed"),
+            "commit_timestamp": commit_timestamp,
         }
 
         response = jsonify(spec)

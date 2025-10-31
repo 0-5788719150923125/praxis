@@ -57,7 +57,7 @@ def get_agents():
                 # No ngrok - use local URL
                 git_url = f"http://localhost:{current_port}/praxis"
 
-            # Get git hash
+            # Get git hash and timestamp
             try:
                 result = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
@@ -69,9 +69,19 @@ def get_agents():
                     result.stdout.strip() if result.returncode == 0 else "unknown"
                 )
                 short_hash = full_hash[:7] if len(full_hash) >= 7 else full_hash
+
+                # Get commit timestamp (Unix epoch)
+                timestamp_result = subprocess.run(
+                    ["git", "show", "-s", "--format=%ct", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=os.getcwd(),
+                )
+                commit_timestamp = int(timestamp_result.stdout.strip()) if timestamp_result.returncode == 0 else None
             except:
                 full_hash = "unknown"
                 short_hash = "unknown"
+                commit_timestamp = None
 
             # Add current instance to the list of self instances
             self_instances.append(
@@ -82,6 +92,7 @@ def get_agents():
                     "status": "online",
                     "commit_hash": full_hash,
                     "short_hash": short_hash,
+                    "commit_timestamp": commit_timestamp,
                 }
             )
         except Exception as e:
@@ -115,6 +126,7 @@ def get_agents():
                                     ),
                                     "full_hash": spec_data.get("full_hash"),
                                     "truncated_hash": spec_data.get("truncated_hash"),
+                                    "commit_timestamp": spec_data.get("commit_timestamp"),
                                 }
                 except:
                     pass
@@ -146,6 +158,7 @@ def get_agents():
                             "status": "online",
                             "commit_hash": instance["full_hash"],
                             "short_hash": instance["truncated_hash"],
+                            "commit_timestamp": instance.get("commit_timestamp"),
                         }
                     )
     except Exception as e:
@@ -163,6 +176,7 @@ def get_agents():
                 "status": instance["status"],
                 "commit_hash": instance["commit_hash"],
                 "short_hash": instance["short_hash"],
+                "commit_timestamp": instance.get("commit_timestamp"),
             }
         )
 
@@ -195,6 +209,7 @@ def get_agents():
                 "status": "offline",
                 "commit_hash": None,
                 "short_hash": None,
+                "commit_timestamp": None,
             }
 
             # Try to check if the remote is accessible using git ls-remote
@@ -214,6 +229,21 @@ def get_agents():
                         commit_hash = output.split("\t")[0]
                         agent["commit_hash"] = commit_hash
                         agent["short_hash"] = commit_hash[:7] if commit_hash else None
+
+                        # Get commit timestamp for this hash
+                        try:
+                            timestamp_result = subprocess.run(
+                                ["git", "show", "-s", "--format=%ct", commit_hash],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL,
+                                cwd=os.getcwd(),
+                                timeout=2,
+                                text=True,
+                            )
+                            if timestamp_result.returncode == 0:
+                                agent["commit_timestamp"] = int(timestamp_result.stdout.strip())
+                        except:
+                            pass
 
                     # Check if this is a Praxis instance
                     is_praxis = False

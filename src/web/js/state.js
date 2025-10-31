@@ -156,6 +156,116 @@ export const state = {
     }
 };
 
+// ============================================================================
+// COLOR UTILITIES - Pure Functional Color Manipulation
+// ============================================================================
+
+/**
+ * Convert RGB color to greyscale using luminance formula
+ * Pure function: (r, g, b) → (grey, grey, grey)
+ * @param {number} r - Red (0-255)
+ * @param {number} g - Green (0-255)
+ * @param {number} b - Blue (0-255)
+ * @returns {Array<number>} [grey, grey, grey]
+ */
+export function rgbToGreyscale(r, g, b) {
+    // Standard luminance formula (ITU-R BT.709)
+    const grey = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    return [grey, grey, grey];
+}
+
+/**
+ * Linear interpolation between two colors
+ * Pure function: (color1, color2, t) → interpolated color
+ * @param {Array<number>} color1 - RGB array [r, g, b]
+ * @param {Array<number>} color2 - RGB array [r, g, b]
+ * @param {number} t - Interpolation factor (0 = color1, 1 = color2)
+ * @returns {Array<number>} Interpolated RGB array
+ */
+export function lerpColor(color1, color2, t) {
+    // Clamp t to [0, 1]
+    t = Math.max(0, Math.min(1, t));
+    return color1.map((c1, i) => Math.round(c1 + (color2[i] - c1) * t));
+}
+
+/**
+ * Convert RGB array to CSS rgb() string
+ * Pure function: [r, g, b] → "rgb(r, g, b)"
+ * @param {Array<number>} rgb - RGB array [r, g, b]
+ * @returns {string} CSS color string
+ */
+export function rgbToString(rgb) {
+    return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+/**
+ * Convert hex color to RGB array
+ * Pure function: "#RRGGBB" → [r, g, b]
+ * @param {string} hex - Hex color string
+ * @returns {Array<number>} RGB array
+ */
+export function hexToRgb(hex) {
+    const cleaned = hex.replace('#', '');
+    const r = parseInt(cleaned.substring(0, 2), 16);
+    const g = parseInt(cleaned.substring(2, 4), 16);
+    const b = parseInt(cleaned.substring(4, 6), 16);
+    return [r, g, b];
+}
+
+/**
+ * Calculate commit freshness from timestamp
+ * Pure function: (timestamp, oldest, newest) → freshness (0-1)
+ * @param {number} timestamp - Unix timestamp of commit
+ * @param {number} oldestTimestamp - Oldest commit timestamp
+ * @param {number} newestTimestamp - Newest commit timestamp
+ * @returns {number} Freshness factor (0 = oldest/dead, 1 = newest/alive)
+ */
+export function calculateCommitFreshness(timestamp, oldestTimestamp, newestTimestamp) {
+    if (!timestamp) return 0;
+    if (newestTimestamp === oldestTimestamp) return 1;
+    return (timestamp - oldestTimestamp) / (newestTimestamp - oldestTimestamp);
+}
+
+/**
+ * Get color for agent based on commit freshness
+ * Pure function: (agent, allAgents) → { bg, text, dot }
+ * @param {Object} agent - Agent data with commit_timestamp
+ * @param {Array<Object>} allAgents - All agents for comparison
+ * @returns {Object} Color palette { background, text, dot }
+ */
+export function getAgentFreshnessColor(agent, allAgents) {
+    // Brand primary color
+    const primaryColor = hexToRgb('#0B9A6D'); // var(--primary-light)
+    const greyColor = rgbToGreyscale(...primaryColor);
+
+    // Get all valid timestamps
+    const timestamps = allAgents
+        .filter(a => a.commit_timestamp)
+        .map(a => a.commit_timestamp);
+
+    if (timestamps.length === 0 || !agent.commit_timestamp) {
+        // No timestamp data - use grey
+        return {
+            background: rgbToString(greyColor),
+            text: rgbToString(greyColor),
+            dot: rgbToString(greyColor),
+        };
+    }
+
+    const oldest = Math.min(...timestamps);
+    const newest = Math.max(...timestamps);
+    const freshness = calculateCommitFreshness(agent.commit_timestamp, oldest, newest);
+
+    // Interpolate from grey (0) to full color (1)
+    const interpolated = lerpColor(greyColor, primaryColor, freshness);
+
+    return {
+        background: rgbToString(interpolated),
+        text: rgbToString(interpolated),
+        dot: rgbToString(interpolated),
+    };
+}
+
 // Constants
 export const CONSTANTS = {
     MAX_HISTORY_LENGTH: 21,

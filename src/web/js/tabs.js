@@ -3,7 +3,7 @@
  * Lazy-load tab content when tabs are switched
  */
 
-import { state } from './state.js';
+import { state, getAgentFreshnessColor } from './state.js';
 import { fetchAPI } from './api.js';
 import { loadResearchMetricsWithCharts } from './charts.js';
 import {
@@ -175,28 +175,39 @@ export async function loadAgents() {
  * Render agents tab content
  */
 /**
- * Render agent card - pure component
+ * Render agent card - pure component with commit freshness colors
+ * @param {Object} agent - Agent data
+ * @param {Array<Object>} allAgents - All agents for color calculation
+ * @returns {string} HTML string
  */
-const renderAgentCard = (agent) => {
+const renderAgentCard = (agent, allAgents) => {
     const statusClass = agent.status || 'offline';
     const statusText = statusClass.charAt(0).toUpperCase() + statusClass.slice(1);
-    
+
     // Build info line using configuration
     const infoLine = AGENT_DISPLAY_FIELDS
         .filter(field => field.condition(agent))
         .map(field => `${field.label}: ${escapeHtml(field.getValue(agent))}`)
         .join(' | ');
-    
+
     const infoHtml = infoLine ? `<div class="agent-url">${infoLine}</div>` : '';
-    
+
+    // Calculate freshness-based colors (pure function)
+    const colors = getAgentFreshnessColor(agent, allAgents);
+
+    // Apply dynamic colors via inline styles
+    // background with 0.1 opacity, text color, dot color
+    const statusStyle = `background-color: ${colors.background.replace('rgb', 'rgba').replace(')', ', 0.1)')}; color: ${colors.text};`;
+    const dotStyle = `background-color: ${colors.dot};`;
+
     return `
         <div class="agent-row">
             <div class="agent-info">
                 <div class="agent-name">${escapeHtml(agent.name || 'Unknown')}</div>
                 ${infoHtml}
             </div>
-            <div class="agent-status ${statusClass}">
-                <span class="status-dot ${statusClass}"></span>
+            <div class="agent-status ${statusClass}" style="${statusStyle}">
+                <span class="status-dot ${statusClass}" style="${dotStyle}"></span>
                 <span>${statusText}</span>
             </div>
         </div>
@@ -211,8 +222,9 @@ function renderAgents(agents, container) {
         container.innerHTML = '<div class="loading-placeholder">No agents available.</div>';
         return;
     }
-    
-    const agentsHtml = agents.map(renderAgentCard).join('');
+
+    // Pass all agents to each card for color calculation
+    const agentsHtml = agents.map(agent => renderAgentCard(agent, agents)).join('');
     container.innerHTML = `<div class="agents-list">${agentsHtml}</div>`;
 }
 
