@@ -211,7 +211,7 @@ export const formatJSON = (obj, indent = 2) => JSON.stringify(obj, null, indent)
  * @returns {string} HTML string
  */
 export const createSimpleTabContent = (containerClass, containerId, placeholderText) => `
-    <div class="${containerClass}" id="${containerId}">
+    <div class="tab-container ${containerClass}" id="${containerId}">
         <div class="loading-placeholder">${placeholderText}</div>
     </div>
 `;
@@ -224,7 +224,7 @@ export const createSimpleTabContent = (containerClass, containerId, placeholderT
  * @returns {string} HTML string
  */
 export const createContainerWithContent = (containerClass, containerId, initialContent) => `
-    <div class="${containerClass}" id="${containerId}">
+    <div class="tab-container ${containerClass}" id="${containerId}">
         ${initialContent}
     </div>
 `;
@@ -306,7 +306,7 @@ export function createTabNav() {
                 <!-- Rendered dynamically by renderTabs() -->
             </div>
             <div class="terminal-status">
-                <!-- Rendered dynamically by renderTerminalStatus() -->
+                <span class="status-indicator" id="status-indicator"></span>
             </div>
         </div>
     `;
@@ -476,7 +476,6 @@ export function createSettingsModal(settings) {
 export function createTerminalStatus(connected) {
     return `
         <span class="status-indicator ${connected ? 'connected' : ''}" id="status-indicator"></span>
-        <span id="terminal-status">${connected ? 'Connected' : 'Disconnected'}</span>
     `;
 }
 

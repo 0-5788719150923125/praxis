@@ -111,10 +111,14 @@ function renderTheme() {
  * Render terminal connection status
  */
 function renderTerminalStatus() {
-    const container = document.querySelector('.terminal-status');
-    if (!container) return;
+    const indicator = document.getElementById('status-indicator');
+    if (!indicator) return;
 
-    container.innerHTML = createTerminalStatus(state.terminal.connected);
+    if (state.terminal.connected) {
+        indicator.classList.add('connected');
+    } else {
+        indicator.classList.remove('connected');
+    }
 }
 
 /**

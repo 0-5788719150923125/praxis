@@ -5,69 +5,98 @@
 .app-container {
     display: grid;
     grid-template-rows: auto auto 1fr auto;
+    grid-template-columns: minmax(0, 1fr);
     height: 100vh;
     height: 100dvh;
-    max-width: 900px;
+    max-width: 56.25rem;
     margin: 0 auto;
-    padding: 0 22px;  /* Precise 22px padding */
+    padding: 0 1.375rem;
     overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* Functional Tab Container - Universal Base Class for All Tabs */
+.tab-container {
+    flex: 1;
+    padding: var(--tab-padding);
+    overflow-y: var(--overflow-y);
+    overflow-x: var(--overflow-x);
+    max-width: var(--content-max-width);
+    width: 100%;
+    box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* Tab Content Layout */
 .tab-content {
     display: none;
     height: 100%;
+    width: 100%;
+    max-width: 100%;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
 .tab-content.active {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100%;
 }
 
-/* Chat Layout */
+/* Chat Layout - Special: messages grow naturally, input floats below */
 .chat-container {
-    overflow-y: auto;
-    padding: var(--spacing-md) var(--spacing-lg) 0 var(--spacing-lg);
+    flex: 0 1 auto;
     display: flex;
     flex-direction: column;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+    overflow-y: visible;
+    overflow-x: hidden;
+    padding: var(--spacing-md) 0 0 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .input-container {
+    flex: 0 0 auto;
     display: flex;
     padding: 0 0 var(--spacing-xl) 0;
     padding-bottom: calc(var(--spacing-xl) + env(safe-area-inset-bottom));
     background-color: var(--background);
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     z-index: 10;
-}
-
-.input-container.with-messages {
-    padding-top: var(--spacing-lg);
-    border-top: 1px solid var(--border);
-    margin-top: 0;
 }
 
 .message-input {
     width: 100%;
-    padding: 12px;
+    max-width: 100%;
+    padding: 0.75rem;
     border: 1px solid var(--border);
     border-radius: var(--radius-small);
-    font-size: 16px;
+    font-size: 1rem;
     resize: none;
-    min-height: 44px;
-    max-height: 200px;
+    min-height: 2.75rem;
+    max-height: 12.5rem;
     overflow-y: hidden;
     transition: border-color 0.2s;
     font-family: inherit;
     background-color: var(--input-bg, var(--background));
     color: var(--input-text, var(--text));
     line-height: 1.5;
+    box-sizing: border-box;
 }
 
 .message-input:focus {
     outline: none;
     border-color: var(--primary);
+}
+
+.input-container.with-messages {
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--border);
+    margin-top: 0;
 }

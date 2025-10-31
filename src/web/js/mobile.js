@@ -1,10 +1,10 @@
 /**
  * Praxis Web - Mobile Optimizations
- * Tab carousel and mobile-specific behavior
+ * Clean tab carousel - clicked tabs float to left
  */
 
 /**
- * Setup mobile tab carousel with scroll indicators
+ * Setup mobile tab carousel
  */
 export function setupTabCarousel() {
     const tabButtons = document.querySelector('.tab-buttons');
@@ -15,20 +15,19 @@ export function setupTabCarousel() {
     // Only apply on mobile
     if (window.innerWidth > 768) return;
 
-    let scrollEndTimer = null;
-
     function updateScrollIndicators() {
         const scrollLeft = tabButtons.scrollLeft;
         const scrollWidth = tabButtons.scrollWidth;
         const clientWidth = tabButtons.clientWidth;
 
-        // Update scroll indicators
+        // Show left fade if scrolled right
         if (scrollLeft > 5) {
             tabNav.classList.add('has-scroll-left');
         } else {
             tabNav.classList.remove('has-scroll-left');
         }
 
+        // Show right fade if more content to the right
         if (scrollLeft < scrollWidth - clientWidth - 5) {
             tabNav.classList.add('has-scroll-right');
         } else {
@@ -36,49 +35,36 @@ export function setupTabCarousel() {
         }
     }
 
-    function snapToNearestButton() {
-        const buttons = tabButtons.querySelectorAll('.tab-button');
-        const containerRect = tabButtons.getBoundingClientRect();
-        const containerCenter = containerRect.left + containerRect.width / 2;
+    // Scroll clicked/active tab to left-most position
+    function scrollTabToLeft(button) {
+        if (!button) return;
 
-        let nearestButton = null;
-        let minDistance = Infinity;
-
-        buttons.forEach(button => {
-            const rect = button.getBoundingClientRect();
-            const buttonCenter = rect.left + rect.width / 2;
-            const distance = Math.abs(buttonCenter - containerCenter);
-
-            if (distance < minDistance) {
-                minDistance = distance;
-                nearestButton = button;
-            }
-        });
-
-        if (nearestButton) {
-            nearestButton.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-        }
+        // Scroll to start (left-most position)
+        button.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
     }
 
     // Update indicators on scroll
     tabButtons.addEventListener('scroll', () => {
         updateScrollIndicators();
+    });
 
-        // Snap to nearest button after scrolling stops
-        clearTimeout(scrollEndTimer);
-        scrollEndTimer = setTimeout(() => {
-            snapToNearestButton();
-        }, 150);
+    // Intercept tab clicks to scroll to left
+    tabButtons.addEventListener('click', (e) => {
+        const button = e.target.closest('.tab-button');
+        if (button) {
+            // Scroll clicked tab to left after a brief delay (allows state update)
+            setTimeout(() => scrollTabToLeft(button), 50);
+        }
     });
 
     // Initial state
     updateScrollIndicators();
 
-    // Center active button on load
+    // Scroll active button to left on load
     const activeButton = tabButtons.querySelector('.tab-button.active');
     if (activeButton) {
         setTimeout(() => {
-            activeButton.scrollIntoView({ behavior: 'auto', inline: 'center', block: 'nearest' });
+            scrollTabToLeft(activeButton);
         }, 100);
     }
 
@@ -86,6 +72,8 @@ export function setupTabCarousel() {
     window.addEventListener('resize', () => {
         if (window.innerWidth <= 768) {
             updateScrollIndicators();
+            const active = tabButtons.querySelector('.tab-button.active');
+            if (active) scrollTabToLeft(active);
         }
     });
 }

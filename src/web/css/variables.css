@@ -36,6 +36,13 @@
     --icon-element-size: 0.85em;  /* Size of the "P" element symbol */
     --icon-padding: 0.5em;
     --seed-font-size: 0.2em;
+
+    /* Functional Layout Constraints - Applied Universally to All Tabs */
+    --tab-padding: 1.25rem;
+    --tab-padding-mobile: 1rem;
+    --content-max-width: 100%;
+    --overflow-y: auto;
+    --overflow-x: hidden;
 }
 
 /* Dark Theme Overrides */
