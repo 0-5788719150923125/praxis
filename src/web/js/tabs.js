@@ -244,7 +244,7 @@ function renderAgents(agents, container) {
     // Create header
     const headerHTML = createTabHeader({
         title: 'Hangar',
-        metadata: `<span><strong>Discovered:</strong> ${agents.length} agent${agents.length !== 1 ? 's' : ''}</span>`
+        metadata: `<span><strong>Discovered:</strong> ${agents.length} blueprint${agents.length !== 1 ? 's' : ''}</span>`
     });
 
     // Pass all agents to each card for color calculation
