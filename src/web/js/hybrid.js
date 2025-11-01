@@ -190,11 +190,12 @@ function updateHybridClipping() {
     const splittingFace = projectSplittingFace(geom);
 
     // Calculate clip paths for both layers
-    const { darkClip, lightClip } = calculateClipPaths(splittingFace);
+    const { lightClip } = calculateClipPaths(splittingFace);
 
-    // Apply clipping to entire overlay (simpler and more consistent)
+    // Apply clipping to light overlay
     if (hybridLayer) {
         hybridLayer.style.clipPath = lightClip;
+        // Opacity controlled by CSS animation
     }
 
     // Continue animation

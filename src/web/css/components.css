@@ -1165,6 +1165,47 @@
 }
 
 /* ==================== Hybrid Mode (Split Reality) ==================== */
+
+/* Multi-layer cloud drift - each layer moves independently */
+@keyframes clouds-drift {
+    0% {
+        background-position:
+            0% 10%,      /* Foreground layer 1 */
+            100% 25%,    /* Foreground layer 2 */
+            50% 5%,      /* Foreground layer 3 */
+            30% 60%,     /* Near layer 1 */
+            85% 35%,     /* Near layer 2 */
+            15% 75%,     /* Mid layer 1 */
+            70% 45%,     /* Mid layer 2 */
+            40% 85%,     /* Far layer 1 */
+            90% 50%,     /* Far layer 2 */
+            25% 40%,     /* Very far layer 1 */
+            65% 70%;     /* Very far layer 2 */
+    }
+    100% {
+        background-position:
+            160% 45%,    /* Foreground - fastest */
+            -80% 70%,
+            220% 35%,
+            130% 85%,    /* Near */
+            -40% 60%,
+            115% 95%,    /* Mid */
+            180% 70%,
+            125% 110%,   /* Far - slowest drift */
+            160% 75%,
+            105% 65%,    /* Very far - glacial */
+            135% 95%;
+    }
+}
+
+/* Atmospheric breathing - gentle opacity oscillation */
+@keyframes atmosphere-breathe {
+    0%, 100% { opacity: 0.30; }
+    25% { opacity: 0.55; }
+    50% { opacity: 0.72; }
+    75% { opacity: 0.48; }
+}
+
 .hybrid-overlay {
     /* Full viewport overlay */
     position: fixed !important;
@@ -1178,8 +1219,53 @@
     /* Non-interactive overlay */
     pointer-events: none !important;
 
-    /* No transitions - we're updating 60fps */
-    transition: none !important;
+    /* Multi-scale atmospheric layers */
+    background-image:
+        /* Layer 1 - Foreground wisps (fast, small, sharp) */
+        radial-gradient(ellipse 60% 40% at 25% 35%, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0.25) 15%, transparent 28%),
+        radial-gradient(ellipse 70% 45% at 75% 60%, rgba(255,255,255,0.70) 0%, rgba(255,255,255,0.20) 18%, transparent 30%),
+        radial-gradient(ellipse 55% 50% at 50% 15%, rgba(255,255,255,0.80) 0%, rgba(255,255,255,0.22) 14%, transparent 26%),
+
+        /* Layer 2 - Near clouds (moderate speed/size) */
+        radial-gradient(ellipse 90% 60% at 30% 50%, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.18) 20%, transparent 35%),
+        radial-gradient(ellipse 85% 70% at 70% 25%, rgba(255,255,255,0.60) 0%, rgba(255,255,255,0.16) 22%, transparent 38%),
+
+        /* Layer 3 - Mid distance (balanced) */
+        radial-gradient(ellipse 120% 80% at 45% 70%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.14) 25%, transparent 42%),
+        radial-gradient(ellipse 110% 75% at 65% 40%, rgba(255,255,255,0.50) 0%, rgba(255,255,255,0.12) 28%, transparent 45%),
+
+        /* Layer 4 - Far clouds (slow, large, diffuse) */
+        radial-gradient(ellipse 160% 100% at 20% 80%, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.10) 30%, transparent 50%),
+        radial-gradient(ellipse 180% 110% at 80% 55%, rgba(255,255,255,0.40) 0%, rgba(255,255,255,0.08) 32%, transparent 52%),
+
+        /* Layer 5 - Very far (glacial, massive, whisper) */
+        radial-gradient(ellipse 220% 140% at 40% 45%, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.06) 35%, transparent 58%),
+        radial-gradient(ellipse 250% 160% at 60% 65%, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.05) 38%, transparent 62%);
+
+    /* Different scales create depth parallax */
+    background-size:
+        50% 50%,   /* Foreground - small */
+        55% 55%,
+        60% 60%,
+        80% 80%,   /* Near */
+        85% 85%,
+        120% 120%, /* Mid */
+        130% 130%,
+        200% 200%, /* Far */
+        220% 220%,
+        350% 350%, /* Very far - huge */
+        400% 400%;
+
+    /* Coordinated animations */
+    animation:
+        clouds-drift 240s linear infinite,
+        atmosphere-breathe 38s ease-in-out infinite;
+
+    /* Blur for softness (GPU accelerated) */
+    filter: blur(0.8px);
+    will-change: opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
 
 }
 
@@ -1286,8 +1372,8 @@ body.hybrid-active .prism-logo {
     background-color: var(--background) !important;
 }
 
-/* Remove all opacity/transparency from hybrid overlay and children */
-.hybrid-overlay,
+/* Hybrid overlay opacity is controlled by weather system */
+/* Children should be fully opaque */
 .hybrid-overlay *:not(#prism-canvas) {
     opacity: 1 !important;
 }
@@ -1365,4 +1451,20 @@ body.hybrid-active .prism-logo {
 .hybrid-overlay[data-theme="light"] button[type="submit"] {
     background-color: #0B9A6D !important;
     color: #ffffff !important;
+}
+
+/* Fix header text colors in light zone to match regular light mode */
+.hybrid-overlay[data-theme="light"] .system-prompt-header {
+    color: #666666 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .settings-button,
+.hybrid-overlay[data-theme="light"] .theme-toggle-button {
+    color: #666666 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .settings-button svg,
+.hybrid-overlay[data-theme="light"] .theme-toggle-button svg {
+    color: #666666 !important;
+    fill: #666666 !important;
 }
