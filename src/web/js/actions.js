@@ -260,9 +260,32 @@ export const ACTION_HANDLERS = {
      * @param {Object} meta - Metadata including button element
      */
     COPY_TO_CLIPBOARD: async (text, meta) => {
+        let copySuccess = false;
+
+        // Try modern clipboard API first
         try {
             await navigator.clipboard.writeText(text);
+            copySuccess = true;
+        } catch (err) {
+            console.warn('[Clipboard] Modern API failed, trying fallback:', err);
 
+            // Fallback: use legacy execCommand method
+            try {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.cssText = 'position:fixed;top:-999px;left:-999px;opacity:0;';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+
+                copySuccess = document.execCommand('copy');
+                document.body.removeChild(textArea);
+            } catch (execErr) {
+                console.error('[Clipboard] Fallback also failed:', execErr);
+            }
+        }
+
+        if (copySuccess) {
             // Create notification with viewport-aware positioning
             const notification = document.createElement('div');
             notification.textContent = 'Copied git remote to clipboard.';
@@ -325,9 +348,53 @@ export const ACTION_HANDLERS = {
                 notification.style.animation = 'fadeOut 0.2s ease-out';
                 setTimeout(() => notification.remove(), 200);
             }, 2000);
-        } catch (err) {
-            console.error('[Clipboard] Failed to copy:', err);
-            alert('Failed to copy to clipboard. Please copy manually.');
+        } else {
+            // Both methods failed - show modal with selectable text
+            const modal = document.createElement('div');
+            modal.className = 'copy-fallback-modal';
+            modal.innerHTML = `
+                <div class="copy-fallback-content">
+                    <h3>Copy Manually</h3>
+                    <p style="margin: 0.5rem 0; font-size: 0.9em; opacity: 0.8;">
+                        Automatic clipboard access is not available. Please copy the text below:
+                    </p>
+                    <input type="text" readonly value="${text.replace(/"/g, '&quot;')}"
+                           class="copy-fallback-input" id="copy-fallback-input">
+                    <button class="copy-fallback-close" id="copy-fallback-close">Close</button>
+                </div>
+            `;
+
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+                padding: 1rem;
+            `;
+
+            document.body.appendChild(modal);
+
+            // Auto-select the text
+            setTimeout(() => {
+                const input = document.getElementById('copy-fallback-input');
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 100);
+
+            // Close handler
+            const closeModal = () => modal.remove();
+            document.getElementById('copy-fallback-close').addEventListener('click', closeModal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeModal();
+            });
         }
     },
 

@@ -63,7 +63,7 @@
         overflow: hidden;
     }
 
-    /* Fade indicators - stop before status box */
+    /* Fade indicators - extend to edges, tabs flow under status indicator */
     .tab-nav::before,
     .tab-nav::after {
         content: '';
@@ -83,7 +83,7 @@
     }
 
     .tab-nav::after {
-        right: 2.5rem;
+        right: 0;
         background: linear-gradient(to left, var(--background), transparent);
     }
 
@@ -98,7 +98,7 @@
     .tab-buttons {
         display: flex;
         gap: 0.375rem;
-        max-width: calc(100% - 3rem);
+        max-width: 100%;
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
@@ -199,7 +199,7 @@
     
     .terminal-status {
         right: 0.5rem;
-        padding: 0.5rem;
+        padding: 0;
     }
 
     .status-indicator {

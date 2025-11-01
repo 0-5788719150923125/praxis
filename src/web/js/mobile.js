@@ -35,12 +35,19 @@ export function setupTabCarousel() {
         }
     }
 
-    // Scroll clicked/active tab to left-most position
+    // Scroll clicked/active tab to left-most position (fixed anchor)
     function scrollTabToLeft(button) {
         if (!button) return;
 
-        // Scroll to start (left-most position)
-        button.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+        // Get fresh positions - button should already have .active class
+        const containerRect = tabButtons.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+
+        // Calculate distance from button to container's left edge
+        const offset = buttonRect.left - containerRect.left;
+
+        // Instant scroll to exact position (no smooth animation)
+        tabButtons.scrollLeft = tabButtons.scrollLeft + offset;
     }
 
     // Update indicators on scroll
@@ -48,12 +55,57 @@ export function setupTabCarousel() {
         updateScrollIndicators();
     });
 
-    // Intercept tab clicks to scroll to left
+    // Track which tab was touched
+    let touchedButton = null;
+
+    // Track touchstart - just remember which button
+    tabButtons.addEventListener('touchstart', (e) => {
+        touchedButton = e.target.closest('.tab-button');
+    }, { passive: true });
+
+    // On touchend - wait for the clicked button to become active, then scroll it
+    tabButtons.addEventListener('touchend', (e) => {
+        if (!touchedButton) return;
+
+        const clickedButton = touchedButton;
+        touchedButton = null;
+
+        // Use MutationObserver to wait for the active class to actually change
+        const observer = new MutationObserver(() => {
+            if (clickedButton.classList.contains('active')) {
+                observer.disconnect();
+                scrollTabToLeft(clickedButton);
+            }
+        });
+
+        // Watch for class changes on the clicked button
+        observer.observe(clickedButton, {
+            attributes: true,
+            attributeFilter: ['class']
+        });
+
+        // Fallback timeout in case the button was already active
+        setTimeout(() => {
+            observer.disconnect();
+            if (clickedButton.classList.contains('active')) {
+                scrollTabToLeft(clickedButton);
+            }
+        }, 50);
+    }, { passive: true });
+
+    // Fallback for non-touch devices (desktop)
     tabButtons.addEventListener('click', (e) => {
-        const button = e.target.closest('.tab-button');
-        if (button) {
-            // Scroll clicked tab to left after a brief delay (allows state update)
-            setTimeout(() => scrollTabToLeft(button), 50);
+        // Only handle click if not a touch device (avoid double-trigger)
+        if (!('ontouchstart' in window)) {
+            const button = e.target.closest('.tab-button');
+            if (button) {
+                requestAnimationFrame(() => {
+                    const activeButton = tabButtons.querySelector('.tab-button.active');
+                    if (activeButton) {
+                        scrollTabToLeft(activeButton);
+                    }
+                });
+            }
         }
     });
 
@@ -63,9 +115,7 @@ export function setupTabCarousel() {
     // Scroll active button to left on load
     const activeButton = tabButtons.querySelector('.tab-button.active');
     if (activeButton) {
-        setTimeout(() => {
-            scrollTabToLeft(activeButton);
-        }, 100);
+        scrollTabToLeft(activeButton);
     }
 
     // Re-calculate on window resize

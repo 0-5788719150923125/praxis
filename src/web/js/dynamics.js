@@ -71,32 +71,26 @@ export async function loadDynamicsWithCharts(force = false) {
 
     try {
         // Fetch dynamics data
-        console.log('[Dynamics] Fetching from /api/dynamics...');
         const response = await fetch(`/api/dynamics?since=0&limit=1000`);
-
-        console.log('[Dynamics] Response status:', response.status);
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}`);
         }
 
         const data = await response.json();
-        console.log('[Dynamics] API response:', data);
 
         if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
             // Show helpful empty state
-            console.log('[Dynamics] No data available, message:', data.message);
             renderEmptyState(container, data.message);
             return;
         }
 
-        console.log('[Dynamics] Rendering charts with', data.runs.length, 'runs');
         // Render charts
         renderDynamicsCharts(data.runs[0], container);
         state.dynamics.loaded = true;
 
     } catch (error) {
-        console.error('[Dynamics] Error loading:', error);
+        console.error('[Dynamics] Failed to load:', error);
         container.innerHTML = `
             <div class="error-message">
                 <h3>Error Loading Dynamics</h3>
@@ -162,33 +156,19 @@ function renderEmptyState(container, message) {
  * Render dynamics charts
  */
 function renderDynamicsCharts(runData, container) {
-    console.log('[Dynamics] renderDynamicsCharts called with runData:', runData);
-
     const dynamics = runData.dynamics || {};
-    console.log('[Dynamics] dynamics object:', dynamics);
-
-    // Debug: Check if values are null
-    if (dynamics.expert_0_bottom_norm) {
-        const hasValues = dynamics.expert_0_bottom_norm.some(v => v !== null);
-        console.log('[Dynamics] expert_0_bottom_norm has non-null values:', hasValues);
-        console.log('[Dynamics] expert_0_bottom_norm sample:', dynamics.expert_0_bottom_norm.slice(0, 3));
-    }
 
     // API returns 'step' (singular), frontend expects 'steps' (plural)
     const steps = dynamics.steps || dynamics.step || [];
-    console.log('[Dynamics] steps array:', steps, 'length:', steps.length);
 
     if (steps.length === 0) {
-        console.log('[Dynamics] No steps found, showing empty state');
         renderEmptyState(container, "No dynamics data points found");
         return;
     }
 
     // Detect number of experts from dynamics keys
     const expertKeys = Object.keys(dynamics).filter(k => k.match(/^expert_\d+_/));
-    console.log('[Dynamics] expertKeys:', expertKeys);
     const numExperts = new Set(expertKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1]))).size;
-    console.log('[Dynamics] numExperts:', numExperts);
 
     // Build refresh icon
     const refreshIcon = `
@@ -222,19 +202,19 @@ function renderDynamicsCharts(runData, container) {
 
     // Build controls for toggling weight tiers
     const controlsHTML = `
-        <div class="dynamics-controls" style="margin-top: 1.5rem; padding: 1rem; background: rgba(100, 150, 200, 0.05); border-radius: 8px; display: flex; gap: 2rem; align-items: center;">
-            <div style="font-weight: 600;">Show Weight Tiers:</div>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+        <div class="dynamics-controls" style="margin-top: 1.5rem; padding: 1rem; background: rgba(100, 150, 200, 0.05); border-radius: 8px; display: flex; gap: 2rem; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <div style="font-weight: 600; white-space: nowrap;">Granularity:</div>
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
                 <input type="checkbox" id="show-top-weights" checked>
-                <span>Top 5% (Coarse-grained)</span>
+                <span>Coarse</span>
             </label>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
                 <input type="checkbox" id="show-bottom-weights" checked>
-                <span>Bottom 5% (Fine-grained)</span>
+                <span>Fine</span>
             </label>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
                 <input type="checkbox" id="show-middle-weights" checked>
-                <span>Middle 90% (Unperturbed)</span>
+                <span>Unperturbed</span>
             </label>
         </div>
     `;
@@ -254,16 +234,12 @@ function renderDynamicsCharts(runData, container) {
 
     container.innerHTML = headerHTML + controlsHTML + chartsHTML;
 
-    console.log('[Dynamics] DOM updated, scheduling chart creation...');
-
     // Render chart after DOM update
     setTimeout(() => {
-        console.log('[Dynamics] Creating expert comparison chart...');
         try {
             createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
-            console.log('[Dynamics] Chart created successfully');
         } catch (error) {
-            console.error('[Dynamics] Error creating chart:', error);
+            console.error('[Dynamics] Chart creation failed:', error);
         }
 
         // Attach event listeners to controls
@@ -307,19 +283,15 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
         tiers.forEach((tier, tierIdx) => {
             const key = `expert_${expertIdx}_${tier}_norm`;
             if (!dynamics[key]) {
-                console.log(`[Dynamics] Missing key: ${key}`);
                 return;
             }
 
             const values = dynamics[key];
-            console.log(`[Dynamics] ${key}:`, values);
 
             const data = steps.map((step, i) => ({
                 x: step,
                 y: values[i]
             })).filter(point => point.y !== null);
-
-            console.log(`[Dynamics] ${key} filtered data:`, data.length, 'points');
 
             // Color scheme:
             // Expert 0 (clean) = blue shades
