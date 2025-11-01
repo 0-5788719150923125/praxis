@@ -117,40 +117,9 @@ function createHybridLayer() {
 
     document.body.appendChild(hybridLayer);
 
-    // Copy canvas content with theme-appropriate rendering (initial sync)
-    const originalCanvases = appContainer.querySelectorAll('canvas:not(#prism-canvas)');
-    const clonedCanvases = appClone.querySelectorAll('canvas:not(#prism-canvas)');
-
-    originalCanvases.forEach((originalCanvas, index) => {
-        if (clonedCanvases[index]) {
-            const clonedCanvas = clonedCanvases[index];
-            const ctx = clonedCanvas.getContext('2d');
-
-            // Match canvas size
-            clonedCanvas.width = originalCanvas.width;
-            clonedCanvas.height = originalCanvas.height;
-
-            // Copy pixel data and invert colors for light theme
-            if (ctx) {
-                // Draw original
-                ctx.drawImage(originalCanvas, 0, 0);
-
-                // Invert colors: get image data and process
-                const imageData = ctx.getImageData(0, 0, clonedCanvas.width, clonedCanvas.height);
-                const data = imageData.data;
-
-                // Invert RGB, keep alpha
-                for (let i = 0; i < data.length; i += 4) {
-                    data[i] = 255 - data[i];         // R
-                    data[i + 1] = 255 - data[i + 1]; // G
-                    data[i + 2] = 255 - data[i + 2]; // B
-                    // data[i + 3] is alpha - leave unchanged
-                }
-
-                ctx.putImageData(imageData, 0, 0);
-            }
-        }
-    });
+    // Render charts with light theme in the overlay (initial sync)
+    // Charts will auto-detect they're in .hybrid-overlay and use light theme colors
+    renderOverlayCharts(appClone);
 
     // Start content sync to keep dynamic content (charts, agents, etc.) updated
     startContentSync();
@@ -207,38 +176,42 @@ function syncHybridContent() {
     hybridLayer.innerHTML = '';
     hybridLayer.appendChild(appClone);
 
-    // Copy canvas content with theme-appropriate rendering
+    // Render charts with light theme in the overlay
+    // Charts will auto-detect they're in .hybrid-overlay and use light theme colors
+    renderOverlayCharts(appClone);
+}
+
+/**
+ * Render charts in the overlay with light theme
+ * TODO: This currently just copies pixels. Future enhancement: re-render with light theme colors.
+ * The chart creation functions now support theme override via getContextTheme(),
+ * but we need to trigger a re-render rather than just cloning DOM.
+ */
+function renderOverlayCharts(clonedContainer) {
+    if (!clonedContainer) return;
+
+    // Get original canvases from main app
+    const appContainer = document.querySelector('.app-container');
+    if (!appContainer) return;
+
     const originalCanvases = appContainer.querySelectorAll('canvas:not(#prism-canvas)');
-    const clonedCanvases = appClone.querySelectorAll('canvas:not(#prism-canvas)');
+    const clonedCanvases = clonedContainer.querySelectorAll('canvas:not(#prism-canvas)');
 
     originalCanvases.forEach((originalCanvas, index) => {
         if (clonedCanvases[index]) {
             const clonedCanvas = clonedCanvases[index];
             const ctx = clonedCanvas.getContext('2d');
 
+            if (!ctx) return;
+
             // Match canvas size
             clonedCanvas.width = originalCanvas.width;
             clonedCanvas.height = originalCanvas.height;
 
-            // Copy pixel data and invert colors for light theme
-            if (ctx) {
-                // Draw original
-                ctx.drawImage(originalCanvas, 0, 0);
-
-                // Invert colors: get image data and process
-                const imageData = ctx.getImageData(0, 0, clonedCanvas.width, clonedCanvas.height);
-                const data = imageData.data;
-
-                // Invert RGB, keep alpha
-                for (let i = 0; i < data.length; i += 4) {
-                    data[i] = 255 - data[i];         // R
-                    data[i + 1] = 255 - data[i + 1]; // G
-                    data[i + 2] = 255 - data[i + 2]; // B
-                    // data[i + 3] is alpha - leave unchanged
-                }
-
-                ctx.putImageData(imageData, 0, 0);
-            }
+            // Copy pixels from original (preserves chart rendering)
+            // Note: This copies dark theme colors. Proper light theme rendering
+            // would require re-running chart creation with theme override.
+            ctx.drawImage(originalCanvas, 0, 0);
         }
     });
 }

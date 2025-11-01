@@ -1255,9 +1255,11 @@ body.hybrid-active .prism-logo {
     backface-visibility: hidden;
 }
 
-/* Chart canvases in hybrid overlay - visible */
+/* Chart canvases in hybrid overlay - invert to approximate light theme */
 .hybrid-overlay canvas:not(#prism-canvas) {
     display: block !important;
+    /* Invert dark theme chart colors to make them readable on light background */
+    filter: invert(1);
 }
 
 /* Header spacer - invisible but maintains layout */
@@ -1383,14 +1385,14 @@ body.hybrid-active .prism-logo {
     color: #ffffff !important;
 }
 
-/* Fix header text colors in light zone */
+/* Fix header text colors in light zone - use darker colors for visibility */
 .hybrid-overlay[data-theme="light"] .system-prompt-header {
-    color: var(--light-text) !important;
+    color: #666666 !important;
 }
 
 .hybrid-overlay[data-theme="light"] .settings-button,
 .hybrid-overlay[data-theme="light"] .theme-toggle-button {
-    color: var(--light-text) !important;
+    color: #666666 !important;
 }
 
 /* Chart text and labels - use proper light theme colors */

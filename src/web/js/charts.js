@@ -7,16 +7,37 @@ import { state, CONSTANTS } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
 
-// Chart instances storage
-const charts = {};
+// Chart instances storage (exported for hybrid mode)
+export const charts = {};
+
+/**
+ * Detect if an element is within a hybrid overlay (light theme context)
+ * @param {HTMLElement} element - The element to check
+ * @returns {boolean} True if in hybrid overlay
+ */
+function isInHybridOverlay(element) {
+    if (!element) return false;
+    return element.closest('.hybrid-overlay') !== null;
+}
+
+/**
+ * Get the appropriate theme for rendering based on context
+ * @param {HTMLElement} element - The element being rendered
+ * @returns {string} 'light' or 'dark'
+ */
+function getContextTheme(element) {
+    return isInHybridOverlay(element) ? 'light' : state.theme;
+}
 
 /**
  * Pure function: Get theme-appropriate colors
  * Always recalculates from current theme state - functional approach
+ * @param {string} [forceTheme] - Optional theme override ('light' or 'dark')
  * @returns {Object} Color palette for current theme
  */
-function getThemeColors() {
-    const isDark = state.theme === 'dark';
+function getThemeColors(forceTheme) {
+    const theme = forceTheme || state.theme;
+    const isDark = theme === 'dark';
     return {
         textColor: isDark ? '#e0e0e0' : '#1a1a1a',
         gridColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)',
@@ -395,8 +416,9 @@ function createMultiAgentChart(canvasId, label, agents, metricKey) {
         charts[canvasId].destroy();
     }
 
-    // Get colors from pure function - always recalculates from current theme
-    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    // Get colors for the appropriate theme context (hybrid overlay or normal)
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
     // Build datasets
     const datasets = agents.map((agent) => {
@@ -523,8 +545,9 @@ function createTokensBarChart(canvasId, label, agents, metricKey) {
         charts[canvasId].destroy();
     }
 
-    // Get colors from pure function - always recalculates from current theme
-    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    // Get colors for the appropriate theme context (hybrid overlay or normal)
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
     // Extract latest token count for each agent
     const data = agents.map((agent) => {
@@ -625,8 +648,9 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
         charts[canvasId].destroy();
     }
 
-    // Get colors from pure function - always recalculates from current theme
-    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    // Get colors for the appropriate theme context (hybrid overlay or normal)
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
     // Collect all documents and their latest weights
     const documentData = [];
@@ -748,8 +772,9 @@ function createExpertRoutingChart(canvasId, agents) {
         charts[canvasId].destroy();
     }
 
-    // Get colors from pure function - always recalculates from current theme
-    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    // Get colors for the appropriate theme context (hybrid overlay or normal)
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
     // Build datasets - one line per expert
     const allDatasets = [];
