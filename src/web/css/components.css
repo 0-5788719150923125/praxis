@@ -1255,9 +1255,9 @@ body.hybrid-active .prism-logo {
     backface-visibility: hidden;
 }
 
-/* Hide Chart.js canvases - they don't clone properly */
+/* Chart canvases in hybrid overlay - visible */
 .hybrid-overlay canvas:not(#prism-canvas) {
-    display: none !important;
+    display: block !important;
 }
 
 /* Header spacer - invisible but maintains layout */
@@ -1374,11 +1374,36 @@ body.hybrid-active .prism-logo {
 /* Buttons */
 .hybrid-overlay[data-theme="light"] button {
     background-color: transparent !important;
-    color: #666666 !important;
+    color: var(--light-text) !important;
 }
 
 .hybrid-overlay[data-theme="light"] .spec-peer-button,
 .hybrid-overlay[data-theme="light"] button[type="submit"] {
     background-color: #0B9A6D !important;
     color: #ffffff !important;
+}
+
+/* Fix header text colors in light zone */
+.hybrid-overlay[data-theme="light"] .system-prompt-header {
+    color: var(--light-text) !important;
+}
+
+.hybrid-overlay[data-theme="light"] .settings-button,
+.hybrid-overlay[data-theme="light"] .theme-toggle-button {
+    color: var(--light-text) !important;
+}
+
+/* Chart text and labels - use proper light theme colors */
+.hybrid-overlay[data-theme="light"] .chart-title {
+    color: var(--text) !important;
+}
+
+.hybrid-overlay[data-theme="light"] .empty-state h3,
+.hybrid-overlay[data-theme="light"] .error-message h3 {
+    color: var(--text) !important;
+}
+
+.hybrid-overlay[data-theme="light"] .empty-state p,
+.hybrid-overlay[data-theme="light"] .error-message p {
+    color: var(--light-text) !important;
 }

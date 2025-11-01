@@ -117,6 +117,41 @@ function createHybridLayer() {
 
     document.body.appendChild(hybridLayer);
 
+    // Copy canvas content with theme-appropriate rendering (initial sync)
+    const originalCanvases = appContainer.querySelectorAll('canvas:not(#prism-canvas)');
+    const clonedCanvases = appClone.querySelectorAll('canvas:not(#prism-canvas)');
+
+    originalCanvases.forEach((originalCanvas, index) => {
+        if (clonedCanvases[index]) {
+            const clonedCanvas = clonedCanvases[index];
+            const ctx = clonedCanvas.getContext('2d');
+
+            // Match canvas size
+            clonedCanvas.width = originalCanvas.width;
+            clonedCanvas.height = originalCanvas.height;
+
+            // Copy pixel data and invert colors for light theme
+            if (ctx) {
+                // Draw original
+                ctx.drawImage(originalCanvas, 0, 0);
+
+                // Invert colors: get image data and process
+                const imageData = ctx.getImageData(0, 0, clonedCanvas.width, clonedCanvas.height);
+                const data = imageData.data;
+
+                // Invert RGB, keep alpha
+                for (let i = 0; i < data.length; i += 4) {
+                    data[i] = 255 - data[i];         // R
+                    data[i + 1] = 255 - data[i + 1]; // G
+                    data[i + 2] = 255 - data[i + 2]; // B
+                    // data[i + 3] is alpha - leave unchanged
+                }
+
+                ctx.putImageData(imageData, 0, 0);
+            }
+        }
+    });
+
     // Start content sync to keep dynamic content (charts, agents, etc.) updated
     startContentSync();
 }
@@ -171,6 +206,41 @@ function syncHybridContent() {
     // Update hybrid layer content
     hybridLayer.innerHTML = '';
     hybridLayer.appendChild(appClone);
+
+    // Copy canvas content with theme-appropriate rendering
+    const originalCanvases = appContainer.querySelectorAll('canvas:not(#prism-canvas)');
+    const clonedCanvases = appClone.querySelectorAll('canvas:not(#prism-canvas)');
+
+    originalCanvases.forEach((originalCanvas, index) => {
+        if (clonedCanvases[index]) {
+            const clonedCanvas = clonedCanvases[index];
+            const ctx = clonedCanvas.getContext('2d');
+
+            // Match canvas size
+            clonedCanvas.width = originalCanvas.width;
+            clonedCanvas.height = originalCanvas.height;
+
+            // Copy pixel data and invert colors for light theme
+            if (ctx) {
+                // Draw original
+                ctx.drawImage(originalCanvas, 0, 0);
+
+                // Invert colors: get image data and process
+                const imageData = ctx.getImageData(0, 0, clonedCanvas.width, clonedCanvas.height);
+                const data = imageData.data;
+
+                // Invert RGB, keep alpha
+                for (let i = 0; i < data.length; i += 4) {
+                    data[i] = 255 - data[i];         // R
+                    data[i + 1] = 255 - data[i + 1]; // G
+                    data[i + 2] = 255 - data[i + 2]; // B
+                    // data[i + 3] is alpha - leave unchanged
+                }
+
+                ctx.putImageData(imageData, 0, 0);
+            }
+        }
+    });
 }
 
 /**
