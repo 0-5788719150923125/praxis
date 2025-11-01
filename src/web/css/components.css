@@ -363,7 +363,7 @@
 .terminal-status {
     position: absolute;
     right: 0.625rem;
-    top: 50%;
+    top: calc(50% - 0.15625rem);
     transform: translateY(-50%);
     display: flex;
     align-items: center;
