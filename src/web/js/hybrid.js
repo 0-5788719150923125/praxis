@@ -10,6 +10,7 @@
 let isActive = false;
 let animationFrameId = null;
 let hybridLayer = null;
+let edgeBand = null;
 
 /**
  * Start hybrid mode rendering
@@ -24,6 +25,9 @@ export function startHybridMode() {
 
     // Create the hybrid layer (light theme overlay)
     createHybridLayer();
+
+    // Create edge band
+    createEdgeBand();
 
     // Start the animation loop
     updateHybridClipping();
@@ -56,6 +60,12 @@ export function stopHybridMode() {
     if (hybridLayer) {
         hybridLayer.remove();
         hybridLayer = null;
+    }
+
+    // Remove edge band
+    if (edgeBand) {
+        edgeBand.remove();
+        edgeBand = null;
     }
 }
 
@@ -174,6 +184,29 @@ function syncHybridContent() {
 }
 
 /**
+ * Create narrow edge band element
+ */
+function createEdgeBand() {
+    if (edgeBand) {
+        edgeBand.remove();
+    }
+
+    edgeBand = document.createElement('div');
+    edgeBand.className = 'edge-band';
+    edgeBand.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: 1000;
+    `;
+
+    document.body.appendChild(edgeBand);
+}
+
+/**
  * Animation loop - update clipping based on tetrahedron rotation
  */
 function updateHybridClipping() {
@@ -195,11 +228,62 @@ function updateHybridClipping() {
     // Apply clipping to light overlay
     if (hybridLayer) {
         hybridLayer.style.clipPath = lightClip;
-        // Opacity controlled by CSS animation
+    }
+
+    // Update edge band to follow the splitting line
+    if (edgeBand && splittingFace.length >= 2) {
+        updateEdgeBand(splittingFace);
     }
 
     // Continue animation
     animationFrameId = requestAnimationFrame(updateHybridClipping);
+}
+
+/**
+ * Update edge band to follow splitting line with narrow projected band
+ */
+function updateEdgeBand(triangle) {
+    if (!edgeBand) return;
+
+    const apex = triangle[0];
+    const back = triangle[1];
+
+    // Extend line to viewport boundaries
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const extendedLine = extendLineToViewport(apex, back, vw, vh);
+
+    // Calculate perpendicular direction for band width
+    const dx = extendedLine.end.x - extendedLine.start.x;
+    const dy = extendedLine.end.y - extendedLine.start.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const perpX = -dy / len;
+    const perpY = dx / len;
+
+    // Band width (pixels on each side of line) - core is smaller, extended for energy fade
+    const bandWidth = 35; // Wider for energy particles, but core is only ~12px
+
+    // Create polygon for narrow band around the line
+    const p1 = {
+        x: extendedLine.start.x + perpX * bandWidth,
+        y: extendedLine.start.y + perpY * bandWidth
+    };
+    const p2 = {
+        x: extendedLine.end.x + perpX * bandWidth,
+        y: extendedLine.end.y + perpY * bandWidth
+    };
+    const p3 = {
+        x: extendedLine.end.x - perpX * bandWidth,
+        y: extendedLine.end.y - perpY * bandWidth
+    };
+    const p4 = {
+        x: extendedLine.start.x - perpX * bandWidth,
+        y: extendedLine.start.y - perpY * bandWidth
+    };
+
+    // Create clip-path for the narrow band
+    const bandClip = `polygon(${p1.x}px ${p1.y}px, ${p2.x}px ${p2.y}px, ${p3.x}px ${p3.y}px, ${p4.x}px ${p4.y}px)`;
+    edgeBand.style.clipPath = bandClip;
 }
 
 /**
