@@ -13,6 +13,7 @@ import {
 export const state = {
     // Theme
     theme: 'dark',
+    isHybridMode: false, // Prismatic split-reality theme mode
 
     // Conversation
     messages: [],

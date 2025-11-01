@@ -362,7 +362,7 @@
 
 .terminal-status {
     position: absolute;
-    right: 0.625rem;
+    right: 1.25rem;
     top: calc(50% - 0.15625rem);
     transform: translateY(-50%);
     display: flex;
@@ -1162,4 +1162,207 @@
 
 .dynamics-controls::-webkit-scrollbar {
     display: none; /* Chrome/Safari */
+}
+
+/* ==================== Hybrid Mode (Split Reality) ==================== */
+.hybrid-overlay {
+    /* Full viewport overlay */
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+    z-index: 998 !important;
+
+    /* Non-interactive overlay */
+    pointer-events: none !important;
+
+    /* No transitions - we're updating 60fps */
+    transition: none !important;
+
+}
+
+/* Hybrid overlay inherits light theme - no custom colors needed */
+/* The data-theme="light" attribute triggers all existing :root light theme rules */
+
+/* Full-width backgrounds without changing content layout */
+body.hybrid-active::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: var(--background);
+    z-index: -1;
+}
+
+
+.hybrid-overlay[data-theme="light"] .message.user {
+    background-color: #e8f5e9 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .message.assistant {
+    background-color: #ffffff !important;
+}
+
+/* Header and prism stay on top in hybrid mode */
+body.hybrid-active .header {
+    position: relative;
+    z-index: 10001 !important;
+    background-color: transparent !important;
+}
+
+body.hybrid-active .logo {
+    background-color: transparent !important;
+}
+
+body.hybrid-active .prism-logo {
+    position: relative;
+    z-index: 10002 !important;
+}
+
+
+/* Essential hybrid overlay rules - let data-theme="light" handle colors */
+
+/* Remove dark mode glow effects */
+.hybrid-overlay[data-theme="light"] .tab-button.active::before,
+.hybrid-overlay[data-theme="light"] .tab-button.active::after {
+    display: none !important;
+}
+
+/* Solid backgrounds to prevent transparency */
+.hybrid-overlay .app-container,
+.hybrid-overlay .tab-content,
+.hybrid-overlay .tab-nav {
+    background-color: var(--background) !important;
+}
+
+/* Hide Chart.js canvases - they don't clone properly */
+.hybrid-overlay canvas:not(#prism-canvas) {
+    display: none !important;
+}
+
+/* Header spacer - invisible but maintains layout */
+.hybrid-overlay .header-spacer-hybrid {
+    background: transparent !important;
+}
+
+/* Hide any loading placeholders or empty states that create white boxes */
+.hybrid-overlay .loading-placeholder {
+    display: none !important;
+}
+
+/* Remove backgrounds from spacer elements */
+.hybrid-overlay .header-spacer-hybrid {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Use consistent background throughout overlay */
+.hybrid-overlay {
+    background: var(--background) !important;
+}
+
+.hybrid-overlay .app-container {
+    background: var(--background) !important;
+}
+
+/* Explicitly define light theme variables on hybrid overlay */
+.hybrid-overlay[data-theme="light"] {
+    --background: #f9f9f9;
+    --text: #333333;
+    --light-text: #666666;
+    --user-message-bg: #e8f5e9;
+    --assistant-message-bg: #ffffff;
+    --border: #d0d0d0;
+    --input-bg: #ffffff;
+    --surface: #ffffff;
+}
+
+/* Apply background using the variable */
+.hybrid-overlay[data-theme="light"] {
+    background-color: var(--background) !important;
+}
+
+/* Remove all opacity/transparency from hybrid overlay and children */
+.hybrid-overlay,
+.hybrid-overlay *:not(#prism-canvas) {
+    opacity: 1 !important;
+}
+
+/* Remove dark mode specific styling that might cause issues */
+.hybrid-overlay[data-theme="light"] .tab-button.active::before,
+.hybrid-overlay[data-theme="light"] .tab-button.active::after {
+    display: none !important;
+}
+/* Comprehensive light theme fixes for hybrid overlay */
+
+/* Input fields - white background, dark text */
+.hybrid-overlay[data-theme="light"] #message-input,
+.hybrid-overlay[data-theme="light"] input,
+.hybrid-overlay[data-theme="light"] textarea {
+    background-color: #ffffff !important;
+    color: #333333 !important;
+    border: 1px solid #d0d0d0 !important;
+}
+
+/* Tab buttons - light theme colors */
+.hybrid-overlay[data-theme="light"] .tab-button {
+    background: #ffffff !important;
+    color: #666666 !important;
+    border: 1px solid transparent !important;
+}
+
+.hybrid-overlay[data-theme="light"] .tab-button.active {
+    background-color: #e8f5e9 !important;
+    color: #18453B !important;
+    font-weight: 500 !important;
+}
+
+/* All text should be dark in light theme */
+.hybrid-overlay[data-theme="light"] {
+    color: #333333 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .message-content {
+    color: #333333 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .message-header {
+    color: #666666 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .terminal-line {
+    color: #333333 !important;
+}
+
+/* Chart backgrounds */
+.hybrid-overlay[data-theme="light"] .chart-card {
+    background-color: #ffffff !important;
+    border: 1px solid #d0d0d0 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .chart-wrapper {
+    background-color: transparent !important;
+}
+
+/* All backgrounds should use light theme color */
+.hybrid-overlay[data-theme="light"] .tab-content,
+.hybrid-overlay[data-theme="light"] .chat-container,
+.hybrid-overlay[data-theme="light"] .terminal-container {
+    background-color: #f9f9f9 !important;
+}
+
+/* Buttons */
+.hybrid-overlay[data-theme="light"] button {
+    background-color: transparent !important;
+    color: #666666 !important;
+}
+
+.hybrid-overlay[data-theme="light"] .spec-peer-button,
+.hybrid-overlay[data-theme="light"] button[type="submit"] {
+    background-color: #0B9A6D !important;
+    color: #ffffff !important;
 }

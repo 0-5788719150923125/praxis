@@ -51,6 +51,23 @@
     let globalRotZ = 0;
     let time = 0;
 
+    // Expose geometry for hybrid mode rendering
+    window.prismGeometry = {
+        rotX: 0,
+        rotY: 0,
+        rotZ: 0,
+        centerX: centerX,
+        centerY: centerY,
+        maxRadius: maxRadius,
+        // Tetrahedron vertices (will be updated each frame)
+        vertices: {
+            apex: {x: 0, y: -0.5, z: 0},
+            back: {x: 0, y: 0.5, z: -0.577},
+            left: {x: -0.5, y: 0.5, z: 0.289},
+            right: {x: 0.5, y: 0.5, z: 0.289}
+        }
+    };
+
     // Rotation velocities for full 3D rotation
     let rotVelX = 0.003 + Math.random() * 0.002;
     let rotVelY = 0.005 + Math.random() * 0.002;
@@ -1325,6 +1342,21 @@
         globalRotY += rotVelY + turbulence.rotY;
         globalRotZ += rotVelZ + turbulence.rotZ;
 
+        // Update exposed geometry for hybrid mode (with morphing)
+        const morph1 = Math.sin(morphPhase) * 0.15; // Same morphFactor as used in rendering
+        const morph2 = Math.cos(morphPhase * 1.3) * 0.15;
+        const morph3 = Math.sin(morphPhase * 0.7) * 0.15;
+
+        window.prismGeometry.rotX = globalRotX;
+        window.prismGeometry.rotY = globalRotY;
+        window.prismGeometry.rotZ = globalRotZ;
+        window.prismGeometry.vertices = {
+            apex: {x: 0 + morph2 * 0.05, y: -0.5 + morph1 * 0.1, z: 0 + morph3 * 0.05},
+            back: {x: 0 + morph1 * 0.1, y: 0.5, z: -0.577 + morph2 * 0.05},
+            left: {x: -0.5 + morph2 * 0.08, y: 0.5, z: 0.289 + morph3 * 0.05},
+            right: {x: 0.5 + morph3 * 0.08, y: 0.5, z: 0.289 + morph1 * 0.05}
+        };
+
         // Update propulsion physics (dark mode only)
         // Car-like acceleration: brief ramp, cruise at offset, decelerate when calm
         const propulsion = updatePropulsion(tendrils, lightMode);
@@ -1340,6 +1372,10 @@
         // Like a ship on a chain - it can move, but there's always tension pulling it back
         const turbulentCenterX = centerX + totalOffsetX;
         const turbulentCenterY = centerY + totalOffsetY;
+
+        // Expose turbulent center for hybrid mode
+        window.prismGeometry.turbulentCenterX = turbulentCenterX;
+        window.prismGeometry.turbulentCenterY = turbulentCenterY;
 
         // Update morphing phase
         morphPhase += morphSpeed;

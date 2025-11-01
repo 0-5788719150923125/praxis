@@ -108,11 +108,48 @@ export const ACTION_HANDLERS = {
 
     /**
      * Toggle theme between light and dark
+     * 25% chance to trigger hybrid "split-reality" mode
      */
     TOGGLE_THEME: () => {
-        state.theme = state.theme === 'light' ? 'dark' : 'light';
+        const oldTheme = state.theme;
+        const oldHybrid = state.isHybridMode;
+
+        // 25% chance to enter hybrid mode (only when switching to dark)
+        const willEnterHybrid = Math.random() < 0.25;
+
+        if (state.theme === 'light' && willEnterHybrid) {
+            // Entering hybrid mode - dark base with light split
+            state.theme = 'dark';
+            state.isHybridMode = true;
+            console.log('[Theme] ⚡ HYBRID MODE ACTIVATED ⚡');
+        } else if (state.isHybridMode) {
+            // Exit hybrid mode
+            state.isHybridMode = false;
+            state.theme = state.theme === 'light' ? 'dark' : 'light';
+        } else {
+            // Normal theme toggle
+            state.theme = state.theme === 'light' ? 'dark' : 'light';
+        }
+
         storage.set('theme', state.theme);
         render();
+
+        // Start/stop hybrid rendering if needed
+        if (state.isHybridMode) {
+            import('./hybrid.js')
+                .then(({ startHybridMode }) => {
+                    startHybridMode();
+                })
+                .catch((err) => {
+                    console.error('[Theme] Failed to load hybrid.js:', err);
+                });
+        } else {
+            import('./hybrid.js')
+                .then(({ stopHybridMode }) => {
+                    stopHybridMode();
+                })
+                .catch(() => {}); // Ignore if module not loaded yet
+        }
 
         // Data-driven: check if current tab has charts via feature flag
         const currentTab = state.tabs.find(t => t.active);
