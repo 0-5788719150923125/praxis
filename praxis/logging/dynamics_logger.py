@@ -36,8 +36,6 @@ class DynamicsLogger:
         self.run_dir = Path(run_dir)
         self.filepath = self.run_dir / filename
         self.lock = Lock()
-        self._write_counter = 0
-        self._commit_interval = 5  # Commit every 5 writes (for faster dashboard updates)
         self.num_experts = num_experts
 
         # Ensure directory exists
@@ -51,6 +49,9 @@ class DynamicsLogger:
         # Enable WAL mode for concurrent reads during training
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        # Ensure WAL checkpoints happen more frequently for instant visibility
+        # This is critical for gradient dynamics since writes are so infrequent
+        self.conn.execute("PRAGMA wal_autocheckpoint=1")  # Checkpoint after every 1 page (~4KB)
 
         # Create schema
         self._create_schema()
@@ -102,59 +103,63 @@ class DynamicsLogger:
         if not dynamics:
             return
 
-        with self.lock:
-            # Build column and value lists
-            columns = ["step", "ts"]
-            values = [step, datetime.now().timestamp()]
+        try:
+            with self.lock:
+                # Build column and value lists
+                columns = ["step", "ts"]
+                values = [step, datetime.now().timestamp()]
 
-            # Extract expert gradients
-            expert_grads = dynamics.get('expert_gradients', {})
-            for expert_key in sorted(expert_grads.keys()):
-                expert_data = expert_grads[expert_key]
-                for metric_key, value in sorted(expert_data.items()):
-                    col_name = f"{expert_key}_{metric_key}"
-                    columns.append(col_name)
+                # Extract expert gradients
+                expert_grads = dynamics.get('expert_gradients', {})
+
+                for expert_key in sorted(expert_grads.keys()):
+                    expert_data = expert_grads[expert_key]
+                    for metric_key, value in sorted(expert_data.items()):
+                        col_name = f"{expert_key}_{metric_key}"
+                        columns.append(col_name)
+                        values.append(value if value is not None else None)
+
+                # Extract divergence scores
+                divergence_scores = dynamics.get('divergence_scores', {})
+                for div_key, value in sorted(divergence_scores.items()):
+                    columns.append(div_key)
                     values.append(value if value is not None else None)
 
-            # Extract divergence scores
-            divergence_scores = dynamics.get('divergence_scores', {})
-            for div_key, value in sorted(divergence_scores.items()):
-                columns.append(div_key)
-                values.append(value if value is not None else None)
+                # Build UPSERT query
+                placeholders = ', '.join(['?'] * len(columns))
 
-            # Build UPSERT query
-            placeholders = ', '.join(['?'] * len(columns))
+                # Create update clauses (keep latest non-null values)
+                update_clauses = ["ts = excluded.ts"]
+                for col in columns[2:]:  # Skip step and ts
+                    update_clauses.append(f"{col} = COALESCE(excluded.{col}, dynamics.{col})")
 
-            # Create update clauses (keep latest non-null values)
-            update_clauses = ["ts = excluded.ts"]
-            for col in columns[2:]:  # Skip step and ts
-                update_clauses.append(f"{col} = COALESCE(excluded.{col}, dynamics.{col})")
+                query = f"""
+                    INSERT INTO dynamics ({', '.join(columns)})
+                    VALUES ({placeholders})
+                    ON CONFLICT(step) DO UPDATE SET
+                    {', '.join(update_clauses)}
+                """
 
-            query = f"""
-                INSERT INTO dynamics ({', '.join(columns)})
-                VALUES ({placeholders})
-                ON CONFLICT(step) DO UPDATE SET
-                {', '.join(update_clauses)}
-            """
+                self.conn.execute(query, values)
 
-            self.conn.execute(query, values)
-
-            # Commit strategy: commit frequently during early training, then batch
-            self._write_counter += 1
-            # First 10 writes: commit every time (for immediate dashboard feedback)
-            if self._write_counter <= 10:
+                # Gradient dynamics are so infrequent (every 10 training steps by default)
+                # that we should just commit immediately every time for instant dashboard visibility
                 self.conn.commit()
-            # After that: commit every N writes
-            elif self._write_counter >= self._commit_interval:
-                self.conn.commit()
-                self._write_counter = 10  # Reset but keep the "past first 10" state
+
+                # Force WAL checkpoint to ensure data is immediately visible to readers
+                # This is critical since the dashboard polls for new data frequently
+                self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+        except Exception as e:
+            print(f"[DynamicsLogger] ❌ Error logging dynamics at step {step}: {e}")
+            import traceback
+            traceback.print_exc()
 
     def close(self) -> None:
         """Close the database connection."""
         with self.lock:
             if self.conn:
-                if self._write_counter > 0:
-                    self.conn.commit()
+                # Final commit not needed since we commit on every write
                 self.conn.close()
 
     def __enter__(self):

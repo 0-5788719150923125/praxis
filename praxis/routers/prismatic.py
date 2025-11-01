@@ -943,36 +943,45 @@ class Prismatic(nn.Module):
                 seed = self._generate_seed(expert_idx, param_name)
                 generator = torch.Generator(device=param.device).manual_seed(seed)
 
-                # Recreate the mask to determine tier
-                mask = self._create_sparse_mask(param, generator)
+                # Determine tier based on weight magnitudes
+                # This applies to ALL experts so we can compare gradient dynamics
+                num_params = param.numel()
+                num_per_side = max(1, int(num_params * self.sparsity / 2))
+                flat_param = param.flatten().abs()
 
-                if expert_idx == 0:
-                    # Expert 0 is always clean - no tiers
-                    tiers[param_name] = 'clean'
+                # Top tier: highest magnitude weights
+                top_threshold = torch.topk(flat_param, num_per_side).values[-1]
+                is_top = (flat_param >= top_threshold).reshape(param.shape)
+
+                # Bottom tier: lowest magnitude non-zero weights
+                non_zero_param = flat_param[flat_param > 0]
+                if len(non_zero_param) >= num_per_side:
+                    bottom_threshold = torch.topk(
+                        non_zero_param, num_per_side, largest=False
+                    ).values[-1]
+                    is_bottom = ((flat_param <= bottom_threshold) & (flat_param > 0)).reshape(param.shape)
                 else:
-                    # For perturbed experts, determine tier based on mask and strategy
+                    is_bottom = (flat_param > 0).reshape(param.shape)
+
+                # For Expert 0: Categorize all params into top/bottom/middle tiers
+                # For Expert 1+: Categorize based on where perturbations landed
+                if expert_idx == 0:
+                    # Categorize the entire parameter by its predominant tier
+                    top_count = is_top.sum().item()
+                    bottom_count = is_bottom.sum().item()
+
+                    if top_count > 0:
+                        tiers[param_name] = 'top'
+                    elif bottom_count > 0:
+                        tiers[param_name] = 'bottom'
+                    else:
+                        tiers[param_name] = 'middle'
+                else:
+                    # For perturbed experts, check if perturbation mask overlaps with tiers
+                    mask = self._create_sparse_mask(param, generator)
+
                     if self.perturbation_strategy == 'dual_sided':
-                        # Need to determine if masked weight is top or bottom
-                        # Re-compute top/bottom masks
-                        num_params = param.numel()
-                        num_per_side = max(1, int(num_params * self.sparsity / 2))
-                        flat_param = param.flatten().abs()
-
-                        # Top mask
-                        top_threshold = torch.topk(flat_param, num_per_side).values[-1]
-                        is_top = (flat_param >= top_threshold).reshape(param.shape)
-
-                        # Bottom mask
-                        non_zero_param = flat_param[flat_param > 0]
-                        if len(non_zero_param) >= num_per_side:
-                            bottom_threshold = torch.topk(
-                                non_zero_param, num_per_side, largest=False
-                            ).values[-1]
-                            is_bottom = ((flat_param <= bottom_threshold) & (flat_param > 0)).reshape(param.shape)
-                        else:
-                            is_bottom = (flat_param > 0).reshape(param.shape)
-
-                        # Determine tier
+                        # Determine which tier was perturbed
                         if (mask * is_top).sum() > 0:
                             tiers[param_name] = 'top'
                         elif (mask * is_bottom).sum() > 0:
@@ -980,7 +989,7 @@ class Prismatic(nn.Module):
                         else:
                             tiers[param_name] = 'middle'
                     else:
-                        # For non-dual-sided, just mark as perturbed or middle
+                        # For non-dual-sided, mark as perturbed or middle
                         if mask.sum() > 0:
                             tiers[param_name] = 'perturbed'
                         else:
@@ -1003,51 +1012,88 @@ class Prismatic(nn.Module):
             Dict with expert gradients by tier, or None if no gradients available
         """
         if not hasattr(self, 'experts') or len(self.experts) == 0:
+            print(f"[Prismatic] log_gradient_dynamics: No experts found")
             return None
 
         # Check if ANY gradients exist
         has_any_grads = False
+        grad_count = 0
+        total_params = 0
         for expert in self.experts:
             for param in expert.parameters():
+                total_params += 1
                 if param.grad is not None:
                     has_any_grads = True
-                    break
-            if has_any_grads:
-                break
+                    grad_count += 1
 
         if not has_any_grads:
             # No gradients available - backward() wasn't called or gradients were zeroed
+            if not hasattr(self, '_no_grads_warned'):
+                print(f"[Prismatic] log_gradient_dynamics: No gradients found ({total_params} params checked)")
+                self._no_grads_warned = True
             return None
 
         expert_grads = {}
 
         for expert_idx, expert in enumerate(self.experts):
-            # Accumulate gradients by tier
-            tier_grads = {'top': [], 'bottom': [], 'middle': [], 'clean': [], 'perturbed': []}
+            # Accumulate gradient norms by tier (element-level, not parameter-level)
+            tier_grads = {'top': [], 'bottom': [], 'middle': []}
 
             for param_name, param in expert.named_parameters():
                 if param.grad is None:
                     continue
 
-                # Get tier for this parameter
-                tier = self._weight_tiers.get(expert_idx, {}).get(param_name, 'unknown')
+                # Compute tier masks for this parameter based on weight magnitudes
+                num_params = param.numel()
+                num_per_side = max(1, int(num_params * self.sparsity / 2))
+                flat_param = param.flatten().abs()
+                flat_grad = param.grad.flatten().abs()
 
-                # Compute gradient norm for this parameter
-                grad_norm = param.grad.norm(2).item()
+                # Top tier: highest magnitude weights
+                top_threshold = torch.topk(flat_param, num_per_side).values[-1]
+                is_top = (flat_param >= top_threshold)
 
-                # Accumulate by tier
-                if tier in tier_grads:
-                    tier_grads[tier].append(grad_norm)
+                # Bottom tier: lowest magnitude non-zero weights
+                non_zero_mask = flat_param > 0
+                if non_zero_mask.sum() >= num_per_side:
+                    non_zero_param = flat_param[non_zero_mask]
+                    bottom_threshold = torch.topk(non_zero_param, num_per_side, largest=False).values[-1]
+                    is_bottom = (flat_param <= bottom_threshold) & non_zero_mask
+                else:
+                    is_bottom = non_zero_mask
 
-            # Compute mean gradient norm for each tier
+                # Middle tier: everything else
+                is_middle = ~(is_top | is_bottom)
+
+                # Collect gradient norms for each tier
+                if is_top.sum() > 0:
+                    tier_grads['top'].extend(flat_grad[is_top].tolist())
+                if is_bottom.sum() > 0:
+                    tier_grads['bottom'].extend(flat_grad[is_bottom].tolist())
+                if is_middle.sum() > 0:
+                    tier_grads['middle'].extend(flat_grad[is_middle].tolist())
+
+            # Compute statistics for each tier
             expert_grad_summary = {}
-            for tier, norms in tier_grads.items():
-                if norms:
-                    expert_grad_summary[f'{tier}_norm'] = sum(norms) / len(norms)
-                    expert_grad_summary[f'{tier}_max'] = max(norms)
-                    expert_grad_summary[f'{tier}_min'] = min(norms)
+            for tier, grad_list in tier_grads.items():
+                if grad_list:
+                    # L2 norm across all gradients in this tier
+                    tier_norm = sum(g**2 for g in grad_list) ** 0.5
+                    expert_grad_summary[f'{tier}_norm'] = tier_norm
+                    expert_grad_summary[f'{tier}_max'] = max(grad_list)
+                    expert_grad_summary[f'{tier}_min'] = min(grad_list)
 
             expert_grads[f'expert_{expert_idx}'] = expert_grad_summary
+
+        # Debug: show what we collected on first call only
+        if not hasattr(self, '_grad_log_count'):
+            self._grad_log_count = 0
+        self._grad_log_count += 1
+
+        if self._grad_log_count == 1:
+            print(f"[Prismatic] Gradient dynamics collection started for {len(self.experts)} experts")
+            for exp_key, metrics in expert_grads.items():
+                print(f"  {exp_key}: {list(metrics.keys())}")
 
         # Calculate divergence between Expert 0 and others
         divergence_scores = {}

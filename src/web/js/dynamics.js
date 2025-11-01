@@ -71,20 +71,26 @@ export async function loadDynamicsWithCharts(force = false) {
 
     try {
         // Fetch dynamics data
+        console.log('[Dynamics] Fetching from /api/dynamics...');
         const response = await fetch(`/api/dynamics?since=0&limit=1000`);
+
+        console.log('[Dynamics] Response status:', response.status);
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}`);
         }
 
         const data = await response.json();
+        console.log('[Dynamics] API response:', data);
 
         if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
             // Show helpful empty state
+            console.log('[Dynamics] No data available, message:', data.message);
             renderEmptyState(container, data.message);
             return;
         }
 
+        console.log('[Dynamics] Rendering charts with', data.runs.length, 'runs');
         // Render charts
         renderDynamicsCharts(data.runs[0], container);
         state.dynamics.loaded = true;
@@ -116,7 +122,7 @@ function renderEmptyState(container, message) {
     `;
 
     const headerHTML = createTabHeader({
-        title: 'Learning Dynamics',
+        title: 'Learning',
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -156,17 +162,33 @@ function renderEmptyState(container, message) {
  * Render dynamics charts
  */
 function renderDynamicsCharts(runData, container) {
+    console.log('[Dynamics] renderDynamicsCharts called with runData:', runData);
+
     const dynamics = runData.dynamics || {};
-    const steps = dynamics.steps || [];
+    console.log('[Dynamics] dynamics object:', dynamics);
+
+    // Debug: Check if values are null
+    if (dynamics.expert_0_bottom_norm) {
+        const hasValues = dynamics.expert_0_bottom_norm.some(v => v !== null);
+        console.log('[Dynamics] expert_0_bottom_norm has non-null values:', hasValues);
+        console.log('[Dynamics] expert_0_bottom_norm sample:', dynamics.expert_0_bottom_norm.slice(0, 3));
+    }
+
+    // API returns 'step' (singular), frontend expects 'steps' (plural)
+    const steps = dynamics.steps || dynamics.step || [];
+    console.log('[Dynamics] steps array:', steps, 'length:', steps.length);
 
     if (steps.length === 0) {
+        console.log('[Dynamics] No steps found, showing empty state');
         renderEmptyState(container, "No dynamics data points found");
         return;
     }
 
     // Detect number of experts from dynamics keys
     const expertKeys = Object.keys(dynamics).filter(k => k.match(/^expert_\d+_/));
+    console.log('[Dynamics] expertKeys:', expertKeys);
     const numExperts = new Set(expertKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1]))).size;
+    console.log('[Dynamics] numExperts:', numExperts);
 
     // Build refresh icon
     const refreshIcon = `
@@ -184,7 +206,7 @@ function renderDynamicsCharts(runData, container) {
     }
 
     const headerHTML = createTabHeader({
-        title: 'Learning Dynamics',
+        title: 'Learning',
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -232,9 +254,17 @@ function renderDynamicsCharts(runData, container) {
 
     container.innerHTML = headerHTML + controlsHTML + chartsHTML;
 
+    console.log('[Dynamics] DOM updated, scheduling chart creation...');
+
     // Render chart after DOM update
     setTimeout(() => {
-        createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
+        console.log('[Dynamics] Creating expert comparison chart...');
+        try {
+            createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
+            console.log('[Dynamics] Chart created successfully');
+        } catch (error) {
+            console.error('[Dynamics] Error creating chart:', error);
+        }
 
         // Attach event listeners to controls
         ['show-top-weights', 'show-bottom-weights', 'show-middle-weights'].forEach(id => {
@@ -276,13 +306,20 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
     for (let expertIdx = 0; expertIdx < numExperts; expertIdx++) {
         tiers.forEach((tier, tierIdx) => {
             const key = `expert_${expertIdx}_${tier}_norm`;
-            if (!dynamics[key]) return;
+            if (!dynamics[key]) {
+                console.log(`[Dynamics] Missing key: ${key}`);
+                return;
+            }
 
             const values = dynamics[key];
+            console.log(`[Dynamics] ${key}:`, values);
+
             const data = steps.map((step, i) => ({
                 x: step,
                 y: values[i]
             })).filter(point => point.y !== null);
+
+            console.log(`[Dynamics] ${key} filtered data:`, data.length, 'points');
 
             // Color scheme:
             // Expert 0 (clean) = blue shades

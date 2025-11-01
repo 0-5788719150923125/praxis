@@ -71,6 +71,7 @@ def get_dynamics():
         # Check if dynamics data exists
         if not dynamics_file.exists():
             # Return empty state with helpful message
+            api_logger.warning(f"Dynamics file not found: {dynamics_file}")
             response = jsonify({
                 "status": "no_data",
                 "message": "Gradient dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
@@ -79,12 +80,28 @@ def get_dynamics():
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
+        api_logger.info(f"Found dynamics file: {dynamics_file}, size: {dynamics_file.stat().st_size} bytes")
+
         # Read dynamics from SQLite database
-        dynamics_data = _read_dynamics_from_db(
-            dynamics_file, since_step, limit
-        )
+        try:
+            dynamics_data = _read_dynamics_from_db(
+                dynamics_file, since_step, limit
+            )
+        except Exception as read_error:
+            api_logger.error(f"Error reading dynamics database: {read_error}")
+            import traceback
+            traceback.print_exc()
+            response = jsonify({
+                "status": "error",
+                "message": f"Error reading database: {str(read_error)}",
+                "runs": []
+            })
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.status_code = 500
+            return response
 
         if not dynamics_data or dynamics_data.get("num_points", 0) == 0:
+            api_logger.warning(f"No data points found in dynamics database")
             response = jsonify({
                 "status": "no_data",
                 "message": "No dynamics data points found",
@@ -154,7 +171,8 @@ def _read_dynamics_from_db(
         Dict with dynamics arrays or None if no data
     """
     try:
-        conn = sqlite3.connect(str(db_path))
+        # Open in read-only mode to avoid permission issues
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
         cursor = conn.cursor()
 
         # Get all column names
@@ -186,6 +204,10 @@ def _read_dynamics_from_db(
         for row in rows:
             for i, col in enumerate(columns):
                 metrics[col].append(row[i])
+
+        # Ensure 'steps' (plural) exists for frontend compatibility
+        if 'step' in metrics and 'steps' not in metrics:
+            metrics['steps'] = metrics['step']
 
         return {
             "metrics": metrics,
