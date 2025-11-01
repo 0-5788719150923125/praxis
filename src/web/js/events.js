@@ -78,6 +78,11 @@ export const CLICK_HANDLERS = [
         })
     },
     {
+        selector: '#refresh-metrics-btn',
+        match: 'closest',
+        action: () => ({ type: 'REFRESH_TAB_DATA' })
+    },
+    {
         selector: '.refresh-button',
         match: 'exact',
         action: (e) => {

@@ -30,31 +30,34 @@ router_type: prismatic # Enable Prismatic router
 
 ### Perturbation Parameters
 
-#### `perturbation_scale` (default: 0.01)
+#### `perturbation_scale` (default: 1.0)
 
-Scale factor for perturbations relative to weight magnitude.
+Scale factor for perturbations relative to weight magnitude. Adds Gaussian noise: `W_new = W_base + scale * |W| * N(0,1)`
 
-- **0.01** (Conservative): 1% of weight magnitude
+- **1.0** (Default - Aggressive): 100% of weight magnitude
 
-  - Safe default for initial experiments
-  - Minimal risk of instability
-  - Good for large models
+  - Adds noise equal to the weight's magnitude
+  - Forces exploration genuinely outside the learned world model
+  - Bottom weights: ±100% perturbation can flip activation thresholds
+  - Top weights: ±100% perturbation cascades through softmax
+  - Tests "forced exploration" hypothesis in its strongest form
+  - Stability maintained by: 90% unperturbed, LayerNorm, soft-merging
 
 - **0.1** (Moderate): 10% of weight magnitude
 
-  - Noticeable diversity without breaking functionality
-  - Recommended for most experiments
+  - More conservative, variations within consensus
+  - Good if 1.0 proves unstable
+  - May not wake up dormant bottom weights
 
-- **1.0** (Aggressive): 100% of weight magnitude
+- **0.01** (Conservative): 1% of weight magnitude
+  - Minimal perturbation
+  - Bottom weights barely affected
+  - Gentlest form of diversity
 
-  - Forces significant exploration
-  - May require careful monitoring
-  - Tests "forced exploration" hypothesis strongly
-
-- **5.0** (Extreme): 500% of weight magnitude
+- **2.0** (Very Aggressive): 200% of weight magnitude
   - Maximum diversity pressure
-  - Experimental; may require gradient clipping
-  - For testing limits of sparse perturbation theory
+  - Can flip weight signs frequently
+  - For testing extreme limits of the hypothesis
 
 #### `sparsity` (default: 0.1)
 
@@ -81,20 +84,44 @@ Fraction of weights to perturb (targets highest-magnitude weights by default).
   - More comprehensive perturbation
   - Useful for larger models
 
-#### `perturb_by_magnitude` (default: true)
+#### `perturbation_strategy` (default: "dual_sided")
 
-Whether to target high-magnitude weights (LTH-inspired) or random selection.
+Strategy for selecting which weights to perturb. Controls which regions of the computational substrate are explored.
 
-- **true**: Perturb top-k% by absolute magnitude
+- **"dual_sided"** (Default - NEW): Perturb top sparsity/2 + bottom sparsity/2 by magnitude
+
+  - **Top weights**: Expose coarse-grained float32 artifacts (large absolute rounding)
+  - **Bottom weights**: Expose fine-grained float32 artifacts (large relative rounding, subnormal behavior)
+  - Both extremes reveal different numerical precision regimes
+  - Creates symmetry in exploration of the computational substrate
+  - May activate dormant pathways suppressed during training
+  - Tests if low-magnitude weights contain latent patterns
+  - Default: 5% from top + 5% from bottom (10% total)
+
+- **"top_only"**: Perturb top-k% by absolute magnitude (original approach)
 
   - Targets "lottery tickets" - most critical parameters
-  - Maximum impact per perturbation
-  - Recommended for testing computational substrate hypothesis
+  - Maximum impact through exponential cascade amplification
+  - Aligns with standard Lottery Ticket Hypothesis interpretation
+  - Use for comparison with previous experiments
 
-- **false**: Random selection
-  - More uniform distribution
-  - Useful for ablation studies
-  - Less biased by initialization
+- **"bottom_only"**: Perturb bottom-k% by absolute magnitude
+
+  - Targets suppressed/dormant parameters
+  - Tests if gradient descent suppressed potentially useful patterns
+  - Control experiment for understanding dual-sided behavior
+
+- **"random"**: Randomly select k% of weights
+  - Uniform distribution across parameter space
+  - Control for ablation studies
+  - Less biased by current parameter values
+
+#### `perturb_by_magnitude` (default: true)
+
+Whether to use magnitude-based selection or random selection.
+
+- **true**: Use perturbation_strategy (dual_sided, top_only, or bottom_only)
+- **false**: Equivalent to perturbation_strategy="random"
 
 #### `use_pi_seeding` (default: true)
 
@@ -287,23 +314,31 @@ Vary `sparsity` and `perturbation_scale` systematically to find optimal (diversi
 ### Perturbation Formula
 
 ```python
-# For each selected weight (top-k% by magnitude):
-perturbation = perturbation_scale * |W| * N(0,1)
+# For each selected weight:
+perturbation = perturbation_scale * |W| * N(0,1) * mask
 W_perturbed = W_base + perturbation
 
+# Where mask is determined by perturbation_strategy:
+# - dual_sided: top sparsity/2 + bottom sparsity/2 by |W|
+# - top_only: top sparsity by |W|
+# - bottom_only: bottom sparsity by |W|
+# - random: random sparsity selection
+
 # Perturbations are:
-# 1. Deterministic (hash-based seeding)
+# 1. Deterministic (pi-digit or hash-based seeding)
 # 2. Sparse (only k% of weights)
 # 3. Magnitude-aware (scaled by |W|)
 # 4. Static (not trainable)
+# 5. Dual-sided (NEW - default): targets both numerical extremes
 ```
 
 ### Key Design Choices
 
 - Perturb ALL parameters including normalization layers (complete substrate diversity)
-- Target highest-magnitude weights by default (LTH-inspired)
+- Target both highest AND lowest magnitude weights by default (dual-sided exploration)
 - Use pi-digit seeding by default (Quantum Echoes)
 - Apply perturbations once at initialization (static architectural constraint)
+- Expose both coarse-grained (top) and fine-grained (bottom) float32 precision regimes
 
 ## Convergence Tracking
 

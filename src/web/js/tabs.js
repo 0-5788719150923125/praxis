@@ -243,7 +243,7 @@ function renderAgents(agents, container) {
 
     // Create header
     const headerHTML = createTabHeader({
-        title: 'Grounding',
+        title: 'Hangar',
         metadata: `<span><strong>Discovered:</strong> ${agents.length} agent${agents.length !== 1 ? 's' : ''}</span>`
     });
 

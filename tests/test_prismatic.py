@@ -149,8 +149,8 @@ class TestPrismaticInitialization:
         base_expert = SimpleMLP(hidden_size=64)
         prismatic = Prismatic(config, base_expert=base_expert)
 
-        # Check defaults
-        assert prismatic.perturbation_scale == 0.01
+        # Check defaults (1.0 = aggressive corruption by default)
+        assert prismatic.perturbation_scale == 1.0
         assert prismatic.sparsity == 0.1
         assert prismatic.perturb_by_magnitude is True
         assert prismatic.dropout_rate == 0.1

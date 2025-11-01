@@ -57,20 +57,24 @@ Instead of arbitrary random seeds, perturbations are seeded by walking backwards
 the digits of pi (3.14159265358979...). Each expert gets a single digit (0-9) from pi's
 infinite sequence:
 
-- Expert 0: Clean (unperturbed) - the original quantum state
-- Expert 1: Seeded by pi_digit[position - 1] - first echo
-- Expert 2: Seeded by pi_digit[position - 2] - second echo
-- Expert 3: Seeded by pi_digit[position - 3] - third echo
+- Expert 0: Clean (unperturbed) - the original quantum state at t=0
+- Expert 1: Seeded by pi_digit[position - 1] - archive/lag/echo from t-1
+- Expert 2: Seeded by pi_digit[position - 2] - archive/lag/echo from t-2
+- Expert 3: Seeded by pi_digit[position - 3] - archive/lag/echo from t-3
 - ...
 
-Walking backwards through pi creates a temporal lag structure where each expert is
-corrupted by a different mathematical artifact from pi's sequence. Like djent music
-(TOOL, Meshuggah) where polyrhythms create complex-but-structured patterns, pi's
-digits create perturbation patterns that appear random but encode deep mathematical
-structure.
+Walking BACKWARDS creates a temporal lag structure - each expert is an archived copy
+"behind" the current state, corrupted by where pi was at increasingly distant positions.
+During iterative reasoning (depth>layers), the model learns to integrate across these
+temporal lags, building a fuzzy state machine where it can blend {current, t-1, t-2, t-3}.
 
-This bridges the non-differentiable gap between mathematical constants and learned
-representations - the model learns in the presence of "cosmic static" from pi itself.
+Like djent polyrhythms (TOOL, Meshuggah): deterministically unpredictable, yet perfectly
+reproducible. Pi's digits create phase-shifted perturbations - the same complex rhythm
+experienced at different temporal offsets.
+
+The backwards walk enables the model to learn a temporal gradient during training,
+then exploit that structure during inference. Efficient caching (computed once) makes
+this practically costless.
 
 Key Insight: "Train on consensus, you manifest the lowest common denominator."
 Static perturbations prevent convergence to consensus, maintaining genuine diversity throughout
@@ -87,33 +91,63 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mpmath import mp
 
+# Module-level cache for pi digits
+# Compute once, slice forever - supports efficient backwards walk
+_PI_CACHE: Optional[str] = None
+_PI_CACHE_START: int = 0
+_PI_CACHE_END: int = 0
 
-def get_pi_digits(num_digits: int = 1000) -> str:
+
+def _ensure_pi_cache(start_position: int, end_position: int) -> None:
     """
-    Get the first num_digits of pi (excluding the decimal point).
+    Ensure pi cache covers the range [start_position, end_position].
 
-    Returns pi digits as a string: "314159265358979..."
-
-    Uses mpmath for arbitrary precision computation of pi.
+    Computes pi digits once and caches them for efficient repeated access.
+    This enables efficient backwards walk through pi without recomputation.
 
     Args:
-        num_digits: Number of digits to retrieve
-
-    Returns:
-        String of pi digits (no decimal point)
+        start_position: First position needed (inclusive)
+        end_position: Last position needed (inclusive)
     """
-    mp.dps = num_digits + 10  # Extra precision for safety
-    pi_str = str(mp.pi).replace(".", "")
-    return pi_str[:num_digits]
+    global _PI_CACHE, _PI_CACHE_START, _PI_CACHE_END
+
+    # Check if we need to extend the cache
+    if (
+        _PI_CACHE is None
+        or start_position < _PI_CACHE_START
+        or end_position > _PI_CACHE_END
+    ):
+        # Compute with buffer to reduce future recomputations
+        buffer = 10000
+        new_start = (
+            min(start_position, _PI_CACHE_START if _PI_CACHE else start_position)
+            - buffer
+        )
+        new_end = (
+            max(end_position, _PI_CACHE_END if _PI_CACHE else end_position) + buffer
+        )
+        new_start = max(0, new_start)  # Don't go below 0
+
+        # Compute pi digits for the entire range
+        num_digits_needed = new_end + 1
+        mp.dps = num_digits_needed + 100  # Extra precision for safety
+        pi_str = str(mp.pi).replace(".", "")
+
+        # Cache the computed digits
+        _PI_CACHE = pi_str[:num_digits_needed]
+        _PI_CACHE_START = 0
+        _PI_CACHE_END = len(_PI_CACHE) - 1
 
 
 def get_pi_digit_at(position: int) -> int:
     """
-    Get a single digit from pi at the specified position.
+    Get a single digit from pi at the specified position (cached, efficient).
 
     Position 0 = 3, position 1 = 1, position 2 = 4, etc.
 
-    Uses mpmath to compute pi to arbitrary precision, so any position is valid.
+    Uses a module-level cache to avoid recomputing pi digits.
+    Particularly efficient for backwards walks where we access
+    sequential positions like [99999, 99998, 99997, ...].
 
     Args:
         position: Index into pi's digit sequence
@@ -121,10 +155,11 @@ def get_pi_digit_at(position: int) -> int:
     Returns:
         Single digit (0-9) at that position
     """
-    # Get enough digits to cover the position (with buffer)
-    needed_digits = position + 100
-    pi_str = get_pi_digits(needed_digits)
-    return int(pi_str[position])
+    # Ensure cache covers this position
+    _ensure_pi_cache(position, position)
+
+    # Return cached digit
+    return int(_PI_CACHE[position])
 
 
 @dataclass
@@ -134,19 +169,29 @@ class PrismaticConfig:
     Attributes:
         hidden_size: Hidden dimension size
         num_experts: Number of expert clones (including 1 clean expert)
-        perturbation_scale: Scale factor for perturbations (default: 0.01)
+        perturbation_scale: Scale factor for perturbations (default: 1.0)
+            Adds Gaussian noise with std = scale * |W|
+            1.0 = add noise equal to weight magnitude (aggressive corruption)
+            0.1 = add 10% noise (moderate)
+            0.01 = add 1% noise (conservative)
         sparsity: Fraction of weights to perturb (default: 0.1 = 10%)
-        perturb_by_magnitude: If True, perturb top-k% by magnitude; else random
+        perturb_by_magnitude: If True, perturb by magnitude; else random
+        perturbation_strategy: Strategy for selecting weights to perturb
+            - "dual_sided": Top sparsity/2 + bottom sparsity/2 by magnitude (default)
+            - "top_only": Top sparsity by magnitude (original approach)
+            - "bottom_only": Bottom sparsity by magnitude
+            - "random": Random sparsity selection
         dropout: Dropout probability for expert dropout during training
         use_pi_seeding: If True, use pi-digits for seeding (Quantum Echoes); else use hash
-        pi_position: Starting position in pi's digit sequence (default: 100)
+        pi_position: Starting position in pi's digit sequence (default: 100000)
     """
 
     hidden_size: int
     num_experts: int
-    perturbation_scale: float = 0.01
+    perturbation_scale: float = 1.0
     sparsity: float = 0.1
     perturb_by_magnitude: bool = True
+    perturbation_strategy: str = "dual_sided"
     dropout: float = 0.1
     use_pi_seeding: bool = True
     pi_position: int = 100000
@@ -206,9 +251,12 @@ class Prismatic(nn.Module):
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
-        self.perturbation_scale = getattr(config, "perturbation_scale", 0.01)
+        self.perturbation_scale = getattr(config, "perturbation_scale", 1.0)
         self.sparsity = getattr(config, "sparsity", 0.1)
         self.perturb_by_magnitude = getattr(config, "perturb_by_magnitude", True)
+        self.perturbation_strategy = getattr(
+            config, "perturbation_strategy", "dual_sided"
+        )
         self.dropout_rate = getattr(config, "dropout", 0.1)
         self.use_pi_seeding = getattr(config, "use_pi_seeding", True)
         self.pi_position = getattr(config, "pi_position", 100000)
@@ -398,22 +446,31 @@ class Prismatic(nn.Module):
         """
         Create sparse mask indicating which parameters to perturb.
 
-        Two strategies:
-        1. Magnitude-based (default): Perturb top-k% of weights by absolute magnitude
-           - Targets the "lottery tickets" - most critical parameters
-           - Creates obstacles in the most influential parts of the computation
-           - Aligns with Lottery Ticket Hypothesis: these are the weights that matter most
-           - Like perturbing key qubits in Willow: maximum impact, minimum perturbation
+        Strategies:
+        1. Dual-sided (DEFAULT): Perturb top sparsity/2 + bottom sparsity/2 by magnitude
+           - Top weights: Expose coarse-grained float32 artifacts (large absolute rounding)
+           - Bottom weights: Expose fine-grained float32 artifacts (large relative rounding)
+           - Both extremes reveal different numerical precision regimes
+           - Creates symmetry in exploration of the computational substrate
+           - May activate dormant pathways suppressed during training
 
-        2. Random: Randomly select k% of weights
-           - More uniform distribution of perturbations across parameter space
-           - Less biased by current parameter values
-           - Useful for ablation studies
+        2. Top-only: Perturb top-k% by absolute magnitude (original approach)
+           - Targets the "lottery tickets" - most critical parameters
+           - Maximum impact through exponential cascade amplification
+           - Aligns with standard Lottery Ticket Hypothesis interpretation
+
+        3. Bottom-only: Perturb bottom-k% by absolute magnitude
+           - Targets suppressed/dormant parameters
+           - May wake up alternative computational paths
+           - Tests if low-magnitude weights contain latent patterns
+
+        4. Random: Randomly select k% of weights
+           - Uniform distribution across parameter space
+           - Control for ablation studies
 
         Default sparsity: 10% of weights
-        - Perturbs enough to force different paths (diversity)
-        - Preserves enough to maintain stability (90% intact)
-        - Analogous to Willow perturbing individual qubits, not entire system
+        - Dual-sided: 5% from top + 5% from bottom
+        - Creates enough irregularity to force exploration while maintaining stability
 
         Args:
             param: Parameter tensor to create mask for
@@ -423,22 +480,75 @@ class Prismatic(nn.Module):
             Binary mask (1 = perturb, 0 = keep original)
         """
         num_params = param.numel()
-        num_perturbed = max(1, int(num_params * self.sparsity))
 
-        if self.perturb_by_magnitude:
-            # Strategy 1: Top-k by absolute magnitude
-            # Rationale: Most important parameters likely encode critical features
-            flat_param = param.flatten().abs()
-            threshold = torch.topk(flat_param, num_perturbed).values[-1]
-            mask = (flat_param >= threshold).float().reshape(param.shape)
-        else:
-            # Strategy 2: Random selection
-            # Rationale: Uniform perturbation distribution across parameter space
+        if not self.perturb_by_magnitude or self.perturbation_strategy == "random":
+            # Random selection strategy
+            num_perturbed = max(1, int(num_params * self.sparsity))
             mask = torch.zeros_like(param)
             flat_mask = mask.flatten()
             indices = torch.randperm(num_params, generator=generator)[:num_perturbed]
             flat_mask[indices] = 1.0
             mask = flat_mask.reshape(param.shape)
+            return mask
+
+        flat_param = param.flatten().abs()
+
+        if self.perturbation_strategy == "dual_sided":
+            # Dual-sided: Top half + Bottom half by magnitude
+            # This exposes BOTH numerical precision regimes of float32
+            num_per_side = max(1, int(num_params * self.sparsity / 2))
+
+            # Top side: Highest magnitude weights
+            # These are the "lottery tickets" - high impact through exponential cascade
+            top_threshold = torch.topk(flat_param, num_per_side).values[-1]
+            top_mask = (flat_param >= top_threshold).float()
+
+            # Bottom side: Lowest magnitude NON-ZERO weights
+            # These live in the fine-grained precision regime
+            # Near activation thresholds - small perturbations can flip dead->alive
+            # May contain suppressed but useful patterns
+            non_zero_param = flat_param[flat_param > 0]
+            if len(non_zero_param) >= num_per_side:
+                # Use topk with largest=False to get smallest values
+                bottom_threshold = torch.topk(
+                    non_zero_param, num_per_side, largest=False
+                ).values[-1]
+                bottom_mask = (
+                    (flat_param <= bottom_threshold) & (flat_param > 0)
+                ).float()
+            else:
+                # Not enough non-zero weights, just use what we have
+                bottom_mask = (flat_param > 0).float()
+
+            # Combine both sides (clamp to handle any overlap)
+            mask = (top_mask + bottom_mask).clamp(0, 1).reshape(param.shape)
+
+        elif self.perturbation_strategy == "top_only":
+            # Original approach: Top-k by magnitude only
+            num_perturbed = max(1, int(num_params * self.sparsity))
+            threshold = torch.topk(flat_param, num_perturbed).values[-1]
+            mask = (flat_param >= threshold).float().reshape(param.shape)
+
+        elif self.perturbation_strategy == "bottom_only":
+            # Bottom-k by magnitude (control experiment)
+            num_perturbed = max(1, int(num_params * self.sparsity))
+            non_zero_param = flat_param[flat_param > 0]
+            if len(non_zero_param) >= num_perturbed:
+                threshold = torch.topk(
+                    non_zero_param, num_perturbed, largest=False
+                ).values[-1]
+                mask = (
+                    ((flat_param <= threshold) & (flat_param > 0))
+                    .float()
+                    .reshape(param.shape)
+                )
+            else:
+                mask = (flat_param > 0).float().reshape(param.shape)
+        else:
+            raise ValueError(
+                f"Unknown perturbation_strategy: {self.perturbation_strategy}. "
+                f"Must be one of: dual_sided, top_only, bottom_only, random"
+            )
 
         return mask
 
@@ -450,18 +560,27 @@ class Prismatic(nn.Module):
 
         Perturbation formula:
             ε = perturbation_scale * |W_base| * N(0,1) * mask
+            W_new = W_base + ε
+
+        Default scale = 1.0: Adds Gaussian noise with std = weight magnitude
+        This creates aggressive corruption that forces exploration outside the
+        learned world model. For dual-sided perturbation:
+        - Top weights (large): ±100% perturbation pushes genuinely outside consensus
+        - Bottom weights (small): ±100% perturbation can flip activation thresholds
 
         Why magnitude-aware?
         -------------------
-        - Preserves relative importance structure
-        - Prevents small weights from being overwhelmed by noise
-        - Maintains overall network behavior while introducing irregularity
+        - Scales perturbation to weight importance
+        - Bottom weights get absolute changes equal to their magnitude
+        - Top weights get proportional changes that cascade through softmax
+        - Both extremes get meaningful perturbations in their respective regimes
 
-        Connection to Quantum Error Correction (Willow):
-        -----------------------------------------------
-        Like controlled qubit perturbations in quantum computing, these weight
-        perturbations are small enough to maintain coherence (network functionality)
-        but large enough to force different computational paths.
+        Connection to World Model Exploration:
+        -------------------------------------
+        Static perturbations are architectural obstacles the model must adapt to.
+        Aggressive scale (1.0) forces fundamentally different computational paths,
+        not just variations within consensus. 90% unperturbed + LayerNorm provide
+        stability while the 10% perturbed create genuine architectural diversity.
 
         Args:
             param: Original parameter tensor
@@ -489,7 +608,8 @@ class Prismatic(nn.Module):
         return (
             f"{self.__class__.__name__}("
             f"num_experts={len(self.experts)}, "
-            f"perturbation_scale={self.perturbation_scale}, "
+            f"strategy={self.perturbation_strategy}, "
+            f"scale={self.perturbation_scale}, "
             f"sparsity={self.sparsity}, "
             f"{seed_type})"
         )
@@ -768,23 +888,23 @@ class Prismatic(nn.Module):
             # Per-expert routing weights (mean across batch)
             # Track convergence for each "eye" independently
             for i, weight in enumerate(expert_weights):
-                self._metrics[f'expert_{i}_routing_weight'] = weight.item()
+                self._metrics[f"expert_{i}_routing_weight"] = weight.item()
 
             # Entropy: H = -Σ(p_i * log(p_i))
             # Measures routing balance: high = balanced, low = collapsed
             probs = expert_weights + 1e-10  # Avoid log(0)
             entropy = -(probs * probs.log()).sum()
-            self._metrics['routing_entropy'] = entropy.item()
+            self._metrics["routing_entropy"] = entropy.item()
 
             # Concentration: max routing weight
             # Tests if routing collapses to clean expert or maintains diversity
             concentration = expert_weights.max()
-            self._metrics['routing_concentration'] = concentration.item()
+            self._metrics["routing_concentration"] = concentration.item()
 
             # Variance: measures routing stability across experts
             # High variance = specialized eyes, low variance = uniform
             variance = expert_weights.var()
-            self._metrics['routing_variance'] = variance.item()
+            self._metrics["routing_variance"] = variance.item()
         except Exception:
             # Silently fail if metric computation fails - don't break training
             pass
