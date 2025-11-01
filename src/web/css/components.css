@@ -1181,6 +1181,14 @@
     /* No transitions - we're updating 60fps */
     transition: none !important;
 
+    /* Force identical rendering */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+
+    /* Prevent subpixel shifts */
+    transform: translate3d(0, 0, 0);
+    backface-visibility: hidden;
 }
 
 /* Hybrid overlay inherits light theme - no custom colors needed */
@@ -1237,6 +1245,14 @@ body.hybrid-active .prism-logo {
 .hybrid-overlay .tab-content,
 .hybrid-overlay .tab-nav {
     background-color: var(--background) !important;
+}
+
+/* Force pixel-perfect positioning on cloned elements */
+.hybrid-overlay .message,
+.hybrid-overlay .tab-content,
+.hybrid-overlay .terminal-line {
+    transform: translateZ(0);
+    backface-visibility: hidden;
 }
 
 /* Hide Chart.js canvases - they don't clone properly */

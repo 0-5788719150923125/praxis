@@ -103,7 +103,7 @@ function createHybridLayer() {
 
     hybridLayer.appendChild(appClone);
 
-    // Position overlay
+    // Position overlay - full viewport
     hybridLayer.style.position = 'fixed';
     hybridLayer.style.top = '0';
     hybridLayer.style.left = '0';
@@ -190,7 +190,7 @@ function updateHybridClipping() {
     const splittingFace = projectSplittingFace(geom);
 
     // Calculate clip paths for both layers
-    const { darkClip, lightClip } = calculateClipPaths(splittingFace);
+    const { lightClip } = calculateClipPaths(splittingFace);
 
     // Apply clipping to entire overlay (simpler and more consistent)
     if (hybridLayer) {
