@@ -7,7 +7,7 @@ import { state } from './state.js';
 import { render } from './render.js';
 import { storage, readFormValues, FORM_FIELDS } from './config.js';
 import { toggleAgentSelector, toggleAgentSelection } from './charts.js';
-import { loadResearchMetrics } from './tabs.js';
+import { loadResearchMetrics, loadDynamics } from './tabs.js';
 import { sendMessage, testApiConnection } from './api.js';
 
 /**
@@ -24,7 +24,8 @@ const getLifecycleFunction = async (name) => {
         recalculateDashboardScale,
         loadSpec,
         loadAgents,
-        loadResearchMetrics
+        loadResearchMetrics,
+        loadDynamics
     };
 
     return lifecycleFunctions[name] || null;
@@ -120,6 +121,12 @@ export const ACTION_HANDLERS = {
             import('./charts.js').then(({ updateChartColors }) => {
                 updateChartColors();
             });
+            // Also update dynamics charts if on Dynamics tab
+            if (currentTab.id === 'dynamics') {
+                import('./dynamics.js').then(({ updateDynamicsChartColors }) => {
+                    updateDynamicsChartColors();
+                });
+            }
         }
     },
 

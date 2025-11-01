@@ -93,6 +93,185 @@
         currentDirection: { x: 0, y: 0, z: 0 }
     };
 
+    // Turbulence system - dark mode only
+    // RANDOM, INFREQUENT jolting - completely independent of hyperactivity
+    // Like hitting air pockets - rare, unpredictable, jarring
+    let turbulenceState = {
+        active: false,
+        intensity: 0,
+        startTime: 0,
+        duration: 0,
+        nextCheck: 20 + Math.random() * 30, // First check at 20-50 seconds (rare!)
+        // Rotational jolts (spinning off axis)
+        joltRotX: 0,
+        joltRotY: 0,
+        joltRotZ: 0,
+        // Translational jolts (spatial displacement)
+        offsetX: 0,
+        offsetY: 0,
+        decay: 0.95,
+        lastJoltTime: 0
+    };
+
+    // Propulsion state - separate from turbulence
+    // Accumulates during hyperactivity, decays when calm
+    let propulsionState = {
+        velocityX: 0,  // Current velocity (accumulates during acceleration)
+        velocityY: 0,
+        positionX: 0,  // Displaced position from anchor
+        positionY: 0,
+        isActive: false,
+        rampPhase: 0  // 0-1 during acceleration ramp
+    };
+
+    // Rubber band anchor system - pulls prism back to center
+    // The further from center, the stronger the pull (Hooke's law)
+    const anchorStrength = 0.12; // Spring constant (stronger for dark mode)
+
+    // Update propulsion physics - like a car accelerating
+    // Brief ramp up, then cruising at displaced position, fighting anchor
+    function updatePropulsion(tendrils, lightMode, dt = 0.016) {
+        /**
+         * Propulsion system with acceleration physics.
+         *
+         * DARK MODE ONLY:
+         * - Hyperactive mode (>30 tendrils) acts like engines firing
+         * - Brief acceleration ramp (like car accelerating)
+         * - Cruising: settled at displaced position, straining against anchor
+         * - Anchor pulls back harder as distance increases (diminishing returns)
+         * - When hyperactivity ends, prism decelerates and returns to center
+         *
+         * LIGHT MODE: Disabled
+         */
+
+        // Light mode: no propulsion
+        if (lightMode) {
+            // Decay any existing propulsion state
+            propulsionState.velocityX *= 0.9;
+            propulsionState.velocityY *= 0.9;
+            propulsionState.positionX *= 0.9;
+            propulsionState.positionY *= 0.9;
+            propulsionState.isActive = false;
+            return { x: 0, y: 0 };
+        }
+
+        const tendrilCount = tendrils.length;
+        const isHyperactive = tendrilCount > 30;
+
+        if (isHyperactive) {
+            // HYPERACTIVE: Engines firing!
+            if (!propulsionState.isActive) {
+                // Just entered hyperactive mode - start acceleration ramp
+                propulsionState.isActive = true;
+                propulsionState.rampPhase = 0;
+            }
+
+            // Acceleration ramp (brief, like car accelerating)
+            if (propulsionState.rampPhase < 1) {
+                propulsionState.rampPhase = Math.min(1, propulsionState.rampPhase + 0.02); // Ramp over ~50 frames (~0.8 seconds)
+            }
+
+            // Calculate thrust direction from tendril aggregate
+            let thrustDirX = 0;
+            let thrustDirY = 0;
+            let sampleCount = 0;
+
+            const sampleStep = Math.max(1, Math.floor(tendrilCount / 20));
+            for (let i = 0; i < tendrilCount; i += sampleStep) {
+                const tendril = tendrils[i];
+                if (tendril.opacity > 0.2) {
+                    thrustDirX += tendril.baseDirection.x * tendril.opacity;
+                    thrustDirY += tendril.baseDirection.y * tendril.opacity;
+                    sampleCount++;
+                }
+            }
+
+            if (sampleCount > 0) {
+                thrustDirX /= sampleCount;
+                thrustDirY /= sampleCount;
+
+                const mag = Math.sqrt(thrustDirX * thrustDirX + thrustDirY * thrustDirY);
+                if (mag > 0) {
+                    thrustDirX /= mag;
+                    thrustDirY /= mag;
+                }
+            }
+
+            // Polynomial power growth (x^2.5 for smooth but strong acceleration)
+            const hyperactivityFactor = Math.min(1, (tendrilCount - 30) / 70);
+            const thrustPower = Math.pow(hyperactivityFactor, 2.5); // Polynomial growth
+
+            // Smooth acceleration ramp (no jarring - pure stable stretching)
+            // Power increases during ramp, then sustains
+            const rampCurve = Math.sin(propulsionState.rampPhase * Math.PI / 2); // Smooth ease-in curve
+            const maxAccel = 2.0; // Strong but stable
+            const accel = thrustPower * maxAccel * rampCurve;
+
+            // Update velocity SMOOTHLY (no jarring)
+            propulsionState.velocityX += thrustDirX * accel;
+            propulsionState.velocityY += thrustDirY * accel;
+
+            // Strong damping for stability (prevents jarring oscillations)
+            const damping = 0.94;
+            propulsionState.velocityX *= damping;
+            propulsionState.velocityY *= damping;
+
+        } else {
+            // NOT HYPERACTIVE: Deceleration phase
+            if (propulsionState.isActive) {
+                propulsionState.isActive = false;
+                propulsionState.rampPhase = 0;
+            }
+
+            // Decelerate smoothly (like car coasting to stop)
+            propulsionState.velocityX *= 0.93;
+            propulsionState.velocityY *= 0.93;
+        }
+
+        // Update position based on velocity
+        propulsionState.positionX += propulsionState.velocityX;
+        propulsionState.positionY += propulsionState.velocityY;
+
+        // Apply rubber band anchor force to position
+        // This creates the tension - position wants to grow, anchor pulls back
+        const anchorPull = 0.08; // Restoring force strength
+        propulsionState.positionX -= propulsionState.positionX * anchorPull;
+        propulsionState.positionY -= propulsionState.positionY * anchorPull;
+
+        return {
+            x: propulsionState.positionX,
+            y: propulsionState.positionY
+        };
+    }
+
+    function applyRubberBandAnchor(offsetX, offsetY, lightMode) {
+        /**
+         * Rubber band physics: pulls prism back to center.
+         * The further from center, the stronger the restoring force (Hooke's law).
+         *
+         * F = -k * displacement
+         *
+         * DARK MODE: Stronger anchor to counteract exponential propulsion
+         * - Creates visible tension against exponential tendril thrust
+         * - Diminishing returns: can pull away but anchor fights back harder
+         * - The ship strains against its chain but cannot escape
+         *
+         * LIGHT MODE: No anchor needed (no propulsion to fight)
+         *
+         * This creates the "chained to a point in space and time" feeling.
+         */
+
+        // Stronger anchor in dark mode to counteract exponential propulsion
+        const k = lightMode ? anchorStrength : anchorStrength * 1.8;
+
+        // Calculate restoring force (towards center)
+        // Force increases linearly with distance (Hooke's law)
+        const restoreX = -offsetX * k;
+        const restoreY = -offsetY * k;
+
+        return { x: restoreX, y: restoreY };
+    }
+
     function updateWind(time) {
         // Random gusts every few seconds
         if (time - windState.gustTime > windState.gustDuration) {
@@ -126,6 +305,113 @@
             z: windState.currentDirection.z * windState.strength * envelope,
             strength: windState.strength * envelope
         };
+    }
+
+    function updateTurbulence(time) {
+        /**
+         * Turbulence system - DARK MODE ONLY
+         *
+         * Simulates aircraft turbulence: periodic, random, infrequent jolts that
+         * jostle the prism off its rotational axis. Creates waves of turbulence
+         * that complement (don't replace) the existing rotation behaviors.
+         *
+         * Think: flying through rough air - sudden jolts, recovery, more jolts
+         */
+
+        // Only activate in dark mode
+        if (isLightMode()) {
+            turbulenceState.active = false;
+            turbulenceState.joltRotX *= 0.8; // Quick decay if switching modes
+            turbulenceState.joltRotY *= 0.8;
+            turbulenceState.joltRotZ *= 0.8;
+            turbulenceState.offsetX *= 0.8;
+            turbulenceState.offsetY *= 0.8;
+            return { rotX: 0, rotY: 0, rotZ: 0, offsetX: 0, offsetY: 0 };
+        }
+
+        // Check if it's time to consider turbulence (completely independent of surges/hyperactivity)
+        if (!turbulenceState.active && time >= turbulenceState.nextCheck) {
+            // Lower chance - turbulence is RARE (20% when checked)
+            if (Math.random() < 0.2) {
+                // TURBULENCE TRIGGERED!
+                turbulenceState.active = true;
+                turbulenceState.startTime = time;
+                turbulenceState.duration = 3 + Math.random() * 5; // 3-8 seconds of sustained jolts
+                turbulenceState.intensity = 0.6 + Math.random() * 0.4; // 0.6-1.0 intensity
+                turbulenceState.lastJoltTime = time;
+            }
+
+            // Schedule next check (20-50 seconds from now - INFREQUENT)
+            turbulenceState.nextCheck = time + 20 + Math.random() * 30;
+        }
+
+        // Apply turbulence jolts if active
+        if (turbulenceState.active) {
+            const elapsed = time - turbulenceState.startTime;
+
+            // End turbulence after duration
+            if (elapsed > turbulenceState.duration) {
+                turbulenceState.active = false;
+                turbulenceState.intensity = 0;
+            } else {
+                // Sustained turbulence: continuous random jolts of varying magnitude
+                // Like flying through asteroid field - constant bumping
+                const timeSinceLastJolt = time - turbulenceState.lastJoltTime;
+
+                // Variable jolt frequency: sometimes rapid fire, sometimes sparse
+                const joltInterval = 0.05 + Math.random() * 0.15; // 50-200ms between jolts
+
+                if (timeSinceLastJolt > joltInterval) {
+                    turbulenceState.lastJoltTime = time;
+
+                    // Mix of small bumps (70%) and larger jolts (30%)
+                    const isLargeJolt = Math.random() < 0.3;
+                    const magnitude = isLargeJolt ?
+                        turbulenceState.intensity * (1.5 + Math.random()) :  // Large jolt: 1.5-2.5x
+                        turbulenceState.intensity * (0.3 + Math.random() * 0.4); // Small bump: 0.3-0.7x
+
+                    // Rotational jolts (spinning off axis)
+                    const joltRotMagnitude = magnitude * (0.015 + Math.random() * 0.02);
+                    turbulenceState.joltRotX += (Math.random() - 0.5) * joltRotMagnitude;
+                    turbulenceState.joltRotY += (Math.random() - 0.5) * joltRotMagnitude;
+                    turbulenceState.joltRotZ += (Math.random() - 0.5) * joltRotMagnitude;
+
+                    // Spatial displacement jolts (fuzzy anchor - actually moves position)
+                    const joltPosMagnitude = magnitude * (10 + Math.random() * 15);
+                    turbulenceState.offsetX += (Math.random() - 0.5) * joltPosMagnitude;
+                    turbulenceState.offsetY += (Math.random() - 0.5) * joltPosMagnitude;
+                }
+
+                // Envelope: fade in/out turbulence intensity over duration
+                const progress = elapsed / turbulenceState.duration;
+                const envelope = Math.sin(progress * Math.PI); // Smooth in, smooth out
+
+                // Apply decay to all jolts (they naturally settle)
+                turbulenceState.joltRotX *= turbulenceState.decay;
+                turbulenceState.joltRotY *= turbulenceState.decay;
+                turbulenceState.joltRotZ *= turbulenceState.decay;
+                turbulenceState.offsetX *= turbulenceState.decay;
+                turbulenceState.offsetY *= turbulenceState.decay;
+
+                return {
+                    rotX: turbulenceState.joltRotX * envelope,
+                    rotY: turbulenceState.joltRotY * envelope,
+                    rotZ: turbulenceState.joltRotZ * envelope,
+                    offsetX: turbulenceState.offsetX * envelope,
+                    offsetY: turbulenceState.offsetY * envelope,
+                    intensity: turbulenceState.intensity * envelope
+                };
+            }
+        }
+
+        // Decay jolts even when not active (smooth return to calm)
+        turbulenceState.joltRotX *= 0.85;
+        turbulenceState.joltRotY *= 0.85;
+        turbulenceState.joltRotZ *= 0.85;
+        turbulenceState.offsetX *= 0.85;
+        turbulenceState.offsetY *= 0.85;
+
+        return { rotX: 0, rotY: 0, rotZ: 0, offsetX: 0, offsetY: 0, intensity: 0 };
     }
 
     // Tendril class for each electric beam
@@ -459,7 +745,7 @@
             }
         }
 
-        draw(shadowPass = false) {
+        draw(shadowPass = false, drawCenterX = centerX, drawCenterY = centerY) {
             // Find intersection with shape in LOCAL space
             // Use 2x4 box in light mode, tetrahedron in dark mode
             const lightMode = isLightMode();
@@ -533,8 +819,8 @@
 
                 // Project to 2D with perspective
                 const perspective = 2 / (2 - worldPos.z * 0.3);
-                const x2D = centerX + worldPos.x * maxRadius * perspective;
-                const y2D = centerY + worldPos.y * maxRadius * perspective * 0.8;
+                const x2D = drawCenterX + worldPos.x * maxRadius * perspective;
+                const y2D = drawCenterY + worldPos.y * maxRadius * perspective * 0.8;
 
                 segments.push({
                     x: x2D,
@@ -804,7 +1090,7 @@
     }
 
     // Draw pyramid edges with illumination
-    function drawPyramidEdges(edges, tendrils, frameCount, shadowPass = false) {
+    function drawPyramidEdges(edges, tendrils, frameCount, shadowPass = false, drawCenterX = centerX, drawCenterY = centerY) {
         ctx.save();
 
         for (let edge of edges) {
@@ -821,10 +1107,10 @@
                 const perspectiveStart = 2 / (2 - rotatedStart.z * 0.3);
                 const perspectiveEnd = 2 / (2 - rotatedEnd.z * 0.3);
 
-                const x1 = centerX + rotatedStart.x * maxRadius * perspectiveStart;
-                const y1 = centerY + rotatedStart.y * maxRadius * perspectiveStart * 0.8;
-                const x2 = centerX + rotatedEnd.x * maxRadius * perspectiveEnd;
-                const y2 = centerY + rotatedEnd.y * maxRadius * perspectiveEnd * 0.8;
+                const x1 = drawCenterX + rotatedStart.x * maxRadius * perspectiveStart;
+                const y1 = drawCenterY + rotatedStart.y * maxRadius * perspectiveStart * 0.8;
+                const x2 = drawCenterX + rotatedEnd.x * maxRadius * perspectiveEnd;
+                const y2 = drawCenterY + rotatedEnd.y * maxRadius * perspectiveEnd * 0.8;
 
                 // Draw edge with illumination-based opacity
                 ctx.beginPath();
@@ -1026,10 +1312,34 @@
         rotVelY = smoothInterpolate(rotVelY, targetVelY, smoothFactor);
         rotVelZ = smoothInterpolate(rotVelZ, targetVelZ, smoothFactor);
 
-        // Apply rotation velocities
-        globalRotX += rotVelX;
-        globalRotY += rotVelY;
-        globalRotZ += rotVelZ;
+        // Check mode once for all physics calculations
+        const lightMode = isLightMode();
+
+        // Update turbulence (dark mode only)
+        const turbulence = updateTurbulence(time);
+
+        // Apply rotation velocities WITH turbulence jolts
+        // Turbulence adds to rotation angles directly (not velocities)
+        // This creates the "jostled off axis" feeling - sudden angular displacement
+        globalRotX += rotVelX + turbulence.rotX;
+        globalRotY += rotVelY + turbulence.rotY;
+        globalRotZ += rotVelZ + turbulence.rotZ;
+
+        // Update propulsion physics (dark mode only)
+        // Car-like acceleration: brief ramp, cruise at offset, decelerate when calm
+        const propulsion = updatePropulsion(tendrils, lightMode);
+
+        // Combine all spatial offsets:
+        // - Turbulence jolts (random bumps - dark mode only)
+        // - Propulsion displacement (sustained pull-away during hyperactivity - dark mode only)
+        const totalOffsetX = turbulence.offsetX + propulsion.x;
+        const totalOffsetY = turbulence.offsetY + propulsion.y;
+
+        // Fuzzy anchoring: Apply combined offsets to center point
+        // The prism can drift away (propulsion + turbulence) but is pulled back (anchor)
+        // Like a ship on a chain - it can move, but there's always tension pulling it back
+        const turbulentCenterX = centerX + totalOffsetX;
+        const turbulentCenterY = centerY + totalOffsetY;
 
         // Update morphing phase
         morphPhase += morphSpeed;
@@ -1100,7 +1410,7 @@
         }
 
         // Get morphed shape edges (2x4 board in light mode, tetrahedron in dark mode)
-        const lightMode = isLightMode();
+        // Reuse lightMode variable already declared above
         const shapeEdges = lightMode ?
             get2x4Edges(0.15) :      // 2x4 board - "We build during the day"
             getPyramidEdges(0.15);   // Tetrahedron - for dark mode
@@ -1110,13 +1420,13 @@
             ctx.save();
             ctx.globalAlpha = 0.5; // Even more subtle overall transparency
 
-            // Draw shadow tendrils
+            // Draw shadow tendrils (light mode uses stable center)
             for (let i = 0; i < tendrils.length; i++) {
-                tendrils[i].draw(true); // shadowPass = true
+                tendrils[i].draw(true, centerX, centerY); // shadowPass = true
             }
 
             // Draw shadow shape edges
-            drawPyramidEdges(shapeEdges, tendrils, frameCount, true); // shadowPass = true
+            drawPyramidEdges(shapeEdges, tendrils, frameCount, true, centerX, centerY); // shadowPass = true
 
             ctx.restore();
         }
@@ -1139,14 +1449,18 @@
             ctx.restore();
         }
 
-        const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreSize * 1.5);
+        // Core uses turbulent center in dark mode, stable center in light mode
+        const coreCenterX = lightMode ? centerX : turbulentCenterX;
+        const coreCenterY = lightMode ? centerY : turbulentCenterY;
+
+        const coreGradient = ctx.createRadialGradient(coreCenterX, coreCenterY, 0, coreCenterX, coreCenterY, coreSize * 1.5);
         coreGradient.addColorStop(0, `rgba(255, 255, 255, ${coreGlow})`);
         coreGradient.addColorStop(0.3, `rgba(200, 255, 200, ${coreGlow * 0.8})`);
         coreGradient.addColorStop(0.6, `rgba(50, 205, 50, ${coreGlow * 0.5})`);
         coreGradient.addColorStop(1, 'rgba(34, 139, 34, 0.05)');
 
         ctx.beginPath();
-        ctx.arc(centerX, centerY, coreSize, 0, Math.PI * 2);
+        ctx.arc(coreCenterX, coreCenterY, coreSize, 0, Math.PI * 2);
         ctx.fillStyle = coreGradient;
         ctx.fill();
 
@@ -1160,12 +1474,13 @@
 
         // Draw shape edges with proximity-based illumination
         // (2x4 board in light mode, tetrahedron in dark mode)
-        drawPyramidEdges(shapeEdges, tendrils, frameCount, false); // shadowPass = false
+        // Use turbulent center in dark mode for jostling effect
+        drawPyramidEdges(shapeEdges, tendrils, frameCount, false, coreCenterX, coreCenterY); // shadowPass = false
         frameCount++;
 
-        // Draw all tendrils
+        // Draw all tendrils with turbulent center
         for (let i = 0; i < tendrils.length; i++) {
-            tendrils[i].draw(false); // shadowPass = false
+            tendrils[i].draw(false, coreCenterX, coreCenterY); // shadowPass = false
         }
 
         // Clean up dead tendrils - aggressive cleanup after surges

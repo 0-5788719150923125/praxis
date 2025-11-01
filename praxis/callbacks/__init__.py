@@ -18,6 +18,7 @@ try:
     from praxis.callbacks.lightning import (
         LIGHTNING_CALLBACK_REGISTRY,
         AccumulationSchedule,
+        DynamicsLoggerCallback,
         MetricsLoggerCallback,
         PeriodicEvaluation,
         TerminalInterface,
@@ -73,6 +74,7 @@ if _HAS_LIGHTNING:
     __all__.extend(
         [
             "AccumulationSchedule",
+            "DynamicsLoggerCallback",
             "MetricsLoggerCallback",
             "PeriodicEvaluation",
             "TerminalInterface",

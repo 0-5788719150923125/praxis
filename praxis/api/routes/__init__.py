@@ -5,6 +5,7 @@ from flask import Flask
 from .agents import agents_bp
 from .core import core_bp
 from .data_metrics import data_metrics_bp
+from .dynamics import dynamics_bp
 from .generation import generation_bp
 from .git import git_bp
 from .metrics import metrics_bp
@@ -23,4 +24,5 @@ def register_routes(app: Flask) -> None:
     app.register_blueprint(git_bp)
     app.register_blueprint(metrics_bp)
     app.register_blueprint(data_metrics_bp)
+    app.register_blueprint(dynamics_bp)
     app.register_blueprint(static_bp)

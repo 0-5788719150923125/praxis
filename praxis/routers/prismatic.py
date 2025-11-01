@@ -297,6 +297,12 @@ class Prismatic(nn.Module):
         # Metrics storage for convergence tracking
         self._metrics = {}
 
+        # Dynamics metrics storage (gradient tracking)
+        self._dynamics_metrics = {}
+
+        # Cache for weight tiers (top/bottom/middle) - computed once during init
+        self._weight_tiers = self._compute_weight_tiers()
+
     def _create_perturbed_experts(self, base_expert: nn.Module) -> List[nn.Module]:
         """
         Create N expert clones from base expert with static perturbations.
@@ -909,9 +915,170 @@ class Prismatic(nn.Module):
             # Silently fail if metric computation fails - don't break training
             pass
 
+    def _compute_weight_tiers(self) -> Dict[str, Dict[str, str]]:
+        """
+        Compute which weights belong to top/bottom/middle tiers for each expert.
+
+        This is done once at initialization based on the perturbation masks used during
+        expert creation. Returns a mapping of expert_idx -> param_name -> tier.
+
+        Tiers:
+        - 'top': Top sparsity/2 weights by magnitude (if dual_sided)
+        - 'bottom': Bottom sparsity/2 weights by magnitude (if dual_sided)
+        - 'middle': Everything else (unperturbed)
+
+        Returns:
+            Dict mapping expert indices to parameter tiers
+        """
+        weight_tiers = {}
+
+        for expert_idx, expert in enumerate(self.experts):
+            tiers = {}
+
+            for param_name, param in expert.named_parameters():
+                if not param.requires_grad:
+                    continue
+
+                # Generate same seed used during perturbation
+                seed = self._generate_seed(expert_idx, param_name)
+                generator = torch.Generator(device=param.device).manual_seed(seed)
+
+                # Recreate the mask to determine tier
+                mask = self._create_sparse_mask(param, generator)
+
+                if expert_idx == 0:
+                    # Expert 0 is always clean - no tiers
+                    tiers[param_name] = 'clean'
+                else:
+                    # For perturbed experts, determine tier based on mask and strategy
+                    if self.perturbation_strategy == 'dual_sided':
+                        # Need to determine if masked weight is top or bottom
+                        # Re-compute top/bottom masks
+                        num_params = param.numel()
+                        num_per_side = max(1, int(num_params * self.sparsity / 2))
+                        flat_param = param.flatten().abs()
+
+                        # Top mask
+                        top_threshold = torch.topk(flat_param, num_per_side).values[-1]
+                        is_top = (flat_param >= top_threshold).reshape(param.shape)
+
+                        # Bottom mask
+                        non_zero_param = flat_param[flat_param > 0]
+                        if len(non_zero_param) >= num_per_side:
+                            bottom_threshold = torch.topk(
+                                non_zero_param, num_per_side, largest=False
+                            ).values[-1]
+                            is_bottom = ((flat_param <= bottom_threshold) & (flat_param > 0)).reshape(param.shape)
+                        else:
+                            is_bottom = (flat_param > 0).reshape(param.shape)
+
+                        # Determine tier
+                        if (mask * is_top).sum() > 0:
+                            tiers[param_name] = 'top'
+                        elif (mask * is_bottom).sum() > 0:
+                            tiers[param_name] = 'bottom'
+                        else:
+                            tiers[param_name] = 'middle'
+                    else:
+                        # For non-dual-sided, just mark as perturbed or middle
+                        if mask.sum() > 0:
+                            tiers[param_name] = 'perturbed'
+                        else:
+                            tiers[param_name] = 'middle'
+
+            weight_tiers[expert_idx] = tiers
+
+        return weight_tiers
+
+    def log_gradient_dynamics(self) -> Optional[Dict]:
+        """
+        Log expert gradient dynamics by weight tier.
+
+        This captures the core question: Do clean vs perturbed experts learn differently?
+        Specifically for dual-sided perturbation: Are bottom weights actually waking up?
+
+        Should be called after backward() but before optimizer.step().
+
+        Returns:
+            Dict with expert gradients by tier, or None if no gradients available
+        """
+        if not hasattr(self, 'experts') or len(self.experts) == 0:
+            return None
+
+        # Check if ANY gradients exist
+        has_any_grads = False
+        for expert in self.experts:
+            for param in expert.parameters():
+                if param.grad is not None:
+                    has_any_grads = True
+                    break
+            if has_any_grads:
+                break
+
+        if not has_any_grads:
+            # No gradients available - backward() wasn't called or gradients were zeroed
+            return None
+
+        expert_grads = {}
+
+        for expert_idx, expert in enumerate(self.experts):
+            # Accumulate gradients by tier
+            tier_grads = {'top': [], 'bottom': [], 'middle': [], 'clean': [], 'perturbed': []}
+
+            for param_name, param in expert.named_parameters():
+                if param.grad is None:
+                    continue
+
+                # Get tier for this parameter
+                tier = self._weight_tiers.get(expert_idx, {}).get(param_name, 'unknown')
+
+                # Compute gradient norm for this parameter
+                grad_norm = param.grad.norm(2).item()
+
+                # Accumulate by tier
+                if tier in tier_grads:
+                    tier_grads[tier].append(grad_norm)
+
+            # Compute mean gradient norm for each tier
+            expert_grad_summary = {}
+            for tier, norms in tier_grads.items():
+                if norms:
+                    expert_grad_summary[f'{tier}_norm'] = sum(norms) / len(norms)
+                    expert_grad_summary[f'{tier}_max'] = max(norms)
+                    expert_grad_summary[f'{tier}_min'] = min(norms)
+
+            expert_grads[f'expert_{expert_idx}'] = expert_grad_summary
+
+        # Calculate divergence between Expert 0 and others
+        divergence_scores = {}
+        if 'expert_0' in expert_grads:
+            clean_norms = expert_grads['expert_0']
+            for expert_idx in range(1, len(self.experts)):
+                perturbed_norms = expert_grads.get(f'expert_{expert_idx}', {})
+
+                # Simple divergence: mean absolute difference across tiers
+                diffs = []
+                for key in ['top_norm', 'bottom_norm', 'middle_norm']:
+                    if key in clean_norms and key in perturbed_norms:
+                        diffs.append(abs(clean_norms[key] - perturbed_norms[key]))
+
+                if diffs:
+                    divergence_scores[f'expert_{expert_idx}_divergence'] = sum(diffs) / len(diffs)
+
+        self._dynamics_metrics = {
+            'expert_gradients': expert_grads,
+            'divergence_scores': divergence_scores
+        }
+
+        return self._dynamics_metrics
+
     def get_metrics(self) -> dict:
         """Return collected metrics for logging."""
         return self._metrics.copy()
+
+    def get_dynamics_metrics(self) -> dict:
+        """Return collected dynamics/gradient metrics for logging."""
+        return self._dynamics_metrics.copy()
 
     def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
         """Check if we're in router mode based on arguments."""

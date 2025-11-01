@@ -88,6 +88,23 @@ export const state = {
             onDeactivate: null
         },
         {
+            id: 'dynamics',
+            label: 'Dynamics',
+            active: false,
+            containerClass: 'dynamics-container',
+            customClasses: ['dynamics-view'],
+            hasCharts: true,  // Uses Chart.js for gradient visualizations
+            template: () => createSimpleTabContent(
+                'dynamics-container',
+                'dynamics-container',
+                'Loading gradient dynamics...'
+            ),
+            onActivate: 'loadDynamics',
+            activateDelay: 0,
+            activateParams: [false],  // Don't force refresh by default
+            onDeactivate: null
+        },
+        {
             id: 'spec',
             label: 'Identity',
             active: false,
@@ -152,6 +169,13 @@ export const state = {
         charts: {},
         etag: null,
         lastStep: 0,
+        error: null
+    },
+
+    // Dynamics/gradient data (loaded async)
+    dynamics: {
+        loaded: false,
+        data: null,
         error: null
     }
 };

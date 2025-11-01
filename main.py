@@ -38,6 +38,7 @@ from praxis import PraxisConfig, PraxisForCausalLM, PraxisModel
 # APIServer is imported locally where needed to avoid starting Flask/SocketIO at import time
 from praxis.callbacks import (
     AccumulationSchedule,
+    DynamicsLoggerCallback,
     MetricsLoggerCallback,
     PeriodicEvaluation,
     SignalHandlerCallback,
@@ -530,6 +531,22 @@ def main():
 
     # Add metrics logger callback for web visualization
     train_params["callbacks"].append(MetricsLoggerCallback(run_dir=cache_dir))
+
+    # Add dynamics logger callback for gradient visualization
+    # Only log if using Prismatic router (has gradient dynamics)
+    if config.router_type == "prismatic":
+        num_experts = getattr(config, 'num_experts', 2)
+        log_freq = 10  # Log gradients every 10 steps (reduce overhead)
+        print(f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq})")
+        train_params["callbacks"].append(
+            DynamicsLoggerCallback(
+                run_dir=cache_dir,
+                num_experts=num_experts,
+                log_freq=log_freq
+            )
+        )
+    else:
+        print(f"[Setup] Skipping DynamicsLoggerCallback (router_type={config.router_type})")
 
     # Add progress bar if not using dashboard
     if progress_bar is not None:

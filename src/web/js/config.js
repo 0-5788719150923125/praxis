@@ -244,7 +244,7 @@ export const extractCommandInfo = (data) => {
 
     const expMatch = command.match(/--([a-z0-9\-]+)/);
     const expName = expMatch ? expMatch[1] : 'reproduce';
-    const configFilename = `./experiments/${expName}.yml`;
+    const configFilename = `experiments/${expName}.yml`;
     const reproduceCommand = command + (command.includes('--reset') ? '' : ' --reset');
 
     return {

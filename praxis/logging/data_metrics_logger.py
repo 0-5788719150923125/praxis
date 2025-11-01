@@ -52,7 +52,7 @@ class DataMetricsLogger:
         self.filepath = self.run_dir / filename
         self.lock = Lock()
         self._write_counter = 0
-        self._commit_interval = 10  # Commit every 10 writes (data metrics are less frequent)
+        self._commit_interval = 5  # Commit every 5 writes (optimized for small models)
 
         # Ensure directory exists
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -134,11 +134,15 @@ class DataMetricsLogger:
                 ),
             )
 
-            # Commit only every N writes to reduce WAL bloat
+            # Commit strategy: commit frequently during early training for immediate dashboard feedback
             self._write_counter += 1
-            if self._write_counter >= self._commit_interval:
+            # First 10 writes: commit every time (for immediate dashboard updates)
+            if self._write_counter <= 10:
                 self.conn.commit()
-                self._write_counter = 0
+            # After that: commit every N writes to balance performance and freshness
+            elif self._write_counter >= self._commit_interval:
+                self.conn.commit()
+                self._write_counter = 10  # Reset but keep the "past first 10" state
 
     def close(self) -> None:
         """Close the database connection."""

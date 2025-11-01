@@ -264,3 +264,12 @@ export async function loadResearchMetrics(force = false) {
     await loadResearchMetricsWithCharts(force);
 }
 
+/**
+ * Load Dynamics/Gradient tab content
+ * Delegates to dynamics.js for full implementation
+ */
+export async function loadDynamics(force = false) {
+    const { loadDynamicsWithCharts } = await import('./dynamics.js');
+    await loadDynamicsWithCharts(force);
+}
+
