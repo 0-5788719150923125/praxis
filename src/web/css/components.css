@@ -1337,18 +1337,21 @@
             0% 0%, 100% 50%, 200% 100%, 0% 200%, 150% 50%,
             0% 50%;
         opacity: 0.6;
+        filter: blur(4px);
     }
     35% {
         background-position:
             50% 30%, 120% 60%, 220% 120%, 30% 220%, 170% 60%,
             70% 50%;
         opacity: 0.7;
+        filter: blur(4.5px);
     }
     70% {
         background-position:
             100% 60%, 140% 70%, 240% 140%, 60% 240%, 190% 70%,
             140% 50%;
         opacity: 0.65;
+        filter: blur(4.2px);
     }
 
     /* Intense burst - brief treat (10% of cycle) */
@@ -1357,12 +1360,14 @@
             150% 90%, 180% 100%, 280% 180%, 90% 280%, 230% 100%,
             170% 50%;
         opacity: 1.0;
+        filter: blur(3px);
     }
     80% {
         background-position:
             250% 150%, 280% 180%, 380% 280%, 150% 380%, 330% 180%,
             220% 50%;
         opacity: 0.95;
+        filter: blur(3.5px);
     }
 
     /* Return to gentle pulse */
@@ -1371,12 +1376,29 @@
             300% 180%, 320% 200%, 420% 320%, 180% 420%, 370% 200%,
             250% 50%;
         opacity: 0.7;
+        filter: blur(4px);
     }
     100% {
         background-position:
             400% 240%, 420% 260%, 520% 400%, 240% 520%, 470% 260%,
             320% 50%;
         opacity: 0.6;
+        filter: blur(4px);
+    }
+}
+
+/* Harmonic resonance - edge breathes with prism's energy */
+@keyframes harmonic-breathe {
+    0%, 100% {
+        box-shadow:
+            0 0 15px rgba(255, 255, 255, 0.6),
+            0 0 30px rgba(255, 255, 255, 0.3);
+    }
+    50% {
+        box-shadow:
+            0 0 20px rgba(255, 255, 255, 0.8),
+            0 0 40px rgba(255, 255, 255, 0.5),
+            0 0 60px rgba(255, 255, 255, 0.2);
     }
 }
 
@@ -1417,25 +1439,14 @@
         7% 7%,
         200% 100%;  /* Current wave - wide to animate smoothly */
 
-    /* Single animation for traveling wave - slow cycle with occasional bursts */
-    animation: current-wave 12s ease-in-out infinite;
+    /* Coordinated animations - current flow and harmonic resonance */
+    animation:
+        current-wave 12s ease-in-out infinite,
+        harmonic-breathe 4s ease-in-out infinite;
 
-    /* Gradient mask - fade perpendicular to edge (outward diffusion) */
-    mask-image: linear-gradient(to right,
-        transparent 0%,
-        rgba(0,0,0,0.2) 10%,
-        rgba(0,0,0,0.6) 30%,
-        black 50%,
-        rgba(0,0,0,0.6) 70%,
-        rgba(0,0,0,0.2) 90%,
-        transparent 100%
-    );
+    /* Mask set dynamically via JS - anchored at prism center */
 
-    filter: blur(4px);
-    box-shadow:
-        0 0 15px rgba(255, 255, 255, 0.6),
-        0 0 30px rgba(255, 255, 255, 0.3);
-    will-change: clip-path;
+    will-change: clip-path, filter, box-shadow;
     transform: translateZ(0);
     backface-visibility: hidden;
 }

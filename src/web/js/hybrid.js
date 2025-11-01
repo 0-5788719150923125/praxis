@@ -286,7 +286,7 @@ function updateEdgeBand(triangle) {
     const bandClip = `polygon(${p1.x}px ${p1.y}px, ${p2.x}px ${p2.y}px, ${p3.x}px ${p3.y}px, ${p4.x}px ${p4.y}px)`;
     edgeBand.style.clipPath = bandClip;
 
-    // Calculate prism center position for intensity correlation
+    // Calculate prism center position - anchor point for edge band
     const geom = window.prismGeometry;
     if (geom) {
         const canvas = document.getElementById('prism-canvas');
@@ -305,7 +305,27 @@ function updateEdgeBand(triangle) {
             const prismScreenX = canvasScreenX + drawCenterX * scale;
             const prismScreenY = canvasScreenY + drawCenterY * scale;
 
-            // Set CSS custom properties for radial gradient center
+            // Add radial mask centered at prism - only show band emanating FROM this point
+            const maskRadius = Math.max(vw, vh) * 1.5; // Large enough to cover viewport
+            edgeBand.style.maskImage = `
+                radial-gradient(circle at ${prismScreenX}px ${prismScreenY}px,
+                    black 0px,
+                    black ${maskRadius}px
+                ),
+                linear-gradient(to right,
+                    transparent 0%,
+                    rgba(0,0,0,0.2) 10%,
+                    rgba(0,0,0,0.6) 30%,
+                    black 50%,
+                    rgba(0,0,0,0.6) 70%,
+                    rgba(0,0,0,0.2) 90%,
+                    transparent 100%
+                )
+            `;
+            edgeBand.style.maskComposite = 'intersect';
+            edgeBand.style.webkitMaskComposite = 'source-in';
+
+            // Set CSS custom properties for gradient center
             edgeBand.style.setProperty('--prism-x', `${prismScreenX}px`);
             edgeBand.style.setProperty('--prism-y', `${prismScreenY}px`);
         }

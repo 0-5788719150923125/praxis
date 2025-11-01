@@ -108,14 +108,14 @@ export const ACTION_HANDLERS = {
 
     /**
      * Toggle theme between light and dark
-     * 25% chance to trigger hybrid "split-reality" mode
+     * 10% chance to trigger hybrid "split-reality" mode
      */
     TOGGLE_THEME: () => {
         const oldTheme = state.theme;
         const oldHybrid = state.isHybridMode;
 
-        // 25% chance to enter hybrid mode (only when switching to dark)
-        const willEnterHybrid = Math.random() < 0.25;
+        // 10% chance to enter hybrid mode (only when switching to dark)
+        const willEnterHybrid = Math.random() < 0.1;
 
         if (state.theme === 'light' && willEnterHybrid) {
             // Entering hybrid mode - dark base with light split
