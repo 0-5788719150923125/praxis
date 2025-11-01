@@ -241,6 +241,7 @@ function updateHybridClipping() {
 
 /**
  * Update edge band to follow splitting line with narrow projected band
+ * Intensity centered on prism position
  */
 function updateEdgeBand(triangle) {
     if (!edgeBand) return;
@@ -260,8 +261,8 @@ function updateEdgeBand(triangle) {
     const perpX = -dy / len;
     const perpY = dx / len;
 
-    // Band width (pixels on each side of line) - core is smaller, extended for energy fade
-    const bandWidth = 35; // Wider for energy particles, but core is only ~12px
+    // Band width (pixels on each side of line) - narrow energy emission
+    const bandWidth = 17.5; // 50% reduction - tight, focused edge glow
 
     // Create polygon for narrow band around the line
     const p1 = {
@@ -284,6 +285,31 @@ function updateEdgeBand(triangle) {
     // Create clip-path for the narrow band
     const bandClip = `polygon(${p1.x}px ${p1.y}px, ${p2.x}px ${p2.y}px, ${p3.x}px ${p3.y}px, ${p4.x}px ${p4.y}px)`;
     edgeBand.style.clipPath = bandClip;
+
+    // Calculate prism center position for intensity correlation
+    const geom = window.prismGeometry;
+    if (geom) {
+        const canvas = document.getElementById('prism-canvas');
+        if (canvas) {
+            const canvasRect = canvas.getBoundingClientRect();
+            const canvasScreenX = canvasRect.left;
+            const canvasScreenY = canvasRect.top;
+            const canvasDisplaySize = 140;
+            const scale = canvasRect.width / canvasDisplaySize;
+
+            // Use turbulent center if available (dark mode), otherwise stable center
+            const drawCenterX = geom.turbulentCenterX !== undefined ? geom.turbulentCenterX : geom.centerX;
+            const drawCenterY = geom.turbulentCenterY !== undefined ? geom.turbulentCenterY : geom.centerY;
+
+            // Convert to screen coordinates
+            const prismScreenX = canvasScreenX + drawCenterX * scale;
+            const prismScreenY = canvasScreenY + drawCenterY * scale;
+
+            // Set CSS custom properties for radial gradient center
+            edgeBand.style.setProperty('--prism-x', `${prismScreenX}px`);
+            edgeBand.style.setProperty('--prism-y', `${prismScreenY}px`);
+        }
+    }
 }
 
 /**

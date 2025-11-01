@@ -1328,21 +1328,70 @@
 
 }
 
-/* Lightsaber energy emission along edge */
-@keyframes energy-flow-1 {
-    from { background-position: 0% 0%, 100% 50%, 200% 100%, 0% 200%, 150% 50%; }
-    to { background-position: 500% 300%, -200% 350%, 600% 400%, 400% 600%, 550% 350%; }
-}
 
-@keyframes energy-flow-2 {
-    from { background-position: 100% 100%, 0% 50%, 300% 0%, 200% 300%, 50% 150%; }
-    to { background-position: -300% 400%, 400% 450%, -200% 300%, 600% 700%, 450% 550%; }
+/* Electric current - mostly slow pulses, occasional bursts */
+@keyframes current-wave {
+    /* Slow, gentle pulse - 70% of the time */
+    0% {
+        background-position:
+            0% 0%, 100% 50%, 200% 100%, 0% 200%, 150% 50%,
+            0% 50%;
+        opacity: 0.6;
+    }
+    35% {
+        background-position:
+            50% 30%, 120% 60%, 220% 120%, 30% 220%, 170% 60%,
+            70% 50%;
+        opacity: 0.7;
+    }
+    70% {
+        background-position:
+            100% 60%, 140% 70%, 240% 140%, 60% 240%, 190% 70%,
+            140% 50%;
+        opacity: 0.65;
+    }
+
+    /* Intense burst - brief treat (10% of cycle) */
+    75% {
+        background-position:
+            150% 90%, 180% 100%, 280% 180%, 90% 280%, 230% 100%,
+            170% 50%;
+        opacity: 1.0;
+    }
+    80% {
+        background-position:
+            250% 150%, 280% 180%, 380% 280%, 150% 380%, 330% 180%,
+            220% 50%;
+        opacity: 0.95;
+    }
+
+    /* Return to gentle pulse */
+    85% {
+        background-position:
+            300% 180%, 320% 200%, 420% 320%, 180% 420%, 370% 200%,
+            250% 50%;
+        opacity: 0.7;
+    }
+    100% {
+        background-position:
+            400% 240%, 420% 260%, 520% 400%, 240% 520%, 470% 260%,
+            320% 50%;
+        opacity: 0.6;
+    }
 }
 
 /* Narrow edge band - lightsaber energy effect */
 .edge-band {
-    /* Core glow */
+    /* Core glow with traveling current wave */
     background:
+        /* Intensity correlation with prism center - brightest at origin */
+        radial-gradient(circle at var(--prism-x, 50%) var(--prism-y, 50%),
+            rgba(255,255,255,0.8) 0%,
+            rgba(255,255,255,0.5) 200px,
+            rgba(255,255,255,0.2) 400px,
+            transparent 600px
+        ),
+
         /* Fast-moving energy particles - tiny, rapid */
         radial-gradient(circle at 15% 22%, rgba(255,255,255,0.9) 0%, transparent 1.5%),
         radial-gradient(circle at 45% 67%, rgba(255,255,255,0.95) 0%, transparent 1.2%),
@@ -1350,27 +1399,26 @@
         radial-gradient(circle at 33% 89%, rgba(255,255,255,0.92) 0%, transparent 1.3%),
         radial-gradient(circle at 91% 12%, rgba(255,255,255,0.88) 0%, transparent 1.6%),
 
-        /* Base energy glow */
-        linear-gradient(to right,
-            transparent 0%,
-            rgba(255,255,255,0.15) 20%,
-            rgba(255,255,255,0.4) 50%,
-            rgba(255,255,255,0.15) 80%,
-            transparent 100%
+        /* Traveling sine wave - repeating pattern along edge */
+        repeating-linear-gradient(90deg,
+            rgba(255,255,255,0.9) 0%,
+            rgba(100,100,100,0.3) 5%,
+            rgba(255,255,255,0.9) 10%,
+            rgba(100,100,100,0.3) 15%,
+            rgba(255,255,255,0.9) 20%
         );
 
     background-size:
-        8% 8%,   /* Tiny particles */
+        100% 100%,  /* Prism-centered radial gradient */
+        8% 8%,      /* Tiny particles */
         7% 7%,
         9% 9%,
         8% 8%,
         7% 7%,
-        100% 100%;
+        200% 100%;  /* Current wave - wide to animate smoothly */
 
-    /* Animate particles flying through */
-    animation:
-        energy-flow-1 8s linear infinite,
-        energy-flow-2 6s linear infinite;
+    /* Single animation for traveling wave - slow cycle with occasional bursts */
+    animation: current-wave 12s ease-in-out infinite;
 
     /* Gradient mask - fade perpendicular to edge (outward diffusion) */
     mask-image: linear-gradient(to right,
