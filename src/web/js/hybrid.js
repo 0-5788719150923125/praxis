@@ -10,7 +10,6 @@
 let isActive = false;
 let animationFrameId = null;
 let hybridLayer = null;
-let edgeBand = null;
 
 /**
  * Start hybrid mode rendering
@@ -25,9 +24,6 @@ export function startHybridMode() {
 
     // Create the hybrid layer (light theme overlay)
     createHybridLayer();
-
-    // Create edge band
-    createEdgeBand();
 
     // Start the animation loop
     updateHybridClipping();
@@ -60,12 +56,6 @@ export function stopHybridMode() {
     if (hybridLayer) {
         hybridLayer.remove();
         hybridLayer = null;
-    }
-
-    // Remove edge band
-    if (edgeBand) {
-        edgeBand.remove();
-        edgeBand = null;
     }
 }
 
@@ -184,29 +174,6 @@ function syncHybridContent() {
 }
 
 /**
- * Create narrow edge band element
- */
-function createEdgeBand() {
-    if (edgeBand) {
-        edgeBand.remove();
-    }
-
-    edgeBand = document.createElement('div');
-    edgeBand.className = 'edge-band';
-    edgeBand.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        pointer-events: none;
-        z-index: 1000;
-    `;
-
-    document.body.appendChild(edgeBand);
-}
-
-/**
  * Animation loop - update clipping based on tetrahedron rotation
  */
 function updateHybridClipping() {
@@ -223,113 +190,15 @@ function updateHybridClipping() {
     const splittingFace = projectSplittingFace(geom);
 
     // Calculate clip paths for both layers
-    const { lightClip } = calculateClipPaths(splittingFace);
+    const { darkClip, lightClip } = calculateClipPaths(splittingFace);
 
-    // Apply clipping to light overlay
+    // Apply clipping to entire overlay (simpler and more consistent)
     if (hybridLayer) {
         hybridLayer.style.clipPath = lightClip;
     }
 
-    // Update edge band to follow the splitting line
-    if (edgeBand && splittingFace.length >= 2) {
-        updateEdgeBand(splittingFace);
-    }
-
     // Continue animation
     animationFrameId = requestAnimationFrame(updateHybridClipping);
-}
-
-/**
- * Update edge band to follow splitting line with narrow projected band
- * Intensity centered on prism position
- */
-function updateEdgeBand(triangle) {
-    if (!edgeBand) return;
-
-    const apex = triangle[0];
-    const back = triangle[1];
-
-    // Extend line to viewport boundaries
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const extendedLine = extendLineToViewport(apex, back, vw, vh);
-
-    // Calculate perpendicular direction for band width
-    const dx = extendedLine.end.x - extendedLine.start.x;
-    const dy = extendedLine.end.y - extendedLine.start.y;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    const perpX = -dy / len;
-    const perpY = dx / len;
-
-    // Band width (pixels on each side of line) - narrow energy emission
-    const bandWidth = 17.5; // 50% reduction - tight, focused edge glow
-
-    // Create polygon for narrow band around the line
-    const p1 = {
-        x: extendedLine.start.x + perpX * bandWidth,
-        y: extendedLine.start.y + perpY * bandWidth
-    };
-    const p2 = {
-        x: extendedLine.end.x + perpX * bandWidth,
-        y: extendedLine.end.y + perpY * bandWidth
-    };
-    const p3 = {
-        x: extendedLine.end.x - perpX * bandWidth,
-        y: extendedLine.end.y - perpY * bandWidth
-    };
-    const p4 = {
-        x: extendedLine.start.x - perpX * bandWidth,
-        y: extendedLine.start.y - perpY * bandWidth
-    };
-
-    // Create clip-path for the narrow band
-    const bandClip = `polygon(${p1.x}px ${p1.y}px, ${p2.x}px ${p2.y}px, ${p3.x}px ${p3.y}px, ${p4.x}px ${p4.y}px)`;
-    edgeBand.style.clipPath = bandClip;
-
-    // Calculate prism center position - anchor point for edge band
-    const geom = window.prismGeometry;
-    if (geom) {
-        const canvas = document.getElementById('prism-canvas');
-        if (canvas) {
-            const canvasRect = canvas.getBoundingClientRect();
-            const canvasScreenX = canvasRect.left;
-            const canvasScreenY = canvasRect.top;
-            const canvasDisplaySize = 140;
-            const scale = canvasRect.width / canvasDisplaySize;
-
-            // Use turbulent center if available (dark mode), otherwise stable center
-            const drawCenterX = geom.turbulentCenterX !== undefined ? geom.turbulentCenterX : geom.centerX;
-            const drawCenterY = geom.turbulentCenterY !== undefined ? geom.turbulentCenterY : geom.centerY;
-
-            // Convert to screen coordinates
-            const prismScreenX = canvasScreenX + drawCenterX * scale;
-            const prismScreenY = canvasScreenY + drawCenterY * scale;
-
-            // Add radial mask centered at prism - only show band emanating FROM this point
-            const maskRadius = Math.max(vw, vh) * 1.5; // Large enough to cover viewport
-            edgeBand.style.maskImage = `
-                radial-gradient(circle at ${prismScreenX}px ${prismScreenY}px,
-                    black 0px,
-                    black ${maskRadius}px
-                ),
-                linear-gradient(to right,
-                    transparent 0%,
-                    rgba(0,0,0,0.2) 10%,
-                    rgba(0,0,0,0.6) 30%,
-                    black 50%,
-                    rgba(0,0,0,0.6) 70%,
-                    rgba(0,0,0,0.2) 90%,
-                    transparent 100%
-                )
-            `;
-            edgeBand.style.maskComposite = 'intersect';
-            edgeBand.style.webkitMaskComposite = 'source-in';
-
-            // Set CSS custom properties for gradient center
-            edgeBand.style.setProperty('--prism-x', `${prismScreenX}px`);
-            edgeBand.style.setProperty('--prism-y', `${prismScreenY}px`);
-        }
-    }
 }
 
 /**
