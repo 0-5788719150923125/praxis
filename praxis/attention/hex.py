@@ -221,13 +221,16 @@ class HexAttention(nn.Module):
         # Following official PyTorch FlexAttention blog pattern
         alibi_bias = self.alibi_slopes.to(inputs.device)
 
+        # Convert seq_len to tensor with dtype for PyTorch inductor compatibility
+        seq_len_tensor = torch.tensor(seq_len, device=inputs.device, dtype=torch.int32)
+
         def alibi_score_mod(score, b, h, q_idx, kv_idx):
             """
             Apply ALiBi positional bias to attention scores.
             Ghost token at kv_idx==seq_len receives no bias (keeps score at 0).
             """
             # Apply bias only to non-ghost tokens (kv_idx < seq_len)
-            bias = alibi_bias[h] * (kv_idx - q_idx) * (kv_idx < seq_len)
+            bias = alibi_bias[h] * (kv_idx - q_idx) * (kv_idx < seq_len_tensor)
             return score + bias
 
         # Apply FlexAttention with causal mask, ALiBi, and GQA support

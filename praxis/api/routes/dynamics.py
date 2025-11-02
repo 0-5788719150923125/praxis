@@ -227,6 +227,12 @@ def _read_dynamics_from_db(
             if routing_data:
                 metrics.update(routing_data)
 
+        # Add sequential pi digits for each step (for radial visualization)
+        metrics['pi_digit_at_step'] = [
+            get_pi_digit_at(step) if step >= 0 else None
+            for step in metrics['step']
+        ]
+
         return {
             "metrics": metrics,
             "num_points": len(rows),
