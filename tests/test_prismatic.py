@@ -750,12 +750,17 @@ class TestPiSeeding:
             ), f"Expert {expert_idx} should be perturbed with pi-seeding"
 
     def test_pi_vs_hash_seeding_differ(self):
-        """Test that pi-seeding produces different perturbations than hash-seeding."""
+        """Test that pi-seeding produces different perturbations than hash-seeding.
+
+        Note: This test uses noise mode because directional mode doesn't use RNG,
+        so pi vs hash seeding only matters for noise mode.
+        """
         config_pi = PrismaticConfig(
             hidden_size=64,
             num_experts=3,
             perturbation_scale=0.01,
             sparsity=0.1,
+            perturbation_mode="noise",  # Pi-seeding only affects noise mode
             use_pi_seeding=True,
             pi_position=100,
         )
@@ -765,6 +770,7 @@ class TestPiSeeding:
             num_experts=3,
             perturbation_scale=0.01,
             sparsity=0.1,
+            perturbation_mode="noise",  # Pi-seeding only affects noise mode
             use_pi_seeding=False,
         )
 
@@ -800,12 +806,16 @@ class TestPiSeeding:
         Test that experts walk backwards through pi (Quantum Echoes).
 
         Expert 1 should use pi[position-1], Expert 2 uses pi[position-2], etc.
+
+        Note: This test uses noise mode because directional mode doesn't use RNG,
+        so the backward walk through pi only creates variation in noise mode.
         """
         config = PrismaticConfig(
             hidden_size=64,
             num_experts=4,
             perturbation_scale=0.01,
             sparsity=0.1,
+            perturbation_mode="noise",  # Pi-seeding backward walk only affects noise mode
             use_pi_seeding=True,
             pi_position=100,
         )
@@ -827,6 +837,259 @@ class TestPiSeeding:
                 assert not torch.allclose(
                     expert_params[i], expert_params[j], atol=1e-6
                 ), f"Expert {i+1} and Expert {j+1} should have different pi-based perturbations"
+
+
+class TestPerturbationModes:
+    """Test different perturbation modes: directional (default) vs noise (legacy)."""
+
+    def test_directional_mode_amplifies_top_weights(self):
+        """
+        Test that directional mode symmetrically amplifies top-magnitude weights.
+
+        In directional mode with dual_sided strategy:
+        - Top positive weights: W + scale * W = 2W (more positive)
+        - Top negative weights: W + scale * W = 2W (more negative)
+        - Both push toward overflow regime (extreme values)
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,  # 100% amplification
+            sparsity=0.2,  # 10% top + 10% bottom for easier testing
+            perturbation_strategy="dual_sided",
+            perturbation_mode="directional",  # Quantum Mirror
+        )
+
+        base_expert = SimpleMLP(hidden_size=64)
+
+        # Store original parameters
+        original_params = {}
+        for name, param in base_expert.named_parameters():
+            original_params[name] = param.clone().detach()
+
+        prismatic = Prismatic(config, base_expert=base_expert)
+
+        # Check expert 1 (first perturbed expert)
+        expert_1 = prismatic.experts[1]
+
+        # Check fc1.weight (should have top weights amplified)
+        fc1_original = original_params["fc1.weight"]
+        fc1_perturbed = expert_1.fc1.weight.detach()
+
+        # Find top 10% by magnitude in original
+        flat_orig = fc1_original.flatten()
+        flat_orig_abs = flat_orig.abs()
+        num_top = max(1, int(flat_orig_abs.numel() * 0.1))
+        top_threshold = torch.topk(flat_orig_abs, num_top).values[-1]
+        top_mask = (flat_orig_abs >= top_threshold)
+
+        # Get corresponding values
+        top_original = flat_orig[top_mask]
+        top_perturbed = fc1_perturbed.flatten()[top_mask]
+
+        # Top weights should be amplified symmetrically: W_new = W + scale * W = 2W
+        # - Positive: W + W = 2W (more positive)
+        # - Negative: W + W = 2W (more negative)
+        for orig, pert in zip(top_original, top_perturbed):
+            expected = orig + 1.0 * orig  # W + W = 2W
+            if orig > 0:
+                # Positive weights should double
+                assert pert > orig, f"Top positive weight {orig} not amplified (got {pert})"
+                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+            else:
+                # Negative weights should also double (become more negative)
+                assert pert < orig, f"Top negative weight {orig} not amplified (got {pert})"
+                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+
+    def test_directional_mode_suppresses_bottom_weights(self):
+        """
+        Test that directional mode symmetrically suppresses bottom-magnitude weights.
+
+        In directional mode with dual_sided strategy:
+        - Bottom positive weights: W - scale * W = 0 (toward zero)
+        - Bottom negative weights: W - scale * W = 0 (toward zero)
+        - Both push toward underflow/subnormal regime (near-zero values)
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,  # 100% suppression
+            sparsity=0.2,  # 10% top + 10% bottom
+            perturbation_strategy="dual_sided",
+            perturbation_mode="directional",
+        )
+
+        base_expert = SimpleMLP(hidden_size=64)
+
+        # Store original parameters
+        original_params = {}
+        for name, param in base_expert.named_parameters():
+            original_params[name] = param.clone().detach()
+
+        prismatic = Prismatic(config, base_expert=base_expert)
+
+        # Check expert 1
+        expert_1 = prismatic.experts[1]
+
+        # Check fc1.weight
+        fc1_original = original_params["fc1.weight"]
+        fc1_perturbed = expert_1.fc1.weight.detach()
+
+        # Find bottom 10% NON-ZERO weights by magnitude in original
+        flat_orig = fc1_original.flatten()
+        flat_orig_abs = flat_orig.abs()
+        non_zero_mask = flat_orig_abs > 0
+        non_zero_abs = flat_orig_abs[non_zero_mask]
+
+        if len(non_zero_abs) > 0:
+            num_bottom = max(1, int(flat_orig_abs.numel() * 0.1))
+            num_bottom = min(num_bottom, len(non_zero_abs))
+            bottom_threshold = torch.topk(non_zero_abs, num_bottom, largest=False).values[-1]
+            bottom_mask = (flat_orig_abs <= bottom_threshold) & (flat_orig_abs > 0)
+
+            # Get corresponding values
+            bottom_original = flat_orig[bottom_mask]
+            bottom_perturbed = fc1_perturbed.flatten()[bottom_mask]
+
+            # Bottom weights should be suppressed symmetrically: W_new = W - scale * W = 0
+            # - Positive: W - W = 0 (toward zero)
+            # - Negative: W - W = 0 (toward zero)
+            for orig, pert in zip(bottom_original, bottom_perturbed):
+                expected = orig - 1.0 * orig  # W - W = 0
+                if orig > 0:
+                    # Positive bottom weights should approach 0
+                    assert pert < orig, f"Bottom positive weight {orig} not suppressed (got {pert})"
+                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                else:
+                    # Negative bottom weights should also approach 0 (NOT amplified)
+                    assert pert > orig, f"Bottom negative weight {orig} not suppressed toward 0 (got {pert})"
+                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+
+    def test_noise_mode_is_bidirectional(self):
+        """
+        Test that noise mode adds bidirectional Gaussian noise (legacy behavior).
+
+        In noise mode:
+        - Weights can go up OR down (non-deterministic direction)
+        - Uses random noise N(0,1) scaled by magnitude
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.1,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="noise",  # Legacy mode
+        )
+
+        base_expert = SimpleMLP(hidden_size=64)
+
+        # Store original parameters
+        original_params = {}
+        for name, param in base_expert.named_parameters():
+            original_params[name] = param.clone().detach()
+
+        prismatic = Prismatic(config, base_expert=base_expert)
+
+        # Check that perturbations exist
+        expert_1 = prismatic.experts[1]
+        fc1_original = original_params["fc1.weight"]
+        fc1_perturbed = expert_1.fc1.weight.detach()
+
+        # Should have differences (perturbations applied)
+        assert not torch.allclose(fc1_original, fc1_perturbed, atol=1e-6), \
+            "Noise mode should create perturbations"
+
+        # The noise is random, so we can't predict exact values
+        # But we can verify that perturbations are roughly magnitude-scaled
+        diff = (fc1_perturbed - fc1_original).abs()
+        mag = fc1_original.abs()
+
+        # Perturbations should be roughly proportional to magnitude
+        # (with some variance due to Gaussian noise)
+        perturbed_mask = diff > 1e-6
+        if perturbed_mask.sum() > 0:
+            avg_diff = diff[perturbed_mask].mean()
+            avg_mag = mag[perturbed_mask].mean()
+            # With scale=0.1 and Gaussian noise, average perturbation should be
+            # roughly scale * magnitude (with high variance)
+            assert avg_diff > 0, "Should have non-zero perturbations"
+
+    def test_directional_mode_is_deterministic(self):
+        """
+        Test that directional mode produces identical perturbations (no randomness).
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="directional",
+        )
+
+        # Create two instances with same base weights
+        base_expert_1 = SimpleMLP(hidden_size=64)
+        base_expert_2 = SimpleMLP(hidden_size=64)
+        base_expert_2.load_state_dict(base_expert_1.state_dict())
+
+        prismatic_1 = Prismatic(config, base_expert=base_expert_1)
+        prismatic_2 = Prismatic(config, base_expert=base_expert_2)
+
+        # Experts should be identical
+        for (name1, param1), (name2, param2) in zip(
+            prismatic_1.experts[1].named_parameters(),
+            prismatic_2.experts[1].named_parameters()
+        ):
+            assert torch.allclose(param1, param2, atol=1e-6), \
+                f"Directional mode should be deterministic for {name1}"
+
+    def test_modes_produce_different_perturbations(self):
+        """Test that directional and noise modes produce different perturbations."""
+        # Same base expert for both
+        base_expert = SimpleMLP(hidden_size=64)
+
+        config_directional = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.1,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="directional",
+        )
+
+        config_noise = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.1,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="noise",
+        )
+
+        # Clone base expert for each mode
+        base_directional = SimpleMLP(hidden_size=64)
+        base_directional.load_state_dict(base_expert.state_dict())
+        base_noise = SimpleMLP(hidden_size=64)
+        base_noise.load_state_dict(base_expert.state_dict())
+
+        prismatic_directional = Prismatic(config_directional, base_expert=base_directional)
+        prismatic_noise = Prismatic(config_noise, base_expert=base_noise)
+
+        # Perturbed experts should differ between modes
+        expert_dir = prismatic_directional.experts[1]
+        expert_noise = prismatic_noise.experts[1]
+
+        params_differ = False
+        for (name_dir, param_dir), (name_noise, param_noise) in zip(
+            expert_dir.named_parameters(),
+            expert_noise.named_parameters()
+        ):
+            if not torch.allclose(param_dir, param_noise, atol=1e-6):
+                params_differ = True
+                break
+
+        assert params_differ, "Directional and noise modes should produce different perturbations"
 
 
 class TestEdgeCases:

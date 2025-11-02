@@ -181,6 +181,14 @@ class PrismaticConfig:
             - "top_only": Top sparsity by magnitude (original approach)
             - "bottom_only": Bottom sparsity by magnitude
             - "random": Random sparsity selection
+        perturbation_mode: Mode for applying perturbations (default: "directional")
+            - "directional": Quantum mirror - symmetric precision regime exploration (DEFAULT)
+                Top weights: W + scale * W (amplify to extremes, both + and -)
+                Bottom weights: W - scale * W (suppress toward 0, both + and -)
+                Explores all floating-point precision regimes symmetrically
+            - "noise": Bidirectional Gaussian noise (legacy mode)
+                Top weights: W + scale * |W| * N(0,1)
+                Bottom weights: W + scale * |W| * N(0,1)
         dropout: Dropout probability for expert dropout during training
         use_pi_seeding: If True, use pi-digits for seeding (Quantum Echoes); else use hash
         pi_position: Starting position in pi's digit sequence (default: 100000)
@@ -188,10 +196,11 @@ class PrismaticConfig:
 
     hidden_size: int
     num_experts: int
-    perturbation_scale: float = 1.0
+    perturbation_scale: float = 1.1
     sparsity: float = 0.1
     perturb_by_magnitude: bool = True
     perturbation_strategy: str = "dual_sided"
+    perturbation_mode: str = "directional"
     dropout: float = 0.1
     use_pi_seeding: bool = True
     pi_position: int = 100000
@@ -209,10 +218,29 @@ class Prismatic(nn.Module):
     - Experts 1..N (the "left eye(s)"): Statically perturbed - forced alternative realities
 
     The perturbations are:
-    - Deterministic (hash-based seeding for reproducibility)
-    - Sparse (only k% of weights, focusing on high-magnitude parameters)
+    - Deterministic (pi-digit or hash-based seeding for reproducibility)
+    - Sparse (only k% of weights, focusing on high/low-magnitude parameters)
     - Static (not trainable - architectural constraints, not optimization targets)
     - Magnitude-aware (scaled by existing weight magnitudes)
+
+    Perturbation Modes:
+    ------------------
+    1. "directional" mode (DEFAULT - Quantum Mirror):
+       - Applies opposing directional perturbations
+       - Top 5%: W + scale * W (systematically amplified to extremes)
+         - Positive → more positive (overflow regime)
+         - Negative → more negative (overflow regime)
+       - Bottom 5%: W - scale * W (systematically suppressed toward zero)
+         - Positive → toward 0 (underflow/subnormal regime)
+         - Negative → toward 0 (underflow/subnormal regime)
+       - Explores ALL floating-point precision regimes symmetrically
+       - Deterministic - no random noise
+
+    2. "noise" mode (legacy):
+       - Adds bidirectional Gaussian noise to selected weights
+       - Top 5%: W + scale * |W| * N(0,1) (can go up or down)
+       - Bottom 5%: W + scale * |W| * N(0,1) (can go up or down)
+       - Creates architectural chaos at both numerical extremes
 
     Why Static Perturbations?
     ------------------------
@@ -257,6 +285,7 @@ class Prismatic(nn.Module):
         self.perturbation_strategy = getattr(
             config, "perturbation_strategy", "dual_sided"
         )
+        self.perturbation_mode = getattr(config, "perturbation_mode", "directional")
         self.dropout_rate = getattr(config, "dropout", 0.1)
         self.use_pi_seeding = getattr(config, "use_pi_seeding", True)
         self.pi_position = getattr(config, "pi_position", 100000)
@@ -460,6 +489,10 @@ class Prismatic(nn.Module):
            - Creates symmetry in exploration of the computational substrate
            - May activate dormant pathways suppressed during training
 
+           Perturbation modes:
+           - "noise": Both top and bottom get bidirectional noise
+           - "directional": Top amplified (+), bottom suppressed (-) - Quantum Mirror
+
         2. Top-only: Perturb top-k% by absolute magnitude (original approach)
            - Targets the "lottery tickets" - most critical parameters
            - Maximum impact through exponential cascade amplification
@@ -483,12 +516,16 @@ class Prismatic(nn.Module):
             generator: Seeded random generator for reproducibility
 
         Returns:
-            Binary mask (1 = perturb, 0 = keep original)
+            Tiered mask for directional mode:
+                +1.0 = Top tier (amplify in directional mode)
+                -1.0 = Bottom tier (suppress in directional mode)
+                0.0 = Middle tier (unchanged)
+            For noise mode, absolute value is used (binary mask).
         """
         num_params = param.numel()
 
         if not self.perturb_by_magnitude or self.perturbation_strategy == "random":
-            # Random selection strategy
+            # Random selection strategy - binary mask (no tiers)
             num_perturbed = max(1, int(num_params * self.sparsity))
             mask = torch.zeros_like(param)
             flat_mask = mask.flatten()
@@ -506,13 +543,14 @@ class Prismatic(nn.Module):
 
             # Top side: Highest magnitude weights
             # These are the "lottery tickets" - high impact through exponential cascade
+            # For directional mode: these will be AMPLIFIED (+1)
             top_threshold = torch.topk(flat_param, num_per_side).values[-1]
             top_mask = (flat_param >= top_threshold).float()
 
             # Bottom side: Lowest magnitude NON-ZERO weights
             # These live in the fine-grained precision regime
             # Near activation thresholds - small perturbations can flip dead->alive
-            # May contain suppressed but useful patterns
+            # For directional mode: these will be SUPPRESSED (-1)
             non_zero_param = flat_param[flat_param > 0]
             if len(non_zero_param) >= num_per_side:
                 # Use topk with largest=False to get smallest values
@@ -526,17 +564,18 @@ class Prismatic(nn.Module):
                 # Not enough non-zero weights, just use what we have
                 bottom_mask = (flat_param > 0).float()
 
-            # Combine both sides (clamp to handle any overlap)
-            mask = (top_mask + bottom_mask).clamp(0, 1).reshape(param.shape)
+            # Create signed tiered mask:
+            # +1 for top tier (amplify), -1 for bottom tier (suppress), 0 for middle
+            mask = (top_mask - bottom_mask).reshape(param.shape)
 
         elif self.perturbation_strategy == "top_only":
-            # Original approach: Top-k by magnitude only
+            # Original approach: Top-k by magnitude only (positive mask)
             num_perturbed = max(1, int(num_params * self.sparsity))
             threshold = torch.topk(flat_param, num_perturbed).values[-1]
             mask = (flat_param >= threshold).float().reshape(param.shape)
 
         elif self.perturbation_strategy == "bottom_only":
-            # Bottom-k by magnitude (control experiment)
+            # Bottom-k by magnitude (positive mask for consistency)
             num_perturbed = max(1, int(num_params * self.sparsity))
             non_zero_param = flat_param[flat_param > 0]
             if len(non_zero_param) >= num_perturbed:
@@ -564,15 +603,28 @@ class Prismatic(nn.Module):
         """
         Generate adaptive perturbation scaled by parameter magnitude.
 
-        Perturbation formula:
-            ε = perturbation_scale * |W_base| * N(0,1) * mask
-            W_new = W_base + ε
+        Two perturbation modes:
 
-        Default scale = 1.0: Adds Gaussian noise with std = weight magnitude
-        This creates aggressive corruption that forces exploration outside the
-        learned world model. For dual-sided perturbation:
-        - Top weights (large): ±100% perturbation pushes genuinely outside consensus
-        - Bottom weights (small): ±100% perturbation can flip activation thresholds
+        1. "directional" mode (DEFAULT - Quantum Mirror):
+            ε = perturbation_scale * W * mask
+            W_new = W + ε
+
+            - Mask is signed: +1 for top, -1 for bottom, 0 for middle
+            - Top positive weights: amplified MORE positive (overflow regime)
+            - Top negative weights: amplified MORE negative (overflow regime)
+            - Bottom positive weights: suppressed toward 0 (underflow/subnormal)
+            - Bottom negative weights: suppressed toward 0 (underflow/subnormal)
+            - Explores ALL floating-point precision regimes symmetrically
+            - Deterministic - no random noise
+
+        2. "noise" mode (legacy):
+            ε = perturbation_scale * |W| * N(0,1) * |mask|
+            W_new = W + ε
+
+            - Bidirectional Gaussian noise at both extremes
+            - Top weights: ±100% noise (can go up or down)
+            - Bottom weights: ±100% noise (can go up or down)
+            - Creates architectural chaos at numerical extremes
 
         Why magnitude-aware?
         -------------------
@@ -584,28 +636,44 @@ class Prismatic(nn.Module):
         Connection to World Model Exploration:
         -------------------------------------
         Static perturbations are architectural obstacles the model must adapt to.
-        Aggressive scale (1.0) forces fundamentally different computational paths,
-        not just variations within consensus. 90% unperturbed + LayerNorm provide
-        stability while the 10% perturbed create genuine architectural diversity.
+        - "noise": Chaotic exploration - forces adaptation to unpredictable irregularity
+        - "directional": Opposing substrates - forces genuinely different computational paths
+        90% unperturbed + LayerNorm provide stability while 10% perturbed create diversity.
 
         Args:
             param: Original parameter tensor
-            mask: Sparse binary mask indicating which weights to perturb
+            mask: Tiered mask (+1 top, -1 bottom, 0 middle) or binary mask
             generator: Seeded random generator for reproducibility
 
         Returns:
             Perturbation tensor (same shape as param)
         """
-        # Generate standard normal noise
-        noise = torch.randn(
-            param.shape, dtype=param.dtype, device=param.device, generator=generator
-        )
+        if self.perturbation_mode == "directional":
+            # Directional mode: Symmetric precision regime exploration
+            # Use param directly (not abs) for symmetric behavior:
+            # - Top positive → more positive (overflow)
+            # - Top negative → more negative (overflow)
+            # - Bottom positive → toward 0 (underflow/subnormal)
+            # - Bottom negative → toward 0 (underflow/subnormal)
+            # mask is +1 for top (amplify), -1 for bottom (suppress), 0 for middle
+            perturbation = self.perturbation_scale * param * mask
+        else:
+            # Noise mode: Bidirectional Gaussian noise
+            # Scale by parameter magnitude (adaptive)
+            magnitude_scale = param.abs()
 
-        # Scale by parameter magnitude (adaptive)
-        magnitude_scale = param.abs()
+            # Convert signed mask to binary (for dual_sided) or use as-is (for others)
+            binary_mask = mask.abs()
 
-        # Apply: scale * magnitude * noise * mask
-        perturbation = self.perturbation_scale * magnitude_scale * noise * mask
+            # Generate standard normal noise
+            noise = torch.randn(
+                param.shape, dtype=param.dtype, device=param.device, generator=generator
+            )
+
+            # Apply: scale * magnitude * noise * |mask|
+            perturbation = (
+                self.perturbation_scale * magnitude_scale * noise * binary_mask
+            )
 
         return perturbation
 
@@ -615,6 +683,7 @@ class Prismatic(nn.Module):
             f"{self.__class__.__name__}("
             f"num_experts={len(self.experts)}, "
             f"strategy={self.perturbation_strategy}, "
+            f"mode={self.perturbation_mode}, "
             f"scale={self.perturbation_scale}, "
             f"sparsity={self.sparsity}, "
             f"{seed_type})"
@@ -959,7 +1028,9 @@ class Prismatic(nn.Module):
                     bottom_threshold = torch.topk(
                         non_zero_param, num_per_side, largest=False
                     ).values[-1]
-                    is_bottom = ((flat_param <= bottom_threshold) & (flat_param > 0)).reshape(param.shape)
+                    is_bottom = (
+                        (flat_param <= bottom_threshold) & (flat_param > 0)
+                    ).reshape(param.shape)
                 else:
                     is_bottom = (flat_param > 0).reshape(param.shape)
 
@@ -971,29 +1042,29 @@ class Prismatic(nn.Module):
                     bottom_count = is_bottom.sum().item()
 
                     if top_count > 0:
-                        tiers[param_name] = 'top'
+                        tiers[param_name] = "top"
                     elif bottom_count > 0:
-                        tiers[param_name] = 'bottom'
+                        tiers[param_name] = "bottom"
                     else:
-                        tiers[param_name] = 'middle'
+                        tiers[param_name] = "middle"
                 else:
                     # For perturbed experts, check if perturbation mask overlaps with tiers
                     mask = self._create_sparse_mask(param, generator)
 
-                    if self.perturbation_strategy == 'dual_sided':
+                    if self.perturbation_strategy == "dual_sided":
                         # Determine which tier was perturbed
                         if (mask * is_top).sum() > 0:
-                            tiers[param_name] = 'top'
+                            tiers[param_name] = "top"
                         elif (mask * is_bottom).sum() > 0:
-                            tiers[param_name] = 'bottom'
+                            tiers[param_name] = "bottom"
                         else:
-                            tiers[param_name] = 'middle'
+                            tiers[param_name] = "middle"
                     else:
                         # For non-dual-sided, mark as perturbed or middle
                         if mask.sum() > 0:
-                            tiers[param_name] = 'perturbed'
+                            tiers[param_name] = "perturbed"
                         else:
-                            tiers[param_name] = 'middle'
+                            tiers[param_name] = "middle"
 
             weight_tiers[expert_idx] = tiers
 
@@ -1011,7 +1082,7 @@ class Prismatic(nn.Module):
         Returns:
             Dict with expert gradients by tier, or None if no gradients available
         """
-        if not hasattr(self, 'experts') or len(self.experts) == 0:
+        if not hasattr(self, "experts") or len(self.experts) == 0:
             print(f"[Prismatic] log_gradient_dynamics: No experts found")
             return None
 
@@ -1028,8 +1099,10 @@ class Prismatic(nn.Module):
 
         if not has_any_grads:
             # No gradients available - backward() wasn't called or gradients were zeroed
-            if not hasattr(self, '_no_grads_warned'):
-                print(f"[Prismatic] log_gradient_dynamics: No gradients found ({total_params} params checked)")
+            if not hasattr(self, "_no_grads_warned"):
+                print(
+                    f"[Prismatic] log_gradient_dynamics: No gradients found ({total_params} params checked)"
+                )
                 self._no_grads_warned = True
             return None
 
@@ -1037,7 +1110,7 @@ class Prismatic(nn.Module):
 
         for expert_idx, expert in enumerate(self.experts):
             # Accumulate gradient norms by tier (element-level, not parameter-level)
-            tier_grads = {'top': [], 'bottom': [], 'middle': []}
+            tier_grads = {"top": [], "bottom": [], "middle": []}
 
             for param_name, param in expert.named_parameters():
                 if param.grad is None:
@@ -1051,13 +1124,15 @@ class Prismatic(nn.Module):
 
                 # Top tier: highest magnitude weights
                 top_threshold = torch.topk(flat_param, num_per_side).values[-1]
-                is_top = (flat_param >= top_threshold)
+                is_top = flat_param >= top_threshold
 
                 # Bottom tier: lowest magnitude non-zero weights
                 non_zero_mask = flat_param > 0
                 if non_zero_mask.sum() >= num_per_side:
                     non_zero_param = flat_param[non_zero_mask]
-                    bottom_threshold = torch.topk(non_zero_param, num_per_side, largest=False).values[-1]
+                    bottom_threshold = torch.topk(
+                        non_zero_param, num_per_side, largest=False
+                    ).values[-1]
                     is_bottom = (flat_param <= bottom_threshold) & non_zero_mask
                 else:
                     is_bottom = non_zero_mask
@@ -1067,11 +1142,11 @@ class Prismatic(nn.Module):
 
                 # Collect gradient norms for each tier
                 if is_top.sum() > 0:
-                    tier_grads['top'].extend(flat_grad[is_top].tolist())
+                    tier_grads["top"].extend(flat_grad[is_top].tolist())
                 if is_bottom.sum() > 0:
-                    tier_grads['bottom'].extend(flat_grad[is_bottom].tolist())
+                    tier_grads["bottom"].extend(flat_grad[is_bottom].tolist())
                 if is_middle.sum() > 0:
-                    tier_grads['middle'].extend(flat_grad[is_middle].tolist())
+                    tier_grads["middle"].extend(flat_grad[is_middle].tolist())
 
             # Compute statistics for each tier
             expert_grad_summary = {}
@@ -1079,41 +1154,45 @@ class Prismatic(nn.Module):
                 if grad_list:
                     # L2 norm across all gradients in this tier
                     tier_norm = sum(g**2 for g in grad_list) ** 0.5
-                    expert_grad_summary[f'{tier}_norm'] = tier_norm
-                    expert_grad_summary[f'{tier}_max'] = max(grad_list)
-                    expert_grad_summary[f'{tier}_min'] = min(grad_list)
+                    expert_grad_summary[f"{tier}_norm"] = tier_norm
+                    expert_grad_summary[f"{tier}_max"] = max(grad_list)
+                    expert_grad_summary[f"{tier}_min"] = min(grad_list)
 
-            expert_grads[f'expert_{expert_idx}'] = expert_grad_summary
+            expert_grads[f"expert_{expert_idx}"] = expert_grad_summary
 
         # Debug: show what we collected on first call only
-        if not hasattr(self, '_grad_log_count'):
+        if not hasattr(self, "_grad_log_count"):
             self._grad_log_count = 0
         self._grad_log_count += 1
 
         if self._grad_log_count == 1:
-            print(f"[Prismatic] Gradient dynamics collection started for {len(self.experts)} experts")
+            print(
+                f"[Prismatic] Gradient dynamics collection started for {len(self.experts)} experts"
+            )
             for exp_key, metrics in expert_grads.items():
                 print(f"  {exp_key}: {list(metrics.keys())}")
 
         # Calculate divergence between Expert 0 and others
         divergence_scores = {}
-        if 'expert_0' in expert_grads:
-            clean_norms = expert_grads['expert_0']
+        if "expert_0" in expert_grads:
+            clean_norms = expert_grads["expert_0"]
             for expert_idx in range(1, len(self.experts)):
-                perturbed_norms = expert_grads.get(f'expert_{expert_idx}', {})
+                perturbed_norms = expert_grads.get(f"expert_{expert_idx}", {})
 
                 # Simple divergence: mean absolute difference across tiers
                 diffs = []
-                for key in ['top_norm', 'bottom_norm', 'middle_norm']:
+                for key in ["top_norm", "bottom_norm", "middle_norm"]:
                     if key in clean_norms and key in perturbed_norms:
                         diffs.append(abs(clean_norms[key] - perturbed_norms[key]))
 
                 if diffs:
-                    divergence_scores[f'expert_{expert_idx}_divergence'] = sum(diffs) / len(diffs)
+                    divergence_scores[f"expert_{expert_idx}_divergence"] = sum(
+                        diffs
+                    ) / len(diffs)
 
         self._dynamics_metrics = {
-            'expert_gradients': expert_grads,
-            'divergence_scores': divergence_scores
+            "expert_gradients": expert_grads,
+            "divergence_scores": divergence_scores,
         }
 
         return self._dynamics_metrics

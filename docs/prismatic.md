@@ -123,6 +123,45 @@ Whether to use magnitude-based selection or random selection.
 - **true**: Use perturbation_strategy (dual_sided, top_only, or bottom_only)
 - **false**: Equivalent to perturbation_strategy="random"
 
+#### `perturbation_mode` (default: "directional")
+
+How perturbations are applied to selected weights. This fundamentally changes the nature of architectural diversity.
+
+- **"directional"** (DEFAULT - Quantum Mirror): Symmetric precision regime exploration
+
+  - Top weights: `W + scale * W` (systematically **amplified** to extremes)
+    - Positive weights → **more positive** (overflow regime)
+    - Negative weights → **more negative** (overflow regime)
+  - Bottom weights: `W - scale * W` (systematically **suppressed** toward zero)
+    - Positive weights → **toward 0** (underflow/subnormal regime)
+    - Negative weights → **toward 0** (underflow/subnormal regime)
+  - Creates **opposing computational substrates** exploring ALL precision regimes
+  - **Expert 0**: Clean, unperturbed (baseline/consensus reality)
+  - **Expert 1+**: Amplified top + suppressed bottom → explores extreme precision regimes
+  - Each perturbed expert uses different pi-seed for variation
+  - Tests: Can forcing all floating-point imprecision regimes reveal complementary patterns?
+
+  **Theoretical Justification:**
+  - Symmetric exploration: Both positive and negative extremes explored
+  - All precision regimes: Overflow (±large), underflow/subnormal (near-zero)
+  - Quantum symmetry: Mirrored architectural pressures create genuine opposition
+  - Deterministic divergence: No randomness - purely directional strategies
+
+- **"noise"** (Legacy): Bidirectional Gaussian noise
+
+  - Top weights: `W + scale * |W| * N(0,1)` (can increase OR decrease)
+  - Bottom weights: `W + scale * |W| * N(0,1)` (can increase OR decrease)
+  - Creates **architectural chaos** - forced adaptation to unpredictable irregularity
+  - Both extremes explore randomly, no guaranteed direction
+  - Tests: Can random structural noise reveal hidden patterns?
+  - Use for ablation studies or if directional mode proves unstable
+
+**Which to use?**
+- **Recommended**: Use "directional" (default) for true opposing substrates
+- "directional" is theoretically aligned with "pushing numerical extremes"
+- "directional" is deterministic (no random noise) - more reproducible
+- Use "noise" for ablation studies or comparison with legacy behavior
+
 #### `use_pi_seeding` (default: true)
 
 Whether to use pi-digit seeding (Quantum Echoes) or hash-based seeding.
@@ -155,9 +194,10 @@ Starting position in pi's digit sequence (only used when `use_pi_seeding=true`).
 # experiments/prismatic-conservative.yml
 router_type: prismatic
 num_experts: 3
-perturbation_scale: 0.01 # 1% perturbations
-sparsity: 0.1 # 10% of weights
-perturb_by_magnitude: true # Target critical weights
+perturbation_scale: 0.01 # 1% directional shift
+sparsity: 0.1 # 10% of weights (5% top, 5% bottom)
+perturb_by_magnitude: true
+perturbation_mode: directional # Default - amplify top, suppress bottom
 ```
 
 ### Moderate Exploration
@@ -166,9 +206,10 @@ perturb_by_magnitude: true # Target critical weights
 # experiments/prismatic-moderate.yml
 router_type: prismatic
 num_experts: 4
-perturbation_scale: 0.1 # 10% perturbations
+perturbation_scale: 0.1 # 10% directional shift
 sparsity: 0.1 # 10% of weights
 perturb_by_magnitude: true
+perturbation_mode: directional # Default
 ```
 
 ### Aggressive Diversity (Forced Exploration)
@@ -180,6 +221,20 @@ num_experts: 4
 perturbation_scale: 1.0 # 100% perturbations
 sparsity: 0.05 # 5% of weights (stability)
 perturb_by_magnitude: true
+perturbation_mode: noise # Chaotic exploration
+```
+
+### Quantum Mirror (Opposing Substrates)
+
+```yaml
+# experiments/prismatic-quantum-mirror.yml
+router_type: prismatic
+num_experts: 4
+perturbation_scale: 1.0 # 100% directional shift
+sparsity: 0.1 # 10% of weights (5% top, 5% bottom)
+perturbation_strategy: dual_sided # Required for mirror effect
+perturbation_mode: directional # Amplify top, suppress bottom
+use_pi_seeding: true # Quantum Echoes
 ```
 
 ### Willow-Inspired (Minimal Perturbation)
@@ -307,19 +362,39 @@ Vary `sparsity` and `perturbation_scale` systematically to find optimal (diversi
 
 ### Architecture
 
-- **Expert 0**: Clean, unperturbed (the "right eye" - consensus reality)
-- **Experts 1+**: Perturbed clones (the "left eye(s)" - forced alternative realities)
+- **Expert 0**: Clean, unperturbed - NO perturbations applied (the "right eye" - consensus reality)
+- **Experts 1+**: Perturbed clones - perturbations applied at initialization (the "left eye(s)" - forced alternative realities)
+  - In directional mode:
+    - Top weights amplified to extremes (both ± directions)
+    - Bottom weights suppressed toward zero (both ± directions)
+    - Explores all floating-point precision regimes symmetrically
+  - Each expert uses different pi-digit seed for deterministic variation
 - **Router**: SMEAR-style soft-merging with learned routing probabilities
 
 ### Perturbation Formula
 
 ```python
+# DIRECTIONAL MODE (default - Quantum Mirror):
+# For dual_sided strategy:
+# - Top 5% weights: W_new = W + perturbation_scale * W
+#   - Positive: amplified more positive (overflow regime)
+#   - Negative: amplified more negative (overflow regime)
+# - Bottom 5% weights: W_new = W - perturbation_scale * W
+#   - Positive: suppressed toward 0 (underflow/subnormal regime)
+#   - Negative: suppressed toward 0 (underflow/subnormal regime)
+# - Middle 90%: W_new = W (unchanged)
+#
+# Explores ALL floating-point precision regimes symmetrically:
+# - Overflow: both positive and negative large values
+# - Underflow/subnormal: both positive and negative near-zero values
+
+# NOISE MODE (legacy):
 # For each selected weight:
-perturbation = perturbation_scale * |W| * N(0,1) * mask
-W_perturbed = W_base + perturbation
+# perturbation = perturbation_scale * |W| * N(0,1) * mask
+# W_perturbed = W_base + perturbation
 
 # Where mask is determined by perturbation_strategy:
-# - dual_sided: top sparsity/2 + bottom sparsity/2 by |W|
+# - dual_sided: top sparsity/2 + bottom sparsity/2 by |W| (signed in directional mode)
 # - top_only: top sparsity by |W|
 # - bottom_only: bottom sparsity by |W|
 # - random: random sparsity selection
@@ -329,16 +404,18 @@ W_perturbed = W_base + perturbation
 # 2. Sparse (only k% of weights)
 # 3. Magnitude-aware (scaled by |W|)
 # 4. Static (not trainable)
-# 5. Dual-sided (NEW - default): targets both numerical extremes
+# 5. Dual-sided (default): targets both numerical extremes
+# 6. Directional (default): opposing pressures, not random noise
 ```
 
 ### Key Design Choices
 
 - Perturb ALL parameters including normalization layers (complete substrate diversity)
 - Target both highest AND lowest magnitude weights by default (dual-sided exploration)
+- Use directional mode by default (amplify top, suppress bottom - Quantum Mirror)
 - Use pi-digit seeding by default (Quantum Echoes)
 - Apply perturbations once at initialization (static architectural constraint)
-- Expose both coarse-grained (top) and fine-grained (bottom) float32 precision regimes
+- Create opposing computational substrates (coarse vs fine-grained precision regimes)
 
 ## Convergence Tracking
 
