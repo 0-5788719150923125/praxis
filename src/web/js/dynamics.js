@@ -221,48 +221,35 @@ function renderDynamicsCharts(runData, container) {
         `
     });
 
-    // Build controls for toggling weight tiers
-    const controlsHTML = `
-        <div class="dynamics-controls" style="margin-top: 1.5rem; padding: 1rem; background: rgba(100, 150, 200, 0.05); border-radius: 8px; display: flex; gap: 2rem; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch;">
-            <div style="font-weight: 600; white-space: nowrap;">Granularity:</div>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
-                <input type="checkbox" id="show-top-weights" checked>
-                <span>Coarse</span>
-            </label>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
-                <input type="checkbox" id="show-bottom-weights" checked>
-                <span>Fine</span>
-            </label>
-            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
-                <input type="checkbox" id="show-middle-weights" checked>
-                <span>Unperturbed</span>
-            </label>
-        </div>
-    `;
-
     // Build chart containers
     const chartsHTML = `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">Pi-Phase Helix: Expert Routing Trajectories</div>
-                <div class="chart-subtitle">Quantum Echoes - each expert seeded by walking backwards through π</div>
-                <div class="chart-wrapper" style="height: 500px;">
-                    <canvas id="dynamics-pi-helix"></canvas>
+                <div class="chart-title">Pi-Resonance Map: Emergent Computational Attractors</div>
+                <div class="chart-subtitle">Radial expansion from origin - revealing if π-structure manifests stable patterns over time</div>
+                <div class="chart-wrapper" style="height: 600px;">
+                    <canvas id="dynamics-pi-radial"></canvas>
                 </div>
             </div>
         </div>
 
         <div style="margin-top: 2rem;">
-            <div class="chart-card">
-                <div class="chart-title">Pi-Divergence Cascade: Pattern Discovery Events</div>
-                <div class="chart-subtitle">Swirling scatter of gradient measurements mapped to π-phase space - revealing computational resonance</div>
-                <div class="chart-wrapper" style="height: 500px;">
-                    <canvas id="dynamics-pi-cascade"></canvas>
-                </div>
+            <div class="dynamics-controls" style="margin-bottom: 1rem; padding: 1rem; background: rgba(100, 150, 200, 0.05); border-radius: 8px; display: flex; gap: 2rem; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+                <div style="font-weight: 600; white-space: nowrap;">Granularity:</div>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
+                    <input type="checkbox" id="show-top-weights" checked>
+                    <span>Coarse</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
+                    <input type="checkbox" id="show-bottom-weights" checked>
+                    <span>Fine</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
+                    <input type="checkbox" id="show-middle-weights" checked>
+                    <span>Unperturbed</span>
+                </label>
             </div>
-        </div>
 
-        <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">Expert Gradient Norms: Clean vs Perturbed</div>
                 <div class="chart-subtitle">Are bottom weights waking up? Comparing Expert 0 (clean) with Expert 1+ (dual-sided perturbed)</div>
@@ -273,17 +260,14 @@ function renderDynamicsCharts(runData, container) {
         </div>
     `;
 
-    container.innerHTML = headerHTML + controlsHTML + chartsHTML;
+    container.innerHTML = headerHTML + chartsHTML;
 
     // Render charts after DOM update
     setTimeout(() => {
         try {
-            // Create pi-helix visualization
+            // Create pi-resonance radial map (new!)
             const metadata = runData.metadata || {};
-            createPiHelixChart('dynamics-pi-helix', dynamics, metadata);
-
-            // Create pi-divergence cascade (scatter plot)
-            createPiDivergenceCascade('dynamics-pi-cascade', dynamics, metadata);
+            createPiResonanceMap('dynamics-pi-radial', dynamics, metadata);
 
             // Create gradient comparison chart (existing)
             createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
@@ -304,268 +288,17 @@ function renderDynamicsCharts(runData, container) {
 }
 
 /**
- * Create Pi-Phase Helix visualization
+ * Create Pi-Resonance Map (Radial Polar Visualization)
  *
- * Maps expert routing trajectories to 3D helices with pi-digit phase offsets.
- * Creates pseudo-3D effect through depth-based opacity and line width.
- */
-function createPiHelixChart(canvasId, dynamics, metadata) {
-    const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-
-    // Destroy existing
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
-    // Get theme colors
-    const theme = getContextTheme(ctx);
-    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
-
-    const steps = dynamics.steps || [];
-    if (steps.length === 0) return;
-
-    // Get pi-phase metadata
-    const pi_phases = metadata.pi_phases || [];
-    const pi_seeds = metadata.pi_seeds || [];
-    const numExperts = metadata.num_experts || 0;
-
-    if (numExperts === 0) {
-        // No experts, show placeholder
-        return;
-    }
-
-    // Helix parameters
-    const windings = 4;  // Number of full rotations
-    const maxSteps = steps[steps.length - 1];
-
-    // Build datasets - one helix per expert
-    const datasets = [];
-    const colorPalette = [
-        '#4A90E2',  // Expert 0 - Blue (clean)
-        '#00D9FF',  // Expert 1 - Cyan
-        '#00FF9F',  // Expert 2 - Green
-        '#FFD700',  // Expert 3 - Gold
-        '#FF6B9D',  // Expert 4 - Pink
-        '#FF4757',  // Expert 5 - Red
-    ];
-
-    for (let expertIdx = 0; expertIdx < numExperts; expertIdx++) {
-        const routing_key = `expert_${expertIdx}_routing_weight`;
-        const routing_weights = dynamics[routing_key];
-
-        // Skip if no routing data for this expert
-        if (!routing_weights || routing_weights.length === 0) {
-            console.warn(`[Pi-Helix] No routing weights found for ${routing_key}`);
-            continue;
-        }
-
-        // Get pi-phase for this expert
-        const phase = pi_phases[expertIdx] || 0;
-        const pi_digit = pi_seeds[expertIdx];
-
-        // Generate helix path data points (filter out None/null values)
-        const helixData = steps
-            .map((step, i) => {
-                // Skip if routing weight is null/undefined
-                const amplitude = routing_weights[i];
-                if (amplitude === null || amplitude === undefined) {
-                    return null;
-                }
-
-                // Normalize step to [0, 1]
-                const t = step / maxSteps;
-
-                // Parametric helix equations with pi-phase offset
-                const angle = t * windings * 2 * Math.PI + phase;
-
-                // X: progress through time (with slight perspective tilt)
-                const x = t * 100;  // 0 to 100 for percentage
-
-                // Y: helix in 2D (combining sin/cos for pseudo-3D projection)
-                // Using isometric-style projection: y = radius * sin, z-depth affects y
-                const y_component = amplitude * Math.sin(angle);
-                const z_component = amplitude * Math.cos(angle);
-
-                // Isometric projection: y_screen = y + z * 0.5
-                const y = y_component + z_component * 0.5;
-
-                // Store z for depth-based opacity
-                return {
-                    x: x,
-                    y: y,
-                    z: z_component,  // depth (for opacity)
-                    step: step,
-                    amplitude: amplitude,
-                    angle: angle
-                };
-            })
-            .filter(point => point !== null);  // Remove null entries
-
-        // Skip this expert if no valid data points
-        if (helixData.length === 0) {
-            console.warn(`[Pi-Helix] Expert ${expertIdx} has no valid routing data points`);
-            continue;
-        }
-
-        // Create dataset with depth-based visual effects
-        const baseColor = colorPalette[expertIdx % colorPalette.length];
-
-        const label = expertIdx === 0
-            ? `Expert 0 (Clean)`
-            : `Expert ${expertIdx} (π[${99999 - expertIdx + 1}] = ${pi_digit ?? '?'})`;
-
-        datasets.push({
-            label: label,
-            data: helixData,
-            borderColor: baseColor,
-            backgroundColor: baseColor + '20',
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 6,
-            pointHoverBackgroundColor: baseColor,
-            pointHoverBorderColor: '#fff',
-            pointHoverBorderWidth: 2,
-            tension: 0.4,  // Smooth curves
-            fill: false,
-            segment: {
-                // Apply pseudo-3D depth effect via opacity
-                borderWidth: (ctx) => {
-                    if (!ctx.p0 || !ctx.p0.raw) return 2;
-                    // Thicker when closer (z > 0), thinner when farther (z < 0)
-                    const z = ctx.p0.raw.z || 0;
-                    return 2 + z * 1.5;  // Range: 0.5 to 3.5
-                },
-                borderColor: (ctx) => {
-                    if (!ctx.p0 || !ctx.p0.raw) return baseColor;
-                    // More opaque when closer, more transparent when farther
-                    const z = ctx.p0.raw.z || 0;
-                    const opacity = 0.4 + (z + 1) * 0.3;  // Range: 0.1 to 1.0
-                    const hex = baseColor.replace('#', '');
-                    const r = parseInt(hex.substr(0, 2), 16);
-                    const g = parseInt(hex.substr(2, 2), 16);
-                    const b = parseInt(hex.substr(4, 2), 16);
-                    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-                }
-            },
-            expertIdx: expertIdx,
-            pi_digit: pi_digit
-        });
-    }
-
-    // If no datasets were created, show a message
-    if (datasets.length === 0) {
-        const message = document.createElement('div');
-        message.className = 'empty-state';
-        message.style.padding = '2rem';
-        message.style.textAlign = 'center';
-        message.innerHTML = `
-            <h3>No Routing Data Available</h3>
-            <p>Routing weights are logged in metrics.db but not found for these training steps.</p>
-            <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
-                The Prismatic router automatically logs routing weights via _log_routing_metrics().
-                This data will appear once training progresses.
-            </p>
-        `;
-        ctx.parentElement.appendChild(message);
-        return;
-    }
-
-    // Create the chart
-    dynamicsCharts[canvasId] = new Chart(ctx, {
-        type: 'line',
-        data: { datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'nearest'
-            },
-            parsing: {
-                xAxisKey: 'x',
-                yAxisKey: 'y'
-            },
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: textColor,
-                        usePointStyle: true,
-                        padding: 12,
-                        font: { size: 11 }
-                    }
-                },
-                tooltip: {
-                    backgroundColor: tooltipBg,
-                    titleColor: textColor,
-                    bodyColor: textColor,
-                    borderColor: gridColor,
-                    borderWidth: 1,
-                    padding: 12,
-                    displayColors: true,
-                    callbacks: {
-                        title: (ctx) => {
-                            const point = ctx[0].raw;
-                            return `Step ${point.step}`;
-                        },
-                        label: (ctx) => {
-                            const point = ctx.raw;
-                            const dataset = ctx.dataset;
-                            return [
-                                `${dataset.label}`,
-                                `Routing: ${(point.amplitude * 100).toFixed(1)}%`,
-                                `Phase: ${(point.angle % (2 * Math.PI)).toFixed(2)} rad`,
-                                `Depth: ${point.z > 0 ? 'near' : 'far'}`
-                            ];
-                        }
-                    }
-                },
-                title: {
-                    display: false
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'Training Progress (%)',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    ticks: {
-                        color: textColor,
-                        callback: (value) => `${value.toFixed(0)}%`
-                    },
-                    grid: { color: gridColor }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: 'Routing Amplitude (Helix Projection)',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    ticks: {
-                        color: textColor
-                    },
-                    grid: { color: gridColor }
-                }
-            }
-        }
-    });
-}
-
-/**
- * Create Pi-Divergence Cascade visualization
+ * Plots measurements expanding radially from origin, with angular position
+ * determined by pi-phase. Reveals emergent patterns, attractors, and whether
+ * π-digit seeding creates stable computational structures over time.
  *
- * Scatter plot of divergence measurements mapped to pi-phase helix positions.
- * Each point represents expert divergence at a training step, creating a
- * swirling cascade pattern that may reveal computational resonance with pi structure.
+ * Concept: Time expands outward from center. Each measurement is a point.
+ * If patterns/clustering emerge at specific (radius, angle) positions,
+ * it suggests computational resonance with mathematical structure.
  */
-function createPiDivergenceCascade(canvasId, dynamics, metadata) {
+function createPiResonanceMap(canvasId, dynamics, metadata) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -587,110 +320,100 @@ function createPiDivergenceCascade(canvasId, dynamics, metadata) {
 
     if (numExperts === 0) return;
 
-    // Helix parameters (matching the helix chart)
-    const windings = 4;
-    const maxSteps = steps[steps.length - 1];
-
-    // Build scatter datasets - show multiple tiers per expert for richer visualization
-    const datasets = [];
+    // Color palette for different measurement types (tendrils)
     const colorPalette = [
-        '#00D9FF',  // Cyan (top tier, expert 1)
-        '#FF6B9D',  // Pink (bottom tier, expert 1)
-        '#00FF9F',  // Green (top tier, expert 2)
-        '#FFD700',  // Gold (bottom tier, expert 2)
-        '#7B68EE',  // Purple (additional experts)
-        '#FF4757',  // Red
+        '#00D9FF',  // Cyan - Top gradients
+        '#FF6B9D',  // Pink - Bottom gradients
+        '#00FF9F',  // Green - Weight angle
+        '#FFD700',  // Gold - Routing weight
     ];
 
-    let datasetIdx = 0;
+    const datasets = [];
 
-    // For each perturbed expert (skip expert 0 - it's clean/baseline)
+    // For each perturbed expert, create multiple tendrils (measurement types)
     for (let expertIdx = 1; expertIdx < numExperts; expertIdx++) {
-        // Get pi-phase for this expert
-        const phase = pi_phases[expertIdx] || 0;
+        const pi_phase = pi_phases[expertIdx] || 0;
         const pi_digit = pi_seeds[expertIdx];
 
-        // Show two cascades per expert: top tier and bottom tier gradients
-        const tiers = [
-            { key: `expert_${expertIdx}_top_norm`, label: 'Top 5%' },
-            { key: `expert_${expertIdx}_bottom_norm`, label: 'Bottom 5%' }
+        // Define measurement tendrils for this expert
+        const tendrils = [
+            {
+                key: `expert_${expertIdx}_top_norm`,
+                label: `E${expertIdx} Top`,
+                angleOffset: 0,
+                color: colorPalette[0]
+            },
+            {
+                key: `expert_${expertIdx}_bottom_norm`,
+                label: `E${expertIdx} Bottom`,
+                angleOffset: Math.PI / 4,  // 45° offset
+                color: colorPalette[1]
+            },
+            {
+                key: `expert_${expertIdx}_weight_angle`,
+                label: `E${expertIdx} Divergence`,
+                angleOffset: Math.PI / 2,  // 90° offset
+                color: colorPalette[2]
+            },
         ];
 
-        for (const tier of tiers) {
-            const values = dynamics[tier.key];
+        for (const tendril of tendrils) {
+            const values = dynamics[tendril.key];
+            if (!values || values.length === 0) continue;
 
-            if (!values || values.length === 0) {
-                console.warn(`[Pi-Cascade] No data for ${tier.key}`);
-                continue;
-            }
+            // Generate points expanding radially from origin
+            const radialPoints = steps.map((step, i) => {
+                const value = values[i];
+                if (value === null || value === undefined) return null;
 
-            // Generate scatter points - one per training step
-            const scatterPoints = steps.map((step, i) => {
-                const amplitude = values[i];
-                if (amplitude === null || amplitude === undefined) return null;
+                // Polar coordinates
+                const radius = step;  // Time expands outward
+                const angle = pi_phase + tendril.angleOffset;  // Pi-phase + tendril offset
 
-                // Normalize step to [0, 1]
-                const t = step / maxSteps;
+                // Convert polar → cartesian
+                const x = radius * Math.cos(angle);
+                const y = radius * Math.sin(angle);
 
-                // Parametric helix equations with pi-phase offset
-                const angle = t * windings * 2 * Math.PI + phase;
+                // Point size based on value magnitude
+                const pointRadius = 3 + Math.log(value + 1) * 1.5;
 
-                // X: progress through time
-                const x = t * 100;  // 0 to 100%
-
-                // Y: helix projection (isometric)
-                const y_component = amplitude * Math.sin(angle);
-                const z_component = amplitude * Math.cos(angle);
-                const y = y_component + z_component * 0.5;  // Isometric projection
-
-                // Point size based on amplitude magnitude
-                const pointRadius = 3 + Math.sqrt(amplitude) * 0.3;  // Range: 3-8
-
-                // Opacity based on depth (z-component)
-                const normalizedZ = (z_component / amplitude) || 0;  // -1 to 1
-                const opacity = 0.4 + (normalizedZ + 1) * 0.3;  // Range: 0.4 to 1.0
+                // Opacity based on value (higher = more opaque)
+                const normalizedValue = Math.min(value / 100, 1.0);
+                const opacity = 0.4 + normalizedValue * 0.5;
 
                 return {
                     x: x,
                     y: y,
-                    z: z_component,
                     step: step,
-                    value: amplitude,
+                    value: value,
                     angle: angle,
                     pointRadius: pointRadius,
                     opacity: opacity
                 };
             }).filter(p => p !== null);
 
-            if (scatterPoints.length === 0) continue;
-
-            // Solid color per tier (no time gradient)
-            const baseColor = colorPalette[datasetIdx % colorPalette.length];
-            datasetIdx++;
-
-            const label = `Expert ${expertIdx} ${tier.label} (π[${99999 - expertIdx + 1}] = ${pi_digit ?? '?'})`;
+            if (radialPoints.length === 0) continue;
 
             datasets.push({
-                label: label,
-                data: scatterPoints,
-                backgroundColor: scatterPoints.map(p => {
-                    // Solid expert color with depth-based opacity only
-                    const hex = baseColor.replace('#', '');
+                label: `${tendril.label} (π=${pi_digit ?? '?'})`,
+                data: radialPoints,
+                backgroundColor: radialPoints.map(p => {
+                    const hex = tendril.color.replace('#', '');
                     const r = parseInt(hex.substr(0, 2), 16);
                     const g = parseInt(hex.substr(2, 2), 16);
                     const b = parseInt(hex.substr(4, 2), 16);
                     return `rgba(${r}, ${g}, ${b}, ${p.opacity})`;
                 }),
-                borderColor: baseColor,
+                borderColor: tendril.color,
                 borderWidth: 1,
-                pointRadius: scatterPoints.map(p => p.pointRadius),
-                pointHoverRadius: scatterPoints.map(p => p.pointRadius * 1.5),
+                pointRadius: radialPoints.map(p => p.pointRadius),
+                pointHoverRadius: radialPoints.map(p => p.pointRadius * 1.8),
                 pointHoverBorderWidth: 2,
                 pointHoverBorderColor: '#fff',
                 expertIdx: expertIdx,
                 pi_digit: pi_digit,
-                tier: tier.label,
-                showLine: false  // Scatter only, no connecting lines
+                tendrilType: tendril.label,
+                showLine: false
             });
         }
     }
@@ -701,17 +424,17 @@ function createPiDivergenceCascade(canvasId, dynamics, metadata) {
         message.style.padding = '2rem';
         message.style.textAlign = 'center';
         message.innerHTML = `
-            <h3>No Gradient Data Available</h3>
-            <p>Expert gradient measurements will appear here during training.</p>
+            <h3>No Data Available</h3>
+            <p>Weight divergence measurements will appear here as training progresses.</p>
             <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
-                This chart reveals whether π-digit seeding creates computational patterns.
+                This chart reveals if π-digit seeding creates stable computational attractors.
             </p>
         `;
         ctx.parentElement.appendChild(message);
         return;
     }
 
-    // Create the scatter chart
+    // Create radial scatter chart
     dynamicsCharts[canvasId] = new Chart(ctx, {
         type: 'scatter',
         data: { datasets },
@@ -729,8 +452,8 @@ function createPiDivergenceCascade(canvasId, dynamics, metadata) {
                     labels: {
                         color: textColor,
                         usePointStyle: true,
-                        padding: 12,
-                        font: { size: 11 }
+                        padding: 10,
+                        font: { size: 10 }
                     }
                 },
                 tooltip: {
@@ -752,14 +475,11 @@ function createPiDivergenceCascade(canvasId, dynamics, metadata) {
                             return [
                                 `${dataset.label}`,
                                 `Value: ${point.value.toExponential(3)}`,
-                                `Phase: ${(point.angle % (2 * Math.PI)).toFixed(2)} rad`,
-                                `Depth: ${point.z > 0 ? 'near (+)' : 'far (-)'}`
+                                `Position: (${point.x.toFixed(1)}, ${point.y.toFixed(1)})`,
+                                `Angle: ${(point.angle * 180 / Math.PI).toFixed(1)}°`
                             ];
                         }
                     }
-                },
-                title: {
-                    display: false
                 }
             },
             scales: {
@@ -767,32 +487,48 @@ function createPiDivergenceCascade(canvasId, dynamics, metadata) {
                     type: 'linear',
                     title: {
                         display: true,
-                        text: 'Training Progress (%)',
+                        text: 'X (Radial Projection)',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
-                    ticks: {
-                        color: textColor,
-                        callback: (value) => `${value.toFixed(0)}%`
+                    ticks: { color: textColor },
+                    grid: {
+                        color: gridColor,
+                        drawTicks: false
                     },
-                    grid: { color: gridColor }
+                    // Center the chart by using symmetric bounds
+                    min: undefined,
+                    max: undefined
                 },
                 y: {
+                    type: 'linear',
                     title: {
                         display: true,
-                        text: 'Divergence Amplitude (π-Phase Projection)',
+                        text: 'Y (Radial Projection)',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
-                    ticks: {
-                        color: textColor
+                    ticks: { color: textColor },
+                    grid: {
+                        color: gridColor,
+                        drawTicks: false
                     },
-                    grid: { color: gridColor }
+                    // Center the chart
+                    min: undefined,
+                    max: undefined
                 }
             }
         }
     });
 }
+
+/**
+ * (Deprecated helix and cascade functions removed - replaced by radial map)
+ */
+
+/**
+ * Create expert comparison chart
+ */
 
 /**
  * Create expert comparison chart

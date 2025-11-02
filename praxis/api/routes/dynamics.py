@@ -284,8 +284,10 @@ def _read_routing_weights_from_metrics(
         for step, extra_metrics_json in rows:
             try:
                 extra_metrics = json.loads(extra_metrics_json)
+                # Extract routing metrics and weight divergence metrics
                 routing_data_by_step[step] = {
-                    k: v for k, v in extra_metrics.items() if 'routing' in k
+                    k: v for k, v in extra_metrics.items()
+                    if 'routing' in k or 'cosine' in k or 'weight_angle' in k
                 }
             except json.JSONDecodeError:
                 continue

@@ -881,6 +881,9 @@ class Prismatic(nn.Module):
         # Log expert convergence metrics for visualization
         self._log_routing_metrics(expert_weights, routing_probs)
 
+        # Compute weight divergence (cosine similarity) every forward pass
+        self._log_weight_divergence()
+
         # Collect parameter names from base expert
         self.parameter_names = self._collect_parameter_names(self.experts[0])
 
@@ -937,6 +940,64 @@ class Prismatic(nn.Module):
             else:
                 return None
         return getattr(submodule, parts[-1], None)
+
+    def _log_weight_divergence(self) -> None:
+        """
+        Compute cosine similarity between base expert and perturbed experts.
+
+        Measures directional divergence in weight space - how much each expert's
+        parameters point in different directions from the clean baseline.
+
+        Cosine similarity = 1.0 means identical direction (no divergence)
+        Cosine similarity = 0.0 means orthogonal (maximal divergence)
+        Cosine similarity = -1.0 means opposite direction
+
+        This is computed every forward pass to track runtime weight expression,
+        independent of gradient dynamics or training updates.
+        """
+        if len(self.experts) < 2:
+            return
+
+        try:
+            # Get base expert parameters (flattened)
+            base_params = []
+            for param in self.experts[0].parameters():
+                if param.requires_grad:
+                    base_params.append(param.flatten())
+
+            if not base_params:
+                return
+
+            base_vector = torch.cat(base_params)
+
+            # Compute cosine similarity for each perturbed expert
+            for expert_idx in range(1, len(self.experts)):
+                expert_params = []
+                for param in self.experts[expert_idx].parameters():
+                    if param.requires_grad:
+                        expert_params.append(param.flatten())
+
+                expert_vector = torch.cat(expert_params)
+
+                # Cosine similarity: (A · B) / (||A|| × ||B||)
+                cosine_sim = torch.nn.functional.cosine_similarity(
+                    base_vector.unsqueeze(0),
+                    expert_vector.unsqueeze(0),
+                    dim=1
+                ).item()
+
+                # Store as metric (will be logged via extra_metrics)
+                self._metrics[f"expert_{expert_idx}_cosine_similarity"] = cosine_sim
+
+                # Also store angular divergence in degrees (more interpretable)
+                # angle = arccos(similarity)
+                angle_rad = torch.acos(torch.tensor(cosine_sim).clamp(-1.0, 1.0))
+                angle_deg = angle_rad * 180.0 / 3.141592653589793
+                self._metrics[f"expert_{expert_idx}_weight_angle"] = angle_deg.item()
+
+        except Exception as e:
+            # Silently fail - don't break forward pass
+            pass
 
     def _log_routing_metrics(
         self, expert_weights: torch.Tensor, routing_probs: torch.Tensor
@@ -1172,8 +1233,8 @@ class Prismatic(nn.Module):
             for exp_key, metrics in expert_grads.items():
                 print(f"  {exp_key}: {list(metrics.keys())}")
 
-        # Calculate divergence between Expert 0 and others
-        divergence_scores = {}
+        # Calculate gradient-based divergence between Expert 0 and others
+        gradient_divergence = {}
         if "expert_0" in expert_grads:
             clean_norms = expert_grads["expert_0"]
             for expert_idx in range(1, len(self.experts)):
@@ -1186,13 +1247,39 @@ class Prismatic(nn.Module):
                         diffs.append(abs(clean_norms[key] - perturbed_norms[key]))
 
                 if diffs:
-                    divergence_scores[f"expert_{expert_idx}_divergence"] = sum(
+                    gradient_divergence[f"expert_{expert_idx}_divergence"] = sum(
                         diffs
                     ) / len(diffs)
 
+        # Calculate weight-level divergence (architectural corruption from perturbations)
+        # This measures L2 distance between actual parameters of clean vs perturbed experts
+        weight_divergence = {}
+        for expert_idx in range(1, len(self.experts)):
+            total_diff = 0.0
+            num_params = 0
+
+            # Compare all parameters between expert 0 (clean) and expert i (perturbed)
+            for (name0, param0), (name_i, param_i) in zip(
+                self.experts[0].named_parameters(),
+                self.experts[expert_idx].named_parameters()
+            ):
+                if not param0.requires_grad:
+                    continue
+
+                # L2 norm of weight difference (measures corruption)
+                param_diff = (param0 - param_i).pow(2).sum().sqrt().item()
+                total_diff += param_diff
+                num_params += 1
+
+            if num_params > 0:
+                weight_divergence[f"expert_{expert_idx}_weight_divergence"] = (
+                    total_diff / num_params
+                )
+
         self._dynamics_metrics = {
             "expert_gradients": expert_grads,
-            "divergence_scores": divergence_scores,
+            "divergence_scores": gradient_divergence,
+            "weight_divergence": weight_divergence,
         }
 
         return self._dynamics_metrics
