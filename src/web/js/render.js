@@ -60,7 +60,7 @@ function renderMessages() {
         .join('');
 
     // Add thinking indicator if needed
-    const thinkingHTML = state.isThinking ? createThinkingIndicator() : '';
+    const thinkingHTML = state.isThinking ? createThinkingIndicator(isDarkMode) : '';
 
     container.innerHTML = messagesHTML + thinkingHTML;
 

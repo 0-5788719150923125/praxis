@@ -249,7 +249,7 @@
 .dots {
     display: inline-flex;
     gap: 0.25rem;
-    margin-left: 0.25rem;
+    margin-left: 0.8rem;
 }
 
 .dot {

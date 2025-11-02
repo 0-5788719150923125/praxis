@@ -373,15 +373,19 @@ export function createMessage({ role, content }, isDarkMode, isLast = false) {
 
 /**
  * Create thinking indicator
+ * @param {boolean} isDarkMode - Current theme
  * @returns {string} HTML string
  */
-export function createThinkingIndicator() {
+export function createThinkingIndicator(isDarkMode) {
+    // In dark mode: assistant is "You", so "You are thinking"
+    // In light mode: assistant is "Me", so "Me—andering" (wordplay with em dash)
+    const thinkingText = isDarkMode ? 'You are thinking' : 'Me—andering';
+
     return `
         <div class="message assistant" id="thinking-message">
             <div class="message-header">
-                <span class="header-name">Me</span>
                 <span class="thinking-status">
-                    thinking<span class="dots">
+                    ${thinkingText}<span class="dots">
                         <span class="dot"></span>
                         <span class="dot"></span>
                         <span class="dot"></span>
