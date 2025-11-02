@@ -254,6 +254,16 @@ function renderDynamicsCharts(runData, container) {
 
         <div style="margin-top: 2rem;">
             <div class="chart-card">
+                <div class="chart-title">Pi-Divergence Cascade: Pattern Discovery Events</div>
+                <div class="chart-subtitle">Swirling scatter of gradient measurements mapped to π-phase space - revealing computational resonance</div>
+                <div class="chart-wrapper" style="height: 500px;">
+                    <canvas id="dynamics-pi-cascade"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
                 <div class="chart-title">Expert Gradient Norms: Clean vs Perturbed</div>
                 <div class="chart-subtitle">Are bottom weights waking up? Comparing Expert 0 (clean) with Expert 1+ (dual-sided perturbed)</div>
                 <div class="chart-wrapper" style="height: 400px;">
@@ -268,9 +278,12 @@ function renderDynamicsCharts(runData, container) {
     // Render charts after DOM update
     setTimeout(() => {
         try {
-            // Create pi-helix visualization (new!)
+            // Create pi-helix visualization
             const metadata = runData.metadata || {};
             createPiHelixChart('dynamics-pi-helix', dynamics, metadata);
+
+            // Create pi-divergence cascade (scatter plot)
+            createPiDivergenceCascade('dynamics-pi-cascade', dynamics, metadata);
 
             // Create gradient comparison chart (existing)
             createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
@@ -532,6 +545,242 @@ function createPiHelixChart(canvasId, dynamics, metadata) {
                     title: {
                         display: true,
                         text: 'Routing Amplitude (Helix Projection)',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: {
+                        color: textColor
+                    },
+                    grid: { color: gridColor }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create Pi-Divergence Cascade visualization
+ *
+ * Scatter plot of divergence measurements mapped to pi-phase helix positions.
+ * Each point represents expert divergence at a training step, creating a
+ * swirling cascade pattern that may reveal computational resonance with pi structure.
+ */
+function createPiDivergenceCascade(canvasId, dynamics, metadata) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Destroy existing
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    // Get theme colors
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
+
+    const steps = dynamics.steps || [];
+    if (steps.length === 0) return;
+
+    const pi_phases = metadata.pi_phases || [];
+    const pi_seeds = metadata.pi_seeds || [];
+    const numExperts = metadata.num_experts || 0;
+
+    if (numExperts === 0) return;
+
+    // Helix parameters (matching the helix chart)
+    const windings = 4;
+    const maxSteps = steps[steps.length - 1];
+
+    // Build scatter datasets - show multiple tiers per expert for richer visualization
+    const datasets = [];
+    const colorPalette = [
+        '#00D9FF',  // Cyan (top tier, expert 1)
+        '#FF6B9D',  // Pink (bottom tier, expert 1)
+        '#00FF9F',  // Green (top tier, expert 2)
+        '#FFD700',  // Gold (bottom tier, expert 2)
+        '#7B68EE',  // Purple (additional experts)
+        '#FF4757',  // Red
+    ];
+
+    let datasetIdx = 0;
+
+    // For each perturbed expert (skip expert 0 - it's clean/baseline)
+    for (let expertIdx = 1; expertIdx < numExperts; expertIdx++) {
+        // Get pi-phase for this expert
+        const phase = pi_phases[expertIdx] || 0;
+        const pi_digit = pi_seeds[expertIdx];
+
+        // Show two cascades per expert: top tier and bottom tier gradients
+        const tiers = [
+            { key: `expert_${expertIdx}_top_norm`, label: 'Top 5%' },
+            { key: `expert_${expertIdx}_bottom_norm`, label: 'Bottom 5%' }
+        ];
+
+        for (const tier of tiers) {
+            const values = dynamics[tier.key];
+
+            if (!values || values.length === 0) {
+                console.warn(`[Pi-Cascade] No data for ${tier.key}`);
+                continue;
+            }
+
+            // Generate scatter points - one per training step
+            const scatterPoints = steps.map((step, i) => {
+                const amplitude = values[i];
+                if (amplitude === null || amplitude === undefined) return null;
+
+                // Normalize step to [0, 1]
+                const t = step / maxSteps;
+
+                // Parametric helix equations with pi-phase offset
+                const angle = t * windings * 2 * Math.PI + phase;
+
+                // X: progress through time
+                const x = t * 100;  // 0 to 100%
+
+                // Y: helix projection (isometric)
+                const y_component = amplitude * Math.sin(angle);
+                const z_component = amplitude * Math.cos(angle);
+                const y = y_component + z_component * 0.5;  // Isometric projection
+
+                // Point size based on amplitude magnitude
+                const pointRadius = 3 + Math.sqrt(amplitude) * 0.3;  // Range: 3-8
+
+                // Opacity based on depth (z-component)
+                const normalizedZ = (z_component / amplitude) || 0;  // -1 to 1
+                const opacity = 0.4 + (normalizedZ + 1) * 0.3;  // Range: 0.4 to 1.0
+
+                return {
+                    x: x,
+                    y: y,
+                    z: z_component,
+                    step: step,
+                    value: amplitude,
+                    angle: angle,
+                    pointRadius: pointRadius,
+                    opacity: opacity
+                };
+            }).filter(p => p !== null);
+
+            if (scatterPoints.length === 0) continue;
+
+            // Solid color per tier (no time gradient)
+            const baseColor = colorPalette[datasetIdx % colorPalette.length];
+            datasetIdx++;
+
+            const label = `Expert ${expertIdx} ${tier.label} (π[${99999 - expertIdx + 1}] = ${pi_digit ?? '?'})`;
+
+            datasets.push({
+                label: label,
+                data: scatterPoints,
+                backgroundColor: scatterPoints.map(p => {
+                    // Solid expert color with depth-based opacity only
+                    const hex = baseColor.replace('#', '');
+                    const r = parseInt(hex.substr(0, 2), 16);
+                    const g = parseInt(hex.substr(2, 2), 16);
+                    const b = parseInt(hex.substr(4, 2), 16);
+                    return `rgba(${r}, ${g}, ${b}, ${p.opacity})`;
+                }),
+                borderColor: baseColor,
+                borderWidth: 1,
+                pointRadius: scatterPoints.map(p => p.pointRadius),
+                pointHoverRadius: scatterPoints.map(p => p.pointRadius * 1.5),
+                pointHoverBorderWidth: 2,
+                pointHoverBorderColor: '#fff',
+                expertIdx: expertIdx,
+                pi_digit: pi_digit,
+                tier: tier.label,
+                showLine: false  // Scatter only, no connecting lines
+            });
+        }
+    }
+
+    if (datasets.length === 0) {
+        const message = document.createElement('div');
+        message.className = 'empty-state';
+        message.style.padding = '2rem';
+        message.style.textAlign = 'center';
+        message.innerHTML = `
+            <h3>No Gradient Data Available</h3>
+            <p>Expert gradient measurements will appear here during training.</p>
+            <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
+                This chart reveals whether π-digit seeding creates computational patterns.
+            </p>
+        `;
+        ctx.parentElement.appendChild(message);
+        return;
+    }
+
+    // Create the scatter chart
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'scatter',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'point'
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                    callbacks: {
+                        title: (ctx) => {
+                            const point = ctx[0].raw;
+                            return `Step ${point.step}`;
+                        },
+                        label: (ctx) => {
+                            const point = ctx.raw;
+                            const dataset = ctx.dataset;
+                            return [
+                                `${dataset.label}`,
+                                `Value: ${point.value.toExponential(3)}`,
+                                `Phase: ${(point.angle % (2 * Math.PI)).toFixed(2)} rad`,
+                                `Depth: ${point.z > 0 ? 'near (+)' : 'far (-)'}`
+                            ];
+                        }
+                    }
+                },
+                title: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Training Progress (%)',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => `${value.toFixed(0)}%`
+                    },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Divergence Amplitude (π-Phase Projection)',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },

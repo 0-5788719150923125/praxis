@@ -1,5 +1,5 @@
 """
-FlexAttention module for causal language modeling using PyTorch's FlexAttention.
+HexAttention module for causal language modeling using PyTorch's FlexAttention.
 Based on the efficient attention implementation with block masking support.
 """
 
@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-class FlexAttention(nn.Module):
+class HexAttention(nn.Module):
     """
     Causal self-attention using PyTorch's FlexAttention API.
     Provides efficient attention computation with customizable block masking.
@@ -20,7 +20,7 @@ class FlexAttention(nn.Module):
 
     def __init__(self, config) -> None:
         """
-        Initialize FlexAttention module.
+        Initialize HexAttention module.
 
         Args:
             config: Configuration object containing attention parameters
@@ -103,35 +103,40 @@ class FlexAttention(nn.Module):
 
         return slopes[:num_heads]
 
-    def _create_causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
+    def _create_causal_mask(
+        self, q_len: int, kv_len: int, device: torch.device
+    ) -> torch.Tensor:
         """
-        Create a causal block mask for the given sequence length.
+        Create a causal block mask for the given sequence lengths.
 
         Args:
-            seq_len: Sequence length
+            q_len: Query sequence length
+            kv_len: Key/Value sequence length (may include ghost token)
             device: Device to create mask on
 
         Returns:
-            Block mask for causal attention
+            Block mask for causal attention with ghostmax support
         """
 
         # Create cache key using device string representation
-        cache_key = (seq_len, str(device))
+        cache_key = (q_len, kv_len, str(device))
 
         # Check cache first
         if cache_key in self.block_mask_cache:
             return self.block_mask_cache[cache_key]
 
         def causal_mask(b, h, q_idx, kv_idx):
-            return q_idx >= kv_idx
+            # Standard causal: allow attending to positions <= q_idx
+            # Ghost token (if present at kv_idx >= q_len) is always accessible
+            return (q_idx >= kv_idx) | (kv_idx >= q_len)
 
         # Create block mask (broadcasting over batch and heads)
         block_mask = self.create_block_mask(
             causal_mask,
             B=None,  # Broadcast over batch
             H=None,  # Broadcast over heads
-            Q_LEN=seq_len,
-            KV_LEN=seq_len,
+            Q_LEN=q_len,
+            KV_LEN=kv_len,
             device=device,
         )
 
@@ -187,22 +192,42 @@ class FlexAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
+        # Ghostmax: Append zero token to K and V
+        # Mathematically: softmax([s_1,...,s_n,0]) ≡ exp(s_i)/(Σexp(s_j)+1)
+        # See: https://www.evanmiller.org/attention-is-off-by-one.html
+        zero_k = torch.zeros(
+            batch_size, self.num_heads, 1, self.head_dim,
+            device=k.device, dtype=k.dtype
+        )
+        zero_v = torch.zeros(
+            batch_size, self.num_heads, 1, self.head_dim,
+            device=v.device, dtype=v.dtype
+        )
+        k = torch.cat([k, zero_k], dim=2)  # (B, H, T+1, D)
+        v = torch.cat([v, zero_v], dim=2)  # (B, H, T+1, D)
+
+        kv_len = seq_len + 1
+
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
-        # Create or retrieve causal mask
+        # Create or retrieve causal mask (with ghost token support)
         block_mask = (
-            self._create_causal_mask(seq_len, inputs.device) if self.causal else None
+            self._create_causal_mask(seq_len, kv_len, inputs.device)
+            if self.causal else None
         )
 
         # Create ALiBi score modification function
-        alibi_slopes = self.alibi_slopes.to(inputs.device)
+        # Following official PyTorch FlexAttention blog pattern
+        alibi_bias = self.alibi_slopes.to(inputs.device)
 
         def alibi_score_mod(score, b, h, q_idx, kv_idx):
-            """Apply ALiBi positional bias to attention scores."""
-            # Calculate position difference (q_idx - kv_idx)
-            # This will be negative or zero for causal attention
-            bias = alibi_slopes[h] * (kv_idx - q_idx)
+            """
+            Apply ALiBi positional bias to attention scores.
+            Ghost token at kv_idx==seq_len receives no bias (keeps score at 0).
+            """
+            # Apply bias only to non-ghost tokens (kv_idx < seq_len)
+            bias = alibi_bias[h] * (kv_idx - q_idx) * (kv_idx < seq_len)
             return score + bias
 
         # Apply FlexAttention with causal mask, ALiBi, and GQA support

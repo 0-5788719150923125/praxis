@@ -10,10 +10,10 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from praxis.attention.flex_attention import FlexAttention
+from praxis.attention.hex import HexAttention
 
 
-class SlidingWindowFlexAttention(FlexAttention):
+class SlidingWindowFlexAttention(HexAttention):
     """
     FlexAttention with sliding window support.
 
