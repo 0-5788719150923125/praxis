@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set
 
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.data.datasets.base import PraxisSampler
 from praxis.data.formatters.files import format_file_as_messages
 
@@ -260,7 +260,7 @@ class MultiDirectoryDataset(PraxisSampler):
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {
                             "role": "developer",
-                            "content": DEVELOPER_PROMPTS.get(
+                            "content": sample_developer_prompt(
                                 "continue_text",
                                 "Continue or complete the provided text.",
                             ),

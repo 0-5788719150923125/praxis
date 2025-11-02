@@ -240,8 +240,18 @@ function renderDynamicsCharts(runData, container) {
         </div>
     `;
 
-    // Build chart container
+    // Build chart containers
     const chartsHTML = `
+        <div style="margin-top: 2rem;">
+            <div class="chart-card">
+                <div class="chart-title">Pi-Phase Helix: Expert Routing Trajectories</div>
+                <div class="chart-subtitle">Quantum Echoes - each expert seeded by walking backwards through π</div>
+                <div class="chart-wrapper" style="height: 500px;">
+                    <canvas id="dynamics-pi-helix"></canvas>
+                </div>
+            </div>
+        </div>
+
         <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">Expert Gradient Norms: Clean vs Perturbed</div>
@@ -255,9 +265,14 @@ function renderDynamicsCharts(runData, container) {
 
     container.innerHTML = headerHTML + controlsHTML + chartsHTML;
 
-    // Render chart after DOM update
+    // Render charts after DOM update
     setTimeout(() => {
         try {
+            // Create pi-helix visualization (new!)
+            const metadata = runData.metadata || {};
+            createPiHelixChart('dynamics-pi-helix', dynamics, metadata);
+
+            // Create gradient comparison chart (existing)
             createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
@@ -273,6 +288,261 @@ function renderDynamicsCharts(runData, container) {
             }
         });
     }, 10);
+}
+
+/**
+ * Create Pi-Phase Helix visualization
+ *
+ * Maps expert routing trajectories to 3D helices with pi-digit phase offsets.
+ * Creates pseudo-3D effect through depth-based opacity and line width.
+ */
+function createPiHelixChart(canvasId, dynamics, metadata) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Destroy existing
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
+
+    // Get theme colors
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
+
+    const steps = dynamics.steps || [];
+    if (steps.length === 0) return;
+
+    // Get pi-phase metadata
+    const pi_phases = metadata.pi_phases || [];
+    const pi_seeds = metadata.pi_seeds || [];
+    const numExperts = metadata.num_experts || 0;
+
+    if (numExperts === 0) {
+        // No experts, show placeholder
+        return;
+    }
+
+    // Helix parameters
+    const windings = 4;  // Number of full rotations
+    const maxSteps = steps[steps.length - 1];
+
+    // Build datasets - one helix per expert
+    const datasets = [];
+    const colorPalette = [
+        '#4A90E2',  // Expert 0 - Blue (clean)
+        '#00D9FF',  // Expert 1 - Cyan
+        '#00FF9F',  // Expert 2 - Green
+        '#FFD700',  // Expert 3 - Gold
+        '#FF6B9D',  // Expert 4 - Pink
+        '#FF4757',  // Expert 5 - Red
+    ];
+
+    for (let expertIdx = 0; expertIdx < numExperts; expertIdx++) {
+        const routing_key = `expert_${expertIdx}_routing_weight`;
+        const routing_weights = dynamics[routing_key];
+
+        // Skip if no routing data for this expert
+        if (!routing_weights || routing_weights.length === 0) {
+            console.warn(`[Pi-Helix] No routing weights found for ${routing_key}`);
+            continue;
+        }
+
+        // Get pi-phase for this expert
+        const phase = pi_phases[expertIdx] || 0;
+        const pi_digit = pi_seeds[expertIdx];
+
+        // Generate helix path data points (filter out None/null values)
+        const helixData = steps
+            .map((step, i) => {
+                // Skip if routing weight is null/undefined
+                const amplitude = routing_weights[i];
+                if (amplitude === null || amplitude === undefined) {
+                    return null;
+                }
+
+                // Normalize step to [0, 1]
+                const t = step / maxSteps;
+
+                // Parametric helix equations with pi-phase offset
+                const angle = t * windings * 2 * Math.PI + phase;
+
+                // X: progress through time (with slight perspective tilt)
+                const x = t * 100;  // 0 to 100 for percentage
+
+                // Y: helix in 2D (combining sin/cos for pseudo-3D projection)
+                // Using isometric-style projection: y = radius * sin, z-depth affects y
+                const y_component = amplitude * Math.sin(angle);
+                const z_component = amplitude * Math.cos(angle);
+
+                // Isometric projection: y_screen = y + z * 0.5
+                const y = y_component + z_component * 0.5;
+
+                // Store z for depth-based opacity
+                return {
+                    x: x,
+                    y: y,
+                    z: z_component,  // depth (for opacity)
+                    step: step,
+                    amplitude: amplitude,
+                    angle: angle
+                };
+            })
+            .filter(point => point !== null);  // Remove null entries
+
+        // Skip this expert if no valid data points
+        if (helixData.length === 0) {
+            console.warn(`[Pi-Helix] Expert ${expertIdx} has no valid routing data points`);
+            continue;
+        }
+
+        // Create dataset with depth-based visual effects
+        const baseColor = colorPalette[expertIdx % colorPalette.length];
+
+        const label = expertIdx === 0
+            ? `Expert 0 (Clean)`
+            : `Expert ${expertIdx} (π[${99999 - expertIdx + 1}] = ${pi_digit ?? '?'})`;
+
+        datasets.push({
+            label: label,
+            data: helixData,
+            borderColor: baseColor,
+            backgroundColor: baseColor + '20',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: baseColor,
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            tension: 0.4,  // Smooth curves
+            fill: false,
+            segment: {
+                // Apply pseudo-3D depth effect via opacity
+                borderWidth: (ctx) => {
+                    if (!ctx.p0 || !ctx.p0.raw) return 2;
+                    // Thicker when closer (z > 0), thinner when farther (z < 0)
+                    const z = ctx.p0.raw.z || 0;
+                    return 2 + z * 1.5;  // Range: 0.5 to 3.5
+                },
+                borderColor: (ctx) => {
+                    if (!ctx.p0 || !ctx.p0.raw) return baseColor;
+                    // More opaque when closer, more transparent when farther
+                    const z = ctx.p0.raw.z || 0;
+                    const opacity = 0.4 + (z + 1) * 0.3;  // Range: 0.1 to 1.0
+                    const hex = baseColor.replace('#', '');
+                    const r = parseInt(hex.substr(0, 2), 16);
+                    const g = parseInt(hex.substr(2, 2), 16);
+                    const b = parseInt(hex.substr(4, 2), 16);
+                    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+                }
+            },
+            expertIdx: expertIdx,
+            pi_digit: pi_digit
+        });
+    }
+
+    // If no datasets were created, show a message
+    if (datasets.length === 0) {
+        const message = document.createElement('div');
+        message.className = 'empty-state';
+        message.style.padding = '2rem';
+        message.style.textAlign = 'center';
+        message.innerHTML = `
+            <h3>No Routing Data Available</h3>
+            <p>Routing weights are logged in metrics.db but not found for these training steps.</p>
+            <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
+                The Prismatic router automatically logs routing weights via _log_routing_metrics().
+                This data will appear once training progresses.
+            </p>
+        `;
+        ctx.parentElement.appendChild(message);
+        return;
+    }
+
+    // Create the chart
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'nearest'
+            },
+            parsing: {
+                xAxisKey: 'x',
+                yAxisKey: 'y'
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                    callbacks: {
+                        title: (ctx) => {
+                            const point = ctx[0].raw;
+                            return `Step ${point.step}`;
+                        },
+                        label: (ctx) => {
+                            const point = ctx.raw;
+                            const dataset = ctx.dataset;
+                            return [
+                                `${dataset.label}`,
+                                `Routing: ${(point.amplitude * 100).toFixed(1)}%`,
+                                `Phase: ${(point.angle % (2 * Math.PI)).toFixed(2)} rad`,
+                                `Depth: ${point.z > 0 ? 'near' : 'far'}`
+                            ];
+                        }
+                    }
+                },
+                title: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Training Progress (%)',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => `${value.toFixed(0)}%`
+                    },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Routing Amplitude (Helix Projection)',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: {
+                        color: textColor
+                    },
+                    grid: { color: gridColor }
+                }
+            }
+        }
+    });
 }
 
 /**

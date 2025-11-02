@@ -7,7 +7,7 @@ from typing import Dict, List
 
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 
 
 def format_tool_calling(
@@ -144,7 +144,7 @@ def format_tool_calling(
     # Build the conversation with unified system/developer prompts and tool usage
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "developer", "content": DEVELOPER_PROMPTS["use_tools"]},
+        {"role": "developer", "content": sample_developer_prompt("use_tools")},
         {"role": "user", "content": user_prompt},
     ]
 

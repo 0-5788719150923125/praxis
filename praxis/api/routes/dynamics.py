@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from flask import Blueprint, current_app, jsonify, request
 
+from praxis.routers.prismatic import get_pi_digit_at
+
 dynamics_bp = Blueprint("dynamics", __name__)
 
 
@@ -110,6 +112,9 @@ def get_dynamics():
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
+        # Detect number of experts and compute pi-phase metadata
+        expert_metadata = _compute_expert_metadata(dynamics_data["metrics"])
+
         # Format response
         response_data = {
             "status": "ok",
@@ -117,7 +122,8 @@ def get_dynamics():
                 "hash": current_hash,
                 "metadata": {
                     "num_points": dynamics_data["num_points"],
-                    "last_step": dynamics_data.get("last_step", 0)
+                    "last_step": dynamics_data.get("last_step", 0),
+                    **expert_metadata  # Add expert count and pi-seeds
                 },
                 "dynamics": dynamics_data["metrics"]
             }]
@@ -147,10 +153,10 @@ def _read_dynamics_from_db(
     db_path: Path, since_step: int = 0, limit: int = 1000
 ) -> Optional[Dict[str, Any]]:
     """
-    Read gradient dynamics from SQLite database.
+    Read gradient dynamics from SQLite database and merge with routing weights.
 
     Schema:
-        CREATE TABLE dynamics (
+        dynamics.db:
             step INTEGER PRIMARY KEY,
             expert_0_top_norm REAL,
             expert_0_bottom_norm REAL,
@@ -160,7 +166,10 @@ def _read_dynamics_from_db(
             expert_1_middle_norm REAL,
             expert_1_divergence REAL,
             ...
-        )
+
+        metrics.db:
+            step INTEGER PRIMARY KEY,
+            extra_metrics TEXT (JSON with routing_weight, routing_entropy, etc.)
 
     Args:
         db_path: Path to dynamics SQLite database
@@ -209,6 +218,15 @@ def _read_dynamics_from_db(
         if 'step' in metrics and 'steps' not in metrics:
             metrics['steps'] = metrics['step']
 
+        # Merge routing weights from metrics.db
+        metrics_db_path = db_path.parent / "metrics.db"
+        if metrics_db_path.exists():
+            routing_data = _read_routing_weights_from_metrics(
+                metrics_db_path, metrics['step']
+            )
+            if routing_data:
+                metrics.update(routing_data)
+
         return {
             "metrics": metrics,
             "num_points": len(rows),
@@ -218,3 +236,160 @@ def _read_dynamics_from_db(
     except Exception as e:
         print(f"Error reading dynamics db: {e}")
         return None
+
+
+def _read_routing_weights_from_metrics(
+    metrics_db_path: Path, steps: List[int]
+) -> Optional[Dict[str, List]]:
+    """
+    Read routing weights from metrics.db extra_metrics JSON field.
+
+    Handles cases where not all dynamics steps have corresponding routing metrics.
+    Missing values are filled with None or interpolated from nearest neighbors.
+
+    Args:
+        metrics_db_path: Path to metrics.db
+        steps: List of steps to query (from dynamics.db)
+
+    Returns:
+        Dict with routing weight arrays keyed by expert_i_routing_weight
+    """
+    try:
+        import json
+
+        conn = sqlite3.connect(f'file:{metrics_db_path}?mode=ro', uri=True)
+        cursor = conn.cursor()
+
+        # Query ALL routing metrics in the step range (not just exact matches)
+        min_step = min(steps)
+        max_step = max(steps)
+
+        query = f"""
+            SELECT step, extra_metrics
+            FROM metrics
+            WHERE step >= ? AND step <= ? AND extra_metrics IS NOT NULL
+            ORDER BY step ASC
+        """
+
+        cursor.execute(query, (min_step, max_step))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            return None
+
+        # Parse routing weights from JSON and create step-indexed map
+        routing_data_by_step = {}
+
+        for step, extra_metrics_json in rows:
+            try:
+                extra_metrics = json.loads(extra_metrics_json)
+                routing_data_by_step[step] = {
+                    k: v for k, v in extra_metrics.items() if 'routing' in k
+                }
+            except json.JSONDecodeError:
+                continue
+
+        if not routing_data_by_step:
+            return None
+
+        # Build aligned arrays for the requested steps
+        # First, determine all routing metric keys from all available data
+        all_routing_keys = set()
+        for step_data in routing_data_by_step.values():
+            all_routing_keys.update(step_data.keys())
+
+        if not all_routing_keys:
+            return None
+
+        # Initialize arrays for all routing metrics
+        routing_metrics = {key: [None] * len(steps) for key in all_routing_keys}
+
+        # Fill in values using forward-fill for missing steps
+        last_known_values = {}
+
+        for step_idx, step in enumerate(steps):
+            # Try exact match first
+            if step in routing_data_by_step:
+                step_data = routing_data_by_step[step]
+                # Update last known values
+                last_known_values.update(step_data)
+            else:
+                # Use last known values (forward-fill)
+                step_data = last_known_values
+
+            # Fill in this step's data
+            for key in all_routing_keys:
+                if key in step_data:
+                    routing_metrics[key][step_idx] = step_data[key]
+
+        return routing_metrics if routing_metrics else None
+
+    except Exception as e:
+        print(f"Error reading routing weights from metrics: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _compute_expert_metadata(metrics: Dict[str, List]) -> Dict[str, Any]:
+    """
+    Compute expert metadata including pi-digit seeds for Quantum Echoes visualization.
+
+    Detects number of experts from dynamics data and computes the pi digit
+    each expert was seeded with (walking backwards from pi_position=100000).
+
+    Args:
+        metrics: Dynamics metrics dict with keys like "expert_0_top_norm", etc.
+
+    Returns:
+        Dict with:
+            - num_experts: int
+            - pi_seeds: List[int] - pi digit for each expert (0-9)
+            - pi_phases: List[float] - phase angle in radians (0 to 2π)
+    """
+    # Detect number of experts from metric keys
+    expert_keys = [k for k in metrics.keys() if k.startswith("expert_")]
+    if not expert_keys:
+        return {"num_experts": 0, "pi_seeds": [], "pi_phases": []}
+
+    # Extract expert indices
+    expert_indices = set()
+    for key in expert_keys:
+        parts = key.split("_")
+        if len(parts) >= 2 and parts[0] == "expert":
+            try:
+                expert_indices.add(int(parts[1]))
+            except ValueError:
+                continue
+
+    num_experts = len(expert_indices)
+    if num_experts == 0:
+        return {"num_experts": 0, "pi_seeds": [], "pi_phases": []}
+
+    # Compute pi seeds for each expert (Quantum Echoes)
+    # Expert 0: no seed (clean)
+    # Expert 1: pi[position - 1], Expert 2: pi[position - 2], etc.
+    pi_seeds = []
+    pi_phases = []
+    pi_position = 100000  # Default position (matches Prismatic default)
+
+    for expert_idx in sorted(expert_indices):
+        if expert_idx == 0:
+            # Expert 0 is clean (no pi seed)
+            pi_seeds.append(None)
+            pi_phases.append(0.0)
+        else:
+            # Walk backwards through pi
+            pi_index = pi_position - expert_idx
+            pi_digit = get_pi_digit_at(pi_index)
+            pi_seeds.append(pi_digit)
+            # Map digit (0-9) to phase angle (0 to 2π)
+            phase = (pi_digit / 10.0) * 2 * 3.141592653589793
+            pi_phases.append(phase)
+
+    return {
+        "num_experts": num_experts,
+        "pi_seeds": pi_seeds,
+        "pi_phases": pi_phases
+    }

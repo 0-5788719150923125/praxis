@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.data.formatters.base import text_formatter
 
 # Chain of Thought tag definitions
@@ -79,7 +79,7 @@ def format_cot(
     # Use chat template with unified system/developer prompts
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "developer", "content": DEVELOPER_PROMPTS["think_step_by_step"]},
+        {"role": "developer", "content": sample_developer_prompt("think_step_by_step")},
         {"role": "user", "content": prompt},
         {"role": "assistant", "content": response},
     ]

@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 import torch
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.data.formatters.base import text_formatter
 
 
@@ -159,7 +159,7 @@ def format_rl(
     # Format with unified system/developer prompts for RL
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "developer", "content": DEVELOPER_PROMPTS["answer_question"]},
+        {"role": "developer", "content": sample_developer_prompt("answer_question")},
         {"role": "user", "content": prompt},
     ]
 

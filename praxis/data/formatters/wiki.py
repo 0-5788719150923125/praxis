@@ -4,7 +4,7 @@ from typing import Dict, List
 
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 
 
 def format_wiki(
@@ -26,7 +26,7 @@ def format_wiki(
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "developer", "content": DEVELOPER_PROMPTS["write_article"]},
+        {"role": "developer", "content": sample_developer_prompt("write_article")},
         {"role": "user", "content": f"Write an article about: {title}"},
         {"role": "assistant", "content": body},
     ]

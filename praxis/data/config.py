@@ -1,5 +1,7 @@
 """Configuration and constants for Praxis data loading."""
 
+import random
+
 from praxis.data.formats import DataFormat
 
 # Dataset weight constants
@@ -50,19 +52,39 @@ DATASET_COLLECTIONS = dict(
 )
 
 # System and developer prompts
-SYSTEM_PROMPT = "You are a helpful AI assistant trained to complete texts, answer questions, and engage in conversation."
+SYSTEM_PROMPT = "Write Thy Wrong."
 
+# Keyword-style developer prompts with tag reuse for generalization
+# Each entry is a list of 1-5 keywords to randomly sample from
+# SYSTEM_PROMPT is included in every list as a valid option
 DEVELOPER_PROMPTS = {
-    "continue_text": "Continue or complete the provided text, maintaining style and coherence.",
-    "follow_instruction": "Follow the user's instructions precisely and provide a complete response.",
-    "engage_conversation": "Engage naturally in this conversation, being helpful and appropriate.",
-    "answer_question": "Answer the question accurately based on your knowledge.",
-    "think_step_by_step": "Think step-by-step through this problem before providing your answer.",
-    "use_tools": "Use the available tools when appropriate to help the user.",
-    "write_article": "Write a comprehensive article or explanation on the given topic.",
-    "persona_chat": "Engage in conversation while maintaining the specified personas.",
-    "soda_dialogue": "Continue this dialogue naturally based on the context provided.",
+    "continue_text": ["continue", SYSTEM_PROMPT, "proceed", "go"],
+    "follow_instruction": ["assist", SYSTEM_PROMPT, "help", "follow"],
+    "engage_conversation": ["engage", SYSTEM_PROMPT, "chat", "converse"],
+    "answer_question": ["answer", SYSTEM_PROMPT, "respond", "think"],
+    "think_step_by_step": ["think", SYSTEM_PROMPT, "reason", "analyze"],
+    "use_tools": ["use", SYSTEM_PROMPT, "assist", "execute"],
+    "write_article": ["write", SYSTEM_PROMPT, "compose", "create"],
+    "persona_chat": ["chat", SYSTEM_PROMPT, "engage", "converse"],
+    "soda_dialogue": ["chat", SYSTEM_PROMPT, "engage", "dialogue"],
 }
+
+
+def sample_developer_prompt(prompt_type: str, fallback: str = "") -> str:
+    """
+    Sample a random keyword from the developer prompt list for the given type.
+
+    Args:
+        prompt_type: Key in DEVELOPER_PROMPTS dict
+        fallback: Fallback value if prompt_type not found
+
+    Returns:
+        Randomly sampled keyword from the list
+    """
+    prompt_list = DEVELOPER_PROMPTS.get(prompt_type)
+    if prompt_list is None:
+        return fallback
+    return random.choice(prompt_list)
 
 
 # HuggingFace dataset configurations

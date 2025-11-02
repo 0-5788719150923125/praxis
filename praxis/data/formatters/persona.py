@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.data.formatters.base import simple_truecase, text_formatter
 
 
@@ -57,7 +57,7 @@ def format_personachat(
         developer_message = developer_message.strip()
     else:
         # Use default persona chat prompt if no personality provided
-        developer_message = DEVELOPER_PROMPTS["persona_chat"]
+        developer_message = sample_developer_prompt("persona_chat")
 
     # Build messages list
     messages = [

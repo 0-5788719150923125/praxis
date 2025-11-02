@@ -11,6 +11,7 @@ from praxis.data.config import (
     SYSTEM_PROMPT,
     TOOLS_WEIGHT,
     DataFormat,
+    sample_developer_prompt,
 )
 
 # DataModule
@@ -71,7 +72,8 @@ __all__ = [
     "DATASET_COLLECTIONS",
     "HUGGINGFACE_DATASETS",
     "SYSTEM_PROMPT",
-    "DEVELOPER_PROMPTS",
+    "DEVELOPER_PROMPTS",  # Now returns lists of keywords
+    "sample_developer_prompt",  # Use this to sample from keyword lists
     "DEFAULT_WEIGHT",
     "SRC_WEIGHT",
     "DIR_WEIGHT",

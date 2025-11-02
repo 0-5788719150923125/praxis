@@ -6,7 +6,7 @@ from typing import Dict, List
 
 from transformers import PreTrainedTokenizer
 
-from praxis.data.config import DEVELOPER_PROMPTS, SYSTEM_PROMPT
+from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
 from praxis.data.formatters.base import (
     repair_broken_emoticons,
     repair_text_punctuation,
@@ -37,7 +37,7 @@ def format_conversation(
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "developer",
-            "content": original_system or DEVELOPER_PROMPTS["engage_conversation"],
+            "content": original_system or sample_developer_prompt("engage_conversation"),
         },
         {"role": "user", "content": text_formatter(document.get(keys[1], ""))},
         {"role": "assistant", "content": text_formatter(document.get(keys[2], ""))},
@@ -76,9 +76,9 @@ def format_messages(
 
     # Determine developer prompt based on content
     if any(msg.get("role") == "user" for msg in messages):
-        developer_prompt = DEVELOPER_PROMPTS["engage_conversation"]
+        developer_prompt = sample_developer_prompt("engage_conversation")
     else:
-        developer_prompt = DEVELOPER_PROMPTS["continue_text"]
+        developer_prompt = sample_developer_prompt("continue_text")
 
     processed_messages.append({"role": "developer", "content": developer_prompt})
 
@@ -138,7 +138,7 @@ def format_soda(document: Dict, keys: List[str], tokenizer: PreTrainedTokenizer)
     # Build conversation with unified system/developer prompts
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "developer", "content": DEVELOPER_PROMPTS["soda_dialogue"]},
+        {"role": "developer", "content": sample_developer_prompt("soda_dialogue")},
     ]
 
     # Add context as a developer message if available
