@@ -202,8 +202,11 @@ class MultiDirectoryDataset(PraxisSampler):
                 messages = [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {
-                        "role": "user",
-                        "content": f"Continue or complete the following code from {rel_path}:",
+                        "role": "developer",
+                        "content": sample_developer_prompt(
+                            "continue_text",
+                            "Continue or complete the provided text.",
+                        ),
                     },
                     {"role": "assistant", "content": content},
                 ]

@@ -149,11 +149,12 @@ class TestPrismaticInitialization:
         base_expert = SimpleMLP(hidden_size=64)
         prismatic = Prismatic(config, base_expert=base_expert)
 
-        # Check defaults (1.0 = aggressive corruption by default)
-        assert prismatic.perturbation_scale == 1.0
+        # Check defaults (0.8 = 80% pruning/amplification for inverse_directional)
+        assert prismatic.perturbation_scale == 0.8
         assert prismatic.sparsity == 0.1
         assert prismatic.perturb_by_magnitude is True
-        assert prismatic.dropout_rate == 0.1
+        assert prismatic.perturbation_mode == "inverse_directional"
+        assert prismatic.dropout_rate == 0.0
 
 
 class TestPerturbationMechanics:
@@ -1090,6 +1091,255 @@ class TestPerturbationModes:
                 break
 
         assert params_differ, "Directional and noise modes should produce different perturbations"
+
+
+class TestInverseDirectionalMode:
+    """Test inverse_directional mode (neuronal regeneration via reverse quantum mirror)."""
+
+    def test_inverse_directional_suppresses_top_weights(self):
+        """
+        Test that inverse_directional mode symmetrically suppresses top-magnitude weights.
+
+        In inverse_directional mode with dual_sided strategy:
+        - Top positive weights: W - scale * W (toward zero, prune lottery tickets)
+        - Top negative weights: W - scale * W (toward zero, prune lottery tickets)
+        - Tests neuronal regeneration hypothesis: prune strong signals
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,  # 100% suppression
+            sparsity=0.2,  # 10% top + 10% bottom for easier testing
+            perturbation_strategy="dual_sided",
+            perturbation_mode="inverse_directional",  # Reverse Quantum Mirror
+        )
+
+        base_expert = SimpleMLP(hidden_size=64)
+
+        # Store original parameters
+        original_params = {}
+        for name, param in base_expert.named_parameters():
+            original_params[name] = param.clone().detach()
+
+        prismatic = Prismatic(config, base_expert=base_expert)
+
+        # Check expert 1 (first perturbed expert)
+        expert_1 = prismatic.experts[1]
+
+        # Check fc1.weight (should have top weights suppressed)
+        fc1_original = original_params["fc1.weight"]
+        fc1_perturbed = expert_1.fc1.weight.detach()
+
+        # Find top 10% by magnitude in original
+        flat_orig = fc1_original.flatten()
+        flat_orig_abs = flat_orig.abs()
+        num_top = max(1, int(flat_orig_abs.numel() * 0.1))
+        top_threshold = torch.topk(flat_orig_abs, num_top).values[-1]
+        top_mask = (flat_orig_abs >= top_threshold)
+
+        # Get corresponding values
+        top_original = flat_orig[top_mask]
+        top_perturbed = fc1_perturbed.flatten()[top_mask]
+
+        # Top weights should be suppressed symmetrically: W_new = W - scale * W = 0
+        # - Positive: W - W = 0 (toward zero)
+        # - Negative: W - W = 0 (toward zero)
+        for orig, pert in zip(top_original, top_perturbed):
+            expected = orig - 1.0 * orig  # W - W = 0
+            if orig > 0:
+                # Positive weights should be suppressed toward zero
+                assert pert < orig, f"Top positive weight {orig} not suppressed (got {pert})"
+                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+            else:
+                # Negative weights should also be suppressed toward zero (NOT amplified)
+                assert pert > orig, f"Top negative weight {orig} not suppressed toward 0 (got {pert})"
+                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+
+    def test_inverse_directional_amplifies_bottom_weights(self):
+        """
+        Test that inverse_directional mode symmetrically amplifies bottom-magnitude weights.
+
+        In inverse_directional mode with dual_sided strategy:
+        - Bottom positive weights: W + scale * W (away from zero, wake dormant neurons)
+        - Bottom negative weights: W + scale * W (away from zero, wake dormant neurons)
+        - Tests neuronal regeneration hypothesis: amplify weak signals
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,  # 100% amplification
+            sparsity=0.2,  # 10% top + 10% bottom
+            perturbation_strategy="dual_sided",
+            perturbation_mode="inverse_directional",
+        )
+
+        base_expert = SimpleMLP(hidden_size=64)
+
+        # Store original parameters
+        original_params = {}
+        for name, param in base_expert.named_parameters():
+            original_params[name] = param.clone().detach()
+
+        prismatic = Prismatic(config, base_expert=base_expert)
+
+        # Check expert 1
+        expert_1 = prismatic.experts[1]
+
+        # Check fc1.weight
+        fc1_original = original_params["fc1.weight"]
+        fc1_perturbed = expert_1.fc1.weight.detach()
+
+        # Find bottom 10% NON-ZERO weights by magnitude in original
+        flat_orig = fc1_original.flatten()
+        flat_orig_abs = flat_orig.abs()
+        non_zero_mask = flat_orig_abs > 0
+        non_zero_abs = flat_orig_abs[non_zero_mask]
+
+        if len(non_zero_abs) > 0:
+            num_bottom = max(1, int(flat_orig_abs.numel() * 0.1))
+            num_bottom = min(num_bottom, len(non_zero_abs))
+            bottom_threshold = torch.topk(non_zero_abs, num_bottom, largest=False).values[-1]
+            bottom_mask = (flat_orig_abs <= bottom_threshold) & (flat_orig_abs > 0)
+
+            # Get corresponding values
+            bottom_original = flat_orig[bottom_mask]
+            bottom_perturbed = fc1_perturbed.flatten()[bottom_mask]
+
+            # Bottom weights should be amplified symmetrically: W_new = W + scale * W = 2W
+            # - Positive: W + W = 2W (away from zero)
+            # - Negative: W + W = 2W (away from zero, more negative)
+            for orig, pert in zip(bottom_original, bottom_perturbed):
+                expected = orig + 1.0 * orig  # W + W = 2W
+                if orig > 0:
+                    # Positive bottom weights should be amplified away from 0
+                    assert pert > orig, f"Bottom positive weight {orig} not amplified (got {pert})"
+                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                else:
+                    # Negative bottom weights should also be amplified (more negative)
+                    assert pert < orig, f"Bottom negative weight {orig} not amplified (got {pert})"
+                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+
+    def test_inverse_directional_is_deterministic(self):
+        """
+        Test that inverse_directional mode produces identical perturbations (no randomness).
+        """
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="inverse_directional",
+        )
+
+        # Create two instances with same base weights
+        base_expert_1 = SimpleMLP(hidden_size=64)
+        base_expert_2 = SimpleMLP(hidden_size=64)
+        base_expert_2.load_state_dict(base_expert_1.state_dict())
+
+        prismatic_1 = Prismatic(config, base_expert=base_expert_1)
+        prismatic_2 = Prismatic(config, base_expert=base_expert_2)
+
+        # Experts should be identical
+        for (name1, param1), (name2, param2) in zip(
+            prismatic_1.experts[1].named_parameters(),
+            prismatic_2.experts[1].named_parameters()
+        ):
+            assert torch.allclose(param1, param2, atol=1e-6), \
+                f"Inverse directional mode should be deterministic for {name1}"
+
+    def test_inverse_vs_directional_modes_differ(self):
+        """
+        Test that inverse_directional and directional modes produce opposite perturbations.
+        """
+        # Same base expert for both
+        base_expert = SimpleMLP(hidden_size=64)
+
+        config_directional = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="directional",
+        )
+
+        config_inverse = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=1.0,
+            sparsity=0.1,
+            perturbation_strategy="dual_sided",
+            perturbation_mode="inverse_directional",
+        )
+
+        # Clone base expert for each mode
+        base_directional = SimpleMLP(hidden_size=64)
+        base_directional.load_state_dict(base_expert.state_dict())
+        base_inverse = SimpleMLP(hidden_size=64)
+        base_inverse.load_state_dict(base_expert.state_dict())
+
+        prismatic_directional = Prismatic(config_directional, base_expert=base_directional)
+        prismatic_inverse = Prismatic(config_inverse, base_expert=base_inverse)
+
+        # Perturbed experts should have opposite perturbations
+        expert_dir = prismatic_directional.experts[1]
+        expert_inv = prismatic_inverse.experts[1]
+
+        # Get fc1.weight perturbations
+        original = base_expert.fc1.weight.clone().detach()
+        dir_weight = expert_dir.fc1.weight.detach()
+        inv_weight = expert_inv.fc1.weight.detach()
+
+        # Calculate perturbations
+        dir_pert = dir_weight - original
+        inv_pert = inv_weight - original
+
+        # Perturbations should be opposite: inv_pert = -dir_pert (where perturbed)
+        # Due to the sign flip in inverse mode
+        perturbed_mask = dir_pert.abs() > 1e-6
+        if perturbed_mask.sum() > 0:
+            dir_pert_values = dir_pert[perturbed_mask]
+            inv_pert_values = inv_pert[perturbed_mask]
+
+            # Should be approximately opposite
+            assert torch.allclose(inv_pert_values, -dir_pert_values, atol=1e-5), \
+                "Inverse directional should create opposite perturbations from directional"
+
+    def test_inverse_directional_forward_pass(self):
+        """Test that inverse_directional mode works in forward pass without errors."""
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=3,
+            perturbation_scale=1.0,
+            sparsity=0.1,
+            perturbation_mode="inverse_directional",
+            dropout=0.0,
+        )
+
+        base_expert = SimpleMLP(hidden_size=64)
+        prismatic = Prismatic(config, base_expert=base_expert)
+
+        # Forward pass
+        batch_size = 2
+        seq_length = 16
+        inputs = torch.randn(batch_size, seq_length, config.hidden_size)
+
+        output, _, _, loss = prismatic(
+            layer=base_expert,
+            inputs=inputs,
+            attention_mask=None,
+            past_key_values=None,
+            current_state=None,
+            current_depth=0,
+            block_ids=None,
+        )
+
+        # Should produce valid outputs
+        assert output.shape == inputs.shape
+        assert not torch.isnan(output).any(), "Output contains NaN"
+        assert not torch.isinf(output).any(), "Output contains Inf"
+        assert output.abs().sum() > 0, "Output is all zeros"
 
 
 class TestEdgeCases:

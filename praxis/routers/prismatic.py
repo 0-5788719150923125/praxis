@@ -169,11 +169,18 @@ class PrismaticConfig:
     Attributes:
         hidden_size: Hidden dimension size
         num_experts: Number of expert clones (including 1 clean expert)
-        perturbation_scale: Scale factor for perturbations (default: 1.0)
-            Adds Gaussian noise with std = scale * |W|
-            1.0 = add noise equal to weight magnitude (aggressive corruption)
-            0.1 = add 10% noise (moderate)
-            0.01 = add 1% noise (conservative)
+        perturbation_scale: Scale factor for perturbations (default: 0.8)
+            For inverse_directional (DEFAULT):
+                0.5 = 50% pruning/amplification (conservative)
+                0.8 = 80% pruning/amplification (default, balanced)
+                0.9 = 90% pruning/amplification (aggressive)
+                1.0 = 100% pruning (top→0), 100% amplification (bottom→2W)
+                >1.0 = overshoots, flips signs (not recommended)
+            For directional mode:
+                1.0 = 100% amplification (top→2W, bottom→0) (standard)
+                0.5 = 50% amplification (moderate)
+            For noise mode:
+                Scale controls Gaussian noise std = scale * |W|
         sparsity: Fraction of weights to perturb (default: 0.1 = 10%)
         perturb_by_magnitude: If True, perturb by magnitude; else random
         perturbation_strategy: Strategy for selecting weights to perturb
@@ -181,8 +188,12 @@ class PrismaticConfig:
             - "top_only": Top sparsity by magnitude (original approach)
             - "bottom_only": Bottom sparsity by magnitude
             - "random": Random sparsity selection
-        perturbation_mode: Mode for applying perturbations (default: "directional")
-            - "directional": Quantum mirror - symmetric precision regime exploration (DEFAULT)
+        perturbation_mode: Mode for applying perturbations (default: "inverse_directional")
+            - "inverse_directional": Reverse quantum mirror - neuronal regeneration (DEFAULT)
+                Top weights: W - scale * W (suppress toward 0, prune lottery tickets)
+                Bottom weights: W + scale * W (amplify away from 0, wake dormant neurons)
+                Forces exploration of dormant pathways with productive instability
+            - "directional": Quantum mirror - symmetric precision regime exploration
                 Top weights: W + scale * W (amplify to extremes, both + and -)
                 Bottom weights: W - scale * W (suppress toward 0, both + and -)
                 Explores all floating-point precision regimes symmetrically
@@ -196,12 +207,12 @@ class PrismaticConfig:
 
     hidden_size: int
     num_experts: int
-    perturbation_scale: float = 1.1
-    sparsity: float = 0.1
+    perturbation_scale: float = 0.8  # For inverse_directional: top→0.2W (prune 80%), bottom→1.8W (amplify 80%)
+    sparsity: float = 0.1  # 10% total: 5% top + 5% bottom
     perturb_by_magnitude: bool = True
     perturbation_strategy: str = "dual_sided"
-    perturbation_mode: str = "directional"
-    dropout: float = 0.1
+    perturbation_mode: str = "inverse_directional"
+    dropout: float = 0.0
     use_pi_seeding: bool = True
     pi_position: int = 100000
 
@@ -225,7 +236,19 @@ class Prismatic(nn.Module):
 
     Perturbation Modes:
     ------------------
-    1. "directional" mode (DEFAULT - Quantum Mirror):
+    1. "inverse_directional" mode (DEFAULT - Reverse Quantum Mirror - Neuronal Regeneration):
+       - Reverses directional perturbations to force dormant pathway exploration
+       - Top 5%: W - scale * W (prune lottery tickets, suppress strong signals)
+         - Positive → toward 0 (disrupt learned structure)
+         - Negative → toward 0 (disrupt learned structure)
+       - Bottom 5%: W + scale * W (wake dormant neurons, amplify weak signals)
+         - Positive → more positive (large relative perturbation)
+         - Negative → more negative (large relative perturbation)
+       - Creates productive instability through forced neuronal turnover
+       - Tests whether continuous pruning/restoration cycles aid learning
+       - Deterministic - no random noise
+
+    2. "directional" mode (Quantum Mirror):
        - Applies opposing directional perturbations
        - Top 5%: W + scale * W (systematically amplified to extremes)
          - Positive → more positive (overflow regime)
@@ -236,7 +259,7 @@ class Prismatic(nn.Module):
        - Explores ALL floating-point precision regimes symmetrically
        - Deterministic - no random noise
 
-    2. "noise" mode (legacy):
+    3. "noise" mode (legacy):
        - Adds bidirectional Gaussian noise to selected weights
        - Top 5%: W + scale * |W| * N(0,1) (can go up or down)
        - Bottom 5%: W + scale * |W| * N(0,1) (can go up or down)
@@ -279,13 +302,13 @@ class Prismatic(nn.Module):
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
-        self.perturbation_scale = getattr(config, "perturbation_scale", 1.0)
+        self.perturbation_scale = getattr(config, "perturbation_scale", 0.8)
         self.sparsity = getattr(config, "sparsity", 0.1)
         self.perturb_by_magnitude = getattr(config, "perturb_by_magnitude", True)
         self.perturbation_strategy = getattr(
             config, "perturbation_strategy", "dual_sided"
         )
-        self.perturbation_mode = getattr(config, "perturbation_mode", "directional")
+        self.perturbation_mode = getattr(config, "perturbation_mode", "inverse_directional")
         self.dropout_rate = getattr(config, "dropout", 0.1)
         self.use_pi_seeding = getattr(config, "use_pi_seeding", True)
         self.pi_position = getattr(config, "pi_position", 100000)
@@ -603,9 +626,22 @@ class Prismatic(nn.Module):
         """
         Generate adaptive perturbation scaled by parameter magnitude.
 
-        Two perturbation modes:
+        Three perturbation modes:
 
-        1. "directional" mode (DEFAULT - Quantum Mirror):
+        1. "inverse_directional" mode (DEFAULT - Reverse Quantum Mirror - Neuronal Regeneration):
+            ε = -perturbation_scale * W * mask
+            W_new = W + ε
+
+            - Mask is signed: +1 for top, -1 for bottom, 0 for middle
+            - Top positive weights: suppressed toward 0 (prune lottery tickets)
+            - Top negative weights: suppressed toward 0 (prune lottery tickets)
+            - Bottom positive weights: amplified away from 0 (wake dormant neurons)
+            - Bottom negative weights: amplified away from 0 (wake dormant neurons)
+            - Forces exploration of dormant pathways
+            - Creates productive instability through neuronal turnover
+            - Deterministic - no random noise
+
+        2. "directional" mode (Quantum Mirror):
             ε = perturbation_scale * W * mask
             W_new = W + ε
 
@@ -617,7 +653,7 @@ class Prismatic(nn.Module):
             - Explores ALL floating-point precision regimes symmetrically
             - Deterministic - no random noise
 
-        2. "noise" mode (legacy):
+        3. "noise" mode (legacy):
             ε = perturbation_scale * |W| * N(0,1) * |mask|
             W_new = W + ε
 
@@ -638,6 +674,7 @@ class Prismatic(nn.Module):
         Static perturbations are architectural obstacles the model must adapt to.
         - "noise": Chaotic exploration - forces adaptation to unpredictable irregularity
         - "directional": Opposing substrates - forces genuinely different computational paths
+        - "inverse_directional": Neuronal regeneration - forces dormant pathway exploration
         90% unperturbed + LayerNorm provide stability while 10% perturbed create diversity.
 
         Args:
@@ -657,6 +694,15 @@ class Prismatic(nn.Module):
             # - Bottom negative → toward 0 (underflow/subnormal)
             # mask is +1 for top (amplify), -1 for bottom (suppress), 0 for middle
             perturbation = self.perturbation_scale * param * mask
+        elif self.perturbation_mode == "inverse_directional":
+            # Inverse Directional mode: Reverse quantum mirror - neuronal regeneration
+            # Flip the sign to reverse the directional behavior:
+            # - Top positive → toward 0 (suppress, prune lottery tickets)
+            # - Top negative → toward 0 (suppress, prune lottery tickets)
+            # - Bottom positive → away from 0 (amplify, wake dormant neurons)
+            # - Bottom negative → away from 0 (amplify, wake dormant neurons)
+            # mask is +1 for top (now suppress), -1 for bottom (now amplify), 0 for middle
+            perturbation = -self.perturbation_scale * param * mask
         else:
             # Noise mode: Bidirectional Gaussian noise
             # Scale by parameter magnitude (adaptive)
@@ -981,9 +1027,7 @@ class Prismatic(nn.Module):
 
                 # Cosine similarity: (A · B) / (||A|| × ||B||)
                 cosine_sim = torch.nn.functional.cosine_similarity(
-                    base_vector.unsqueeze(0),
-                    expert_vector.unsqueeze(0),
-                    dim=1
+                    base_vector.unsqueeze(0), expert_vector.unsqueeze(0), dim=1
                 ).item()
 
                 # Store as metric (will be logged via extra_metrics)
@@ -1261,7 +1305,7 @@ class Prismatic(nn.Module):
             # Compare all parameters between expert 0 (clean) and expert i (perturbed)
             for (name0, param0), (name_i, param_i) in zip(
                 self.experts[0].named_parameters(),
-                self.experts[expert_idx].named_parameters()
+                self.experts[expert_idx].named_parameters(),
             ):
                 if not param0.requires_grad:
                     continue
