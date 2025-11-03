@@ -149,12 +149,14 @@ class TestPrismaticInitialization:
         base_expert = SimpleMLP(hidden_size=64)
         prismatic = Prismatic(config, base_expert=base_expert)
 
-        # Check defaults (0.8 = 80% pruning/amplification for inverse_directional)
+        # Check defaults (0.8 = 80% pruning/amplification for attractive mode)
         assert prismatic.perturbation_scale == 0.8
         assert prismatic.sparsity == 0.1
         assert prismatic.perturb_by_magnitude is True
-        assert prismatic.perturbation_mode == "inverse_directional"
+        assert prismatic.perturbation_mode == "attractive"
         assert prismatic.dropout_rate == 0.0
+        assert prismatic.helical_modulation is True  # Helical modulation is now default
+        assert prismatic.helical_wavelength == 3141.592653589793  # π × 1000
 
 
 class TestPerturbationMechanics:
@@ -712,26 +714,25 @@ class TestIntegration:
         ), "Input gradients should be non-zero"
 
 
-class TestPiSeeding:
-    """Test pi-digit seeding (Quantum Echoes)."""
+class TestCleanPerturbations:
+    """Test clean deterministic perturbations (Phase 1 baseline)."""
 
-    def test_pi_seeding_enabled(self):
-        """Test that pi-seeding can be enabled and creates perturbations."""
+    def test_clean_perturbations_are_created(self):
+        """Test that directional modes use simple deterministic perturbations."""
         config = PrismaticConfig(
             hidden_size=64,
-            num_experts=4,
-            perturbation_scale=0.01,
+            num_experts=3,
+            perturbation_scale=0.8,
             sparsity=0.1,
-            use_pi_seeding=True,
-            pi_position=100,
+            perturbation_mode="attractive",
+            helical_modulation=False,  # Phase 1: clean baseline
         )
 
         base_expert = SimpleMLP(hidden_size=64)
         prismatic = Prismatic(config, base_expert=base_expert)
 
-        # Verify pi-seeding is enabled
-        assert prismatic.use_pi_seeding is True
-        assert "pi-seeded" in str(prismatic)
+        # Verify clean perturbations in repr
+        assert "clean" in str(prismatic)
 
         # Verify experts are perturbed
         for expert_idx in range(1, config.num_experts):
@@ -748,106 +749,167 @@ class TestPiSeeding:
                     break
             assert (
                 has_perturbations
-            ), f"Expert {expert_idx} should be perturbed with pi-seeding"
+            ), f"Expert {expert_idx} should have clean deterministic perturbations"
 
-    def test_pi_vs_hash_seeding_differ(self):
-        """Test that pi-seeding produces different perturbations than hash-seeding.
-
-        Note: This test uses noise mode because directional mode doesn't use RNG,
-        so pi vs hash seeding only matters for noise mode.
-        """
-        config_pi = PrismaticConfig(
-            hidden_size=64,
-            num_experts=3,
-            perturbation_scale=0.01,
-            sparsity=0.1,
-            perturbation_mode="noise",  # Pi-seeding only affects noise mode
-            use_pi_seeding=True,
-            pi_position=100,
-        )
-
-        config_hash = PrismaticConfig(
-            hidden_size=64,
-            num_experts=3,
-            perturbation_scale=0.01,
-            sparsity=0.1,
-            perturbation_mode="noise",  # Pi-seeding only affects noise mode
-            use_pi_seeding=False,
-        )
-
-        # Same base expert (load same weights)
-        base_expert_pi = SimpleMLP(hidden_size=64)
-        base_expert_hash = SimpleMLP(hidden_size=64)
-        base_expert_hash.load_state_dict(base_expert_pi.state_dict())
-
-        prismatic_pi = Prismatic(config_pi, base_expert=base_expert_pi)
-        prismatic_hash = Prismatic(config_hash, base_expert=base_expert_hash)
-
-        # Compare expert 1 perturbations
-        expert_1_pi = prismatic_pi.experts[1]
-        expert_1_hash = prismatic_hash.experts[1]
-
-        # Should have different perturbations
-        params_differ = False
-        for (name_pi, param_pi), (name_hash, param_hash) in zip(
-            expert_1_pi.named_parameters(), expert_1_hash.named_parameters()
-        ):
-            if not param_pi.requires_grad:
-                continue
-            if not torch.allclose(param_pi, param_hash, atol=1e-6):
-                params_differ = True
-                break
-
-        assert (
-            params_differ
-        ), "Pi-seeding and hash-seeding should produce different perturbations"
-
-    def test_quantum_echoes_backward_walk(self):
-        """
-        Test that experts walk backwards through pi (Quantum Echoes).
-
-        Expert 1 should use pi[position-1], Expert 2 uses pi[position-2], etc.
-
-        Note: This test uses noise mode because directional mode doesn't use RNG,
-        so the backward walk through pi only creates variation in noise mode.
-        """
+    def test_perturbations_are_deterministic(self):
+        """Test that clean perturbations are deterministic (reproducible)."""
         config = PrismaticConfig(
             hidden_size=64,
-            num_experts=4,
-            perturbation_scale=0.01,
+            num_experts=3,
+            perturbation_scale=0.8,
             sparsity=0.1,
-            perturbation_mode="noise",  # Pi-seeding backward walk only affects noise mode
-            use_pi_seeding=True,
-            pi_position=100,
+            perturbation_mode="repulsive",
+            helical_modulation=False,
+        )
+
+        # Create two instances with same config
+        base_expert_1 = SimpleMLP(hidden_size=64)
+        base_expert_2 = SimpleMLP(hidden_size=64)
+        base_expert_2.load_state_dict(base_expert_1.state_dict())
+
+        prismatic_1 = Prismatic(config, base_expert=base_expert_1)
+        prismatic_2 = Prismatic(config, base_expert=base_expert_2)
+
+        # Experts should have identical perturbations
+        for expert_idx in range(1, config.num_experts):
+            for (name1, param1), (name2, param2) in zip(
+                prismatic_1.experts[expert_idx].named_parameters(),
+                prismatic_2.experts[expert_idx].named_parameters()
+            ):
+                assert torch.allclose(param1, param2, atol=1e-6), \
+                    f"Clean perturbations should be deterministic for expert {expert_idx}, param {name1}"
+
+
+class TestHelicalModulation:
+    """Test helical modulation (Phase 2 experiment)."""
+
+    def test_helical_modulation_is_created(self):
+        """Test that helical modulation can be enabled."""
+        config = PrismaticConfig(
+            hidden_size=64,
+            num_experts=3,
+            perturbation_scale=0.8,
+            sparsity=0.1,
+            perturbation_mode="attractive",
+            helical_modulation=True,  # Phase 2: helical experiment
+            helical_wavelength=1000.0,
         )
 
         base_expert = SimpleMLP(hidden_size=64)
         prismatic = Prismatic(config, base_expert=base_expert)
 
-        # Each expert should have different perturbations (walking backward through pi)
-        expert_params = []
+        # Verify helical modulation in repr
+        assert "helical" in str(prismatic)
+
+        # Verify experts are perturbed
         for expert_idx in range(1, config.num_experts):
             expert = prismatic.experts[expert_idx]
-            # Get first linear layer weight
-            param = expert.fc1.weight.clone()
-            expert_params.append(param)
+            has_perturbations = False
+            for name, param in expert.named_parameters():
+                if not param.requires_grad:
+                    continue
+                clean_param = prismatic.experts[0].state_dict()[name]
+                if not torch.allclose(param, clean_param, atol=1e-6):
+                    has_perturbations = True
+                    break
+            assert has_perturbations, f"Expert {expert_idx} should have helical perturbations"
 
-        # All experts should have different perturbations
-        for i in range(len(expert_params)):
-            for j in range(i + 1, len(expert_params)):
-                assert not torch.allclose(
-                    expert_params[i], expert_params[j], atol=1e-6
-                ), f"Expert {i+1} and Expert {j+1} should have different pi-based perturbations"
+    def test_helical_creates_different_patterns_than_clean(self):
+        """Test that helical modulation creates different patterns than clean."""
+        base_expert = SimpleMLP(hidden_size=64)
+
+        config_clean = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.8,
+            sparsity=0.1,
+            perturbation_mode="attractive",
+            helical_modulation=False,
+        )
+
+        config_helical = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.8,
+            sparsity=0.1,
+            perturbation_mode="attractive",
+            helical_modulation=True,
+            helical_wavelength=1000.0,
+        )
+
+        base_1 = SimpleMLP(hidden_size=64)
+        base_2 = SimpleMLP(hidden_size=64)
+        base_2.load_state_dict(base_1.state_dict())
+
+        prismatic_clean = Prismatic(config_clean, base_expert=base_1)
+        prismatic_helical = Prismatic(config_helical, base_expert=base_2)
+
+        # Expert 1 should have different perturbations
+        params_differ = False
+        for (name1, param1), (name2, param2) in zip(
+            prismatic_clean.experts[1].named_parameters(),
+            prismatic_helical.experts[1].named_parameters()
+        ):
+            if not param1.requires_grad:
+                continue
+            if not torch.allclose(param1, param2, atol=1e-6):
+                params_differ = True
+                break
+
+        assert params_differ, "Helical modulation should create different perturbations than clean"
+
+    def test_helical_wavelength_affects_pattern(self):
+        """Test that different wavelengths create different spiral patterns."""
+        config_1 = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.8,
+            sparsity=0.1,
+            perturbation_mode="attractive",
+            helical_modulation=True,
+            helical_wavelength=500.0,
+        )
+
+        config_2 = PrismaticConfig(
+            hidden_size=64,
+            num_experts=2,
+            perturbation_scale=0.8,
+            sparsity=0.1,
+            perturbation_mode="attractive",
+            helical_modulation=True,
+            helical_wavelength=2000.0,  # Different wavelength
+        )
+
+        base_1 = SimpleMLP(hidden_size=64)
+        base_2 = SimpleMLP(hidden_size=64)
+        base_2.load_state_dict(base_1.state_dict())
+
+        prismatic_1 = Prismatic(config_1, base_expert=base_1)
+        prismatic_2 = Prismatic(config_2, base_expert=base_2)
+
+        # Should have different perturbations
+        params_differ = False
+        for (name1, param1), (name2, param2) in zip(
+            prismatic_1.experts[1].named_parameters(),
+            prismatic_2.experts[1].named_parameters()
+        ):
+            if not param1.requires_grad:
+                continue
+            if not torch.allclose(param1, param2, atol=1e-6):
+                params_differ = True
+                break
+
+        assert params_differ, "Different wavelengths should create different patterns"
 
 
 class TestPerturbationModes:
-    """Test different perturbation modes: directional (default) vs noise (legacy)."""
+    """Test different perturbation modes: attractive/repulsive vs noise."""
 
-    def test_directional_mode_amplifies_top_weights(self):
+    def test_repulsive_mode_amplifies_top_weights(self):
         """
-        Test that directional mode symmetrically amplifies top-magnitude weights.
+        Test that repulsive mode symmetrically amplifies top-magnitude weights.
 
-        In directional mode with dual_sided strategy:
+        In repulsive mode with dual_sided strategy:
         - Top positive weights: W + scale * W = 2W (more positive)
         - Top negative weights: W + scale * W = 2W (more negative)
         - Both push toward overflow regime (extreme values)
@@ -858,7 +920,8 @@ class TestPerturbationModes:
             perturbation_scale=1.0,  # 100% amplification
             sparsity=0.2,  # 10% top + 10% bottom for easier testing
             perturbation_strategy="dual_sided",
-            perturbation_mode="directional",  # Quantum Mirror
+            perturbation_mode="repulsive",  # Quantum Mirror
+            helical_modulation=False,  # Disable for exact math test
         )
 
         base_expert = SimpleMLP(hidden_size=64)
@@ -902,11 +965,11 @@ class TestPerturbationModes:
                 assert pert < orig, f"Top negative weight {orig} not amplified (got {pert})"
                 assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
 
-    def test_directional_mode_suppresses_bottom_weights(self):
+    def test_repulsive_mode_suppresses_bottom_weights(self):
         """
-        Test that directional mode symmetrically suppresses bottom-magnitude weights.
+        Test that repulsive mode symmetrically suppresses bottom-magnitude weights.
 
-        In directional mode with dual_sided strategy:
+        In repulsive mode with dual_sided strategy:
         - Bottom positive weights: W - scale * W = 0 (toward zero)
         - Bottom negative weights: W - scale * W = 0 (toward zero)
         - Both push toward underflow/subnormal regime (near-zero values)
@@ -917,7 +980,8 @@ class TestPerturbationModes:
             perturbation_scale=1.0,  # 100% suppression
             sparsity=0.2,  # 10% top + 10% bottom
             perturbation_strategy="dual_sided",
-            perturbation_mode="directional",
+            perturbation_mode="repulsive",
+            helical_modulation=False,  # Disable for exact math test
         )
 
         base_expert = SimpleMLP(hidden_size=64)
@@ -1016,9 +1080,9 @@ class TestPerturbationModes:
             # roughly scale * magnitude (with high variance)
             assert avg_diff > 0, "Should have non-zero perturbations"
 
-    def test_directional_mode_is_deterministic(self):
+    def test_repulsive_mode_is_deterministic(self):
         """
-        Test that directional mode produces identical perturbations (no randomness).
+        Test that repulsive mode produces identical perturbations (no randomness).
         """
         config = PrismaticConfig(
             hidden_size=64,
@@ -1026,7 +1090,7 @@ class TestPerturbationModes:
             perturbation_scale=1.0,
             sparsity=0.1,
             perturbation_strategy="dual_sided",
-            perturbation_mode="directional",
+            perturbation_mode="repulsive",
         )
 
         # Create two instances with same base weights
@@ -1043,20 +1107,20 @@ class TestPerturbationModes:
             prismatic_2.experts[1].named_parameters()
         ):
             assert torch.allclose(param1, param2, atol=1e-6), \
-                f"Directional mode should be deterministic for {name1}"
+                f"Repulsive mode should be deterministic for {name1}"
 
     def test_modes_produce_different_perturbations(self):
-        """Test that directional and noise modes produce different perturbations."""
+        """Test that repulsive and noise modes produce different perturbations."""
         # Same base expert for both
         base_expert = SimpleMLP(hidden_size=64)
 
-        config_directional = PrismaticConfig(
+        config_repulsive = PrismaticConfig(
             hidden_size=64,
             num_experts=2,
             perturbation_scale=0.1,
             sparsity=0.1,
             perturbation_strategy="dual_sided",
-            perturbation_mode="directional",
+            perturbation_mode="repulsive",
         )
 
         config_noise = PrismaticConfig(
@@ -1069,38 +1133,38 @@ class TestPerturbationModes:
         )
 
         # Clone base expert for each mode
-        base_directional = SimpleMLP(hidden_size=64)
-        base_directional.load_state_dict(base_expert.state_dict())
+        base_repulsive = SimpleMLP(hidden_size=64)
+        base_repulsive.load_state_dict(base_expert.state_dict())
         base_noise = SimpleMLP(hidden_size=64)
         base_noise.load_state_dict(base_expert.state_dict())
 
-        prismatic_directional = Prismatic(config_directional, base_expert=base_directional)
+        prismatic_repulsive = Prismatic(config_repulsive, base_expert=base_repulsive)
         prismatic_noise = Prismatic(config_noise, base_expert=base_noise)
 
         # Perturbed experts should differ between modes
-        expert_dir = prismatic_directional.experts[1]
+        expert_rep = prismatic_repulsive.experts[1]
         expert_noise = prismatic_noise.experts[1]
 
         params_differ = False
-        for (name_dir, param_dir), (name_noise, param_noise) in zip(
-            expert_dir.named_parameters(),
+        for (name_rep, param_rep), (name_noise, param_noise) in zip(
+            expert_rep.named_parameters(),
             expert_noise.named_parameters()
         ):
-            if not torch.allclose(param_dir, param_noise, atol=1e-6):
+            if not torch.allclose(param_rep, param_noise, atol=1e-6):
                 params_differ = True
                 break
 
-        assert params_differ, "Directional and noise modes should produce different perturbations"
+        assert params_differ, "Repulsive and noise modes should produce different perturbations"
 
 
-class TestInverseDirectionalMode:
-    """Test inverse_directional mode (neuronal regeneration via reverse quantum mirror)."""
+class TestAttractiveMode:
+    """Test attractive mode (neuronal regeneration - attract to dormant)."""
 
-    def test_inverse_directional_suppresses_top_weights(self):
+    def test_attractive_mode_suppresses_top_weights(self):
         """
-        Test that inverse_directional mode symmetrically suppresses top-magnitude weights.
+        Test that attractive mode symmetrically suppresses top-magnitude weights.
 
-        In inverse_directional mode with dual_sided strategy:
+        In attractive mode with dual_sided strategy:
         - Top positive weights: W - scale * W (toward zero, prune lottery tickets)
         - Top negative weights: W - scale * W (toward zero, prune lottery tickets)
         - Tests neuronal regeneration hypothesis: prune strong signals
@@ -1111,7 +1175,8 @@ class TestInverseDirectionalMode:
             perturbation_scale=1.0,  # 100% suppression
             sparsity=0.2,  # 10% top + 10% bottom for easier testing
             perturbation_strategy="dual_sided",
-            perturbation_mode="inverse_directional",  # Reverse Quantum Mirror
+            perturbation_mode="attractive",  # Reverse Quantum Mirror
+            helical_modulation=False,  # Disable for exact math test
         )
 
         base_expert = SimpleMLP(hidden_size=64)
@@ -1155,11 +1220,11 @@ class TestInverseDirectionalMode:
                 assert pert > orig, f"Top negative weight {orig} not suppressed toward 0 (got {pert})"
                 assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
 
-    def test_inverse_directional_amplifies_bottom_weights(self):
+    def test_attractive_mode_amplifies_bottom_weights(self):
         """
-        Test that inverse_directional mode symmetrically amplifies bottom-magnitude weights.
+        Test that attractive mode symmetrically amplifies bottom-magnitude weights.
 
-        In inverse_directional mode with dual_sided strategy:
+        In attractive mode with dual_sided strategy:
         - Bottom positive weights: W + scale * W (away from zero, wake dormant neurons)
         - Bottom negative weights: W + scale * W (away from zero, wake dormant neurons)
         - Tests neuronal regeneration hypothesis: amplify weak signals
@@ -1170,7 +1235,8 @@ class TestInverseDirectionalMode:
             perturbation_scale=1.0,  # 100% amplification
             sparsity=0.2,  # 10% top + 10% bottom
             perturbation_strategy="dual_sided",
-            perturbation_mode="inverse_directional",
+            perturbation_mode="attractive",
+            helical_modulation=False,  # Disable for exact math test
         )
 
         base_expert = SimpleMLP(hidden_size=64)
@@ -1219,9 +1285,9 @@ class TestInverseDirectionalMode:
                     assert pert < orig, f"Bottom negative weight {orig} not amplified (got {pert})"
                     assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
 
-    def test_inverse_directional_is_deterministic(self):
+    def test_attractive_mode_is_deterministic(self):
         """
-        Test that inverse_directional mode produces identical perturbations (no randomness).
+        Test that attractive mode produces identical perturbations (no randomness).
         """
         config = PrismaticConfig(
             hidden_size=64,
@@ -1229,7 +1295,7 @@ class TestInverseDirectionalMode:
             perturbation_scale=1.0,
             sparsity=0.1,
             perturbation_strategy="dual_sided",
-            perturbation_mode="inverse_directional",
+            perturbation_mode="attractive",
         )
 
         # Create two instances with same base weights
@@ -1246,74 +1312,74 @@ class TestInverseDirectionalMode:
             prismatic_2.experts[1].named_parameters()
         ):
             assert torch.allclose(param1, param2, atol=1e-6), \
-                f"Inverse directional mode should be deterministic for {name1}"
+                f"Attractive mode should be deterministic for {name1}"
 
-    def test_inverse_vs_directional_modes_differ(self):
+    def test_attractive_vs_repulsive_modes_differ(self):
         """
-        Test that inverse_directional and directional modes produce opposite perturbations.
+        Test that attractive and repulsive modes produce opposite perturbations.
         """
         # Same base expert for both
         base_expert = SimpleMLP(hidden_size=64)
 
-        config_directional = PrismaticConfig(
+        config_repulsive = PrismaticConfig(
             hidden_size=64,
             num_experts=2,
             perturbation_scale=1.0,
             sparsity=0.1,
             perturbation_strategy="dual_sided",
-            perturbation_mode="directional",
+            perturbation_mode="repulsive",
         )
 
-        config_inverse = PrismaticConfig(
+        config_attractive = PrismaticConfig(
             hidden_size=64,
             num_experts=2,
             perturbation_scale=1.0,
             sparsity=0.1,
             perturbation_strategy="dual_sided",
-            perturbation_mode="inverse_directional",
+            perturbation_mode="attractive",
         )
 
         # Clone base expert for each mode
-        base_directional = SimpleMLP(hidden_size=64)
-        base_directional.load_state_dict(base_expert.state_dict())
-        base_inverse = SimpleMLP(hidden_size=64)
-        base_inverse.load_state_dict(base_expert.state_dict())
+        base_repulsive = SimpleMLP(hidden_size=64)
+        base_repulsive.load_state_dict(base_expert.state_dict())
+        base_attractive = SimpleMLP(hidden_size=64)
+        base_attractive.load_state_dict(base_expert.state_dict())
 
-        prismatic_directional = Prismatic(config_directional, base_expert=base_directional)
-        prismatic_inverse = Prismatic(config_inverse, base_expert=base_inverse)
+        prismatic_repulsive = Prismatic(config_repulsive, base_expert=base_repulsive)
+        prismatic_attractive = Prismatic(config_attractive, base_expert=base_attractive)
 
         # Perturbed experts should have opposite perturbations
-        expert_dir = prismatic_directional.experts[1]
-        expert_inv = prismatic_inverse.experts[1]
+        expert_rep = prismatic_repulsive.experts[1]
+        expert_att = prismatic_attractive.experts[1]
 
         # Get fc1.weight perturbations
         original = base_expert.fc1.weight.clone().detach()
-        dir_weight = expert_dir.fc1.weight.detach()
-        inv_weight = expert_inv.fc1.weight.detach()
+        rep_weight = expert_rep.fc1.weight.detach()
+        att_weight = expert_att.fc1.weight.detach()
 
         # Calculate perturbations
-        dir_pert = dir_weight - original
-        inv_pert = inv_weight - original
+        rep_pert = rep_weight - original
+        att_pert = att_weight - original
 
-        # Perturbations should be opposite: inv_pert = -dir_pert (where perturbed)
-        # Due to the sign flip in inverse mode
-        perturbed_mask = dir_pert.abs() > 1e-6
+        # Perturbations should be opposite: att_pert = -rep_pert (where perturbed)
+        # Due to the sign flip in attractive mode
+        perturbed_mask = rep_pert.abs() > 1e-6
         if perturbed_mask.sum() > 0:
-            dir_pert_values = dir_pert[perturbed_mask]
-            inv_pert_values = inv_pert[perturbed_mask]
+            rep_pert_values = rep_pert[perturbed_mask]
+            att_pert_values = att_pert[perturbed_mask]
 
             # Should be approximately opposite
-            assert torch.allclose(inv_pert_values, -dir_pert_values, atol=1e-5), \
-                "Inverse directional should create opposite perturbations from directional"
+            assert torch.allclose(att_pert_values, -rep_pert_values, atol=1e-5), \
+                "Attractive should create opposite perturbations from repulsive"
 
-    def test_inverse_directional_forward_pass(self):
-        """Test that inverse_directional mode works in forward pass without errors."""
+    def test_attractive_mode_forward_pass(self):
+        """Test that attractive mode works in forward pass without errors."""
         config = PrismaticConfig(
             hidden_size=64,
             num_experts=3,
             perturbation_scale=1.0,
             sparsity=0.1,
-            perturbation_mode="inverse_directional",
+            perturbation_mode="attractive",
             dropout=0.0,
         )
 

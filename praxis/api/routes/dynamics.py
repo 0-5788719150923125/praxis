@@ -4,9 +4,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Blueprint, current_app, jsonify, request
+import math
 
-from praxis.routers.prismatic import get_pi_digit_at
+from flask import Blueprint, current_app, jsonify, request
 
 dynamics_bp = Blueprint("dynamics", __name__)
 
@@ -112,7 +112,7 @@ def get_dynamics():
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
-        # Detect number of experts and compute pi-phase metadata
+        # Detect number of experts and compute pi metadata for charts
         expert_metadata = _compute_expert_metadata(dynamics_data["metrics"])
 
         # Format response
@@ -123,7 +123,7 @@ def get_dynamics():
                 "metadata": {
                     "num_points": dynamics_data["num_points"],
                     "last_step": dynamics_data.get("last_step", 0),
-                    **expert_metadata  # Add expert count and pi-seeds
+                    **expert_metadata  # Add expert count, pi_phases, pi_seeds
                 },
                 "dynamics": dynamics_data["metrics"]
             }]
@@ -226,12 +226,6 @@ def _read_dynamics_from_db(
             )
             if routing_data:
                 metrics.update(routing_data)
-
-        # Add sequential pi digits for each step (for radial visualization)
-        metrics['pi_digit_at_step'] = [
-            get_pi_digit_at(step) if step >= 0 else None
-            for step in metrics['step']
-        ]
 
         return {
             "metrics": metrics,
@@ -342,10 +336,9 @@ def _read_routing_weights_from_metrics(
 
 def _compute_expert_metadata(metrics: Dict[str, List]) -> Dict[str, Any]:
     """
-    Compute expert metadata including pi-digit seeds for Quantum Echoes visualization.
+    Compute expert metadata from dynamics data.
 
-    Detects number of experts from dynamics data and computes the pi digit
-    each expert was seeded with (walking backwards from pi_position=100000).
+    Computes actual helical phase offsets used in perturbations (not fake pi seeds).
 
     Args:
         metrics: Dynamics metrics dict with keys like "expert_0_top_norm", etc.
@@ -353,13 +346,12 @@ def _compute_expert_metadata(metrics: Dict[str, List]) -> Dict[str, Any]:
     Returns:
         Dict with:
             - num_experts: int
-            - pi_seeds: List[int] - pi digit for each expert (0-9)
-            - pi_phases: List[float] - phase angle in radians (0 to 2π)
+            - phase_offsets: List[float] - actual phase angles used in helical modulation
     """
     # Detect number of experts from metric keys
     expert_keys = [k for k in metrics.keys() if k.startswith("expert_")]
     if not expert_keys:
-        return {"num_experts": 0, "pi_seeds": [], "pi_phases": []}
+        return {"num_experts": 0, "phase_offsets": []}
 
     # Extract expert indices
     expert_indices = set()
@@ -373,31 +365,21 @@ def _compute_expert_metadata(metrics: Dict[str, List]) -> Dict[str, Any]:
 
     num_experts = len(expert_indices)
     if num_experts == 0:
-        return {"num_experts": 0, "pi_seeds": [], "pi_phases": []}
+        return {"num_experts": 0, "phase_offsets": []}
 
-    # Compute pi seeds for each expert (Quantum Echoes)
-    # Expert 0: no seed (clean)
-    # Expert 1: pi[position - 1], Expert 2: pi[position - 2], etc.
-    pi_seeds = []
-    pi_phases = []
-    pi_position = 100000  # Default position (matches Prismatic default)
-
+    # Compute actual helical phase offsets (as used in perturbations)
+    # phase_offset = expert_idx * 2π / num_experts
+    phase_offsets = []
     for expert_idx in sorted(expert_indices):
         if expert_idx == 0:
-            # Expert 0 is clean (no pi seed)
-            pi_seeds.append(None)
-            pi_phases.append(0.0)
+            # Expert 0 is clean (no phase offset)
+            phase_offsets.append(0.0)
         else:
-            # Walk backwards through pi
-            pi_index = pi_position - expert_idx
-            pi_digit = get_pi_digit_at(pi_index)
-            pi_seeds.append(pi_digit)
-            # Map digit (0-9) to phase angle (0 to 2π)
-            phase = (pi_digit / 10.0) * 2 * 3.141592653589793
-            pi_phases.append(phase)
+            # Actual phase offset from helical modulation
+            phase_offset = expert_idx * 2 * math.pi / num_experts
+            phase_offsets.append(phase_offset)
 
     return {
         "num_experts": num_experts,
-        "pi_seeds": pi_seeds,
-        "pi_phases": pi_phases
+        "phase_offsets": phase_offsets  # Actual helical phases, not fake pi seeds
     }

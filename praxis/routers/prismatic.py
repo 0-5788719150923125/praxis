@@ -51,30 +51,30 @@ The perturbations are NOT learned - they are architectural constraints that forc
 paths through the parameter space, analogous to how qubit perturbations force different
 paths through quantum state space.
 
-Pi-Digit Seeding (Quantum Echoes Through Mathematical Constants):
------------------------------------------------------------------
-Instead of arbitrary random seeds, perturbations are seeded by walking backwards through
-the digits of pi (3.14159265358979...). Each expert gets a single digit (0-9) from pi's
-infinite sequence:
+Helical Modulation (Structure Transfer Experiment):
+----------------------------------------------------
+Perturbations are modulated by helical/spiral patterns using Euler's formula:
 
-- Expert 0: Clean (unperturbed) - the original quantum state at t=0
-- Expert 1: Seeded by pi_digit[position - 1] - archive/lag/echo from t-1
-- Expert 2: Seeded by pi_digit[position - 2] - archive/lag/echo from t-2
-- Expert 3: Seeded by pi_digit[position - 3] - archive/lag/echo from t-3
+    spiral(position, expert_idx) = cos(2π · position / wavelength + phase_offset)
+
+Where:
+- wavelength = π × 1000 (using π's actual mathematical value)
+- phase_offset = expert_idx × 2π / num_experts (harmonic phase relationships)
+
+Each expert experiences a different phase of the spiral pattern:
+- Expert 0: Clean (unperturbed) - the baseline
+- Expert 1: Phase offset π/N - first harmonic
+- Expert 2: Phase offset 2π/N - second harmonic
+- Expert 3: Phase offset 3π/N - third harmonic
 - ...
 
-Walking BACKWARDS creates a temporal lag structure - each expert is an archived copy
-"behind" the current state, corrupted by where pi was at increasingly distant positions.
-During iterative reasoning (depth>layers), the model learns to integrate across these
-temporal lags, building a fuzzy state machine where it can blend {current, t-1, t-2, t-3}.
+During iterative reasoning (depth>layers), the model experiences different harmonic
+combinations at each iteration. The soft-merging creates wave interference patterns
+as experts combine.
 
-Like djent polyrhythms (TOOL, Meshuggah): deterministically unpredictable, yet perfectly
-reproducible. Pi's digits create phase-shifted perturbations - the same complex rhythm
-experienced at different temporal offsets.
-
-The backwards walk enables the model to learn a temporal gradient during training,
-then exploit that structure during inference. Efficient caching (computed once) makes
-this practically costless.
+**Hypothesis**: External helical structure in perturbations transfers into internal
+patterns (gradients, learned features). This is testable by comparing helical_modulation
+enabled vs disabled.
 
 Key Insight: "Train on consensus, you manifest the lowest common denominator."
 Static perturbations prevent convergence to consensus, maintaining genuine diversity throughout
@@ -82,84 +82,12 @@ training. Each expert traverses a fundamentally different computational substrat
 """
 
 import copy
-import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mpmath import mp
-
-# Module-level cache for pi digits
-# Compute once, slice forever - supports efficient backwards walk
-_PI_CACHE: Optional[str] = None
-_PI_CACHE_START: int = 0
-_PI_CACHE_END: int = 0
-
-
-def _ensure_pi_cache(start_position: int, end_position: int) -> None:
-    """
-    Ensure pi cache covers the range [start_position, end_position].
-
-    Computes pi digits once and caches them for efficient repeated access.
-    This enables efficient backwards walk through pi without recomputation.
-
-    Args:
-        start_position: First position needed (inclusive)
-        end_position: Last position needed (inclusive)
-    """
-    global _PI_CACHE, _PI_CACHE_START, _PI_CACHE_END
-
-    # Check if we need to extend the cache
-    if (
-        _PI_CACHE is None
-        or start_position < _PI_CACHE_START
-        or end_position > _PI_CACHE_END
-    ):
-        # Compute with buffer to reduce future recomputations
-        buffer = 10000
-        new_start = (
-            min(start_position, _PI_CACHE_START if _PI_CACHE else start_position)
-            - buffer
-        )
-        new_end = (
-            max(end_position, _PI_CACHE_END if _PI_CACHE else end_position) + buffer
-        )
-        new_start = max(0, new_start)  # Don't go below 0
-
-        # Compute pi digits for the entire range
-        num_digits_needed = new_end + 1
-        mp.dps = num_digits_needed + 100  # Extra precision for safety
-        pi_str = str(mp.pi).replace(".", "")
-
-        # Cache the computed digits
-        _PI_CACHE = pi_str[:num_digits_needed]
-        _PI_CACHE_START = 0
-        _PI_CACHE_END = len(_PI_CACHE) - 1
-
-
-def get_pi_digit_at(position: int) -> int:
-    """
-    Get a single digit from pi at the specified position (cached, efficient).
-
-    Position 0 = 3, position 1 = 1, position 2 = 4, etc.
-
-    Uses a module-level cache to avoid recomputing pi digits.
-    Particularly efficient for backwards walks where we access
-    sequential positions like [99999, 99998, 99997, ...].
-
-    Args:
-        position: Index into pi's digit sequence
-
-    Returns:
-        Single digit (0-9) at that position
-    """
-    # Ensure cache covers this position
-    _ensure_pi_cache(position, position)
-
-    # Return cached digit
-    return int(_PI_CACHE[position])
 
 
 @dataclass
@@ -188,33 +116,38 @@ class PrismaticConfig:
             - "top_only": Top sparsity by magnitude (original approach)
             - "bottom_only": Bottom sparsity by magnitude
             - "random": Random sparsity selection
-        perturbation_mode: Mode for applying perturbations (default: "inverse_directional")
-            - "inverse_directional": Reverse quantum mirror - neuronal regeneration (DEFAULT)
+        perturbation_mode: Mode for applying perturbations (default: "attractive")
+            - "attractive": Neuronal regeneration - wake dormant, prune dominant (DEFAULT)
                 Top weights: W - scale * W (suppress toward 0, prune lottery tickets)
                 Bottom weights: W + scale * W (amplify away from 0, wake dormant neurons)
-                Forces exploration of dormant pathways with productive instability
-            - "directional": Quantum mirror - symmetric precision regime exploration
+                Attracts attention to overlooked pathways with productive instability
+            - "repulsive": Extreme exploration - push to numerical limits
                 Top weights: W + scale * W (amplify to extremes, both + and -)
                 Bottom weights: W - scale * W (suppress toward 0, both + and -)
-                Explores all floating-point precision regimes symmetrically
+                Repels weights to floating-point precision extremes (overflow/underflow)
             - "noise": Bidirectional Gaussian noise (legacy mode)
                 Top weights: W + scale * |W| * N(0,1)
                 Bottom weights: W + scale * |W| * N(0,1)
         dropout: Dropout probability for expert dropout during training
-        use_pi_seeding: If True, use pi-digits for seeding (Quantum Echoes); else use hash
-        pi_position: Starting position in pi's digit sequence (default: 100000)
+        helical_modulation: Apply helical/spiral modulation using Euler's formula (default: True)
+            When True (DEFAULT): perturbations modulated by cos(2π·position/wavelength + phase)
+            When False: simple deterministic perturbations (clean baseline for ablation)
+        helical_wavelength: Wavelength for helical pattern (default: π * 1000)
+            Creates harmonic relationships between experts with phase offsets
     """
 
     hidden_size: int
     num_experts: int
-    perturbation_scale: float = 0.8  # For inverse_directional: top→0.2W (prune 80%), bottom→1.8W (amplify 80%)
+    perturbation_scale: float = (
+        0.8  # For attractive: top→0.2W (prune 80%), bottom→1.8W (amplify 80%)
+    )
     sparsity: float = 0.1  # 10% total: 5% top + 5% bottom
     perturb_by_magnitude: bool = True
     perturbation_strategy: str = "dual_sided"
-    perturbation_mode: str = "inverse_directional"
+    perturbation_mode: str = "attractive"
     dropout: float = 0.0
-    use_pi_seeding: bool = True
-    pi_position: int = 100000
+    helical_modulation: bool = True  # Structure transfer (Euler's formula)
+    helical_wavelength: float = 3141.592653589793  # π × 1000 (using actual π value)
 
 
 class Prismatic(nn.Module):
@@ -236,24 +169,24 @@ class Prismatic(nn.Module):
 
     Perturbation Modes:
     ------------------
-    1. "inverse_directional" mode (DEFAULT - Reverse Quantum Mirror - Neuronal Regeneration):
-       - Reverses directional perturbations to force dormant pathway exploration
-       - Top 5%: W - scale * W (prune lottery tickets, suppress strong signals)
+    1. "attractive" mode (DEFAULT - Neuronal Regeneration):
+       - Attracts attention to dormant pathways, prunes dominant signals
+       - Top 5%: W - scale * W (suppress strong signals, prune lottery tickets)
          - Positive → toward 0 (disrupt learned structure)
          - Negative → toward 0 (disrupt learned structure)
-       - Bottom 5%: W + scale * W (wake dormant neurons, amplify weak signals)
+       - Bottom 5%: W + scale * W (amplify weak signals, wake dormant neurons)
          - Positive → more positive (large relative perturbation)
          - Negative → more negative (large relative perturbation)
        - Creates productive instability through forced neuronal turnover
        - Tests whether continuous pruning/restoration cycles aid learning
        - Deterministic - no random noise
 
-    2. "directional" mode (Quantum Mirror):
-       - Applies opposing directional perturbations
-       - Top 5%: W + scale * W (systematically amplified to extremes)
+    2. "repulsive" mode (Extreme Polarization):
+       - Repels weights to numerical extremes for precision regime exploration
+       - Top 5%: W + scale * W (amplify to extremes, repel from center)
          - Positive → more positive (overflow regime)
          - Negative → more negative (overflow regime)
-       - Bottom 5%: W - scale * W (systematically suppressed toward zero)
+       - Bottom 5%: W - scale * W (suppress toward zero)
          - Positive → toward 0 (underflow/subnormal regime)
          - Negative → toward 0 (underflow/subnormal regime)
        - Explores ALL floating-point precision regimes symmetrically
@@ -308,10 +241,12 @@ class Prismatic(nn.Module):
         self.perturbation_strategy = getattr(
             config, "perturbation_strategy", "dual_sided"
         )
-        self.perturbation_mode = getattr(config, "perturbation_mode", "inverse_directional")
+        self.perturbation_mode = getattr(config, "perturbation_mode", "attractive")
         self.dropout_rate = getattr(config, "dropout", 0.1)
-        self.use_pi_seeding = getattr(config, "use_pi_seeding", True)
-        self.pi_position = getattr(config, "pi_position", 100000)
+        self.helical_modulation = getattr(config, "helical_modulation", True)
+        self.helical_wavelength = getattr(
+            config, "helical_wavelength", 3141.592653589793
+        )
 
         # Get base expert from kwargs
         # Supports two initialization patterns:
@@ -396,9 +331,9 @@ class Prismatic(nn.Module):
         This implements the core "prismatic" mechanism: forcing the expert to adapt
         to an irregular parameter space. The perturbations are:
 
-        1. Deterministic: hash(expert_idx || param_name) -> reproducible seed
+        1. Deterministic: pi-based (directional) or hash-based (noise)
         2. Sparse: Only perturb top-k% of weights (by magnitude or random)
-        3. Adaptive: Noise scaled by parameter magnitude to preserve structure
+        3. Adaptive: Scaled by parameter magnitude to preserve structure
         4. Static: Applied once, not trainable - architectural constraints
 
         Why Sparse Perturbations?
@@ -415,15 +350,18 @@ class Prismatic(nn.Module):
         functionality. The unperturbed 90% provide stability; the perturbed 10% force
         diversity.
 
-        Why Magnitude-Aware Scaling?
-        ---------------------------
-        Preserves relative importance of parameters. Large weights receive larger
-        perturbations, maintaining the network's learned prior while introducing
-        controlled irregularity.
+        Why Simple Deterministic Perturbations?
+        ---------------------------------------
+        Phase 1 (baseline): Use clean, simple perturbations without decoration.
+        Each expert gets a fixed transformation that's reproducible.
+
+        Phase 2 (experiment): Test if helical modulation (Euler's formula) transfers
+        structure into learned patterns. This is an optional experiment to test whether
+        external perturbation structure influences internal gradient/feature patterns.
 
         Args:
             expert: The expert module to perturb (modified in-place)
-            expert_idx: Expert index for deterministic seeding
+            expert_idx: Expert index for phase offset (if helical modulation enabled)
         """
         for param_name, param in expert.named_parameters():
             if not param.requires_grad:
@@ -435,68 +373,25 @@ class Prismatic(nn.Module):
             # in response to the perturbed computational substrate.
             # The network must adapt its rebalancing, not rely on identical norms.
 
-            # Generate deterministic seed from expert_idx and param_name
-            seed = self._generate_seed(expert_idx, param_name)
-            generator = torch.Generator(device=param.device).manual_seed(seed)
+            # Create RNG generator for noise mode and random mask
+            # For directional modes: generator not used (deterministic)
+            # For noise mode: provides reproducible random noise
+            generator = torch.Generator(device=param.device).manual_seed(expert_idx)
 
             # Create sparse mask: which weights to perturb
             mask = self._create_sparse_mask(param, generator)
 
-            # Generate adaptive perturbation: scaled by parameter magnitude
-            # This preserves relative importance while introducing irregularity
-            perturbation = self._generate_perturbation(param, mask, generator)
+            # Generate adaptive perturbation
+            # For directional modes: simple deterministic (optionally modulated by helical pattern)
+            # For noise mode: uses seeded RNG
+            perturbation = self._generate_perturbation(
+                param, mask, generator, expert_idx, param_name
+            )
 
             # Apply perturbation (in-place, static)
             # This is NOT part of the computational graph - it's an architectural constraint
             with torch.no_grad():
                 param.add_(perturbation)
-
-    def _generate_seed(self, expert_idx: int, param_name: str) -> int:
-        """
-        Generate deterministic seed from expert index and parameter name.
-
-        Two modes:
-
-        1. Pi-Digit Seeding (Quantum Echoes) - default:
-           Each expert gets seeded by walking BACKWARDS through pi's digits.
-           - Expert 1: pi_digit[position - 1]
-           - Expert 2: pi_digit[position - 2]
-           - Expert 3: pi_digit[position - 3]
-           Creates temporal lag structure where each expert is an "echo" corrupted
-           by a different mathematical artifact from pi's sequence.
-
-        2. Hash-Based Seeding (fallback):
-           Uses SHA-256 for uncorrelated random seeds.
-
-        Args:
-            expert_idx: Expert index (0 is clean, 1+ are perturbed)
-            param_name: Full parameter name (e.g., "layer.0.weight")
-
-        Returns:
-            Integer seed for random number generation
-        """
-        if self.use_pi_seeding and expert_idx > 0:
-            # Walk backwards through pi's digits
-            # Expert 1 gets pi[position - 1], Expert 2 gets pi[position - 2], etc.
-            pi_index = self.pi_position - expert_idx
-            pi_digit = get_pi_digit_at(pi_index)
-
-            # Combine pi digit with param_name hash for diversity across parameters
-            # But the pi digit provides the primary seed structure
-            param_hash = hashlib.sha256(param_name.encode("utf-8")).digest()
-            param_contribution = int.from_bytes(param_hash[:4], byteorder="big")
-
-            # Seed = pi_digit (primary) + param_hash (secondary variation)
-            # This gives us 10 fundamental seeds (0-9 from pi) with per-parameter variation
-            seed = (pi_digit * 10**9 + param_contribution) % (2**63 - 1)
-
-            return seed
-        else:
-            # Fallback to hash-based seeding
-            hash_input = f"{expert_idx}||{param_name}".encode("utf-8")
-            hash_digest = hashlib.sha256(hash_input).digest()
-            seed = int.from_bytes(hash_digest[:8], byteorder="big")
-            return seed % (2**63 - 1)
 
     def _create_sparse_mask(
         self, param: torch.Tensor, generator: torch.Generator
@@ -514,7 +409,8 @@ class Prismatic(nn.Module):
 
            Perturbation modes:
            - "noise": Both top and bottom get bidirectional noise
-           - "directional": Top amplified (+), bottom suppressed (-) - Quantum Mirror
+           - "repulsive": Top amplified (+), bottom suppressed (-)
+           - "attractive": Top suppressed (-), bottom amplified (+)
 
         2. Top-only: Perturb top-k% by absolute magnitude (original approach)
            - Targets the "lottery tickets" - most critical parameters
@@ -621,88 +517,101 @@ class Prismatic(nn.Module):
         return mask
 
     def _generate_perturbation(
-        self, param: torch.Tensor, mask: torch.Tensor, generator: torch.Generator
+        self,
+        param: torch.Tensor,
+        mask: torch.Tensor,
+        generator: torch.Generator,
+        expert_idx: int,
+        param_name: str,
     ) -> torch.Tensor:
         """
         Generate adaptive perturbation scaled by parameter magnitude.
 
         Three perturbation modes:
 
-        1. "inverse_directional" mode (DEFAULT - Reverse Quantum Mirror - Neuronal Regeneration):
-            ε = -perturbation_scale * W * mask
-            W_new = W + ε
+        1. "attractive" mode (DEFAULT - Neuronal Regeneration):
+            Phase 1 (helical_modulation=False):
+                ε = -perturbation_scale * W * mask
+                W_new = W + ε
+                Clean perturbations - suppress top, amplify bottom
+                Attracts attention to dormant neurons
 
-            - Mask is signed: +1 for top, -1 for bottom, 0 for middle
-            - Top positive weights: suppressed toward 0 (prune lottery tickets)
-            - Top negative weights: suppressed toward 0 (prune lottery tickets)
-            - Bottom positive weights: amplified away from 0 (wake dormant neurons)
-            - Bottom negative weights: amplified away from 0 (wake dormant neurons)
-            - Forces exploration of dormant pathways
-            - Creates productive instability through neuronal turnover
-            - Deterministic - no random noise
+            Phase 2 (helical_modulation=True):
+                ε = -perturbation_scale * W * mask * spiral(expert_idx)
+                W_new = W + ε
+                Tests if helical structure transfers into learned patterns
 
-        2. "directional" mode (Quantum Mirror):
-            ε = perturbation_scale * W * mask
-            W_new = W + ε
-
-            - Mask is signed: +1 for top, -1 for bottom, 0 for middle
-            - Top positive weights: amplified MORE positive (overflow regime)
-            - Top negative weights: amplified MORE negative (overflow regime)
-            - Bottom positive weights: suppressed toward 0 (underflow/subnormal)
-            - Bottom negative weights: suppressed toward 0 (underflow/subnormal)
-            - Explores ALL floating-point precision regimes symmetrically
-            - Deterministic - no random noise
+        2. "repulsive" mode (Extreme Exploration):
+            Phase 1: ε = perturbation_scale * W * mask
+            Phase 2: ε = perturbation_scale * W * mask * spiral(expert_idx)
+            Repels weights to numerical extremes
 
         3. "noise" mode (legacy):
             ε = perturbation_scale * |W| * N(0,1) * |mask|
-            W_new = W + ε
+            Random Gaussian noise (not affected by helical modulation)
 
-            - Bidirectional Gaussian noise at both extremes
-            - Top weights: ±100% noise (can go up or down)
-            - Bottom weights: ±100% noise (can go up or down)
-            - Creates architectural chaos at numerical extremes
+        Helical Modulation (Phase 2):
+        -----------------------------
+        When enabled, uses Euler's formula to create spiral patterns:
+            spiral = cos(2π * position / wavelength + phase_offset)
 
-        Why magnitude-aware?
-        -------------------
-        - Scales perturbation to weight importance
-        - Bottom weights get absolute changes equal to their magnitude
-        - Top weights get proportional changes that cascade through softmax
-        - Both extremes get meaningful perturbations in their respective regimes
+        Each expert gets different phase offset: phase = expert_idx * 2π / num_experts
+        This creates harmonic relationships between experts.
 
-        Connection to World Model Exploration:
-        -------------------------------------
-        Static perturbations are architectural obstacles the model must adapt to.
-        - "noise": Chaotic exploration - forces adaptation to unpredictable irregularity
-        - "directional": Opposing substrates - forces genuinely different computational paths
-        - "inverse_directional": Neuronal regeneration - forces dormant pathway exploration
-        90% unperturbed + LayerNorm provide stability while 10% perturbed create diversity.
+        **Hypothesis**: External helical structure in perturbations may transfer into
+        internal patterns (gradients, learned features). This is testable by comparing
+        Phase 1 vs Phase 2 results.
 
         Args:
             param: Original parameter tensor
             mask: Tiered mask (+1 top, -1 bottom, 0 middle) or binary mask
-            generator: Seeded random generator for reproducibility
+            generator: Seeded random generator (used only for noise mode)
+            expert_idx: Expert index for phase offset
+            param_name: Parameter name (unused, kept for interface compatibility)
 
         Returns:
             Perturbation tensor (same shape as param)
         """
-        if self.perturbation_mode == "directional":
-            # Directional mode: Symmetric precision regime exploration
-            # Use param directly (not abs) for symmetric behavior:
-            # - Top positive → more positive (overflow)
-            # - Top negative → more negative (overflow)
-            # - Bottom positive → toward 0 (underflow/subnormal)
-            # - Bottom negative → toward 0 (underflow/subnormal)
-            # mask is +1 for top (amplify), -1 for bottom (suppress), 0 for middle
-            perturbation = self.perturbation_scale * param * mask
-        elif self.perturbation_mode == "inverse_directional":
-            # Inverse Directional mode: Reverse quantum mirror - neuronal regeneration
-            # Flip the sign to reverse the directional behavior:
-            # - Top positive → toward 0 (suppress, prune lottery tickets)
-            # - Top negative → toward 0 (suppress, prune lottery tickets)
-            # - Bottom positive → away from 0 (amplify, wake dormant neurons)
-            # - Bottom negative → away from 0 (amplify, wake dormant neurons)
-            # mask is +1 for top (now suppress), -1 for bottom (now amplify), 0 for middle
-            perturbation = -self.perturbation_scale * param * mask
+        import math
+
+        if (
+            self.perturbation_mode == "repulsive"
+            or self.perturbation_mode == "attractive"
+        ):
+            # Phase 1: Simple deterministic perturbations (clean baseline)
+            if self.perturbation_mode == "attractive":
+                # Suppress top, amplify bottom (attract to dormant)
+                base_perturbation = -self.perturbation_scale * param * mask
+            else:
+                # Amplify top, suppress bottom (repel to extremes)
+                base_perturbation = self.perturbation_scale * param * mask
+
+            # Phase 2: Optionally modulate with helical pattern
+            if self.helical_modulation and expert_idx > 0:
+                # Create spiral modulation using Euler's formula
+                # spiral = cos(2π * position / wavelength + phase_offset)
+
+                # Spatial positions for each weight
+                num_weights = param.numel()
+                positions = torch.arange(
+                    num_weights, dtype=param.dtype, device=param.device
+                )
+
+                # Normalize to wavelength
+                positions_normalized = 2 * math.pi * positions / self.helical_wavelength
+
+                # Expert-specific phase offset (harmonic relationships)
+                phase_offset = expert_idx * 2 * math.pi / self.num_experts
+
+                # Create spiral pattern
+                spiral = torch.cos(positions_normalized + phase_offset)
+                spiral = spiral.reshape(param.shape)
+
+                # Modulate perturbation with spiral
+                perturbation = base_perturbation * spiral
+            else:
+                # No helical modulation - clean baseline
+                perturbation = base_perturbation
         else:
             # Noise mode: Bidirectional Gaussian noise
             # Scale by parameter magnitude (adaptive)
@@ -724,7 +633,7 @@ class Prismatic(nn.Module):
         return perturbation
 
     def __repr__(self) -> str:
-        seed_type = "pi-seeded" if self.use_pi_seeding else "hash-seeded"
+        modulation = "helical" if self.helical_modulation else "clean"
         return (
             f"{self.__class__.__name__}("
             f"num_experts={len(self.experts)}, "
@@ -732,7 +641,7 @@ class Prismatic(nn.Module):
             f"mode={self.perturbation_mode}, "
             f"scale={self.perturbation_scale}, "
             f"sparsity={self.sparsity}, "
-            f"{seed_type})"
+            f"{modulation})"
         )
 
     def forward(
@@ -1113,9 +1022,8 @@ class Prismatic(nn.Module):
                 if not param.requires_grad:
                     continue
 
-                # Generate same seed used during perturbation
-                seed = self._generate_seed(expert_idx, param_name)
-                generator = torch.Generator(device=param.device).manual_seed(seed)
+                # Generate same generator used during perturbation (for random strategy)
+                generator = torch.Generator(device=param.device).manual_seed(expert_idx)
 
                 # Determine tier based on weight magnitudes
                 # This applies to ALL experts so we can compare gradient dynamics

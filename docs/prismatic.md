@@ -123,68 +123,74 @@ Whether to use magnitude-based selection or random selection.
 - **true**: Use perturbation_strategy (dual_sided, top_only, or bottom_only)
 - **false**: Equivalent to perturbation_strategy="random"
 
-#### `perturbation_mode` (default: "directional")
+#### `perturbation_mode` (default: "attractive")
 
 How perturbations are applied to selected weights. This fundamentally changes the nature of architectural diversity.
 
-- **"directional"** (DEFAULT - Quantum Mirror): Symmetric precision regime exploration
+- **"attractive"** (DEFAULT - Neuronal Regeneration): Attract attention to dormant pathways
 
-  - Top weights: `W + scale * W` (systematically **amplified** to extremes)
-    - Positive weights → **more positive** (overflow regime)
-    - Negative weights → **more negative** (overflow regime)
-  - Bottom weights: `W - scale * W` (systematically **suppressed** toward zero)
-    - Positive weights → **toward 0** (underflow/subnormal regime)
-    - Negative weights → **toward 0** (underflow/subnormal regime)
-  - Creates **opposing computational substrates** exploring ALL precision regimes
-  - **Expert 0**: Clean, unperturbed (baseline/consensus reality)
-  - **Expert 1+**: Amplified top + suppressed bottom → explores extreme precision regimes
-  - Each perturbed expert uses different pi-seed for variation
-  - Tests: Can forcing all floating-point imprecision regimes reveal complementary patterns?
+  - Top weights: `W - scale * W` (systematically **suppressed** toward zero)
+    - Prunes lottery tickets → forces gradient corrections
+    - Creates new sparse weights → continuous neuronal turnover
+  - Bottom weights: `W + scale * W` (systematically **amplified** away from zero)
+    - Wakes dormant neurons with large relative perturbations
+    - Forces weak signals to matter
+  - Creates **productive instability** through pruning/restoration cycles
+  - **Expert 0**: Clean, unperturbed (baseline)
+  - **Expert 1+**: Suppressed top + amplified bottom → explores dormant pathways
+  - Tests: Does forced neuronal turnover aid learning?
 
   **Theoretical Justification:**
-  - Symmetric exploration: Both positive and negative extremes explored
-  - All precision regimes: Overflow (±large), underflow/subnormal (near-zero)
-  - Quantum symmetry: Mirrored architectural pressures create genuine opposition
-  - Deterministic divergence: No randomness - purely directional strategies
+  - Inverts standard approach: prunes strong, amplifies weak
+  - Small weights get huge perturbations (forced to participate)
+  - Gradients correct → creates new small weights elsewhere
+  - Cycle repeats → continuous regeneration
+  - Combined with iterative reasoning: temporal oscillation creates dynamic cycling
+
+- **"repulsive"** (Extreme Exploration): Repel weights to numerical limits
+
+  - Top weights: `W + scale * W` (amplified to extremes)
+  - Bottom weights: `W - scale * W` (suppressed toward zero)
+  - Explores all floating-point precision regimes (overflow/underflow)
+  - Deterministic - no randomness
 
 - **"noise"** (Legacy): Bidirectional Gaussian noise
 
-  - Top weights: `W + scale * |W| * N(0,1)` (can increase OR decrease)
-  - Bottom weights: `W + scale * |W| * N(0,1)` (can increase OR decrease)
-  - Creates **architectural chaos** - forced adaptation to unpredictable irregularity
-  - Both extremes explore randomly, no guaranteed direction
-  - Tests: Can random structural noise reveal hidden patterns?
-  - Use for ablation studies or if directional mode proves unstable
+  - Top weights: `W + scale * |W| * N(0,1)` (random)
+  - Bottom weights: `W + scale * |W| * N(0,1)` (random)
+  - Creates architectural chaos
+  - Use for ablation studies
 
 **Which to use?**
-- **Recommended**: Use "directional" (default) for true opposing substrates
-- "directional" is theoretically aligned with "pushing numerical extremes"
-- "directional" is deterministic (no random noise) - more reproducible
-- Use "noise" for ablation studies or comparison with legacy behavior
+- **Recommended**: Use "attractive" (default) for neuronal regeneration
+- "attractive" tests if dormant pathway exploration aids learning
+- "repulsive" for extreme precision regime exploration
+- "noise" for ablation studies or legacy comparison
 
-#### `use_pi_seeding` (default: true)
+#### `helical_modulation` (default: true)
 
-Whether to use pi-digit seeding (Quantum Echoes) or hash-based seeding.
+Apply helical/spiral modulation to perturbations using Euler's formula.
 
-- **true**: Pi-Digit Seeding (Quantum Echoes)
+- **true** (DEFAULT): Helical Structure Transfer Experiment
 
-  - Each expert walks backwards through pi's digit sequence
-  - Expert 1 gets pi[position-1], Expert 2 gets pi[position-2], etc.
-  - Creates temporal lag structure - each expert is corrupted by a different mathematical artifact
-  - Bridges non-differentiable gap between mathematical constants and learned representations
-  - "The model learns in the presence of cosmic static from π itself"
+  - Perturbations modulated by: `cos(2π·position/wavelength + phase_offset)`
+  - Each expert gets different phase: `phase = expert_idx * 2π / num_experts`
+  - Creates harmonic relationships between experts
+  - Tests hypothesis: Does external helical structure transfer into learned patterns?
+  - Uses π directly in the modulation formula
 
-- **false**: Hash-based seeding
-  - Uses SHA-256 for uncorrelated random seeds
-  - Standard approach, useful for ablation studies
+- **false**: Clean Baseline
+  - Simple deterministic perturbations without modulation
+  - Useful for ablation studies to compare with/without helical structure
 
-#### `pi_position` (default: 100000)
+#### `helical_wavelength` (default: 3141.59)
 
-Starting position in pi's digit sequence (only used when `use_pi_seeding=true`).
+Wavelength for helical pattern (only used when `helical_modulation=true`).
 
-- **100000** (default): Start at pi[100000] and walk backwards
-- Different positions explore different regions of pi's digit space
-- All positions are mathematically equivalent (pi is scale-invariant)
+- **3141.59** (default): π × 1000 - creates smooth spiral patterns
+- Smaller values: Tighter spirals, more frequent oscillations
+- Larger values: Gentler spirals, slower oscillations
+- Controls the spatial frequency of harmonic modulation
 
 ## Example Configurations
 
@@ -224,17 +230,44 @@ perturb_by_magnitude: true
 perturbation_mode: noise # Chaotic exploration
 ```
 
-### Quantum Mirror (Opposing Substrates)
+### Neuronal Regeneration with Helical Transfer (DEFAULT)
 
 ```yaml
-# experiments/prismatic-quantum-mirror.yml
+# experiments/prismatic-default.yml
 router_type: prismatic
 num_experts: 4
-perturbation_scale: 1.0 # 100% directional shift
+perturbation_scale: 0.8 # 80% pruning/amplification
 sparsity: 0.1 # 10% of weights (5% top, 5% bottom)
-perturbation_strategy: dual_sided # Required for mirror effect
-perturbation_mode: directional # Amplify top, suppress bottom
-use_pi_seeding: true # Quantum Echoes
+perturbation_strategy: dual_sided
+perturbation_mode: attractive # Wake dormant, prune dominant (default)
+helical_modulation: true # Helical structure transfer (default)
+helical_wavelength: 3141.59 # π × 1000
+```
+
+### Clean Baseline (Ablation - No Helical)
+
+```yaml
+# experiments/prismatic-clean.yml
+router_type: prismatic
+num_experts: 4
+perturbation_scale: 0.8
+sparsity: 0.1
+perturbation_strategy: dual_sided
+perturbation_mode: attractive
+helical_modulation: false # Disable helical for comparison
+```
+
+### Extreme Exploration (Repulsive Mode)
+
+```yaml
+# experiments/prismatic-repulsive.yml
+router_type: prismatic
+num_experts: 4
+perturbation_scale: 0.8
+sparsity: 0.1
+perturbation_strategy: dual_sided
+perturbation_mode: repulsive # Push to numerical extremes
+helical_modulation: true
 ```
 
 ### Willow-Inspired (Minimal Perturbation)

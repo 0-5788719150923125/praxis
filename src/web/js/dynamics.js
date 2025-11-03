@@ -225,10 +225,10 @@ function renderDynamicsCharts(runData, container) {
     const chartsHTML = `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">Pi-Resonance Map: Emergent Computational Attractors</div>
-                <div class="chart-subtitle">Radial expansion from origin - revealing if π-structure manifests stable patterns over time</div>
+                <div class="chart-title">Helical Phase Map: Expert Harmonic Relationships</div>
+                <div class="chart-subtitle">Radial expansion from origin - each expert at different phase offset (Euler's formula modulation)</div>
                 <div class="chart-wrapper" style="height: 600px;">
-                    <canvas id="dynamics-pi-radial"></canvas>
+                    <canvas id="dynamics-phase-radial"></canvas>
                 </div>
             </div>
         </div>
@@ -265,9 +265,9 @@ function renderDynamicsCharts(runData, container) {
     // Render charts after DOM update
     setTimeout(() => {
         try {
-            // Create pi-resonance radial map (new!)
+            // Create helical phase radial map
             const metadata = runData.metadata || {};
-            createPiResonanceMap('dynamics-pi-radial', dynamics, metadata);
+            createPiResonanceMap('dynamics-phase-radial', dynamics, metadata);
 
             // Create gradient comparison chart (existing)
             createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
@@ -288,15 +288,15 @@ function renderDynamicsCharts(runData, container) {
 }
 
 /**
- * Create Pi-Resonance Map (Radial Polar Visualization)
+ * Create Helical Phase Map (Radial Polar Visualization)
  *
  * Plots measurements expanding radially from origin, with angular position
- * determined by pi-phase. Reveals emergent patterns, attractors, and whether
- * π-digit seeding creates stable computational structures over time.
+ * determined by helical phase offset. Reveals emergent patterns and whether
+ * harmonic relationships between experts create stable computational structures.
  *
- * Concept: Time expands outward from center. Each measurement is a point.
- * If patterns/clustering emerge at specific (radius, angle) positions,
- * it suggests computational resonance with mathematical structure.
+ * Concept: Time expands outward from center. Each expert positioned at different
+ * phase angle based on Euler's formula: phase = expert_idx * 2π / num_experts.
+ * If patterns/clustering emerge, it suggests helical structure transfers to learned features.
  */
 function createPiResonanceMap(canvasId, dynamics, metadata) {
     const ctx = document.getElementById(canvasId);
@@ -314,8 +314,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
     const steps = dynamics.steps || [];
     if (steps.length === 0) return;
 
-    const pi_phases = metadata.pi_phases || [];
-    const pi_seeds = metadata.pi_seeds || [];
+    const phase_offsets = metadata.phase_offsets || [];
     const numExperts = metadata.num_experts || 0;
 
     if (numExperts === 0) return;
@@ -332,8 +331,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
 
     // For each perturbed expert, create multiple tendrils (measurement types)
     for (let expertIdx = 1; expertIdx < numExperts; expertIdx++) {
-        const pi_phase = pi_phases[expertIdx] || 0;
-        const pi_digit = pi_seeds[expertIdx];
+        const phase = phase_offsets[expertIdx] || 0;  // Actual helical phase offset
 
         // Define measurement tendrils for this expert
         const tendrils = [
@@ -368,7 +366,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
 
                 // Polar coordinates
                 const radius = step;  // Time expands outward
-                const angle = pi_phase + tendril.angleOffset;  // Pi-phase + tendril offset
+                const angle = phase + tendril.angleOffset;  // Helical phase + tendril offset
 
                 // Convert polar → cartesian
                 const x = radius * Math.cos(angle);
@@ -395,7 +393,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
             if (radialPoints.length === 0) continue;
 
             datasets.push({
-                label: `${tendril.label} (π=${pi_digit ?? '?'})`,
+                label: `${tendril.label} (φ=${(phase * 180 / Math.PI).toFixed(0)}°)`,  // Show actual phase angle
                 data: radialPoints,
                 backgroundColor: radialPoints.map(p => {
                     const hex = tendril.color.replace('#', '');
@@ -411,7 +409,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
                 pointHoverBorderWidth: 2,
                 pointHoverBorderColor: '#fff',
                 expertIdx: expertIdx,
-                pi_digit: pi_digit,
+                phase_offset: phase,  // Actual helical phase
                 tendrilType: tendril.label,
                 showLine: false
             });
@@ -427,7 +425,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
             <h3>No Data Available</h3>
             <p>Weight divergence measurements will appear here as training progresses.</p>
             <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
-                This chart reveals if π-digit seeding creates stable computational attractors.
+                This chart reveals if helical modulation (Euler's formula) creates stable patterns.
             </p>
         `;
         ctx.parentElement.appendChild(message);
