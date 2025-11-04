@@ -80,10 +80,91 @@ export function updateDynamicsChartColors() {
 }
 
 /**
- * Load and render gradient dynamics
+ * Downsample data points using Largest Triangle Three Buckets (LTTB) algorithm
+ * Preserves visual shape while reducing point count for performance
+ * @param {Array} data - Array of {x, y, ...} points
+ * @param {number} threshold - Target number of points
+ * @returns {Array} Downsampled array
+ */
+function downsampleLTTB(data, threshold) {
+    if (data.length <= threshold || threshold <= 2) {
+        return data;
+    }
+
+    const sampled = [];
+    const bucketSize = (data.length - 2) / (threshold - 2);
+
+    // Always keep first point
+    sampled.push(data[0]);
+
+    for (let i = 0; i < threshold - 2; i++) {
+        const avgRangeStart = Math.floor((i + 1) * bucketSize) + 1;
+        const avgRangeEnd = Math.floor((i + 2) * bucketSize) + 1;
+        const avgRangeEnd2 = avgRangeEnd < data.length ? avgRangeEnd : data.length;
+
+        // Calculate average point in next bucket
+        let avgX = 0, avgY = 0;
+        let avgRangeLength = avgRangeEnd2 - avgRangeStart;
+
+        for (let j = avgRangeStart; j < avgRangeEnd2; j++) {
+            avgX += data[j].x;
+            avgY += data[j].y;
+        }
+        avgX /= avgRangeLength;
+        avgY /= avgRangeLength;
+
+        // Get current bucket range
+        const rangeStart = Math.floor(i * bucketSize) + 1;
+        const rangeEnd = Math.floor((i + 1) * bucketSize) + 1;
+
+        // Point in previous bucket
+        const prevPoint = sampled[sampled.length - 1];
+
+        // Find point in current bucket with largest triangle area
+        let maxArea = -1;
+        let maxAreaPoint = null;
+
+        for (let j = rangeStart; j < rangeEnd; j++) {
+            if (j >= data.length) break;
+
+            // Calculate triangle area
+            const area = Math.abs(
+                (prevPoint.x - avgX) * (data[j].y - prevPoint.y) -
+                (prevPoint.x - data[j].x) * (avgY - prevPoint.y)
+            ) * 0.5;
+
+            if (area > maxArea) {
+                maxArea = area;
+                maxAreaPoint = data[j];
+            }
+        }
+
+        if (maxAreaPoint) {
+            sampled.push(maxAreaPoint);
+        }
+    }
+
+    // Always keep last point
+    sampled.push(data[data.length - 1]);
+
+    return sampled;
+}
+
+/**
+ * Load and render gradient dynamics (initial load)
  */
 export async function loadDynamicsWithCharts(force = false) {
-    if (state.dynamics.loaded && !force) return;
+    // If already loaded and user forces refresh, do incremental fetch
+    if (state.dynamics.loaded && force) {
+        console.log('[Dynamics] Forcing incremental update...');
+        await fetchIncrementalDynamics();
+        return;
+    }
+
+    // If already loaded and not forcing, do nothing
+    if (state.dynamics.loaded && !force) {
+        return;
+    }
 
     const container = document.getElementById('dynamics-container');
     if (!container) return;
@@ -91,8 +172,8 @@ export async function loadDynamicsWithCharts(force = false) {
     container.innerHTML = '<div class="loading-placeholder">Loading gradient dynamics...</div>';
 
     try {
-        // Fetch dynamics data
-        const response = await fetch(`/api/dynamics?since=0&limit=1000`);
+        // Initial load: fetch all data from beginning
+        const response = await fetch(`/api/dynamics?since=0&limit=10000`);
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}`);
@@ -104,6 +185,13 @@ export async function loadDynamicsWithCharts(force = false) {
             // Show helpful empty state
             renderEmptyState(container, data.message);
             return;
+        }
+
+        // Store data and update last step
+        state.dynamics.data = data.runs[0];
+        const steps = data.runs[0].dynamics?.steps || [];
+        if (steps.length > 0) {
+            state.dynamics.lastStep = Math.max(...steps);
         }
 
         // Render charts
@@ -121,6 +209,196 @@ export async function loadDynamicsWithCharts(force = false) {
                     See docs/gradient_visualization_proposals.md for details.
                 </p>
             </div>
+        `;
+    }
+}
+
+/**
+ * Fetch and append incremental dynamics data
+ */
+async function fetchIncrementalDynamics() {
+    if (!state.dynamics.loaded || !state.dynamics.data) return;
+
+    try {
+        // Fetch only new data since last step
+        const response = await fetch(`/api/dynamics?since=${state.dynamics.lastStep + 1}&limit=1000`);
+
+        if (!response.ok) {
+            console.warn('[Dynamics] Incremental fetch failed:', response.status);
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
+            // No new data yet
+            return;
+        }
+
+        const newRunData = data.runs[0];
+        const newSteps = newRunData.dynamics?.steps || [];
+
+        if (newSteps.length === 0) {
+            // No new steps
+            return;
+        }
+
+        // Update last step
+        state.dynamics.lastStep = Math.max(...newSteps);
+
+        // Append new data to existing data
+        appendDynamicsData(newRunData);
+
+        // Update charts with new data
+        appendDynamicsToCharts(newRunData);
+
+        console.log(`[Dynamics] Loaded ${newSteps.length} new data points (up to step ${state.dynamics.lastStep})`);
+
+    } catch (error) {
+        console.error('[Dynamics] Incremental fetch error:', error);
+    }
+}
+
+/**
+ * Append new dynamics data to existing stored data
+ */
+function appendDynamicsData(newRunData) {
+    if (!state.dynamics.data || !state.dynamics.data.dynamics) return;
+
+    const existingDynamics = state.dynamics.data.dynamics;
+    const newDynamics = newRunData.dynamics;
+
+    // Append all numeric arrays
+    Object.keys(newDynamics).forEach(key => {
+        if (Array.isArray(newDynamics[key]) && Array.isArray(existingDynamics[key])) {
+            existingDynamics[key] = existingDynamics[key].concat(newDynamics[key]);
+        } else if (Array.isArray(newDynamics[key])) {
+            // New key, add it
+            existingDynamics[key] = newDynamics[key];
+        }
+    });
+}
+
+
+/**
+ * Append new dynamics data to existing charts
+ * When new data arrives, we need to re-downsample the entire dataset from state
+ */
+function appendDynamicsToCharts(newRunData) {
+    const newDynamics = newRunData.dynamics || {};
+    const newSteps = newDynamics.steps || [];
+
+    if (newSteps.length === 0) return;
+
+    // Use the full dataset from state (which now includes new data)
+    const fullDynamics = state.dynamics.data.dynamics;
+    const fullSteps = fullDynamics.steps || [];
+
+    // Update radial phase map chart
+    const phaseChart = dynamicsCharts['dynamics-phase-radial'];
+    if (phaseChart && phaseChart.data && phaseChart.data.datasets) {
+        const metadata = state.dynamics.data.metadata || {};
+        const phase_offsets = metadata.phase_offsets || [];
+        const numExperts = metadata.num_experts || 0;
+
+        if (numExperts > 0) {
+            // Color palette (same as creation)
+            const colorPalette = ['#00D9FF', '#FF6B9D', '#00FF9F', '#FFD700'];
+
+            // For each perturbed expert
+            for (let expertIdx = 1; expertIdx < numExperts; expertIdx++) {
+                const phase = phase_offsets[expertIdx] || 0;
+
+                const tendrils = [
+                    { key: `expert_${expertIdx}_top_norm`, angleOffset: 0, color: colorPalette[0] },
+                    { key: `expert_${expertIdx}_bottom_norm`, angleOffset: Math.PI / 4, color: colorPalette[1] },
+                    { key: `expert_${expertIdx}_weight_angle`, angleOffset: Math.PI / 2, color: colorPalette[2] }
+                ];
+
+                for (const tendril of tendrils) {
+                    const values = fullDynamics[tendril.key];
+                    if (!values || values.length === 0) continue;
+
+                    // Find matching dataset
+                    const dataset = phaseChart.data.datasets.find(ds =>
+                        ds.expertIdx === expertIdx && ds.tendrilType?.includes(tendril.key.includes('top') ? 'Top' : tendril.key.includes('bottom') ? 'Bottom' : 'Divergence')
+                    );
+
+                    if (dataset) {
+                        // Rebuild full dataset with all points
+                        const rawRadialPoints = fullSteps.map((step, i) => {
+                            const value = values[i];
+                            if (value === null || value === undefined) return null;
+
+                            const radius = step;
+                            const angle = phase + tendril.angleOffset;
+                            const x = radius * Math.cos(angle);
+                            const y = radius * Math.sin(angle);
+                            const pointRadius = 3 + Math.log(value + 1) * 1.5;
+                            const normalizedValue = Math.min(value / 100, 1.0);
+                            const opacity = 0.4 + normalizedValue * 0.5;
+
+                            return { x, y, step, value, angle, pointRadius, opacity };
+                        }).filter(p => p !== null);
+
+                        // Re-downsample entire dataset
+                        const downsampledPoints = downsampleLTTB(rawRadialPoints, 800);
+
+                        // Replace dataset
+                        dataset.data = downsampledPoints;
+
+                        // Update styling arrays
+                        dataset.backgroundColor = downsampledPoints.map(p => {
+                            const hex = tendril.color.replace('#', '');
+                            const r = parseInt(hex.substr(0, 2), 16);
+                            const g = parseInt(hex.substr(2, 2), 16);
+                            const b = parseInt(hex.substr(4, 2), 16);
+                            return `rgba(${r}, ${g}, ${b}, ${p.opacity})`;
+                        });
+                        dataset.pointRadius = downsampledPoints.map(p => p.pointRadius);
+                        dataset.pointHoverRadius = downsampledPoints.map(p => p.pointRadius * 1.8);
+                    }
+                }
+            }
+
+            phaseChart.update('none');
+        }
+    }
+
+    // Update expert comparison chart
+    const comparisonChart = dynamicsCharts['dynamics-expert-comparison'];
+    if (comparisonChart && comparisonChart.data && comparisonChart.data.datasets) {
+        comparisonChart.data.datasets.forEach(dataset => {
+            const { expertIdx, tier } = dataset;
+            const key = `expert_${expertIdx}_${tier}_norm`;
+            const values = fullDynamics[key];
+
+            if (values && values.length > 0) {
+                // Rebuild full dataset with all points
+                const rawData = fullSteps.map((step, i) => ({
+                    x: step,
+                    y: values[i]
+                })).filter(point => point.y !== null);
+
+                // Re-downsample entire dataset
+                dataset.data = downsampleLTTB(rawData, 1000);
+            }
+        });
+
+        comparisonChart.update('none');
+    }
+
+    // Update metadata display (divergence score)
+    const headerMetadata = document.querySelector('.tab-header-metadata');
+    if (headerMetadata && fullDynamics.expert_1_divergence) {
+        const latest = fullDynamics.expert_1_divergence[fullDynamics.expert_1_divergence.length - 1];
+        const divergenceScore = latest ? latest.toFixed(4) : 'N/A';
+        const totalPoints = fullSteps.length;
+
+        headerMetadata.innerHTML = `
+            <span><strong>Points:</strong> ${totalPoints}</span>
+            <span><strong>Experts:</strong> ${numExperts || 'N/A'}</span>
+            <span><strong>Divergence:</strong> ${divergenceScore}</span>
         `;
     }
 }
@@ -360,7 +638,7 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
             if (!values || values.length === 0) continue;
 
             // Generate points expanding radially from origin
-            const radialPoints = steps.map((step, i) => {
+            const rawRadialPoints = steps.map((step, i) => {
                 const value = values[i];
                 if (value === null || value === undefined) return null;
 
@@ -390,7 +668,10 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
                 };
             }).filter(p => p !== null);
 
-            if (radialPoints.length === 0) continue;
+            if (rawRadialPoints.length === 0) continue;
+
+            // Downsample to max 800 points for performance (scatter charts need fewer points)
+            const radialPoints = downsampleLTTB(rawRadialPoints, 800);
 
             datasets.push({
                 label: `${tendril.label} (φ=${(phase * 180 / Math.PI).toFixed(0)}°)`,  // Show actual phase angle
@@ -564,10 +845,13 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
 
             const values = dynamics[key];
 
-            const data = steps.map((step, i) => ({
+            const rawData = steps.map((step, i) => ({
                 x: step,
                 y: values[i]
             })).filter(point => point.y !== null);
+
+            // Downsample to max 1000 points for performance
+            const data = downsampleLTTB(rawData, 1000);
 
             // Color scheme:
             // Expert 0 (clean) = blue shades

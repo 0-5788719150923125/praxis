@@ -177,6 +177,7 @@ export const state = {
     dynamics: {
         loaded: false,
         data: null,
+        lastStep: 0,  // Track last loaded step for incremental updates
         error: null
     }
 };
