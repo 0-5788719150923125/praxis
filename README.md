@@ -258,6 +258,7 @@ print(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 - [Discord](https://discord.gg/8ZmHP8CqUX)
 - [The Source](https://src.eco)
+- [Demo](https://gym.src.eco/jD866BRv0pef_WLa-p75csE0Lhoqt1DF)
 
 </details>
 

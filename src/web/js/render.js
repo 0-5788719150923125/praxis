@@ -40,6 +40,7 @@ export function render() {
     renderTerminalStatus();
     renderModal();
     renderSystemPrompt();
+    renderAgentsTitle();
 }
 
 /**
@@ -147,6 +148,27 @@ function renderSystemPrompt() {
     const element = document.getElementById('developer-prompt');
     if (element && element.textContent !== state.settings.systemPrompt) {
         element.textContent = state.settings.systemPrompt;
+    }
+}
+
+/**
+ * Render agents tab title (theme-aware: Hangar/Wire)
+ */
+function renderAgentsTitle() {
+    // Only update if agents tab is loaded
+    if (!state.agents.loaded) return;
+
+    const container = document.getElementById('agents-container');
+    if (!container) return;
+
+    // Find the title element in the tab header
+    const titleElement = container.querySelector('.tab-header h2');
+    if (!titleElement) return;
+
+    // Update title based on current theme
+    const title = state.theme === 'dark' ? 'Hangar' : 'Wire';
+    if (titleElement.textContent !== title) {
+        titleElement.textContent = title;
     }
 }
 

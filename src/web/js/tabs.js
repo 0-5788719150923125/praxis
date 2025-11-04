@@ -241,9 +241,10 @@ function renderAgents(agents, container) {
         return;
     }
 
-    // Create header
+    // Create header with theme-aware title
+    const title = state.theme === 'dark' ? 'Hangar' : 'Wire';
     const headerHTML = createTabHeader({
-        title: 'Hangar',
+        title: title,
         metadata: `<span><strong>Discovered:</strong> ${agents.length} actor${agents.length !== 1 ? 's' : ''}</span>`
     });
 

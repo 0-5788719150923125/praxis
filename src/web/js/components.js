@@ -4,7 +4,7 @@
  * Following the principle: UI = render(data)
  */
 
-import { CONSTANTS } from './state.js';
+import { CONSTANTS, state } from './state.js';
 
 // ============================================================================
 // GENERIC UI PRIMITIVES
@@ -402,12 +402,15 @@ export function createThinkingIndicator(isDarkMode) {
  * @returns {string} HTML string
  */
 export function createTab({ id, label, active }) {
+    // Resolve label - can be string or function(theme)
+    const resolvedLabel = typeof label === 'function' ? label(state.theme) : label;
+
     return `
         <button
             class="tab-button ${active ? 'active' : ''}"
             data-tab="${id}"
         >
-            ${label}
+            ${resolvedLabel}
         </button>
     `;
 }

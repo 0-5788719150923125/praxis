@@ -57,7 +57,7 @@ export const state = {
         },
         {
             id: 'agents',
-            label: 'Agents',
+            label: (theme) => theme === 'dark' ? 'Hangar' : 'Wire',
             active: false,
             containerClass: 'agents-container',
             customClasses: [],
