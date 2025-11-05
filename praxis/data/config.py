@@ -52,7 +52,7 @@ DATASET_COLLECTIONS = dict(
 )
 
 # System and developer prompts
-SYSTEM_PROMPT = "Write Thy Wrong."
+SYSTEM_PROMPT = "Write thy wrong."
 
 # Keyword-style developer prompts with tag reuse for generalization
 # Each entry is a list of 1-5 keywords to randomly sample from
