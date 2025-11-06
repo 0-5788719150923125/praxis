@@ -82,6 +82,7 @@ training. Each expert traverses a fundamentally different computational substrat
 """
 
 import copy
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -129,9 +130,21 @@ class PrismaticConfig:
                 Top weights: W + scale * |W| * N(0,1)
                 Bottom weights: W + scale * |W| * N(0,1)
         dropout: Dropout probability for expert dropout during training
-        helical_modulation: Apply helical/spiral modulation using Euler's formula (default: True)
-            When True (DEFAULT): perturbations modulated by cos(2π·position/wavelength + phase)
-            When False: simple deterministic perturbations (clean baseline for ablation)
+        focal_pattern: Pattern for modulating perturbations (default: "radial_helical")
+            - "radial_helical": Radial lens + helical waves (DEFAULT - Prismatic lens)
+                Each expert focuses at different radial positions with helical modulation
+                Creates position-dependent transformation signatures with wave structure
+                Focal points: π-based spacing, helical waves with π wavelength
+            - "helical": Pure helical/spiral modulation using Euler's formula
+                Perturbations modulated by cos(2π·position/wavelength + phase)
+                Creates wave interference patterns when experts merge
+            - "radial": Pure radial lens focusing
+                Each expert focuses at different positions in weight space
+                Creates hierarchical center-to-edge gradients in transformations
+            - "none": No modulation - simple deterministic perturbations
+                Clean baseline for ablation studies
+        focal_length: Focal length for radial lens (default: π * 100)
+            Controls how quickly focal strength decays from center
         helical_wavelength: Wavelength for helical pattern (default: π * 1000)
             Creates harmonic relationships between experts with phase offsets
     """
@@ -146,8 +159,9 @@ class PrismaticConfig:
     perturbation_strategy: str = "dual_sided"
     perturbation_mode: str = "attractive"
     dropout: float = 0.0
-    helical_modulation: bool = True  # Structure transfer (Euler's formula)
-    helical_wavelength: float = 3141.592653589793  # π × 1000 (using actual π value)
+    focal_pattern: str = "radial_helical"  # Lens + waves (default)
+    focal_length: float = math.pi * 100  # π × 100 - Gaussian lens decay rate
+    helical_wavelength: float = math.pi * 1000  # π × 1000 - harmonic wave period
 
 
 class Prismatic(nn.Module):
@@ -243,10 +257,9 @@ class Prismatic(nn.Module):
         )
         self.perturbation_mode = getattr(config, "perturbation_mode", "attractive")
         self.dropout_rate = getattr(config, "dropout", 0.1)
-        self.helical_modulation = getattr(config, "helical_modulation", True)
-        self.helical_wavelength = getattr(
-            config, "helical_wavelength", 3141.592653589793
-        )
+        self.focal_pattern = getattr(config, "focal_pattern", "radial_helical")
+        self.focal_length = getattr(config, "focal_length", math.pi * 100)
+        self.helical_wavelength = getattr(config, "helical_wavelength", math.pi * 1000)
 
         # Get base expert from kwargs
         # Supports two initialization patterns:
@@ -471,45 +484,35 @@ class Prismatic(nn.Module):
         Generate adaptive perturbation scaled by parameter magnitude.
 
         Three perturbation modes:
+        1. "attractive": Suppress top, amplify bottom (neuronal regeneration)
+        2. "repulsive": Amplify top, suppress bottom (extreme exploration)
+        3. "noise": Bidirectional Gaussian noise (legacy)
 
-        1. "attractive" mode (DEFAULT - Neuronal Regeneration):
-            Phase 1 (helical_modulation=False):
-                ε = -perturbation_scale * W * mask
-                W_new = W + ε
-                Clean perturbations - suppress top, amplify bottom
-                Attracts attention to dormant neurons
+        Four focal patterns for modulation:
+        1. "radial_helical" (DEFAULT): Lens focusing + helical waves
+           - Each expert focuses at different radial positions
+           - Helical modulation creates wave structure
+           - Creates transformation signatures: radial hierarchy + periodic oscillation
 
-            Phase 2 (helical_modulation=True):
-                ε = -perturbation_scale * W * mask * spiral(expert_idx)
-                W_new = W + ε
-                Tests if helical structure transfers into learned patterns
+        2. "helical": Pure wave modulation (original)
+           - Spiral patterns using Euler's formula
+           - Phase offsets create harmonic relationships
+           - Creates wave interference when experts merge
 
-        2. "repulsive" mode (Extreme Exploration):
-            Phase 1: ε = perturbation_scale * W * mask
-            Phase 2: ε = perturbation_scale * W * mask * spiral(expert_idx)
-            Repels weights to numerical extremes
+        3. "radial": Pure lens focusing
+           - Each expert focuses at different positions in weight space
+           - Creates center-to-edge gradients in transformations
+           - Hierarchical structure only
 
-        3. "noise" mode (legacy):
-            ε = perturbation_scale * |W| * N(0,1) * |mask|
-            Random Gaussian noise (not affected by helical modulation)
-
-        Helical Modulation (Phase 2):
-        -----------------------------
-        When enabled, uses Euler's formula to create spiral patterns:
-            spiral = cos(2π * position / wavelength + phase_offset)
-
-        Each expert gets different phase offset: phase = expert_idx * 2π / num_experts
-        This creates harmonic relationships between experts.
-
-        **Hypothesis**: External helical structure in perturbations may transfer into
-        internal patterns (gradients, learned features). This is testable by comparing
-        Phase 1 vs Phase 2 results.
+        4. "none": No modulation
+           - Simple deterministic perturbations
+           - Clean baseline for ablation
 
         Args:
             param: Original parameter tensor
             mask: Tiered mask (+1 top, -1 bottom, 0 middle) or binary mask
             generator: Seeded random generator (used only for noise mode)
-            expert_idx: Expert index for phase offset
+            expert_idx: Expert index for focal point and phase offset
             param_name: Parameter name (unused, kept for interface compatibility)
 
         Returns:
@@ -521,7 +524,7 @@ class Prismatic(nn.Module):
             self.perturbation_mode == "repulsive"
             or self.perturbation_mode == "attractive"
         ):
-            # Phase 1: Simple deterministic perturbations (clean baseline)
+            # Calculate base perturbation (before modulation)
             if self.perturbation_mode == "attractive":
                 # Suppress top, amplify bottom (attract to dormant)
                 base_perturbation = -self.perturbation_scale * param * mask
@@ -529,32 +532,78 @@ class Prismatic(nn.Module):
                 # Amplify top, suppress bottom (repel to extremes)
                 base_perturbation = self.perturbation_scale * param * mask
 
-            # Phase 2: Optionally modulate with helical pattern
-            if self.helical_modulation and expert_idx > 0:
-                # Create spiral modulation using Euler's formula
-                # spiral = cos(2π * position / wavelength + phase_offset)
-
-                # Spatial positions for each weight
+            # Apply focal pattern modulation
+            if expert_idx == 0 or self.focal_pattern == "none":
+                # Expert 0 is always clean, or no modulation requested
+                perturbation = base_perturbation
+            else:
+                # Calculate modulation based on focal pattern
                 num_weights = param.numel()
                 positions = torch.arange(
                     num_weights, dtype=param.dtype, device=param.device
                 )
 
-                # Normalize to wavelength
-                positions_normalized = 2 * math.pi * positions / self.helical_wavelength
+                if self.focal_pattern == "radial_helical":
+                    # RADIAL-HELICAL: Prismatic lens (DEFAULT)
+                    # Each expert focuses at different radial positions with helical waves
 
-                # Expert-specific phase offset (harmonic relationships)
-                phase_offset = expert_idx * 2 * math.pi / self.num_experts
+                    # Focal point varies by expert (distribute across weight space)
+                    focal_point = (expert_idx / self.num_experts) * num_weights
 
-                # Create spiral pattern
-                spiral = torch.cos(positions_normalized + phase_offset)
-                spiral = spiral.reshape(param.shape)
+                    # Radial distance from focal point
+                    distance = torch.abs(positions - focal_point)
 
-                # Modulate perturbation with spiral
-                perturbation = base_perturbation * spiral
-            else:
-                # No helical modulation - clean baseline
-                perturbation = base_perturbation
+                    # Gaussian-like lens focusing using π-based focal length
+                    # Stronger at focal point, decays with distance
+                    focal_strength = torch.exp(-distance / self.focal_length)
+
+                    # Helical modulation with expert-specific phase
+                    positions_normalized = 2 * math.pi * distance / self.helical_wavelength
+                    phase_offset = expert_idx * 2 * math.pi / self.num_experts
+                    helical = torch.cos(positions_normalized + phase_offset)
+
+                    # Combine: radial focusing × helical waves
+                    # Creates spiral patterns radiating from focal point
+                    modulation = focal_strength * helical
+                    modulation = modulation.reshape(param.shape)
+                    perturbation = base_perturbation * modulation
+
+                elif self.focal_pattern == "radial":
+                    # RADIAL: Pure lens focusing
+                    # Each expert focuses at different positions in weight space
+
+                    # Focal point varies by expert
+                    focal_point = (expert_idx / self.num_experts) * num_weights
+
+                    # Radial distance from focal point
+                    distance = torch.abs(positions - focal_point)
+
+                    # Gaussian-like lens focusing using π-based focal length
+                    focal_strength = torch.exp(-distance / self.focal_length)
+                    focal_strength = focal_strength.reshape(param.shape)
+
+                    perturbation = base_perturbation * focal_strength
+
+                elif self.focal_pattern == "helical":
+                    # HELICAL: Pure wave modulation (original approach)
+                    # Creates harmonic phase relationships between experts
+
+                    # Normalize positions to wavelength
+                    positions_normalized = 2 * math.pi * positions / self.helical_wavelength
+
+                    # Expert-specific phase offset
+                    phase_offset = expert_idx * 2 * math.pi / self.num_experts
+
+                    # Create spiral pattern
+                    spiral = torch.cos(positions_normalized + phase_offset)
+                    spiral = spiral.reshape(param.shape)
+
+                    perturbation = base_perturbation * spiral
+                else:
+                    raise ValueError(
+                        f"Unknown focal_pattern: {self.focal_pattern}. "
+                        f"Must be one of: radial_helical, helical, radial, none"
+                    )
         else:
             # Noise mode: Bidirectional Gaussian noise
             # Scale by parameter magnitude (adaptive)
@@ -576,7 +625,6 @@ class Prismatic(nn.Module):
         return perturbation
 
     def __repr__(self) -> str:
-        modulation = "helical" if self.helical_modulation else "clean"
         return (
             f"{self.__class__.__name__}("
             f"num_experts={self.num_experts}, "
@@ -584,7 +632,7 @@ class Prismatic(nn.Module):
             f"mode={self.perturbation_mode}, "
             f"scale={self.perturbation_scale}, "
             f"sparsity={self.sparsity}, "
-            f"{modulation})"
+            f"focal={self.focal_pattern})"
         )
 
     def forward(
