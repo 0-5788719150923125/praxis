@@ -6,7 +6,8 @@
 import {
     createSimpleTabContent,
     createContainerWithContent,
-    createChatTabContent
+    createChatTabContent,
+    createIframeTabContent
 } from './components.js';
 
 // Application state - all data lives here
@@ -53,6 +54,23 @@ export const state = {
             onActivate: 'recalculateDashboardScale',
             activateDelay: 0,  // Delay before calling onActivate (ms)
             activateParams: [],  // Parameters to pass to activation function
+            onDeactivate: null
+        },
+        {
+            id: 'books',
+            label: 'Books',
+            active: false,
+            containerClass: 'iframe-container',
+            customClasses: ['iframe-view'],
+            template: () => createIframeTabContent({
+                url: 'https://try.axe.eco/basic/note.html',
+                containerClass: 'iframe-container',
+                containerId: 'books-container',
+                title: 'Books'
+            }),
+            onActivate: null,
+            activateDelay: 0,
+            activateParams: [],
             onDeactivate: null
         },
         {

@@ -243,6 +243,18 @@ export const createChatTabContent = (config) => `
     </div>
 `;
 
+/**
+ * Create iframe tab content
+ * Generic, reusable template for rendering iframes scaled to container
+ * @param {Object} config - Configuration {url, containerClass, containerId}
+ * @returns {string} HTML string
+ */
+export const createIframeTabContent = (config) => `
+    <div class="tab-container ${config.containerClass}" id="${config.containerId}">
+        <iframe src="${escapeHtml(config.url)}" class="iframe-content" title="${escapeHtml(config.title || 'Content')}"></iframe>
+    </div>
+`;
+
 // ============================================================================
 // APP-SPECIFIC COMPONENTS
 // ============================================================================
