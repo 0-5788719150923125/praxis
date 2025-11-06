@@ -310,8 +310,8 @@ function renderDynamicsCharts(runData, container) {
     const chartsHTML = `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">Helical Phase Map: Expert Harmonic Relationships</div>
-                <div class="chart-subtitle">Radial expansion from origin - each expert at different phase offset (Euler's formula modulation)</div>
+                <div class="chart-title">Helical Phase Map: View Harmonic Relationships</div>
+                <div class="chart-subtitle">Radial expansion from origin - each view at different phase offset (π-based radial-helical modulation)</div>
                 <div class="chart-wrapper" style="height: 600px;">
                     <canvas id="dynamics-phase-radial"></canvas>
                 </div>
@@ -336,8 +336,8 @@ function renderDynamicsCharts(runData, container) {
             </div>
 
             <div class="chart-card">
-                <div class="chart-title">Expert Gradient Norms: Clean vs Perturbed</div>
-                <div class="chart-subtitle">Are bottom weights waking up? Comparing Expert 0 (clean) with Expert 1+ (dual-sided perturbed)</div>
+                <div class="chart-title">Gradient Dynamics: Base Expert + Router Learning</div>
+                <div class="chart-subtitle">Base expert tier gradients (solid lines) + router learning to select views (dashed lines)</div>
                 <div class="chart-wrapper" style="height: 400px;">
                     <canvas id="dynamics-expert-comparison"></canvas>
                 </div>
@@ -414,31 +414,54 @@ function createPiResonanceMap(canvasId, dynamics, metadata) {
 
     const datasets = [];
 
-    // For each perturbed expert, create multiple tendrils (measurement types)
-    for (let expertIdx = 1; expertIdx < numExperts; expertIdx++) {
+    // For each expert view, create tendrils
+    // Expert 0: Base expert tier gradients
+    // Expert 1+: Router gradients (how routing learns to select this view)
+    for (let expertIdx = 0; expertIdx < numExperts; expertIdx++) {
         const phase = phase_offsets[expertIdx] || 0;  // Actual helical phase offset
 
-        // Define measurement tendrils for this expert
-        const tendrils = [
-            {
-                key: `expert_${expertIdx}_top_norm`,
-                label: `E${expertIdx} Top`,
-                angleOffset: 0,
-                color: colorPalette[0]
-            },
-            {
-                key: `expert_${expertIdx}_bottom_norm`,
-                label: `E${expertIdx} Bottom`,
-                angleOffset: Math.PI / 4,  // 45° offset
-                color: colorPalette[1]
-            },
-            {
-                key: `expert_${expertIdx}_weight_angle`,
-                label: `E${expertIdx} Divergence`,
-                angleOffset: Math.PI / 2,  // 90° offset
-                color: colorPalette[2]
-            },
-        ];
+        // Define measurement tendrils based on what data is available
+        let tendrils = [];
+
+        if (expertIdx === 0) {
+            // Expert 0 (base expert): Show tier gradients
+            tendrils = [
+                {
+                    key: `expert_0_top_norm`,
+                    label: `E0 Top (Base)`,
+                    angleOffset: 0,
+                    color: colorPalette[0]
+                },
+                {
+                    key: `expert_0_bottom_norm`,
+                    label: `E0 Bottom (Base)`,
+                    angleOffset: Math.PI / 4,
+                    color: colorPalette[1]
+                },
+                {
+                    key: `expert_0_middle_norm`,
+                    label: `E0 Middle (Base)`,
+                    angleOffset: Math.PI / 2,
+                    color: colorPalette[2]
+                },
+            ];
+        } else {
+            // Expert 1+ (runtime views): Show router learning for this view
+            tendrils = [
+                {
+                    key: `expert_${expertIdx}_router_weight_expert_${expertIdx}_norm`,
+                    label: `V${expertIdx} Router`,
+                    angleOffset: 0,
+                    color: colorPalette[3]
+                },
+                {
+                    key: `expert_${expertIdx}_routing_weight`,
+                    label: `V${expertIdx} Weight`,
+                    angleOffset: Math.PI / 3,
+                    color: colorPalette[3]
+                },
+            ];
+        }
 
         for (const tendril of tendrils) {
             const values = dynamics[tendril.key];
@@ -634,8 +657,12 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
 
     const steps = dynamics.steps || [];
 
-    // Build datasets: one line per expert per tier
+    // Build datasets
+    // Expert 0: Show base expert tier gradients (top/bottom/middle)
+    // Expert 1+: Show router gradients (how routing learns to select each view)
     const datasets = [];
+
+    // Expert 0 (base expert): Tier gradients
     const tiers = ['top', 'bottom', 'middle'];
     const tierLabels = {
         'top': 'Top 5% (Coarse)',
@@ -643,52 +670,75 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
         'middle': 'Middle 90% (Stable)'
     };
 
-    for (let expertIdx = 0; expertIdx < numExperts; expertIdx++) {
-        tiers.forEach((tier, tierIdx) => {
-            const key = `expert_${expertIdx}_${tier}_norm`;
-            if (!dynamics[key]) {
-                return;
-            }
+    tiers.forEach((tier, tierIdx) => {
+        const key = `expert_0_${tier}_norm`;
+        if (!dynamics[key]) return;
 
-            const values = dynamics[key];
+        const values = dynamics[key];
+        const rawData = steps.map((step, i) => ({
+            x: step,
+            y: values[i]
+        })).filter(point => point.y !== null);
 
+        const data = downsampleLTTB(rawData, 1000);
+
+        const baseColor = ['#4A90E2', '#7EB2F5', '#B3D4FF'][tierIdx];  // Blues
+
+        datasets.push({
+            label: `Base Expert - ${tierLabels[tier]}`,
+            data: data,
+            borderColor: baseColor,
+            backgroundColor: baseColor + '20',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: baseColor,
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            tension: 0.3,
+            fill: false,
+            hidden: false,  // Visibility controlled by checkboxes
+            expertIdx: 0,  // Base expert
+            tier: tier
+        });
+    });
+
+    // Expert 1+ (runtime views): Show router gradients
+    for (let viewIdx = 1; viewIdx < numExperts; viewIdx++) {
+        // Router learns to select this view - show gradient on routing weight for this view
+        const routerKey = `expert_${viewIdx}_router_weight_expert_${viewIdx}_norm`;
+
+        if (dynamics[routerKey]) {
+            const values = dynamics[routerKey];
             const rawData = steps.map((step, i) => ({
                 x: step,
                 y: values[i]
-            })).filter(point => point.y !== null);
+            })).filter(point => point.y !== null && point.y !== undefined);
 
-            // Downsample to max 1000 points for performance
-            const data = downsampleLTTB(rawData, 1000);
+            if (rawData.length > 0) {
+                const data = downsampleLTTB(rawData, 1000);
+                const color = ['#FF6B6B', '#FFA07A', '#FFB399'][viewIdx - 1] || '#FF6B6B';
 
-            // Color scheme:
-            // Expert 0 (clean) = blue shades
-            // Expert 1+ (perturbed) = orange/red shades
-            const baseColor = expertIdx === 0
-                ? ['#4A90E2', '#7EB2F5', '#B3D4FF'][tierIdx]  // Blues
-                : ['#FF6B6B', '#FFA07A', '#FFB399'][tierIdx]; // Reds/Oranges
-
-            const label = expertIdx === 0
-                ? `Expert 0 (Clean) - ${tierLabels[tier]}`
-                : `Expert ${expertIdx} (Perturbed) - ${tierLabels[tier]}`;
-
-            datasets.push({
-                label: label,
-                data: data,
-                borderColor: baseColor,
-                backgroundColor: baseColor + '20',
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-                pointHoverBackgroundColor: baseColor,
-                pointHoverBorderColor: '#fff',
-                pointHoverBorderWidth: 2,
-                tension: 0.3,
-                fill: false,
-                hidden: false,  // Visibility controlled by checkboxes
-                expertIdx: expertIdx,
-                tier: tier
-            });
-        });
+                datasets.push({
+                    label: `View ${viewIdx} Router Learning`,
+                    data: data,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    borderWidth: 2,
+                    borderDash: [5, 5],  // Dashed to distinguish from base expert
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: color,
+                    pointHoverBorderColor: '#fff',
+                    pointHoverBorderWidth: 2,
+                    tension: 0.3,
+                    fill: false,
+                    hidden: false,
+                    expertIdx: viewIdx,
+                    tier: 'router'
+                });
+            }
+        }
     }
 
     dynamicsCharts[canvasId] = new Chart(ctx, {

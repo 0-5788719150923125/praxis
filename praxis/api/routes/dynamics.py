@@ -1,10 +1,9 @@
 """Gradient dynamics API routes for Expert learning visualization."""
 
+import math
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import math
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -112,8 +111,14 @@ def get_dynamics():
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
-        # Detect number of experts and compute pi metadata for charts
-        expert_metadata = _compute_expert_metadata(dynamics_data["metrics"])
+        # Detect number of experts and compute metadata for charts
+        # First check if num_experts is stored in the database
+        stored_num_experts = dynamics_data.get("num_experts")
+        expert_metadata = _compute_expert_metadata(
+            dynamics_data["metrics"],
+            dynamics_data.get("metadata"),
+            stored_num_experts
+        )
 
         # Format response
         response_data = {
@@ -227,10 +232,17 @@ def _read_dynamics_from_db(
             if routing_data:
                 metrics.update(routing_data)
 
+        # Extract num_experts from the data if available
+        num_experts = None
+        if 'num_experts' in metrics and len(metrics['num_experts']) > 0:
+            # Get the most recent num_experts value
+            num_experts = metrics['num_experts'][-1]
+
         return {
             "metrics": metrics,
             "num_points": len(rows),
-            "last_step": rows[-1][0] if rows else 0
+            "last_step": rows[-1][0] if rows else 0,
+            "num_experts": num_experts
         }
 
     except Exception as e:
@@ -334,43 +346,72 @@ def _read_routing_weights_from_metrics(
         return None
 
 
-def _compute_expert_metadata(metrics: Dict[str, List]) -> Dict[str, Any]:
+def _compute_expert_metadata(
+    metrics: Dict[str, List],
+    extra_metadata: Optional[Dict] = None,
+    stored_num_experts: Optional[int] = None
+) -> Dict[str, Any]:
     """
     Compute expert metadata from dynamics data.
 
-    Computes actual helical phase offsets used in perturbations (not fake pi seeds).
+    Computes actual helical phase offsets used in perturbations.
 
     Args:
-        metrics: Dynamics metrics dict with keys like "expert_0_top_norm", etc.
+        metrics: Dynamics metrics dict with keys like "expert_0_top_norm", "expert_0_routing_weight", etc.
+        extra_metadata: Optional additional metadata from database
 
     Returns:
         Dict with:
             - num_experts: int
             - phase_offsets: List[float] - actual phase angles used in helical modulation
     """
-    # Detect number of experts from metric keys
-    expert_keys = [k for k in metrics.keys() if k.startswith("expert_")]
-    if not expert_keys:
-        return {"num_experts": 0, "phase_offsets": []}
+    # First, use stored num_experts if available (most reliable)
+    if stored_num_experts is not None:
+        num_experts = int(stored_num_experts)
+    else:
+        # Try to detect num_experts from routing_weight metrics (most reliable data-based detection)
+        # These are logged from router.get_metrics() and represent configured views
+        routing_keys = [k for k in metrics.keys() if k.startswith("expert_") and "routing_weight" in k]
+        if routing_keys:
+            expert_indices = set()
+            for key in routing_keys:
+                # Format: expert_N_routing_weight
+                parts = key.split("_")
+                if len(parts) >= 2 and parts[0] == "expert":
+                    try:
+                        expert_indices.add(int(parts[1]))
+                    except ValueError:
+                        continue
 
-    # Extract expert indices
-    expert_indices = set()
-    for key in expert_keys:
-        parts = key.split("_")
-        if len(parts) >= 2 and parts[0] == "expert":
-            try:
-                expert_indices.add(int(parts[1]))
-            except ValueError:
-                continue
+            if expert_indices:
+                num_experts = len(expert_indices)
+            else:
+                num_experts = 0
+        else:
+            # Fallback: detect from expert_*_top_norm or other gradient keys
+            expert_keys = [k for k in metrics.keys() if k.startswith("expert_") and "_norm" in k]
+            if not expert_keys:
+                return {"num_experts": 0, "phase_offsets": []}
 
-    num_experts = len(expert_indices)
+            # Extract expert indices
+            expert_indices = set()
+            for key in expert_keys:
+                parts = key.split("_")
+                if len(parts) >= 2 and parts[0] == "expert":
+                    try:
+                        expert_indices.add(int(parts[1]))
+                    except ValueError:
+                        continue
+
+            num_experts = len(expert_indices)
+
     if num_experts == 0:
         return {"num_experts": 0, "phase_offsets": []}
 
     # Compute actual helical phase offsets (as used in perturbations)
     # phase_offset = expert_idx * 2π / num_experts
     phase_offsets = []
-    for expert_idx in sorted(expert_indices):
+    for expert_idx in range(num_experts):
         if expert_idx == 0:
             # Expert 0 is clean (no phase offset)
             phase_offsets.append(0.0)

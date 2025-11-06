@@ -1012,14 +1012,71 @@ class Prismatic(nn.Module):
                 grad_summary[f"{tier}_min"] = min(grad_list)
                 grad_summary[f"{tier}_mean"] = sum(grad_list) / len(grad_list)
 
+        # Track router gradients (how routing network learns)
+        router_grads = self._compute_router_gradients()
+
+        # Create synthetic "expert" gradients for each view
+        # Even though only base expert receives gradients, we create entries
+        # for each view to maintain visualization compatibility
+        expert_gradients = {
+            "expert_0": grad_summary  # Base expert (all views derived from this)
+        }
+
+        # For views 1+, create synthetic entries with only that view's router gradient
+        for view_idx in range(1, self.num_experts):
+            # Only include the router gradient for this specific view
+            view_grads = {}
+            router_key = f"router_weight_expert_{view_idx}_norm"
+            if router_key in router_grads:
+                view_grads[router_key] = router_grads[router_key]
+            expert_gradients[f"expert_{view_idx}"] = view_grads
+
         self._dynamics_metrics = {
-            "base_expert_gradients": grad_summary,
-            "num_experts": self.num_experts,
+            "expert_gradients": expert_gradients,
+            "divergence_scores": {},  # No divergence (views are runtime, not separate modules)
+            "router_gradients": router_grads,  # How routing network itself learns
+            "num_experts": self.num_experts,  # IMPORTANT: Use config value, not data count
             "perturbation_mode": self.perturbation_mode,
             "perturbation_strategy": self.perturbation_strategy,
+            "focal_pattern": self.focal_pattern,
         }
 
         return self._dynamics_metrics
+
+    def _compute_router_gradients(self) -> dict:
+        """
+        Compute gradient statistics for the router network itself.
+
+        Tracks how the routing network learns to select between views.
+        This is interesting because it shows which view preferences emerge.
+
+        Returns:
+            Dict with router gradient statistics
+        """
+        router_grads = {}
+
+        try:
+            if self.router.weight.grad is not None:
+                # Router weight gradients (shape: [num_experts, hidden_size])
+                router_weight_grad = self.router.weight.grad
+
+                # Per-expert routing weight gradient norms
+                for expert_idx in range(self.num_experts):
+                    expert_router_grad = router_weight_grad[expert_idx]
+                    norm = expert_router_grad.norm().item()
+                    router_grads[f"router_weight_expert_{expert_idx}_norm"] = norm
+
+                # Overall router gradient norm
+                router_grads["router_weight_total_norm"] = router_weight_grad.norm().item()
+
+            if self.router.bias is not None and self.router.bias.grad is not None:
+                router_grads["router_bias_norm"] = self.router.bias.grad.norm().item()
+
+        except Exception as e:
+            # Silently fail - don't break gradient logging
+            pass
+
+        return router_grads
 
     def get_metrics(self) -> dict:
         """Return collected metrics for logging."""
