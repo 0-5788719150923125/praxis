@@ -2,7 +2,7 @@
 
 ## Overview
 
-Prismatic attention implements multi-eye architectural diversity through static sparse perturbations, as described in "The Blind Watchmaker" paper. It creates diverse expert clones from a single base expert by applying deterministic, sparse, magnitude-aware perturbations.
+Prismatic attention implements multi-eye architectural diversity through **runtime sparse perturbations**, as described in "The Blind Watchmaker" paper. It creates diverse expert views from a single base expert by applying deterministic, sparse, magnitude-aware perturbations at every forward pass—ensuring architectural diversity persists as the base expert learns.
 
 ## Theoretical Foundations
 
@@ -16,7 +16,7 @@ Google's Willow quantum computer achieves error correction by perturbing individ
 
 ### Key Insight
 
-"Train on consensus, you manifest the lowest common denominator." Static perturbations prevent convergence to consensus, maintaining genuine diversity throughout training.
+"Train on consensus, you manifest the lowest common denominator." Runtime perturbations prevent convergence to consensus—as the base expert learns, perturbations are always applied relative to its current state, maintaining genuine diversity throughout training.
 
 ## Configuration Parameters
 
@@ -30,11 +30,16 @@ router_type: prismatic # Enable Prismatic router
 
 ### Perturbation Parameters
 
-#### `perturbation_scale` (default: 1.0)
+#### `perturbation_scale` (default: 0.8)
 
-Scale factor for perturbations relative to weight magnitude. Adds Gaussian noise: `W_new = W_base + scale * |W| * N(0,1)`
+Scale factor for perturbations relative to weight magnitude.
 
-- **1.0** (Default - Aggressive): 100% of weight magnitude
+- **0.8** (Default - Balanced): 80% suppression/amplification
+
+  - Balanced exploration without excessive instability
+  - Recommended starting point for most experiments
+
+- **1.0** (Aggressive): 100% of weight magnitude
 
   - Adds noise equal to the weight's magnitude
   - Forces exploration genuinely outside the learned world model
@@ -167,30 +172,56 @@ How perturbations are applied to selected weights. This fundamentally changes th
 - "repulsive" for extreme precision regime exploration
 - "noise" for ablation studies or legacy comparison
 
-#### `helical_modulation` (default: true)
+#### `focal_pattern` (default: "radial_helical")
 
-Apply helical/spiral modulation to perturbations using Euler's formula.
+Pattern for modulating perturbations. Controls how weight perturbations create transformation signatures that attention can learn to recognize.
 
-- **true** (DEFAULT): Helical Structure Transfer Experiment
+- **"radial_helical"** (DEFAULT - Prismatic Lens): Radial focusing + helical waves
 
-  - Perturbations modulated by: `cos(2π·position/wavelength + phase_offset)`
+  - Each expert focuses at different radial positions in weight space
+  - Helical modulation creates spiral patterns radiating from focal points
+  - Uses π for both: focal_length (π×100) and wavelength (π×1000)
+  - Creates transformation signatures combining hierarchical (radial) + periodic (helical) structure
+  - **Recommended**: Richest structure, literal "prism" behavior
+  - The lens focuses, the waves interfere, the router learns
+
+- **"radial"**: Pure lens focusing
+
+  - Each expert focuses at different positions in weight space
+  - Gaussian decay from focal point: `exp(-distance/focal_length)`
+  - Creates hierarchical center-to-edge gradients in transformations
+  - No wave structure—just focal hierarchy
+
+- **"helical"**: Pure wave modulation (original approach)
+
+  - Spiral patterns with harmonic phase offsets
+  - Perturbations modulated by: `cos(2π·position/wavelength + phase)`
   - Each expert gets different phase: `phase = expert_idx * 2π / num_experts`
-  - Creates harmonic relationships between experts
-  - Tests hypothesis: Does external helical structure transfer into learned patterns?
-  - Uses π directly in the modulation formula
+  - Creates wave interference patterns when experts merge
+  - No focal hierarchy—just harmonic oscillations
 
-- **false**: Clean Baseline
-  - Simple deterministic perturbations without modulation
-  - Useful for ablation studies to compare with/without helical structure
+- **"none"**: No modulation
+  - Simple deterministic perturbations
+  - Clean baseline for ablation studies
 
-#### `helical_wavelength` (default: 3141.59)
+#### `focal_length` (default: π × 100)
 
-Wavelength for helical pattern (only used when `helical_modulation=true`).
+Focal length for radial lens pattern. Controls how quickly focal strength decays from the focal point.
 
-- **3141.59** (default): π × 1000 - creates smooth spiral patterns
+- **π × 100** (Default): Smooth Gaussian focusing
+- Larger values: Gentler focusing (wider lens aperture)
+- Smaller values: Sharper focusing (tighter lens)
+- Only used when `focal_pattern` is "radial" or "radial_helical"
+
+#### `helical_wavelength` (default: π × 1000)
+
+Wavelength for helical wave pattern. Controls oscillation frequency in weight space.
+
+- **π × 1000** (Default): Smooth harmonic oscillations
 - Smaller values: Tighter spirals, more frequent oscillations
 - Larger values: Gentler spirals, slower oscillations
-- Controls the spatial frequency of harmonic modulation
+- Only used when `focal_pattern` is "helical" or "radial_helical"
+- Uses π directly in the modulation formula (Euler's formula connection)
 
 ## Example Configurations
 
@@ -230,7 +261,7 @@ perturb_by_magnitude: true
 perturbation_mode: noise # Chaotic exploration
 ```
 
-### Neuronal Regeneration with Helical Transfer (DEFAULT)
+### Prismatic Lens (DEFAULT)
 
 ```yaml
 # experiments/prismatic-default.yml
@@ -240,21 +271,36 @@ perturbation_scale: 0.8 # 80% pruning/amplification
 sparsity: 0.1 # 10% of weights (5% top, 5% bottom)
 perturbation_strategy: dual_sided
 perturbation_mode: attractive # Wake dormant, prune dominant (default)
-helical_modulation: true # Helical structure transfer (default)
+focal_pattern: radial_helical # Lens + waves (default)
+focal_length: 314.159  # π × 100
 helical_wavelength: 3141.59 # π × 1000
 ```
 
-### Clean Baseline (Ablation - No Helical)
+### Ablation: Pure Radial Lens
 
 ```yaml
-# experiments/prismatic-clean.yml
+# experiments/prismatic-radial.yml
 router_type: prismatic
-num_experts: 4
-perturbation_scale: 0.8
-sparsity: 0.1
-perturbation_strategy: dual_sided
-perturbation_mode: attractive
-helical_modulation: false # Disable helical for comparison
+num_experts: 3
+focal_pattern: radial # Hierarchical focusing only, no waves
+```
+
+### Ablation: Pure Helical Waves
+
+```yaml
+# experiments/prismatic-helical.yml
+router_type: prismatic
+num_experts: 3
+focal_pattern: helical # Wave interference only, no lens
+```
+
+### Ablation: No Modulation
+
+```yaml
+# experiments/prismatic-none.yml
+router_type: prismatic
+num_experts: 2
+focal_pattern: none # Simple perturbations, clean baseline
 ```
 
 ### Extreme Exploration (Repulsive Mode)
@@ -267,7 +313,7 @@ perturbation_scale: 0.8
 sparsity: 0.1
 perturbation_strategy: dual_sided
 perturbation_mode: repulsive # Push to numerical extremes
-helical_modulation: true
+focal_pattern: radial_helical
 ```
 
 ### Willow-Inspired (Minimal Perturbation)
@@ -393,62 +439,83 @@ Vary `sparsity` and `perturbation_scale` systematically to find optimal (diversi
 
 ## Implementation Details
 
-### Architecture
+### Runtime Perturbation Architecture
 
-- **Expert 0**: Clean, unperturbed - NO perturbations applied (the "right eye" - consensus reality)
-- **Experts 1+**: Perturbed clones - perturbations applied at initialization (the "left eye(s)" - forced alternative realities)
-  - In directional mode:
-    - Top weights amplified to extremes (both ± directions)
-    - Bottom weights suppressed toward zero (both ± directions)
-    - Explores all floating-point precision regimes symmetrically
-  - Each expert uses different pi-digit seed for deterministic variation
+Unlike the previous approach (perturb at init), Prismatic now applies perturbations **at every forward pass**:
+
+1. **Base expert** trains normally (single module, receives gradients)
+2. At forward pass, create **perturbed views** of current base weights
+3. Merge views based on routing probabilities
+4. Apply merged weights via `torch.func.functional_call`
+
+This ensures:
+- Architectural diversity persists as base expert learns
+- No convergence between "experts" (they're runtime views, not separate modules)
+- Perturbations always relative to current learned state
+
+**Expert views**:
+- **View 0**: Clean, unperturbed - consensus reality (the "right eye")
+- **Views 1+**: Perturbed in-flight - alternative realities (the "left eye(s)")
+  - Each view has different focal point (radial_helical mode)
+  - Each view has different phase offset (helical component)
+  - Deterministic (reproducible across forward passes)
 - **Router**: SMEAR-style soft-merging with learned routing probabilities
 
-### Perturbation Formula
+### Perturbation Formula (Runtime Application)
 
 ```python
-# DIRECTIONAL MODE (default - Quantum Mirror):
-# For dual_sided strategy:
-# - Top 5% weights: W_new = W + perturbation_scale * W
-#   - Positive: amplified more positive (overflow regime)
-#   - Negative: amplified more negative (overflow regime)
-# - Bottom 5% weights: W_new = W - perturbation_scale * W
-#   - Positive: suppressed toward 0 (underflow/subnormal regime)
-#   - Negative: suppressed toward 0 (underflow/subnormal regime)
-# - Middle 90%: W_new = W (unchanged)
-#
-# Explores ALL floating-point precision regimes symmetrically:
-# - Overflow: both positive and negative large values
-# - Underflow/subnormal: both positive and negative near-zero values
+# At each forward pass, for expert_idx > 0:
 
-# NOISE MODE (legacy):
-# For each selected weight:
-# perturbation = perturbation_scale * |W| * N(0,1) * mask
-# W_perturbed = W_base + perturbation
+# 1. Select weights to perturb (dual_sided by default)
+mask = top 5% + bottom 5% by magnitude
 
-# Where mask is determined by perturbation_strategy:
-# - dual_sided: top sparsity/2 + bottom sparsity/2 by |W| (signed in directional mode)
-# - top_only: top sparsity by |W|
-# - bottom_only: bottom sparsity by |W|
-# - random: random sparsity selection
+# 2. Calculate base perturbation (attractive mode default)
+base_perturbation = -scale * W * mask  # Suppress top, amplify bottom
 
-# Perturbations are:
-# 1. Deterministic (pi-digit or hash-based seeding)
-# 2. Sparse (only k% of weights)
-# 3. Magnitude-aware (scaled by |W|)
-# 4. Static (not trainable)
-# 5. Dual-sided (default): targets both numerical extremes
-# 6. Directional (default): opposing pressures, not random noise
+# 3. Apply focal pattern modulation (radial_helical default)
+focal_point = (expert_idx / num_experts) * num_weights
+distance = |positions - focal_point|
+
+# Radial component (Gaussian lens, using π)
+focal_strength = exp(-distance / (π × 100))
+
+# Helical component (harmonic waves, using π)
+phase = expert_idx * 2π / num_experts
+helical = cos(2π * distance / (π × 1000) + phase)
+
+# Combined: The Prismatic Lens
+modulation = focal_strength * helical
+perturbation = base_perturbation * modulation
+
+# 4. Create perturbed view (non-destructive)
+W_view = W_base + perturbation
+
+# 5. Merge all views by routing weights
+W_merged = Σ(routing_weight[i] * W_view[i])
+
+# 6. Apply merged weights via functional_call
+output = functional_call(base_expert, W_merged, inputs)
 ```
+
+Perturbations are:
+1. **Runtime** (applied every forward pass, not just at init)
+2. **Sparse** (only 10% of weights by default)
+3. **Magnitude-aware** (scaled by |W|)
+4. **Deterministic** (reproducible, not trainable)
+5. **Dual-sided** (targets both numerical extremes)
+6. **π-modulated** (focal_length=π×100, wavelength=π×1000)
+7. **View-based** (single base expert, multiple perturbed views)
 
 ### Key Design Choices
 
 - Perturb ALL parameters including normalization layers (complete substrate diversity)
 - Target both highest AND lowest magnitude weights by default (dual-sided exploration)
-- Use directional mode by default (amplify top, suppress bottom - Quantum Mirror)
-- Use pi-digit seeding by default (Quantum Echoes)
-- Apply perturbations once at initialization (static architectural constraint)
-- Create opposing computational substrates (coarse vs fine-grained precision regimes)
+- Use "attractive" mode by default (suppress top, amplify bottom - neuronal regeneration)
+- Use radial_helical focal pattern by default (lens focusing + wave interference)
+- **Apply perturbations at runtime** (every forward pass, persistent diversity as base expert learns)
+- Create transformation signatures through π-modulated weight perturbations
+- Single base expert receives gradients (no convergence between separate expert modules)
+- Explore both numerical precision regimes (overflow via top weights, underflow via bottom weights)
 
 ## Convergence Tracking
 
@@ -469,11 +536,13 @@ Expert routing weights are automatically tracked and visualized in the Research 
 - Enable gradient clipping
 - Reduce learning rate
 
-### All Experts Converge to Same Solution
+### Views Not Diverse Enough
 
-- Increase `perturbation_scale` (stronger initial diversity)
-- Verify perturbations are actually being applied (check test suite)
-- Consider multiplicative perturbations instead of additive
+With runtime perturbations, views are always diverse by construction. If routing still collapses:
+
+- Increase `perturbation_scale` (stronger perturbations)
+- Try different `focal_pattern` (radial_helical creates richest structure)
+- Verify perturbations are being applied (check test suite)
 
 ### No Performance Improvement
 

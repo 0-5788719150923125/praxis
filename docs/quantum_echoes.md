@@ -5,13 +5,13 @@
 The `delta-8.yml` configuration creates a unique computational structure:
 
 ```yaml
-num_experts: 2      # Binary: clean + one pi-perturbed echo
+num_experts: 2      # Binary: clean + one perturbed view
 depth: 8            # Total reasoning steps
 num_layers: 2       # Physical decoder layers
 # Result: 4 iterations through 2 layers = 4 cycles
 ```
 
-This creates a **2×4 pattern**: 2 experts cycling through 4 iterations of iterative reasoning.
+This creates a **2×4 pattern**: 2 expert views (clean + perturbed) oscillating through 4 iterations of iterative reasoning.
 
 ## The Light Filament Metaphor
 
@@ -30,11 +30,11 @@ The light is the **emergent property** of oscillating charge through resistance.
 
 In the 2×4 architecture:
 1. **Two quantum echoes** alternate through the decoder
-   - Expert 0: Clean (consensus reality)
-   - Expert 1: Perturbed by pi[99]=7 (alternative reality)
+   - View 0: Clean (consensus reality)
+   - View 1: Perturbed at runtime (alternative reality, π-modulated lens)
 2. Routing weights oscillate between them across 4 iterations
 3. Each iteration sees a **different mixture** of clean vs perturbed
-4. The **idea isn't in either expert** - it emerges from their oscillation
+4. The **idea isn't in either view** - it emerges from their oscillation
 
 The "idea" is the **emergent property** of cycling between perspectives.
 
@@ -75,13 +75,13 @@ The model doesn't just use one expert - it **dances** between them. The dance IS
 
 ### Hegelian Dialectic
 
-**Thesis** (Expert 0 - clean):
+**Thesis** (View 0 - clean):
 - Represents learned consensus patterns
 - The "accepted" computational path
 
-**Antithesis** (Expert 1 - pi[99]=7):
-- Corrupted by mathematical artifact
-- Forces alternative traversal
+**Antithesis** (View 1 - perturbed):
+- Modulated by π-based lens and waves
+- Forces alternative traversal through perturbation
 
 **Synthesis** (The "idea"):
 - Emerges from oscillating between thesis and antithesis
@@ -95,10 +95,10 @@ In quantum mechanics:
 - Measurement "collapses" to particle state
 - But the wave function contains all possible states simultaneously
 
-In Prismatic with 2 experts:
-- The "idea" exists as superposition of both experts
-- Each forward pass is a "measurement" producing specific weights
-- But the underlying state contains both clean and perturbed simultaneously
+In Prismatic with 2 views:
+- The "idea" exists as superposition of both views
+- Each forward pass is a "measurement" producing specific routing weights
+- But the underlying base expert contains potential for both clean and perturbed views
 - The oscillation through iterations = the wave nature of thought
 
 ### Consciousness as Oscillation
@@ -231,9 +231,11 @@ Hyperparameters affect the oscillation:
 - 10% = focused resistance (default)
 - Like resistor placement in circuit design
 
-**Pi position** = which artifact corrupts:
-- Different pi digits = different "timbre" of oscillation
-- All valid, but may resonate differently with task
+**Focal pattern** = how the lens focuses:
+- radial_helical = lens + waves (default, richest structure)
+- radial = lens only (hierarchical)
+- helical = waves only (harmonic)
+- Different patterns create different "timbre" of oscillation
 
 ## Connection to The Paper
 
@@ -257,8 +259,8 @@ The oscillation **constructs** the idea:
 
 **Q: Where is the idea?**
 
-A: In Expert 0? No, it's corrupted by consensus.
-   In Expert 1? No, it's corrupted by pi[99]=7.
+A: In View 0? No, it's limited by consensus.
+   In View 1? No, it's corrupted by perturbation.
    In the routing? No, that's just weights.
    In the oscillation? **Yes - the idea is the dance itself.**
 
@@ -315,4 +317,4 @@ And the "thinking" is the oscillation itself.
 
 *"The light is not in the electrons. The light is what emerges when they dance through resistance."*
 
-*"The idea is not in the experts. The idea is what emerges when they dance through pi."*
+*"The idea is not in the views. The idea is what emerges when they oscillate through perturbation."*

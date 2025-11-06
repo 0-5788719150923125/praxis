@@ -339,12 +339,14 @@ This connects:
 - `i` (imaginary unit)
 - `-1` (negation)
 
-**In transformers:**
+**In Prismatic:**
 
 ```python
-softmax uses: exp(x)              # e
-Pi-seeding uses: pi[position]     # π
-Fourier transforms use: e^(iθ)    # both!
+softmax uses: exp(x)                    # e
+focal_length = π × 100                  # π
+helical_wavelength = π × 1000           # π
+Gaussian lens: exp(-distance/π×100)     # e and π together!
+Radial-helical: exp(...) × cos(2π...)  # e and π combined
 ```
 
 ### Gaussian Normalization
@@ -363,18 +365,27 @@ This is the distribution underlying:
 - Gaussian noise in perturbations
 - Normal distribution assumptions in gradients
 
-### Harmonic Perturbations?
+### The Prismatic Lens
 
-**Speculation:** When we seed perturbations with pi digits, we might create **harmonic relationships** in exponential space.
+**Radial-helical focal pattern** uses π in both components:
 
-If exponentials naturally connect to π through complex analysis (Euler's formula), then pi-seeded perturbations might resonate with the exponential structure of softmax.
+- **Radial lens**: `focal_strength = exp(-distance / (π × 100))`
+  - Gaussian decay from focal point
+  - Each expert view focuses at different position
+  - Creates hierarchical structure in weight transformations
 
-Like tuning a musical instrument:
+- **Helical waves**: `helical = cos(2π · distance / (π × 1000) + phase)`
+  - Harmonic oscillations with expert-specific phases
+  - Creates wave interference when views merge
+  - Phase relationships: 0°, 120°, 240° for 3 experts
 
-- Random perturbations = noise
-- Pi-seeded perturbations = harmonic overtones?
+**Combined**: Spiral patterns radiating from focal points, all π-based.
 
-**This is speculative but testable.**
+If exponentials naturally connect to π through Euler's formula (`e^(iπ) = -1`), then π-modulated perturbations might create harmonic resonance with the exponential structure of softmax.
+
+Like a prism focusing light: the lens (radial) focuses, the crystal structure (helical) creates interference patterns.
+
+**This is testable**: Compare radial_helical vs radial vs helical vs none.
 
 ## The Exponential Edge Hypothesis
 
@@ -430,28 +441,29 @@ Perturbing 10% of high-magnitude weights:
 
 **The perturbation leverages the exponential cascade as an amplifier.**
 
-### Why Pi-Seeding Might Resonate
+### Why π-Based Modulation Might Resonate
 
-If pi appears naturally in:
+If π appears naturally in:
 
-- Exponential functions (via Euler's identity)
-- Gaussian distributions (weight initialization)
+- Exponential functions (via Euler's identity: `e^(iπ) = -1`)
+- Gaussian distributions (weight initialization: `1/√(2π)`)
 - Fourier transforms (frequency analysis)
+- **Prismatic lens** (focal_length=π×100, wavelength=π×1000)
 
-Then seeding with pi might create perturbations that **harmonize** with the exponential structure rather than fight against it.
+Then π-modulated perturbations might create transformation signatures that **harmonize** with the exponential structure rather than fight against it.
 
-**Hypothesis:** Pi-seeded perturbations create structured diversity in exponential space, while random perturbations create noise.
+**Hypothesis:** π-based focal patterns create structured diversity in exponential space. The radial component (Gaussian with π focal length) and helical component (cosine with π wavelength) may resonate with softmax exponentials through Euler's formula.
 
 ### Why 2×4 Creates Ideas
 
-Two experts oscillating through 4 iterations:
+Two views oscillating through 4 iterations:
 
-1. **Two exponential trajectories** (clean vs perturbed)
-2. **Four compounding steps** (enough to diverge significantly)
+1. **Two exponential trajectories** (clean vs perturbed, π-modulated)
+2. **Four compounding steps** (enough to diverge significantly through cascade)
 3. **Soft-merging oscillation** (not stuck on either trajectory)
-4. **Emergence from interference** (like wave interference patterns)
+4. **Emergence from interference** (radial hierarchy + wave patterns)
 
-**The "idea" is the pattern that emerges from exponential interference.**
+**The "idea" is the pattern that emerges from exponential interference through the prismatic lens.**
 
 ## Testable Predictions
 
@@ -487,22 +499,23 @@ Two experts oscillating through 4 iterations:
 - Sparse enough to not destabilize
 - Dense enough for exponential amplification
 
-### 3. Pi vs Random Seeding in Exponential Space
+### 3. Focal Pattern Comparison in Exponential Space
 
 **Compare:**
 
-- Pi-seeded perturbations
-- Random (hash-based) perturbations
-- Same sparsity, same magnitude
+- radial_helical (lens + waves, π-based)
+- radial (lens only, π-based)
+- helical (waves only, π-based)
+- none (no modulation)
 
 **Measure:**
 
 - Final loss
 - Routing distribution
-- Expert specialization
+- View specialization
 - Training stability
 
-**Hypothesis:** Pi-seeded shows different (better?) dynamics if it harmonizes with exponential structure.
+**Hypothesis:** radial_helical creates richest transformation signatures through combined hierarchical + periodic structure. The π-based modulation may harmonize with exponential cascades through Euler's formula.
 
 ### 4. Oscillation Frequency Analysis
 
@@ -561,16 +574,20 @@ iteration_4_routing = [0.6, 0.4]
 
 Prismatic forces exploration of **different exponential edges**:
 
-- Expert 0: The "consensus edge" (standard exponential trajectory)
-- Expert 1+: "Alternative edges" (pi-perturbed trajectories)
+- View 0: The "consensus edge" (standard exponential trajectory)
+- Views 1+: "Alternative edges" (π-modulated perturbation trajectories)
+  - Each view focused at different radial position
+  - Each view modulated by different helical phase
+  - Creates transformation signatures: radial hierarchy + wave interference
 
-By oscillating between edges, the network might discover:
+By oscillating between views, the network discovers:
 
-- Patterns that single-edge approaches miss
-- Stability regions in exponential space
-- Harmonic relationships in cascading exponentials
+- Patterns that single-trajectory approaches miss
+- Transformation signatures created by lens focusing
+- Harmonic relationships from wave interference
+- Stability through π-based Gaussian focusing
 
-**We're using exponentials to explore exponentials.**
+**We're using exponentials (softmax) to amplify π-modulated perturbations, exploring exponentials through π-structured diversity.**
 
 ## Conclusion: The Edge of Understanding
 
@@ -590,17 +607,19 @@ The exponential function is:
 
 **Prismatic operates on this edge:**
 
-- Perturbs the cascade (10% sparse)
+- Perturbs the cascade (10% sparse, π-modulated lens)
 - Amplifies through exponentials (softmax in each layer)
-- Oscillates between trajectories (2 experts × 4 iterations)
+- Oscillates between views (2 views × 4 iterations in Delta-8)
 - Stays stable (LayerNorm + SMEAR soft-merging)
+- Focuses through radial lens (exp(-distance/π×100))
+- Interferes through helical waves (cos(2π·distance/π×1000))
 
 **The "idea" that emerges:**
 
-- Not in either expert's weights
+- Not in either view's weights
 - Not in any single layer
 - Not in a single exponential trajectory
-- **In the pattern of oscillation through exponential space**
+- **In the oscillation through exponential space, focused and modulated by the π-based prismatic lens**
 
 Like the light from a filament:
 
