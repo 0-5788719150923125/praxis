@@ -34,17 +34,19 @@ class PoseCalculator:
 
     def calculate_pose(self, points_2d, points_3d):
         """
-        Calculate head pose angles from 2D and 3D landmark points.
+        Calculate head pose from 2D and 3D landmark points.
 
         Args:
             points_2d: (N, 2) array of 2D pixel coordinates
             points_3d: (N, 3) array of 3D coordinates
 
         Returns:
-            tuple: (yaw, pitch, roll) in degrees, or (None, None, None) if calculation fails
+            tuple: (rotation_matrix, euler_angles_for_debug)
+                   rotation_matrix: 3x3 numpy array
+                   euler_angles_for_debug: (yaw, pitch, roll) in degrees for display
         """
         if points_2d is None or points_3d is None:
-            return None, None, None
+            return None, (None, None, None)
 
         # Solve PnP to get rotation and translation vectors
         success, rot_vec, trans_vec = cv2.solvePnP(
@@ -56,21 +58,30 @@ class PoseCalculator:
         )
 
         if not success:
-            return None, None, None
+            return None, (None, None, None)
 
         # Convert rotation vector to rotation matrix
         rmat, _ = cv2.Rodrigues(rot_vec)
 
-        # Decompose rotation matrix to euler angles
-        # Using RQDecomp3x3 for stability
-        angles, _, _, _, _, _ = cv2.RQDecomp3x3(rmat)
+        # Extract Euler angles for debug display only
+        sy = np.sqrt(rmat[0, 0]**2 + rmat[1, 0]**2)
+        singular = sy < 1e-6
 
-        # Extract yaw, pitch, roll (convert to degrees)
-        pitch = angles[0] * 360
-        yaw = angles[1] * 360
-        roll = angles[2] * 360
+        if not singular:
+            pitch = np.arctan2(-rmat[2, 0], sy)
+            yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
+            roll = np.arctan2(rmat[2, 1], rmat[2, 2])
+        else:
+            pitch = np.arctan2(-rmat[2, 0], sy)
+            yaw = 0
+            roll = np.arctan2(-rmat[1, 2], rmat[1, 1])
 
-        return yaw, pitch, roll
+        # Convert to degrees for debug
+        pitch_deg = np.degrees(pitch)
+        yaw_deg = np.degrees(yaw)
+        roll_deg = np.degrees(roll)
+
+        return rmat, (yaw_deg, pitch_deg, roll_deg)
 
     def get_rotation_matrix(self, yaw, pitch, roll):
         """

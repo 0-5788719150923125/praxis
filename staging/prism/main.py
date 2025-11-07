@@ -198,7 +198,7 @@ def run_pipeline(capture, tracker, pose_calc, renderer, monitor, output, args):
             face_data, image_shape = tracker.detect(frame)
 
         # Calculate pose if face detected
-        pose_angles = None
+        pose_data = None
         jaw_points = None
         jaw_width = 0
 
@@ -211,18 +211,18 @@ def run_pipeline(capture, tracker, pose_calc, renderer, monitor, output, args):
             # Calculate head pose
             with monitor.measure('pose'):
                 points_2d, points_3d = tracker.get_pose_points(face_data, image_shape)
-                yaw, pitch, roll = pose_calc.calculate_pose(points_2d, points_3d)
-                pose_angles = (yaw, pitch, roll)
+                rotation_matrix, (yaw, pitch, roll) = pose_calc.calculate_pose(points_2d, points_3d)
+                pose_data = (rotation_matrix, (yaw, pitch, roll))
 
         # Render tetrahedron mask
         with monitor.measure('rendering'):
-            output_frame = renderer.render(frame, jaw_points, jaw_width, pose_angles)
+            output_frame = renderer.render(frame, jaw_points, jaw_width, pose_data)
 
         # Add debug info if requested
         if args.debug:
             fps = monitor.get_fps()
             output_frame = renderer.draw_debug_info(
-                output_frame, jaw_points, jaw_width, pose_angles, fps
+                output_frame, jaw_points, jaw_width, pose_data, fps
             )
 
         # Send to output (virtual camera or preview)

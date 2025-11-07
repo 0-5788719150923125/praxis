@@ -25,25 +25,22 @@ class TetrahedronRenderer:
         self.opacity = opacity
         self.smoothing = smoothing
 
-        # Accumulated rotation angles (like globalRotX, globalRotY, globalRotZ in JS)
+        # Current rotation angles (set from pose estimation)
         self.rot_x = 0.0
         self.rot_y = 0.0
         self.rot_z = 0.0
 
-        # Rotation velocities
-        self.vel_x = 0.0
-        self.vel_y = 0.0
-        self.vel_z = 0.0
+        # Neutral pose offsets (calibrated to user's natural resting position)
+        self.neutral_pitch = None
+        self.neutral_yaw = None
+        self.neutral_roll = None
+        self.calibration_frames = 0
+        self.calibration_samples = []
 
-        # Previous jaw orientation for tracking changes
-        self.prev_jaw_center = None
-        self.prev_jaw_right_vec = None
-        self.prev_jaw_up_vec = None
-
-        # Frame timing for velocity calculations
+        # Frame timing for smooth transitions
         self.last_time = time.time()
 
-    def render(self, frame, jaw_points, jaw_width, pose_angles):
+    def render(self, frame, jaw_points, jaw_width, pose_data):
         """
         Render tetrahedron mask on frame.
 
@@ -51,55 +48,52 @@ class TetrahedronRenderer:
             frame: Input BGR image
             jaw_points: Dictionary with 'chin', 'left_jaw', 'right_jaw' positions
             jaw_width: Width of jaw in pixels
-            pose_angles: Tuple of (yaw, pitch, roll) in degrees (used for reference)
+            pose_data: Tuple of (rotation_matrix, (yaw, pitch, roll)) from pose estimation
 
         Returns:
             numpy.ndarray: Frame with tetrahedron mask rendered
         """
-        if jaw_points is None:
+        if jaw_points is None or pose_data is None:
             return frame
 
-        # Extract jaw landmarks
+        rotation_matrix, (yaw, pitch, roll) = pose_data
+
+        # Calibrate neutral rotation matrix during first 30 frames
+        if self.neutral_pitch is None:
+            self.calibration_samples.append(rotation_matrix.copy())
+            self.calibration_frames += 1
+
+            if self.calibration_frames >= 30:
+                # Calculate average neutral rotation matrix
+                neutral_rmat = np.mean(self.calibration_samples, axis=0)
+                # Store it for relative rotation
+                self.neutral_rotation_matrix = neutral_rmat
+                # Extract Euler angles for display
+                sy = np.sqrt(neutral_rmat[0, 0]**2 + neutral_rmat[1, 0]**2)
+                self.neutral_pitch = np.degrees(np.arctan2(-neutral_rmat[2, 0], sy))
+                self.neutral_yaw = np.degrees(np.arctan2(neutral_rmat[1, 0], neutral_rmat[0, 0]))
+                self.neutral_roll = np.degrees(np.arctan2(neutral_rmat[2, 1], neutral_rmat[2, 2]))
+                print(f"Calibrated neutral pose: pitch={self.neutral_pitch:.1f}°, yaw={self.neutral_yaw:.1f}°, roll={self.neutral_roll:.1f}°")
+            else:
+                # Still calibrating - return frame unchanged
+                return frame
+
+        # Calculate relative rotation: R_relative = R_neutral^T @ R_current
+        # This gives rotation from neutral pose to current pose
+        relative_rotation = self.neutral_rotation_matrix.T @ rotation_matrix
+
+        # Invert the rotation (transpose) to fix left/right inversion
+        relative_rotation = relative_rotation.T
+
+        # Extract chin for anchor point
         chin = np.array(jaw_points['chin'][:2], dtype=np.float64)
-        left_jaw = np.array(jaw_points['left_jaw'][:2], dtype=np.float64)
-        right_jaw = np.array(jaw_points['right_jaw'][:2], dtype=np.float64)
-
-        # Calculate current jaw orientation
-        jaw_center = (left_jaw + right_jaw) / 2.0
-        jaw_right_vec = right_jaw - left_jaw  # Left to right vector
-        jaw_up_vec = jaw_center - chin  # Chin to jaw center vector
-
-        # Normalize
-        jaw_right_vec = jaw_right_vec / (np.linalg.norm(jaw_right_vec) + 1e-6)
-        jaw_up_vec = jaw_up_vec / (np.linalg.norm(jaw_up_vec) + 1e-6)
-
-        # Calculate time delta for velocity
-        current_time = time.time()
-        dt = current_time - self.last_time
-        self.last_time = current_time
-
-        # Detect rotation from jaw orientation changes
-        if self.prev_jaw_center is not None and dt > 0:
-            # Calculate angular velocities from frame-to-frame changes
-            self._update_rotation_from_jaw_changes(
-                jaw_center, jaw_right_vec, jaw_up_vec, dt
-            )
-
-        # Store current orientation for next frame
-        self.prev_jaw_center = jaw_center.copy()
-        self.prev_jaw_right_vec = jaw_right_vec.copy()
-        self.prev_jaw_up_vec = jaw_up_vec.copy()
-
-        # Apply rotation velocities to accumulated angles
-        self.rot_x += self.vel_x
-        self.rot_y += self.vel_y
-        self.rot_z += self.vel_z
 
         # Calculate tetrahedron size based on jaw width
         base_size = jaw_width * 2.5  # Large base
         apex_distance = jaw_width * 1.5  # Forward projection distance
 
         # Define tetrahedron vertices in local coordinates
+        # Default orientation: apex points forward (positive Z)
         vertices_local = np.array([
             # Apex (forward-pointing vertex, like a bill)
             [0, 0, apex_distance],
@@ -110,12 +104,15 @@ class TetrahedronRenderer:
             [0, base_size * 0.7, -base_size * 0.8]                    # Top-back (above head)
         ], dtype=np.float64)
 
-        # Apply 3D rotations (like JavaScript rotate3D)
-        vertices_rotated = self._rotate_vertices_3d(vertices_local)
+        # Apply rotation matrix directly to vertices
+        # This is mathematically clean - no Euler angle ambiguity
+        vertices_rotated = vertices_local @ relative_rotation.T
+
+        # Use chin as anchor point
+        anchor_x, anchor_y = int(chin[0]), int(chin[1])
 
         # Project to 2D screen coordinates
-        chin_x, chin_y = int(chin[0]), int(chin[1])
-        vertices_2d = self._project_to_2d(vertices_rotated, chin_x, chin_y, frame.shape)
+        vertices_2d = self._project_to_2d(vertices_rotated, anchor_x, anchor_y, frame.shape)
 
         # Create overlay for transparency
         overlay = frame.copy()
@@ -127,100 +124,6 @@ class TetrahedronRenderer:
         frame = cv2.addWeighted(overlay, self.opacity, frame, 1 - self.opacity, 0)
 
         return frame
-
-    def _update_rotation_from_jaw_changes(self, jaw_center, jaw_right_vec, jaw_up_vec, dt):
-        """
-        Calculate rotation velocities from jaw orientation changes.
-
-        Args:
-            jaw_center: Current jaw center position
-            jaw_right_vec: Current right vector (normalized)
-            jaw_up_vec: Current up vector (normalized)
-            dt: Time delta in seconds
-        """
-        # Position change (translational movement)
-        center_delta = jaw_center - self.prev_jaw_center
-
-        # Detect YAW (left-right turn) from right vector rotation in XY plane
-        # When face turns left, right vector rotates counterclockwise
-        prev_angle_right = np.arctan2(self.prev_jaw_right_vec[1], self.prev_jaw_right_vec[0])
-        curr_angle_right = np.arctan2(jaw_right_vec[1], jaw_right_vec[0])
-        yaw_change = curr_angle_right - prev_angle_right
-
-        # Normalize angle to [-pi, pi]
-        yaw_change = np.arctan2(np.sin(yaw_change), np.cos(yaw_change))
-
-        # Detect PITCH (up-down tilt) from up vector length and direction changes
-        # When face tilts up, jaw center moves up relative to chin
-        prev_angle_up = np.arctan2(self.prev_jaw_up_vec[1], self.prev_jaw_up_vec[0])
-        curr_angle_up = np.arctan2(jaw_up_vec[1], jaw_up_vec[0])
-        pitch_change = curr_angle_up - prev_angle_up
-
-        # Normalize angle
-        pitch_change = np.arctan2(np.sin(pitch_change), np.cos(pitch_change))
-
-        # Detect ROLL (head tilt) from right vector tilt
-        # Cross product magnitude indicates roll
-        cross = np.cross(self.prev_jaw_right_vec, jaw_right_vec)
-        roll_change = cross * 0.5  # Scale down
-
-        # Convert changes to velocities
-        # Scale factors tuned for responsive but smooth tracking
-        yaw_velocity = -yaw_change * 0.5  # Inverted and scaled
-        pitch_velocity = pitch_change * 0.5
-        roll_velocity = roll_change * 0.3
-
-        # Apply smoothing to velocities
-        smooth = self.smoothing
-        self.vel_x = smooth * self.vel_x + (1 - smooth) * pitch_velocity
-        self.vel_y = smooth * self.vel_y + (1 - smooth) * yaw_velocity
-        self.vel_z = smooth * self.vel_z + (1 - smooth) * roll_velocity
-
-        # Damping to prevent runaway rotation
-        self.vel_x *= 0.95
-        self.vel_y *= 0.95
-        self.vel_z *= 0.95
-
-    def _rotate_vertices_3d(self, vertices):
-        """
-        Apply 3D rotations to vertices (like JavaScript rotate3D function).
-
-        Args:
-            vertices: (N, 3) array of vertex coordinates
-
-        Returns:
-            numpy.ndarray: Rotated vertices
-        """
-        rotated = vertices.copy()
-
-        for i in range(len(vertices)):
-            x, y, z = vertices[i]
-
-            # Rotate around X axis (pitch)
-            cos_x = np.cos(self.rot_x)
-            sin_x = np.sin(self.rot_x)
-            y1 = y * cos_x - z * sin_x
-            z1 = y * sin_x + z * cos_x
-            y = y1
-            z = z1
-
-            # Rotate around Y axis (yaw)
-            cos_y = np.cos(self.rot_y)
-            sin_y = np.sin(self.rot_y)
-            x1 = x * cos_y + z * sin_y
-            z2 = -x * sin_y + z * cos_y
-            x = x1
-            z = z2
-
-            # Rotate around Z axis (roll)
-            cos_z = np.cos(self.rot_z)
-            sin_z = np.sin(self.rot_z)
-            x2 = x * cos_z - y * sin_z
-            y2 = x * sin_z + y * cos_z
-
-            rotated[i] = [x2, y2, z]
-
-        return rotated
 
     def _project_to_2d(self, vertices_3d, center_x, center_y, frame_shape):
         """
@@ -308,7 +211,7 @@ class TetrahedronRenderer:
                           tuple([int(c * 0.5) for c in self.color]), -1, cv2.LINE_AA)
                 cv2.circle(img, vertex_tuple, 3, self.color, -1, cv2.LINE_AA)
 
-    def draw_debug_info(self, frame, jaw_points, jaw_width, pose_angles, fps):
+    def draw_debug_info(self, frame, jaw_points, jaw_width, pose_data, fps):
         """
         Draw debug information on frame.
 
@@ -316,26 +219,36 @@ class TetrahedronRenderer:
             frame: Input frame
             jaw_points: Jaw landmark points
             jaw_width: Jaw width in pixels
-            pose_angles: (yaw, pitch, roll) tuple
+            pose_data: Tuple of (rotation_matrix, (yaw, pitch, roll))
             fps: Current FPS
 
         Returns:
             numpy.ndarray: Frame with debug info
         """
-        if jaw_points is None:
+        if jaw_points is None or pose_data is None:
             cv2.putText(frame, "No face detected", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             return frame
 
-        yaw, pitch, roll = pose_angles if pose_angles else (0, 0, 0)
+        _, (yaw, pitch, roll) = pose_data
 
-        # Draw text info including rotation angles
+        # Calculate relative angles for display
+        if self.neutral_pitch is not None:
+            rel_pitch = pitch - self.neutral_pitch
+            rel_yaw = yaw - self.neutral_yaw
+            rel_roll = roll - self.neutral_roll
+        else:
+            rel_pitch = pitch
+            rel_yaw = yaw
+            rel_roll = roll
+
+        # Draw text info including pose angles
         info_lines = [
             f"FPS: {fps:.1f}",
             f"Jaw Width: {jaw_width:.0f}px",
-            f"RotX: {np.degrees(self.rot_x):.1f}° VelX: {self.vel_x:.3f}",
-            f"RotY: {np.degrees(self.rot_y):.1f}° VelY: {self.vel_y:.3f}",
-            f"RotZ: {np.degrees(self.rot_z):.1f}° VelZ: {self.vel_z:.3f}"
+            f"Pitch: {rel_pitch:.1f}° (raw: {pitch:.1f}°)",
+            f"Yaw: {rel_yaw:.1f}° (raw: {yaw:.1f}°)",
+            f"Roll: {rel_roll:.1f}° (raw: {roll:.1f}°)"
         ]
 
         y_offset = 30
