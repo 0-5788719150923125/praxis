@@ -301,7 +301,7 @@ class Prismatic(nn.Module):
         self._dynamics_metrics = {}
 
     def _create_perturbed_view(
-        self, base_params: Dict[str, torch.Tensor], expert_idx: int
+        self, base_params: Dict[str, torch.Tensor], expert_idx: int, current_depth: int = 0
     ) -> Dict[str, torch.Tensor]:
         """
         Create a perturbed view of base expert parameters at runtime.
@@ -320,6 +320,7 @@ class Prismatic(nn.Module):
         Args:
             base_params: Base expert's current parameters
             expert_idx: Expert index (0 = clean, 1+ = perturbed)
+            current_depth: Current reasoning iteration depth (for iteration-dependent modulation)
 
         Returns:
             Dictionary of perturbed parameters (or clean if expert_idx=0)
@@ -340,7 +341,7 @@ class Prismatic(nn.Module):
 
             # Generate perturbation
             perturbation = self._generate_perturbation(
-                param, mask, generator, expert_idx, param_name
+                param, mask, generator, expert_idx, param_name, current_depth
             )
 
             # Apply perturbation (non-destructive - creates new tensor)
@@ -479,6 +480,7 @@ class Prismatic(nn.Module):
         generator: torch.Generator,
         expert_idx: int,
         param_name: str,
+        current_depth: int = 0,
     ) -> torch.Tensor:
         """
         Generate adaptive perturbation scaled by parameter magnitude.
@@ -493,11 +495,13 @@ class Prismatic(nn.Module):
            - Each expert focuses at different radial positions
            - Helical modulation creates wave structure
            - Creates transformation signatures: radial hierarchy + periodic oscillation
+           - Phase offset varies by both expert AND reasoning iteration
 
         2. "helical": Pure wave modulation (original)
            - Spiral patterns using Euler's formula
            - Phase offsets create harmonic relationships
            - Creates wave interference when experts merge
+           - Phase offset varies by both expert AND reasoning iteration
 
         3. "radial": Pure lens focusing
            - Each expert focuses at different positions in weight space
@@ -514,6 +518,7 @@ class Prismatic(nn.Module):
             generator: Seeded random generator (used only for noise mode)
             expert_idx: Expert index for focal point and phase offset
             param_name: Parameter name (unused, kept for interface compatibility)
+            current_depth: Current reasoning iteration depth (modulates phase offset)
 
         Returns:
             Perturbation tensor (same shape as param)
@@ -557,9 +562,10 @@ class Prismatic(nn.Module):
                     # Stronger at focal point, decays with distance
                     focal_strength = torch.exp(-distance / self.focal_length)
 
-                    # Helical modulation with expert-specific phase
+                    # Helical modulation with expert-specific AND iteration-dependent phase
+                    # Each reasoning iteration shifts the phase, creating temporal variation
                     positions_normalized = 2 * math.pi * distance / self.helical_wavelength
-                    phase_offset = expert_idx * 2 * math.pi / self.num_experts
+                    phase_offset = (expert_idx * 2 * math.pi / self.num_experts) + (current_depth * math.pi / 10)
                     helical = torch.cos(positions_normalized + phase_offset)
 
                     # Combine: radial focusing × helical waves
@@ -591,8 +597,9 @@ class Prismatic(nn.Module):
                     # Normalize positions to wavelength
                     positions_normalized = 2 * math.pi * positions / self.helical_wavelength
 
-                    # Expert-specific phase offset
-                    phase_offset = expert_idx * 2 * math.pi / self.num_experts
+                    # Expert-specific AND iteration-dependent phase offset
+                    # Each reasoning iteration shifts the phase, creating temporal variation
+                    phase_offset = (expert_idx * 2 * math.pi / self.num_experts) + (current_depth * math.pi / 10)
 
                     # Create spiral pattern
                     spiral = torch.cos(positions_normalized + phase_offset)
@@ -674,8 +681,8 @@ class Prismatic(nn.Module):
             router_args = self._parse_router_args(args, kwargs)
             return self._router_forward(*router_args)
         else:
-            inputs, current_state = self._parse_direct_args(args, kwargs)
-            return self._direct_forward(inputs, current_state)
+            inputs, current_state, current_depth = self._parse_direct_args(args, kwargs)
+            return self._direct_forward(inputs, current_state, current_depth)
 
     def _router_forward(
         self,
@@ -719,7 +726,7 @@ class Prismatic(nn.Module):
             )
 
         # Soft-merge expert parameters based on routing probabilities
-        merged_state_dict = self._merge_expert_parameters(routing_probs)
+        merged_state_dict = self._merge_expert_parameters(routing_probs, current_depth)
 
         # Use base expert as structure for functional_call
         # Apply merged parameters (which are perturbed views soft-merged by routing)
@@ -748,6 +755,7 @@ class Prismatic(nn.Module):
         self,
         inputs: torch.Tensor,
         current_state: Optional[torch.Tensor],
+        current_depth: int = 0,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
         """
         Direct mode forward pass for RecurrentBlock usage.
@@ -773,8 +781,8 @@ class Prismatic(nn.Module):
                 routing_probs.sum(dim=-1, keepdim=True) + 1e-8
             )
 
-        # Merge and apply
-        merged_state_dict = self._merge_expert_parameters(routing_probs)
+        # Merge and apply (with iteration-dependent perturbations)
+        merged_state_dict = self._merge_expert_parameters(routing_probs, current_depth)
 
         result = torch.func.functional_call(
             self.base_expert, merged_state_dict, (inputs, current_state), {}
@@ -789,7 +797,7 @@ class Prismatic(nn.Module):
             return result, current_state, 0.0
 
     def _merge_expert_parameters(
-        self, routing_probs: torch.Tensor
+        self, routing_probs: torch.Tensor, current_depth: int = 0
     ) -> Dict[str, torch.Tensor]:
         """
         Soft-merge expert parameters based on routing probabilities.
@@ -813,6 +821,7 @@ class Prismatic(nn.Module):
 
         Args:
             routing_probs: Routing probabilities [batch_size, num_experts]
+            current_depth: Current reasoning iteration depth (for iteration-dependent perturbations)
 
         Returns:
             Dictionary of merged parameters
@@ -836,8 +845,8 @@ class Prismatic(nn.Module):
             merged_param: Optional[torch.Tensor] = None
 
             for expert_idx in range(self.num_experts):
-                # Get perturbed view of this parameter
-                perturbed_view = self._create_perturbed_view(base_state_dict, expert_idx)
+                # Get perturbed view of this parameter (with iteration-dependent modulation)
+                perturbed_view = self._create_perturbed_view(base_state_dict, expert_idx, current_depth)
                 param = perturbed_view[param_name]
 
                 # Ensure device compatibility
@@ -1107,14 +1116,16 @@ class Prismatic(nn.Module):
 
     def _parse_direct_args(
         self, args: tuple, kwargs: dict
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], int]:
         """Parse arguments for direct mode."""
-        if len(args) >= 2:
-            return args[0], args[1]
+        if len(args) >= 3:
+            return args[0], args[1], args[2]
+        elif len(args) == 2:
+            return args[0], args[1], 0
         elif len(args) == 1:
-            return args[0], None
+            return args[0], None, 0
         else:
             inputs = kwargs.get("inputs")
             if inputs is None:
                 raise ValueError(f"No inputs provided. Args: {args}, Kwargs: {kwargs}")
-            return inputs, kwargs.get("current_state")
+            return inputs, kwargs.get("current_state"), kwargs.get("current_depth", 0)

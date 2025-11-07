@@ -57,8 +57,24 @@ export const state = {
             onDeactivate: null
         },
         {
+            id: 'agents',
+            label: 'Agency',
+            active: false,
+            containerClass: 'agents-container',
+            customClasses: [],
+            template: () => createSimpleTabContent(
+                'agents-container',
+                'agents-container',
+                'Loading agents...'
+            ),
+            onActivate: 'loadAgents',
+            activateDelay: 0,
+            activateParams: [],
+            onDeactivate: null
+        },
+        {
             id: 'books',
-            label: 'Books',
+            label: 'Booking',
             active: false,
             containerClass: 'iframe-container',
             customClasses: ['iframe-view'],
@@ -69,22 +85,6 @@ export const state = {
                 title: 'Books'
             }),
             onActivate: null,
-            activateDelay: 0,
-            activateParams: [],
-            onDeactivate: null
-        },
-        {
-            id: 'agents',
-            label: (theme) => theme === 'dark' ? 'Hangar' : 'Wire',
-            active: false,
-            containerClass: 'agents-container',
-            customClasses: [],
-            template: () => createSimpleTabContent(
-                'agents-container',
-                'agents-container',
-                'Loading agents...'
-            ),
-            onActivate: 'loadAgents',
             activateDelay: 0,
             activateParams: [],
             onDeactivate: null
