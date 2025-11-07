@@ -37,6 +37,9 @@ class TetrahedronRenderer:
         self.calibration_frames = 0
         self.calibration_samples = []
 
+        # Smoothed rotation matrix for temporal filtering
+        self.smoothed_rotation = None
+
         # Frame timing for smooth transitions
         self.last_time = time.time()
 
@@ -85,6 +88,31 @@ class TetrahedronRenderer:
         # Invert the rotation (transpose) to fix left/right inversion
         relative_rotation = relative_rotation.T
 
+        # Apply temporal smoothing to reduce jitter
+        if self.smoothed_rotation is None:
+            # First frame - initialize
+            self.smoothed_rotation = relative_rotation.copy()
+        else:
+            # Exponential moving average (EMA) on rotation matrix
+            # Higher smoothing = more lag but smoother motion
+            alpha = 1.0 - self.smoothing  # Convert smoothing to alpha (0=smooth, 1=responsive)
+
+            # Interpolate rotation matrix
+            interpolated = self.smoothing * self.smoothed_rotation + alpha * relative_rotation
+
+            # Re-orthogonalize to ensure it's a valid rotation matrix
+            # Using SVD decomposition: A = U * S * V^T, then orthogonal = U * V^T
+            U, _, Vt = np.linalg.svd(interpolated)
+            self.smoothed_rotation = U @ Vt
+
+            # Ensure determinant is +1 (proper rotation, not reflection)
+            if np.linalg.det(self.smoothed_rotation) < 0:
+                U[:, -1] *= -1
+                self.smoothed_rotation = U @ Vt
+
+        # Use smoothed rotation for rendering
+        relative_rotation = self.smoothed_rotation
+
         # Extract chin for anchor point
         chin = np.array(jaw_points['chin'][:2], dtype=np.float64)
 
@@ -93,15 +121,15 @@ class TetrahedronRenderer:
         apex_distance = jaw_width * 1.5  # Forward projection distance
 
         # Define tetrahedron vertices in local coordinates
-        # Default orientation: apex points forward (positive Z)
+        # Default orientation: apex points forward (positive Z), inverted triangle (point down)
         vertices_local = np.array([
             # Apex (forward-pointing vertex, like a bill)
             [0, 0, apex_distance],
 
-            # Base triangle (large, wrapping around head/jaw/neck)
-            [-base_size * 0.6, -base_size * 0.3, -base_size * 0.8],  # Left-bottom-back
-            [base_size * 0.6, -base_size * 0.3, -base_size * 0.8],   # Right-bottom-back
-            [0, base_size * 0.7, -base_size * 0.8]                    # Top-back (above head)
+            # Base triangle (large, wrapping around head/jaw/neck) - INVERTED
+            [-base_size * 0.6, base_size * 0.3, -base_size * 0.8],   # Left-top-back
+            [base_size * 0.6, base_size * 0.3, -base_size * 0.8],    # Right-top-back
+            [0, -base_size * 0.7, -base_size * 0.8]                   # Bottom-back (below chin)
         ], dtype=np.float64)
 
         # Apply rotation matrix directly to vertices
