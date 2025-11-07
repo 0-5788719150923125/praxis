@@ -79,6 +79,18 @@ def parse_args():
         default=100,
         help='Print stats every N frames (default: 100)'
     )
+    parser.add_argument(
+        '--process-width',
+        type=int,
+        default=None,
+        help='Processing resolution width (default: same as output). Set lower for better performance.'
+    )
+    parser.add_argument(
+        '--process-height',
+        type=int,
+        default=None,
+        help='Processing resolution height (default: same as output). Set lower for better performance.'
+    )
 
     return parser.parse_args()
 
@@ -96,10 +108,16 @@ def main():
         print(f"Error: Invalid color format '{args.color}'. Use BGR format like '0,255,136'")
         return 1
 
+    # Determine processing resolution (defaults to output resolution)
+    process_width = args.process_width if args.process_width else args.width
+    process_height = args.process_height if args.process_height else args.height
+
     print("="*60)
     print("Real-Time 3D Tetrahedron Face Mask Pipeline")
     print("="*60)
-    print(f"Resolution: {args.width}x{args.height} @ {args.fps} FPS")
+    print(f"Output Resolution: {args.width}x{args.height} @ {args.fps} FPS")
+    if process_width != args.width or process_height != args.height:
+        print(f"Processing Resolution: {process_width}x{process_height} (optimized)")
     print(f"Camera: {args.camera}")
     print(f"Tetrahedron Color (BGR): {color}")
     print(f"Tetrahedron Opacity: {args.opacity}")
@@ -124,9 +142,13 @@ def main():
         return 1
 
     tracker = FaceTracker()
-    pose_calc = PoseCalculator(image_width=args.width, image_height=args.height)
+    pose_calc = PoseCalculator(image_width=process_width, image_height=process_height)
     renderer = TetrahedronRenderer(color=color, opacity=args.opacity, smoothing=args.smoothing)
     monitor = PerformanceMonitor()
+
+    # Store scale factors for coordinate mapping
+    scale_x = args.width / process_width
+    scale_y = args.height / process_height
 
     print("Components initialized.")
     print()
@@ -145,14 +167,18 @@ def main():
             with PreviewWindow() as preview:
                 run_pipeline(
                     capture, tracker, pose_calc, renderer, monitor,
-                    output=preview, args=args
+                    output=preview, args=args,
+                    process_width=process_width, process_height=process_height,
+                    scale_x=scale_x, scale_y=scale_y
                 )
         else:
             # Virtual camera mode
             with VirtualCamera(width=args.width, height=args.height, fps=args.fps) as vcam:
                 run_pipeline(
                     capture, tracker, pose_calc, renderer, monitor,
-                    output=vcam, args=args
+                    output=vcam, args=args,
+                    process_width=process_width, process_height=process_height,
+                    scale_x=scale_x, scale_y=scale_y
                 )
 
     except KeyboardInterrupt:
@@ -175,7 +201,8 @@ def main():
     return 0
 
 
-def run_pipeline(capture, tracker, pose_calc, renderer, monitor, output, args):
+def run_pipeline(capture, tracker, pose_calc, renderer, monitor, output, args,
+                 process_width, process_height, scale_x, scale_y):
     """
     Run the main processing pipeline.
 
@@ -183,19 +210,34 @@ def run_pipeline(capture, tracker, pose_calc, renderer, monitor, output, args):
         capture: VideoCapture instance
         tracker: FaceTracker instance
         pose_calc: PoseCalculator instance
-        renderer: SphereRenderer instance
+        renderer: TetrahedronRenderer instance
         monitor: PerformanceMonitor instance
         output: VirtualCamera or PreviewWindow instance
         args: Command line arguments
+        process_width: Width for face detection processing
+        process_height: Height for face detection processing
+        scale_x: X scaling factor (output_width / process_width)
+        scale_y: Y scaling factor (output_height / process_height)
     """
-    while True:
-        # Read frame from capture thread
-        with monitor.measure('capture'):
-            frame = capture.read()
+    import cv2
+    use_dual_resolution = (scale_x != 1.0 or scale_y != 1.0)
 
-        # Detect face landmarks
+    while True:
+        # Read frame from capture thread (high resolution)
+        with monitor.measure('capture'):
+            frame_highres = capture.read()
+
+        # Downscale for processing if using dual resolution
+        if use_dual_resolution:
+            with monitor.measure('downscale'):
+                frame_process = cv2.resize(frame_highres, (process_width, process_height),
+                                          interpolation=cv2.INTER_LINEAR)
+        else:
+            frame_process = frame_highres
+
+        # Detect face landmarks on low-res frame
         with monitor.measure('detection'):
-            face_data, image_shape = tracker.detect(frame)
+            face_data, image_shape = tracker.detect(frame_process)
 
         # Calculate pose if face detected
         pose_data = None
@@ -203,20 +245,38 @@ def run_pipeline(capture, tracker, pose_calc, renderer, monitor, output, args):
         jaw_width = 0
 
         if face_data is not None:
-            # Get jaw points
+            # Get jaw points (on low-res frame)
             with monitor.measure('landmarks'):
-                jaw_points = tracker.get_jaw_points(face_data, image_shape)
-                jaw_width = tracker.calculate_jaw_width(jaw_points)
+                jaw_points_lowres = tracker.get_jaw_points(face_data, image_shape)
+                jaw_width_lowres = tracker.calculate_jaw_width(jaw_points_lowres)
 
-            # Calculate head pose
+            # Calculate head pose (on low-res frame)
             with monitor.measure('pose'):
                 points_2d, points_3d = tracker.get_pose_points(face_data, image_shape)
                 rotation_matrix, (yaw, pitch, roll) = pose_calc.calculate_pose(points_2d, points_3d)
                 pose_data = (rotation_matrix, (yaw, pitch, roll))
 
-        # Render tetrahedron mask
+            # Scale jaw points and width to high-res coordinates
+            if use_dual_resolution:
+                jaw_points = {
+                    'chin': (int(jaw_points_lowres['chin'][0] * scale_x),
+                            int(jaw_points_lowres['chin'][1] * scale_y),
+                            jaw_points_lowres['chin'][2]),
+                    'left_jaw': (int(jaw_points_lowres['left_jaw'][0] * scale_x),
+                                int(jaw_points_lowres['left_jaw'][1] * scale_y),
+                                jaw_points_lowres['left_jaw'][2]),
+                    'right_jaw': (int(jaw_points_lowres['right_jaw'][0] * scale_x),
+                                 int(jaw_points_lowres['right_jaw'][1] * scale_y),
+                                 jaw_points_lowres['right_jaw'][2])
+                }
+                jaw_width = jaw_width_lowres * scale_x
+            else:
+                jaw_points = jaw_points_lowres
+                jaw_width = jaw_width_lowres
+
+        # Render tetrahedron mask on high-res frame
         with monitor.measure('rendering'):
-            output_frame = renderer.render(frame, jaw_points, jaw_width, pose_data)
+            output_frame = renderer.render(frame_highres, jaw_points, jaw_width, pose_data)
 
         # Add debug info if requested
         if args.debug:
