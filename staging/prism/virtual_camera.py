@@ -56,11 +56,10 @@ class VirtualCamera:
         if self.cam is None:
             return False
 
-        # Validate frame dimensions
+        # Resize frame if dimensions don't match
         if frame.shape[:2] != (self.height, self.width):
-            print(f"Warning: Frame shape {frame.shape[:2]} doesn't match "
-                  f"expected {(self.height, self.width)}")
-            return False
+            import cv2
+            frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
 
         try:
             self.cam.send(frame)

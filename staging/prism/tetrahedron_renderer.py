@@ -142,16 +142,62 @@ class TetrahedronRenderer:
         # Project to 2D screen coordinates
         vertices_2d = self._project_to_2d(vertices_rotated, anchor_x, anchor_y, frame.shape)
 
-        # Create overlay for transparency
+        # Draw solid black fill directly on frame (fully opaque, no transparency)
+        self._draw_filled_faces(frame, vertices_2d, vertices_rotated)
+
+        # Create overlay for transparent wireframe only
         overlay = frame.copy()
 
-        # Draw tetrahedron wireframe
+        # Draw tetrahedron wireframe on overlay
         self._draw_wireframe(overlay, vertices_2d)
 
-        # Blend overlay with original frame
+        # Blend only the wireframe with transparency
         frame = cv2.addWeighted(overlay, self.opacity, frame, 1 - self.opacity, 0)
 
         return frame
+
+    def _draw_filled_faces(self, img, vertices_2d, vertices_3d):
+        """
+        Draw filled black faces of the tetrahedron.
+
+        Args:
+            img: Image to draw on
+            vertices_2d: (4, 2) array of 2D vertex positions
+            vertices_3d: (4, 3) array of 3D vertex positions for depth sorting
+        """
+        # Define the 4 triangular faces of the tetrahedron
+        # vertices: [0]=apex, [1]=left-top-back, [2]=right-top-back, [3]=bottom-back
+        faces = [
+            (0, 1, 2),  # Front-left face
+            (0, 2, 3),  # Front-right face
+            (0, 3, 1),  # Front-bottom face
+            (1, 2, 3),  # Back base triangle
+        ]
+
+        # Sort faces by average Z depth (back to front for proper occlusion)
+        face_depths = []
+        for face in faces:
+            avg_z = np.mean([vertices_3d[i][2] for i in face])
+            face_depths.append((avg_z, face))
+
+        # Sort by depth (furthest first)
+        face_depths.sort(key=lambda x: x[0])
+
+        # Draw each face
+        for _, face in face_depths:
+            # Get 2D points for this face
+            points = np.array([vertices_2d[i] for i in face], dtype=np.int32)
+
+            # Back-face culling: only draw if face is visible (counter-clockwise in screen space)
+            # Calculate cross product of two edges
+            edge1 = points[1] - points[0]
+            edge2 = points[2] - points[0]
+            cross = edge1[0] * edge2[1] - edge1[1] * edge2[0]
+
+            # If counter-clockwise (cross > 0), face is visible
+            if cross > 0:
+                # Draw filled triangle with solid black
+                cv2.fillPoly(img, [points], (0, 0, 0), lineType=cv2.LINE_AA)
 
     def _project_to_2d(self, vertices_3d, center_x, center_y, frame_shape):
         """
