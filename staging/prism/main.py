@@ -74,6 +74,12 @@ def parse_args():
         help='Rotation smoothing 0-1, higher=smoother but laggier (default: 0.7)'
     )
     parser.add_argument(
+        '--y-offset',
+        type=float,
+        default=-0.4,
+        help='Vertical offset as fraction of jaw width, negative=up (default: -0.4)'
+    )
+    parser.add_argument(
         '--stats-interval',
         type=int,
         default=100,
@@ -122,6 +128,7 @@ def main():
     print(f"Tetrahedron Color (BGR): {color}")
     print(f"Tetrahedron Opacity: {args.opacity}")
     print(f"Smoothing: {args.smoothing}")
+    print(f"Y-Offset: {args.y_offset} (negative = up)")
     print(f"Mode: {'Preview Window' if args.preview else 'Virtual Camera'}")
     print(f"Debug: {'Enabled' if args.debug else 'Disabled'}")
     print("="*60)
@@ -143,7 +150,7 @@ def main():
 
     tracker = FaceTracker()
     pose_calc = PoseCalculator(image_width=process_width, image_height=process_height)
-    renderer = TetrahedronRenderer(color=color, opacity=args.opacity, smoothing=args.smoothing)
+    renderer = TetrahedronRenderer(color=color, opacity=args.opacity, smoothing=args.smoothing, y_offset=args.y_offset)
     monitor = PerformanceMonitor()
 
     # Store scale factors for coordinate mapping

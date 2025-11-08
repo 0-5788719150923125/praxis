@@ -12,7 +12,7 @@ import time
 class TetrahedronRenderer:
     """Render 3D tetrahedron mask that projects from face and follows head movement."""
 
-    def __init__(self, color=(0, 255, 136), opacity=0.6, smoothing=0.7):
+    def __init__(self, color=(0, 255, 136), opacity=0.6, smoothing=0.7, y_offset=-0.4):
         """
         Initialize tetrahedron renderer.
 
@@ -20,10 +20,12 @@ class TetrahedronRenderer:
             color: BGR color tuple (default: cyan-green)
             opacity: Transparency level 0-1 (default: 0.6)
             smoothing: Smoothing factor 0-1, higher = smoother but laggier (default: 0.7)
+            y_offset: Vertical offset as fraction of jaw_width, negative moves up (default: -0.4)
         """
         self.color = color
         self.opacity = opacity
         self.smoothing = smoothing
+        self.y_offset = y_offset
 
         # Current rotation angles (set from pose estimation)
         self.rot_x = 0.0
@@ -115,6 +117,10 @@ class TetrahedronRenderer:
 
         # Extract chin for anchor point
         chin = np.array(jaw_points['chin'][:2], dtype=np.float64)
+
+        # Apply vertical offset to shift prism up/down (negative = up, positive = down)
+        vertical_shift = jaw_width * self.y_offset
+        chin[1] += vertical_shift  # Adjust Y coordinate
 
         # Calculate tetrahedron size based on jaw width
         base_size = jaw_width * 2.5  # Large base

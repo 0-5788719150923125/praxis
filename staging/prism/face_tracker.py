@@ -3,10 +3,11 @@ OpenCV YuNet face detector for detecting faces and 5 key facial landmarks.
 Fast and efficient, works with Python 3.13.
 """
 
-import cv2
-import numpy as np
 import os
 import urllib.request
+
+import cv2
+import numpy as np
 
 
 class FaceTracker:
@@ -52,7 +53,7 @@ class FaceTracker:
             "",
             (320, 320),  # Will be updated with actual frame size
             score_threshold=self.score_threshold,
-            nms_threshold=self.nms_threshold
+            nms_threshold=self.nms_threshold,
         )
 
     def _get_model_path(self):
@@ -100,20 +101,16 @@ class FaceTracker:
         bbox = face[0:4].astype(int)  # [x, y, w, h]
 
         landmarks = {
-            'right_eye': (int(face[4]), int(face[5])),
-            'left_eye': (int(face[6]), int(face[7])),
-            'nose_tip': (int(face[8]), int(face[9])),
-            'right_mouth': (int(face[10]), int(face[11])),
-            'left_mouth': (int(face[12]), int(face[13]))
+            "right_eye": (int(face[4]), int(face[5])),
+            "left_eye": (int(face[6]), int(face[7])),
+            "nose_tip": (int(face[8]), int(face[9])),
+            "right_mouth": (int(face[10]), int(face[11])),
+            "left_mouth": (int(face[12]), int(face[13])),
         }
 
         confidence = face[14] if len(face) > 14 else 1.0
 
-        face_data = {
-            'bbox': bbox,
-            'landmarks': landmarks,
-            'confidence': confidence
-        }
+        face_data = {"bbox": bbox, "landmarks": landmarks, "confidence": confidence}
 
         return face_data, (h, w)
 
@@ -132,12 +129,12 @@ class FaceTracker:
         if face_data is None:
             return None
 
-        landmarks = face_data['landmarks']
-        bbox = face_data['bbox']
+        landmarks = face_data["landmarks"]
+        bbox = face_data["bbox"]
 
         # Estimate chin position (below mouth, centered)
-        mouth_center_x = (landmarks['left_mouth'][0] + landmarks['right_mouth'][0]) // 2
-        mouth_center_y = (landmarks['left_mouth'][1] + landmarks['right_mouth'][1]) // 2
+        mouth_center_x = (landmarks["left_mouth"][0] + landmarks["right_mouth"][0]) // 2
+        mouth_center_y = (landmarks["left_mouth"][1] + landmarks["right_mouth"][1]) // 2
 
         # Chin is approximately 0.6-0.7 of face height below nose
         face_height = bbox[3]
@@ -153,9 +150,9 @@ class FaceTracker:
         right_jaw_x = mouth_center_x + jaw_width // 2
 
         jaw_points = {
-            'chin': (chin_x, chin_y, 0),
-            'left_jaw': (left_jaw_x, jaw_y, 0),
-            'right_jaw': (right_jaw_x, jaw_y, 0)
+            "chin": (chin_x, chin_y, 0),
+            "left_jaw": (left_jaw_x, jaw_y, 0),
+            "right_jaw": (right_jaw_x, jaw_y, 0),
         }
 
         return jaw_points
@@ -176,36 +173,42 @@ class FaceTracker:
         if face_data is None:
             return None, None
 
-        landmarks = face_data['landmarks']
-        bbox = face_data['bbox']
+        landmarks = face_data["landmarks"]
+        bbox = face_data["bbox"]
 
         # Estimate chin position (6th point needed for solvePnP)
-        mouth_center_x = (landmarks['left_mouth'][0] + landmarks['right_mouth'][0]) / 2
-        mouth_center_y = (landmarks['left_mouth'][1] + landmarks['right_mouth'][1]) / 2
+        mouth_center_x = (landmarks["left_mouth"][0] + landmarks["right_mouth"][0]) / 2
+        mouth_center_y = (landmarks["left_mouth"][1] + landmarks["right_mouth"][1]) / 2
         face_height = bbox[3]
         chin_x = mouth_center_x
         chin_y = mouth_center_y + face_height * 0.25
 
         # 2D points from detected landmarks (6 points for solvePnP DLT algorithm)
-        points_2d = np.array([
-            landmarks['nose_tip'],
-            landmarks['left_eye'],
-            landmarks['right_eye'],
-            landmarks['left_mouth'],
-            landmarks['right_mouth'],
-            [chin_x, chin_y]  # Estimated chin point
-        ], dtype=np.float64)
+        points_2d = np.array(
+            [
+                landmarks["nose_tip"],
+                landmarks["left_eye"],
+                landmarks["right_eye"],
+                landmarks["left_mouth"],
+                landmarks["right_mouth"],
+                [chin_x, chin_y],  # Estimated chin point
+            ],
+            dtype=np.float64,
+        )
 
         # 3D model points (generic face model)
         # Coordinates in mm, approximate human face proportions
-        points_3d = np.array([
-            [0.0, 0.0, 0.0],          # Nose tip
-            [-30.0, -30.0, -20.0],    # Left eye
-            [30.0, -30.0, -20.0],     # Right eye
-            [-20.0, 30.0, -10.0],     # Left mouth corner
-            [20.0, 30.0, -10.0],      # Right mouth corner
-            [0.0, 50.0, -15.0]        # Chin
-        ], dtype=np.float64)
+        points_3d = np.array(
+            [
+                [0.0, 0.0, 0.0],  # Nose tip
+                [-30.0, -30.0, -20.0],  # Left eye
+                [30.0, -30.0, -20.0],  # Right eye
+                [-20.0, 30.0, -10.0],  # Left mouth corner
+                [20.0, 30.0, -10.0],  # Right mouth corner
+                [0.0, 50.0, -15.0],  # Chin
+            ],
+            dtype=np.float64,
+        )
 
         return points_2d, points_3d
 
@@ -222,13 +225,14 @@ class FaceTracker:
         if jaw_points is None:
             return 0
 
-        left = jaw_points['left_jaw']
-        right = jaw_points['right_jaw']
+        left = jaw_points["left_jaw"]
+        right = jaw_points["right_jaw"]
 
         # Euclidean distance in 2D
-        width = np.sqrt((right[0] - left[0])**2 + (right[1] - left[1])**2)
+        width = np.sqrt((right[0] - left[0]) ** 2 + (right[1] - left[1]) ** 2)
         return width
 
     def close(self):
         """Release resources (YuNet doesn't need explicit cleanup)."""
+        pass
         pass
