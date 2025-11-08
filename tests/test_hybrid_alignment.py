@@ -16,12 +16,12 @@ def test_hybrid_mode_alignment(page: Page):
 
     for _ in range(max_attempts):
         # Toggle theme
-        theme_button = page.locator('.theme-toggle-button')
+        theme_button = page.locator(".theme-toggle-button")
         theme_button.click()
         page.wait_for_timeout(300)
 
         # Check if hybrid mode is active
-        hybrid_overlay = page.locator('.hybrid-overlay')
+        hybrid_overlay = page.locator(".hybrid-overlay")
         if hybrid_overlay.count() > 0 and hybrid_overlay.is_visible():
             hybrid_active = True
             break
@@ -32,8 +32,8 @@ def test_hybrid_mode_alignment(page: Page):
     page.wait_for_timeout(1000)
 
     # Get bounding boxes of key elements in both layers
-    original_app = page.locator('.app-container').first
-    hybrid_app = page.locator('.hybrid-overlay .app-container').first
+    original_app = page.locator(".app-container").first
+    hybrid_app = page.locator(".hybrid-overlay .app-container").first
 
     # Verify both exist
     expect(original_app).to_be_visible()
@@ -47,19 +47,25 @@ def test_hybrid_mode_alignment(page: Page):
     assert hybrid_box is not None, "Hybrid app-container not found"
 
     # Verify width alignment (should be identical)
-    assert abs(original_box['width'] - hybrid_box['width']) < 2, \
-        f"Width mismatch: original={original_box['width']}, hybrid={hybrid_box['width']}"
+    assert (
+        abs(original_box["width"] - hybrid_box["width"]) < 2
+    ), f"Width mismatch: original={original_box['width']}, hybrid={hybrid_box['width']}"
 
     # Verify both containers have proper max-width constraint
-    original_width = page.evaluate("() => getComputedStyle(document.querySelector('.app-container')).maxWidth")
-    hybrid_width = page.evaluate("() => getComputedStyle(document.querySelector('.hybrid-overlay .app-container')).maxWidth")
+    original_width = page.evaluate(
+        "() => getComputedStyle(document.querySelector('.app-container')).maxWidth"
+    )
+    hybrid_width = page.evaluate(
+        "() => getComputedStyle(document.querySelector('.hybrid-overlay .app-container')).maxWidth"
+    )
 
-    assert original_width == hybrid_width, \
-        f"max-width mismatch: original={original_width}, hybrid={hybrid_width}"
+    assert (
+        original_width == hybrid_width
+    ), f"max-width mismatch: original={original_width}, hybrid={hybrid_width}"
 
     # Verify text content alignment by checking first message in each
-    original_msg = page.locator('.app-container .message').first
-    hybrid_msg = page.locator('.hybrid-overlay .message').first
+    original_msg = page.locator(".app-container .message").first
+    hybrid_msg = page.locator(".hybrid-overlay .message").first
 
     if original_msg.count() > 0 and hybrid_msg.count() > 0:
         orig_msg_box = original_msg.bounding_box()
@@ -67,12 +73,14 @@ def test_hybrid_mode_alignment(page: Page):
 
         if orig_msg_box and hyb_msg_box:
             # X positions should be very close (within 2px)
-            assert abs(orig_msg_box['x'] - hyb_msg_box['x']) < 2, \
-                f"Message X position mismatch: original={orig_msg_box['x']}, hybrid={hyb_msg_box['x']}"
+            assert (
+                abs(orig_msg_box["x"] - hyb_msg_box["x"]) < 2
+            ), f"Message X position mismatch: original={orig_msg_box['x']}, hybrid={hyb_msg_box['x']}"
 
             # Y positions should be very close (within 2px)
-            assert abs(orig_msg_box['y'] - hyb_msg_box['y']) < 2, \
-                f"Message Y position mismatch: original={orig_msg_box['y']}, hybrid={hyb_msg_box['y']}"
+            assert (
+                abs(orig_msg_box["y"] - hyb_msg_box["y"]) < 2
+            ), f"Message Y position mismatch: original={orig_msg_box['y']}, hybrid={hyb_msg_box['y']}"
 
 
 def test_hybrid_overlay_fully_opaque(page: Page):
@@ -82,16 +90,20 @@ def test_hybrid_overlay_fully_opaque(page: Page):
 
     # Force hybrid mode
     for _ in range(20):
-        page.locator('.theme-toggle-button').click()
+        page.locator(".theme-toggle-button").click()
         page.wait_for_timeout(300)
 
-        if page.locator('.hybrid-overlay').count() > 0:
+        if page.locator(".hybrid-overlay").count() > 0:
             break
 
     page.wait_for_timeout(500)
 
     # Check opacity
-    overlay = page.locator('.hybrid-overlay').first
+    overlay = page.locator(".hybrid-overlay").first
     if overlay.count() > 0:
-        opacity = page.evaluate("() => getComputedStyle(document.querySelector('.hybrid-overlay')).opacity")
-        assert opacity == '1', f"Hybrid overlay should be fully opaque, got opacity={opacity}"
+        opacity = page.evaluate(
+            "() => getComputedStyle(document.querySelector('.hybrid-overlay')).opacity"
+        )
+        assert (
+            opacity == "1"
+        ), f"Hybrid overlay should be fully opaque, got opacity={opacity}"

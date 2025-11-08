@@ -76,9 +76,7 @@ class BaseDecoder(nn.Module):
 
             # Pass base block as a single-element list (experts parameter)
             # Prismatic will use it as the base for creating perturbed clones
-            expert = LocalLayer(
-                config, block=base_block, expert_blocks=[base_block]
-            )
+            expert = LocalLayer(config, block=base_block, expert_blocks=[base_block])
             # Reuse the same expert for all layer positions
             for i in range(self.num_layers):
                 self.locals.append(expert)
@@ -175,7 +173,9 @@ class BaseDecoder(nn.Module):
         # Check first local layer for router metrics (shared across all layers)
         if self.locals and len(self.locals) > 0:
             first_local = self.locals[0]
-            if hasattr(first_local, 'router') and hasattr(first_local.router, 'get_metrics'):
+            if hasattr(first_local, "router") and hasattr(
+                first_local.router, "get_metrics"
+            ):
                 router_metrics = first_local.router.get_metrics()
                 if router_metrics:
                     extras = {**extras, **router_metrics}

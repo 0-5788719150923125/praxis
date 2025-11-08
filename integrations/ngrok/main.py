@@ -277,10 +277,10 @@ def setup_ngrok_routes(app, ngrok_secret):
                             ('src="/socket.io/', f'src="/{ngrok_secret}/socket.io/'),
                             ("fetch('/", f"fetch('/{ngrok_secret}/"),
                             ('fetch("/', f'fetch("/{ngrok_secret}/'),
-                            ('fetch(`/', f'fetch(`/{ngrok_secret}/'),
+                            ("fetch(`/", f"fetch(`/{ngrok_secret}/"),
                             ('"/api/', f'"/{ngrok_secret}/api/'),
                             ("'/api/", f"'/{ngrok_secret}/api/"),
-                            ('`/api/', f'`/{ngrok_secret}/api/'),
+                            ("`/api/", f"`/{ngrok_secret}/api/"),
                         ]
                         for old, new in replacements:
                             html = html.replace(old, new)

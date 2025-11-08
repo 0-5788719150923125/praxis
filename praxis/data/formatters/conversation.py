@@ -37,7 +37,8 @@ def format_conversation(
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "developer",
-            "content": original_system or sample_developer_prompt("engage_conversation"),
+            "content": original_system
+            or sample_developer_prompt("engage_conversation"),
         },
         {"role": "user", "content": text_formatter(document.get(keys[1], ""))},
         {"role": "assistant", "content": text_formatter(document.get(keys[2], ""))},

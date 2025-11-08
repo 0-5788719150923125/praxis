@@ -72,23 +72,23 @@ export const state = {
             activateParams: [],
             onDeactivate: null
         },
-        {
-            id: 'books',
-            label: 'Booking',
-            active: false,
-            containerClass: 'iframe-container',
-            customClasses: ['iframe-view'],
-            template: () => createIframeTabContent({
-                url: 'https://try.axe.eco/basic/note.html',
-                containerClass: 'iframe-container',
-                containerId: 'books-container',
-                title: 'Books'
-            }),
-            onActivate: null,
-            activateDelay: 0,
-            activateParams: [],
-            onDeactivate: null
-        },
+        // {
+        //     id: 'books',
+        //     label: 'Booking',
+        //     active: false,
+        //     containerClass: 'iframe-container',
+        //     customClasses: ['iframe-view'],
+        //     template: () => createIframeTabContent({
+        //         url: 'https://try.axe.eco/basic/note.html',
+        //         containerClass: 'iframe-container',
+        //         containerId: 'books-container',
+        //         title: 'Books'
+        //     }),
+        //     onActivate: null,
+        //     activateDelay: 0,
+        //     activateParams: [],
+        //     onDeactivate: null
+        // },
         {
             id: 'research',
             label: 'Research',
@@ -382,8 +382,9 @@ export const CONSTANTS = {
         { key: 'sampling_weights', canvasId: 'chart-sampling-weights', title: 'Task Sampling Weights', label: 'Sampling Weights', type: 'sampling', source: 'data_metrics' },
         // Expert convergence metrics (SMEAR & Prismatic routers)
         { key: 'expert_routing_weights', canvasId: 'chart-expert-routing', title: 'Expert Routing Weights (Convergence)', label: 'Routing Weight', type: 'multi_expert_line', isComposite: true },
-        { key: 'routing_entropy', canvasId: 'chart-routing-entropy', title: 'Routing Entropy (Balance)', label: 'Entropy', type: 'line' },
-        { key: 'routing_concentration', canvasId: 'chart-routing-concentration', title: 'Routing Concentration (Collapse)', label: 'Max Weight', type: 'line' },
-        { key: 'routing_variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' }
+        { key: 'routing/entropy', canvasId: 'chart-routing-entropy', title: 'Routing Entropy (Balance)', label: 'Entropy', type: 'line' },
+        { key: 'routing/concentration', canvasId: 'chart-routing-concentration', title: 'Routing Concentration (Collapse)', label: 'Max Weight', type: 'line' },
+        { key: 'routing/variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' },
+        { key: 'routing/balance', canvasId: 'chart-routing-balance', title: 'Routing Balance', label: 'Balance', type: 'line' }
     ]
 };

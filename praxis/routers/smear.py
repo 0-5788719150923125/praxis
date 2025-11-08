@@ -296,23 +296,23 @@ class SMEAR(nn.Module):
             # Per-expert routing weights (mean across batch)
             # These show individual expert convergence trajectories
             for i, weight in enumerate(expert_weights):
-                self._metrics[f'expert_{i}_routing_weight'] = weight.item()
+                self._metrics[f"expert_{i}_routing_weight"] = weight.item()
 
             # Entropy: H = -Σ(p_i * log(p_i))
             # Measures routing balance: high = balanced, low = collapsed
             probs = expert_weights + 1e-10  # Avoid log(0)
             entropy = -(probs * probs.log()).sum()
-            self._metrics['routing_entropy'] = entropy.item()
+            self._metrics["routing_entropy"] = entropy.item()
 
             # Concentration: max routing weight
             # Measures expert collapse: 1.0 = fully collapsed, 1/N = uniform
             concentration = expert_weights.max()
-            self._metrics['routing_concentration'] = concentration.item()
+            self._metrics["routing_concentration"] = concentration.item()
 
             # Variance: measures routing stability across experts
             # High variance = specialized experts, low variance = uniform
             variance = expert_weights.var()
-            self._metrics['routing_variance'] = variance.item()
+            self._metrics["routing_variance"] = variance.item()
         except Exception:
             # Silently fail if metric computation fails - don't break training
             pass

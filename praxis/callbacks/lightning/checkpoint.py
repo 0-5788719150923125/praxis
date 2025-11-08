@@ -57,6 +57,7 @@ class TimeBasedCheckpoint(ModelCheckpoint):
 
                 # Clear CUDA cache after checkpoint saving to prevent memory accumulation
                 import torch
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 

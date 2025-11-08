@@ -78,7 +78,9 @@ class InterleaveDataManager:
             except Exception as e:
                 print(f"[WARNING] Failed to initialize data metrics logger: {e}")
         else:
-            print(f"[DATA METRICS] Logger not initialized: run_dir={run_dir}, use_dynamic_weights={self.use_dynamic_weights}")
+            print(
+                f"[DATA METRICS] Logger not initialized: run_dir={run_dir}, use_dynamic_weights={self.use_dynamic_weights}"
+            )
 
         # Dynamic weighting setup
         if self.use_dynamic_weights:

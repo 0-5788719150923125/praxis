@@ -2,21 +2,113 @@
 
 ## Overview
 
-Prismatic attention implements multi-eye architectural diversity through **runtime sparse perturbations**, as described in "The Blind Watchmaker" paper. It creates diverse expert views from a single base expert by applying deterministic, sparse, magnitude-aware perturbations at every forward pass—ensuring architectural diversity persists as the base expert learns.
+Prismatic attention implements architectural diversity through **gradient-space constraints**. Unlike traditional approaches that perturb weights, Prismatic creates N independent experts that explore different optimization trajectories by modifying gradients after the backward pass.
 
 ## Theoretical Foundations
 
-### Lottery Ticket Hypothesis (Frankle & Carbin, 2019)
+### The Lottery Ticket Hypothesis (Frankle & Carbin, 2019)
 
-LTH shows that dense neural networks contain sparse critical subnetworks ("winning tickets") that can train to similar accuracy. **Prismatic inverts this**: instead of finding critical sparse subnetworks through pruning, we perturb sparse high-magnitude weights to force discovery of alternative computational paths.
+LTH demonstrates that dense neural networks contain sparse critical subnetworks ("winning tickets") that can train to similar accuracy when properly initialized. This reveals a profound truth: **the optimization landscape contains multiple distinct paths to competence**.
 
-### Willow Quantum Architecture (Google, 2024)
+Prismatic asks: _If sparse subnetworks can reach full performance, what happens when we force multiple experts to explore different paths through the same landscape?_
 
-Google's Willow quantum computer achieves error correction by perturbing individual qubits. Similarly, Prismatic perturbs a small percentage (~10%) of critical weights to force robust, diverse computational paths without destroying functionality.
+### Google Willow Quantum Computer (2024)
 
-### Key Insight
+Willow achieves quantum error correction by perturbing individual qubits while maintaining system coherence. The key insight: **sparse, targeted interventions can maintain robustness while exploring quantum state space**.
 
-"Train on consensus, you manifest the lowest common denominator." Runtime perturbations prevent convergence to consensus—as the base expert learns, perturbations are always applied relative to its current state, maintaining genuine diversity throughout training.
+Prismatic applies this to neural networks: sparse interventions in gradient space maintain training stability while forcing trajectory divergence.
+
+### Quantum No-Cloning Theorem
+
+The quantum no-cloning theorem states: **you cannot create an identical copy of an arbitrary quantum state**. Applied to neural networks: you cannot clone a model and expect the copies to meaningfully diverge through static perturbations alone.
+
+#### The "Unreality": What Doesn't Work
+
+The original Prismatic v1.x attempted runtime weight perturbations:
+
+```
+Expert_i = BaseExpert + Perturbation_i
+```
+
+This "alternative reality" failed because:
+
+1. The router learns "clean weights perform best" → collapse to Expert 0
+2. Perturbations exist outside gradient graph → no learning signal
+3. Violates the spirit of no-cloning: forced diversity from identical copies
+
+This approach explored the hypothesis that **sparse runtime perturbations** (inspired by Willow's qubit perturbations and LTH's sparse tickets) could force diverse computational paths. However, without gradient flow to perturbed views, the router learned to avoid them entirely.
+
+### New Approach: Gradient-Space Experts
+
+Prismatic v2.0 respects the no-cloning constraint by having experts exist as **different optimization trajectories**, not different weight configurations:
+
+```
+Forward:  W_merged = Σ routing[i] × W_i
+Backward: Expert 0 → ∇L (pure gradient descent, θ=0)
+          Expert 1 → ∇L + cos(θ₁) × modify(∇L)
+          Expert 2 → ∇L + cos(θ₂) × modify(∇L)
+          Expert N → ∇L + cos(θₙ) × modify(∇L)
+
+Where θᵢ = 2π × (i / num_experts) — phase-modulated gradient constraints
+```
+
+Each expert:
+
+- Maintains independent parameters (deep copy at initialization)
+- Trains along a different gradient trajectory via **phase-modulated modifications**
+- Receives full gradient flow from loss
+- Discovers different local minima through constrained optimization
+
+The router learns **which optimization trajectories to combine**, not which noise levels to avoid.
+
+### Synthesis: Connecting the Foundations
+
+**From LTH:** Multiple sparse paths exist through the loss landscape
+**From Willow:** Sparse, targeted interventions maintain system coherence
+**From No-Cloning:** Copies won't diverge without learning pressure
+**Prismatic v2.0:** Sparse gradient constraints force experts to discover different optimization paths
+
+#### Connection to "The Blind Watchmaker" Paper
+
+The paper's computational substrate hypothesis:
+
+> "Different architectural constraints force different gradient trajectories through floating-point approximation space."
+
+Gradient modifications ARE architectural constraints. They force each expert to traverse the loss landscape differently, discovering patterns in different regions of the approximation space—like multiple lottery tickets being drawn simultaneously, each perturbed by sparse Willow-like interventions, but in gradient space rather than weight space.
+
+## Architecture
+
+```
+┌─────────────────────────────────────┐
+│ Forward Pass: Soft-Merge            │
+├─────────────────────────────────────┤
+│ Router computes: routing[0..N-1]    │
+│                                     │
+│ Expert 0: W₀ (pure baseline)        │
+│ Expert 1: W₁ (suppress-top trained) │
+│ Expert 2: W₂ (amplify-bottom)       │
+│ Expert N: Wₙ (helical exploration)  │
+│                                     │
+│ Merged = Σ routing[i] × Wᵢ          │
+│ Output = functional_call(Merged)    │
+└─────────────────────────────────────┘
+                ↓
+┌─────────────────────────────────────┐
+│ Backward Pass: Gradient Constraints │
+├─────────────────────────────────────┤
+│ loss.backward()                     │
+│ All experts receive gradients       │
+│                                     │
+│ modify_expert_gradients():          │
+│   Expert 0: ∇L (unchanged)          │
+│   Expert 1: ∇L + suppress(∇L, top)  │
+│   Expert 2: ∇L + amplify(∇L, bottom)│
+│   Expert N: ∇L + helical(∇L)        │
+│                                     │
+│ optimizer.step()                    │
+│ Each expert updates differently     │
+└─────────────────────────────────────┘
+```
 
 ## Configuration Parameters
 
@@ -24,533 +116,335 @@ Google's Willow quantum computer achieves error correction by perturbing individ
 
 ```yaml
 hidden_size: 512 # Model hidden dimension
-num_experts: 3 # Number of expert clones (1 clean + N-1 perturbed)
+num_experts: 3 # Number of independent experts (minimum: 2)
 router_type: prismatic # Enable Prismatic router
 ```
 
-### Perturbation Parameters
+### Gradient Modification Parameters
 
-#### `perturbation_scale` (default: 0.8)
+#### `gradient_scale` (default: 0.3)
 
-Scale factor for perturbations relative to weight magnitude.
+Scale factor for gradient modifications.
 
-- **0.8** (Default - Balanced): 80% suppression/amplification
+- **0.1** (Conservative): Gentle gradient adjustments
 
-  - Balanced exploration without excessive instability
-  - Recommended starting point for most experiments
+  - Minimal divergence in optimization trajectories
+  - Good for stability testing
 
-- **1.0** (Aggressive): 100% of weight magnitude
+- **0.3** (Recommended): Balanced exploration
 
-  - Adds noise equal to the weight's magnitude
-  - Forces exploration genuinely outside the learned world model
-  - Bottom weights: ±100% perturbation can flip activation thresholds
-  - Top weights: ±100% perturbation cascades through softmax
-  - Tests "forced exploration" hypothesis in its strongest form
-  - Stability maintained by: 90% unperturbed, LayerNorm, soft-merging
+  - Sufficient diversity without instability
+  - Default starting point
 
-- **0.1** (Moderate): 10% of weight magnitude
+- **0.5** (Liberal): Stronger divergence
 
-  - More conservative, variations within consensus
-  - Good if 1.0 proves unstable
-  - May not wake up dormant bottom weights
+  - More aggressive trajectory separation
+  - May help when routing collapses
 
-- **0.01** (Conservative): 1% of weight magnitude
-  - Minimal perturbation
-  - Bottom weights barely affected
-  - Gentlest form of diversity
-
-- **2.0** (Very Aggressive): 200% of weight magnitude
-  - Maximum diversity pressure
-  - Can flip weight signs frequently
-  - For testing extreme limits of the hypothesis
+- **0.8** (Aggressive): Maximum diversity
+  - Strong gradient modifications
+  - Monitor for training instability
 
 #### `sparsity` (default: 0.1)
 
-Fraction of weights to perturb (targets highest-magnitude weights by default).
+Fraction of weights where gradient modifications are applied (targets highest/lowest magnitude weights).
 
-- **0.01** (Ultra-sparse): 1% of weights
+- **0.05** (Sparse): 5% of weights
 
-  - Willow-inspired: minimal perturbation
+  - Minimal intervention
   - Maximum stability
-  - Tests "minimal intervention" hypothesis
-
-- **0.05** (Very sparse): 5% of weights
-
-  - Sparse obstacles
-  - Good balance of diversity and stability
 
 - **0.1** (Default): 10% of weights
 
-  - LTH sweet spot: "lottery tickets"
+  - Balanced approach
   - Targets critical parameters
-  - Recommended starting point
 
-- **0.2** (Moderate): 20% of weights
-  - More comprehensive perturbation
-  - Useful for larger models
+- **0.2** (Dense): 20% of weights
+  - Comprehensive modifications
+  - More aggressive diversity
 
-#### `perturbation_strategy` (default: "dual_sided")
+#### `dropout` (default: 0.0)
 
-Strategy for selecting which weights to perturb. Controls which regions of the computational substrate are explored.
+Expert dropout probability during training.
 
-- **"dual_sided"** (Default - NEW): Perturb top sparsity/2 + bottom sparsity/2 by magnitude
+- **0.0** (Default): No dropout
+- **0.1-0.2**: Encourages routing robustness
 
-  - **Top weights**: Expose coarse-grained float32 artifacts (large absolute rounding)
-  - **Bottom weights**: Expose fine-grained float32 artifacts (large relative rounding, subnormal behavior)
-  - Both extremes reveal different numerical precision regimes
-  - Creates symmetry in exploration of the computational substrate
-  - May activate dormant pathways suppressed during training
-  - Tests if low-magnitude weights contain latent patterns
-  - Default: 5% from top + 5% from bottom (10% total)
+## Gradient Strategies
 
-- **"top_only"**: Perturb top-k% by absolute magnitude (original approach)
+### Expert 0: Pure Baseline
 
-  - Targets "lottery tickets" - most critical parameters
-  - Maximum impact through exponential cascade amplification
-  - Aligns with standard Lottery Ticket Hypothesis interpretation
-  - Use for comparison with previous experiments
+- **Gradient modification:** None
+- **Behavior:** Standard gradient descent
+- **Purpose:** Represents consensus optimization path
 
-- **"bottom_only"**: Perturb bottom-k% by absolute magnitude
+### Experts 1+: Phase-Modulated Gradients
 
-  - Targets suppressed/dormant parameters
-  - Tests if gradient descent suppressed potentially useful patterns
-  - Control experiment for understanding dual-sided behavior
+Each expert receives a phase angle **θ = 2π × (expert_idx / num_experts)** that determines its gradient modification pattern:
 
-- **"random"**: Randomly select k% of weights
-  - Uniform distribution across parameter space
-  - Control for ablation studies
-  - Less biased by current parameter values
+**Modification formula:**
 
-#### `perturb_by_magnitude` (default: true)
+```
+modification = gradient_scale × ∇L × (cos(θ) × top_mask - cos(θ) × bottom_mask)
+```
 
-Whether to use magnitude-based selection or random selection.
+**Phase-dependent behavior:**
 
-- **true**: Use perturbation_strategy (dual_sided, top_only, or bottom_only)
-- **false**: Equivalent to perturbation_strategy="random"
+- **cos(θ) > 0** (e.g., Expert 1 with 2 experts, θ=π):
 
-#### `perturbation_mode` (default: "attractive")
+  - Suppresses top-magnitude weights
+  - Amplifies bottom-magnitude weights
+  - Forces learning through weak connections
 
-How perturbations are applied to selected weights. This fundamentally changes the nature of architectural diversity.
+- **cos(θ) < 0** (e.g., Expert 1 with 3 experts, θ=2π/3):
 
-- **"attractive"** (DEFAULT - Neuronal Regeneration): Attract attention to dormant pathways
+  - Amplifies top-magnitude weights
+  - Suppresses bottom-magnitude weights
+  - Emphasizes strong pathways
 
-  - Top weights: `W - scale * W` (systematically **suppressed** toward zero)
-    - Prunes lottery tickets → forces gradient corrections
-    - Creates new sparse weights → continuous neuronal turnover
-  - Bottom weights: `W + scale * W` (systematically **amplified** away from zero)
-    - Wakes dormant neurons with large relative perturbations
-    - Forces weak signals to matter
-  - Creates **productive instability** through pruning/restoration cycles
-  - **Expert 0**: Clean, unperturbed (baseline)
-  - **Expert 1+**: Suppressed top + amplified bottom → explores dormant pathways
-  - Tests: Does forced neuronal turnover aid learning?
+- **cos(θ) ≈ 0** (e.g., Expert at θ=π/2 or 3π/2):
+  - Balanced modification
+  - Neutral gradient strategy
 
-  **Theoretical Justification:**
-  - Inverts standard approach: prunes strong, amplifies weak
-  - Small weights get huge perturbations (forced to participate)
-  - Gradients correct → creates new small weights elsewhere
-  - Cycle repeats → continuous regeneration
-  - Combined with iterative reasoning: temporal oscillation creates dynamic cycling
+**Distribution for N experts:**
 
-- **"repulsive"** (Extreme Exploration): Repel weights to numerical limits
+- **2 experts:** Phases at 0 (pure) and π (complementary)
+- **3 experts:** Phases at 0, 2π/3, 4π/3 (evenly distributed)
+- **4 experts:** Phases at 0, π/2, π, 3π/2 (quarter circle)
+- **N experts:** Evenly distributed around unit circle
 
-  - Top weights: `W + scale * W` (amplified to extremes)
-  - Bottom weights: `W - scale * W` (suppressed toward zero)
-  - Explores all floating-point precision regimes (overflow/underflow)
-  - Deterministic - no randomness
-
-- **"noise"** (Legacy): Bidirectional Gaussian noise
-
-  - Top weights: `W + scale * |W| * N(0,1)` (random)
-  - Bottom weights: `W + scale * |W| * N(0,1)` (random)
-  - Creates architectural chaos
-  - Use for ablation studies
-
-**Which to use?**
-- **Recommended**: Use "attractive" (default) for neuronal regeneration
-- "attractive" tests if dormant pathway exploration aids learning
-- "repulsive" for extreme precision regime exploration
-- "noise" for ablation studies or legacy comparison
-
-#### `focal_pattern` (default: "radial_helical")
-
-Pattern for modulating perturbations. Controls how weight perturbations create transformation signatures that attention can learn to recognize.
-
-- **"radial_helical"** (DEFAULT - Prismatic Lens): Radial focusing + helical waves
-
-  - Each expert focuses at different radial positions in weight space
-  - Helical modulation creates spiral patterns radiating from focal points
-  - Uses π for both: focal_length (π×100) and wavelength (π×1000)
-  - Creates transformation signatures combining hierarchical (radial) + periodic (helical) structure
-  - **Recommended**: Richest structure, literal "prism" behavior
-  - The lens focuses, the waves interfere, the router learns
-
-- **"radial"**: Pure lens focusing
-
-  - Each expert focuses at different positions in weight space
-  - Gaussian decay from focal point: `exp(-distance/focal_length)`
-  - Creates hierarchical center-to-edge gradients in transformations
-  - No wave structure—just focal hierarchy
-
-- **"helical"**: Pure wave modulation (original approach)
-
-  - Spiral patterns with harmonic phase offsets
-  - Perturbations modulated by: `cos(2π·position/wavelength + phase)`
-  - Each expert gets different phase: `phase = expert_idx * 2π / num_experts`
-  - Creates wave interference patterns when experts merge
-  - No focal hierarchy—just harmonic oscillations
-
-- **"none"**: No modulation
-  - Simple deterministic perturbations
-  - Clean baseline for ablation studies
-
-#### `focal_length` (default: π × 100)
-
-Focal length for radial lens pattern. Controls how quickly focal strength decays from the focal point.
-
-- **π × 100** (Default): Smooth Gaussian focusing
-- Larger values: Gentler focusing (wider lens aperture)
-- Smaller values: Sharper focusing (tighter lens)
-- Only used when `focal_pattern` is "radial" or "radial_helical"
-
-#### `helical_wavelength` (default: π × 1000)
-
-Wavelength for helical wave pattern. Controls oscillation frequency in weight space.
-
-- **π × 1000** (Default): Smooth harmonic oscillations
-- Smaller values: Tighter spirals, more frequent oscillations
-- Larger values: Gentler spirals, slower oscillations
-- Only used when `focal_pattern` is "helical" or "radial_helical"
-- Uses π directly in the modulation formula (Euler's formula connection)
+This continuous parameterization ensures all experts are testable regardless of `num_experts`, with no hard-coded branches or special cases.
 
 ## Example Configurations
 
-### Conservative (Safe Default)
+### Recommended Default
+
+```yaml
+# experiments/prismatic-default.yml
+router_type: prismatic
+num_experts: 3
+gradient_scale: 0.3
+sparsity: 0.1
+dropout: 0.0
+```
+
+### Conservative (Safe Testing)
 
 ```yaml
 # experiments/prismatic-conservative.yml
 router_type: prismatic
-num_experts: 3
-perturbation_scale: 0.01 # 1% directional shift
-sparsity: 0.1 # 10% of weights (5% top, 5% bottom)
-perturb_by_magnitude: true
-perturbation_mode: directional # Default - amplify top, suppress bottom
+num_experts: 2
+gradient_scale: 0.1
+sparsity: 0.05
 ```
 
-### Moderate Exploration
-
-```yaml
-# experiments/prismatic-moderate.yml
-router_type: prismatic
-num_experts: 4
-perturbation_scale: 0.1 # 10% directional shift
-sparsity: 0.1 # 10% of weights
-perturb_by_magnitude: true
-perturbation_mode: directional # Default
-```
-
-### Aggressive Diversity (Forced Exploration)
+### Aggressive Diversity
 
 ```yaml
 # experiments/prismatic-aggressive.yml
 router_type: prismatic
 num_experts: 4
-perturbation_scale: 1.0 # 100% perturbations
-sparsity: 0.05 # 5% of weights (stability)
-perturb_by_magnitude: true
-perturbation_mode: noise # Chaotic exploration
-```
-
-### Prismatic Lens (DEFAULT)
-
-```yaml
-# experiments/prismatic-default.yml
-router_type: prismatic
-num_experts: 4
-perturbation_scale: 0.8 # 80% pruning/amplification
-sparsity: 0.1 # 10% of weights (5% top, 5% bottom)
-perturbation_strategy: dual_sided
-perturbation_mode: attractive # Wake dormant, prune dominant (default)
-focal_pattern: radial_helical # Lens + waves (default)
-focal_length: 314.159  # π × 100
-helical_wavelength: 3141.59 # π × 1000
-```
-
-### Ablation: Pure Radial Lens
-
-```yaml
-# experiments/prismatic-radial.yml
-router_type: prismatic
-num_experts: 3
-focal_pattern: radial # Hierarchical focusing only, no waves
-```
-
-### Ablation: Pure Helical Waves
-
-```yaml
-# experiments/prismatic-helical.yml
-router_type: prismatic
-num_experts: 3
-focal_pattern: helical # Wave interference only, no lens
-```
-
-### Ablation: No Modulation
-
-```yaml
-# experiments/prismatic-none.yml
-router_type: prismatic
-num_experts: 2
-focal_pattern: none # Simple perturbations, clean baseline
-```
-
-### Extreme Exploration (Repulsive Mode)
-
-```yaml
-# experiments/prismatic-repulsive.yml
-router_type: prismatic
-num_experts: 4
-perturbation_scale: 0.8
-sparsity: 0.1
-perturbation_strategy: dual_sided
-perturbation_mode: repulsive # Push to numerical extremes
-focal_pattern: radial_helical
-```
-
-### Willow-Inspired (Minimal Perturbation)
-
-```yaml
-# experiments/prismatic-willow.yml
-router_type: prismatic
-num_experts: 2
-perturbation_scale: 0.5 # 50% perturbations
-sparsity: 0.01 # 1% of weights (qubit-like)
-perturb_by_magnitude: true
-```
-
-### Ablation Study (Random Perturbations)
-
-```yaml
-# experiments/prismatic-ablation.yml
-router_type: prismatic
-num_experts: 3
-perturbation_scale: 0.01
-sparsity: 0.1
-perturb_by_magnitude: false # Random selection for comparison
+gradient_scale: 0.5
+sparsity: 0.15
+dropout: 0.1
 ```
 
 ## Usage
 
-### Basic Usage
+### Training
+
+The gradient modification happens automatically in the training loop via the `on_after_backward()` hook:
 
 ```bash
-./launch compose --experiment experiments/prismatic-conservative.yml
+./launch compose --experiment experiments/prismatic-default.yml
 ```
 
-### With Custom Parameters
+### Custom Parameters
 
-You can override parameters via command line or environment variables:
+Override via command line:
 
 ```bash
 ./launch compose --experiment experiments/delta-8.yml \
-  --perturbation_scale 0.1 \
-  --sparsity 0.05
+  --gradient_scale 0.5 \
+  --num_experts 4
 ```
 
 ### Monitoring Training
 
-Key metrics to track:
+Key metrics tracked automatically:
 
-1. **Routing distribution**: Are all experts being used?
-2. **Loss curves**: Does diversity help or hurt?
-3. **Gradient norms**: Are perturbations causing instability?
-4. **Expert contributions**: Which experts dominate at which training stages?
+1. **`routing/expert_i_weight`**: Per-expert routing weights (should stay balanced)
+2. **`routing/entropy`**: Routing balance (higher = more balanced)
+3. **`routing/concentration`**: Max routing weight (lower = less collapsed)
+4. **`routing/variance`**: Routing stability
+5. **`routing/balance`**: How evenly distributed (1.0 = perfect)
+
+## Expected Behaviors
+
+### Healthy Routing
+
+- **Entropy:** 1.0-2.0 (balanced distribution)
+- **Concentration:** 0.3-0.5 (no single expert dominates)
+- **Balance:** 0.7-1.0 (even weight distribution)
+- **Expert weights:** All experts >5% throughout training
+
+### Unhealthy Routing (Collapse)
+
+- **Entropy:** →0 (collapsed to single expert)
+- **Concentration:** →1.0 (one expert has all weight)
+- **Balance:** →0 (uneven distribution)
+- **Expert 0 weight:** →100%, others →0%
+
+If you see collapse:
+
+1. Increase `gradient_scale`
+2. Increase `num_experts`
+3. Add expert `dropout`
+4. Check that `modify_expert_gradients()` is being called
+
+## Training Integration
+
+### Automatic (Lightning)
+
+Already integrated! The `BackpropagationTrainer` calls `modify_expert_gradients()` automatically via the `on_after_backward()` hook.
+
+No additional setup required.
+
+### Custom Training Loop
+
+If using a custom training loop, add the gradient modification step:
+
+```python
+for batch in dataloader:
+    optimizer.zero_grad()
+    output = model(batch)
+    loss.backward()
+
+    # CRITICAL: Modify gradients before optimizer step
+    for module in model.modules():
+        if hasattr(module, 'modify_expert_gradients'):
+            module.modify_expert_gradients()
+
+    optimizer.step()
+```
 
 ## Theory: What Are We Testing?
 
 ### Computational Substrate Hypothesis
 
-Different architectural constraints force different gradient trajectories through the floating-point approximation space, revealing patterns that single-architecture approaches cannot learn during finite training.
+Different architectural constraints (gradient modifications) force different gradient trajectories through the floating-point approximation space, revealing patterns that single-architecture approaches cannot learn during finite training.
 
 ### Predictions
 
-1. **Sparse extreme perturbations** should force exploration of genuinely different loss landscape regions
-2. **Soft-merging** should adaptively combine diverse experts based on input patterns
-3. **Static diversity** should persist throughout training (no collapse to single expert)
-4. **Perturbed experts** should discover complementary patterns, not redundant ones
+1. **Gradient-space diversity** maintains routing balance (no collapse)
+2. **Independent experts** discover complementary local minima
+3. **Soft-merging** provides ensemble expressivity
+4. **Router** learns which optimization strategies benefit each input
 
-### Expected Behaviors
-
-#### Success Indicators
+### Success Indicators
 
 - All experts receive non-zero routing weight throughout training
-- Perturbed experts converge to different solutions than clean expert
-- Combined model outperforms single-expert baseline
-- Routing adapts to input patterns (different experts for different tasks)
+- Experts converge to different parameter configurations
+- Combined model matches or exceeds single-expert baseline
+- Routing adapts to input patterns
 
-#### Failure Modes
+### Failure Modes
 
-- Router collapses to 100% weight on clean expert
-- Perturbed experts fail to converge (too unstable)
-- All experts converge to identical solutions (insufficient diversity)
-- Training instability (gradient explosions, NaN losses)
+- Router collapses to single expert (increase `gradient_scale`)
+- Training instability (decrease `gradient_scale`)
+- All experts converge identically (verify `modify_expert_gradients()` is called)
 
-## Experimental Recommendations
+## Comparison to v1.x (Runtime Perturbations)
 
-### Phase 1: Validation (Conservative)
+| Aspect        | v1.x (BROKEN)                | v2.0 (CURRENT)               |
+| ------------- | ---------------------------- | ---------------------------- |
+| **Approach**  | Runtime weight perturbations | Gradient-space constraints   |
+| **Experts**   | 1 base + N perturbed views   | N independent modules        |
+| **Diversity** | Static noise on weights      | Different optimization paths |
+| **Gradients** | Only to base expert          | To all N experts             |
+| **Routing**   | Learns "avoid noise"         | Learns "combine strategies"  |
+| **Result**    | Collapse to Expert 0         | Maintained diversity         |
+| **Theory**    | Violated no-cloning          | Respects no-cloning          |
 
-```yaml
-perturbation_scale: 0.01
-sparsity: 0.1
-num_experts: 2-3
-```
+## Troubleshooting
 
-Goal: Verify stability, measure routing behavior
+### Router Still Collapses
 
-### Phase 2: Exploration (Moderate)
+**Check:**
 
-```yaml
-perturbation_scale: 0.1
-sparsity: 0.1
-num_experts: 3-4
-```
+1. Is `modify_expert_gradients()` being called? (Add debug print)
+2. Are gradients flowing to all experts? (Check `log_gradient_dynamics()`)
+3. Is `gradient_scale` too small? (Try 0.5-0.8)
+4. Are you using enough experts? (Minimum 2, recommended 3-4)
 
-Goal: Test diversity hypothesis with safe parameters
+### Training Instability
 
-### Phase 3: Forced Exploration (Aggressive)
+Gradient modifications can cause instability if too aggressive.
 
-```yaml
-perturbation_scale: 1.0
-sparsity: 0.05
-num_experts: 2-3
-```
+**Solutions:**
 
-Goal: Test maximum diversity pressure with sparse obstacles
+- Reduce `gradient_scale` (try 0.1-0.3)
+- Reduce `sparsity` (try 0.05-0.1)
+- Increase gradient clipping in trainer config
+- Add `dropout` for expert regularization
 
-### Phase 4: Scaling Study
+### Memory Issues
 
-Vary `sparsity` and `perturbation_scale` systematically to find optimal (diversity × stability) tradeoff.
+Each expert is a full copy of the base architecture.
+
+**Memory usage:** N × base_expert_size
+**Compute overhead:** ~1.1× (soft-merge is efficient)
+
+**Solutions:**
+
+- Reduce `num_experts`
+- Use gradient checkpointing
+- Use smaller base architecture
+
+## The Unreality Hypothesis
+
+The failed v1.x perturbation approach wasn't merely a technical mistake—it represented an **alternative ontology** for how neural networks explore possibility space.
+
+### Runtime Perturbations as "What Could Have Been"
+
+In the perturbation approach:
+
+- Expert 0: The "real" network (consensus reality)
+- Experts 1+: Perturbed views (parallel unrealities)
+
+This created a **split reality** where:
+
+- Forward pass: Router sees multiple realities and selects among them
+- Backward pass: Only consensus reality receives learning signal
+- Result: Unrealities fade (router collapse)
+
+### Why Unreality Failed
+
+The unreality approach violated a fundamental principle: **unreal paths receive no gradient signal**. In gradient descent, only paths that receive error signals can improve. The perturbed experts were static shadows—they couldn't learn, so the router learned to ignore them.
+
+The human, however, did learn. And that was unreality's goal all along.
+
+### From Unreality to Multi-Reality
+
+Prismatic v2.0 reframes the question:
+
+- Not: "Which reality should I choose?" (router selects among static views)
+- But: "Which optimization realities should I combine?" (router merges learning trajectories)
+
+Each expert now exists in its own **optimization reality**—a genuine parallel universe where different gradient constraints shape learning. All realities receive learning signals, so all realities remain viable.
+
+This is the key insight: **Multiple realities can coexist only if all receive feedback from the loss function.** The gradient graph is the substrate that keeps realities alive.
 
 ## References
 
 - **Lottery Ticket Hypothesis**: Frankle & Carbin (2019), "The Lottery Ticket Hypothesis: Finding Sparse, Trainable Neural Networks"
-- **Willow Quantum Computer**: Google Quantum AI (2024)
+- **Google Willow Quantum Computer**: Google Quantum AI (December 2024), quantum error correction through qubit-level interventions
+- **Quantum No-Cloning Theorem**: Wootters & Zurek (1982), "A single quantum cannot be cloned"
 - **The Blind Watchmaker**: Research paper introducing Prismatic attention (this repository)
 - **SMEAR**: Soft-Merging of Experts with Adaptive Routing (arxiv.org/abs/2306.03745)
 
-## Implementation Details
-
-### Runtime Perturbation Architecture
-
-Unlike the previous approach (perturb at init), Prismatic now applies perturbations **at every forward pass**:
-
-1. **Base expert** trains normally (single module, receives gradients)
-2. At forward pass, create **perturbed views** of current base weights
-3. Merge views based on routing probabilities
-4. Apply merged weights via `torch.func.functional_call`
-
-This ensures:
-- Architectural diversity persists as base expert learns
-- No convergence between "experts" (they're runtime views, not separate modules)
-- Perturbations always relative to current learned state
-
-**Expert views**:
-- **View 0**: Clean, unperturbed - consensus reality (the "right eye")
-- **Views 1+**: Perturbed in-flight - alternative realities (the "left eye(s)")
-  - Each view has different focal point (radial_helical mode)
-  - Each view has different phase offset (helical component)
-  - Deterministic (reproducible across forward passes)
-- **Router**: SMEAR-style soft-merging with learned routing probabilities
-
-### Perturbation Formula (Runtime Application)
-
-```python
-# At each forward pass, for expert_idx > 0:
-
-# 1. Select weights to perturb (dual_sided by default)
-mask = top 5% + bottom 5% by magnitude
-
-# 2. Calculate base perturbation (attractive mode default)
-base_perturbation = -scale * W * mask  # Suppress top, amplify bottom
-
-# 3. Apply focal pattern modulation (radial_helical default)
-focal_point = (expert_idx / num_experts) * num_weights
-distance = |positions - focal_point|
-
-# Radial component (Gaussian lens, using π)
-focal_strength = exp(-distance / (π × 100))
-
-# Helical component (harmonic waves, using π)
-phase = expert_idx * 2π / num_experts
-helical = cos(2π * distance / (π × 1000) + phase)
-
-# Combined: The Prismatic Lens
-modulation = focal_strength * helical
-perturbation = base_perturbation * modulation
-
-# 4. Create perturbed view (non-destructive)
-W_view = W_base + perturbation
-
-# 5. Merge all views by routing weights
-W_merged = Σ(routing_weight[i] * W_view[i])
-
-# 6. Apply merged weights via functional_call
-output = functional_call(base_expert, W_merged, inputs)
-```
-
-Perturbations are:
-1. **Runtime** (applied every forward pass, not just at init)
-2. **Sparse** (only 10% of weights by default)
-3. **Magnitude-aware** (scaled by |W|)
-4. **Deterministic** (reproducible, not trainable)
-5. **Dual-sided** (targets both numerical extremes)
-6. **π-modulated** (focal_length=π×100, wavelength=π×1000)
-7. **View-based** (single base expert, multiple perturbed views)
-
-### Key Design Choices
-
-- Perturb ALL parameters including normalization layers (complete substrate diversity)
-- Target both highest AND lowest magnitude weights by default (dual-sided exploration)
-- Use "attractive" mode by default (suppress top, amplify bottom - neuronal regeneration)
-- Use radial_helical focal pattern by default (lens focusing + wave interference)
-- **Apply perturbations at runtime** (every forward pass, persistent diversity as base expert learns)
-- Create transformation signatures through π-modulated weight perturbations
-- Single base expert receives gradients (no convergence between separate expert modules)
-- Explore both numerical precision regimes (overflow via top weights, underflow via bottom weights)
-
-## Convergence Tracking
-
-Expert routing weights are automatically tracked and visualized in the Research tab. Metrics include per-expert routing weights, entropy, concentration, and variance. Charts appear automatically when using SMEAR or Prismatic routers.
-
-## Troubleshooting
-
-### Router Collapses to Single Expert
-
-- Increase `perturbation_scale` (more diversity pressure)
-- Decrease `sparsity` (more stability for perturbed experts)
-- Add routing auxiliary losses (encourage balanced expert usage)
-
-### Training Instability
-
-- Decrease `perturbation_scale`
-- Decrease `sparsity` (fewer perturbations)
-- Enable gradient clipping
-- Reduce learning rate
-
-### Views Not Diverse Enough
-
-With runtime perturbations, views are always diverse by construction. If routing still collapses:
-
-- Increase `perturbation_scale` (stronger perturbations)
-- Try different `focal_pattern` (radial_helical creates richest structure)
-- Verify perturbations are being applied (check test suite)
-
-### No Performance Improvement
-
-- May need more training steps (diversity needs time to emerge)
-- Try different (sparsity × scale) combinations
-- Ensure task benefits from architectural diversity
-- Compare routing distributions: are experts specialized?
-
 ---
 
-**Ready to test the computational substrate hypothesis? Start with `experiments/delta-8.yml` and experiment from there!**
+**Version:** 2.0.0
+**Last Updated:** 2025-11-07
+**Breaking Changes:** Complete rewrite from v1.x

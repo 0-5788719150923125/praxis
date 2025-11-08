@@ -325,4 +325,3 @@ class ArchitectureGroup:
             default=False,
             help="Tie embedding and output projection weights to reduce parameters",
         )
-

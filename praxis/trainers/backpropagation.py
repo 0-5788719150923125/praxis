@@ -125,7 +125,9 @@ class BackpropagationTrainer(LightningModule):
         if model_metrics:
             # Extract expert convergence metrics and add to logging
             for key, value in model_metrics.items():
-                if key not in metrics and key not in ["experts"]:  # Skip duplicate keys and nested dicts
+                if key not in metrics and key not in [
+                    "experts"
+                ]:  # Skip duplicate keys and nested dicts
                     metrics[key] = value
 
         self.log_dict(
@@ -139,6 +141,22 @@ class BackpropagationTrainer(LightningModule):
         )
 
         return loss
+
+    def on_after_backward(self):
+        """
+        Hook called after backward pass but before optimizer step.
+
+        This is where we apply gradient modifications for Prismatic routers,
+        enabling diverse optimization trajectories across experts.
+        """
+        # Apply gradient modifications for all Prismatic modules
+        for module in self.model.modules():
+            # Handle both compiled and uncompiled models
+            actual_module = module._orig_mod if hasattr(module, "_orig_mod") else module
+
+            # Check if this is a Prismatic router
+            if hasattr(actual_module, "modify_expert_gradients"):
+                actual_module.modify_expert_gradients()
 
     def _generate_and_evaluate_rl_batch(self, prompt_ids, metadata):
         """
@@ -389,7 +407,9 @@ class BackpropagationTrainer(LightningModule):
             stats["val_bits_per_byte"] = self._compute_bits_per_byte(input_ids, loss)
         else:
             # Detach logits to prevent memory accumulation from computation graph
-            stats["val_perplexity"] = perplexity(outputs.logits[..., :-1, :].detach(), labels)
+            stats["val_perplexity"] = perplexity(
+                outputs.logits[..., :-1, :].detach(), labels
+            )
 
         self.log_dict(
             stats,

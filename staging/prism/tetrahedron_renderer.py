@@ -4,9 +4,10 @@ Renders a single tetrahedron projecting from the face like a crocodile's jaw.
 Uses accumulated rotation tracking like the JavaScript prism implementation.
 """
 
+import time
+
 import cv2
 import numpy as np
-import time
 
 
 class TetrahedronRenderer:
@@ -74,11 +75,17 @@ class TetrahedronRenderer:
                 # Store it for relative rotation
                 self.neutral_rotation_matrix = neutral_rmat
                 # Extract Euler angles for display
-                sy = np.sqrt(neutral_rmat[0, 0]**2 + neutral_rmat[1, 0]**2)
+                sy = np.sqrt(neutral_rmat[0, 0] ** 2 + neutral_rmat[1, 0] ** 2)
                 self.neutral_pitch = np.degrees(np.arctan2(-neutral_rmat[2, 0], sy))
-                self.neutral_yaw = np.degrees(np.arctan2(neutral_rmat[1, 0], neutral_rmat[0, 0]))
-                self.neutral_roll = np.degrees(np.arctan2(neutral_rmat[2, 1], neutral_rmat[2, 2]))
-                print(f"Calibrated neutral pose: pitch={self.neutral_pitch:.1f}°, yaw={self.neutral_yaw:.1f}°, roll={self.neutral_roll:.1f}°")
+                self.neutral_yaw = np.degrees(
+                    np.arctan2(neutral_rmat[1, 0], neutral_rmat[0, 0])
+                )
+                self.neutral_roll = np.degrees(
+                    np.arctan2(neutral_rmat[2, 1], neutral_rmat[2, 2])
+                )
+                print(
+                    f"Calibrated neutral pose: pitch={self.neutral_pitch:.1f}°, yaw={self.neutral_yaw:.1f}°, roll={self.neutral_roll:.1f}°"
+                )
             else:
                 # Still calibrating - return frame unchanged
                 return frame
@@ -97,10 +104,14 @@ class TetrahedronRenderer:
         else:
             # Exponential moving average (EMA) on rotation matrix
             # Higher smoothing = more lag but smoother motion
-            alpha = 1.0 - self.smoothing  # Convert smoothing to alpha (0=smooth, 1=responsive)
+            alpha = (
+                1.0 - self.smoothing
+            )  # Convert smoothing to alpha (0=smooth, 1=responsive)
 
             # Interpolate rotation matrix
-            interpolated = self.smoothing * self.smoothed_rotation + alpha * relative_rotation
+            interpolated = (
+                self.smoothing * self.smoothed_rotation + alpha * relative_rotation
+            )
 
             # Re-orthogonalize to ensure it's a valid rotation matrix
             # Using SVD decomposition: A = U * S * V^T, then orthogonal = U * V^T
@@ -116,7 +127,7 @@ class TetrahedronRenderer:
         relative_rotation = self.smoothed_rotation
 
         # Extract chin for anchor point
-        chin = np.array(jaw_points['chin'][:2], dtype=np.float64)
+        chin = np.array(jaw_points["chin"][:2], dtype=np.float64)
 
         # Apply vertical offset to shift prism up/down (negative = up, positive = down)
         vertical_shift = jaw_width * self.y_offset
@@ -128,15 +139,17 @@ class TetrahedronRenderer:
 
         # Define tetrahedron vertices in local coordinates
         # Default orientation: apex points forward (positive Z), inverted triangle (point down)
-        vertices_local = np.array([
-            # Apex (forward-pointing vertex, like a bill)
-            [0, 0, apex_distance],
-
-            # Base triangle (large, wrapping around head/jaw/neck) - INVERTED
-            [-base_size * 0.6, base_size * 0.3, -base_size * 0.8],   # Left-top-back
-            [base_size * 0.6, base_size * 0.3, -base_size * 0.8],    # Right-top-back
-            [0, -base_size * 0.7, -base_size * 0.8]                   # Bottom-back (below chin)
-        ], dtype=np.float64)
+        vertices_local = np.array(
+            [
+                # Apex (forward-pointing vertex, like a bill)
+                [0, 0, apex_distance],
+                # Base triangle (large, wrapping around head/jaw/neck) - INVERTED
+                [-base_size * 0.6, base_size * 0.3, -base_size * 0.8],  # Left-top-back
+                [base_size * 0.6, base_size * 0.3, -base_size * 0.8],  # Right-top-back
+                [0, -base_size * 0.7, -base_size * 0.8],  # Bottom-back (below chin)
+            ],
+            dtype=np.float64,
+        )
 
         # Apply rotation matrix directly to vertices
         # This is mathematically clean - no Euler angle ambiguity
@@ -146,7 +159,9 @@ class TetrahedronRenderer:
         anchor_x, anchor_y = int(chin[0]), int(chin[1])
 
         # Project to 2D screen coordinates
-        vertices_2d = self._project_to_2d(vertices_rotated, anchor_x, anchor_y, frame.shape)
+        vertices_2d = self._project_to_2d(
+            vertices_rotated, anchor_x, anchor_y, frame.shape
+        )
 
         # Draw solid black fill directly on frame (fully opaque, no transparency)
         self._draw_filled_faces(frame, vertices_2d, vertices_rotated)
@@ -279,16 +294,34 @@ class TetrahedronRenderer:
             # Apex is brighter and larger
             if i == 0:
                 # Glow layers for apex
-                cv2.circle(img, vertex_tuple, 12,
-                          tuple([int(c * 0.3) for c in self.color]), -1, cv2.LINE_AA)
-                cv2.circle(img, vertex_tuple, 8,
-                          tuple([int(c * 0.6) for c in self.color]), -1, cv2.LINE_AA)
+                cv2.circle(
+                    img,
+                    vertex_tuple,
+                    12,
+                    tuple([int(c * 0.3) for c in self.color]),
+                    -1,
+                    cv2.LINE_AA,
+                )
+                cv2.circle(
+                    img,
+                    vertex_tuple,
+                    8,
+                    tuple([int(c * 0.6) for c in self.color]),
+                    -1,
+                    cv2.LINE_AA,
+                )
                 cv2.circle(img, vertex_tuple, 5, self.color, -1, cv2.LINE_AA)
                 cv2.circle(img, vertex_tuple, 3, (255, 255, 255), -1, cv2.LINE_AA)
             else:
                 # Base vertices
-                cv2.circle(img, vertex_tuple, 6,
-                          tuple([int(c * 0.5) for c in self.color]), -1, cv2.LINE_AA)
+                cv2.circle(
+                    img,
+                    vertex_tuple,
+                    6,
+                    tuple([int(c * 0.5) for c in self.color]),
+                    -1,
+                    cv2.LINE_AA,
+                )
                 cv2.circle(img, vertex_tuple, 3, self.color, -1, cv2.LINE_AA)
 
     def draw_debug_info(self, frame, jaw_points, jaw_width, pose_data, fps):
@@ -306,8 +339,15 @@ class TetrahedronRenderer:
             numpy.ndarray: Frame with debug info
         """
         if jaw_points is None or pose_data is None:
-            cv2.putText(frame, "No face detected", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(
+                frame,
+                "No face detected",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 255),
+                2,
+            )
             return frame
 
         _, (yaw, pitch, roll) = pose_data
@@ -328,19 +368,26 @@ class TetrahedronRenderer:
             f"Jaw Width: {jaw_width:.0f}px",
             f"Pitch: {rel_pitch:.1f}° (raw: {pitch:.1f}°)",
             f"Yaw: {rel_yaw:.1f}° (raw: {yaw:.1f}°)",
-            f"Roll: {rel_roll:.1f}° (raw: {roll:.1f}°)"
+            f"Roll: {rel_roll:.1f}° (raw: {roll:.1f}°)",
         ]
 
         y_offset = 30
         for line in info_lines:
-            cv2.putText(frame, line, (10, y_offset),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(
+                frame,
+                line,
+                (10, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
+            )
             y_offset += 25
 
         # Draw jaw landmarks
-        chin_x, chin_y, _ = jaw_points['chin']
-        left_x, left_y, _ = jaw_points['left_jaw']
-        right_x, right_y, _ = jaw_points['right_jaw']
+        chin_x, chin_y, _ = jaw_points["chin"]
+        left_x, left_y, _ = jaw_points["left_jaw"]
+        right_x, right_y, _ = jaw_points["right_jaw"]
 
         cv2.circle(frame, (chin_x, chin_y), 5, (0, 255, 255), -1)
         cv2.circle(frame, (left_x, left_y), 5, (255, 0, 255), -1)

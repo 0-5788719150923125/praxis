@@ -9,14 +9,7 @@ from contextlib import redirect_stdout
 from datetime import datetime
 
 import yaml
-from flask import (
-    Blueprint,
-    Response,
-    jsonify,
-    make_response,
-    render_template,
-    request,
-)
+from flask import Blueprint, Response, jsonify, make_response, render_template, request
 
 from ..config import CSP_POLICY
 

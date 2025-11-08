@@ -3,9 +3,10 @@ Threaded video capture for non-blocking webcam reading.
 Prevents I/O operations from blocking computation, improving FPS by 52-67%.
 """
 
-import cv2
 import threading
 from queue import Queue
+
+import cv2
 
 
 class VideoCapture:

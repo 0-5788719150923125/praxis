@@ -77,7 +77,11 @@ def get_agents():
                     text=True,
                     cwd=os.getcwd(),
                 )
-                commit_timestamp = int(timestamp_result.stdout.strip()) if timestamp_result.returncode == 0 else None
+                commit_timestamp = (
+                    int(timestamp_result.stdout.strip())
+                    if timestamp_result.returncode == 0
+                    else None
+                )
             except:
                 full_hash = "unknown"
                 short_hash = "unknown"
@@ -126,7 +130,9 @@ def get_agents():
                                     ),
                                     "full_hash": spec_data.get("full_hash"),
                                     "truncated_hash": spec_data.get("truncated_hash"),
-                                    "commit_timestamp": spec_data.get("commit_timestamp"),
+                                    "commit_timestamp": spec_data.get(
+                                        "commit_timestamp"
+                                    ),
                                 }
                 except:
                     pass
@@ -241,7 +247,9 @@ def get_agents():
                                 text=True,
                             )
                             if timestamp_result.returncode == 0:
-                                agent["commit_timestamp"] = int(timestamp_result.stdout.strip())
+                                agent["commit_timestamp"] = int(
+                                    timestamp_result.stdout.strip()
+                                )
                         except:
                             pass
 

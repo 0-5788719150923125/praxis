@@ -61,17 +61,25 @@ class WeightedIterableDataset(IterableDataset):
                 # Use maximum available sampling mode based on batch size
                 if self.batch_size >= 64:
                     oversample, supersample, hypersample = False, False, True
-                    print(f"[DATA] First batch: forcing hypersample (8x) for batch_size={self.batch_size}")
+                    print(
+                        f"[DATA] First batch: forcing hypersample (8x) for batch_size={self.batch_size}"
+                    )
                 elif self.batch_size >= 16:
                     oversample, supersample, hypersample = False, True, False
-                    print(f"[DATA] First batch: forcing supersample (4x) for batch_size={self.batch_size}")
+                    print(
+                        f"[DATA] First batch: forcing supersample (4x) for batch_size={self.batch_size}"
+                    )
                 elif self.batch_size >= 4:
                     oversample, supersample, hypersample = True, False, False
-                    print(f"[DATA] First batch: forcing oversample (2x) for batch_size={self.batch_size}")
+                    print(
+                        f"[DATA] First batch: forcing oversample (2x) for batch_size={self.batch_size}"
+                    )
                 else:
                     # Batch size too small for any sampling mode
                     oversample, supersample, hypersample = False, False, False
-                    print(f"[DATA] First batch: batch_size={self.batch_size} too small for oversampling")
+                    print(
+                        f"[DATA] First batch: batch_size={self.batch_size} too small for oversampling"
+                    )
             else:
                 # Normal random sampling after first batch
                 oversample = random.random() < self.oversample_chance

@@ -535,18 +535,20 @@ def main():
     # Add dynamics logger callback for gradient visualization
     # Only log if using Prismatic router (has gradient dynamics)
     if config.router_type == "prismatic":
-        num_experts = getattr(config, 'num_experts', 2)
+        num_experts = getattr(config, "num_experts", 2)
         log_freq = 10  # Log gradients every 10 steps (reduce overhead)
-        print(f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq})")
+        print(
+            f"[Setup] Adding DynamicsLoggerCallback (router_type={config.router_type}, num_experts={num_experts}, log_freq={log_freq})"
+        )
         train_params["callbacks"].append(
             DynamicsLoggerCallback(
-                run_dir=cache_dir,
-                num_experts=num_experts,
-                log_freq=log_freq
+                run_dir=cache_dir, num_experts=num_experts, log_freq=log_freq
             )
         )
     else:
-        print(f"[Setup] Skipping DynamicsLoggerCallback (router_type={config.router_type})")
+        print(
+            f"[Setup] Skipping DynamicsLoggerCallback (router_type={config.router_type})"
+        )
 
     # Add progress bar if not using dashboard
     if progress_bar is not None:

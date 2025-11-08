@@ -25,7 +25,9 @@ class DynamicsLogger:
             logger.log(step=100, dynamics=dynamics)
     """
 
-    def __init__(self, run_dir: str, filename: str = "dynamics.db", num_experts: int = 2):
+    def __init__(
+        self, run_dir: str, filename: str = "dynamics.db", num_experts: int = 2
+    ):
         """Initialize the dynamics logger.
 
         Args:
@@ -51,7 +53,9 @@ class DynamicsLogger:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         # Ensure WAL checkpoints happen more frequently for instant visibility
         # This is critical for gradient dynamics since writes are so infrequent
-        self.conn.execute("PRAGMA wal_autocheckpoint=1")  # Checkpoint after every 1 page (~4KB)
+        self.conn.execute(
+            "PRAGMA wal_autocheckpoint=1"
+        )  # Checkpoint after every 1 page (~4KB)
 
         # Create schema
         self._create_schema()
@@ -59,10 +63,14 @@ class DynamicsLogger:
     def _create_schema(self) -> None:
         """Create dynamics table with columns for all experts and tiers."""
         # Build columns dynamically based on num_experts
-        columns = ["step INTEGER PRIMARY KEY", "ts REAL NOT NULL", "num_experts INTEGER"]
+        columns = [
+            "step INTEGER PRIMARY KEY",
+            "ts REAL NOT NULL",
+            "num_experts INTEGER",
+        ]
 
-        tiers = ['top', 'bottom', 'middle', 'clean', 'perturbed']
-        metrics = ['norm', 'max', 'min', 'mean']  # Added 'mean' metric
+        tiers = ["top", "bottom", "middle", "clean", "perturbed"]
+        metrics = ["norm", "max", "min", "mean"]  # Added 'mean' metric
 
         for expert_idx in range(self.num_experts):
             for tier in tiers:
@@ -103,7 +111,9 @@ class DynamicsLogger:
             for col_name in column_names:
                 if col_name not in existing_columns:
                     # SQLite requires ALTER TABLE for each column individually
-                    self.conn.execute(f"ALTER TABLE dynamics ADD COLUMN {col_name} REAL")
+                    self.conn.execute(
+                        f"ALTER TABLE dynamics ADD COLUMN {col_name} REAL"
+                    )
                     print(f"[DynamicsLogger] Added new column: {col_name}")
 
             # Commit schema changes
@@ -137,11 +147,11 @@ class DynamicsLogger:
                 # Build column and value lists
                 columns = ["step", "ts", "num_experts"]
                 # Store num_experts from dynamics data or use configured value
-                num_experts = dynamics.get('num_experts', self.num_experts)
+                num_experts = dynamics.get("num_experts", self.num_experts)
                 values = [step, datetime.now().timestamp(), num_experts]
 
                 # Extract expert gradients
-                expert_grads = dynamics.get('expert_gradients', {})
+                expert_grads = dynamics.get("expert_gradients", {})
 
                 for expert_key in sorted(expert_grads.keys()):
                     expert_data = expert_grads[expert_key]
@@ -155,7 +165,7 @@ class DynamicsLogger:
                         values.append(value)
 
                 # Extract divergence scores
-                divergence_scores = dynamics.get('divergence_scores', {})
+                divergence_scores = dynamics.get("divergence_scores", {})
                 for div_key, value in sorted(divergence_scores.items()):
                     # Skip non-numeric values
                     if not isinstance(value, (int, float)):
@@ -165,15 +175,22 @@ class DynamicsLogger:
                     values.append(value)
 
                 # Ensure all columns exist in the schema (add missing ones dynamically)
-                self._ensure_columns_exist(columns[3:])  # Skip step, ts, and num_experts
+                self._ensure_columns_exist(
+                    columns[3:]
+                )  # Skip step, ts, and num_experts
 
                 # Build UPSERT query
-                placeholders = ', '.join(['?'] * len(columns))
+                placeholders = ", ".join(["?"] * len(columns))
 
                 # Create update clauses (keep latest non-null values)
-                update_clauses = ["ts = excluded.ts", "num_experts = excluded.num_experts"]
+                update_clauses = [
+                    "ts = excluded.ts",
+                    "num_experts = excluded.num_experts",
+                ]
                 for col in columns[3:]:  # Skip step, ts, and num_experts
-                    update_clauses.append(f"{col} = COALESCE(excluded.{col}, dynamics.{col})")
+                    update_clauses.append(
+                        f"{col} = COALESCE(excluded.{col}, dynamics.{col})"
+                    )
 
                 query = f"""
                     INSERT INTO dynamics ({', '.join(columns)})
@@ -195,6 +212,7 @@ class DynamicsLogger:
         except Exception as e:
             print(f"[DynamicsLogger] ❌ Error logging dynamics at step {step}: {e}")
             import traceback
+
             traceback.print_exc()
 
     def close(self) -> None:

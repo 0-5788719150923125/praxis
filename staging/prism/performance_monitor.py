@@ -135,7 +135,9 @@ class PerformanceMonitor:
                     avg_time = sum(times) / len(times)
                     min_time = min(times)
                     max_time = max(times)
-                    print(f"{name:<20} {avg_time:>10.2f}   {min_time:>10.2f}   {max_time:>10.2f}")
+                    print(
+                        f"{name:<20} {avg_time:>10.2f}   {min_time:>10.2f}   {max_time:>10.2f}"
+                    )
 
         print(f"{'='*60}\n")
 
@@ -159,20 +161,20 @@ class PerformanceMonitor:
             dict: Dictionary with performance metrics
         """
         stats = {
-            'fps': self.get_fps(),
-            'total_latency_ms': self.get_total_latency(),
-            'frame_count': self.frame_count,
-            'runtime_s': time.time() - self.start_time,
-            'stages': {}
+            "fps": self.get_fps(),
+            "total_latency_ms": self.get_total_latency(),
+            "frame_count": self.frame_count,
+            "runtime_s": time.time() - self.start_time,
+            "stages": {},
         }
 
         for name in self.timings:
             times = list(self.timings[name])
             if times:
-                stats['stages'][name] = {
-                    'avg_ms': sum(times) / len(times),
-                    'min_ms': min(times),
-                    'max_ms': max(times)
+                stats["stages"][name] = {
+                    "avg_ms": sum(times) / len(times),
+                    "min_ms": min(times),
+                    "max_ms": max(times),
                 }
 
         return stats

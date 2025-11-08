@@ -70,7 +70,9 @@ def get_metrics():
         downsample_method = request.args.get("downsample", "lttb")
         runs_param = request.args.get("runs", "")  # Comma-separated hashes
 
-        api_logger.debug(f"Metrics request: since={since_step}, limit={limit}, downsample={downsample_method}")
+        api_logger.debug(
+            f"Metrics request: since={since_step}, limit={limit}, downsample={downsample_method}"
+        )
 
         # Get current run directory
         current_hash = current_app.config.get("truncated_hash", "unknown")
@@ -98,18 +100,24 @@ def get_metrics():
 
             # Read and parse metrics with SQL-level sampling for efficiency
             # Pass limit * 3 to give LTTB algorithm enough data points to work with
-            raw_metrics = _read_metrics_file(metrics_file, since_step, max_rows=limit * 3)
+            raw_metrics = _read_metrics_file(
+                metrics_file, since_step, max_rows=limit * 3
+            )
 
             if not raw_metrics:
                 api_logger.debug(f"No metrics found for run {run_hash}")
                 continue
 
-            api_logger.debug(f"Loaded {len(raw_metrics)} raw metrics for run {run_hash}")
+            api_logger.debug(
+                f"Loaded {len(raw_metrics)} raw metrics for run {run_hash}"
+            )
 
             # Downsample with LTTB if we still have more points than needed
             if len(raw_metrics) > limit:
                 raw_metrics = _downsample_metrics(raw_metrics, limit, downsample_method)
-                api_logger.debug(f"Downsampled to {len(raw_metrics)} points for run {run_hash}")
+                api_logger.debug(
+                    f"Downsampled to {len(raw_metrics)} points for run {run_hash}"
+                )
 
             # Transform to API format
             metrics_data = _transform_metrics(raw_metrics)
@@ -168,8 +176,11 @@ def get_metrics():
         # Log response size for debugging
         try:
             import sys
+
             response_size = sys.getsizeof(json.dumps(response_data))
-            api_logger.debug(f"Metrics response size: {response_size} bytes ({len(all_runs_data)} runs)")
+            api_logger.debug(
+                f"Metrics response size: {response_size} bytes ({len(all_runs_data)} runs)"
+            )
         except Exception as size_err:
             api_logger.warning(f"Could not calculate response size: {size_err}")
 
@@ -181,18 +192,19 @@ def get_metrics():
 
     except Exception as e:
         from ..app import api_logger
+
         api_logger.error(f"Error in get_metrics endpoint: {e}", exc_info=True)
 
-        error_response = jsonify({
-            "error": str(e),
-            "status": "error",
-            "error_type": type(e).__name__
-        })
+        error_response = jsonify(
+            {"error": str(e), "status": "error", "error_type": type(e).__name__}
+        )
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
 
 
-def _read_metrics_file(db_path: Path, since_step: int = 0, max_rows: int = None) -> List[Dict[str, Any]]:
+def _read_metrics_file(
+    db_path: Path, since_step: int = 0, max_rows: int = None
+) -> List[Dict[str, Any]]:
     """Read metrics from SQLite database, filtering by step.
 
     Args:
@@ -213,7 +225,9 @@ def _read_metrics_file(db_path: Path, since_step: int = 0, max_rows: int = None)
 
         # If max_rows specified, check total count and sample intelligently
         if max_rows:
-            cursor.execute("SELECT COUNT(*) FROM metrics WHERE step >= ?", (since_step,))
+            cursor.execute(
+                "SELECT COUNT(*) FROM metrics WHERE step >= ?", (since_step,)
+            )
             total_count = cursor.fetchone()[0]
 
             # If dataset is larger than max_rows, use SQL-level sampling
@@ -257,7 +271,10 @@ def _read_metrics_file(db_path: Path, since_step: int = 0, max_rows: int = None)
         metrics = []
         for row in cursor.fetchall():
             # Build metric dict from native columns
-            entry = {"step": row["step"], "ts": datetime.fromtimestamp(row["ts"]).isoformat()}
+            entry = {
+                "step": row["step"],
+                "ts": datetime.fromtimestamp(row["ts"]).isoformat(),
+            }
 
             # Add non-null native columns
             for col in [
@@ -289,6 +306,7 @@ def _read_metrics_file(db_path: Path, since_step: int = 0, max_rows: int = None)
 
     except Exception as e:
         from ..app import api_logger
+
         api_logger.error(f"Error reading metrics from {db_path}: {e}", exc_info=True)
         return []
 
@@ -532,12 +550,11 @@ def get_runs():
 
     except Exception as e:
         from ..app import api_logger
+
         api_logger.error(f"Error in get_runs endpoint: {e}", exc_info=True)
 
-        error_response = jsonify({
-            "error": str(e),
-            "status": "error",
-            "error_type": type(e).__name__
-        })
+        error_response = jsonify(
+            {"error": str(e), "status": "error", "error_type": type(e).__name__}
+        )
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500

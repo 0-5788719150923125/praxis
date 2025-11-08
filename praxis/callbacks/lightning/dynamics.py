@@ -28,7 +28,9 @@ class DynamicsLoggerCallback(Callback):
         super().__init__()
         self.dynamics_logger = DynamicsLogger(run_dir, num_experts=num_experts)
         self.log_freq = log_freq
-        print(f"[DynamicsLogger] Initialized: logging every {log_freq} steps to {self.dynamics_logger.filepath}")
+        print(
+            f"[DynamicsLogger] Initialized: logging every {log_freq} steps to {self.dynamics_logger.filepath}"
+        )
 
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
         """Log gradient dynamics before optimizer step.
@@ -46,26 +48,32 @@ class DynamicsLoggerCallback(Callback):
 
             if dynamics:
                 # Only print success on first few successful logs
-                if not hasattr(self, '_success_count'):
+                if not hasattr(self, "_success_count"):
                     self._success_count = 0
                 self._success_count += 1
 
                 if self._success_count <= 3:
-                    print(f"[DynamicsLogger] ✓ Logged gradient dynamics at step {trainer.global_step}")
-                    print(f"  Experts: {list(dynamics.get('expert_gradients', {}).keys())}")
+                    print(
+                        f"[DynamicsLogger] ✓ Logged gradient dynamics at step {trainer.global_step}"
+                    )
+                    print(
+                        f"  Experts: {list(dynamics.get('expert_gradients', {}).keys())}"
+                    )
 
                 self.dynamics_logger.log(step=trainer.global_step, dynamics=dynamics)
             else:
                 # Debug: log why we're not getting dynamics - but only on first few attempts
-                if not getattr(self, '_failure_logged', False):
-                    print(f"[DynamicsLogger] WARNING: No dynamics extracted at step {trainer.global_step}")
+                if not getattr(self, "_failure_logged", False):
+                    print(
+                        f"[DynamicsLogger] WARNING: No dynamics extracted at step {trainer.global_step}"
+                    )
 
                     # Get actual model (unwrap from Lightning and torch.compile)
                     model = None
-                    if hasattr(pl_module, 'model'):
+                    if hasattr(pl_module, "model"):
                         model = pl_module.model
                         print(f"  Lightning module has .model attribute")
-                        if hasattr(model, '_orig_mod'):
+                        if hasattr(model, "_orig_mod"):
                             print(f"  Model is torch.compiled, unwrapping to _orig_mod")
                             model = model._orig_mod
                     else:
@@ -73,23 +81,33 @@ class DynamicsLoggerCallback(Callback):
                         print(f"  Using pl_module directly (no .model attribute)")
 
                     print(f"  Model type: {type(model).__name__}")
-                    print(f"  Model dir: {[attr for attr in dir(model) if not attr.startswith('_')][:20]}")
+                    print(
+                        f"  Model dir: {[attr for attr in dir(model) if not attr.startswith('_')][:20]}"
+                    )
                     print(f"  Has decoder: {hasattr(model, 'decoder')}")
-                    if hasattr(model, 'decoder'):
+                    if hasattr(model, "decoder"):
                         print(f"  Has locals: {hasattr(model.decoder, 'locals')}")
-                        if hasattr(model.decoder, 'locals'):
+                        if hasattr(model.decoder, "locals"):
                             print(f"  Num layers: {len(model.decoder.locals)}")
                             for i, layer in enumerate(model.decoder.locals):
-                                print(f"  Layer {i} has router: {hasattr(layer, 'router')}")
-                                if hasattr(layer, 'router'):
+                                print(
+                                    f"  Layer {i} has router: {hasattr(layer, 'router')}"
+                                )
+                                if hasattr(layer, "router"):
                                     router = layer.router
                                     print(f"    Router type: {type(router).__name__}")
-                                    print(f"    Has log_gradient_dynamics: {hasattr(router, 'log_gradient_dynamics')}")
-                                    if hasattr(router, 'log_gradient_dynamics'):
+                                    print(
+                                        f"    Has log_gradient_dynamics: {hasattr(router, 'log_gradient_dynamics')}"
+                                    )
+                                    if hasattr(router, "log_gradient_dynamics"):
                                         result = router.log_gradient_dynamics()
-                                        print(f"    log_gradient_dynamics() returned: {result is not None}")
+                                        print(
+                                            f"    log_gradient_dynamics() returned: {result is not None}"
+                                        )
                                         if result is None:
-                                            print(f"    This likely means no gradients are available yet")
+                                            print(
+                                                f"    This likely means no gradients are available yet"
+                                            )
                     self._failure_logged = True
 
         except Exception as e:
@@ -99,9 +117,12 @@ class DynamicsLoggerCallback(Callback):
             print("=" * 80)
             print(f"Error: {e}")
             import traceback
+
             traceback.print_exc()
             print("=" * 80)
-            print("[DynamicsLogger] Callback will continue but gradient logging may be broken")
+            print(
+                "[DynamicsLogger] Callback will continue but gradient logging may be broken"
+            )
             print("=" * 80)
             # Don't re-raise - keep training going but make the error VERY visible
 
@@ -123,36 +144,41 @@ class DynamicsLoggerCallback(Callback):
             # Get the actual model from Lightning module
             # Lightning wraps the model in pl_module.model
             model = None
-            if hasattr(pl_module, 'model'):
+            if hasattr(pl_module, "model"):
                 model = pl_module.model
                 # Handle torch.compile wrapper
-                if hasattr(model, '_orig_mod'):
+                if hasattr(model, "_orig_mod"):
                     model = model._orig_mod
             else:
                 # Fallback: maybe pl_module IS the model (for other trainers)
                 model = pl_module
 
             # Check for decoder with locals (standard model structure)
-            if not hasattr(model, 'decoder'):
+            if not hasattr(model, "decoder"):
                 return {}
 
-            if not hasattr(model.decoder, 'locals'):
+            if not hasattr(model.decoder, "locals"):
                 return {}
 
             for layer_idx, layer in enumerate(model.decoder.locals):
                 # Check if this layer has a Prismatic router
-                if not hasattr(layer, 'router'):
+                if not hasattr(layer, "router"):
                     continue
 
                 router = layer.router
-                if not hasattr(router, 'log_gradient_dynamics'):
+                if not hasattr(router, "log_gradient_dynamics"):
                     continue
 
                 # Call log_gradient_dynamics
                 dynamics = router.log_gradient_dynamics()
 
-                if dynamics and dynamics.get('expert_gradients'):
-                    all_dynamics.append(dynamics)
+                if dynamics:
+                    # Convert new flat format to nested format for compatibility
+                    if not isinstance(dynamics.get("expert_gradients"), dict):
+                        dynamics = self._convert_flat_to_nested(dynamics)
+
+                    if dynamics.get("expert_gradients"):
+                        all_dynamics.append(dynamics)
 
             if not all_dynamics:
                 return {}
@@ -163,8 +189,61 @@ class DynamicsLoggerCallback(Callback):
         except Exception as e:
             print(f"[DynamicsLogger] ❌ Error in _extract_gradient_dynamics: {e}")
             import traceback
+
             traceback.print_exc()
             return {}
+
+    def _convert_flat_to_nested(self, flat_dynamics: dict) -> dict:
+        """Convert new flat dynamics format to nested format for DynamicsLogger.
+
+        New flat format (Prismatic v2.0):
+            {
+                "expert_0_top_norm": 0.12,
+                "expert_0_bottom_norm": 0.003,
+                "expert_1_router_weight_expert_1_norm": 0.05,
+                ...
+            }
+
+        Old nested format (expected by DynamicsLogger):
+            {
+                "expert_gradients": {
+                    "expert_0": {"top_norm": 0.12, "bottom_norm": 0.003},
+                    "expert_1": {"router_weight_expert_1_norm": 0.05}
+                },
+                "divergence_scores": {}
+            }
+
+        Args:
+            flat_dynamics: Flat dict from Prismatic.log_gradient_dynamics()
+
+        Returns:
+            Nested dict compatible with DynamicsLogger
+        """
+        expert_gradients = {}
+        divergence_scores = {}
+
+        for key, value in flat_dynamics.items():
+            # Extract expert_idx from key (format: expert_N_...)
+            if not key.startswith("expert_"):
+                continue
+
+            parts = key.split("_", 2)  # Split into ["expert", "N", "rest"]
+            if len(parts) < 3:
+                continue
+
+            expert_key = f"expert_{parts[1]}"  # "expert_0", "expert_1", etc.
+            metric_key = parts[2]  # "top_norm", "router_weight_expert_1_norm", etc.
+
+            # Initialize expert dict if needed
+            if expert_key not in expert_gradients:
+                expert_gradients[expert_key] = {}
+
+            expert_gradients[expert_key][metric_key] = value
+
+        return {
+            "expert_gradients": expert_gradients,
+            "divergence_scores": divergence_scores,
+        }
 
     def _aggregate_dynamics(self, dynamics_list: list) -> dict:
         """Aggregate gradient dynamics across multiple Prismatic layers.
@@ -190,7 +269,7 @@ class DynamicsLoggerCallback(Callback):
         # Collect all expert keys
         all_experts = set()
         for dyn in dynamics_list:
-            all_experts.update(dyn.get('expert_gradients', {}).keys())
+            all_experts.update(dyn.get("expert_gradients", {}).keys())
 
         # Average gradient norms for each expert
         for expert_key in all_experts:
@@ -198,7 +277,7 @@ class DynamicsLoggerCallback(Callback):
             tier_counts = {}
 
             for dyn in dynamics_list:
-                expert_data = dyn.get('expert_gradients', {}).get(expert_key, {})
+                expert_data = dyn.get("expert_gradients", {}).get(expert_key, {})
                 for metric_key, value in expert_data.items():
                     if value is None:
                         continue
@@ -215,7 +294,7 @@ class DynamicsLoggerCallback(Callback):
 
         # Average divergence scores
         for dyn in dynamics_list:
-            for div_key, value in dyn.get('divergence_scores', {}).items():
+            for div_key, value in dyn.get("divergence_scores", {}).items():
                 if value is None:
                     continue
                 if div_key not in divergence_scores:
@@ -228,8 +307,8 @@ class DynamicsLoggerCallback(Callback):
         }
 
         return {
-            'expert_gradients': expert_gradients,
-            'divergence_scores': divergence_scores
+            "expert_gradients": expert_gradients,
+            "divergence_scores": divergence_scores,
         }
 
     def on_train_end(self, trainer, pl_module):

@@ -4,8 +4,8 @@ Sends processed video frames to a virtual camera device that can be used
 in video conferencing applications (Zoom, Teams, Discord, etc.).
 """
 
-import pyvirtualcam
 import numpy as np
+import pyvirtualcam
 
 
 class VirtualCamera:
@@ -31,7 +31,7 @@ class VirtualCamera:
             width=self.width,
             height=self.height,
             fps=self.fps,
-            fmt=pyvirtualcam.PixelFormat.BGR  # OpenCV native format
+            fmt=pyvirtualcam.PixelFormat.BGR,  # OpenCV native format
         )
         print(f"Virtual camera device: {self.cam.device}")
         print(f"Resolution: {self.width}x{self.height} @ {self.fps} FPS")
@@ -59,7 +59,10 @@ class VirtualCamera:
         # Resize frame if dimensions don't match
         if frame.shape[:2] != (self.height, self.width):
             import cv2
-            frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+            frame = cv2.resize(
+                frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR
+            )
 
         try:
             self.cam.send(frame)
@@ -100,6 +103,7 @@ class PreviewWindow:
     def __enter__(self):
         """Create preview window."""
         import cv2
+
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         self.is_open = True
         return self
@@ -107,6 +111,7 @@ class PreviewWindow:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Destroy preview window."""
         import cv2
+
         if self.is_open:
             cv2.destroyWindow(self.window_name)
             self.is_open = False
@@ -125,12 +130,14 @@ class PreviewWindow:
             return -1
 
         import cv2
+
         cv2.imshow(self.window_name, frame)
         return cv2.waitKey(1) & 0xFF
 
     def is_closed(self):
         """Check if window was closed by user."""
         import cv2
+
         try:
             # Try to get window property - will fail if window closed
             cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE)

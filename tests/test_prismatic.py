@@ -774,10 +774,11 @@ class TestCleanPerturbations:
         for expert_idx in range(1, config.num_experts):
             for (name1, param1), (name2, param2) in zip(
                 prismatic_1.experts[expert_idx].named_parameters(),
-                prismatic_2.experts[expert_idx].named_parameters()
+                prismatic_2.experts[expert_idx].named_parameters(),
             ):
-                assert torch.allclose(param1, param2, atol=1e-6), \
-                    f"Clean perturbations should be deterministic for expert {expert_idx}, param {name1}"
+                assert torch.allclose(
+                    param1, param2, atol=1e-6
+                ), f"Clean perturbations should be deterministic for expert {expert_idx}, param {name1}"
 
 
 class TestHelicalModulation:
@@ -812,7 +813,9 @@ class TestHelicalModulation:
                 if not torch.allclose(param, clean_param, atol=1e-6):
                     has_perturbations = True
                     break
-            assert has_perturbations, f"Expert {expert_idx} should have helical perturbations"
+            assert (
+                has_perturbations
+            ), f"Expert {expert_idx} should have helical perturbations"
 
     def test_helical_creates_different_patterns_than_clean(self):
         """Test that helical modulation creates different patterns than clean."""
@@ -848,7 +851,7 @@ class TestHelicalModulation:
         params_differ = False
         for (name1, param1), (name2, param2) in zip(
             prismatic_clean.experts[1].named_parameters(),
-            prismatic_helical.experts[1].named_parameters()
+            prismatic_helical.experts[1].named_parameters(),
         ):
             if not param1.requires_grad:
                 continue
@@ -856,7 +859,9 @@ class TestHelicalModulation:
                 params_differ = True
                 break
 
-        assert params_differ, "Helical modulation should create different perturbations than clean"
+        assert (
+            params_differ
+        ), "Helical modulation should create different perturbations than clean"
 
     def test_helical_wavelength_affects_pattern(self):
         """Test that different wavelengths create different spiral patterns."""
@@ -891,7 +896,7 @@ class TestHelicalModulation:
         params_differ = False
         for (name1, param1), (name2, param2) in zip(
             prismatic_1.experts[1].named_parameters(),
-            prismatic_2.experts[1].named_parameters()
+            prismatic_2.experts[1].named_parameters(),
         ):
             if not param1.requires_grad:
                 continue
@@ -945,7 +950,7 @@ class TestPerturbationModes:
         flat_orig_abs = flat_orig.abs()
         num_top = max(1, int(flat_orig_abs.numel() * 0.1))
         top_threshold = torch.topk(flat_orig_abs, num_top).values[-1]
-        top_mask = (flat_orig_abs >= top_threshold)
+        top_mask = flat_orig_abs >= top_threshold
 
         # Get corresponding values
         top_original = flat_orig[top_mask]
@@ -958,12 +963,20 @@ class TestPerturbationModes:
             expected = orig + 1.0 * orig  # W + W = 2W
             if orig > 0:
                 # Positive weights should double
-                assert pert > orig, f"Top positive weight {orig} not amplified (got {pert})"
-                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                assert (
+                    pert > orig
+                ), f"Top positive weight {orig} not amplified (got {pert})"
+                assert torch.isclose(
+                    pert, expected, atol=1e-5
+                ), f"Expected {expected}, got {pert}"
             else:
                 # Negative weights should also double (become more negative)
-                assert pert < orig, f"Top negative weight {orig} not amplified (got {pert})"
-                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                assert (
+                    pert < orig
+                ), f"Top negative weight {orig} not amplified (got {pert})"
+                assert torch.isclose(
+                    pert, expected, atol=1e-5
+                ), f"Expected {expected}, got {pert}"
 
     def test_repulsive_mode_suppresses_bottom_weights(self):
         """
@@ -1009,7 +1022,9 @@ class TestPerturbationModes:
         if len(non_zero_abs) > 0:
             num_bottom = max(1, int(flat_orig_abs.numel() * 0.1))
             num_bottom = min(num_bottom, len(non_zero_abs))
-            bottom_threshold = torch.topk(non_zero_abs, num_bottom, largest=False).values[-1]
+            bottom_threshold = torch.topk(
+                non_zero_abs, num_bottom, largest=False
+            ).values[-1]
             bottom_mask = (flat_orig_abs <= bottom_threshold) & (flat_orig_abs > 0)
 
             # Get corresponding values
@@ -1023,12 +1038,20 @@ class TestPerturbationModes:
                 expected = orig - 1.0 * orig  # W - W = 0
                 if orig > 0:
                     # Positive bottom weights should approach 0
-                    assert pert < orig, f"Bottom positive weight {orig} not suppressed (got {pert})"
-                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                    assert (
+                        pert < orig
+                    ), f"Bottom positive weight {orig} not suppressed (got {pert})"
+                    assert torch.isclose(
+                        pert, expected, atol=1e-5
+                    ), f"Expected {expected}, got {pert}"
                 else:
                     # Negative bottom weights should also approach 0 (NOT amplified)
-                    assert pert > orig, f"Bottom negative weight {orig} not suppressed toward 0 (got {pert})"
-                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                    assert (
+                        pert > orig
+                    ), f"Bottom negative weight {orig} not suppressed toward 0 (got {pert})"
+                    assert torch.isclose(
+                        pert, expected, atol=1e-5
+                    ), f"Expected {expected}, got {pert}"
 
     def test_noise_mode_is_bidirectional(self):
         """
@@ -1062,8 +1085,9 @@ class TestPerturbationModes:
         fc1_perturbed = expert_1.fc1.weight.detach()
 
         # Should have differences (perturbations applied)
-        assert not torch.allclose(fc1_original, fc1_perturbed, atol=1e-6), \
-            "Noise mode should create perturbations"
+        assert not torch.allclose(
+            fc1_original, fc1_perturbed, atol=1e-6
+        ), "Noise mode should create perturbations"
 
         # The noise is random, so we can't predict exact values
         # But we can verify that perturbations are roughly magnitude-scaled
@@ -1104,10 +1128,11 @@ class TestPerturbationModes:
         # Experts should be identical
         for (name1, param1), (name2, param2) in zip(
             prismatic_1.experts[1].named_parameters(),
-            prismatic_2.experts[1].named_parameters()
+            prismatic_2.experts[1].named_parameters(),
         ):
-            assert torch.allclose(param1, param2, atol=1e-6), \
-                f"Repulsive mode should be deterministic for {name1}"
+            assert torch.allclose(
+                param1, param2, atol=1e-6
+            ), f"Repulsive mode should be deterministic for {name1}"
 
     def test_modes_produce_different_perturbations(self):
         """Test that repulsive and noise modes produce different perturbations."""
@@ -1147,14 +1172,15 @@ class TestPerturbationModes:
 
         params_differ = False
         for (name_rep, param_rep), (name_noise, param_noise) in zip(
-            expert_rep.named_parameters(),
-            expert_noise.named_parameters()
+            expert_rep.named_parameters(), expert_noise.named_parameters()
         ):
             if not torch.allclose(param_rep, param_noise, atol=1e-6):
                 params_differ = True
                 break
 
-        assert params_differ, "Repulsive and noise modes should produce different perturbations"
+        assert (
+            params_differ
+        ), "Repulsive and noise modes should produce different perturbations"
 
 
 class TestAttractiveMode:
@@ -1200,7 +1226,7 @@ class TestAttractiveMode:
         flat_orig_abs = flat_orig.abs()
         num_top = max(1, int(flat_orig_abs.numel() * 0.1))
         top_threshold = torch.topk(flat_orig_abs, num_top).values[-1]
-        top_mask = (flat_orig_abs >= top_threshold)
+        top_mask = flat_orig_abs >= top_threshold
 
         # Get corresponding values
         top_original = flat_orig[top_mask]
@@ -1213,12 +1239,20 @@ class TestAttractiveMode:
             expected = orig - 1.0 * orig  # W - W = 0
             if orig > 0:
                 # Positive weights should be suppressed toward zero
-                assert pert < orig, f"Top positive weight {orig} not suppressed (got {pert})"
-                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                assert (
+                    pert < orig
+                ), f"Top positive weight {orig} not suppressed (got {pert})"
+                assert torch.isclose(
+                    pert, expected, atol=1e-5
+                ), f"Expected {expected}, got {pert}"
             else:
                 # Negative weights should also be suppressed toward zero (NOT amplified)
-                assert pert > orig, f"Top negative weight {orig} not suppressed toward 0 (got {pert})"
-                assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                assert (
+                    pert > orig
+                ), f"Top negative weight {orig} not suppressed toward 0 (got {pert})"
+                assert torch.isclose(
+                    pert, expected, atol=1e-5
+                ), f"Expected {expected}, got {pert}"
 
     def test_attractive_mode_amplifies_bottom_weights(self):
         """
@@ -1264,7 +1298,9 @@ class TestAttractiveMode:
         if len(non_zero_abs) > 0:
             num_bottom = max(1, int(flat_orig_abs.numel() * 0.1))
             num_bottom = min(num_bottom, len(non_zero_abs))
-            bottom_threshold = torch.topk(non_zero_abs, num_bottom, largest=False).values[-1]
+            bottom_threshold = torch.topk(
+                non_zero_abs, num_bottom, largest=False
+            ).values[-1]
             bottom_mask = (flat_orig_abs <= bottom_threshold) & (flat_orig_abs > 0)
 
             # Get corresponding values
@@ -1278,12 +1314,20 @@ class TestAttractiveMode:
                 expected = orig + 1.0 * orig  # W + W = 2W
                 if orig > 0:
                     # Positive bottom weights should be amplified away from 0
-                    assert pert > orig, f"Bottom positive weight {orig} not amplified (got {pert})"
-                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                    assert (
+                        pert > orig
+                    ), f"Bottom positive weight {orig} not amplified (got {pert})"
+                    assert torch.isclose(
+                        pert, expected, atol=1e-5
+                    ), f"Expected {expected}, got {pert}"
                 else:
                     # Negative bottom weights should also be amplified (more negative)
-                    assert pert < orig, f"Bottom negative weight {orig} not amplified (got {pert})"
-                    assert torch.isclose(pert, expected, atol=1e-5), f"Expected {expected}, got {pert}"
+                    assert (
+                        pert < orig
+                    ), f"Bottom negative weight {orig} not amplified (got {pert})"
+                    assert torch.isclose(
+                        pert, expected, atol=1e-5
+                    ), f"Expected {expected}, got {pert}"
 
     def test_attractive_mode_is_deterministic(self):
         """
@@ -1309,10 +1353,11 @@ class TestAttractiveMode:
         # Experts should be identical
         for (name1, param1), (name2, param2) in zip(
             prismatic_1.experts[1].named_parameters(),
-            prismatic_2.experts[1].named_parameters()
+            prismatic_2.experts[1].named_parameters(),
         ):
-            assert torch.allclose(param1, param2, atol=1e-6), \
-                f"Attractive mode should be deterministic for {name1}"
+            assert torch.allclose(
+                param1, param2, atol=1e-6
+            ), f"Attractive mode should be deterministic for {name1}"
 
     def test_attractive_vs_repulsive_modes_differ(self):
         """
@@ -1369,8 +1414,9 @@ class TestAttractiveMode:
             att_pert_values = att_pert[perturbed_mask]
 
             # Should be approximately opposite
-            assert torch.allclose(att_pert_values, -rep_pert_values, atol=1e-5), \
-                "Attractive should create opposite perturbations from repulsive"
+            assert torch.allclose(
+                att_pert_values, -rep_pert_values, atol=1e-5
+            ), "Attractive should create opposite perturbations from repulsive"
 
     def test_attractive_mode_forward_pass(self):
         """Test that attractive mode works in forward pass without errors."""

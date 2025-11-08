@@ -359,10 +359,14 @@ function renderMetricsCharts(data, container) {
                 Object.keys(a.data_metrics[config.key]).length > 0
             );
         } else if (config.isComposite && config.key === 'expert_routing_weights') {
-            // Check if ANY expert_*_routing_weight metrics exist
-            // This is a composite metric combining all expert routing weights
+            // Check if ANY expert routing weight metrics exist (old or new format)
+            // Old format: expert_*_routing_weight
+            // New format: routing/expert_*_weight
             return agents.some(a =>
-                Object.keys(a.metrics).some(k => k.match(/^expert_\d+_routing_weight$/))
+                Object.keys(a.metrics).some(k =>
+                    k.match(/^expert_\d+_routing_weight$/) ||  // Old format
+                    k.match(/^routing\/expert_\d+_weight$/)    // New format
+                )
             );
         } else {
             // Check regular agent metrics
@@ -784,12 +788,20 @@ function createExpertRoutingChart(canvasId, agents) {
         const metrics = agent.metrics;
         const steps = metrics.steps || [];
 
-        // Find all expert_*_routing_weight metrics
-        const expertKeys = Object.keys(metrics).filter(k => k.match(/^expert_\d+_routing_weight$/));
+        // Find all expert routing weight metrics (old or new format)
+        // Old format: expert_*_routing_weight
+        // New format: routing/expert_*_weight
+        const expertKeys = Object.keys(metrics).filter(k =>
+            k.match(/^expert_\d+_routing_weight$/) ||
+            k.match(/^routing\/expert_\d+_weight$/)
+        );
         maxExperts = Math.max(maxExperts, expertKeys.length);
 
         expertKeys.forEach((expertKey) => {
-            const expertNum = expertKey.match(/expert_(\d+)_routing_weight/)[1];
+            // Extract expert number from either format
+            const match = expertKey.match(/expert[_/](\d+)[_](?:routing_)?weight/) ||
+                         expertKey.match(/routing\/expert_(\d+)_weight/);
+            const expertNum = match ? match[1] : '0';
             const values = metrics[expertKey] || [];
 
             const data = steps.map((step, i) => ({

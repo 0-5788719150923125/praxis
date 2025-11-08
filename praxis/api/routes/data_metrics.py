@@ -94,18 +94,24 @@ def get_data_metrics():
             etag_parts.append(f"{run_hash}:{stat.st_mtime}:{stat.st_size}")
 
             # Read and parse data metrics with SQL-level sampling
-            raw_metrics = _read_data_metrics_file(data_metrics_file, since_step, max_rows=limit * 2)
+            raw_metrics = _read_data_metrics_file(
+                data_metrics_file, since_step, max_rows=limit * 2
+            )
 
             if not raw_metrics:
                 api_logger.debug(f"No data metrics found for run {run_hash}")
                 continue
 
-            api_logger.debug(f"Loaded {len(raw_metrics)} data metrics for run {run_hash}")
+            api_logger.debug(
+                f"Loaded {len(raw_metrics)} data metrics for run {run_hash}"
+            )
 
             # Downsample if needed
             if len(raw_metrics) > limit and downsample_method == "lttb":
                 raw_metrics = _downsample_data_metrics(raw_metrics, limit)
-                api_logger.debug(f"Downsampled to {len(raw_metrics)} data points for run {run_hash}")
+                api_logger.debug(
+                    f"Downsampled to {len(raw_metrics)} data points for run {run_hash}"
+                )
 
             # Transform to API format (column-based)
             metrics_data = _transform_data_metrics(raw_metrics)
@@ -165,13 +171,12 @@ def get_data_metrics():
 
     except Exception as e:
         from ..app import api_logger
+
         api_logger.error(f"Error in get_data_metrics endpoint: {e}", exc_info=True)
 
-        error_response = jsonify({
-            "error": str(e),
-            "status": "error",
-            "error_type": type(e).__name__
-        })
+        error_response = jsonify(
+            {"error": str(e), "status": "error", "error_type": type(e).__name__}
+        )
         error_response.headers.add("Access-Control-Allow-Origin", "*")
         return error_response, 500
 
@@ -199,7 +204,9 @@ def _read_data_metrics_file(
 
         # If max_rows specified, check total count and sample intelligently
         if max_rows:
-            cursor.execute("SELECT COUNT(*) FROM data_metrics WHERE step >= ?", (since_step,))
+            cursor.execute(
+                "SELECT COUNT(*) FROM data_metrics WHERE step >= ?", (since_step,)
+            )
             total_count = cursor.fetchone()[0]
 
             # If dataset is larger than max_rows, use SQL-level sampling
@@ -234,7 +241,10 @@ def _read_data_metrics_file(
         metrics = []
         for row in cursor.fetchall():
             # Build metric dict
-            entry = {"step": row["step"], "ts": datetime.fromtimestamp(row["ts"]).isoformat()}
+            entry = {
+                "step": row["step"],
+                "ts": datetime.fromtimestamp(row["ts"]).isoformat(),
+            }
 
             # Parse JSON fields
             if row["sampling_weights"]:
@@ -262,7 +272,10 @@ def _read_data_metrics_file(
 
     except Exception as e:
         from ..app import api_logger
-        api_logger.error(f"Error reading data metrics from {db_path}: {e}", exc_info=True)
+
+        api_logger.error(
+            f"Error reading data metrics from {db_path}: {e}", exc_info=True
+        )
         return []
 
 

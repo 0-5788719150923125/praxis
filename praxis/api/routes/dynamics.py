@@ -73,41 +73,48 @@ def get_dynamics():
         if not dynamics_file.exists():
             # Return empty state with helpful message
             api_logger.warning(f"Dynamics file not found: {dynamics_file}")
-            response = jsonify({
-                "status": "no_data",
-                "message": "Gradient dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
-                "runs": []
-            })
+            response = jsonify(
+                {
+                    "status": "no_data",
+                    "message": "Gradient dynamics not logged. Enable by calling router.log_gradient_dynamics() during training.",
+                    "runs": [],
+                }
+            )
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
-        api_logger.info(f"Found dynamics file: {dynamics_file}, size: {dynamics_file.stat().st_size} bytes")
+        api_logger.info(
+            f"Found dynamics file: {dynamics_file}, size: {dynamics_file.stat().st_size} bytes"
+        )
 
         # Read dynamics from SQLite database
         try:
-            dynamics_data = _read_dynamics_from_db(
-                dynamics_file, since_step, limit
-            )
+            dynamics_data = _read_dynamics_from_db(dynamics_file, since_step, limit)
         except Exception as read_error:
             api_logger.error(f"Error reading dynamics database: {read_error}")
             import traceback
+
             traceback.print_exc()
-            response = jsonify({
-                "status": "error",
-                "message": f"Error reading database: {str(read_error)}",
-                "runs": []
-            })
+            response = jsonify(
+                {
+                    "status": "error",
+                    "message": f"Error reading database: {str(read_error)}",
+                    "runs": [],
+                }
+            )
             response.headers.add("Access-Control-Allow-Origin", "*")
             response.status_code = 500
             return response
 
         if not dynamics_data or dynamics_data.get("num_points", 0) == 0:
             api_logger.warning(f"No data points found in dynamics database")
-            response = jsonify({
-                "status": "no_data",
-                "message": "No dynamics data points found",
-                "runs": []
-            })
+            response = jsonify(
+                {
+                    "status": "no_data",
+                    "message": "No dynamics data points found",
+                    "runs": [],
+                }
+            )
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
 
@@ -115,23 +122,23 @@ def get_dynamics():
         # First check if num_experts is stored in the database
         stored_num_experts = dynamics_data.get("num_experts")
         expert_metadata = _compute_expert_metadata(
-            dynamics_data["metrics"],
-            dynamics_data.get("metadata"),
-            stored_num_experts
+            dynamics_data["metrics"], dynamics_data.get("metadata"), stored_num_experts
         )
 
         # Format response
         response_data = {
             "status": "ok",
-            "runs": [{
-                "hash": current_hash,
-                "metadata": {
-                    "num_points": dynamics_data["num_points"],
-                    "last_step": dynamics_data.get("last_step", 0),
-                    **expert_metadata  # Add expert count, pi_phases, pi_seeds
-                },
-                "dynamics": dynamics_data["metrics"]
-            }]
+            "runs": [
+                {
+                    "hash": current_hash,
+                    "metadata": {
+                        "num_points": dynamics_data["num_points"],
+                        "last_step": dynamics_data.get("last_step", 0),
+                        **expert_metadata,  # Add expert count, pi_phases, pi_seeds
+                    },
+                    "dynamics": dynamics_data["metrics"],
+                }
+            ],
         }
 
         response = jsonify(response_data)
@@ -142,13 +149,10 @@ def get_dynamics():
 
     except Exception as e:
         from ..app import api_logger
+
         api_logger.error(f"Error in get_dynamics: {str(e)}")
 
-        response = jsonify({
-            "status": "error",
-            "message": str(e),
-            "runs": []
-        })
+        response = jsonify({"status": "error", "message": str(e), "runs": []})
         response.headers.add("Access-Control-Allow-Origin", "*")
         response.status_code = 500
         return response
@@ -186,7 +190,7 @@ def _read_dynamics_from_db(
     """
     try:
         # Open in read-only mode to avoid permission issues
-        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         cursor = conn.cursor()
 
         # Get all column names
@@ -220,29 +224,29 @@ def _read_dynamics_from_db(
                 metrics[col].append(row[i])
 
         # Ensure 'steps' (plural) exists for frontend compatibility
-        if 'step' in metrics and 'steps' not in metrics:
-            metrics['steps'] = metrics['step']
+        if "step" in metrics and "steps" not in metrics:
+            metrics["steps"] = metrics["step"]
 
         # Merge routing weights from metrics.db
         metrics_db_path = db_path.parent / "metrics.db"
         if metrics_db_path.exists():
             routing_data = _read_routing_weights_from_metrics(
-                metrics_db_path, metrics['step']
+                metrics_db_path, metrics["step"]
             )
             if routing_data:
                 metrics.update(routing_data)
 
         # Extract num_experts from the data if available
         num_experts = None
-        if 'num_experts' in metrics and len(metrics['num_experts']) > 0:
+        if "num_experts" in metrics and len(metrics["num_experts"]) > 0:
             # Get the most recent num_experts value
-            num_experts = metrics['num_experts'][-1]
+            num_experts = metrics["num_experts"][-1]
 
         return {
             "metrics": metrics,
             "num_points": len(rows),
             "last_step": rows[-1][0] if rows else 0,
-            "num_experts": num_experts
+            "num_experts": num_experts,
         }
 
     except Exception as e:
@@ -269,7 +273,7 @@ def _read_routing_weights_from_metrics(
     try:
         import json
 
-        conn = sqlite3.connect(f'file:{metrics_db_path}?mode=ro', uri=True)
+        conn = sqlite3.connect(f"file:{metrics_db_path}?mode=ro", uri=True)
         cursor = conn.cursor()
 
         # Query ALL routing metrics in the step range (not just exact matches)
@@ -298,8 +302,9 @@ def _read_routing_weights_from_metrics(
                 extra_metrics = json.loads(extra_metrics_json)
                 # Extract routing metrics and weight divergence metrics
                 routing_data_by_step[step] = {
-                    k: v for k, v in extra_metrics.items()
-                    if 'routing' in k or 'cosine' in k or 'weight_angle' in k
+                    k: v
+                    for k, v in extra_metrics.items()
+                    if "routing" in k or "cosine" in k or "weight_angle" in k
                 }
             except json.JSONDecodeError:
                 continue
@@ -342,6 +347,7 @@ def _read_routing_weights_from_metrics(
     except Exception as e:
         print(f"Error reading routing weights from metrics: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -349,7 +355,7 @@ def _read_routing_weights_from_metrics(
 def _compute_expert_metadata(
     metrics: Dict[str, List],
     extra_metadata: Optional[Dict] = None,
-    stored_num_experts: Optional[int] = None
+    stored_num_experts: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Compute expert metadata from dynamics data.
@@ -371,7 +377,11 @@ def _compute_expert_metadata(
     else:
         # Try to detect num_experts from routing_weight metrics (most reliable data-based detection)
         # These are logged from router.get_metrics() and represent configured views
-        routing_keys = [k for k in metrics.keys() if k.startswith("expert_") and "routing_weight" in k]
+        routing_keys = [
+            k
+            for k in metrics.keys()
+            if k.startswith("expert_") and "routing_weight" in k
+        ]
         if routing_keys:
             expert_indices = set()
             for key in routing_keys:
@@ -389,7 +399,9 @@ def _compute_expert_metadata(
                 num_experts = 0
         else:
             # Fallback: detect from expert_*_top_norm or other gradient keys
-            expert_keys = [k for k in metrics.keys() if k.startswith("expert_") and "_norm" in k]
+            expert_keys = [
+                k for k in metrics.keys() if k.startswith("expert_") and "_norm" in k
+            ]
             if not expert_keys:
                 return {"num_experts": 0, "phase_offsets": []}
 
@@ -422,5 +434,5 @@ def _compute_expert_metadata(
 
     return {
         "num_experts": num_experts,
-        "phase_offsets": phase_offsets  # Actual helical phases, not fake pi seeds
+        "phase_offsets": phase_offsets,  # Actual helical phases, not fake pi seeds
     }

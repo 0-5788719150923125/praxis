@@ -3,9 +3,10 @@
 Renders semi-transparent sphere with glow effect and rotation.
 """
 
+import time
+
 import cv2
 import numpy as np
-import time
 
 
 class SphereRenderer:
@@ -40,7 +41,7 @@ class SphereRenderer:
             return frame
 
         # Extract chin position
-        chin_x, chin_y, chin_z = jaw_points['chin']
+        chin_x, chin_y, chin_z = jaw_points["chin"]
         yaw, pitch, roll = pose_angles
 
         # Calculate sphere size based on jaw width
@@ -100,9 +101,17 @@ class SphereRenderer:
             if circle_radius > 0:
                 # Draw ellipse for perspective
                 axes = (int(circle_radius), int(circle_radius * 0.7))
-                cv2.ellipse(img, (cx, int(cy + rotated_y)), axes,
-                           angle=np.degrees(yaw_rad), startAngle=0, endAngle=360,
-                           color=self.color, thickness=2, lineType=cv2.LINE_AA)
+                cv2.ellipse(
+                    img,
+                    (cx, int(cy + rotated_y)),
+                    axes,
+                    angle=np.degrees(yaw_rad),
+                    startAngle=0,
+                    endAngle=360,
+                    color=self.color,
+                    thickness=2,
+                    lineType=cv2.LINE_AA,
+                )
 
         # Draw longitude lines (meridians)
         for i in range(n_lon):
@@ -156,8 +165,14 @@ class SphereRenderer:
             for thickness in [8, 6, 4, 2]:
                 alpha = 0.5 * (9 - thickness) / 8
                 color_adjusted = tuple([int(c * alpha) for c in self.color])
-                cv2.line(img, (cx, cy), (end_x, end_y),
-                        color_adjusted, thickness, cv2.LINE_AA)
+                cv2.line(
+                    img,
+                    (cx, cy),
+                    (end_x, end_y),
+                    color_adjusted,
+                    thickness,
+                    cv2.LINE_AA,
+                )
 
     def _get_pulse_scale(self):
         """Get pulsing scale factor based on time."""
@@ -179,8 +194,15 @@ class SphereRenderer:
             numpy.ndarray: Frame with debug info
         """
         if jaw_points is None or pose_angles is None:
-            cv2.putText(frame, "No face detected", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(
+                frame,
+                "No face detected",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 255),
+                2,
+            )
             return frame
 
         yaw, pitch, roll = pose_angles
@@ -191,19 +213,26 @@ class SphereRenderer:
             f"Jaw Width: {jaw_width:.0f}px",
             f"Yaw: {yaw:.1f}°",
             f"Pitch: {pitch:.1f}°",
-            f"Roll: {roll:.1f}°"
+            f"Roll: {roll:.1f}°",
         ]
 
         y_offset = 30
         for line in info_lines:
-            cv2.putText(frame, line, (10, y_offset),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(
+                frame,
+                line,
+                (10, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
             y_offset += 30
 
         # Draw jaw landmarks
-        chin_x, chin_y, _ = jaw_points['chin']
-        left_x, left_y, _ = jaw_points['left_jaw']
-        right_x, right_y, _ = jaw_points['right_jaw']
+        chin_x, chin_y, _ = jaw_points["chin"]
+        left_x, left_y, _ = jaw_points["left_jaw"]
+        right_x, right_y, _ = jaw_points["right_jaw"]
 
         cv2.circle(frame, (chin_x, chin_y), 5, (0, 255, 255), -1)
         cv2.circle(frame, (left_x, left_y), 5, (255, 0, 255), -1)

@@ -23,11 +23,14 @@ class PoseCalculator:
 
         # Camera matrix (simplified calibration)
         focal_length = image_width
-        self.camera_matrix = np.array([
-            [focal_length, 0, image_width / 2],
-            [0, focal_length, image_height / 2],
-            [0, 0, 1]
-        ], dtype=np.float64)
+        self.camera_matrix = np.array(
+            [
+                [focal_length, 0, image_width / 2],
+                [0, focal_length, image_height / 2],
+                [0, 0, 1],
+            ],
+            dtype=np.float64,
+        )
 
         # Distortion coefficients (assume no distortion)
         self.dist_coeffs = np.zeros((4, 1), dtype=np.float64)
@@ -54,7 +57,7 @@ class PoseCalculator:
             points_2d,
             self.camera_matrix,
             self.dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE
+            flags=cv2.SOLVEPNP_ITERATIVE,
         )
 
         if not success:
@@ -64,7 +67,7 @@ class PoseCalculator:
         rmat, _ = cv2.Rodrigues(rot_vec)
 
         # Extract Euler angles for debug display only
-        sy = np.sqrt(rmat[0, 0]**2 + rmat[1, 0]**2)
+        sy = np.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
         singular = sy < 1e-6
 
         if not singular:
@@ -101,25 +104,31 @@ class PoseCalculator:
         roll_rad = np.radians(roll)
 
         # Rotation matrix around Y (yaw)
-        R_y = np.array([
-            [np.cos(yaw_rad), 0, np.sin(yaw_rad)],
-            [0, 1, 0],
-            [-np.sin(yaw_rad), 0, np.cos(yaw_rad)]
-        ])
+        R_y = np.array(
+            [
+                [np.cos(yaw_rad), 0, np.sin(yaw_rad)],
+                [0, 1, 0],
+                [-np.sin(yaw_rad), 0, np.cos(yaw_rad)],
+            ]
+        )
 
         # Rotation matrix around X (pitch)
-        R_x = np.array([
-            [1, 0, 0],
-            [0, np.cos(pitch_rad), -np.sin(pitch_rad)],
-            [0, np.sin(pitch_rad), np.cos(pitch_rad)]
-        ])
+        R_x = np.array(
+            [
+                [1, 0, 0],
+                [0, np.cos(pitch_rad), -np.sin(pitch_rad)],
+                [0, np.sin(pitch_rad), np.cos(pitch_rad)],
+            ]
+        )
 
         # Rotation matrix around Z (roll)
-        R_z = np.array([
-            [np.cos(roll_rad), -np.sin(roll_rad), 0],
-            [np.sin(roll_rad), np.cos(roll_rad), 0],
-            [0, 0, 1]
-        ])
+        R_z = np.array(
+            [
+                [np.cos(roll_rad), -np.sin(roll_rad), 0],
+                [np.sin(roll_rad), np.cos(roll_rad), 0],
+                [0, 0, 1],
+            ]
+        )
 
         # Combined rotation matrix
         R = R_z @ R_y @ R_x

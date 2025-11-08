@@ -196,12 +196,10 @@ class HexAttention(nn.Module):
         # Mathematically: softmax([s_1,...,s_n,0]) ≡ exp(s_i)/(Σexp(s_j)+1)
         # See: https://www.evanmiller.org/attention-is-off-by-one.html
         zero_k = torch.zeros(
-            batch_size, self.num_heads, 1, self.head_dim,
-            device=k.device, dtype=k.dtype
+            batch_size, self.num_heads, 1, self.head_dim, device=k.device, dtype=k.dtype
         )
         zero_v = torch.zeros(
-            batch_size, self.num_heads, 1, self.head_dim,
-            device=v.device, dtype=v.dtype
+            batch_size, self.num_heads, 1, self.head_dim, device=v.device, dtype=v.dtype
         )
         k = torch.cat([k, zero_k], dim=2)  # (B, H, T+1, D)
         v = torch.cat([v, zero_v], dim=2)  # (B, H, T+1, D)
@@ -214,7 +212,8 @@ class HexAttention(nn.Module):
         # Create or retrieve causal mask (with ghost token support)
         block_mask = (
             self._create_causal_mask(seq_len, kv_len, inputs.device)
-            if self.causal else None
+            if self.causal
+            else None
         )
 
         # Create ALiBi score modification function
