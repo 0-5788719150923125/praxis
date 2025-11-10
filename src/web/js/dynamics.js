@@ -1,37 +1,17 @@
 /**
  * Praxis Web - Gradient Dynamics Visualization
- * Expert Gradient Divergence Tracker - validates dual-sided perturbation hypothesis
+ * Tracks gradient norms and variance per expert during training
  */
 
 import { state, CONSTANTS } from './state.js';
 import { fetchAPI } from './api.js';
 import { createTabHeader } from './components.js';
 
-// Chart instances for dynamics (exported for hybrid mode)
+// Chart instances
 export const dynamicsCharts = {};
 
 /**
- * Detect if an element is within a hybrid overlay (light theme context)
- * @param {HTMLElement} element - The element to check
- * @returns {boolean} True if in hybrid overlay
- */
-function isInHybridOverlay(element) {
-    if (!element) return false;
-    return element.closest('.hybrid-overlay') !== null;
-}
-
-/**
- * Get the appropriate theme for rendering based on context
- * @param {HTMLElement} element - The element being rendered
- * @returns {string} 'light' or 'dark'
- */
-function getContextTheme(element) {
-    return isInHybridOverlay(element) ? 'light' : state.theme;
-}
-
-/**
- * Get theme-appropriate colors (reuse from charts.js pattern)
- * @param {string} [forceTheme] - Optional theme override ('light' or 'dark')
+ * Get theme-appropriate colors
  */
 function getThemeColors(forceTheme) {
     const theme = forceTheme || state.theme;
@@ -44,7 +24,7 @@ function getThemeColors(forceTheme) {
 }
 
 /**
- * Update dynamics chart colors for theme changes
+ * Update chart colors for theme changes
  */
 export function updateDynamicsChartColors() {
     const { textColor, gridColor, tooltipBg } = getThemeColors();
@@ -64,10 +44,6 @@ export function updateDynamicsChartColors() {
             chart.options.plugins.legend.labels.color = textColor;
         }
 
-        if (chart.options.plugins?.title) {
-            chart.options.plugins.title.color = textColor;
-        }
-
         if (chart.options.plugins?.tooltip) {
             chart.options.plugins.tooltip.backgroundColor = tooltipBg;
             chart.options.plugins.tooltip.titleColor = textColor;
@@ -80,81 +56,9 @@ export function updateDynamicsChartColors() {
 }
 
 /**
- * Downsample data points using Largest Triangle Three Buckets (LTTB) algorithm
- * Preserves visual shape while reducing point count for performance
- * @param {Array} data - Array of {x, y, ...} points
- * @param {number} threshold - Target number of points
- * @returns {Array} Downsampled array
- */
-function downsampleLTTB(data, threshold) {
-    if (data.length <= threshold || threshold <= 2) {
-        return data;
-    }
-
-    const sampled = [];
-    const bucketSize = (data.length - 2) / (threshold - 2);
-
-    // Always keep first point
-    sampled.push(data[0]);
-
-    for (let i = 0; i < threshold - 2; i++) {
-        const avgRangeStart = Math.floor((i + 1) * bucketSize) + 1;
-        const avgRangeEnd = Math.floor((i + 2) * bucketSize) + 1;
-        const avgRangeEnd2 = avgRangeEnd < data.length ? avgRangeEnd : data.length;
-
-        // Calculate average point in next bucket
-        let avgX = 0, avgY = 0;
-        let avgRangeLength = avgRangeEnd2 - avgRangeStart;
-
-        for (let j = avgRangeStart; j < avgRangeEnd2; j++) {
-            avgX += data[j].x;
-            avgY += data[j].y;
-        }
-        avgX /= avgRangeLength;
-        avgY /= avgRangeLength;
-
-        // Get current bucket range
-        const rangeStart = Math.floor(i * bucketSize) + 1;
-        const rangeEnd = Math.floor((i + 1) * bucketSize) + 1;
-
-        // Point in previous bucket
-        const prevPoint = sampled[sampled.length - 1];
-
-        // Find point in current bucket with largest triangle area
-        let maxArea = -1;
-        let maxAreaPoint = null;
-
-        for (let j = rangeStart; j < rangeEnd; j++) {
-            if (j >= data.length) break;
-
-            // Calculate triangle area
-            const area = Math.abs(
-                (prevPoint.x - avgX) * (data[j].y - prevPoint.y) -
-                (prevPoint.x - data[j].x) * (avgY - prevPoint.y)
-            ) * 0.5;
-
-            if (area > maxArea) {
-                maxArea = area;
-                maxAreaPoint = data[j];
-            }
-        }
-
-        if (maxAreaPoint) {
-            sampled.push(maxAreaPoint);
-        }
-    }
-
-    // Always keep last point
-    sampled.push(data[data.length - 1]);
-
-    return sampled;
-}
-
-/**
- * Load and render gradient dynamics (initial load or refresh)
+ * Load and render gradient dynamics
  */
 export async function loadDynamicsWithCharts(force = false) {
-    // If already loaded and not forcing, do nothing
     if (state.dynamics.loaded && !force) {
         return;
     }
@@ -162,13 +66,10 @@ export async function loadDynamicsWithCharts(force = false) {
     const container = document.getElementById('dynamics-container');
     if (!container) return;
 
-    // Show loading indicator (for both initial load and refresh)
     container.innerHTML = '<div class="loading-placeholder">Loading gradient dynamics...</div>';
 
     try {
-        // Fetch data: if refreshing, fetch all data since beginning (including new data)
-        const since = force && state.dynamics.lastStep > 0 ? 0 : 0;
-        const response = await fetch(`/api/dynamics?since=${since}&limit=10000`);
+        const response = await fetch(`/api/dynamics?since=0&limit=10000`);
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}`);
@@ -177,23 +78,20 @@ export async function loadDynamicsWithCharts(force = false) {
         const data = await response.json();
 
         if (data.status === 'no_data' || !data.runs || data.runs.length === 0) {
-            // Show helpful empty state
             renderEmptyState(container, data.message);
             return;
         }
 
-        // Store data and update last step
         state.dynamics.data = data.runs[0];
         const steps = data.runs[0].dynamics?.steps || [];
         if (steps.length > 0) {
             state.dynamics.lastStep = Math.max(...steps);
         }
 
-        // Render charts
         renderDynamicsCharts(data.runs[0], container);
         state.dynamics.loaded = true;
 
-        console.log(`[Dynamics] Loaded ${steps.length} data points (up to step ${state.dynamics.lastStep})`);
+        console.log(`[Dynamics] Loaded ${steps.length} data points`);
 
     } catch (error) {
         console.error('[Dynamics] Failed to load:', error);
@@ -201,17 +99,13 @@ export async function loadDynamicsWithCharts(force = false) {
             <div class="error-message">
                 <h3>Error Loading Dynamics</h3>
                 <p>${error.message}</p>
-                <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
-                    Gradient dynamics require logging during training.
-                    See docs/gradient_visualization_proposals.md for details.
-                </p>
             </div>
         `;
     }
 }
 
 /**
- * Render empty state when no dynamics data available
+ * Render empty state
  */
 function renderEmptyState(container, message) {
     const refreshIcon = `
@@ -222,7 +116,7 @@ function renderEmptyState(container, message) {
     `;
 
     const headerHTML = createTabHeader({
-        title: 'Learning',
+        title: 'Gradient Dynamics',
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -236,24 +130,7 @@ function renderEmptyState(container, message) {
         ${headerHTML}
         <div class="empty-state" style="margin-top: 2rem;">
             <h3>No Gradient Dynamics Yet</h3>
-            <p>${message || 'Waiting for training data from Prismatic router...'}</p>
-            <div style="margin-top: 2rem; padding: 1.5rem; background: rgba(100, 150, 200, 0.1); border-radius: 8px; text-align: left;">
-                <h4 style="margin-top: 0;">How Gradient Dynamics Work</h4>
-                <p style="margin: 0.5rem 0;">
-                    When you train with <code>router_type: prismatic</code>, gradient dynamics are <strong>automatically logged</strong>
-                    every 10 steps via the <code>DynamicsLoggerCallback</code>.
-                </p>
-                <p style="margin: 0.5rem 0;">
-                    The chart will show whether aggressive dual-sided perturbations (scale=1.0, top 5% + bottom 5%)
-                    force genuinely different learning dynamics between clean and perturbed experts.
-                </p>
-                <p style="margin-top: 1.5rem; font-size: 0.9em; opacity: 0.8;">
-                    <strong>Key question:</strong> Are bottom weights waking up under ±100% perturbations?
-                </p>
-                <p style="margin: 0.5rem 0; font-size: 0.9em; opacity: 0.8;">
-                    Start training with Prismatic to populate this chart.
-                </p>
-            </div>
+            <p>${message || 'Start training to see gradient dynamics'}</p>
         </div>
     `;
 }
@@ -263,8 +140,6 @@ function renderEmptyState(container, message) {
  */
 function renderDynamicsCharts(runData, container) {
     const dynamics = runData.dynamics || {};
-
-    // API returns 'step' (singular), frontend expects 'steps' (plural)
     const steps = dynamics.steps || dynamics.step || [];
 
     if (steps.length === 0) {
@@ -272,11 +147,10 @@ function renderDynamicsCharts(runData, container) {
         return;
     }
 
-    // Detect number of experts from dynamics keys
-    const expertKeys = Object.keys(dynamics).filter(k => k.match(/^expert_\d+_/));
+    // Detect number of experts
+    const expertKeys = Object.keys(dynamics).filter(k => k.match(/^expert_\d+_grad_norm$/));
     const numExperts = new Set(expertKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1]))).size;
 
-    // Build refresh icon
     const refreshIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
             <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
@@ -284,15 +158,8 @@ function renderDynamicsCharts(runData, container) {
         </svg>
     `;
 
-    // Calculate divergence score (latest value)
-    let divergenceScore = 'N/A';
-    if (dynamics.expert_1_divergence && dynamics.expert_1_divergence.length > 0) {
-        const latest = dynamics.expert_1_divergence[dynamics.expert_1_divergence.length - 1];
-        divergenceScore = latest ? latest.toFixed(4) : 'N/A';
-    }
-
     const headerHTML = createTabHeader({
-        title: 'Learning',
+        title: 'Gradient Dynamics',
         buttons: [{
             id: 'refresh-dynamics-btn',
             label: 'Refresh',
@@ -302,44 +169,26 @@ function renderDynamicsCharts(runData, container) {
         metadata: `
             <span><strong>Points:</strong> ${steps.length}</span>
             <span><strong>Experts:</strong> ${numExperts}</span>
-            <span><strong>Divergence:</strong> ${divergenceScore}</span>
         `
     });
 
-    // Build chart containers
     const chartsHTML = `
         <div style="margin-top: 2rem;">
             <div class="chart-card">
-                <div class="chart-title">Helical Phase Map: View Harmonic Relationships</div>
-                <div class="chart-subtitle">Radial expansion from origin - each view at different phase offset (π-based radial-helical modulation)</div>
-                <div class="chart-wrapper" style="height: 600px;">
-                    <canvas id="dynamics-phase-radial"></canvas>
+                <div class="chart-title">Gradient Norms per Expert</div>
+                <div class="chart-subtitle">L2 norm of gradients across all parameters</div>
+                <div class="chart-wrapper" style="height: 400px;">
+                    <canvas id="dynamics-grad-norms"></canvas>
                 </div>
             </div>
         </div>
 
         <div style="margin-top: 2rem;">
-            <div class="dynamics-controls" style="margin-bottom: 1rem; padding: 1rem; background: rgba(100, 150, 200, 0.05); border-radius: 8px; display: flex; gap: 2rem; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch;">
-                <div style="font-weight: 600; white-space: nowrap;">Granularity:</div>
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
-                    <input type="checkbox" id="show-top-weights" checked>
-                    <span>Coarse</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
-                    <input type="checkbox" id="show-bottom-weights" checked>
-                    <span>Fine</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap;">
-                    <input type="checkbox" id="show-middle-weights" checked>
-                    <span>Unperturbed</span>
-                </label>
-            </div>
-
             <div class="chart-card">
-                <div class="chart-title">Gradient Dynamics: Base Expert + Router Learning</div>
-                <div class="chart-subtitle">Base expert tier gradients (solid lines) + router learning to select views (dashed lines)</div>
+                <div class="chart-title">Gradient Variance per Expert</div>
+                <div class="chart-subtitle">Variance of gradient values across all parameters</div>
                 <div class="chart-wrapper" style="height: 400px;">
-                    <canvas id="dynamics-expert-comparison"></canvas>
+                    <canvas id="dynamics-grad-vars"></canvas>
                 </div>
             </div>
         </div>
@@ -347,398 +196,55 @@ function renderDynamicsCharts(runData, container) {
 
     container.innerHTML = headerHTML + chartsHTML;
 
-    // Render charts after DOM update
+    // Render charts
     setTimeout(() => {
         try {
-            // Create helical phase radial map
-            const metadata = runData.metadata || {};
-            createPiResonanceMap('dynamics-phase-radial', dynamics, metadata);
-
-            // Create gradient comparison chart (existing)
-            createExpertComparisonChart('dynamics-expert-comparison', dynamics, numExperts);
+            createGradientNormsChart('dynamics-grad-norms', dynamics, numExperts);
+            createGradientVarsChart('dynamics-grad-vars', dynamics, numExperts);
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
         }
-
-        // Attach event listeners to controls
-        ['show-top-weights', 'show-bottom-weights', 'show-middle-weights'].forEach(id => {
-            const checkbox = document.getElementById(id);
-            if (checkbox) {
-                checkbox.addEventListener('change', () => {
-                    updateChartVisibility();
-                });
-            }
-        });
     }, 10);
 }
 
 /**
- * Create Helical Phase Map (Radial Polar Visualization)
- *
- * Plots measurements expanding radially from origin, with angular position
- * determined by helical phase offset. Reveals emergent patterns and whether
- * harmonic relationships between experts create stable computational structures.
- *
- * Concept: Time expands outward from center. Each expert positioned at different
- * phase angle based on Euler's formula: phase = expert_idx * 2π / num_experts.
- * If patterns/clustering emerge, it suggests helical structure transfers to learned features.
+ * Create gradient norms chart
  */
-function createPiResonanceMap(canvasId, dynamics, metadata) {
+function createGradientNormsChart(canvasId, dynamics, numExperts) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    // Destroy existing
     if (dynamicsCharts[canvasId]) {
         dynamicsCharts[canvasId].destroy();
     }
 
-    // Get theme colors
-    const theme = getContextTheme(ctx);
-    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
-
-    const steps = dynamics.steps || [];
-    if (steps.length === 0) return;
-
-    const phase_offsets = metadata.phase_offsets || [];
-    const numExperts = metadata.num_experts || 0;
-
-    if (numExperts === 0) return;
-
-    // Color palette for different measurement types (tendrils)
-    const colorPalette = [
-        '#00D9FF',  // Cyan - Top gradients
-        '#FF6B9D',  // Pink - Bottom gradients
-        '#00FF9F',  // Green - Weight angle
-        '#FFD700',  // Gold - Routing weight
-    ];
-
-    const datasets = [];
-
-    // For each expert view, create tendrils
-    // Expert 0: Base expert tier gradients
-    // Expert 1+: Router gradients (how routing learns to select this view)
-    for (let expertIdx = 0; expertIdx < numExperts; expertIdx++) {
-        const phase = phase_offsets[expertIdx] || 0;  // Actual helical phase offset
-
-        // Define measurement tendrils based on what data is available
-        let tendrils = [];
-
-        if (expertIdx === 0) {
-            // Expert 0 (base expert): Show tier gradients
-            tendrils = [
-                {
-                    key: `expert_0_top_norm`,
-                    label: `E0 Top (Base)`,
-                    angleOffset: 0,
-                    color: colorPalette[0]
-                },
-                {
-                    key: `expert_0_bottom_norm`,
-                    label: `E0 Bottom (Base)`,
-                    angleOffset: Math.PI / 4,
-                    color: colorPalette[1]
-                },
-                {
-                    key: `expert_0_middle_norm`,
-                    label: `E0 Middle (Base)`,
-                    angleOffset: Math.PI / 2,
-                    color: colorPalette[2]
-                },
-            ];
-        } else {
-            // Expert 1+ (runtime views): Show router learning for this view
-            tendrils = [
-                {
-                    key: `expert_${expertIdx}_router_weight_expert_${expertIdx}_norm`,
-                    label: `V${expertIdx} Router`,
-                    angleOffset: 0,
-                    color: colorPalette[3]
-                },
-                {
-                    key: `expert_${expertIdx}_routing_weight`,
-                    label: `V${expertIdx} Weight`,
-                    angleOffset: Math.PI / 3,
-                    color: colorPalette[3]
-                },
-            ];
-        }
-
-        for (const tendril of tendrils) {
-            const values = dynamics[tendril.key];
-            if (!values || values.length === 0) continue;
-
-            // Generate points expanding radially from origin
-            const rawRadialPoints = steps.map((step, i) => {
-                const value = values[i];
-                if (value === null || value === undefined) return null;
-
-                // Polar coordinates
-                const radius = step;  // Time expands outward
-                const angle = phase + tendril.angleOffset;  // Helical phase + tendril offset
-
-                // Convert polar → cartesian
-                const x = radius * Math.cos(angle);
-                const y = radius * Math.sin(angle);
-
-                // Point size based on value magnitude
-                const pointRadius = 3 + Math.log(value + 1) * 1.5;
-
-                // Opacity based on value (higher = more opaque)
-                const normalizedValue = Math.min(value / 100, 1.0);
-                const opacity = 0.4 + normalizedValue * 0.5;
-
-                return {
-                    x: x,
-                    y: y,
-                    step: step,
-                    value: value,
-                    angle: angle,
-                    pointRadius: pointRadius,
-                    opacity: opacity
-                };
-            }).filter(p => p !== null);
-
-            if (rawRadialPoints.length === 0) continue;
-
-            // Downsample to max 800 points for performance (scatter charts need fewer points)
-            const radialPoints = downsampleLTTB(rawRadialPoints, 800);
-
-            datasets.push({
-                label: `${tendril.label} (φ=${(phase * 180 / Math.PI).toFixed(0)}°)`,  // Show actual phase angle
-                data: radialPoints,
-                backgroundColor: radialPoints.map(p => {
-                    const hex = tendril.color.replace('#', '');
-                    const r = parseInt(hex.substr(0, 2), 16);
-                    const g = parseInt(hex.substr(2, 2), 16);
-                    const b = parseInt(hex.substr(4, 2), 16);
-                    return `rgba(${r}, ${g}, ${b}, ${p.opacity})`;
-                }),
-                borderColor: tendril.color,
-                borderWidth: 1,
-                pointRadius: radialPoints.map(p => p.pointRadius),
-                pointHoverRadius: radialPoints.map(p => p.pointRadius * 1.8),
-                pointHoverBorderWidth: 2,
-                pointHoverBorderColor: '#fff',
-                expertIdx: expertIdx,
-                phase_offset: phase,  // Actual helical phase
-                tendrilType: tendril.label,
-                showLine: false
-            });
-        }
-    }
-
-    if (datasets.length === 0) {
-        const message = document.createElement('div');
-        message.className = 'empty-state';
-        message.style.padding = '2rem';
-        message.style.textAlign = 'center';
-        message.innerHTML = `
-            <h3>No Data Available</h3>
-            <p>Weight divergence measurements will appear here as training progresses.</p>
-            <p style="margin-top: 1rem; font-size: 0.9em; opacity: 0.7;">
-                This chart reveals if helical modulation (Euler's formula) creates stable patterns.
-            </p>
-        `;
-        ctx.parentElement.appendChild(message);
-        return;
-    }
-
-    // Create radial scatter chart
-    dynamicsCharts[canvasId] = new Chart(ctx, {
-        type: 'scatter',
-        data: { datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'point'
-            },
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: textColor,
-                        usePointStyle: true,
-                        padding: 10,
-                        font: { size: 10 }
-                    }
-                },
-                tooltip: {
-                    backgroundColor: tooltipBg,
-                    titleColor: textColor,
-                    bodyColor: textColor,
-                    borderColor: gridColor,
-                    borderWidth: 1,
-                    padding: 12,
-                    displayColors: true,
-                    callbacks: {
-                        title: (ctx) => {
-                            const point = ctx[0].raw;
-                            return `Step ${point.step}`;
-                        },
-                        label: (ctx) => {
-                            const point = ctx.raw;
-                            const dataset = ctx.dataset;
-                            return [
-                                `${dataset.label}`,
-                                `Value: ${point.value.toExponential(3)}`,
-                                `Position: (${point.x.toFixed(1)}, ${point.y.toFixed(1)})`,
-                                `Angle: ${(point.angle * 180 / Math.PI).toFixed(1)}°`
-                            ];
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'X (Radial Projection)',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    ticks: { color: textColor },
-                    grid: {
-                        color: gridColor,
-                        drawTicks: false
-                    },
-                    // Center the chart by using symmetric bounds
-                    min: undefined,
-                    max: undefined
-                },
-                y: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'Y (Radial Projection)',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    ticks: { color: textColor },
-                    grid: {
-                        color: gridColor,
-                        drawTicks: false
-                    },
-                    // Center the chart
-                    min: undefined,
-                    max: undefined
-                }
-            }
-        }
-    });
-}
-
-/**
- * (Deprecated helix and cascade functions removed - replaced by radial map)
- */
-
-/**
- * Create expert comparison chart
- */
-
-/**
- * Create expert comparison chart
- */
-function createExpertComparisonChart(canvasId, dynamics, numExperts) {
-    const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-
-    // Destroy existing
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
-    // Get colors for the appropriate theme context (hybrid overlay or normal)
-    const theme = getContextTheme(ctx);
-    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
-
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
     const steps = dynamics.steps || [];
 
-    // Build datasets
-    // Expert 0: Show base expert tier gradients (top/bottom/middle)
-    // Expert 1+: Show router gradients (how routing learns to select each view)
     const datasets = [];
+    const colors = ['#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
 
-    // Expert 0 (base expert): Tier gradients
-    const tiers = ['top', 'bottom', 'middle'];
-    const tierLabels = {
-        'top': 'Top 5% (Coarse)',
-        'bottom': 'Bottom 5% (Fine)',
-        'middle': 'Middle 90% (Stable)'
-    };
-
-    tiers.forEach((tier, tierIdx) => {
-        const key = `expert_0_${tier}_norm`;
-        if (!dynamics[key]) return;
+    for (let i = 0; i < numExperts; i++) {
+        const key = `expert_${i}_grad_norm`;
+        if (!dynamics[key]) continue;
 
         const values = dynamics[key];
-        const rawData = steps.map((step, i) => ({
+        const data = steps.map((step, idx) => ({
             x: step,
-            y: values[i]
-        })).filter(point => point.y !== null);
-
-        const data = downsampleLTTB(rawData, 1000);
-
-        const baseColor = ['#4A90E2', '#7EB2F5', '#B3D4FF'][tierIdx];  // Blues
+            y: values[idx]
+        })).filter(p => p.y !== null && p.y !== undefined);
 
         datasets.push({
-            label: `Base Expert - ${tierLabels[tier]}`,
+            label: `Expert ${i}`,
             data: data,
-            borderColor: baseColor,
-            backgroundColor: baseColor + '20',
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length] + '20',
             borderWidth: 2,
             pointRadius: 0,
             pointHoverRadius: 5,
-            pointHoverBackgroundColor: baseColor,
-            pointHoverBorderColor: '#fff',
-            pointHoverBorderWidth: 2,
             tension: 0.3,
-            fill: false,
-            hidden: false,  // Visibility controlled by checkboxes
-            expertIdx: 0,  // Base expert
-            tier: tier
+            fill: false
         });
-    });
-
-    // Expert 1+ (runtime views): Show router gradients
-    for (let viewIdx = 1; viewIdx < numExperts; viewIdx++) {
-        // Router learns to select this view - show gradient on routing weight for this view
-        const routerKey = `expert_${viewIdx}_router_weight_expert_${viewIdx}_norm`;
-
-        if (dynamics[routerKey]) {
-            const values = dynamics[routerKey];
-            const rawData = steps.map((step, i) => ({
-                x: step,
-                y: values[i]
-            })).filter(point => point.y !== null && point.y !== undefined);
-
-            if (rawData.length > 0) {
-                const data = downsampleLTTB(rawData, 1000);
-                const color = ['#FF6B6B', '#FFA07A', '#FFB399'][viewIdx - 1] || '#FF6B6B';
-
-                datasets.push({
-                    label: `View ${viewIdx} Router Learning`,
-                    data: data,
-                    borderColor: color,
-                    backgroundColor: color + '20',
-                    borderWidth: 2,
-                    borderDash: [5, 5],  // Dashed to distinguish from base expert
-                    pointRadius: 0,
-                    pointHoverRadius: 5,
-                    pointHoverBackgroundColor: color,
-                    pointHoverBorderColor: '#fff',
-                    pointHoverBorderWidth: 2,
-                    tension: 0.3,
-                    fill: false,
-                    hidden: false,
-                    expertIdx: viewIdx,
-                    tier: 'router'
-                });
-            }
-        }
     }
 
     dynamicsCharts[canvasId] = new Chart(ctx, {
@@ -758,12 +264,7 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
                     labels: {
                         color: textColor,
                         usePointStyle: true,
-                        padding: 12,
-                        font: { size: 10 },
-                        filter: (item) => {
-                            // Filter out hidden datasets from legend
-                            return !item.hidden;
-                        }
+                        padding: 12
                     }
                 },
                 tooltip: {
@@ -772,16 +273,7 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
                     bodyColor: textColor,
                     borderColor: gridColor,
                     borderWidth: 1,
-                    padding: 12,
-                    displayColors: true,
-                    callbacks: {
-                        title: (ctx) => `Step ${ctx[0].parsed.x}`,
-                        label: (ctx) => {
-                            const value = ctx.parsed.y;
-                            const label = ctx.dataset.label;
-                            return `${label}: ${value.toExponential(3)}`;
-                        }
-                    }
+                    padding: 12
                 }
             },
             scales: {
@@ -790,22 +282,17 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
                     title: {
                         display: true,
                         text: 'Training Step',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
+                        color: textColor
                     },
-                    ticks: {
-                        color: textColor,
-                        maxTicksLimit: 10
-                    },
+                    ticks: { color: textColor },
                     grid: { color: gridColor }
                 },
                 y: {
-                    type: 'logarithmic',  // Log scale for gradient norms
+                    type: 'logarithmic',
                     title: {
                         display: true,
                         text: 'Gradient Norm (L2, Log Scale)',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
+                        color: textColor
                     },
                     ticks: {
                         color: textColor,
@@ -819,32 +306,105 @@ function createExpertComparisonChart(canvasId, dynamics, numExperts) {
 }
 
 /**
- * Update chart visibility based on checkbox state
+ * Create gradient variance chart
  */
-function updateChartVisibility() {
-    const showTop = document.getElementById('show-top-weights')?.checked ?? true;
-    const showBottom = document.getElementById('show-bottom-weights')?.checked ?? true;
-    const showMiddle = document.getElementById('show-middle-weights')?.checked ?? true;
+function createGradientVarsChart(canvasId, dynamics, numExperts) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
 
-    Object.values(dynamicsCharts).forEach(chart => {
-        if (!chart) return;
+    if (dynamicsCharts[canvasId]) {
+        dynamicsCharts[canvasId].destroy();
+    }
 
-        chart.data.datasets.forEach(dataset => {
-            if (dataset.tier === 'top') {
-                dataset.hidden = !showTop;
-            } else if (dataset.tier === 'bottom') {
-                dataset.hidden = !showBottom;
-            } else if (dataset.tier === 'middle') {
-                dataset.hidden = !showMiddle;
-            }
+    const { textColor, gridColor, tooltipBg } = getThemeColors();
+    const steps = dynamics.steps || [];
+
+    const datasets = [];
+    const colors = ['#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
+
+    for (let i = 0; i < numExperts; i++) {
+        const key = `expert_${i}_grad_var`;
+        if (!dynamics[key]) continue;
+
+        const values = dynamics[key];
+        const data = steps.map((step, idx) => ({
+            x: step,
+            y: values[idx]
+        })).filter(p => p.y !== null && p.y !== undefined);
+
+        datasets.push({
+            label: `Expert ${i}`,
+            data: data,
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length] + '20',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            tension: 0.3,
+            fill: false
         });
+    }
 
-        chart.update('none');
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        padding: 12
+                    }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Training Step',
+                        color: textColor
+                    },
+                    ticks: { color: textColor },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    type: 'logarithmic',
+                    title: {
+                        display: true,
+                        text: 'Gradient Variance (Log Scale)',
+                        color: textColor
+                    },
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => value.toExponential(0)
+                    },
+                    grid: { color: gridColor }
+                }
+            }
+        }
     });
 }
 
 /**
- * Destroy all dynamics charts (cleanup)
+ * Destroy all dynamics charts
  */
 export function destroyAllDynamicsCharts() {
     Object.keys(dynamicsCharts).forEach(key => {

@@ -161,7 +161,7 @@ class DynamicsLoggerCallback(Callback):
                 return {}
 
             for layer_idx, layer in enumerate(model.decoder.locals):
-                # Check if this layer has a Prismatic router
+                # Check if this layer has a router
                 if not hasattr(layer, "router"):
                     continue
 
@@ -173,18 +173,24 @@ class DynamicsLoggerCallback(Callback):
                 dynamics = router.log_gradient_dynamics()
 
                 if dynamics:
-                    # Convert new flat format to nested format for compatibility
-                    if not isinstance(dynamics.get("expert_gradients"), dict):
-                        dynamics = self._convert_flat_to_nested(dynamics)
-
-                    if dynamics.get("expert_gradients"):
-                        all_dynamics.append(dynamics)
+                    all_dynamics.append(dynamics)
 
             if not all_dynamics:
                 return {}
 
-            # Aggregate across layers (mean for POC)
-            return self._aggregate_dynamics(all_dynamics)
+            # Aggregate across layers: average gradient norms and variances
+            if len(all_dynamics) == 1:
+                return all_dynamics[0]
+
+            # Average across layers
+            aggregated = {}
+            for key in all_dynamics[0].keys():
+                values = [d.get(key) for d in all_dynamics if key in d]
+                values = [v for v in values if v is not None]
+                if values:
+                    aggregated[key] = sum(values) / len(values)
+
+            return aggregated
 
         except Exception as e:
             print(f"[DynamicsLogger] ❌ Error in _extract_gradient_dynamics: {e}")
@@ -192,124 +198,6 @@ class DynamicsLoggerCallback(Callback):
 
             traceback.print_exc()
             return {}
-
-    def _convert_flat_to_nested(self, flat_dynamics: dict) -> dict:
-        """Convert new flat dynamics format to nested format for DynamicsLogger.
-
-        New flat format (Prismatic v2.0):
-            {
-                "expert_0_top_norm": 0.12,
-                "expert_0_bottom_norm": 0.003,
-                "expert_1_router_weight_expert_1_norm": 0.05,
-                ...
-            }
-
-        Old nested format (expected by DynamicsLogger):
-            {
-                "expert_gradients": {
-                    "expert_0": {"top_norm": 0.12, "bottom_norm": 0.003},
-                    "expert_1": {"router_weight_expert_1_norm": 0.05}
-                },
-                "divergence_scores": {}
-            }
-
-        Args:
-            flat_dynamics: Flat dict from Prismatic.log_gradient_dynamics()
-
-        Returns:
-            Nested dict compatible with DynamicsLogger
-        """
-        expert_gradients = {}
-        divergence_scores = {}
-
-        for key, value in flat_dynamics.items():
-            # Extract expert_idx from key (format: expert_N_...)
-            if not key.startswith("expert_"):
-                continue
-
-            parts = key.split("_", 2)  # Split into ["expert", "N", "rest"]
-            if len(parts) < 3:
-                continue
-
-            expert_key = f"expert_{parts[1]}"  # "expert_0", "expert_1", etc.
-            metric_key = parts[2]  # "top_norm", "router_weight_expert_1_norm", etc.
-
-            # Initialize expert dict if needed
-            if expert_key not in expert_gradients:
-                expert_gradients[expert_key] = {}
-
-            expert_gradients[expert_key][metric_key] = value
-
-        return {
-            "expert_gradients": expert_gradients,
-            "divergence_scores": divergence_scores,
-        }
-
-    def _aggregate_dynamics(self, dynamics_list: list) -> dict:
-        """Aggregate gradient dynamics across multiple Prismatic layers.
-
-        For POC: Simple averaging. Could be extended to track per-layer separately.
-
-        Args:
-            dynamics_list: List of dynamics dicts from each layer
-
-        Returns:
-            Aggregated dynamics dict
-        """
-        if len(dynamics_list) == 0:
-            return {}
-
-        if len(dynamics_list) == 1:
-            return dynamics_list[0]
-
-        # Aggregate expert gradients
-        expert_gradients = {}
-        divergence_scores = {}
-
-        # Collect all expert keys
-        all_experts = set()
-        for dyn in dynamics_list:
-            all_experts.update(dyn.get("expert_gradients", {}).keys())
-
-        # Average gradient norms for each expert
-        for expert_key in all_experts:
-            tier_sums = {}
-            tier_counts = {}
-
-            for dyn in dynamics_list:
-                expert_data = dyn.get("expert_gradients", {}).get(expert_key, {})
-                for metric_key, value in expert_data.items():
-                    if value is None:
-                        continue
-                    if metric_key not in tier_sums:
-                        tier_sums[metric_key] = 0
-                        tier_counts[metric_key] = 0
-                    tier_sums[metric_key] += value
-                    tier_counts[metric_key] += 1
-
-            expert_gradients[expert_key] = {
-                k: tier_sums[k] / tier_counts[k] if tier_counts[k] > 0 else 0
-                for k in tier_sums.keys()
-            }
-
-        # Average divergence scores
-        for dyn in dynamics_list:
-            for div_key, value in dyn.get("divergence_scores", {}).items():
-                if value is None:
-                    continue
-                if div_key not in divergence_scores:
-                    divergence_scores[div_key] = []
-                divergence_scores[div_key].append(value)
-
-        divergence_scores = {
-            k: sum(v) / len(v) if len(v) > 0 else 0
-            for k, v in divergence_scores.items()
-        }
-
-        return {
-            "expert_gradients": expert_gradients,
-            "divergence_scores": divergence_scores,
-        }
 
     def on_train_end(self, trainer, pl_module):
         """Close logger on training end."""

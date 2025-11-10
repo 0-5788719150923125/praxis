@@ -67,16 +67,37 @@ class BaseDecoder(nn.Module):
             for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "prismatic":
-            # For Prismatic, create a base expert block
-            # Prismatic will clone and perturb it to create num_experts diverse copies
-            if self.manager:
-                base_block = self.manager.register_expert(config)
-            else:
-                base_block = BLOCK_REGISTRY[config.block_type](config)
+            # For Prismatic with architectural diversity, create num_experts blocks
+            # with different pos_types that cycle through architectures list
+            architectures = getattr(config, "architectures", ["alibi", "rope"])
+            if not isinstance(architectures, list):
+                architectures = ["alibi", "rope"]
 
-            # Pass base block as a single-element list (experts parameter)
-            # Prismatic will use it as the base for creating perturbed clones
-            expert = LocalLayer(config, block=base_block, expert_blocks=[base_block])
+            expert_blocks = []
+            for expert_idx in range(self.num_experts):
+                # Temporarily modify config to specify pos_type for this expert
+                original_pos_type = getattr(config, "pos_type", None)
+                config.pos_type = architectures[expert_idx % len(architectures)]
+
+                if self.manager:
+                    block = self.manager.register_expert(config)
+                else:
+                    block = BLOCK_REGISTRY[config.block_type](config)
+                expert_blocks.append(block)
+
+                # Debug: Print which architecture was created
+                print(f"[PRISMATIC] Created expert {expert_idx} with pos_type={config.pos_type}")
+
+                # Restore original pos_type
+                if original_pos_type is not None:
+                    config.pos_type = original_pos_type
+                elif hasattr(config, "pos_type"):
+                    delattr(config, "pos_type")
+
+            # Create a single LocalLayer with all expert blocks
+            expert = LocalLayer(
+                config, block=expert_blocks[0], expert_blocks=expert_blocks
+            )
             # Reuse the same expert for all layer positions
             for i in range(self.num_layers):
                 self.locals.append(expert)

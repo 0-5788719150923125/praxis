@@ -10,17 +10,16 @@ from typing import Any, Dict, Optional
 class DynamicsLogger:
     """Logs gradient dynamics to SQLite database for web visualization.
 
-    Tracks expert-level gradient norms by weight tier (top/bottom/middle) to validate
-    whether dual-sided perturbations force genuinely different learning dynamics.
+    Tracks simple gradient metrics per expert: norm and variance.
 
     Usage:
-        logger = DynamicsLogger(run_dir="build/runs/83492c812")
+        logger = DynamicsLogger(run_dir="build/runs/83492c812", num_experts=2)
         dynamics = model.router.log_gradient_dynamics()
         logger.log(step=100, dynamics=dynamics)
         logger.close()
 
     Context manager usage:
-        with DynamicsLogger(run_dir="build/runs/83492c812") as logger:
+        with DynamicsLogger(run_dir="build/runs/83492c812", num_experts=2) as logger:
             dynamics = model.router.log_gradient_dynamics()
             logger.log(step=100, dynamics=dynamics)
     """
@@ -61,7 +60,7 @@ class DynamicsLogger:
         self._create_schema()
 
     def _create_schema(self) -> None:
-        """Create dynamics table with columns for all experts and tiers."""
+        """Create dynamics table with simple gradient metrics per expert."""
         # Build columns dynamically based on num_experts
         columns = [
             "step INTEGER PRIMARY KEY",
@@ -69,18 +68,10 @@ class DynamicsLogger:
             "num_experts INTEGER",
         ]
 
-        tiers = ["top", "bottom", "middle", "clean", "perturbed"]
-        metrics = ["norm", "max", "min", "mean"]  # Added 'mean' metric
-
+        # Simple metrics per expert: gradient norm and variance
         for expert_idx in range(self.num_experts):
-            for tier in tiers:
-                for metric in metrics:
-                    col_name = f"expert_{expert_idx}_{tier}_{metric}"
-                    columns.append(f"{col_name} REAL")
-
-            # Divergence scores (for perturbed experts)
-            if expert_idx > 0:
-                columns.append(f"expert_{expert_idx}_divergence REAL")
+            columns.append(f"expert_{expert_idx}_grad_norm REAL")
+            columns.append(f"expert_{expert_idx}_grad_var REAL")
 
         schema = f"""
         CREATE TABLE IF NOT EXISTS dynamics (
@@ -128,15 +119,13 @@ class DynamicsLogger:
 
         Args:
             step: Training step number
-            dynamics: Dynamics dict from router.log_gradient_dynamics()
+            dynamics: Flat dict from router.log_gradient_dynamics()
                 {
-                    'expert_gradients': {
-                        'expert_0': {'top_norm': 0.12, 'bottom_norm': 0.003, ...},
-                        'expert_1': {'top_norm': 0.08, 'bottom_norm': 0.012, ...}
-                    },
-                    'divergence_scores': {
-                        'expert_1_divergence': 0.05
-                    }
+                    "expert_0_grad_norm": 0.12,
+                    "expert_0_grad_var": 0.003,
+                    "expert_1_grad_norm": 0.08,
+                    "expert_1_grad_var": 0.002,
+                    ...
                 }
         """
         if not dynamics:
@@ -146,48 +135,22 @@ class DynamicsLogger:
             with self.lock:
                 # Build column and value lists
                 columns = ["step", "ts", "num_experts"]
-                # Store num_experts from dynamics data or use configured value
-                num_experts = dynamics.get("num_experts", self.num_experts)
-                values = [step, datetime.now().timestamp(), num_experts]
+                values = [step, datetime.now().timestamp(), self.num_experts]
 
-                # Extract expert gradients
-                expert_grads = dynamics.get("expert_gradients", {})
-
-                for expert_key in sorted(expert_grads.keys()):
-                    expert_data = expert_grads[expert_key]
-                    for metric_key, value in sorted(expert_data.items()):
-                        # Skip non-numeric values (strings, None, etc.)
-                        if not isinstance(value, (int, float)):
-                            continue
-
-                        col_name = f"{expert_key}_{metric_key}"
-                        columns.append(col_name)
-                        values.append(value)
-
-                # Extract divergence scores
-                divergence_scores = dynamics.get("divergence_scores", {})
-                for div_key, value in sorted(divergence_scores.items()):
-                    # Skip non-numeric values
+                # Add all dynamics metrics
+                for key, value in sorted(dynamics.items()):
                     if not isinstance(value, (int, float)):
                         continue
-
-                    columns.append(div_key)
+                    columns.append(key)
                     values.append(value)
 
-                # Ensure all columns exist in the schema (add missing ones dynamically)
-                self._ensure_columns_exist(
-                    columns[3:]
-                )  # Skip step, ts, and num_experts
+                # Ensure all columns exist (handles new experts added dynamically)
+                self._ensure_columns_exist(columns[3:])
 
                 # Build UPSERT query
                 placeholders = ", ".join(["?"] * len(columns))
-
-                # Create update clauses (keep latest non-null values)
-                update_clauses = [
-                    "ts = excluded.ts",
-                    "num_experts = excluded.num_experts",
-                ]
-                for col in columns[3:]:  # Skip step, ts, and num_experts
+                update_clauses = ["ts = excluded.ts", "num_experts = excluded.num_experts"]
+                for col in columns[3:]:
                     update_clauses.append(
                         f"{col} = COALESCE(excluded.{col}, dynamics.{col})"
                     )
@@ -200,13 +163,7 @@ class DynamicsLogger:
                 """
 
                 self.conn.execute(query, values)
-
-                # Gradient dynamics are so infrequent (every 10 training steps by default)
-                # that we should just commit immediately every time for instant dashboard visibility
                 self.conn.commit()
-
-                # Force WAL checkpoint to ensure data is immediately visible to readers
-                # This is critical since the dashboard polls for new data frequently
                 self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
         except Exception as e:

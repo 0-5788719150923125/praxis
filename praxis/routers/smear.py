@@ -321,6 +321,51 @@ class SMEAR(nn.Module):
         """Return collected metrics for logging."""
         return self._metrics.copy()
 
+    def log_gradient_dynamics(self) -> Optional[Dict[str, float]]:
+        """Log gradient statistics for all experts.
+
+        Returns flat dict with per-expert gradient norms and variance.
+
+        Returns:
+            {
+                "expert_0_grad_norm": 0.12,
+                "expert_0_grad_var": 0.003,
+                "expert_1_grad_norm": 0.08,
+                "expert_1_grad_var": 0.002,
+                ...
+            }
+        """
+        if not hasattr(self, "experts") or len(self.experts) == 0:
+            return None
+
+        metrics = {}
+
+        for expert_idx, expert in enumerate(self.experts):
+            grad_norms = []
+            grad_vars = []
+
+            for param in expert.parameters():
+                if param.grad is None:
+                    continue
+
+                grad_norm = param.grad.norm().item()
+                grad_norms.append(grad_norm)
+
+                grad_var = param.grad.var().item()
+                grad_vars.append(grad_var)
+
+            # Aggregate across all parameters
+            if grad_norms:
+                metrics[f"expert_{expert_idx}_grad_norm"] = sum(
+                    g**2 for g in grad_norms
+                ) ** 0.5
+            if grad_vars:
+                metrics[f"expert_{expert_idx}_grad_var"] = sum(grad_vars) / len(
+                    grad_vars
+                )
+
+        return metrics if metrics else None
+
     def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
         """Check if we're in router mode based on arguments."""
         # Router mode if we have 7 positional args or 'layer' in kwargs

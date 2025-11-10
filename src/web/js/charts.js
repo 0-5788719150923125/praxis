@@ -368,6 +368,11 @@ function renderMetricsCharts(data, container) {
                     k.match(/^routing\/expert_\d+_weight$/)    // New format
                 )
             );
+        } else if (config.isComposite && config.keyPattern) {
+            // Check if ANY metrics match the keyPattern
+            return agents.some(a =>
+                Object.keys(a.metrics).some(k => k.match(config.keyPattern))
+            );
         } else {
             // Check regular agent metrics
             return agents.some(a => a.metrics[config.key]?.some(v => v !== null));
@@ -398,8 +403,12 @@ function renderMetricsCharts(data, container) {
             } else if (config.type === 'sampling') {
                 createSamplingWeightsChart(config.canvasId, dataMetrics);
             } else if (config.type === 'multi_expert_line') {
-                // Expert routing convergence chart
-                createExpertRoutingChart(config.canvasId, agents);
+                // Expert routing or architecture selection chart
+                if (config.keyPattern) {
+                    createMultiExpertChart(config.canvasId, config.title, config.label, agents, config.keyPattern);
+                } else {
+                    createExpertRoutingChart(config.canvasId, agents);
+                }
             } else {
                 // Default: line chart
                 createMultiAgentChart(config.canvasId, config.label, agents, config.key);
@@ -906,6 +915,130 @@ function createExpertRoutingChart(canvasId, agents) {
                     ticks: {
                         color: textColor,
                         callback: (value) => `${(value * 100).toFixed(0)}%`
+                    },
+                    grid: { color: gridColor }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Create multi-expert chart for any expert-indexed metric (e.g., architecture selection)
+ * Generic version that works with any keyPattern
+ */
+function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Destroy existing
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
+
+    const theme = getContextTheme(ctx);
+    const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
+
+    const allDatasets = [];
+    let maxExperts = 0;
+
+    agents.forEach((agent, agentIdx) => {
+        const metrics = agent.metrics;
+        const steps = metrics.steps || [];
+
+        // Find all metrics matching the pattern
+        const expertKeys = Object.keys(metrics).filter(k => k.match(keyPattern));
+        maxExperts = Math.max(maxExperts, expertKeys.length);
+
+        expertKeys.forEach((expertKey) => {
+            // Extract expert number
+            const match = expertKey.match(/expert[_/](\d+)/);
+            const expertNum = match ? match[1] : '0';
+            const values = metrics[expertKey] || [];
+
+            const data = steps.map((step, i) => ({
+                x: step,
+                y: values[i]
+            })).filter(point => point.y !== null)
+              .sort((a, b) => a.x - b.x);
+
+            const color = CONSTANTS.RUN_COLORS[parseInt(expertNum) % CONSTANTS.RUN_COLORS.length];
+            const label = agents.length > 1 ? `${agent.name} - Expert ${expertNum}` : `Expert ${expertNum}`;
+
+            allDatasets.push({
+                label: label,
+                data: data,
+                borderColor: color,
+                backgroundColor: color + '20',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                pointHoverBackgroundColor: color,
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 2,
+                tension: 0.3,
+                fill: false
+            });
+        });
+    });
+
+    if (allDatasets.length === 0) {
+        return;
+    }
+
+    charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: allDatasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: textColor,
+                    bodyColor: textColor,
+                    borderColor: gridColor,
+                    borderWidth: 1,
+                    padding: 12
+                }
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Training Step',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    ticks: { color: textColor, maxTicksLimit: 10 },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: yAxisLabel,
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => `${value.toFixed(0)}%`
                     },
                     grid: { color: gridColor }
                 }

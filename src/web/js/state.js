@@ -385,6 +385,8 @@ export const CONSTANTS = {
         { key: 'routing/entropy', canvasId: 'chart-routing-entropy', title: 'Routing Entropy (Balance)', label: 'Entropy', type: 'line' },
         { key: 'routing/concentration', canvasId: 'chart-routing-concentration', title: 'Routing Concentration (Collapse)', label: 'Max Weight', type: 'line' },
         { key: 'routing/variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' },
-        { key: 'routing/balance', canvasId: 'chart-routing-balance', title: 'Routing Balance', label: 'Balance', type: 'line' }
+        { key: 'routing/balance', canvasId: 'chart-routing-balance', title: 'Routing Balance', label: 'Balance', type: 'line' },
+        // Architecture selection metrics (Prismatic v3.0)
+        { key: 'arch_selection_pct', canvasId: 'chart-arch-selection', title: 'Architecture Selection (% Forward Passes)', label: 'Selection %', type: 'multi_expert_line', isComposite: true, keyPattern: /^arch\/expert_\d+_pct$/ }
     ]
 };

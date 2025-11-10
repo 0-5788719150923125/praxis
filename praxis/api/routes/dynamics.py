@@ -360,79 +360,32 @@ def _compute_expert_metadata(
     """
     Compute expert metadata from dynamics data.
 
-    Computes actual helical phase offsets used in perturbations.
-
     Args:
-        metrics: Dynamics metrics dict with keys like "expert_0_top_norm", "expert_0_routing_weight", etc.
-        extra_metadata: Optional additional metadata from database
+        metrics: Dynamics metrics dict
+        extra_metadata: Optional additional metadata
+        stored_num_experts: Number of experts from database
 
     Returns:
-        Dict with:
-            - num_experts: int
-            - phase_offsets: List[float] - actual phase angles used in helical modulation
+        Dict with num_experts
     """
-    # First, use stored num_experts if available (most reliable)
+    # Use stored num_experts if available
     if stored_num_experts is not None:
-        num_experts = int(stored_num_experts)
-    else:
-        # Try to detect num_experts from routing_weight metrics (most reliable data-based detection)
-        # These are logged from router.get_metrics() and represent configured views
-        routing_keys = [
-            k
-            for k in metrics.keys()
-            if k.startswith("expert_") and "routing_weight" in k
-        ]
-        if routing_keys:
-            expert_indices = set()
-            for key in routing_keys:
-                # Format: expert_N_routing_weight
-                parts = key.split("_")
-                if len(parts) >= 2 and parts[0] == "expert":
-                    try:
-                        expert_indices.add(int(parts[1]))
-                    except ValueError:
-                        continue
+        return {"num_experts": int(stored_num_experts)}
 
-            if expert_indices:
-                num_experts = len(expert_indices)
-            else:
-                num_experts = 0
-        else:
-            # Fallback: detect from expert_*_top_norm or other gradient keys
-            expert_keys = [
-                k for k in metrics.keys() if k.startswith("expert_") and "_norm" in k
-            ]
-            if not expert_keys:
-                return {"num_experts": 0, "phase_offsets": []}
+    # Detect from grad_norm metrics
+    expert_keys = [k for k in metrics.keys() if k.startswith("expert_") and "_grad_norm" in k]
 
-            # Extract expert indices
-            expert_indices = set()
-            for key in expert_keys:
-                parts = key.split("_")
-                if len(parts) >= 2 and parts[0] == "expert":
-                    try:
-                        expert_indices.add(int(parts[1]))
-                    except ValueError:
-                        continue
+    if not expert_keys:
+        return {"num_experts": 0}
 
-            num_experts = len(expert_indices)
+    # Extract expert indices
+    expert_indices = set()
+    for key in expert_keys:
+        parts = key.split("_")
+        if len(parts) >= 2 and parts[0] == "expert":
+            try:
+                expert_indices.add(int(parts[1]))
+            except ValueError:
+                continue
 
-    if num_experts == 0:
-        return {"num_experts": 0, "phase_offsets": []}
-
-    # Compute actual helical phase offsets (as used in perturbations)
-    # phase_offset = expert_idx * 2π / num_experts
-    phase_offsets = []
-    for expert_idx in range(num_experts):
-        if expert_idx == 0:
-            # Expert 0 is clean (no phase offset)
-            phase_offsets.append(0.0)
-        else:
-            # Actual phase offset from helical modulation
-            phase_offset = expert_idx * 2 * math.pi / num_experts
-            phase_offsets.append(phase_offset)
-
-    return {
-        "num_experts": num_experts,
-        "phase_offsets": phase_offsets,  # Actual helical phases, not fake pi seeds
-    }
+    return {"num_experts": len(expert_indices)}
