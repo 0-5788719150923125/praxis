@@ -946,8 +946,11 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern)
         const metrics = agent.metrics;
         const steps = metrics.steps || [];
 
+        console.log(`[createMultiExpertChart] Agent: ${agent.name}, Steps: ${steps.length}, First: ${steps[0]}, Last: ${steps[steps.length-1]}`);
+
         // Find all metrics matching the pattern
         const expertKeys = Object.keys(metrics).filter(k => k.match(keyPattern));
+        console.log(`[createMultiExpertChart] Found ${expertKeys.length} keys matching pattern:`, expertKeys);
         maxExperts = Math.max(maxExperts, expertKeys.length);
 
         expertKeys.forEach((expertKey) => {
@@ -956,11 +959,15 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern)
             const expertNum = match ? match[1] : '0';
             const values = metrics[expertKey] || [];
 
+            console.log(`[createMultiExpertChart] Key: ${expertKey}, Values length: ${values.length}, First: ${values[0]}, Last: ${values[values.length-1]}`);
+
             const data = steps.map((step, i) => ({
                 x: step,
                 y: values[i]
             })).filter(point => point.y !== null)
               .sort((a, b) => a.x - b.x);
+
+            console.log(`[createMultiExpertChart] Data points after filtering: ${data.length}, First x: ${data[0]?.x}, Last x: ${data[data.length-1]?.x}`);
 
             const color = CONSTANTS.RUN_COLORS[parseInt(expertNum) % CONSTANTS.RUN_COLORS.length];
             const label = agents.length > 1 ? `${agent.name} - Expert ${expertNum}` : `Expert ${expertNum}`;
@@ -985,6 +992,18 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern)
     if (allDatasets.length === 0) {
         return;
     }
+
+    // Calculate x-axis bounds from all data
+    let minX = Infinity;
+    let maxX = -Infinity;
+    allDatasets.forEach(dataset => {
+        dataset.data.forEach(point => {
+            minX = Math.min(minX, point.x);
+            maxX = Math.max(maxX, point.x);
+        });
+    });
+
+    console.log(`[createMultiExpertChart] Creating chart with X bounds: [${minX}, ${maxX}], ${allDatasets.length} datasets`);
 
     charts[canvasId] = new Chart(ctx, {
         type: 'line',
@@ -1018,16 +1037,25 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern)
             },
             scales: {
                 x: {
+                    type: 'linear',
                     title: {
                         display: true,
                         text: 'Training Step',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
-                    ticks: { color: textColor, maxTicksLimit: 10 },
-                    grid: { color: gridColor }
+                    min: minX,
+                    max: maxX,
+                    ticks: {
+                        color: textColor,
+                        maxTicksLimit: 10,
+                        precision: 0
+                    },
+                    grid: { color: gridColor },
+                    beginAtZero: false
                 },
                 y: {
+                    type: 'linear',
                     title: {
                         display: true,
                         text: yAxisLabel,

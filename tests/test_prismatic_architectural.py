@@ -175,7 +175,7 @@ class TestArchitecturalDiversity:
         assert torch.allclose(routing_2.sum(dim=-1), torch.ones(batch_size))
 
     def test_architecture_selection_tracking(self, config):
-        """Test that architecture selection counts are tracked."""
+        """Test that architecture selection is tracked."""
         expert_alibi = HexAttention(config, pos_type="alibi")
         expert_rope = HexAttention(config, pos_type="rope")
         experts = [expert_alibi, expert_rope]
@@ -190,21 +190,21 @@ class TestArchitecturalDiversity:
         for _ in range(10):
             output, _, _ = prismatic(inputs, None)
 
-        # Check metrics include architecture selection counts
+        # Check metrics include architecture selection
         metrics = prismatic.get_metrics()
 
         assert "arch/expert_0_count" in metrics
         assert "arch/expert_1_count" in metrics
-        assert "arch/expert_0_pct" in metrics
-        assert "arch/expert_1_pct" in metrics
+        assert "arch/expert_0_selected" in metrics
+        assert "arch/expert_1_selected" in metrics
         assert "arch/total_selections" in metrics
 
         # Total selections should be 10
         assert metrics["arch/total_selections"] == 10
 
-        # Percentages should sum to 100
-        total_pct = metrics["arch/expert_0_pct"] + metrics["arch/expert_1_pct"]
-        assert abs(total_pct - 100.0) < 0.01
+        # Exactly one expert should be marked as selected (binary)
+        selected_sum = metrics["arch/expert_0_selected"] + metrics["arch/expert_1_selected"]
+        assert selected_sum == 100.0
 
         # Counts should sum to total
         total_count = metrics["arch/expert_0_count"] + metrics["arch/expert_1_count"]

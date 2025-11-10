@@ -71,9 +71,22 @@ class Prismatic(nn.Module):
         # Metrics
         self._metrics: Dict[str, float] = {}
 
-        # Architecture selection counters
-        self._arch_selection_counts = [0 for _ in range(self.num_experts)]
-        self._total_selections = 0
+        # Architecture selection tracking (buffers for checkpoint serialization)
+        self.register_buffer(
+            "_last_selected_arch",
+            torch.tensor(0, dtype=torch.long),
+            persistent=True
+        )
+        self.register_buffer(
+            "_arch_selection_counts",
+            torch.zeros(self.num_experts, dtype=torch.long),
+            persistent=True
+        )
+        self.register_buffer(
+            "_total_selections",
+            torch.tensor(0, dtype=torch.long),
+            persistent=True
+        )
 
     def forward(
         self, *args, **kwargs
@@ -115,7 +128,8 @@ class Prismatic(nn.Module):
         arch_idx = routing_probs.mean(0).argmax().item()
         selected_expert = self.experts[arch_idx]
 
-        # Track architecture selection BEFORE merging (so metrics reflect current state)
+        # Track architecture selection
+        self._last_selected_arch.fill_(arch_idx)
         self._arch_selection_counts[arch_idx] += 1
         self._total_selections += 1
 
@@ -158,7 +172,8 @@ class Prismatic(nn.Module):
         arch_idx = routing_probs.mean(0).argmax().item()
         selected_expert = self.experts[arch_idx]
 
-        # Track architecture selection BEFORE merging
+        # Track architecture selection
+        self._last_selected_arch.fill_(arch_idx)
         self._arch_selection_counts[arch_idx] += 1
         self._total_selections += 1
 
@@ -230,16 +245,16 @@ class Prismatic(nn.Module):
             balance = 1.0 - ((expert_weights - ideal_weight).abs().sum().item() / 2.0)
             self._metrics["routing/balance"] = balance
 
-            # Architecture selection counts and percentages
+            # Architecture selection: binary indicator showing which arch was used
+            last_arch = self._last_selected_arch.item()
             for i in range(self.num_experts):
-                self._metrics[f"arch/expert_{i}_count"] = float(self._arch_selection_counts[i])
+                self._metrics[f"arch/expert_{i}_selected"] = 100.0 if i == last_arch else 0.0
 
-                # Percentage of total selections
-                if self._total_selections > 0:
-                    percentage = (self._arch_selection_counts[i] / self._total_selections) * 100.0
-                    self._metrics[f"arch/expert_{i}_pct"] = percentage
+            # Cumulative counts for reference
+            for i in range(self.num_experts):
+                self._metrics[f"arch/expert_{i}_count"] = float(self._arch_selection_counts[i].item())
 
-            self._metrics["arch/total_selections"] = float(self._total_selections)
+            self._metrics["arch/total_selections"] = float(self._total_selections.item())
 
         except Exception:
             pass
