@@ -405,7 +405,7 @@ function renderMetricsCharts(data, container) {
             } else if (config.type === 'multi_expert_line') {
                 // Expert routing or architecture selection chart
                 if (config.keyPattern) {
-                    createMultiExpertChart(config.canvasId, config.title, config.label, agents, config.keyPattern);
+                    createMultiExpertChart(config.canvasId, config.title, config.label, agents, config.keyPattern, config);
                 } else {
                     createExpertRoutingChart(config.canvasId, agents);
                 }
@@ -927,7 +927,7 @@ function createExpertRoutingChart(canvasId, agents) {
  * Create multi-expert chart for any expert-indexed metric (e.g., architecture selection)
  * Generic version that works with any keyPattern
  */
-function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern) {
+function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern, options = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -983,7 +983,8 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern)
                 pointHoverBackgroundColor: color,
                 pointHoverBorderColor: '#fff',
                 pointHoverBorderWidth: 2,
-                tension: 0.3,
+                tension: options.stepped ? 0 : 0.3,
+                stepped: options.stepped || false,
                 fill: false
             });
         });
@@ -1063,10 +1064,9 @@ function createMultiExpertChart(canvasId, title, yAxisLabel, agents, keyPattern)
                         font: { size: 13, weight: '500' }
                     },
                     min: 0,
-                    max: 100,
                     ticks: {
                         color: textColor,
-                        callback: (value) => `${value.toFixed(0)}%`
+                        callback: options.stepped ? (value) => value.toFixed(0) : (value) => `${value.toFixed(0)}%`
                     },
                     grid: { color: gridColor }
                 }

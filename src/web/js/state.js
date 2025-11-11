@@ -387,6 +387,6 @@ export const CONSTANTS = {
         { key: 'routing/variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' },
         { key: 'routing/balance', canvasId: 'chart-routing-balance', title: 'Routing Balance', label: 'Balance', type: 'line' },
         // Architecture selection metrics (Prismatic v3.0)
-        { key: 'arch_selection', canvasId: 'chart-arch-selection', title: 'Architecture Selection (Which Expert Used)', label: 'Selected (0=No, 100=Yes)', type: 'multi_expert_line', isComposite: true, keyPattern: /^arch\/expert_\d+_selected$/ }
+        { key: 'arch_selection', canvasId: 'chart-arch-selection', title: 'Architecture Selection (Cumulative Counts)', label: 'Tool Call Count', type: 'multi_expert_line', isComposite: true, keyPattern: /^arch\/expert_\d+_count$/, stepped: true }
     ]
 };

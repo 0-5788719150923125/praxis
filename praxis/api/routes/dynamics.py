@@ -88,8 +88,9 @@ def get_dynamics():
         )
 
         # Read dynamics from SQLite database
+        # Pass limit * 3 to give LTTB algorithm enough data points to work with
         try:
-            dynamics_data = _read_dynamics_from_db(dynamics_file, since_step, limit)
+            dynamics_data = _read_dynamics_from_db(dynamics_file, since_step, limit * 3)
         except Exception as read_error:
             api_logger.error(f"Error reading dynamics database: {read_error}")
             import traceback
@@ -117,6 +118,17 @@ def get_dynamics():
             )
             response.headers.add("Access-Control-Allow-Origin", "*")
             return response
+
+        # Apply LTTB downsampling if we have more points than requested
+        original_count = dynamics_data["num_points"]
+        if original_count > limit:
+            dynamics_data["metrics"] = _downsample_dynamics_lttb(
+                dynamics_data["metrics"], limit
+            )
+            dynamics_data["num_points"] = len(dynamics_data["metrics"]["steps"])
+            api_logger.debug(
+                f"Downsampled dynamics from {original_count} to {dynamics_data['num_points']} points"
+            )
 
         # Detect number of experts and compute metadata for charts
         # First check if num_experts is stored in the database
@@ -156,6 +168,126 @@ def get_dynamics():
         response.headers.add("Access-Control-Allow-Origin", "*")
         response.status_code = 500
         return response
+
+
+def _downsample_dynamics_lttb(
+    metrics: Dict[str, List], target_size: int
+) -> Dict[str, List]:
+    """Downsample dynamics metrics using LTTB algorithm.
+
+    LTTB (Largest Triangle Three Buckets) preserves visual fidelity by selecting
+    points that maintain the shape of time-series curves.
+
+    Args:
+        metrics: Dict with "steps" and metric arrays (e.g., "expert_0_grad_norm")
+        target_size: Target number of points
+
+    Returns:
+        Downsampled metrics dict with same structure
+    """
+    steps = metrics.get("steps") or metrics.get("step", [])
+    if len(steps) <= target_size:
+        return metrics
+
+    if target_size < 3:
+        # For very small targets, return first and last
+        if target_size == 1:
+            indices = [len(steps) - 1]
+        else:
+            indices = [0, len(steps) - 1]
+    else:
+        # LTTB algorithm
+        selected_indices = [0]  # Always include first point
+
+        bucket_size = (len(steps) - 2) / (target_size - 2)
+
+        # For each bucket
+        for bucket_idx in range(target_size - 2):
+            # Current bucket range
+            curr_bucket_start = int(bucket_idx * bucket_size) + 1
+            curr_bucket_end = int((bucket_idx + 1) * bucket_size) + 1
+
+            # Previous point
+            prev_idx = selected_indices[-1]
+            prev_x = steps[prev_idx]
+
+            # Next bucket average (for triangle calculation)
+            next_bucket_start = curr_bucket_end
+            next_bucket_end = min(int((bucket_idx + 2) * bucket_size) + 1, len(steps))
+
+            if next_bucket_end > len(steps):
+                next_bucket_end = len(steps)
+
+            if next_bucket_start >= len(steps):
+                break
+
+            next_avg_x = sum(steps[next_bucket_start:next_bucket_end]) / (
+                next_bucket_end - next_bucket_start
+            )
+
+            # Use first metric array for Y values (typically a gradient norm)
+            # Find first non-step metric
+            y_key = None
+            for key in metrics.keys():
+                if key not in ("steps", "step"):
+                    y_key = key
+                    break
+
+            if not y_key:
+                # No metric data, just sample uniformly
+                selected_indices.extend(
+                    range(
+                        curr_bucket_start,
+                        min(curr_bucket_end, len(steps)),
+                        max(1, (curr_bucket_end - curr_bucket_start) // (target_size - len(selected_indices))),
+                    )
+                )
+                continue
+
+            y_values = metrics[y_key]
+            prev_y = y_values[prev_idx]
+
+            # Calculate next bucket avg y
+            next_avg_y = sum(y_values[next_bucket_start:next_bucket_end]) / (
+                next_bucket_end - next_bucket_start
+            )
+
+            # Find point in current bucket that maximizes triangle area
+            max_area = -1
+            max_area_point = None
+
+            for i in range(curr_bucket_start, min(curr_bucket_end, len(steps))):
+                curr_x = steps[i]
+                curr_y = y_values[i]
+
+                # Triangle area formula
+                area = (
+                    abs(
+                        (prev_x - next_avg_x) * (curr_y - prev_y)
+                        - (prev_x - curr_x) * (next_avg_y - prev_y)
+                    )
+                    * 0.5
+                )
+
+                if area > max_area:
+                    max_area = area
+                    max_area_point = i
+
+            if max_area_point is not None:
+                selected_indices.append(max_area_point)
+
+        selected_indices.append(len(steps) - 1)  # Always include last point
+        indices = sorted(list(set(selected_indices)))  # Deduplicate and sort
+
+    # Apply indices to all metric arrays
+    downsampled = {}
+    for key, values in metrics.items():
+        if isinstance(values, list) and len(values) == len(steps):
+            downsampled[key] = [values[i] for i in indices]
+        else:
+            downsampled[key] = values
+
+    return downsampled
 
 
 def _read_dynamics_from_db(

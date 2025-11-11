@@ -69,7 +69,7 @@ export async function loadDynamicsWithCharts(force = false) {
     container.innerHTML = '<div class="loading-placeholder">Loading gradient dynamics...</div>';
 
     try {
-        const response = await fetch(`/api/dynamics?since=0&limit=10000`);
+        const response = await fetch(`/api/dynamics?since=0&limit=1000`);
 
         if (!response.ok) {
             throw new Error(`API returned ${response.status}`);
@@ -257,7 +257,14 @@ function createGradientNormsChart(canvasId, dynamics, numExperts) {
                 intersect: false,
                 mode: 'index'
             },
+            parsing: false,
+            normalized: true,
             plugins: {
+                decimation: {
+                    enabled: true,
+                    algorithm: 'lttb',
+                    samples: 500
+                },
                 legend: {
                     display: true,
                     position: 'top',
@@ -355,7 +362,14 @@ function createGradientVarsChart(canvasId, dynamics, numExperts) {
                 intersect: false,
                 mode: 'index'
             },
+            parsing: false,
+            normalized: true,
             plugins: {
+                decimation: {
+                    enabled: true,
+                    algorithm: 'lttb',
+                    samples: 500
+                },
                 legend: {
                     display: true,
                     position: 'top',
