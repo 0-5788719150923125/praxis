@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from praxis import PraxisConfig
-from praxis.modeling_praxis import PraxisForCausalLM, PraxisModel
+from praxis.modeling import PraxisForCausalLM, PraxisModel
 
 
 @pytest.fixture

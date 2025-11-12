@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, TypeVar, Union
+import copy
 
 import torch
 import torch.nn as nn
@@ -67,32 +68,37 @@ class BaseDecoder(nn.Module):
             for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "prismatic":
-            # For Prismatic with architectural diversity, create num_experts blocks
-            # with different pos_types that cycle through architectures list
-            architectures = getattr(config, "architectures", ["alibi", "rope"])
-            if not isinstance(architectures, list):
-                architectures = ["alibi", "rope"]
-
+            # For Prismatic with bidirectional masking, create identical experts
+            # from the same "forward-backward-reality seed"
+            # Philosophy: Same initial state, divergence purely from masking constraints
             expert_blocks = []
-            for expert_idx in range(self.num_experts):
-                # Temporarily modify config to specify pos_type for this expert
-                original_pos_type = getattr(config, "pos_type", None)
-                config.pos_type = architectures[expert_idx % len(architectures)]
 
-                if self.manager:
-                    block = self.manager.register_expert(config)
-                else:
-                    block = BLOCK_REGISTRY[config.block_type](config)
-                expert_blocks.append(block)
+            # Ensure both experts use ALiBi (same architecture)
+            original_pos_type = getattr(config, "pos_type", None)
+            config.pos_type = "alibi"
 
-                # Debug: Print which architecture was created
-                print(f"[PRISMATIC] Created expert {expert_idx} with pos_type={config.pos_type}")
+            # Create base expert (Expert 0 - Forward Eye)
+            if self.manager:
+                base_expert = self.manager.register_expert(config)
+            else:
+                base_expert = BLOCK_REGISTRY[config.block_type](config)
+            expert_blocks.append(base_expert)
 
-                # Restore original pos_type
-                if original_pos_type is not None:
-                    config.pos_type = original_pos_type
-                elif hasattr(config, "pos_type"):
-                    delattr(config, "pos_type")
+            print(f"[PRISMATIC] Created base expert (Expert 0 - Forward Eye) with pos_type=alibi")
+
+            # Clone Expert 1 from Expert 0 (same initial conditions)
+            # Divergence emerges purely from temporal masking constraints during training
+            for expert_idx in range(1, self.num_experts):
+                cloned_expert = copy.deepcopy(base_expert)
+                expert_blocks.append(cloned_expert)
+                print(f"[PRISMATIC] Cloned expert {expert_idx} from base expert (Backward Eye)")
+                print(f"  → Identical initial weights, divergence via masking constraints")
+
+            # Restore original pos_type
+            if original_pos_type is not None:
+                config.pos_type = original_pos_type
+            elif hasattr(config, "pos_type"):
+                delattr(config, "pos_type")
 
             # Create a single LocalLayer with all expert blocks
             expert = LocalLayer(

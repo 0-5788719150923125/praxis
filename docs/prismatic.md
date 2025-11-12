@@ -1,187 +1,314 @@
-# Prismatic Attention v3.0: Architectural Diversity
+# Prismatic Attention v6.0: Sparse Bidirectional Temporal Routing
 
 ## Overview
 
-Prismatic v3.0 implements architectural diversity through **different positional encoding strategies**. Instead of gradient perturbations, experts use genuinely different architectures (RoPE vs ALiBi) while sharing merged learnable parameters.
+Prismatic v6.0 implements **sparse bidirectional temporal perspectives** through different attention masking strategies with sequence-level expert selection.
 
-## Key Changes from v2.0
+**Core Concept:**
 
-**v2.0 (Gradient Perturbations):**
-- Modified gradients after backward pass
-- Created optimization trajectory diversity
-- Result: Router collapse (99.7%/0.3% split)
+- **Expert 0 (Forward Eye)**: Standard causal masking - sees past, infers future
+- **Expert 1 (Backward Eye)**: Inverted causal masking - sees future, infers past
+- Both use **identical architecture** (ALiBi positional encoding)
+- Differentiation is purely through **temporal perspective**
+- **Sparse routing**: ONE expert per sequence (not soft parameter merging)
 
-**v3.0 (Architectural Diversity):**
-- Different positional encodings per expert
-- Soft-merge learnable parameters
-- Hard-gate architectural operations
-- Result: Both architectures remain viable
+## Key Changes from v5.0
+
+**v5.0 (SMEAR-style soft parameter merging):**
+
+- Soft-merged expert parameters
+- Ran both experts with merged parameters
+- Had fundamental contradiction: merged params but different masks needed
+- Complex and confusing data flow
+
+**v6.0 (Sparse MoE):**
+
+- Sparse routing: ONE expert selected per sequence
+- Each expert runs independently with its own mask
+- Clean separation: router creates masks, experts process
+- Standard MoE pattern (well-understood, debuggable)
+- Load balancing loss encourages 50/50 usage
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│ Forward Pass                        │
-├─────────────────────────────────────┤
-│ 1. Compute routing probabilities    │
-│ 2. Soft-merge parameters:           │
-│    W_merged = Σ routing[i] × W_i    │
-│ 3. Hard-gate architecture:          │
-│    if routing[rope] > 0.5:          │
-│        use RoPE                     │
-│    else:                            │
-│        use ALiBi                    │
-│ 4. Forward with merged params       │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ Forward Pass (v6.0 Sparse Routing)          │
+├─────────────────────────────────────────────┤
+│ 1. Compute routing probabilities:           │
+│    seq_repr = input.mean(dim=1)             │
+│    logits = router(LayerNorm(seq_repr))     │
+│    probs = softmax(logits)                  │
+│                                             │
+│ 2. Select expert per sequence (top-1):      │
+│    expert_idx = argmax(probs)  # [batch]    │
+│                                             │
+│ 3. Create appropriate mask:                 │
+│    if expert_idx == 0:                      │
+│        mask = forward_mask (sees past)      │
+│    else:                                    │
+│        mask = backward_mask (sees future)   │
+│                                             │
+│ 4. Execute selected expert:                 │
+│    output = expert[expert_idx](input, mask) │
+│                                             │
+│ 5. Load balancing loss:                     │
+│    Encourage 50/50 expert usage             │
+└─────────────────────────────────────────────┘
 ```
 
-## Positional Encodings
+### Attention Masks
 
-### ALiBi (Attention with Linear Biases)
-- Adds linear bias to attention scores
-- Better for very long sequences
+**Forward Masking (Expert 0 - "sees past"):**
+
+```
+Position can attend to:
+     0  1  2  3
+  0 [✓  ✗  ✗  ✗]
+  1 [✓  ✓  ✗  ✗]
+  2 [✓  ✓  ✓  ✗]
+  3 [✓  ✓  ✓  ✓]
+
+Standard autoregressive: predicts next token from history
+```
+
+**Backward Masking (Expert 1 - "sees future"):**
+
+```
+Position can attend to:
+     0  1  2  3
+  0 [✓  ✓  ✓  ✓]
+  1 [✗  ✓  ✓  ✓]
+  2 [✗  ✗  ✓  ✓]
+  3 [✗  ✗  ✗  ✓]
+
+Inverted causality: must infer past from future patterns
+```
+
+## Positional Encoding
+
+Both experts use **ALiBi** (Attention with Linear Biases):
+
+- Adds linear bias to attention scores based on distance
+- Better for long sequences
 - No learned parameters
+- Identical across both experts
 
-### RoPE (Rotary Position Embedding)
-- Rotates Q/K based on position
-- Better for length extrapolation
-- No learned parameters
-
-Both are **operational** differences, not parameter differences, making them ideal for architectural gating.
+The differentiation comes purely from **attention masking**, not positional encoding.
 
 ## Configuration
 
 ```yaml
 router_type: prismatic
-num_experts: 2
-architectures: ["alibi", "rope"]  # Optional, defaults to ["alibi", "rope"]
-attention_type: hex  # Must support pos_type parameter
+num_experts: 2 # Must be 2 for bidirectional masking
+attention_type: hex
+pos_type: alibi # Both experts use ALiBi
+router_balance_loss_coef: 0.01 # Load balancing coefficient
 ```
 
-Prismatic automatically creates experts with different architectures using modulo cycling:
-- Expert 0: `architectures[0 % len(architectures)]` → ALiBi
-- Expert 1: `architectures[1 % len(architectures)]` → RoPE
-- Expert 2: `architectures[2 % len(architectures)]` → ALiBi (cycles back)
-- etc.
+Experts are created identically - differentiation happens through masking in the router.
 
 ## Usage
 
-### Creating Architecturally Diverse Experts
+### Basic Setup
 
 ```python
-from praxis.attention.hex import HexAttention
-from praxis.routers.prismatic import Prismatic
+from praxis.configuration import PraxisConfig
 
-# Prismatic creates experts automatically with different architectures
-prismatic = Prismatic(config, expert_class=HexAttention)
-
-# With 2 experts: ALiBi, RoPE
-# With 4 experts: ALiBi, RoPE, ALiBi, RoPE (cycles)
-```
-
-### Custom Architecture Patterns
-
-```python
-# Custom cycling pattern
-config.architectures = ["rope", "rope", "alibi"]  # 2 RoPE, 1 ALiBi
-config.num_experts = 6
-
-prismatic = Prismatic(config, expert_class=HexAttention)
-# Expert 0: rope
-# Expert 1: rope
-# Expert 2: alibi
-# Expert 3: rope (cycle repeats)
-# Expert 4: rope
-# Expert 5: alibi
+config = PraxisConfig(
+    hidden_size=512,
+    num_heads=8,
+    num_experts=2,
+    router_type="prismatic",
+    pos_type="alibi"
+)
 ```
 
 ### Forward Pass
 
 ```python
 inputs = torch.randn(batch_size, seq_len, hidden_size)
-output, state, loss = prismatic(inputs, None)
+output, cache, state, aux_loss = model(inputs)
+
+# aux_loss includes load balancing loss
+total_loss = task_loss + aux_loss
 ```
 
 ## How It Works
 
-1. **Routing**: Computes probabilities for each architecture
-2. **Parameter Merging**: Soft-merges all learnable weights (QKV, output projections)
-3. **Architecture Gating**: Selects RoPE or ALiBi based on routing probabilities
-4. **Execution**: Runs forward pass with merged parameters through selected architecture
+1. **Routing**: Sequence-level softmax routing (mean pooling → router network)
+2. **Sparse Selection**: Top-1 expert per sequence (argmax)
+3. **Mask Creation**: Router creates forward or backward mask based on selection
+4. **Execution**: Selected expert processes sequence with appropriate mask
+5. **Load Balancing**: MSE loss from uniform distribution (encourages 50/50 usage)
 
 ## Metrics
 
-Prismatic tracks routing metrics:
-- `routing/expert_0_weight`: ALiBi routing weight
-- `routing/expert_1_weight`: RoPE routing weight
-- `routing/entropy`: Distribution balance
-- `routing/concentration`: Max routing weight
-- `routing/balance`: Distribution evenness (1.0 = perfect)
+### Routing Metrics (Research Tab)
 
-### Healthy Routing
+**Expert Routing Weights:**
 
-- Both experts receive >10% routing weight
-- Entropy >0.5
-- Concentration <0.9
-- Router learns meaningful input-dependent patterns
+- `routing/expert_0_weight`: Forward expert average routing probability
+- `routing/expert_1_weight`: Backward expert average routing probability
+- Shows which temporal perspective is preferred on average
+
+**Balance Metrics:**
+
+- `routing/entropy`: Distribution balance (high = balanced, low = collapsed)
+- `routing/concentration`: Max routing weight (1.0 = collapsed, 0.5 = balanced)
+- `routing/variance`: Routing stability across experts
+- `routing/balance`: Distance from uniform (1.0 = perfect balance, 0.0 = collapsed)
+
+**Debug Metrics:**
+
+- `routing/balance_loss`: MSE from uniform distribution
+- `routing/avg_confidence`: Average max probability (routing confidence)
+
+### Gradient Dynamics (Dynamics Tab)
+
+Call `router.log_gradient_dynamics()` during training to enable:
+
+- `expert_0_grad_norm`: L2 norm of expert 0 gradients
+- `expert_0_grad_var`: Variance of expert 0 gradients
+- `expert_1_grad_norm`: L2 norm of expert 1 gradients
+- `expert_1_grad_var`: Variance of expert 1 gradients
+
+### What to Watch
+
+**Healthy Training:**
+
+- Expert weights stay near 0.5 each (balanced usage)
+- Entropy > 0.5 (not collapsed)
+- Both experts receive gradients
+- Routing learns meaningful patterns (not random)
+
+**Warning Signs:**
+
+- One expert weight approaches 1.0 (routing collapse)
+- Entropy near 0 (deterministic routing to one expert)
+- One expert has zero gradients (not learning)
 
 ## Theoretical Foundation
 
-### Computational Substrate Hypothesis
+### Quantum Echoes: Two Temporal Observers
 
-Different architectures traverse the loss landscape differently. RoPE and ALiBi impose different inductive biases:
+**The Core Idea:**
+What if a model could "think backwards"? Not just predict the future from the past, but infer the past from the future?
 
-- **RoPE**: Rotation-based, better at compositional patterns
-- **ALiBi**: Bias-based, better at uniform attention
+**Forward Eye (Expert 0):**
 
-The router learns which inductive bias fits which input patterns.
+- Sees: tokens 0...i
+- Learns: "What comes next based on history"
+- Standard autoregressive prediction
 
-### Connection to "The Blind Watchmaker"
+**Backward Eye (Expert 1):**
 
-> "Different architectural constraints force different gradient trajectories through floating-point approximation space."
+- Sees: tokens i...N
+- Learns: "What must have come before to produce this future"
+- Forced backwards inference (cannot directly see past)
 
-By using different positional encodings, we create genuine architectural diversity without sabotaging learning. Both architectures are proven approaches—neither is "worse," they simply have different strengths.
+**Sparse Selection:**
+The model learns WHEN each perspective is useful:
 
-## Advantages over v2.0
+- Some sequences benefit from forward reasoning
+- Others benefit from backward reasoning
+- Router learns to distinguish and select appropriately
 
-1. **No gradient sabotage**: Both experts learn normally
-2. **Proven architectures**: RoPE and ALiBi are both validated approaches
-3. **Meaningful diversity**: Different inductive biases, not artificial perturbations
-4. **Stable routing**: Router learns which architecture for which patterns
+### Forced Inference vs Direct Access
 
-## Implementation Notes
+**Traditional transformers:**
 
-### HexAttention Support
+- Direct access to all previous tokens
+- Learn patterns through exposure
+- "I see X, so Y follows"
 
-HexAttention now accepts a `pos_type` parameter:
+**Backward expert:**
+
+- No direct access to past
+- Must **infer** what came before from what comes after
+- "I see Y, so X must have preceded it"
+- Develops backwards causal reasoning
+
+### Why Sparse Instead of SMEAR?
+
+**SMEAR's fundamental problem:**
+
+- Merged parameters → ONE forward pass → can only apply ONE mask
+- Bidirectional masking needs DIFFERENT masks per expert
+- These are mutually exclusive
+
+**Sparse MoE solution:**
+
+- Separate forward passes per expert
+- Each expert applies its own mask
+- Outputs combined (not parameters)
+- Standard, well-understood approach
+
+## Advantages over v5.0
+
+1. **Actually Works**: No parameter merging contradiction
+2. **Simpler**: Standard sparse MoE pattern
+3. **Debuggable**: Easy to trace which expert processes which sequence
+4. **Interpretable**: Can analyze which sequences prefer which perspective
+5. **Efficient**: Same computational cost as baseline when balanced (50/50 split)
+6. **Standard**: Well-studied MoE dynamics and training patterns
+
+## Implementation Details
+
+### Clean Separation of Concerns
+
+**Router (`prismatic.py`):**
+
+- Creates forward/backward masks
+- Selects expert per sequence
+- Passes appropriate mask to expert via `attention_mask`
+- Computes load balancing loss
+
+**HexAttention (`hex.py`):**
+
+- Accepts external mask via `attention_mask` parameter
+- Applies mask using score_mod (combines with ALiBi)
+- No knowledge of temporal direction
+
+**Experts (TransformerBlocks):**
+
+- Identical architecture
+- Just process input with provided mask
+- No special masking logic
+
+### Load Balancing
+
+Encourages 50/50 expert usage through MSE loss:
 
 ```python
-attention = HexAttention(config, pos_type="rope")  # or "alibi"
+# Average routing probability per expert
+avg_probs = routing_probs.mean(dim=0)  # [0.5, 0.5] ideal
+
+# MSE from uniform distribution
+target = [0.5, 0.5]
+balance_loss = MSE(avg_probs, target)
 ```
-
-The `pos_type` determines which positional encoding is applied during forward pass.
-
-### Parameter Compatibility
-
-RoPE and ALiBi differ only in **operations**, not parameters:
-- Both use the same QKV projections
-- Both use the same output projection
-- Only the positional encoding step differs
-
-This makes them perfect for soft-parameter merging with hard-operation gating.
 
 ## Future Extensions
 
-Potential architectural differences to explore:
-- Learned vs fixed positional encodings
-- Different attention mechanisms (FlexAttention variants)
-- Different activation functions
-- Different normalization strategies
+Potential enhancements:
 
-The key requirement: operations must differ while parameters remain compatible for merging.
+- **Token-level routing**: More fine-grained than sequence-level
+- **Top-k routing**: Combine multiple perspectives per sequence
+- **More perspectives**: Near-past, far-past, near-future, far-future
+- **Adaptive k**: Learn optimal number of experts per sequence
+- **Hierarchical**: Different perspectives at different layers
+
+The key principle: Same architecture, different **perspectives** on the sequence.
 
 ---
 
-**Version:** 3.0.0
-**Last Updated:** 2025-01-09
-**Breaking Changes:** Complete rewrite from v2.0 gradient perturbation approach
+**Version:** 6.0.0
+**Last Updated:** 2025-01-11
+**Breaking Changes:**
+
+- Removed SMEAR soft parameter merging (incompatible with bidirectional masking)
+- Implemented sparse MoE with sequence-level routing
+- Router now creates and passes masks to experts
+- Experts are truly identical (no instance-level differentiation)
+- Added load balancing loss for stable training

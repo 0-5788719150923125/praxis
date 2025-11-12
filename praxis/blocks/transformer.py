@@ -96,9 +96,21 @@ class TransformerBlock(nn.Module):
         attn_input = self.attn_norm(self.attn_res.format_state(residual), mode="pre")
         if self.use_scaler:
             attn_input = norm_scaling(attn_input, current_depth)
-        attn_output, past_key_values, aux_loss = self.attn(
-            attn_input, attention_mask, past_key_values, block_ids, current_depth
-        )
+
+        # Pass through ghost_position if provided and supported (for bidirectional masking)
+        ghost_position = kwargs.get('ghost_position', 'start')
+        # Check if attention module supports ghost_position (HexAttention does)
+        attn_forward = self.attn.forward
+        import inspect
+        attn_sig = inspect.signature(attn_forward)
+        if 'ghost_position' in attn_sig.parameters:
+            attn_output, past_key_values, aux_loss = self.attn(
+                attn_input, attention_mask, past_key_values, block_ids, current_depth, ghost_position
+            )
+        else:
+            attn_output, past_key_values, aux_loss = self.attn(
+                attn_input, attention_mask, past_key_values, block_ids, current_depth
+            )
         # Apply post-normalization (if configured)
         attn_output = self.attn_norm(attn_output, mode="post")
 

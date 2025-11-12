@@ -1,8 +1,18 @@
 """
-Prismatic Attention: Architectural Diversity Through Parameter Merging
+Prismatic Attention: Sparse Bidirectional Temporal Routing
 
-Receives pre-created experts with different architectures (RoPE vs ALiBi).
-Soft-merges learnable parameters, hard-gates architectural operations.
+v6.0 - Sparse Mixture-of-Eyes:
+Routes sequences to one of two "eyes" with different temporal perspectives:
+- Expert 0 (Forward Eye): Standard causal masking - sees past, infers future
+- Expert 1 (Backward Eye): Inverted causal masking - sees future, infers past
+
+Unlike previous SMEAR approach (soft parameter merging), this uses sparse routing:
+each sequence is processed by ONE expert with the appropriate temporal mask.
+
+Philosophy:
+"Temporal Perspective Selection" - The model learns which temporal perspective
+is most useful for each sequence, then commits to that perspective for processing.
+Clean separation: router creates masks and routes, experts just process with given mask.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -14,39 +24,51 @@ import torch.nn.functional as F
 
 class Prismatic(nn.Module):
     """
-    Prismatic router with architectural diversity.
+    Prismatic router with sparse bidirectional temporal masking.
 
-    Forward pass:
-    1. Compute routing probabilities
-    2. Soft-merge all learnable parameters across experts
-    3. Hard-gate architecture choice based on routing
-    4. Execute forward pass with merged params + selected architecture
+    Routes entire sequences to one of two experts:
+    - Expert 0 (Forward Eye): Sees past, infers future
+    - Expert 1 (Backward Eye): Sees future, infers past
+
+    The router:
+    1. Computes routing probabilities per sequence
+    2. Selects ONE expert per sequence (sparse, top-1)
+    3. Creates appropriate mask (forward or backward)
+    4. Executes selected expert with that mask
+    5. Applies load balancing loss to encourage 50/50 usage
+
+    Key design: Router handles all masking logic. Experts are identical architecture,
+    differentiated only by which mask the router passes to them.
     """
 
-    __version__ = "3.0.0"
+    __version__ = "6.0.0"
 
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
     ):
         """
-        Initialize Prismatic with architecturally diverse experts.
+        Initialize Prismatic with sparse bidirectional routing.
 
         Args:
-            config: Configuration with num_experts, hidden_size, architectures
+            config: Configuration with num_experts, hidden_size
             layout: Unused, kept for compatibility
-            **kwargs: Either 'expert_class' or 'experts'
+            **kwargs: Must include 'experts' parameter
         """
         super().__init__()
 
         self.num_experts = config.num_experts
+        if self.num_experts != 2:
+            raise ValueError(
+                f"Prismatic requires exactly 2 experts (forward/backward), got {self.num_experts}"
+            )
+
         self.hidden_size = config.hidden_size
 
-        # Get experts - they should be pre-created with different architectures
+        # Get experts - should be identical architecture
         experts = kwargs.get("experts")
         if experts is None:
             raise ValueError(
-                "Prismatic requires 'experts' parameter with pre-created expert blocks. "
-                "Experts should be created in base.py with different pos_types via config."
+                "Prismatic requires 'experts' parameter with pre-created expert blocks."
             )
 
         if len(experts) != self.num_experts:
@@ -57,36 +79,21 @@ class Prismatic(nn.Module):
 
         self.experts = nn.ModuleList(experts)
 
-        # Debug: Print received expert architectures
-        print(f"[PRISMATIC ROUTER] Received {len(self.experts)} experts:")
-        for i, expert in enumerate(self.experts):
-            # Try to get pos_type from expert's attention layer
-            pos_type = self._get_expert_pos_type(expert)
-            print(f"  Expert {i}: pos_type={pos_type}")
+        print(f"[PRISMATIC v6.0] Sparse routing with {len(self.experts)} experts")
+        print(f"  Expert 0: Forward eye (sees past)")
+        print(f"  Expert 1: Backward eye (sees future)")
+        print(f"  Routing: Sequence-level, top-1 sparse")
 
-        # Router: learns which architecture for which input
+        # Router: learns to select forward vs backward perspective per sequence
+        # Uses sequence representation (mean pooling) to decide
         self.router_norm = nn.LayerNorm(self.hidden_size)
         self.router = nn.Linear(self.hidden_size, self.num_experts)
 
+        # Load balancing
+        self.balance_loss_coef = getattr(config, "router_balance_loss_coef", 0.01)
+
         # Metrics
         self._metrics: Dict[str, float] = {}
-
-        # Architecture selection tracking (buffers for checkpoint serialization)
-        self.register_buffer(
-            "_last_selected_arch",
-            torch.tensor(0, dtype=torch.long),
-            persistent=True
-        )
-        self.register_buffer(
-            "_arch_selection_counts",
-            torch.zeros(self.num_experts, dtype=torch.long),
-            persistent=True
-        )
-        self.register_buffer(
-            "_total_selections",
-            torch.tensor(0, dtype=torch.long),
-            persistent=True
-        )
 
     def forward(
         self, *args, **kwargs
@@ -99,11 +106,24 @@ class Prismatic(nn.Module):
             float,
         ],
     ]:
-        """Forward pass with architecture gating."""
+        """Forward pass with sparse routing."""
         if self._is_router_mode(args, kwargs):
-            return self._router_forward(*self._parse_router_args(args, kwargs))
+            return self._router_forward(*args, **kwargs)
         else:
-            return self._direct_forward(*self._parse_direct_args(args, kwargs))
+            return self._expert_mode_forward(*args, **kwargs)
+
+    def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
+        """Check if we're in router mode (multiple args) vs expert mode (single arg)."""
+        if len(args) >= 6:
+            return True
+        return "current_depth" in kwargs
+
+    def _expert_mode_forward(
+        self, inputs: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
+        """Expert mode: simple pass-through to first expert."""
+        output, cache, aux_loss = self.experts[0](inputs, attention_mask)
+        return output, cache, aux_loss
 
     def _router_forward(
         self,
@@ -120,154 +140,231 @@ class Prismatic(nn.Module):
         Optional[torch.Tensor],
         float,
     ]:
-        """Router mode forward pass."""
-        # Compute routing probabilities
-        routing_probs = self._compute_routing(inputs)
+        """
+        Router mode: select expert per sequence and execute with appropriate mask.
 
-        # Hard-gate architecture: pick based on routing
-        arch_idx = routing_probs.mean(0).argmax().item()
-        selected_expert = self.experts[arch_idx]
+        Args:
+            layer: The LocalLayer wrapper (unused in sparse routing)
+            inputs: Input tensor [batch, seq_len, hidden_size]
+            attention_mask: Optional padding mask (combined with causal mask)
+            past_key_values: KV cache (if using)
+            current_state: Current hidden state (for routing)
+            current_depth: Current layer depth
+            block_ids: Block IDs for attention
 
-        # Track architecture selection
-        self._last_selected_arch.fill_(arch_idx)
-        self._arch_selection_counts[arch_idx] += 1
-        self._total_selections += 1
+        Returns:
+            output: [batch, seq_len, hidden_size]
+            past_key_values: Updated cache
+            current_state: Updated state (None for now)
+            aux_loss: Load balancing loss
+        """
+        batch_size, seq_len, _ = inputs.shape
 
-        # Soft-merge parameters (this logs metrics with updated counts)
-        merged_params = self._soft_merge_parameters(routing_probs)
+        # Compute routing probabilities per sequence
+        # Use mean pooling to get sequence-level representation
+        seq_repr = inputs.mean(dim=1)  # [batch, hidden_size]
+        seq_repr = self.router_norm(seq_repr)
+        logits = self.router(seq_repr)  # [batch, 2]
+        probs = F.softmax(logits, dim=-1)  # [batch, 2]
 
-        # Forward with merged params
-        result = torch.func.functional_call(
-            selected_expert,
-            merged_params,
-            (
-                inputs,
-                attention_mask,
-                past_key_values,
-                current_state,
-                current_depth,
-                block_ids,
-            ),
-            {},
+        # Top-1 expert selection (sparse)
+        expert_indices = torch.argmax(probs, dim=-1)  # [batch]
+
+        # Create forward and backward masks
+        # These will be passed to experts via attention_mask parameter
+        forward_mask = self._create_causal_mask(
+            seq_len, direction="forward", device=inputs.device
+        )
+        backward_mask = self._create_causal_mask(
+            seq_len, direction="backward", device=inputs.device
         )
 
-        # Normalize return format
-        if isinstance(result, tuple) and len(result) == 4:
-            return result
-        elif isinstance(result, tuple) and len(result) == 3:
-            return result[0], result[1], result[2], 0.0
-        else:
-            return result, past_key_values, current_state, 0.0
+        # Pad masks for ghost token (used by HexAttention)
+        # Forward: ghost at START (standard ghostmax - escape from past)
+        # Backward: ghost at END (inverted ghostmax - escape from future)
+        kv_len = seq_len + 1
 
-    def _direct_forward(
-        self,
-        inputs: torch.Tensor,
-        current_state: Optional[torch.Tensor],
-        current_depth: int = 0,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], float]:
-        """Direct mode forward pass."""
-        routing_probs = self._compute_routing(inputs)
+        # Forward mask: ghost at position 0 (start) - standard ghostmax
+        # Prepend zero column - ghost always accessible
+        forward_mask = torch.cat([torch.zeros(seq_len, 1, device=inputs.device), forward_mask], dim=1)
 
-        # Pick architecture
-        arch_idx = routing_probs.mean(0).argmax().item()
-        selected_expert = self.experts[arch_idx]
+        # Backward mask: ghost at position seq_len (end) - inverted ghostmax
+        # Append zero column - ghost always accessible
+        backward_mask = torch.cat([backward_mask, torch.zeros(seq_len, 1, device=inputs.device)], dim=1)
 
-        # Track architecture selection
-        self._last_selected_arch.fill_(arch_idx)
-        self._arch_selection_counts[arch_idx] += 1
-        self._total_selections += 1
-
-        # Soft-merge parameters (this logs metrics with updated counts)
-        merged_params = self._soft_merge_parameters(routing_probs)
-
-        result = torch.func.functional_call(
-            selected_expert, merged_params, (inputs, current_state), {}
-        )
-
-        if isinstance(result, tuple) and len(result) == 3:
-            return result
-        elif isinstance(result, tuple) and len(result) == 2:
-            return result[0], result[1], 0.0
-        else:
-            return result, current_state, 0.0
-
-    def _compute_routing(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Compute routing probabilities."""
-        router_input = inputs.mean(dim=1)
-        router_input = self.router_norm(router_input)
-
-        normalized_weight = F.normalize(self.router.weight, dim=1)
-        logits = F.linear(router_input, normalized_weight, self.router.bias)
-        routing_probs = F.softmax(logits, dim=-1)
-
-        return routing_probs
-
-    def _soft_merge_parameters(
-        self, routing_probs: torch.Tensor
-    ) -> Dict[str, torch.Tensor]:
-        """Soft-merge parameters weighted by routing probabilities."""
-        expert_weights = routing_probs.mean(dim=0)
-        self._log_routing_metrics(expert_weights, routing_probs)
-
-        merged_params = {}
-        param_names = [name for name, _ in self.experts[0].named_parameters()]
-
-        for param_name in param_names:
-            merged_param = None
-
-            for expert_idx in range(self.num_experts):
-                param = dict(self.experts[expert_idx].named_parameters())[param_name]
-                weighted = param * expert_weights[expert_idx].to(param.device)
-                merged_param = (
-                    weighted if merged_param is None else merged_param + weighted
-                )
-
-            merged_params[param_name] = merged_param
-
-        return merged_params
-
-    def _log_routing_metrics(
-        self, expert_weights: torch.Tensor, routing_probs: torch.Tensor
-    ):
-        """Log routing metrics including architecture selection counts."""
-        try:
-            # Routing probabilities
-            for i in range(self.num_experts):
-                self._metrics[f"routing/expert_{i}_weight"] = expert_weights[i].item()
-
-            probs = expert_weights + 1e-10
-            entropy = -(probs * probs.log()).sum()
-            self._metrics["routing/entropy"] = entropy.item()
-            self._metrics["routing/concentration"] = expert_weights.max().item()
-            self._metrics["routing/variance"] = expert_weights.var().item()
-
-            ideal_weight = 1.0 / self.num_experts
-            balance = 1.0 - ((expert_weights - ideal_weight).abs().sum().item() / 2.0)
-            self._metrics["routing/balance"] = balance
-
-            # Architecture selection: binary indicator showing which arch was used
-            last_arch = self._last_selected_arch.item()
-            for i in range(self.num_experts):
-                self._metrics[f"arch/expert_{i}_selected"] = 100.0 if i == last_arch else 0.0
-
-            # Cumulative counts for reference
-            for i in range(self.num_experts):
-                self._metrics[f"arch/expert_{i}_count"] = float(self._arch_selection_counts[i].item())
-
-            self._metrics["arch/total_selections"] = float(self._total_selections.item())
-
-        except Exception:
+        # Combine with provided attention_mask if present (for padding)
+        if attention_mask is not None:
+            # attention_mask from padding is typically [batch, seq_len] or [batch, 1, 1, seq_len]
+            # We need to broadcast it to [seq_len, seq_len] format and add
+            # For now, assume attention_mask is handled separately by the expert
+            # TODO: Properly combine padding mask with causal mask
             pass
 
+        # Execute experts in parallel batches (efficient sparse MoE)
+        # Group sequences by expert assignment and execute each expert once
+
+        output = torch.zeros_like(inputs)
+        total_aux_loss = 0.0
+
+        # Create masks for which sequences go to which expert
+        expert_0_mask = (expert_indices == 0)  # [batch]
+        expert_1_mask = (expert_indices == 1)  # [batch]
+
+        # Execute expert 0 on all sequences assigned to it (forward eye)
+        # Ghost at START for forward perspective (standard ghostmax - escape from past)
+        if expert_0_mask.any():
+            expert_0_inputs = inputs[expert_0_mask]  # [n0, seq_len, hidden]
+            expert_0_output, _, _, expert_0_aux = self.experts[0](
+                expert_0_inputs,
+                attention_mask=forward_mask,
+                past_key_values=None,
+                current_state=None,
+                current_depth=current_depth,
+                block_ids=block_ids,
+                ghost_position="start",  # Standard ghostmax
+            )
+            output[expert_0_mask] = expert_0_output
+            # Weight aux loss by proportion of batch
+            total_aux_loss += expert_0_aux * expert_0_mask.sum().float() / batch_size
+
+        # Execute expert 1 on all sequences assigned to it (backward eye)
+        # Ghost at END for backward perspective (inverted ghostmax - escape from future)
+        if expert_1_mask.any():
+            expert_1_inputs = inputs[expert_1_mask]  # [n1, seq_len, hidden]
+            expert_1_output, _, _, expert_1_aux = self.experts[1](
+                expert_1_inputs,
+                attention_mask=backward_mask,
+                past_key_values=None,
+                current_state=None,
+                current_depth=current_depth,
+                block_ids=block_ids,
+                ghost_position="end",  # Inverted ghostmax
+            )
+            output[expert_1_mask] = expert_1_output
+            # Weight aux loss by proportion of batch
+            total_aux_loss += expert_1_aux * expert_1_mask.sum().float() / batch_size
+
+        # Compute load balancing loss and add to expert aux losses
+        balance_loss = self._compute_balance_loss(probs)
+        total_aux_loss = total_aux_loss + self.balance_loss_coef * balance_loss
+
+        # Update metrics
+        self._update_metrics(expert_indices, probs, balance_loss)
+
+        return output, past_key_values, current_state, total_aux_loss
+
+    def _create_causal_mask(
+        self, seq_len: int, direction: str, device: torch.device
+    ) -> torch.Tensor:
+        """
+        Create causal attention mask.
+
+        Args:
+            seq_len: Sequence length
+            direction: "forward" or "backward"
+            device: Device to create mask on
+
+        Returns:
+            Additive mask [seq_len, seq_len] with 0 for allowed, -inf for masked
+        """
+        if direction == "forward":
+            # Standard causal: position i can see j where j <= i
+            # Lower triangular matrix (including diagonal)
+            mask = torch.triu(
+                torch.ones(seq_len, seq_len, device=device) * float('-inf'),
+                diagonal=1
+            )
+        elif direction == "backward":
+            # Inverted causal: position i can see j where j >= i
+            # Upper triangular matrix (including diagonal)
+            mask = torch.tril(
+                torch.ones(seq_len, seq_len, device=device) * float('-inf'),
+                diagonal=-1
+            )
+        else:
+            raise ValueError(f"direction must be 'forward' or 'backward', got {direction}")
+
+        return mask
+
+    def _compute_balance_loss(self, probs: torch.Tensor) -> torch.Tensor:
+        """
+        Compute load balancing loss to encourage 50/50 expert usage.
+
+        Args:
+            probs: Routing probabilities [batch, 2]
+
+        Returns:
+            Scalar loss - MSE from uniform distribution
+        """
+        # Average probability per expert across batch
+        avg_probs = probs.mean(dim=0)  # [2]
+
+        # Target: uniform distribution (0.5, 0.5)
+        target = torch.ones_like(avg_probs) / self.num_experts
+
+        # L2 loss
+        balance_loss = F.mse_loss(avg_probs, target)
+
+        return balance_loss
+
+    def _update_metrics(
+        self,
+        expert_indices: torch.Tensor,
+        probs: torch.Tensor,
+        balance_loss: torch.Tensor,
+    ) -> None:
+        """Update routing metrics for logging.
+
+        Metrics are compatible with the web app's Research tab charts:
+        - routing/expert_*_weight: Individual expert routing weights
+        - routing/entropy: Routing balance (high = balanced, low = collapsed)
+        - routing/concentration: Max weight (measures collapse)
+        - routing/variance: Routing stability across experts
+        - routing/balance: How close to uniform distribution (1.0 = perfect)
+        """
+        # Calculate mean routing weights per expert across batch
+        expert_weights = probs.mean(dim=0)  # [num_experts]
+
+        # Per-expert routing weights (for "Expert Routing Weights" chart)
+        # Web app expects: routing/expert_0_weight, routing/expert_1_weight
+        for i in range(self.num_experts):
+            self._metrics[f"routing/expert_{i}_weight"] = expert_weights[i].item()
+
+        # Entropy: H = -Σ(p_i * log(p_i))
+        # Measures routing balance: high = balanced, low = collapsed
+        probs_safe = expert_weights + 1e-10  # Avoid log(0)
+        entropy = -(probs_safe * probs_safe.log()).sum()
+        self._metrics["routing/entropy"] = entropy.item()
+
+        # Concentration: max routing weight
+        # Measures expert collapse: 1.0 = fully collapsed, 1/N = uniform
+        concentration = expert_weights.max()
+        self._metrics["routing/concentration"] = concentration.item()
+
+        # Variance: measures routing stability across experts
+        # High variance = specialized experts, low variance = uniform
+        variance = expert_weights.var()
+        self._metrics["routing/variance"] = variance.item()
+
+        # Balance: distance from uniform distribution (1.0 = perfect balance)
+        # Computed as 1 - max_deviation_from_uniform
+        uniform_weight = 1.0 / self.num_experts
+        max_deviation = (expert_weights - uniform_weight).abs().max()
+        balance = 1.0 - max_deviation.item()
+        self._metrics["routing/balance"] = balance
+
+        # Additional debug metrics
+        self._metrics["routing/balance_loss"] = balance_loss.item()
+        self._metrics["routing/avg_confidence"] = probs.max(dim=-1)[0].mean().item()
+
     def get_metrics(self) -> Dict[str, float]:
-        """Return routing metrics."""
-        return self._metrics.copy()
+        """Get current routing metrics."""
+        return self._metrics
 
     def log_gradient_dynamics(self) -> Optional[Dict[str, float]]:
         """Log gradient statistics for all experts.
 
-        Returns flat dict with per-expert gradient norms and variance.
-        Compatible with any router type, any number of experts.
+        Returns flat dict with per-expert gradient norms and variance for web app.
 
         Returns:
             {
@@ -275,7 +372,6 @@ class Prismatic(nn.Module):
                 "expert_0_grad_var": 0.003,
                 "expert_1_grad_norm": 0.08,
                 "expert_1_grad_var": 0.002,
-                ...
             }
         """
         if not hasattr(self, "experts") or len(self.experts) == 0:
@@ -291,79 +387,26 @@ class Prismatic(nn.Module):
                 if param.grad is None:
                     continue
 
-                # Compute gradient norm for this parameter
                 grad_norm = param.grad.norm().item()
                 grad_norms.append(grad_norm)
 
-                # Compute gradient variance for this parameter
                 grad_var = param.grad.var().item()
                 grad_vars.append(grad_var)
 
-            # Aggregate across all parameters for this expert
+            # Aggregate across all parameters
             if grad_norms:
-                # L2 norm across all parameter gradient norms
                 metrics[f"expert_{expert_idx}_grad_norm"] = sum(
                     g**2 for g in grad_norms
                 ) ** 0.5
             if grad_vars:
-                # Mean variance
                 metrics[f"expert_{expert_idx}_grad_var"] = sum(grad_vars) / len(
                     grad_vars
                 )
 
         return metrics if metrics else None
 
-    def _get_expert_pos_type(self, expert: nn.Module) -> str:
-        """Extract pos_type from expert block (looks inside TransformerBlock for attention)."""
-        # If expert is HexAttention directly
-        if hasattr(expert, "pos_type"):
-            return expert.pos_type
-
-        # If expert is TransformerBlock, look inside for attention
-        if hasattr(expert, "attn") and hasattr(expert.attn, "pos_type"):
-            return expert.attn.pos_type
-
-        # Recursively search for pos_type in any submodule
-        for module in expert.modules():
-            if hasattr(module, "pos_type"):
-                return module.pos_type
-
-        return "unknown"
-
-    def _is_router_mode(self, args: tuple, kwargs: dict) -> bool:
-        return len(args) == 7 or "layer" in kwargs
-
-    def _parse_router_args(self, args: tuple, kwargs: dict) -> tuple:
-        if len(args) == 7:
-            return args
-        return (
-            kwargs["layer"],
-            kwargs["inputs"],
-            kwargs.get("attention_mask"),
-            kwargs.get("past_key_values"),
-            kwargs.get("current_state"),
-            kwargs.get("current_depth", 0),
-            kwargs.get("block_ids"),
-        )
-
-    def _parse_direct_args(
-        self, args: tuple, kwargs: dict
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], int]:
-        if len(args) >= 3:
-            return args[0], args[1], args[2]
-        elif len(args) == 2:
-            return args[0], args[1], 0
-        elif len(args) == 1:
-            return args[0], None, 0
-        else:
-            inputs = kwargs.get("inputs")
-            if inputs is None:
-                raise ValueError("No inputs provided")
-            return inputs, kwargs.get("current_state"), kwargs.get("current_depth", 0)
-
     def __repr__(self) -> str:
         return (
-            f"{self.__class__.__name__}("
-            f"num_experts={self.num_experts}, "
+            f"Prismatic(num_experts={self.num_experts}, "
             f"version={self.__version__})"
         )
