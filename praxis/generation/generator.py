@@ -3,6 +3,7 @@
 import contextlib
 import json
 import re
+import time
 import uuid
 from queue import Queue
 from typing import Any, Dict, Optional
@@ -33,6 +34,11 @@ class Generator:
 
         self.tools = get_tools_json_schema()
         self.call_tool = call_tool
+
+        # Tool calling safety limits
+        self.max_tool_calls_per_request = 3  # Maximum recursive tool calls
+        self.max_tool_call_time = 10.0  # Maximum time (seconds) for all tool calls
+
         print(f"[TOOLS]: Loaded {len(self.tools)} tools.")
 
     @contextlib.contextmanager
@@ -95,11 +101,28 @@ class Generator:
         )
         return self._process_single_request(request)
 
-    def _process_single_request(self, request: GenerationRequest):
+    def _process_single_request(
+        self,
+        request: GenerationRequest,
+        tool_call_depth: int = 0,
+        tool_call_history: list = None,
+        start_time: float = None,
+    ):
         """
         Process a single generation request, automatically handling tool calls if detected.
         Returns the generated text with proper message structure for tool calls.
+
+        Args:
+            request: The generation request to process
+            tool_call_depth: Current recursion depth for tool calls (safety limit)
+            tool_call_history: List of (tool_name, tool_args_json) tuples to detect duplicates
+            start_time: Start time for timeout detection
         """
+        # Initialize tracking on first call
+        if tool_call_history is None:
+            tool_call_history = []
+        if start_time is None:
+            start_time = time.time()
         # Check if the prompt is already a list of messages
         if isinstance(request.prompt, list):
             # Apply chat template to messages
@@ -275,6 +298,23 @@ class Generator:
         if unprocessed_call and self.tools and self.call_tool:
             tool_call, _ = unprocessed_call
 
+            # === SAFETY CHECK 1: Maximum recursion depth ===
+            if tool_call_depth >= self.max_tool_calls_per_request:
+                print(
+                    f"[TOOL_SAFETY] Maximum tool call depth ({self.max_tool_calls_per_request}) reached. Stopping recursion."
+                )
+                print(f"[TOOL_SAFETY] Tool call history: {tool_call_history}")
+                return return_text
+
+            # === SAFETY CHECK 2: Timeout protection ===
+            elapsed_time = time.time() - start_time
+            if elapsed_time > self.max_tool_call_time:
+                print(
+                    f"[TOOL_SAFETY] Tool calling timeout ({self.max_tool_call_time}s) exceeded after {elapsed_time:.2f}s."
+                )
+                print(f"[TOOL_SAFETY] Completed {tool_call_depth} tool calls before timeout.")
+                return return_text
+
             # Execute the tool
             tool_name = tool_call.get("name")
             tool_args = tool_call.get("arguments", {})
@@ -294,10 +334,27 @@ class Generator:
                     )
                     return return_text
 
+            # === SAFETY CHECK 3: Duplicate tool call detection ===
+            # Create a signature for this tool call (name + sorted args)
+            tool_signature = (tool_name, json.dumps(tool_args, sort_keys=True))
+            if tool_signature in tool_call_history:
+                print(
+                    f"[TOOL_SAFETY] Duplicate tool call detected: {tool_name}({tool_args})"
+                )
+                print(
+                    f"[TOOL_SAFETY] This tool was already called with identical arguments."
+                )
+                print(f"[TOOL_SAFETY] Stopping to prevent infinite loop.")
+                print(f"[TOOL_SAFETY] Tool call history: {[sig[0] for sig in tool_call_history]}")
+                return return_text
+
             try:
                 tool_result = self.call_tool(tool_name, tool_args)
                 print(f"Called tool: {tool_name} with args: {tool_args}")
                 print(f"Tool result: {tool_result}")
+
+                # Add this tool call to history (after successful execution)
+                tool_call_history.append(tool_signature)
 
                 # Build a new messages list with the tool result
                 if isinstance(request.prompt, list):
@@ -337,7 +394,13 @@ class Generator:
 
                 # Recursively process to get the model's response after tool execution
                 # This will handle any additional tool calls the model might make
-                final_response = self._process_single_request(tool_response_request)
+                # Pass tracking parameters to maintain safety limits across recursion
+                final_response = self._process_single_request(
+                    tool_response_request,
+                    tool_call_depth=tool_call_depth + 1,
+                    tool_call_history=tool_call_history,
+                    start_time=start_time,
+                )
                 return final_response
 
             except Exception as e:

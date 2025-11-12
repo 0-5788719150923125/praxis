@@ -278,10 +278,17 @@ function handleInputBlur(e) {
 }
 
 /**
- * Handle input click (prevent cursor before prefix)
+ * Handle input click (clear placeholder and prevent cursor before prefix)
  */
 function handleInputClick(e) {
     const input = e.target;
+
+    // Clear placeholder on click
+    if (state.isShowingPlaceholder) {
+        hidePlaceholder();
+    }
+
+    // Prevent cursor before prefix
     if (input.selectionStart < CONSTANTS.PREFIX.length) {
         setCursorAfterPrefix();
     }
@@ -307,6 +314,7 @@ function showPlaceholder() {
     input.value = CONSTANTS.PREFIX + CONSTANTS.PLACEHOLDER_TEXT;
     input.style.color = 'var(--light-text)';
     input.style.fontStyle = 'italic';
+    input.style.height = 'auto'; // Reset height to default (collapse to single line)
     state.isShowingPlaceholder = true;
     setCursorAfterPrefix();
 }
@@ -355,8 +363,13 @@ async function sendUserMessage() {
     // Add user message to state
     state.messages.push({ role: 'user', content });
 
-    // Reset input to placeholder
-    showPlaceholder();
+    // Clear input without showing placeholder (let blur handler do that if needed)
+    input.value = CONSTANTS.PREFIX;
+    input.style.height = 'auto'; // Reset height to single line
+    input.style.color = '';
+    input.style.fontStyle = '';
+    state.isShowingPlaceholder = false;
+    setCursorAfterPrefix();
 
     // Show thinking indicator
     state.isThinking = true;
