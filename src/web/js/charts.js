@@ -268,6 +268,15 @@ export async function loadResearchMetricsWithCharts(force = false) {
         renderMetricsCharts({ agents: agentMetrics, dataMetrics: agentDataMetrics }, container);
         state.research.loaded = true;
 
+        // Set up refresh button event listener (manual reload)
+        const refreshBtn = document.getElementById('refresh-metrics-btn');
+        if (refreshBtn) {
+            refreshBtn.onclick = () => {
+                console.log('[Charts] Manual refresh triggered');
+                loadResearchMetricsWithCharts(true);  // Force reload
+            };
+        }
+
     } catch (error) {
         console.error('[Charts] Error loading metrics:', error);
         container.innerHTML = `

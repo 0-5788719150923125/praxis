@@ -207,33 +207,50 @@ class HexAttention(nn.Module):
         return block_mask
 
     def _create_score_mod_from_additive_mask(
-        self, attention_mask: Tensor, score_mod: Optional[callable] = None
+        self, attention_mask: Tensor, seq_len: int, score_mod: Optional[callable] = None
     ) -> callable:
         """
         Create a score_mod function that applies an additive mask and optional positional bias.
 
+        Handles ghost token by treating position 0 (ghost) specially.
+
         Args:
-            attention_mask: Additive mask [q_len, kv_len] with 0/-inf values
+            attention_mask: Additive mask [seq_len, seq_len] with 0/-inf values (before ghost)
+            seq_len: Original sequence length (before ghost token)
             score_mod: Optional existing score_mod (e.g., for ALiBi) to chain
 
         Returns:
             A score_mod function that can be passed to FlexAttention
         """
         # Capture the mask tensor for use in score_mod
-        # Note: This works because PyTorch's JIT can handle tensor indexing
         mask = attention_mask
+        seq_len_tensor = torch.tensor(seq_len, device=attention_mask.device, dtype=torch.int32)
 
         if score_mod is None:
             def combined_score_mod(score, b, h, q_idx, kv_idx):
-                """Apply additive mask only."""
-                return score + mask[q_idx, kv_idx]
+                """Apply additive mask with ghost token handling."""
+                # Ghost token at kv_idx=0 is always accessible (return 0)
+                # Original positions shifted: kv_idx=1 → original pos 0
+                if kv_idx == 0:
+                    return score  # Ghost token, no mask penalty
+                elif kv_idx <= seq_len_tensor and q_idx < seq_len_tensor:
+                    # Both in original sequence range, apply mask
+                    # Adjust indices: kv_idx-1 because ghost shifts everything
+                    return score + mask[q_idx, kv_idx - 1]
+                else:
+                    return score
         else:
             def combined_score_mod(score, b, h, q_idx, kv_idx):
-                """Apply both additive mask and positional bias (e.g., ALiBi)."""
+                """Apply both additive mask and positional bias."""
                 # First apply positional bias
                 score = score_mod(score, b, h, q_idx, kv_idx)
-                # Then apply additive mask
-                return score + mask[q_idx, kv_idx]
+                # Then apply mask (with ghost handling)
+                if kv_idx == 0:
+                    return score  # Ghost token
+                elif kv_idx <= seq_len_tensor and q_idx < seq_len_tensor:
+                    return score + mask[q_idx, kv_idx - 1]
+                else:
+                    return score
 
         return combined_score_mod
 
@@ -244,7 +261,6 @@ class HexAttention(nn.Module):
         past_key_values: Optional[Tensor] = None,
         block_ids: Optional[Tensor] = None,
         current_depth: int = 0,
-        ghost_position: str = "start",
     ) -> Tuple[Tensor, Optional[Tensor], float]:
         """
         Forward pass of the FlexAttention module.
@@ -255,9 +271,6 @@ class HexAttention(nn.Module):
             past_key_values: Optional cache for key/value pairs (not currently supported)
             block_ids: Optional tensor indicating block structure
             current_depth: Current depth in the network (for caching)
-            ghost_position: Where to place ghostmax token - "start" or "end" (default: "start")
-                          "start" for forward masking (escape from past context)
-                          "end" for backward masking (escape from future context)
 
         Returns:
             Tuple containing:
@@ -305,38 +318,27 @@ class HexAttention(nn.Module):
 
             score_mod = alibi_score_mod
 
-        # Ghostmax: Add zero token to K and V (after positional encoding)
-        # Position depends on temporal perspective:
-        # - "start": Forward masking (escape from past context) - STANDARD GHOSTMAX
-        # - "end": Backward masking (escape from future context)
+        # Ghostmax: Prepend zero token to K and V (after positional encoding)
+        # Provides escape from attending to specific past context
         zero_k = torch.zeros(
             batch_size, self.num_heads, 1, self.head_dim, device=k.device, dtype=k.dtype
         )
         zero_v = torch.zeros(
             batch_size, self.num_heads, 1, self.head_dim, device=v.device, dtype=v.dtype
         )
-
-        if ghost_position == "start":
-            # Prepend ghost for forward masking (standard ghostmax)
-            k = torch.cat([zero_k, k], dim=2)  # (B, H, T+1, D)
-            v = torch.cat([zero_v, v], dim=2)  # (B, H, T+1, D)
-        else:  # "end"
-            # Append ghost for backward masking (inverted ghostmax)
-            k = torch.cat([k, zero_k], dim=2)  # (B, H, T+1, D)
-            v = torch.cat([v, zero_v], dim=2)  # (B, H, T+1, D)
-
+        k = torch.cat([zero_k, k], dim=2)  # (B, H, T+1, D)
+        v = torch.cat([zero_v, v], dim=2)  # (B, H, T+1, D)
         kv_len = seq_len + 1
 
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
-        # Handle masking: provided mask via score_mod, or standard causal via block_mask
-        if attention_mask is not None:
-            # Custom mask provided: apply via score_mod (combining with ALiBi if present)
-            score_mod = self._create_score_mod_from_additive_mask(attention_mask, score_mod)
-            block_mask = None  # Don't use block_mask when applying custom additive mask
-        elif self.causal:
-            # Fallback: create standard causal block_mask
+        # Handle masking: use standard causal block_mask
+        # Note: attention_mask parameter is for padding masks (not used with FlexAttention)
+        # Custom causal masks from routers (like bidirectional) would use score_mod,
+        # but v7.0 uses standard causal masking only
+        if self.causal:
+            # Create standard causal block_mask
             block_mask = self._create_causal_mask(seq_len, kv_len, inputs.device)
         else:
             block_mask = None

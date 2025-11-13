@@ -68,31 +68,29 @@ class BaseDecoder(nn.Module):
             for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "prismatic":
-            # For Prismatic with bidirectional masking, create identical experts
-            # from the same "forward-backward-reality seed"
-            # Philosophy: Same initial state, divergence purely from masking constraints
+            # For Prismatic with architectural diversity, create experts with different pos_type
+            # Philosophy: Test "Blind Watchmaker" hypothesis - architectural diversity
+            # reveals patterns single approaches cannot discover
             expert_blocks = []
+            pos_types = ["alibi", "rope"]  # Expert 0: ALiBi, Expert 1: RoPE
 
-            # Ensure both experts use ALiBi (same architecture)
             original_pos_type = getattr(config, "pos_type", None)
-            config.pos_type = "alibi"
 
-            # Create base expert (Expert 0 - Forward Eye)
-            if self.manager:
-                base_expert = self.manager.register_expert(config)
-            else:
-                base_expert = BLOCK_REGISTRY[config.block_type](config)
-            expert_blocks.append(base_expert)
+            for expert_idx in range(self.num_experts):
+                # Set positional encoding for this expert
+                config.pos_type = pos_types[expert_idx % len(pos_types)]
 
-            print(f"[PRISMATIC] Created base expert (Expert 0 - Forward Eye) with pos_type=alibi")
+                if self.manager:
+                    block = self.manager.register_expert(config)
+                else:
+                    block = BLOCK_REGISTRY[config.block_type](config)
+                expert_blocks.append(block)
 
-            # Clone Expert 1 from Expert 0 (same initial conditions)
-            # Divergence emerges purely from temporal masking constraints during training
-            for expert_idx in range(1, self.num_experts):
-                cloned_expert = copy.deepcopy(base_expert)
-                expert_blocks.append(cloned_expert)
-                print(f"[PRISMATIC] Cloned expert {expert_idx} from base expert (Backward Eye)")
-                print(f"  → Identical initial weights, divergence via masking constraints")
+                print(f"[PRISMATIC v7.0] Created expert {expert_idx} with pos_type={config.pos_type}")
+
+            print(f"[PRISMATIC v7.0] Architectural diversity: ALiBi vs RoPE")
+            print(f"  Expert 0: ALiBi (linear distance bias)")
+            print(f"  Expert 1: RoPE (rotational encoding)")
 
             # Restore original pos_type
             if original_pos_type is not None:

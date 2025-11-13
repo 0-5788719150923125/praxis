@@ -1,12 +1,12 @@
 """
-Test suite for Prismatic router with sparse bidirectional temporal routing.
+Test suite for Prismatic v7.0: Architectural Diversity (ALiBi vs RoPE).
 
 Tests verify:
-1. Sparse routing selects one expert per sequence
-2. Mask creation (forward vs backward)
-3. Load balancing loss
-4. Metrics are logged correctly
-5. Gradients flow to router
+1. Experts created with different pos_type
+2. Sparse routing works correctly
+3. Load balancing prevents collapse
+4. Metrics logged correctly
+5. Gradients flow to both experts
 """
 
 import copy
@@ -35,146 +35,98 @@ class SimpleDenseBlock(nn.Module):
         current_state=None,
         current_depth=0,
         block_ids=None,
-        **kwargs  # Accept ghost_position and other parameters
+        **kwargs
     ):
         x = self.linear(inputs)
         x = self.norm(x)
         return x, past_key_values, current_state, 0.0
 
 
-class TestExpertCloning:
-    """Test that experts are cloned from same initial state."""
+class TestArchitecturalDiversity:
+    """Test that experts use different positional encodings."""
 
-    def test_experts_start_identical(self):
-        """Verify Expert 1 is cloned from Expert 0 with identical weights."""
+    def test_experts_have_different_pos_types(self):
+        """Verify ALiBi and RoPE experts are created."""
         config = PraxisConfig(
             hidden_size=64,
             num_heads=4,
             num_queries=1,
             num_experts=2,
             router_type="prismatic",
-            causal=True,
-            pos_type="alibi"
+            causal=True
         )
 
-        # Create experts
-        from praxis.blocks.transformer import TransformerBlock
-        base_expert = TransformerBlock(config)
-        cloned_expert = copy.deepcopy(base_expert)
+        # Create experts with different pos_types
+        from praxis.attention.hex import HexAttention
 
-        experts = [base_expert, cloned_expert]
-        router = Prismatic(config, experts=experts)
+        alibi_expert = HexAttention(config, pos_type="alibi")
+        rope_expert = HexAttention(config, pos_type="rope")
 
-        # Verify all parameters are identical at initialization
-        for (name0, param0), (name1, param1) in zip(
-            router.experts[0].named_parameters(),
-            router.experts[1].named_parameters()
-        ):
-            assert name0 == name1, f"Parameter names differ: {name0} vs {name1}"
-            assert torch.allclose(param0, param1), f"Parameters differ for {name0}"
+        router = Prismatic(config, experts=[alibi_expert, rope_expert])
 
-        print("[TEST] ✓ Experts start with identical weights (same reality seed)")
+        # Verify pos_types
+        assert router.experts[0].pos_type == "alibi"
+        assert router.experts[1].pos_type == "rope"
 
-    def test_cloned_experts_maintain_independence(self):
-        """Verify cloned experts are independent and can diverge during training."""
+        print("[TEST] ✓ Expert 0 uses ALiBi, Expert 1 uses RoPE")
+
+    def test_different_architectures_produce_different_outputs(self):
+        """Verify ALiBi and RoPE produce different outputs on same input."""
         config = PraxisConfig(
             hidden_size=64,
             num_heads=4,
             num_queries=1,
-            num_experts=2,
-            router_type="prismatic"
+            dropout=0.0,
+            causal=True
         )
 
-        # Create and clone simple experts
-        base_expert = SimpleDenseBlock(config.hidden_size)
-        cloned_expert = copy.deepcopy(base_expert)
+        from praxis.attention.hex import HexAttention
 
-        # Verify they start identical
-        for (n0, p0), (n1, p1) in zip(base_expert.named_parameters(), cloned_expert.named_parameters()):
-            assert torch.allclose(p0, p1), f"Cloned expert differs at {n0}"
+        alibi_attn = HexAttention(config, pos_type="alibi")
+        rope_attn = HexAttention(config, pos_type="rope")
 
-        # Verify they're independent PyTorch modules (different objects)
-        assert base_expert is not cloned_expert, "Experts should be different objects"
-        assert base_expert.linear is not cloned_expert.linear, "Submodules should be different objects"
+        # Same input
+        inputs = torch.randn(1, 8, config.hidden_size)
 
-        # Verify parameter independence by modifying one
-        with torch.no_grad():
-            original_weight = base_expert.linear.weight.clone()
-            base_expert.linear.weight.add_(0.1)  # Modify base expert
+        # Different outputs (different pos_type)
+        out_alibi, _, _ = alibi_attn(inputs)
+        out_rope, _, _ = rope_attn(inputs)
 
-            # Cloned expert should be unaffected
-            assert not torch.allclose(base_expert.linear.weight, cloned_expert.linear.weight), \
-                "Modifying base expert should not affect clone"
+        assert not torch.allclose(out_alibi, out_rope, atol=1e-3), \
+            "ALiBi and RoPE should produce different outputs"
 
-            # Restore
-            base_expert.linear.weight.copy_(original_weight)
+        print("[TEST] ✓ Architectural diversity creates different representations")
 
-        print("[TEST] ✓ Cloned experts are independent PyTorch modules")
-        print("[TEST] ✓ Constraint-driven divergence possible (from same initial state)")
-
-
-class TestMaskCreation:
-    """Test Prismatic mask creation."""
-
-    def test_forward_mask_creation(self):
-        """Verify Prismatic creates correct forward causal mask."""
+    def test_supports_n_experts_with_modulus_cycling(self):
+        """Verify Prismatic supports N experts with architecture cycling."""
         config = PraxisConfig(
             hidden_size=64,
             num_heads=4,
             num_queries=1,
-            num_experts=2,
-            router_type="prismatic"
+            num_experts=4,
+            router_type="prismatic",
+            causal=True
         )
 
-        # Create dummy experts
-        experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
+        from praxis.attention.hex import HexAttention
+
+        # Create 4 experts with cycling architectures
+        experts = []
+        pos_types = ["alibi", "rope"]
+        for i in range(4):
+            expert = HexAttention(config, pos_type=pos_types[i % len(pos_types)])
+            experts.append(expert)
+
         router = Prismatic(config, experts=experts)
 
-        # Create forward mask
-        seq_len = 4
-        forward_mask = router._create_causal_mask(
-            seq_len, direction="forward", device=torch.device("cpu")
-        )
+        # Verify cycling: alibi, rope, alibi, rope
+        assert router.experts[0].pos_type == "alibi"
+        assert router.experts[1].pos_type == "rope"
+        assert router.experts[2].pos_type == "alibi"
+        assert router.experts[3].pos_type == "rope"
 
-        # Verify shape
-        assert forward_mask.shape == (seq_len, seq_len)
-
-        # Forward causal: position i can see j where j <= i
-        assert forward_mask[0, 0] == 0.0
-        assert forward_mask[0, 1] == float('-inf')
-
-        # Row 3 should see all positions
-        assert torch.all(forward_mask[3, :] == 0.0)
-
-    def test_backward_mask_creation(self):
-        """Verify Prismatic creates correct backward causal mask."""
-        config = PraxisConfig(
-            hidden_size=64,
-            num_heads=4,
-            num_queries=1,
-            num_experts=2,
-            router_type="prismatic"
-        )
-
-        experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
-        router = Prismatic(config, experts=experts)
-
-        # Create backward mask
-        seq_len = 4
-        backward_mask = router._create_causal_mask(
-            seq_len, direction="backward", device=torch.device("cpu")
-        )
-
-        # Verify shape
-        assert backward_mask.shape == (seq_len, seq_len)
-
-        # Backward causal: position i can see j where j >= i
-        # Row 0 should see all positions
-        assert torch.all(backward_mask[0, :] == 0.0)
-
-        # Row 3 should only see position 3
-        assert backward_mask[3, 3] == 0.0
-        assert backward_mask[3, 0] == float('-inf')
+        print("[TEST] ✓ Supports N experts with modulus cycling")
+        print("  Expert 0: ALiBi, Expert 1: RoPE, Expert 2: ALiBi, Expert 3: RoPE")
 
 
 class TestSparseRouting:
@@ -198,20 +150,21 @@ class TestSparseRouting:
         seq_len = 8
         inputs = torch.randn(batch_size, seq_len, config.hidden_size)
 
-        # Get sequence representation and route
+        # Get routing decision
         seq_repr = inputs.mean(dim=1)
         seq_repr = router.router_norm(seq_repr)
         logits = router.router(seq_repr)
         probs = torch.nn.functional.softmax(logits, dim=-1)
         expert_indices = torch.argmax(probs, dim=-1)
 
-        # Verify we have one expert index per sequence
+        # Verify one expert per sequence
         assert expert_indices.shape == (batch_size,)
-        assert expert_indices.dtype == torch.long
         assert torch.all((expert_indices == 0) | (expert_indices == 1))
 
+        print("[TEST] ✓ Sparse routing: one expert per sequence")
+
     def test_gradients_flow_to_router(self):
-        """Verify router receives gradients during training."""
+        """Verify router receives gradients."""
         config = PraxisConfig(
             hidden_size=64,
             num_heads=4,
@@ -223,12 +176,8 @@ class TestSparseRouting:
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
         router = Prismatic(config, experts=experts)
 
-        # Create input
-        batch_size = 2
-        seq_len = 4
-        inputs = torch.randn(batch_size, seq_len, config.hidden_size)
+        inputs = torch.randn(2, 4, config.hidden_size)
 
-        # Forward pass (router mode)
         from praxis.layers.local import LocalLayer
         layer = LocalLayer(config, block=experts[0], expert_blocks=experts)
 
@@ -241,20 +190,20 @@ class TestSparseRouting:
             block_ids=None
         )
 
-        # Backward pass
         loss = output.sum() + aux_loss
         loss.backward()
 
-        # Check router has gradients
         assert router.router.weight.grad is not None
         assert router.router.weight.grad.abs().sum() > 0
+
+        print("[TEST] ✓ Router learns from gradients")
 
 
 class TestLoadBalancing:
     """Test load balancing loss."""
 
     def test_balance_loss_computed(self):
-        """Verify balance loss encourages 50/50 expert usage."""
+        """Verify balance loss encourages 50/50 usage."""
         config = PraxisConfig(
             hidden_size=64,
             num_heads=4,
@@ -266,22 +215,24 @@ class TestLoadBalancing:
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
         router = Prismatic(config, experts=experts)
 
-        # Test balanced probs (should have low loss)
-        balanced_probs = torch.tensor([[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]])
+        # Balanced probs
+        balanced_probs = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
         balanced_loss = router._compute_balance_loss(balanced_probs)
-        assert balanced_loss.item() < 0.01  # Nearly zero
+        assert balanced_loss.item() < 0.01
 
-        # Test imbalanced probs (should have higher loss)
-        imbalanced_probs = torch.tensor([[0.9, 0.1], [0.9, 0.1], [0.9, 0.1]])
+        # Imbalanced probs
+        imbalanced_probs = torch.tensor([[0.9, 0.1], [0.9, 0.1]])
         imbalanced_loss = router._compute_balance_loss(imbalanced_probs)
         assert imbalanced_loss.item() > balanced_loss.item()
+
+        print("[TEST] ✓ Load balancing loss prevents collapse")
 
 
 class TestMetrics:
     """Test metrics logging."""
 
     def test_metrics_logged(self):
-        """Verify routing metrics are logged."""
+        """Verify all routing and architecture metrics are logged."""
         config = PraxisConfig(
             hidden_size=64,
             num_heads=4,
@@ -294,32 +245,75 @@ class TestMetrics:
         router = Prismatic(config, experts=experts)
 
         # Simulate routing
-        batch_size = 4
-        expert_indices = torch.tensor([0, 0, 1, 1])  # 50/50 split
-        probs = torch.tensor([
-            [0.8, 0.2],
-            [0.7, 0.3],
-            [0.3, 0.7],
-            [0.2, 0.8]
-        ])
+        expert_indices = torch.tensor([0, 0, 1, 1])
+        probs = torch.tensor([[0.7, 0.3], [0.6, 0.4], [0.3, 0.7], [0.2, 0.8]])
         balance_loss = torch.tensor(0.01)
 
         router._update_metrics(expert_indices, probs, balance_loss)
         metrics = router.get_metrics()
 
-        # Verify metrics exist (web app compatible)
+        # Routing metrics (web app compatible)
         assert "routing/expert_0_weight" in metrics
         assert "routing/expert_1_weight" in metrics
         assert "routing/entropy" in metrics
         assert "routing/concentration" in metrics
         assert "routing/variance" in metrics
         assert "routing/balance" in metrics
-        assert "routing/balance_loss" in metrics
-        assert "routing/avg_confidence" in metrics
 
-        # Verify expert weights sum to approximately 1.0 (softmax property)
+        # Architecture-specific metrics
+        assert "architecture/alibi_usage" in metrics
+        assert "architecture/rope_usage" in metrics
+
+        # Verify expert weights sum to 1.0
         total_weight = metrics["routing/expert_0_weight"] + metrics["routing/expert_1_weight"]
         assert abs(total_weight - 1.0) < 0.01
+
+        # Verify architecture usage sums to 100%
+        total_usage = metrics["architecture/alibi_usage"] + metrics["architecture/rope_usage"]
+        assert abs(total_usage - 100.0) < 0.01
+
+        print("[TEST] ✓ All metrics logged correctly (web app compatible)")
+
+    def test_expert_selection_counts_tracked(self):
+        """Verify actual expert selection counts are tracked (k=1 sparse usage)."""
+        config = PraxisConfig(
+            hidden_size=64,
+            num_heads=4,
+            num_queries=1,
+            num_experts=2,
+            router_type="prismatic"
+        )
+
+        experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
+        router = Prismatic(config, experts=experts)
+
+        # Initially counts should be zero
+        assert router.expert_selection_counts[0].item() == 0
+        assert router.expert_selection_counts[1].item() == 0
+
+        # Simulate routing - 3 sequences to expert 0, 1 sequence to expert 1
+        expert_indices = torch.tensor([0, 0, 0, 1])
+        probs = torch.tensor([[0.8, 0.2], [0.7, 0.3], [0.6, 0.4], [0.3, 0.7]])
+        balance_loss = torch.tensor(0.01)
+
+        router._update_metrics(expert_indices, probs, balance_loss)
+        metrics = router.get_metrics()
+
+        # Check selection counts
+        assert "expert_selection/expert_0_count" in metrics
+        assert "expert_selection/expert_1_count" in metrics
+        assert metrics["expert_selection/expert_0_count"] == 3
+        assert metrics["expert_selection/expert_1_count"] == 1
+
+        # Run again - counts should accumulate
+        router._update_metrics(expert_indices, probs, balance_loss)
+        metrics = router.get_metrics()
+
+        assert metrics["expert_selection/expert_0_count"] == 6  # 3 + 3
+        assert metrics["expert_selection/expert_1_count"] == 2  # 1 + 1
+
+        print("[TEST] ✓ Expert selection counts tracked correctly (cumulative)")
+        print(f"  Expert 0 selected 6 times, Expert 1 selected 2 times")
 
 
 if __name__ == "__main__":

@@ -1,18 +1,18 @@
 """
-Prismatic Attention: Sparse Bidirectional Temporal Routing
+Prismatic Attention: Architectural Diversity via Sparse Routing
 
-v6.0 - Sparse Mixture-of-Eyes:
-Routes sequences to one of two "eyes" with different temporal perspectives:
-- Expert 0 (Forward Eye): Standard causal masking - sees past, infers future
-- Expert 1 (Backward Eye): Inverted causal masking - sees future, infers past
+v7.0 - Positional Encoding Diversity:
+Routes sequences to experts with different positional encoding strategies:
+- Expert 0: ALiBi (Attention with Linear Biases)
+- Expert 1: RoPE (Rotary Position Embedding)
 
-Unlike previous SMEAR approach (soft parameter merging), this uses sparse routing:
-each sequence is processed by ONE expert with the appropriate temporal mask.
+Clean, simple test of the core hypothesis from "The Blind Watchmaker":
+Different architectural constraints force different gradient trajectories through
+the computational substrate, revealing patterns single approaches cannot discover.
 
 Philosophy:
-"Temporal Perspective Selection" - The model learns which temporal perspective
-is most useful for each sequence, then commits to that perspective for processing.
-Clean separation: router creates masks and routes, experts just process with given mask.
+"Architectural Diversity" - Same input, same masking, different positional encodings.
+Let the model learn which architectural constraint suits which pattern.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -24,30 +24,29 @@ import torch.nn.functional as F
 
 class Prismatic(nn.Module):
     """
-    Prismatic router with sparse bidirectional temporal masking.
+    Prismatic router with architectural diversity (ALiBi vs RoPE).
 
-    Routes entire sequences to one of two experts:
-    - Expert 0 (Forward Eye): Sees past, infers future
-    - Expert 1 (Backward Eye): Sees future, infers past
+    Routes entire sequences to one of two experts with different positional encodings:
+    - Expert 0: ALiBi (linear distance bias)
+    - Expert 1: RoPE (rotational encoding)
 
     The router:
     1. Computes routing probabilities per sequence
     2. Selects ONE expert per sequence (sparse, top-1)
-    3. Creates appropriate mask (forward or backward)
-    4. Executes selected expert with that mask
-    5. Applies load balancing loss to encourage 50/50 usage
+    3. Executes selected expert (both use standard causal masking)
+    4. Applies load balancing loss to encourage balanced usage
 
-    Key design: Router handles all masking logic. Experts are identical architecture,
-    differentiated only by which mask the router passes to them.
+    Key design: Clean architectural diversity. Different pos_type per expert,
+    everything else identical. Tests core "Blind Watchmaker" hypothesis.
     """
 
-    __version__ = "6.0.0"
+    __version__ = "7.0.0"
 
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
     ):
         """
-        Initialize Prismatic with sparse bidirectional routing.
+        Initialize Prismatic with architectural diversity.
 
         Args:
             config: Configuration with num_experts, hidden_size
@@ -57,14 +56,9 @@ class Prismatic(nn.Module):
         super().__init__()
 
         self.num_experts = config.num_experts
-        if self.num_experts != 2:
-            raise ValueError(
-                f"Prismatic requires exactly 2 experts (forward/backward), got {self.num_experts}"
-            )
-
         self.hidden_size = config.hidden_size
 
-        # Get experts - should be identical architecture
+        # Get experts - should have different pos_type via modulus cycling
         experts = kwargs.get("experts")
         if experts is None:
             raise ValueError(
@@ -79,13 +73,18 @@ class Prismatic(nn.Module):
 
         self.experts = nn.ModuleList(experts)
 
-        print(f"[PRISMATIC v6.0] Sparse routing with {len(self.experts)} experts")
-        print(f"  Expert 0: Forward eye (sees past)")
-        print(f"  Expert 1: Backward eye (sees future)")
-        print(f"  Routing: Sequence-level, top-1 sparse")
+        # Architecture list for modulus cycling
+        self.architectures = ["alibi", "rope"]  # Cycles: alibi, rope, alibi, rope, ...
 
-        # Router: learns to select forward vs backward perspective per sequence
-        # Uses sequence representation (mean pooling) to decide
+        print(f"[PRISMATIC v7.0] Architectural diversity with {len(self.experts)} experts")
+        print(f"  Architectures: {', '.join(self.architectures)} (cycling via modulus)")
+        for i in range(len(self.experts)):
+            arch = self.architectures[i % len(self.architectures)]
+            print(f"  Expert {i}: {arch.upper()}")
+        print(f"  Routing: Sequence-level, top-1 sparse")
+        print(f"  Masking: Standard causal (no temporal tricks)")
+
+        # Router: learns to select ALiBi vs RoPE per sequence
         self.router_norm = nn.LayerNorm(self.hidden_size)
         self.router = nn.Linear(self.hidden_size, self.num_experts)
 
@@ -94,6 +93,9 @@ class Prismatic(nn.Module):
 
         # Metrics
         self._metrics: Dict[str, float] = {}
+
+        # Cumulative expert selection counters (for actual k=1 usage tracking)
+        self.register_buffer("expert_selection_counts", torch.zeros(self.num_experts, dtype=torch.long))
 
     def forward(
         self, *args, **kwargs
@@ -141,14 +143,14 @@ class Prismatic(nn.Module):
         float,
     ]:
         """
-        Router mode: select expert per sequence and execute with appropriate mask.
+        Router mode: select expert per sequence based on architectural suitability.
 
         Args:
             layer: The LocalLayer wrapper (unused in sparse routing)
             inputs: Input tensor [batch, seq_len, hidden_size]
-            attention_mask: Optional padding mask (combined with causal mask)
+            attention_mask: Optional padding mask
             past_key_values: KV cache (if using)
-            current_state: Current hidden state (for routing)
+            current_state: Current hidden state
             current_depth: Current layer depth
             block_ids: Block IDs for attention
 
@@ -170,81 +172,30 @@ class Prismatic(nn.Module):
         # Top-1 expert selection (sparse)
         expert_indices = torch.argmax(probs, dim=-1)  # [batch]
 
-        # Create forward and backward masks
-        # These will be passed to experts via attention_mask parameter
-        forward_mask = self._create_causal_mask(
-            seq_len, direction="forward", device=inputs.device
-        )
-        backward_mask = self._create_causal_mask(
-            seq_len, direction="backward", device=inputs.device
-        )
-
-        # Pad masks for ghost token (used by HexAttention)
-        # Forward: ghost at START (standard ghostmax - escape from past)
-        # Backward: ghost at END (inverted ghostmax - escape from future)
-        kv_len = seq_len + 1
-
-        # Forward mask: ghost at position 0 (start) - standard ghostmax
-        # Prepend zero column - ghost always accessible
-        forward_mask = torch.cat([torch.zeros(seq_len, 1, device=inputs.device), forward_mask], dim=1)
-
-        # Backward mask: ghost at position seq_len (end) - inverted ghostmax
-        # Append zero column - ghost always accessible
-        backward_mask = torch.cat([backward_mask, torch.zeros(seq_len, 1, device=inputs.device)], dim=1)
-
-        # Combine with provided attention_mask if present (for padding)
-        if attention_mask is not None:
-            # attention_mask from padding is typically [batch, seq_len] or [batch, 1, 1, seq_len]
-            # We need to broadcast it to [seq_len, seq_len] format and add
-            # For now, assume attention_mask is handled separately by the expert
-            # TODO: Properly combine padding mask with causal mask
-            pass
-
         # Execute experts in parallel batches (efficient sparse MoE)
         # Group sequences by expert assignment and execute each expert once
-
         output = torch.zeros_like(inputs)
         total_aux_loss = 0.0
 
-        # Create masks for which sequences go to which expert
-        expert_0_mask = (expert_indices == 0)  # [batch]
-        expert_1_mask = (expert_indices == 1)  # [batch]
+        # Execute each expert on its assigned sequences
+        for expert_idx in range(self.num_experts):
+            expert_mask = (expert_indices == expert_idx)  # [batch]
 
-        # Execute expert 0 on all sequences assigned to it (forward eye)
-        # Ghost at START for forward perspective (standard ghostmax - escape from past)
-        if expert_0_mask.any():
-            expert_0_inputs = inputs[expert_0_mask]  # [n0, seq_len, hidden]
-            expert_0_output, _, _, expert_0_aux = self.experts[0](
-                expert_0_inputs,
-                attention_mask=forward_mask,
-                past_key_values=None,
-                current_state=None,
-                current_depth=current_depth,
-                block_ids=block_ids,
-                ghost_position="start",  # Standard ghostmax
-            )
-            output[expert_0_mask] = expert_0_output
-            # Weight aux loss by proportion of batch
-            total_aux_loss += expert_0_aux * expert_0_mask.sum().float() / batch_size
+            if expert_mask.any():
+                expert_inputs = inputs[expert_mask]  # [n_i, seq_len, hidden]
+                expert_output, _, _, expert_aux = self.experts[expert_idx](
+                    expert_inputs,
+                    attention_mask=attention_mask,
+                    past_key_values=None,
+                    current_state=None,
+                    current_depth=current_depth,
+                    block_ids=block_ids,
+                )
+                output[expert_mask] = expert_output
+                # Weight aux loss by proportion of batch
+                total_aux_loss += expert_aux * expert_mask.sum().float() / batch_size
 
-        # Execute expert 1 on all sequences assigned to it (backward eye)
-        # Ghost at END for backward perspective (inverted ghostmax - escape from future)
-        if expert_1_mask.any():
-            expert_1_inputs = inputs[expert_1_mask]  # [n1, seq_len, hidden]
-            expert_1_output, _, _, expert_1_aux = self.experts[1](
-                expert_1_inputs,
-                attention_mask=backward_mask,
-                past_key_values=None,
-                current_state=None,
-                current_depth=current_depth,
-                block_ids=block_ids,
-                ghost_position="end",  # Inverted ghostmax
-            )
-            output[expert_1_mask] = expert_1_output
-            # Weight aux loss by proportion of batch
-            total_aux_loss += expert_1_aux * expert_1_mask.sum().float() / batch_size
-
-        # Compute load balancing loss and add to expert aux losses
+        # Compute load balancing loss
         balance_loss = self._compute_balance_loss(probs)
         total_aux_loss = total_aux_loss + self.balance_loss_coef * balance_loss
 
@@ -252,39 +203,6 @@ class Prismatic(nn.Module):
         self._update_metrics(expert_indices, probs, balance_loss)
 
         return output, past_key_values, current_state, total_aux_loss
-
-    def _create_causal_mask(
-        self, seq_len: int, direction: str, device: torch.device
-    ) -> torch.Tensor:
-        """
-        Create causal attention mask.
-
-        Args:
-            seq_len: Sequence length
-            direction: "forward" or "backward"
-            device: Device to create mask on
-
-        Returns:
-            Additive mask [seq_len, seq_len] with 0 for allowed, -inf for masked
-        """
-        if direction == "forward":
-            # Standard causal: position i can see j where j <= i
-            # Lower triangular matrix (including diagonal)
-            mask = torch.triu(
-                torch.ones(seq_len, seq_len, device=device) * float('-inf'),
-                diagonal=1
-            )
-        elif direction == "backward":
-            # Inverted causal: position i can see j where j >= i
-            # Upper triangular matrix (including diagonal)
-            mask = torch.tril(
-                torch.ones(seq_len, seq_len, device=device) * float('-inf'),
-                diagonal=-1
-            )
-        else:
-            raise ValueError(f"direction must be 'forward' or 'backward', got {direction}")
-
-        return mask
 
     def _compute_balance_loss(self, probs: torch.Tensor) -> torch.Tensor:
         """
@@ -316,44 +234,63 @@ class Prismatic(nn.Module):
         """Update routing metrics for logging.
 
         Metrics are compatible with the web app's Research tab charts:
-        - routing/expert_*_weight: Individual expert routing weights
+        - routing/expert_*_weight: Individual expert routing weights (probabilities)
+        - expert_selection/expert_*_count: Actual selection counts (k=1 sparse usage)
         - routing/entropy: Routing balance (high = balanced, low = collapsed)
         - routing/concentration: Max weight (measures collapse)
         - routing/variance: Routing stability across experts
         - routing/balance: How close to uniform distribution (1.0 = perfect)
+        - architecture/alibi_usage: % sequences using ALiBi
+        - architecture/rope_usage: % sequences using RoPE
         """
+        # Update cumulative selection counts (actual k=1 expert usage)
+        for expert_idx in range(self.num_experts):
+            count = (expert_indices == expert_idx).sum().item()
+            self.expert_selection_counts[expert_idx] += count
+
         # Calculate mean routing weights per expert across batch
         expert_weights = probs.mean(dim=0)  # [num_experts]
 
         # Per-expert routing weights (for "Expert Routing Weights" chart)
-        # Web app expects: routing/expert_0_weight, routing/expert_1_weight
+        # These show routing probabilities (soft weights)
         for i in range(self.num_experts):
             self._metrics[f"routing/expert_{i}_weight"] = expert_weights[i].item()
 
+        # Per-expert actual selection counts (for "Expert Selection" chart)
+        # These show actual k=1 sparse usage (hard counts)
+        for i in range(self.num_experts):
+            self._metrics[f"expert_selection/expert_{i}_count"] = self.expert_selection_counts[i].item()
+
+        # Architecture-specific metrics (aggregate by architecture type)
+        arch_usage = {arch: 0.0 for arch in self.architectures}
+        for i in range(self.num_experts):
+            arch = self.architectures[i % len(self.architectures)]
+            arch_usage[arch] += expert_weights[i].item()
+
+        # Log aggregated architecture usage
+        for arch, usage in arch_usage.items():
+            self._metrics[f"architecture/{arch}_usage"] = usage * 100.0
+
         # Entropy: H = -Σ(p_i * log(p_i))
-        # Measures routing balance: high = balanced, low = collapsed
-        probs_safe = expert_weights + 1e-10  # Avoid log(0)
+        probs_safe = expert_weights + 1e-10
         entropy = -(probs_safe * probs_safe.log()).sum()
         self._metrics["routing/entropy"] = entropy.item()
 
         # Concentration: max routing weight
-        # Measures expert collapse: 1.0 = fully collapsed, 1/N = uniform
         concentration = expert_weights.max()
         self._metrics["routing/concentration"] = concentration.item()
 
-        # Variance: measures routing stability across experts
-        # High variance = specialized experts, low variance = uniform
+        # Variance: measures routing stability
         variance = expert_weights.var()
         self._metrics["routing/variance"] = variance.item()
 
-        # Balance: distance from uniform distribution (1.0 = perfect balance)
-        # Computed as 1 - max_deviation_from_uniform
+        # Balance: distance from uniform distribution
         uniform_weight = 1.0 / self.num_experts
         max_deviation = (expert_weights - uniform_weight).abs().max()
         balance = 1.0 - max_deviation.item()
         self._metrics["routing/balance"] = balance
 
-        # Additional debug metrics
+        # Debug metrics
         self._metrics["routing/balance_loss"] = balance_loss.item()
         self._metrics["routing/avg_confidence"] = probs.max(dim=-1)[0].mean().item()
 
@@ -368,9 +305,9 @@ class Prismatic(nn.Module):
 
         Returns:
             {
-                "expert_0_grad_norm": 0.12,
+                "expert_0_grad_norm": 0.12,  # ALiBi
                 "expert_0_grad_var": 0.003,
-                "expert_1_grad_norm": 0.08,
+                "expert_1_grad_norm": 0.08,   # RoPE
                 "expert_1_grad_var": 0.002,
             }
         """
