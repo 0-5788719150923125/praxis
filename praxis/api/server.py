@@ -197,6 +197,7 @@ class APIServer:
         app.config["launch_timestamp"] = self.launch_timestamp
         app.config["param_stats"] = self.param_stats
         app.config["config_file"] = self.config_file
+        app.config["repo_root"] = os.getcwd()  # Store the repository root at startup
 
         # Start the server thread
         self.server_thread = Thread(target=self._run_server)

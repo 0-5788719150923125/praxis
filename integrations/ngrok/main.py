@@ -172,10 +172,10 @@ _tunnel = None
 
 
 def create_socketio_path_middleware(wsgi_app, ngrok_secret):
-    """WSGI middleware to handle Socket.IO WebSocket paths with ngrok secret.
+    """WSGI middleware to handle Socket.IO WebSocket paths and git paths with ngrok secret.
 
-    This only strips the prefix for Socket.IO paths, leaving all other paths alone
-    for Flask routing to handle.
+    This strips the prefix for Socket.IO and git paths, leaving all other paths
+    for the ngrok_proxy Flask route to handle.
 
     Args:
         wsgi_app: The WSGI application
@@ -189,12 +189,29 @@ def create_socketio_path_middleware(wsgi_app, ngrok_secret):
         path = environ.get("PATH_INFO", "")
         prefix = f"/{ngrok_secret}"
 
-        # Only strip prefix for socket.io paths (WebSocket upgrades)
+        # Strip prefix for socket.io paths (WebSocket upgrades)
         if path.startswith(prefix + "/socket.io"):
             # Remove the secret prefix for Socket.IO
             new_path = path[len(prefix) :]
             environ["PATH_INFO"] = new_path
             environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + prefix
+
+        # Strip prefix for git paths so they route directly to git handlers
+        elif path.startswith(prefix + "/praxis") or path.startswith(prefix + "/src"):
+            # Check if it's a git request
+            query_string = environ.get("QUERY_STRING", "")
+            is_git_request = (
+                "service=git-" in query_string
+                or path.endswith("/info/refs")
+                or path.endswith("/git-upload-pack")
+                or path.endswith("/git-receive-pack")
+            )
+
+            if is_git_request:
+                # Remove the secret prefix for git requests
+                new_path = path[len(prefix) :]
+                environ["PATH_INFO"] = new_path
+                environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + prefix
 
         return wsgi_app(environ, start_response)
 
@@ -447,6 +464,11 @@ class Integration(BaseIntegration):
 
         path = request.path
 
+        # Strip the ngrok secret prefix if present to check the actual path
+        path_without_secret = path
+        if ngrok_secret and path.startswith(f"/{ngrok_secret}/"):
+            path_without_secret = path[len(f"/{ngrok_secret}"):]
+
         # Allow git-specific paths without authentication
         # Git clients need these exact paths to work
         # Check if this is a git request based on path patterns
@@ -458,6 +480,9 @@ class Integration(BaseIntegration):
             or path.startswith("/praxis.git")
             or path.startswith("/praxis/")
             or path == "/praxis"
+            or path_without_secret.startswith("/praxis.git")
+            or path_without_secret.startswith("/praxis/")
+            or path_without_secret == "/praxis"
         ):
             # Check if it looks like a git request (has service parameter or is POST to git-upload-pack)
             service = request.args.get("service")

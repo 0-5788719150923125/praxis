@@ -53,8 +53,18 @@ def git_http_backend(git_path=None):
 
         try:
             # Run git command to get refs
-            cmd = ["git", "upload-pack", "--stateless-rpc", "--advertise-refs", "."]
-            result = subprocess.run(cmd, capture_output=True, cwd=os.getcwd())
+            # Get repository root from Flask config (set at server startup)
+            from flask import current_app
+            repo_root = current_app.config.get("repo_root", os.getcwd())
+
+            # Disable git safe.directory check for this operation
+            cmd = ["git", "-c", "safe.directory=*", "upload-pack", "--stateless-rpc", "--advertise-refs", repo_root]
+            result = subprocess.run(cmd, capture_output=True)
+
+            # Check for errors
+            if result.returncode != 0:
+                error_msg = result.stderr.decode("utf-8", errors="replace")
+                return f"Git error: {error_msg}", 500
 
             # Format response for git HTTP protocol
             response_data = f"001e# service={service}\n0000" + result.stdout.decode(
@@ -70,16 +80,27 @@ def git_http_backend(git_path=None):
                 },
             )
         except Exception as e:
-            return f"Git error: {str(e)}", 500
+            import traceback
+            return f"Git error: {str(e)}\n{traceback.format_exc()}", 500
 
     # Handle git-upload-pack request (actual clone/fetch)
     elif git_path == "git-upload-pack" and request.method == "POST":
         try:
             # Run git upload-pack with the request data
-            cmd = ["git", "upload-pack", "--stateless-rpc", "."]
+            # Get repository root from Flask config (set at server startup)
+            from flask import current_app
+            repo_root = current_app.config.get("repo_root", os.getcwd())
+
+            # Disable git safe.directory check for this operation
+            cmd = ["git", "-c", "safe.directory=*", "upload-pack", "--stateless-rpc", repo_root]
             result = subprocess.run(
-                cmd, input=request.data, capture_output=True, cwd=os.getcwd()
+                cmd, input=request.data, capture_output=True
             )
+
+            # Check for errors
+            if result.returncode != 0:
+                error_msg = result.stderr.decode("utf-8", errors="replace")
+                return f"Git error: {error_msg}", 500
 
             return Response(
                 result.stdout,
@@ -90,7 +111,8 @@ def git_http_backend(git_path=None):
                 },
             )
         except Exception as e:
-            return f"Git error: {str(e)}", 500
+            import traceback
+            return f"Git error: {str(e)}\n{traceback.format_exc()}", 500
 
     # Return 404 for other paths
     return "Not found", 404
