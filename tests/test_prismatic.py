@@ -215,14 +215,20 @@ class TestLoadBalancing:
         experts = [SimpleDenseBlock(config.hidden_size) for _ in range(2)]
         router = Prismatic(config, experts=experts)
 
-        # Balanced probs
+        # Balanced probs and balanced selections
+        # For perfect balance: importance=[0.5, 0.5], load=[0.5, 0.5]
+        # Loss = num_experts * sum(importance * load) = 2 * (0.5*0.5 + 0.5*0.5) = 1.0
         balanced_probs = torch.tensor([[0.5, 0.5], [0.5, 0.5]])
-        balanced_loss = router._compute_balance_loss(balanced_probs)
-        assert balanced_loss.item() < 0.01
+        balanced_indices = torch.tensor([[0, 1], [1, 0]])  # [batch, k=2]
+        balanced_loss = router._compute_balance_loss(balanced_probs, balanced_indices)
+        assert abs(balanced_loss.item() - 1.0) < 0.01  # Should be close to 1.0 for perfect balance
 
-        # Imbalanced probs
+        # Imbalanced probs and imbalanced selections
+        # importance=[0.9, 0.1], load=[1.0, 0.0]
+        # Loss = 2 * (0.9*1.0 + 0.1*0.0) = 1.8
         imbalanced_probs = torch.tensor([[0.9, 0.1], [0.9, 0.1]])
-        imbalanced_loss = router._compute_balance_loss(imbalanced_probs)
+        imbalanced_indices = torch.tensor([[0, 0], [0, 0]])  # [batch, k=2] all selecting expert 0
+        imbalanced_loss = router._compute_balance_loss(imbalanced_probs, imbalanced_indices)
         assert imbalanced_loss.item() > balanced_loss.item()
 
         print("[TEST] ✓ Load balancing loss prevents collapse")

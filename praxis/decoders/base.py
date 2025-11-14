@@ -49,9 +49,9 @@ class BaseDecoder(nn.Module):
             expert = LocalLayer(config, block=block)
             for i in range(self.num_layers):
                 self.locals.append(expert)
-        elif config.router_type == "smear":
-            # For SMEAR with multiple experts, create a single LocalLayer that manages all experts
-            # and reuse it across all positions (similar to scatter)
+        elif config.router_type == "smear" or config.router_type == "distance":
+            # For SMEAR and Distance routers with multiple experts, create a single LocalLayer
+            # that manages all experts and reuse it across all positions
             expert_blocks = []
             for expert_idx in range(self.num_experts):
                 if self.manager:

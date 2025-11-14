@@ -1,7 +1,7 @@
 """
 Prismatic Attention: Architectural Diversity via Sparse Routing
 
-v8.0 - Top-2 Positional Encoding Diversity:
+v8.1 - Top-2 Positional Encoding Diversity with Switch Transformers Loss:
 Routes sequences to k=2 experts with different positional encoding strategies:
 - Expert 0: ALiBi (Attention with Linear Biases)
 - Expert 1: RoPE (Rotary Position Embedding)
@@ -10,6 +10,9 @@ Routes sequences to k=2 experts with different positional encoding strategies:
 
 Each sequence is processed by 2 experts, blending complementary architectural strengths.
 This prevents the degradation issues of k=1 while maintaining architectural diversity.
+
+Load balancing uses Switch Transformers auxiliary loss (importance × load) which
+strongly encourages exploration and prevents expert collapse.
 
 Philosophy:
 "Architectural Diversity" - Same input, same masking, different positional encodings.
@@ -43,7 +46,7 @@ class Prismatic(nn.Module):
     everything else identical. Blends complementary architectural strengths.
     """
 
-    __version__ = "8.0.0"
+    __version__ = "8.1.0"
 
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
@@ -81,7 +84,7 @@ class Prismatic(nn.Module):
         self.architectures = ["alibi", "rope"]  # Cycles: alibi, rope, alibi, rope, ...
 
         print(
-            f"[PRISMATIC v8.0] Architectural diversity with {len(self.experts)} experts"
+            f"[PRISMATIC v8.1] Architectural diversity with {len(self.experts)} experts"
         )
         print(f"  Architectures: {', '.join(self.architectures)} (cycling via modulus)")
         for i in range(len(self.experts)):
@@ -231,7 +234,7 @@ class Prismatic(nn.Module):
             total_aux_loss += expert_aux * expert_total_weight / batch_size
 
         # Compute load balancing loss
-        balance_loss = self._compute_balance_loss(probs)
+        balance_loss = self._compute_balance_loss(probs, expert_indices)
         total_aux_loss = total_aux_loss + self.balance_loss_coef * balance_loss
 
         # Update metrics
@@ -239,24 +242,39 @@ class Prismatic(nn.Module):
 
         return output, past_key_values, current_state, total_aux_loss
 
-    def _compute_balance_loss(self, probs: torch.Tensor) -> torch.Tensor:
+    def _compute_balance_loss(
+        self, probs: torch.Tensor, expert_indices: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Compute load balancing loss to encourage 50/50 expert usage.
+        Compute load balancing loss using Switch Transformers approach.
+
+        This loss encourages balanced expert usage by penalizing experts that
+        receive both high routing probability (importance) AND high actual
+        usage (load). This is stronger than MSE loss.
 
         Args:
-            probs: Routing probabilities [batch, 2]
+            probs: Routing probabilities [batch, num_experts]
+            expert_indices: Selected expert indices [batch, k]
 
         Returns:
-            Scalar loss - MSE from uniform distribution
+            Scalar loss - importance * load scaled by num_experts^2
         """
-        # Average probability per expert across batch
-        avg_probs = probs.mean(dim=0)  # [2]
+        batch_size = probs.shape[0]
 
-        # Target: uniform distribution (0.5, 0.5)
-        target = torch.ones_like(avg_probs) / self.num_experts
+        # Importance: fraction of routing probability mass to each expert (soft)
+        importance = probs.mean(dim=0)  # [num_experts]
 
-        # L2 loss
-        balance_loss = F.mse_loss(avg_probs, target)
+        # Load: fraction of actual routing decisions to each expert (hard)
+        # Count how many times each expert was selected across top-k
+        expert_mask = F.one_hot(
+            expert_indices, num_classes=self.num_experts
+        ).float()  # [batch, k, num_experts]
+        load = expert_mask.sum(dim=[0, 1]) / (
+            batch_size * self.top_k
+        )  # [num_experts]
+
+        # Switch Transformers loss: scale by num_experts to maintain magnitude
+        balance_loss = self.num_experts * (importance * load).sum()
 
         return balance_loss
 
@@ -287,10 +305,22 @@ class Prismatic(nn.Module):
         # Calculate mean routing weights per expert across batch
         expert_weights = probs.mean(dim=0)  # [num_experts]
 
+        # Calculate load (actual routing decisions)
+        # Handle both [batch, k] and [batch] shapes for backwards compatibility
+        if expert_indices.dim() == 1:
+            # Old shape [batch] - for tests
+            expert_indices = expert_indices.unsqueeze(-1)  # [batch, 1]
+
+        batch_size = expert_indices.shape[0]
+        expert_mask = F.one_hot(expert_indices, num_classes=self.num_experts).float()
+        load = expert_mask.sum(dim=[0, 1]) / (batch_size * self.top_k)  # [num_experts]
+
         # Per-expert routing weights (for "Expert Routing Weights" chart)
-        # These show routing probabilities (soft weights)
+        # These show routing probabilities (soft weights / importance)
         for i in range(self.num_experts):
             self._metrics[f"routing/expert_{i}_weight"] = expert_weights[i].item()
+            self._metrics[f"routing/expert_{i}_importance"] = expert_weights[i].item()
+            self._metrics[f"routing/expert_{i}_load"] = load[i].item()
 
         # Per-expert actual selection counts (for "Expert Selection" chart)
         # These show actual k=1 sparse usage (hard counts)

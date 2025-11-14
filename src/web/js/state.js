@@ -387,6 +387,11 @@ export const CONSTANTS = {
         { key: 'routing/concentration', canvasId: 'chart-routing-concentration', title: 'Routing Concentration (Collapse)', label: 'Max Weight', type: 'line' },
         { key: 'routing/variance', canvasId: 'chart-routing-variance', title: 'Routing Variance (Stability)', label: 'Variance', type: 'line' },
         { key: 'routing/balance', canvasId: 'chart-routing-balance', title: 'Routing Balance', label: 'Balance', type: 'line' },
+        // Prismatic v8.1 - Switch Transformers loss metrics
+        { key: 'expert_importance', canvasId: 'chart-expert-importance', title: 'Expert Importance (Soft Routing Probabilities)', label: 'Importance', type: 'multi_expert_line', isComposite: true, keyPattern: /^routing\/expert_\d+_importance$/ },
+        { key: 'expert_load', canvasId: 'chart-expert-load', title: 'Expert Load (Hard Routing Decisions)', label: 'Load', type: 'multi_expert_line', isComposite: true, keyPattern: /^routing\/expert_\d+_load$/ },
+        // Distance router - Parameter diversity loss
+        { key: 'routing/diversity_loss', canvasId: 'chart-diversity-loss', title: 'Parameter Diversity Loss (Distance Router)', label: 'Diversity Loss', type: 'line' },
         // Architecture selection metrics (Prismatic v3.0)
         { key: 'arch_selection', canvasId: 'chart-arch-selection', title: 'Architecture Selection (Cumulative Counts)', label: 'Tool Call Count', type: 'multi_expert_line', isComposite: true, keyPattern: /^arch\/expert_\d+_count$/, stepped: true }
     ]
