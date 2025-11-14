@@ -299,17 +299,18 @@ def main():
     }
 
     # Misc hyperparameters
-    hparams = dict(
-        batch_size=batch_size,
-        target_batch_size=target_batch_size,
-        block_size=block_size,
-        oversample_chance=0.1,  # double the block_size
-        supersample_chance=0.01,  # quadruple the block_size
-        hypersample_chance=0.001,  # octuple the block_size
-        device=device,
-        trainer_type=trainer_type,
+    # Spread config first, then explicit params override any duplicates
+    hparams = {
         **config.to_dict(),
-    )
+        "batch_size": batch_size,
+        "target_batch_size": target_batch_size,
+        "block_size": block_size,
+        "oversample_chance": 0.1,  # double the block_size
+        "supersample_chance": 0.01,  # quadruple the block_size
+        "hypersample_chance": 0.001,  # octuple the block_size
+        "device": device,
+        "trainer_type": trainer_type,
+    }
 
     # Training config
     train_params = dict(

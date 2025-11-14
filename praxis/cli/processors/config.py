@@ -37,6 +37,9 @@ class ConfigBuilder:
             "encoding_type": "encoding",
         }
 
+        # Experimental kwargs (from experiment files, not in PraxisConfig signature)
+        experimental_kwargs = {}
+
         # Process all arguments from CLI
         for arg_name in vars(args):
             arg_value = getattr(args, arg_name)
@@ -48,9 +51,13 @@ class ConfigBuilder:
             # Check if this arg needs to be mapped to a different config param name
             config_param = arg_to_config_mapping.get(arg_name, arg_name)
 
-            # Only include parameters that PraxisConfig actually accepts
+            # Include parameters that PraxisConfig explicitly accepts
             if config_param in valid_config_params:
                 config_kwargs[config_param] = arg_value
+            else:
+                # This might be an experimental parameter from an experiment file
+                # Store it separately so we can pass it to PraxisConfig
+                experimental_kwargs[config_param] = arg_value
 
         # Handle the new defaulting logic:
         # num_layers defaults to 2 (set in CLI)
@@ -129,4 +136,8 @@ class ConfigBuilder:
             k: v for k, v in config_kwargs.items() if k in valid_config_params
         }
 
-        return PraxisConfig(**filtered_kwargs)
+        # Merge experimental kwargs (from experiment files)
+        # These will be caught by PraxisConfig's **kwargs and passed through
+        all_kwargs = {**filtered_kwargs, **experimental_kwargs}
+
+        return PraxisConfig(**all_kwargs)

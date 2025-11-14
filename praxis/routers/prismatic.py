@@ -1,18 +1,19 @@
 """
 Prismatic Attention: Architectural Diversity via Sparse Routing
 
-v7.0 - Positional Encoding Diversity:
-Routes sequences to experts with different positional encoding strategies:
+v8.0 - Top-2 Positional Encoding Diversity:
+Routes sequences to k=2 experts with different positional encoding strategies:
 - Expert 0: ALiBi (Attention with Linear Biases)
 - Expert 1: RoPE (Rotary Position Embedding)
+- Expert 2: ALiBi
+- Expert 3: RoPE
 
-Clean, simple test of the core hypothesis from "The Blind Watchmaker":
-Different architectural constraints force different gradient trajectories through
-the computational substrate, revealing patterns single approaches cannot discover.
+Each sequence is processed by 2 experts, blending complementary architectural strengths.
+This prevents the degradation issues of k=1 while maintaining architectural diversity.
 
 Philosophy:
 "Architectural Diversity" - Same input, same masking, different positional encodings.
-Let the model learn which architectural constraint suits which pattern.
+Let the model learn which architectural constraints to blend for each pattern.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -26,21 +27,23 @@ class Prismatic(nn.Module):
     """
     Prismatic router with architectural diversity (ALiBi vs RoPE).
 
-    Routes entire sequences to one of two experts with different positional encodings:
+    Routes entire sequences to k=2 experts with different positional encodings:
     - Expert 0: ALiBi (linear distance bias)
     - Expert 1: RoPE (rotational encoding)
+    - Expert 2: ALiBi
+    - Expert 3: RoPE
 
     The router:
     1. Computes routing probabilities per sequence
-    2. Selects ONE expert per sequence (sparse, top-1)
-    3. Executes selected expert (both use standard causal masking)
+    2. Selects TOP-2 experts per sequence (sparse, top-k)
+    3. Executes selected experts and blends outputs
     4. Applies load balancing loss to encourage balanced usage
 
     Key design: Clean architectural diversity. Different pos_type per expert,
-    everything else identical. Tests core "Blind Watchmaker" hypothesis.
+    everything else identical. Blends complementary architectural strengths.
     """
 
-    __version__ = "7.0.0"
+    __version__ = "8.0.0"
 
     def __init__(
         self, config: Any, layout: str = "standard", *args: Any, **kwargs: Any
@@ -57,6 +60,7 @@ class Prismatic(nn.Module):
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
+        self.top_k = getattr(config, "k_experts", 2)  # Default k=2
 
         # Get experts - should have different pos_type via modulus cycling
         experts = kwargs.get("experts")
@@ -76,12 +80,14 @@ class Prismatic(nn.Module):
         # Architecture list for modulus cycling
         self.architectures = ["alibi", "rope"]  # Cycles: alibi, rope, alibi, rope, ...
 
-        print(f"[PRISMATIC v7.0] Architectural diversity with {len(self.experts)} experts")
+        print(
+            f"[PRISMATIC v8.0] Architectural diversity with {len(self.experts)} experts"
+        )
         print(f"  Architectures: {', '.join(self.architectures)} (cycling via modulus)")
         for i in range(len(self.experts)):
             arch = self.architectures[i % len(self.architectures)]
             print(f"  Expert {i}: {arch.upper()}")
-        print(f"  Routing: Sequence-level, top-1 sparse")
+        print(f"  Routing: Sequence-level, top-{self.top_k} sparse")
         print(f"  Masking: Standard causal (no temporal tricks)")
 
         # Router: learns to select ALiBi vs RoPE per sequence
@@ -95,11 +101,11 @@ class Prismatic(nn.Module):
         self._metrics: Dict[str, float] = {}
 
         # Cumulative expert selection counters (for actual k=1 usage tracking)
-        self.register_buffer("expert_selection_counts", torch.zeros(self.num_experts, dtype=torch.long))
+        self.register_buffer(
+            "expert_selection_counts", torch.zeros(self.num_experts, dtype=torch.long)
+        )
 
-    def forward(
-        self, *args, **kwargs
-    ) -> Union[
+    def forward(self, *args, **kwargs) -> Union[
         Tuple[torch.Tensor, Optional[torch.Tensor], float],
         Tuple[
             torch.Tensor,
@@ -166,34 +172,46 @@ class Prismatic(nn.Module):
         # Use mean pooling to get sequence-level representation
         seq_repr = inputs.mean(dim=1)  # [batch, hidden_size]
         seq_repr = self.router_norm(seq_repr)
-        logits = self.router(seq_repr)  # [batch, 2]
-        probs = F.softmax(logits, dim=-1)  # [batch, 2]
+        logits = self.router(seq_repr)  # [batch, num_experts]
+        probs = F.softmax(logits, dim=-1)  # [batch, num_experts]
 
-        # Top-1 expert selection (sparse)
-        expert_indices = torch.argmax(probs, dim=-1)  # [batch]
+        # Top-k expert selection (sparse)
+        top_k_probs, expert_indices = torch.topk(
+            probs, self.top_k, dim=-1
+        )  # [batch, k]
 
-        # Execute experts in parallel batches (efficient sparse MoE)
-        # Group sequences by expert assignment and execute each expert once
+        # Normalize top-k probabilities to sum to 1
+        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)  # [batch, k]
+
+        # Execute experts and blend outputs
+        # Each sequence gets processed by k experts and outputs are weighted
         output = torch.zeros_like(inputs)
         total_aux_loss = 0.0
 
-        # Execute each expert on its assigned sequences
-        for expert_idx in range(self.num_experts):
-            expert_mask = (expert_indices == expert_idx)  # [batch]
+        # Process each sample in the batch
+        for batch_idx in range(batch_size):
+            sample_input = inputs[batch_idx : batch_idx + 1]  # [1, seq_len, hidden]
+            sample_output = torch.zeros_like(sample_input)
 
-            if expert_mask.any():
-                expert_inputs = inputs[expert_mask]  # [n_i, seq_len, hidden]
+            # Execute top-k experts for this sample and blend
+            for k_idx in range(self.top_k):
+                expert_idx = expert_indices[batch_idx, k_idx].item()
+                expert_weight = top_k_probs[batch_idx, k_idx].item()
+
                 expert_output, _, _, expert_aux = self.experts[expert_idx](
-                    expert_inputs,
+                    sample_input,
                     attention_mask=attention_mask,
                     past_key_values=None,
                     current_state=None,
                     current_depth=current_depth,
                     block_ids=block_ids,
                 )
-                output[expert_mask] = expert_output
-                # Weight aux loss by proportion of batch
-                total_aux_loss += expert_aux * expert_mask.sum().float() / batch_size
+
+                # Weighted accumulation
+                sample_output += expert_weight * expert_output
+                total_aux_loss += expert_aux * expert_weight / batch_size
+
+            output[batch_idx] = sample_output.squeeze(0)
 
         # Compute load balancing loss
         balance_loss = self._compute_balance_loss(probs)
@@ -235,7 +253,7 @@ class Prismatic(nn.Module):
 
         Metrics are compatible with the web app's Research tab charts:
         - routing/expert_*_weight: Individual expert routing weights (probabilities)
-        - expert_selection/expert_*_count: Actual selection counts (k=1 sparse usage)
+        - expert_selection/expert_*_count: Actual selection counts (top-k sparse usage)
         - routing/entropy: Routing balance (high = balanced, low = collapsed)
         - routing/concentration: Max weight (measures collapse)
         - routing/variance: Routing stability across experts
@@ -243,7 +261,8 @@ class Prismatic(nn.Module):
         - architecture/alibi_usage: % sequences using ALiBi
         - architecture/rope_usage: % sequences using RoPE
         """
-        # Update cumulative selection counts (actual k=1 expert usage)
+        # Update cumulative selection counts (actual top-k expert usage)
+        # expert_indices is [batch, k], so flatten and count
         for expert_idx in range(self.num_experts):
             count = (expert_indices == expert_idx).sum().item()
             self.expert_selection_counts[expert_idx] += count
@@ -259,7 +278,9 @@ class Prismatic(nn.Module):
         # Per-expert actual selection counts (for "Expert Selection" chart)
         # These show actual k=1 sparse usage (hard counts)
         for i in range(self.num_experts):
-            self._metrics[f"expert_selection/expert_{i}_count"] = self.expert_selection_counts[i].item()
+            self._metrics[f"expert_selection/expert_{i}_count"] = (
+                self.expert_selection_counts[i].item()
+            )
 
         # Architecture-specific metrics (aggregate by architecture type)
         arch_usage = {arch: 0.0 for arch in self.architectures}
@@ -332,9 +353,9 @@ class Prismatic(nn.Module):
 
             # Aggregate across all parameters
             if grad_norms:
-                metrics[f"expert_{expert_idx}_grad_norm"] = sum(
-                    g**2 for g in grad_norms
-                ) ** 0.5
+                metrics[f"expert_{expert_idx}_grad_norm"] = (
+                    sum(g**2 for g in grad_norms) ** 0.5
+                )
             if grad_vars:
                 metrics[f"expert_{expert_idx}_grad_var"] = sum(grad_vars) / len(
                     grad_vars
@@ -345,5 +366,6 @@ class Prismatic(nn.Module):
     def __repr__(self) -> str:
         return (
             f"Prismatic(num_experts={self.num_experts}, "
+            f"top_k={self.top_k}, "
             f"version={self.__version__})"
         )

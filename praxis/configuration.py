@@ -63,6 +63,7 @@ class PraxisConfig(PretrainedConfig):
         **kwargs,
     ):
 
+        # Pass all kwargs to parent (PretrainedConfig stores them as attributes)
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
