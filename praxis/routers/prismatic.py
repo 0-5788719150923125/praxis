@@ -183,35 +183,52 @@ class Prismatic(nn.Module):
         # Normalize top-k probabilities to sum to 1
         top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)  # [batch, k]
 
-        # Execute experts and blend outputs
-        # Each sequence gets processed by k experts and outputs are weighted
+        # Execute experts in parallel (efficient sparse MoE)
+        # Group samples by expert selection and execute each expert once
         output = torch.zeros_like(inputs)
         total_aux_loss = 0.0
 
-        # Process each sample in the batch
-        for batch_idx in range(batch_size):
-            sample_input = inputs[batch_idx : batch_idx + 1]  # [1, seq_len, hidden]
-            sample_output = torch.zeros_like(sample_input)
+        for expert_idx in range(self.num_experts):
+            # Find which samples selected this expert (in any of their top-k positions)
+            expert_mask = (expert_indices == expert_idx)  # [batch, k]
 
-            # Execute top-k experts for this sample and blend
-            for k_idx in range(self.top_k):
-                expert_idx = expert_indices[batch_idx, k_idx].item()
-                expert_weight = top_k_probs[batch_idx, k_idx].item()
+            if not expert_mask.any():
+                continue
 
-                expert_output, _, _, expert_aux = self.experts[expert_idx](
-                    sample_input,
-                    attention_mask=attention_mask,
-                    past_key_values=None,
-                    current_state=None,
-                    current_depth=current_depth,
-                    block_ids=block_ids,
-                )
+            # Get batch indices that selected this expert
+            selected_samples = expert_mask.any(dim=1)  # [batch]
+            batch_indices = selected_samples.nonzero(as_tuple=False).squeeze(1)
 
-                # Weighted accumulation
-                sample_output += expert_weight * expert_output
-                total_aux_loss += expert_aux * expert_weight / batch_size
+            # Handle scalar case (single sample selected this expert)
+            if batch_indices.dim() == 0:
+                batch_indices = batch_indices.unsqueeze(0)
 
-            output[batch_idx] = sample_output.squeeze(0)
+            # Gather inputs for all samples that selected this expert
+            expert_inputs = inputs[batch_indices]  # [n_samples, seq_len, hidden]
+
+            # Execute expert once on all its samples
+            expert_output, _, _, expert_aux = self.experts[expert_idx](
+                expert_inputs,
+                attention_mask=attention_mask,
+                past_key_values=None,
+                current_state=None,
+                current_depth=current_depth,
+                block_ids=block_ids,
+            )
+
+            # Scatter results back with proper routing weights
+            for i, batch_idx in enumerate(batch_indices):
+                batch_idx = batch_idx.item()
+                # Get weight for this expert in this sample's top-k
+                # (handle case where expert appears multiple times in top-k)
+                sample_expert_mask = expert_indices[batch_idx] == expert_idx
+                expert_weight = top_k_probs[batch_idx][sample_expert_mask].sum()
+
+                output[batch_idx] += expert_weight * expert_output[i]
+
+            # Accumulate aux loss weighted by total routing probability to this expert
+            expert_total_weight = top_k_probs[expert_mask].sum()
+            total_aux_loss += expert_aux * expert_total_weight / batch_size
 
         # Compute load balancing loss
         balance_loss = self._compute_balance_loss(probs)
