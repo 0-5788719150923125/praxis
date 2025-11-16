@@ -28,7 +28,7 @@ class PraxisDataModule(LightningDataModule):
         run_dir: Optional[str] = None,
         data_metrics_log_interval: int = 50,
         enable_chat_validation: bool = True,
-        strict_chat_validation: bool = False,
+        strict_chat_validation: bool = False,  # Set to True to halt on validation failures
     ):
         super().__init__()
         self.rl_type = rl_type

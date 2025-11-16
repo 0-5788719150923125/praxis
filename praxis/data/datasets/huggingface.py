@@ -229,14 +229,23 @@ class HuggingfaceDataset(PraxisSampler):
 
                     self.sequence_cache.append(text)
                 else:
-                    # Empty document, add placeholder
-                    self.sequence_cache.append("")
+                    # Empty document, try recursively instead of adding placeholder
+                    self.fill_sequence_cache()
             except StopIteration:
-                # Dataset is empty or has issues, add a placeholder to prevent infinite loop
+                # Dataset is empty or has issues - create properly formatted minimal message
                 print(
-                    f"WARNING: Dataset '{self.dataset_path}' appears to be empty or has issues. Adding placeholder."
+                    f"[ERROR] Dataset '{self.dataset_path}' appears to be empty or has issues."
                 )
-                self.sequence_cache.append("")
+                # Create minimal valid message instead of empty string
+                from praxis.data.config import SYSTEM_PROMPT
+                error_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "assistant", "content": f"Dataset {self.dataset_path} unavailable."},
+                ]
+                formatted_error = self.tokenizer.apply_chat_template(
+                    error_messages, tokenize=False, add_generation_prompt=False
+                )
+                self.sequence_cache.append(formatted_error)
 
     def _format_document(self, document):
         return self.format_handler(document, self.keys, self.tokenizer)

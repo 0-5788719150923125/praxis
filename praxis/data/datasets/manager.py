@@ -71,6 +71,10 @@ class InterleaveDataManager:
         self.data_metrics_logger = None
         self.data_metrics_log_interval = data_metrics_log_interval
         self.samples_since_last_log = 0
+
+        # Track batch count for validation stats logging
+        self.batch_count = 0
+        self.validation_stats_log_interval = 100  # Log every 100 batches
         if run_dir is not None and self.use_dynamic_weights:
             try:
                 self.data_metrics_logger = DataMetricsLogger(run_dir=run_dir)
@@ -172,6 +176,13 @@ class InterleaveDataManager:
         # Add sampler weights to result if using dynamic weighting
         if self.use_dynamic_weights:
             batch["sampler_weights"] = self.weights.copy()
+
+        # Log validation statistics periodically
+        self.batch_count += 1
+        if self.batch_count % self.validation_stats_log_interval == 0:
+            stats = self.message_queue.get_validation_stats()
+            if any(stats.values()):  # Only log if there are any stats
+                print(f"[VALIDATION STATS] Batch {self.batch_count}: {stats}")
 
         return batch
 

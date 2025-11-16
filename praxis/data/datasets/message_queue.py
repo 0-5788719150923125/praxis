@@ -59,6 +59,7 @@ class MessageQueueManager:
             "documents_validated": 0,
             "documents_failed": 0,
             "documents_skipped": 0,
+            "template_application_errors": 0,
         }
 
     def add_document(self, document_data: Dict[str, Any]):
@@ -107,18 +108,35 @@ class MessageQueueManager:
                     messages, tokenize=False, add_generation_prompt=False
                 )
             except Exception as e:
-                print(
-                    f"[ERROR] MessageQueue._refill_token_buffer failed to apply chat template: {e}"
-                )
-                print(f"[ERROR] Messages: {messages}")
-                import traceback
+                # Track template application errors
+                self.validation_stats["template_application_errors"] += 1
 
+                # Log detailed error information
+                print("=" * 80)
+                print("[CRITICAL ERROR] Failed to apply chat template!")
+                print(f"Error: {e}")
+                print(f"Document metadata: {metadata}")
+                print(f"Messages structure:")
+                for i, msg in enumerate(messages):
+                    role = msg.get("role", "MISSING_ROLE")
+                    content_preview = str(msg.get("content", "MISSING_CONTENT"))[:200]
+                    print(f"  [{i}] role={role}, content={content_preview}...")
+                print("=" * 80)
+
+                import traceback
                 traceback.print_exc()
+
+                # Skip this document
                 continue
 
             # Tokenize this document
+            # Use add_special_tokens=False because chat template already includes all special tokens
             doc_tokens = self.tokenizer(
-                text, return_tensors="pt", padding=False, truncation=False
+                text,
+                add_special_tokens=False,
+                return_tensors="pt",
+                padding=False,
+                truncation=False
             )["input_ids"].squeeze(0)
 
             # Validate chat template if enabled
@@ -276,5 +294,6 @@ class MessageQueueManager:
             - documents_validated: Total documents validated
             - documents_failed: Documents that failed validation
             - documents_skipped: Documents skipped due to validation failure
+            - template_application_errors: Documents where chat template failed to apply
         """
         return self.validation_stats.copy()

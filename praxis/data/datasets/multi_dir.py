@@ -284,11 +284,25 @@ class MultiDirectoryDataset(PraxisSampler):
                     self.sequence_cache.append(formatted_text)
                     return  # Successfully added to cache
 
-                except Exception:
-                    # If formatting fails, fall back to simple format
-                    simple_content = self.tokenizer.bos_token + content
-                    self.sequence_cache.append(simple_content)
-                    return
+                except Exception as e:
+                    # If formatting fails, log and create minimal valid structure
+                    print(f"[ERROR] Failed to format file {file_path}: {e}")
+                    try:
+                        # Create minimal valid message structure
+                        fallback_messages = [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "assistant", "content": content[:1000]},  # Truncate to prevent issues
+                        ]
+                        simple_content = self.tokenizer.apply_chat_template(
+                            fallback_messages, tokenize=False, add_generation_prompt=False
+                        )
+                        self.sequence_cache.append(simple_content)
+                        return
+                    except Exception as e2:
+                        # If even fallback fails, log and skip this file
+                        print(f"[ERROR] Fallback formatting also failed: {e2}")
+                        self.removed_files.add(file_path)
+                        continue
 
             except StopIteration:
                 # End of file list - reshuffle and start over
@@ -298,23 +312,34 @@ class MultiDirectoryDataset(PraxisSampler):
                 ]
 
                 if not self.file_list:
-                    # No files left to read
+                    # No files left to read - create valid error message
                     print(
-                        "Warning: No readable files remaining in MultiDirectoryDataset"
+                        "[ERROR] No readable files remaining in MultiDirectoryDataset"
                     )
-                    # Add a dummy entry to prevent crashes
-                    self.sequence_cache.append(
-                        self.tokenizer.bos_token + "No files available."
+                    # Create a properly formatted error message
+                    error_messages = [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "assistant", "content": "No files available."},
+                    ]
+                    formatted_error = self.tokenizer.apply_chat_template(
+                        error_messages, tokenize=False, add_generation_prompt=False
                     )
+                    self.sequence_cache.append(formatted_error)
                     return
 
                 random.shuffle(self.file_list)
                 self.file_iterator = iter(self.file_list)
                 continue
 
-        # Fallback if we hit max attempts
+        # Fallback if we hit max attempts - create valid error message
         print(
-            "Warning: Max attempts reached in MultiDirectoryDataset.fill_sequence_cache"
+            "[ERROR] Max attempts reached in MultiDirectoryDataset.fill_sequence_cache"
         )
-        self.sequence_cache.append(self.tokenizer.bos_token + "Error loading files.")
-        self.sequence_cache.append(self.tokenizer.bos_token + "Error loading files.")
+        error_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "assistant", "content": "Error loading files."},
+        ]
+        formatted_error = self.tokenizer.apply_chat_template(
+            error_messages, tokenize=False, add_generation_prompt=False
+        )
+        self.sequence_cache.append(formatted_error)
