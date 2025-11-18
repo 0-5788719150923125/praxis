@@ -458,9 +458,9 @@ class Integration(BaseIntegration):
 
         if not ngrok_secret:
             # No secret configured, block the request with proper response
-            from flask import make_response
+            from flask import abort
 
-            return make_response("", 404)
+            return abort(404)
 
         path = request.path
 
@@ -496,9 +496,9 @@ class Integration(BaseIntegration):
             return None  # Authorized request
 
         # Block unauthorized ngrok requests with proper response
-        from flask import make_response
+        from flask import abort
 
-        return make_response("", 404)
+        return abort(404)
 
     def cleanup(self) -> None:
         """Clean up ngrok resources."""
