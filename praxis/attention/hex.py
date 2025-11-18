@@ -166,17 +166,21 @@ class HexAttention(nn.Module):
         self, q_len: int, kv_len: int, device: torch.device
     ) -> torch.Tensor:
         """
-        Create a standard causal block mask for the given sequence lengths.
+        Create a causal block mask with ghostmax support.
 
-        Standard causal: position i sees j where j ≤ i (sees past, infers future).
+        Ghost token at kv_idx=0 is always accessible.
+        For actual tokens (kv_idx >= 1), apply causal masking with ghost shift:
+        - kv_idx=1 corresponds to position 0
+        - kv_idx=2 corresponds to position 1, etc.
+        - Causal constraint: q_idx >= actual_position, i.e., q_idx >= kv_idx - 1
 
         Args:
-            q_len: Query sequence length
-            kv_len: Key/Value sequence length
+            q_len: Query sequence length (number of actual positions)
+            kv_len: Key/Value sequence length (should be q_len + 1 for ghost)
             device: Device to create mask on
 
         Returns:
-            Block mask for causal attention
+            Block mask for causal attention with ghostmax
         """
 
         # Create cache key using device string representation
@@ -187,8 +191,10 @@ class HexAttention(nn.Module):
             return self.block_mask_cache[cache_key]
 
         def causal_mask(b, h, q_idx, kv_idx):
-            # Standard causal: allow attending to positions <= q_idx
-            return q_idx >= kv_idx
+            # Ghost token (kv_idx=0) is always accessible
+            # Actual tokens: kv_idx=1 is position 0, so causal becomes q_idx >= kv_idx - 1
+            # Equivalently: q_idx + 1 >= kv_idx
+            return (kv_idx == 0) | (q_idx + 1 >= kv_idx)
 
         # Create block mask (broadcasting over batch and heads)
         block_mask = self.create_block_mask(
@@ -257,9 +263,26 @@ class HexAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Apply positional encoding
+        # Apply positional encoding (RoPE modifies q,k directly, must happen before ghostmax)
         if self.pos_type == "rope":
             q, k = self._apply_rope(q, k)
+
+        # Ghostmax: Prepend zero token to K and V (after positional encoding)
+        # This implements softmax1 by adding an implicit exp(0)=1 to the denominator
+        # and a zero vector that contributes nothing to the output.
+        # See: https://www.evanmiller.org/attention-is-off-by-one.html
+        zero_k = torch.zeros(
+            batch_size, self.num_heads, 1, self.head_dim, device=k.device, dtype=k.dtype
+        )
+        zero_v = torch.zeros(
+            batch_size, self.num_heads, 1, self.head_dim, device=v.device, dtype=v.dtype
+        )
+        k = torch.cat([zero_k, k], dim=2)  # (B, H, T+1, D)
+        v = torch.cat([zero_v, v], dim=2)  # (B, H, T+1, D)
+        kv_len = seq_len + 1
+
+        # Define score_mod for positional bias (after ghostmax, so it accounts for ghost at kv_idx=0)
+        if self.pos_type == "rope":
             score_mod = None
         else:  # alibi
             alibi_bias = self.alibi_slopes.to(inputs.device)
@@ -267,11 +290,17 @@ class HexAttention(nn.Module):
             def alibi_score_mod(score, b, h, q_idx, kv_idx):
                 """Apply ALiBi positional bias to attention scores.
 
-                ALiBi applies a negative bias that increases with distance.
-                For causal attention where q_idx >= kv_idx, this produces
-                negative biases that decrease as distance increases.
+                Ghost token at kv_idx=0 receives no bias.
+                For actual tokens (kv_idx >= 1), apply standard ALiBi bias
+                accounting for the ghost shift: kv_idx=1 corresponds to position 0.
+
+                Uses tensor ops instead of if/else for torch.compile compatibility.
                 """
-                bias = alibi_bias[h] * (kv_idx - q_idx)
+                # For ghost token (kv_idx=0): is_not_ghost=0, so bias=0
+                # For actual tokens (kv_idx>=1): is_not_ghost=1, so bias is applied
+                is_not_ghost = (kv_idx > 0).float()
+                actual_kv = kv_idx - 1
+                bias = alibi_bias[h] * (actual_kv - q_idx) * is_not_ghost
                 return score + bias
 
             score_mod = alibi_score_mod
@@ -279,10 +308,10 @@ class HexAttention(nn.Module):
         # Determine if we're using GQA
         is_gqa = self.num_queries > 1
 
-        # Handle masking: use standard causal block_mask
+        # Handle masking: use causal block_mask with ghost token support
         if self.causal:
-            # Create standard causal block_mask
-            block_mask = self._create_causal_mask(seq_len, seq_len, inputs.device)
+            # Create causal block_mask that allows ghost access
+            block_mask = self._create_causal_mask(seq_len, kv_len, inputs.device)
         else:
             block_mask = None
 

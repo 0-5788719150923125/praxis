@@ -73,4 +73,9 @@ def extract_assistant_reply(generated_text: str, tokenizer: Any) -> str:
     if assistant_reply.startswith(tokenizer.bos_token):
         assistant_reply = assistant_reply[len(tokenizer.bos_token) :].strip()
 
+    # Strip '#RESPONSE' prefix from training data if present
+    if assistant_reply.startswith("#RESPONSE"):
+        # Remove '#RESPONSE' and any following whitespace/newlines
+        assistant_reply = assistant_reply[len("#RESPONSE") :].lstrip()
+
     return assistant_reply
