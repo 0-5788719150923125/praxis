@@ -4,12 +4,16 @@ Based on the efficient attention implementation with block masking support.
 """
 
 import math
+import os
 from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+# Suppress verbose compile-time logs
+os.environ["TORCHDYNAMO_EXTENDED_ADVICE"] = "0"
 
 
 class HexAttention(nn.Module):
@@ -18,23 +22,23 @@ class HexAttention(nn.Module):
     Provides efficient attention computation with customizable block masking.
     """
 
-    def __init__(self, config, pos_type: str = None) -> None:
+    def __init__(self, config) -> None:
         """
         Initialize HexAttention module.
 
         Args:
             config: Configuration object containing attention parameters
-            pos_type: Positional encoding type - "alibi" or "rope"
-                     If None, reads from config.pos_type (default "alibi")
+                   (config.encoding should be "alibi" or "rope")
         """
         super().__init__()
 
-        # Get pos_type from parameter or config
-        if pos_type is None:
-            pos_type = getattr(config, "pos_type", "alibi")
+        # Get positional encoding type from config
+        pos_type = config.encoding
 
         if pos_type not in ["alibi", "rope"]:
-            raise ValueError(f"pos_type must be 'alibi' or 'rope', got {pos_type}")
+            raise ValueError(
+                f"config.encoding must be 'alibi' or 'rope' for HexAttention, got '{pos_type}'"
+            )
 
         self.pos_type = pos_type
         hidden_size = config.hidden_size
@@ -210,7 +214,6 @@ class HexAttention(nn.Module):
         self.block_mask_cache[cache_key] = block_mask
 
         return block_mask
-
 
     def forward(
         self,

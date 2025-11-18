@@ -5,6 +5,8 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List
 
+from praxis.tools import format_tool_call_with_result
+
 
 def format_file_as_messages(
     file_path: str,
@@ -40,18 +42,17 @@ def format_file_as_messages(
     if isinstance(sample_path, Path):
         sample_path = str(sample_path)
 
-    # Create tool-calling format
+    # Create tool-calling format using inline <tin>/<tout> tags
     messages = []
 
-    # Assistant calls the read_file tool
-    tool_call = {
-        "function": {"name": "read_file", "arguments": {"file_path": sample_path}}
-    }
+    # Format the tool call with inline result
+    tool_call_content = format_tool_call_with_result(
+        tool_name="read_file",
+        arguments={"file_path": sample_path},
+        result=content
+    )
 
-    # Assistant message with tool call (no content needed, just the tool call)
-    messages.append({"role": "assistant", "tool_calls": [tool_call]})
-
-    # Tool response with the file content
-    messages.append({"role": "tool", "content": content})
+    # Single assistant message with inline tool call and result
+    messages.append({"role": "assistant", "content": tool_call_content})
 
     return messages

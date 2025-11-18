@@ -226,3 +226,20 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Any:
 
     # Provide helpful error message with available tools
     raise ValueError(f"Tool '{name}' not found. Available tools: {available_names}")
+
+
+# Export tag utilities for use across the codebase
+from praxis.tools.tags import (
+    TOOL_INPUT_TAG,
+    TOOL_OUTPUT_TAG,
+    format_tool_input,
+    format_tool_output,
+    format_tool_call_with_result,
+    get_tool_input_pattern,
+    get_tool_output_pattern,
+    parse_tool_call,
+    get_unprocessed_tool_call,
+    fix_truncated_tags,
+    has_complete_tool_call,
+    has_tool_output,
+)

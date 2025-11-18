@@ -4,6 +4,8 @@ Test suite for Prismatic v3.0: Architectural Diversity
 Tests architectural gating with RoPE vs ALiBi positional encodings.
 """
 
+import copy
+
 import pytest
 import torch
 import torch.nn as nn
@@ -31,7 +33,9 @@ class TestArchitecturalDiversity:
 
     def test_hex_attention_with_rope(self, config):
         """Test HexAttention with RoPE positional encoding."""
-        attention = HexAttention(config, pos_type="rope")
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+        attention = HexAttention(rope_config)
 
         batch_size = 2
         seq_len = 16
@@ -44,7 +48,9 @@ class TestArchitecturalDiversity:
 
     def test_hex_attention_with_alibi(self, config):
         """Test HexAttention with ALiBi positional encoding."""
-        attention = HexAttention(config, pos_type="alibi")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        attention = HexAttention(alibi_config)
 
         batch_size = 2
         seq_len = 16
@@ -57,8 +63,13 @@ class TestArchitecturalDiversity:
 
     def test_rope_and_alibi_produce_different_outputs(self, config):
         """Test that RoPE and ALiBi produce different outputs."""
-        attention_rope = HexAttention(config, pos_type="rope")
-        attention_alibi = HexAttention(config, pos_type="alibi")
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+
+        attention_rope = HexAttention(rope_config)
+        attention_alibi = HexAttention(alibi_config)
 
         # Use same input
         batch_size = 2
@@ -77,8 +88,13 @@ class TestArchitecturalDiversity:
     def test_prismatic_with_architectural_experts(self, config):
         """Test Prismatic router with architecturally diverse experts."""
         # Create experts with different architectures
-        expert_alibi = HexAttention(config, pos_type="alibi")
-        expert_rope = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        expert_alibi = HexAttention(alibi_config)
+        expert_rope = HexAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -89,8 +105,13 @@ class TestArchitecturalDiversity:
 
     def test_prismatic_forward_with_architectural_diversity(self, config):
         """Test forward pass with architectural diversity."""
-        expert_alibi = HexAttention(config, pos_type="alibi")
-        expert_rope = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        expert_alibi = HexAttention(alibi_config)
+        expert_rope = HexAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -107,8 +128,13 @@ class TestArchitecturalDiversity:
 
     def test_routing_selects_architecture(self, config):
         """Test that routing selects one of the architectures."""
-        expert_alibi = HexAttention(config, pos_type="alibi")
-        expert_rope = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        expert_alibi = HexAttention(alibi_config)
+        expert_rope = HexAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -134,8 +160,13 @@ class TestArchitecturalDiversity:
 
     def test_gradient_flow(self, config):
         """Test that gradients flow through merged parameters."""
-        expert_alibi = HexAttention(config, pos_type="alibi")
-        expert_rope = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        expert_alibi = HexAttention(alibi_config)
+        expert_rope = HexAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -153,8 +184,13 @@ class TestArchitecturalDiversity:
 
     def test_different_inputs_different_routing(self, config):
         """Test that different inputs produce different routing patterns."""
-        expert_alibi = HexAttention(config, pos_type="alibi")
-        expert_rope = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        expert_alibi = HexAttention(alibi_config)
+        expert_rope = HexAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)
@@ -176,8 +212,13 @@ class TestArchitecturalDiversity:
 
     def test_architecture_selection_tracking(self, config):
         """Test that architecture selection is tracked."""
-        expert_alibi = HexAttention(config, pos_type="alibi")
-        expert_rope = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        expert_alibi = HexAttention(alibi_config)
+        expert_rope = HexAttention(rope_config)
         experts = [expert_alibi, expert_rope]
 
         prismatic = Prismatic(config, experts=experts)

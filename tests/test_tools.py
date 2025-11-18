@@ -8,7 +8,15 @@ import pytest
 import torch
 
 from praxis import PraxisConfig, PraxisForCausalLM
-from praxis.tools import calc, get_tools
+from praxis.tools import (
+    calc,
+    format_tool_call_with_result,
+    format_tool_input,
+    format_tool_output,
+    get_tool_input_pattern,
+    get_tools,
+    parse_tool_call,
+)
 
 
 def test_calc_tool_basic():
@@ -138,27 +146,20 @@ def test_tool_calling_during_inference():
     result = calc.forward(values=[10, 20], op="add")
     assert result == 30
 
-    # Parse a tool call from text (simulate what Generator would do)
-    tool_call_text = """<tool_call>
-{"name": "calc", "arguments": {"values": [10, 20], "op": "add"}}
-</tool_call>"""
+    # Parse a tool call from text using new <tin> tag format
+    tool_call_text = format_tool_input("calc", {"values": [10, 20], "op": "add"})
 
-    # Simple regex parsing (similar to Generator._parse_tool_call)
-    import json
-    import re
+    # Parse using the utility function
+    tool_data = parse_tool_call(tool_call_text)
 
-    tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
-    match = re.search(tool_pattern, tool_call_text, re.DOTALL)
+    assert tool_data is not None
+    assert tool_data["name"] == "calc"
+    assert tool_data["arguments"]["values"] == [10, 20]
 
-    if match:
-        tool_data = json.loads(match.group(1))
-        assert tool_data["name"] == "calc"
-        assert tool_data["arguments"]["values"] == [10, 20]
-
-        # Execute the parsed tool call via calc
-        if tool_data["name"] == "calc":
-            result = calc.forward(**tool_data["arguments"])
-            assert result == 30
+    # Execute the parsed tool call via calc
+    if tool_data["name"] == "calc":
+        result = calc.forward(**tool_data["arguments"])
+        assert result == 30
 
 
 def test_model_with_tools():
@@ -186,15 +187,13 @@ Assistant: I'll calculate that for you."""
     # Verify the prompt includes tool information
     assert "calc" in prompt
 
-    # Simulate a tool call response (what an agent might generate)
-    tool_response = '<tool_call>\n{"name": "calc", "arguments": {"values": [15, 25], "op": "add"}}\n</tool_call>'
+    # Simulate a tool call response using new tag format
+    tool_response = format_tool_input("calc", {"values": [15, 25], "op": "add"})
 
-    # Parse and execute
-    pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
-    match = re.search(pattern, tool_response, re.DOTALL)
-    assert match is not None
+    # Parse and execute using utility function
+    tool_data = parse_tool_call(tool_response)
+    assert tool_data is not None
 
-    tool_data = json.loads(match.group(1))
     # Execute via the calc tool directly
     if tool_data["name"] == "calc":
         result = calc.forward(**tool_data["arguments"])
@@ -202,34 +201,80 @@ Assistant: I'll calculate that for you."""
 
 
 def test_truncated_tool_call_tag():
-    """Test that truncated tool call tags are properly fixed."""
-    # Test the fix for malformed tool call closing tags
+    """Test that truncated tool input tags are properly fixed."""
+    from praxis.tools import fix_truncated_tags
+
+    # Test the fix for malformed tool input closing tags
     malformed_text = """[BOS]assistant
-<tool_call>
+<tin>
 {"name": "calc", "arguments": {"values": [103253, 757695], "op": "add"}}
-</tool_call
+</tin
 [SEP]
 [BOS]assistant
 >
-[SEP]
-[BOS]tool
-860948"""
+[SEP]"""
 
-    # The fix should correct the truncated tag
-    if "</tool_call" in malformed_text and not "</tool_call>" in malformed_text:
-        fixed_text = malformed_text.replace("</tool_call", "</tool_call>")
-        assert "</tool_call>" in fixed_text
-        assert "</tool_call\n" not in fixed_text  # The malformed version should be gone
+    # Use the utility function to fix truncated tags
+    fixed_text = fix_truncated_tags(malformed_text)
 
-        # Also test that the unwanted assistant message fragment would be removed
-        import re
+    # Verify the tag was fixed
+    assert "</tin>" in fixed_text
+    assert "</tin\n" not in fixed_text  # The malformed version should be gone
 
-        cleaned_text = re.sub(
-            r"</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]",
-            "</tool_call>",
-            fixed_text,
-        )
-        assert (
-            "[BOS]assistant\n>" not in cleaned_text
-            or "[BOS]assistant" in cleaned_text.split("</tool_call>")[0]
-        )
+    # Verify unwanted fragments were removed
+    assert "[BOS]assistant\n>" not in fixed_text or "[BOS]assistant" in fixed_text.split(
+        "</tin>"
+    )[0]
+
+
+def test_tool_tag_utilities():
+    """Test the new tool tag utility functions."""
+    from praxis.tools import (
+        format_tool_call_with_result,
+        format_tool_input,
+        format_tool_output,
+        get_unprocessed_tool_call,
+        has_complete_tool_call,
+        has_tool_output,
+        parse_tool_call,
+    )
+
+    # Test format_tool_input
+    tool_input = format_tool_input("calc", {"values": [1, 2], "op": "add"})
+    assert "<tin>" in tool_input
+    assert "</tin>" in tool_input
+    assert '"name": "calc"' in tool_input
+
+    # Test format_tool_output
+    tool_output = format_tool_output(42)
+    assert tool_output == "<tout>42</tout>"
+
+    # Test format_tool_call_with_result
+    complete_call = format_tool_call_with_result("calc", {"values": [1, 2], "op": "add"}, 3)
+    assert "<tin>" in complete_call
+    assert "</tin>" in complete_call
+    assert "<tout>3</tout>" in complete_call
+
+    # Test parse_tool_call
+    parsed = parse_tool_call(tool_input)
+    assert parsed is not None
+    assert parsed["name"] == "calc"
+    assert parsed["arguments"]["values"] == [1, 2]
+
+    # Test has_complete_tool_call
+    assert has_complete_tool_call(tool_input) is True
+    assert has_complete_tool_call("no tool call here") is False
+
+    # Test has_tool_output
+    assert has_tool_output(tool_output) is True
+    assert has_tool_output("no output here") is False
+
+    # Test get_unprocessed_tool_call
+    # Tool call without output should be detected as unprocessed
+    unprocessed = get_unprocessed_tool_call(tool_input)
+    assert unprocessed is not None
+    assert unprocessed[0]["name"] == "calc"
+
+    # Tool call with output should not be unprocessed
+    processed = get_unprocessed_tool_call(complete_call)
+    assert processed is None  # Has output, so it's processed

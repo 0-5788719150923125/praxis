@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional, TypeVar, Union
 import copy
+from typing import Any, Dict, List, Optional, TypeVar, Union
 
 import torch
 import torch.nn as nn
@@ -68,17 +68,17 @@ class BaseDecoder(nn.Module):
             for i in range(self.num_layers):
                 self.locals.append(expert)
         elif config.router_type == "prismatic":
-            # For Prismatic with architectural diversity, create experts with different pos_type
+            # For Prismatic with architectural diversity, create experts with different encoding
             # Philosophy: Test "Blind Watchmaker" hypothesis - architectural diversity
             # reveals patterns single approaches cannot discover
             expert_blocks = []
-            pos_types = ["alibi", "rope"]  # Expert 0: ALiBi, Expert 1: RoPE
+            encodings = ["alibi", "rope"]  # Expert 0: ALiBi, Expert 1: RoPE
 
-            original_pos_type = getattr(config, "pos_type", None)
+            original_encoding = getattr(config, "encoding", None)
 
             for expert_idx in range(self.num_experts):
                 # Set positional encoding for this expert
-                config.pos_type = pos_types[expert_idx % len(pos_types)]
+                config.encoding = encodings[expert_idx % len(encodings)]
 
                 if self.manager:
                     block = self.manager.register_expert(config)
@@ -86,17 +86,17 @@ class BaseDecoder(nn.Module):
                     block = BLOCK_REGISTRY[config.block_type](config)
                 expert_blocks.append(block)
 
-                print(f"[PRISMATIC v7.0] Created expert {expert_idx} with pos_type={config.pos_type}")
+                print(f"[PRISMATIC v7.0] Created expert {expert_idx} with encoding={config.encoding}")
 
             print(f"[PRISMATIC v7.0] Architectural diversity: ALiBi vs RoPE")
             print(f"  Expert 0: ALiBi (linear distance bias)")
             print(f"  Expert 1: RoPE (rotational encoding)")
 
-            # Restore original pos_type
-            if original_pos_type is not None:
-                config.pos_type = original_pos_type
-            elif hasattr(config, "pos_type"):
-                delattr(config, "pos_type")
+            # Restore original encoding
+            if original_encoding is not None:
+                config.encoding = original_encoding
+            elif hasattr(config, "encoding"):
+                delattr(config, "encoding")
 
             # Create a single LocalLayer with all expert blocks
             expert = LocalLayer(

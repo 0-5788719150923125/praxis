@@ -85,7 +85,7 @@ attention_type: hex
 router_balance_loss_coef: 0.01
 ```
 
-Experts are created with cycling `pos_type` via modulus: `architectures[i % len(architectures)]`
+Experts are created with cycling `encoding` via modulus: `architectures[i % len(architectures)]`
 
 ## Usage
 
@@ -170,8 +170,8 @@ config = PraxisConfig(
 - ❌ Target leakage prevention hacks
 
 **Added (~5 lines of simplicity):**
-- ✅ Expert 0: `pos_type = "alibi"`
-- ✅ Expert 1: `pos_type = "rope"`
+- ✅ Expert 0: `encoding = "alibi"`
+- ✅ Expert 1: `encoding = "rope"`
 - ✅ Standard causal masking everywhere
 
 **Net result: Much simpler, philosophically aligned, actually valid.**
@@ -200,7 +200,7 @@ config = PraxisConfig(
 **v6.0 tested:** Temporal perspective (backward inference)
 **Result:** Fundamentally broken (target leakage)
 
-**v7.0 tests:** Architectural diversity (pos_type)
+**v7.0 tests:** Architectural diversity (encoding)
 **Expected:** Clean experiment testing actual research hypothesis
 
 **The question:**
@@ -246,7 +246,7 @@ Does routing between ALiBi and RoPE outperform either architecture alone?
 - More positional encoding types (Absolute, T5-style relative, etc.)
 - More experts (3-4 different strategies)
 - Token-level routing (finer granularity)
-- Layer-specific architectures (different pos_types per layer)
+- Layer-specific architectures (different encodings per layer)
 
 **The key: Simple, clean architectural diversity. Let gradient descent figure out what works.**
 
@@ -257,6 +257,6 @@ Does routing between ALiBi and RoPE outperform either architecture alone?
 **Breaking Changes:**
 - Removed all bidirectional temporal masking
 - Removed ghost_position parameter
-- Experts now differ by pos_type (ALiBi vs RoPE), not masking
+- Experts now differ by encoding (ALiBi vs RoPE), not masking
 - Standard causal masking everywhere
 - Much simpler implementation (~200 lines removed)

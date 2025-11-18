@@ -56,11 +56,17 @@ class TestArchitecturalDiversity:
             causal=True
         )
 
-        # Create experts with different pos_types
+        # Create experts with different encodings
         from praxis.attention.hex import HexAttention
 
-        alibi_expert = HexAttention(config, pos_type="alibi")
-        rope_expert = HexAttention(config, pos_type="rope")
+        # Create config copies with different encodings
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        alibi_expert = HexAttention(alibi_config)
+        rope_expert = HexAttention(rope_config)
 
         router = Prismatic(config, experts=[alibi_expert, rope_expert])
 
@@ -82,8 +88,13 @@ class TestArchitecturalDiversity:
 
         from praxis.attention.hex import HexAttention
 
-        alibi_attn = HexAttention(config, pos_type="alibi")
-        rope_attn = HexAttention(config, pos_type="rope")
+        alibi_config = copy.copy(config)
+        alibi_config.encoding = "alibi"
+        rope_config = copy.copy(config)
+        rope_config.encoding = "rope"
+
+        alibi_attn = HexAttention(alibi_config)
+        rope_attn = HexAttention(rope_config)
 
         # Same input
         inputs = torch.randn(1, 8, config.hidden_size)
@@ -112,9 +123,11 @@ class TestArchitecturalDiversity:
 
         # Create 4 experts with cycling architectures
         experts = []
-        pos_types = ["alibi", "rope"]
+        encodings = ["alibi", "rope"]
         for i in range(4):
-            expert = HexAttention(config, pos_type=pos_types[i % len(pos_types)])
+            expert_config = copy.copy(config)
+            expert_config.encoding = encodings[i % len(encodings)]
+            expert = HexAttention(expert_config)
             experts.append(expert)
 
         router = Prismatic(config, experts=experts)

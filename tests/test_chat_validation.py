@@ -26,8 +26,9 @@ def test_validator_initialization(tokenizer):
     validator = ChatTemplateValidator(tokenizer)
     assert validator.tokenizer == tokenizer
     assert validator.bos_token_id is not None
-    assert len(validator.ALLOWED_ROLES) == 5
+    assert len(validator.ALLOWED_ROLES) == 4  # system, developer, user, assistant
     assert "system" in validator.ALLOWED_ROLES
+    assert "developer" in validator.ALLOWED_ROLES
     assert "user" in validator.ALLOWED_ROLES
     assert "assistant" in validator.ALLOWED_ROLES
 

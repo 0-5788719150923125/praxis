@@ -42,7 +42,7 @@ class Prismatic(nn.Module):
     3. Executes selected experts and blends outputs
     4. Applies load balancing loss to encourage balanced usage
 
-    Key design: Clean architectural diversity. Different pos_type per expert,
+    Key design: Clean architectural diversity. Different encoding per expert,
     everything else identical. Blends complementary architectural strengths.
     """
 
@@ -65,7 +65,7 @@ class Prismatic(nn.Module):
         self.hidden_size = config.hidden_size
         self.top_k = getattr(config, "k_experts", 2)  # Default k=2
 
-        # Get experts - should have different pos_type via modulus cycling
+        # Get experts - should have different encoding via modulus cycling
         experts = kwargs.get("experts")
         if experts is None:
             raise ValueError(

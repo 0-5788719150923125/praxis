@@ -63,15 +63,7 @@ def test_chat_template(tokenizer: PreTrainedTokenizerFast):
         },
         {
             "role": "assistant",
-            "content": 'Let me calculate that for you.\n<tool_call>\n{"name": "calc", "arguments": {"values": [25, 17], "op": "add"}}\n</tool_call>',
-        },
-        {
-            "role": "tool",
-            "content": f"{result}",
-        },
-        {
-            "role": "assistant",
-            "content": f"You would have {result} qubits total. With 42 qubits, your quantum computer could theoretically represent 2^42 (about 4.4 trillion) different states simultaneously - that's the power of quantum superposition at scale!",
+            "content": f'Let me calculate that for you.\n<tin>\n{{"name": "calc", "arguments": {{"values": [25, 17], "op": "add"}}}}\n</tin><tout>{result}</tout> You would have {result} qubits total. With 42 qubits, your quantum computer could theoretically represent 2^42 (about 4.4 trillion) different states simultaneously - that\'s the power of quantum superposition at scale!',
         },
     ]
 

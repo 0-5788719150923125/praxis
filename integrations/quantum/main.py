@@ -444,23 +444,23 @@ def get_quantum_examples(num_examples: int = 10) -> List[Dict[str, str]]:
                 {"role": "user", "content": user_prompt},
             ]
 
-            # Assistant calls the read_file tool
-            tool_call = {
-                "function": {
-                    "name": "read_file",
-                    "arguments": {"file_path": relative_path},
-                }
-            }
+            # Assistant calls the read_file tool using inline format
+            from praxis.tools import format_tool_call_with_result
 
-            # Assistant message with tool call (no content needed, just the tool call)
-            messages.append({"role": "assistant", "tool_calls": [tool_call]})
-
-            # Tool response with the file content
-            messages.append({"role": "tool", "content": content})
+            tool_call_content = format_tool_call_with_result(
+                tool_name="read_file",
+                arguments={"file_path": relative_path},
+                result=content
+            )
 
             # Add the assistant's analysis after reading the file
             analysis = _generate_quantum_analysis(content, file_path, file_ext)
-            messages.append({"role": "assistant", "content": analysis})
+
+            # Combine tool call with analysis in a single assistant message
+            messages.append({
+                "role": "assistant",
+                "content": f"{tool_call_content} {analysis}"
+            })
 
             examples.append(
                 {"messages": messages, "source": f"quantum:{relative_path}"}

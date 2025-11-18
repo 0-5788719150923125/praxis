@@ -8,6 +8,7 @@ from typing import Dict, List
 from transformers import PreTrainedTokenizer
 
 from praxis.data.config import SYSTEM_PROMPT, sample_developer_prompt
+from praxis.tools import format_tool_call_with_result
 
 
 def format_tool_calling(
@@ -154,27 +155,30 @@ def format_tool_calling(
 
         tools_json = json.dumps(get_tools_json_schema(), indent=2)
 
-        messages.extend(
-            [
-                {
-                    "role": "assistant",
-                    "content": f"<tool_call>\n{json.dumps({'name': 'get_tools', 'arguments': {}}, indent=2)}\n</tool_call>",
-                },
-                {"role": "tool", "content": tools_json},
-            ]
+        # Format tool call with inline result using new tag format
+        tool_call_content = format_tool_call_with_result(
+            tool_name="get_tools",
+            arguments={},
+            result=tools_json
         )
 
-    # Always call calc tool
-    messages.extend(
-        [
-            {
-                "role": "assistant",
-                "content": f"<tool_call>\n{json.dumps({'name': 'calc', 'arguments': {'values': values, 'op': operation}}, indent=2)}\n</tool_call>",
-            },
-            {"role": "tool", "content": str(float(result))},
-            {"role": "assistant", "content": result_phrase},
-        ]
+        messages.append({
+            "role": "assistant",
+            "content": tool_call_content,
+        })
+
+    # Always call calc tool - inline format with result and response
+    tool_call_content = format_tool_call_with_result(
+        tool_name="calc",
+        arguments={"values": values, "op": operation},
+        result=str(float(result))
     )
+
+    # Append the result phrase right after the tool output in the same message
+    messages.append({
+        "role": "assistant",
+        "content": f"{tool_call_content} {result_phrase}",
+    })
 
     # Return messages and metadata
     return {

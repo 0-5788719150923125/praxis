@@ -1,7 +1,7 @@
 """Chat template validation for BOS token constraints.
 
 This module validates that BOS tokens in tokenized sequences are only followed
-by valid role names (system, developer, user, assistant, tool).
+by valid role names (system, developer, user, assistant).
 """
 
 from typing import Dict, List, Tuple
@@ -18,7 +18,7 @@ class ChatTemplateValidator:
     """
 
     # Valid role names that can appear after BOS tokens
-    ALLOWED_ROLES = ["system", "developer", "user", "assistant", "tool"]
+    ALLOWED_ROLES = ["system", "developer", "user", "assistant"]
 
     def __init__(self, tokenizer: PreTrainedTokenizer, strict_mode: bool = False):
         """Initialize the validator.

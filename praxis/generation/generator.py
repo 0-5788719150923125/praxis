@@ -1,4 +1,8 @@
-"""Text generation with request queuing and tool calling support."""
+"""Text generation with request queuing and inline tool calling support.
+
+Tool calls are handled inline using <tin>...</tin> and <tout>...</tout> tags,
+allowing the model to execute tools and continue generation in a single pass.
+"""
 
 import contextlib
 import json
@@ -12,6 +16,12 @@ import torch
 from transformers import GenerationConfig
 
 from praxis.generation.request import GenerationRequest
+from praxis.tools import (
+    fix_truncated_tags,
+    format_tool_output,
+    get_unprocessed_tool_call,
+    parse_tool_call,
+)
 
 
 class Generator:
@@ -275,25 +285,10 @@ class Generator:
                 )
 
         # Clean up any malformed tool call closing tags before processing
-        # Fix truncated </tool_call tags (e.g., "</tool_call" without the closing >)
-        if "</tool_call" in return_text and not "</tool_call>" in return_text:
-            # Find the truncated tag and fix it
-            return_text = return_text.replace("</tool_call", "</tool_call>")
-            # Remove any extra content after the fixed tag that shouldn't be there
-            # Look for patterns like "</tool_call>[SEP][BOS]assistant>"
-            # Remove assistant message with just ">" or similar fragments after tool call
-            return_text = re.sub(
-                r"</tool_call>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]",
-                "</tool_call>",
-                return_text,
-            )
-            # Also handle cases without the special tokens
-            return_text = re.sub(
-                r"</tool_call>\s*assistant\s*>\s*", "</tool_call>", return_text
-            )
+        return_text = fix_truncated_tags(return_text)
 
         # Check if the generated text contains an unprocessed tool call
-        unprocessed_call = self._get_unprocessed_tool_call(return_text)
+        unprocessed_call = get_unprocessed_tool_call(return_text)
 
         if unprocessed_call and self.tools and self.call_tool:
             tool_call, _ = unprocessed_call
@@ -312,7 +307,9 @@ class Generator:
                 print(
                     f"[TOOL_SAFETY] Tool calling timeout ({self.max_tool_call_time}s) exceeded after {elapsed_time:.2f}s."
                 )
-                print(f"[TOOL_SAFETY] Completed {tool_call_depth} tool calls before timeout.")
+                print(
+                    f"[TOOL_SAFETY] Completed {tool_call_depth} tool calls before timeout."
+                )
                 return return_text
 
             # Execute the tool
@@ -345,7 +342,9 @@ class Generator:
                     f"[TOOL_SAFETY] This tool was already called with identical arguments."
                 )
                 print(f"[TOOL_SAFETY] Stopping to prevent infinite loop.")
-                print(f"[TOOL_SAFETY] Tool call history: {[sig[0] for sig in tool_call_history]}")
+                print(
+                    f"[TOOL_SAFETY] Tool call history: {[sig[0] for sig in tool_call_history]}"
+                )
                 return return_text
 
             try:
@@ -356,47 +355,77 @@ class Generator:
                 # Add this tool call to history (after successful execution)
                 tool_call_history.append(tool_signature)
 
-                # Build a new messages list with the tool result
+                # Inline tool execution: inject <tout>result</tout> and continue generation
+                # Find the end position of the tool call (after </tin>)
+                _, tin_end_pos = unprocessed_call
+
+                # Inject the tool output tag immediately after </tin>
+                tool_output_tag = format_tool_output(tool_result)
+                text_with_result = (
+                    return_text[:tin_end_pos]
+                    + tool_output_tag
+                    + return_text[tin_end_pos:]
+                )
+
+                # Now continue generation from this point
+                # Re-encode the text with the injected result
+                new_input_ids = self.tokenizer.encode(text_with_result)
+
+                if isinstance(new_input_ids, list):
+                    model_device = next(self.model.parameters()).device
+                    new_input_ids = torch.tensor(
+                        [new_input_ids], dtype=torch.long, device=model_device
+                    )
+
+                # Ensure input_ids are on the same device as the model
+                model_device = next(self.model.parameters()).device
+                if new_input_ids.device != model_device:
+                    new_input_ids = new_input_ids.to(model_device)
+
+                # Calculate remaining tokens to generate
+                # We want to allow the model to continue after the tool result
+                original_max_tokens = request.kwargs.get("max_new_tokens", 100)
+                tokens_used = new_input_ids.shape[1] - original_prompt_length
+                remaining_tokens = max(1, original_max_tokens - tokens_used)
+
+                # Create continuation request with updated prompt
+                continuation_kwargs = request.kwargs.copy()
+                continuation_kwargs["max_new_tokens"] = remaining_tokens
+
+                # Build messages with the tool call + result inline
                 if isinstance(request.prompt, list):
                     messages = request.prompt.copy()
                 else:
-                    # Convert string prompt to messages format
                     messages = [{"role": "user", "content": request.prompt}]
 
-                # Extract assistant's content (without the original prompt)
-                assistant_content = return_text
+                # Extract assistant's content with tool call and result
+                assistant_content = text_with_result
                 if prompt_text in assistant_content:
                     assistant_content = assistant_content.replace(
                         prompt_text, ""
                     ).strip()
 
-                # Clean up any fragments like lone ">" that might be in the content
-                # Remove patterns like "[SEP][BOS]assistant>[SEP]" or just ">"
+                # Clean up any fragments
                 assistant_content = re.sub(
                     r"\[SEP\]\[BOS\]assistant\s*>\s*\[SEP\]", "", assistant_content
                 )
                 assistant_content = re.sub(r"^\s*>\s*$", "", assistant_content)
                 assistant_content = assistant_content.strip()
 
-                # Add assistant message if there's content
-                if assistant_content:
-                    messages.append({"role": "assistant", "content": assistant_content})
+                # Add the assistant message with inline tool call + result
+                messages.append({"role": "assistant", "content": assistant_content})
 
-                # Add tool result as a proper tool message
-                messages.append({"role": "tool", "content": str(tool_result)})
-
-                # Create new request with proper messages
-                tool_response_request = GenerationRequest(
-                    id=request.id + "_tool_response",
+                # Create continuation request
+                continuation_request = GenerationRequest(
+                    id=request.id + "_tool_continuation",
                     prompt=messages,
-                    kwargs=request.kwargs,
+                    kwargs=continuation_kwargs,
                 )
 
-                # Recursively process to get the model's response after tool execution
-                # This will handle any additional tool calls the model might make
-                # Pass tracking parameters to maintain safety limits across recursion
+                # Recursively process to continue generation after tool execution
+                # This allows the model to respond to the tool result and make additional calls if needed
                 final_response = self._process_single_request(
-                    tool_response_request,
+                    continuation_request,
                     tool_call_depth=tool_call_depth + 1,
                     tool_call_history=tool_call_history,
                     start_time=start_time,
@@ -408,47 +437,6 @@ class Generator:
                 return return_text
 
         return return_text
-
-    def _parse_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parse tool call from generated text, returning the LAST complete tool call."""
-
-        # Look for ALL tool call patterns
-        tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
-        matches = re.findall(tool_pattern, text, re.DOTALL)
-
-        # Process from last to first, returning the first valid JSON
-        for match in reversed(matches):
-            try:
-                tool_data = json.loads(match)
-                return tool_data
-            except json.JSONDecodeError:
-                continue
-
-        return None
-
-    def _get_unprocessed_tool_call(
-        self, text: str
-    ) -> Optional[tuple[Dict[str, Any], int]]:
-        """
-        Find the last tool call in the text.
-        Returns a tuple of (tool_data, match_end_position) or None.
-        Since we use message-based tool responses, we simply return the last valid tool call.
-        """
-        tool_pattern = r"<tool_call>\s*({.*?})\s*</tool_call>"
-        matches = list(re.finditer(tool_pattern, text, re.DOTALL))
-
-        if not matches:
-            return None
-
-        # Return the last valid tool call
-        for match in reversed(matches):
-            try:
-                tool_data = json.loads(match.group(1))
-                return (tool_data, match.end())
-            except json.JSONDecodeError:
-                continue
-
-        return None
 
     def fulfill_requests(self, max_requests: int = None) -> int:
         """

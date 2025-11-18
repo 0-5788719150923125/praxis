@@ -19,7 +19,7 @@ def format_messages_to_chatml(messages: List[Dict[str, str]], tokenizer: Any) ->
     # Validate message roles
     for message in messages:
         role = message.get("role", "").strip()
-        if role not in {"system", "developer", "user", "assistant", "tool"}:
+        if role not in {"system", "developer", "user", "assistant"}:
             raise ValueError(f"Invalid role: {role}")
 
     # Apply the chat template and add assistant generation prompt
