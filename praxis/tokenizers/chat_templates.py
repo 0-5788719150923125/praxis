@@ -4,15 +4,11 @@
 # https://huggingface.co/docs/transformers/en/conversations
 # https://huggingface.co/docs/transformers/en/chat_extras
 # https://cookbook.openai.com/articles/openai-harmony
-DEFAULT_CHAT_TEMPLATE = """{% set ns = namespace(system_seen=false) %}
-{% for message in messages %}
+DEFAULT_CHAT_TEMPLATE = """{% for message in messages %}
 {% if message['role'] == 'system' %}
-{% if not ns.system_seen %}
 {{ bos_token }}system
 {{ message['content'] }}
 {{ sep_token }}
-{% set ns.system_seen = true %}
-{% endif %}
 {% elif message['role'] == 'developer' %}
 {{ bos_token }}developer
 {{ message['content'] }}
