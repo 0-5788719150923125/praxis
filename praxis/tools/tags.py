@@ -120,7 +120,10 @@ def parse_tool_call(text: str) -> Optional[Dict[str, Any]]:
 
 
 def get_unprocessed_tool_call(text: str) -> Optional[Tuple[Dict[str, Any], int]]:
-    """Find the last tool call that doesn't have a corresponding output.
+    """Find the first tool call that doesn't have a corresponding output.
+
+    This function processes tool calls in order (first to last), ensuring that
+    multiple tool calls in a single context are all executed sequentially.
 
     Args:
         text: Text containing tool call tags
@@ -140,25 +143,25 @@ def get_unprocessed_tool_call(text: str) -> Optional[Tuple[Dict[str, Any], int]]
     if not matches:
         return None
 
-    # Check the last tool call - does it have a corresponding output?
-    last_match = matches[-1]
-
-    # Look for <tout> immediately after this </tin>
-    text_after = text[last_match.end():]
+    # Iterate through all matches in order and find the FIRST one without an output
+    # This ensures we process multiple tool calls sequentially, not just the last one
     output_pattern = rf"^\s*<{TOOL_OUTPUT_TAG}>"
 
-    # If there's already an output, this tool call is processed
-    if re.match(output_pattern, text_after):
-        return None
+    for match in matches:
+        # Look for <tout> immediately after this </tin>
+        text_after = text[match.end():]
 
-    # Return the last valid unprocessed tool call
-    for match in reversed(matches):
-        try:
-            tool_data = json.loads(match.group(1))
-            return (tool_data, match.end())
-        except json.JSONDecodeError:
-            continue
+        # If this tool call doesn't have an output, it's unprocessed
+        if not re.match(output_pattern, text_after):
+            # Try to parse the JSON to make sure it's valid
+            try:
+                tool_data = json.loads(match.group(1))
+                return (tool_data, match.end())
+            except json.JSONDecodeError:
+                # This tool call has invalid JSON, skip it and check the next one
+                continue
 
+    # All tool calls have outputs, nothing to process
     return None
 
 
@@ -166,8 +169,11 @@ def fix_truncated_tags(text: str) -> str:
     """Fix common malformed tag patterns.
 
     Handles cases like:
+    - "</" at the very end (incomplete closing tag start)
     - "</tin" without the closing ">"
+    - "</t", "</ti" (partial tag names)
     - Extra whitespace or fragments after tags
+    - [SEP] and [BOS] tokens that got generated mid-tag
 
     Args:
         text: Text potentially containing malformed tags
@@ -179,27 +185,78 @@ def fix_truncated_tags(text: str) -> str:
         >>> fix_truncated_tags('</tin\\n[SEP]')
         '</tin>\\n[SEP]'
     """
-    # Fix truncated closing tags for tool input
+    # Handle case where generation stopped at just "</" or partial tag names
+    # Look for patterns like "</\n", "</\s+", "</t\n", "</ti\n" followed by separators/noise
+    # These indicate the model was trying to close a tag but got interrupted
+    if f"<{TOOL_INPUT_TAG}>" in text:
+        # Replace "</\s*[SEP]" with "</tin>" (tag got cut off at just the opening)
+        text = re.sub(
+            r"</\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_INPUT_TAG}>",
+            text,
+        )
+        # Replace "</t\s*[SEP]" with "</tin>"
+        text = re.sub(
+            r"</t\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_INPUT_TAG}>",
+            text,
+        )
+        # Replace "</ti\s*[SEP]" with "</tin>"
+        text = re.sub(
+            r"</ti\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_INPUT_TAG}>",
+            text,
+        )
+        # Also handle end of string cases
+        if text.rstrip().endswith("</"):
+            text = text.rstrip() + f"{TOOL_INPUT_TAG}>"
+        elif text.rstrip().endswith("</t"):
+            text = text.rstrip()[:-1] + f"{TOOL_INPUT_TAG}>"
+        elif text.rstrip().endswith("</ti"):
+            text = text.rstrip()[:-2] + f"{TOOL_INPUT_TAG}>"
+
+    # Fix truncated closing tags for tool input (</tin without >)
     if f"</{TOOL_INPUT_TAG}" in text and f"</{TOOL_INPUT_TAG}>" not in text:
         text = text.replace(f"</{TOOL_INPUT_TAG}", f"</{TOOL_INPUT_TAG}>")
 
-        # Remove common fragments after fixed tag
-        # Pattern: </tin>[SEP][BOS]assistant>[SEP]
-        text = re.sub(
-            rf"</{TOOL_INPUT_TAG}>\s*\[SEP\]\s*\[BOS\]assistant\s*>\s*\[SEP\]",
-            f"</{TOOL_INPUT_TAG}>",
-            text,
-        )
-        # Also handle cases without special tokens
-        text = re.sub(
-            rf"</{TOOL_INPUT_TAG}>\s*assistant\s*>\s*",
-            f"</{TOOL_INPUT_TAG}>",
-            text,
-        )
+    # After fixing, aggressively clean up any separator/role tokens that appear
+    # immediately after the closing tag (these are artifacts from generation stopping mid-tag)
+    # This handles patterns like: </tin>[SEP], </tin>\n[SEP], </tin>\n[BOS]assistant, etc.
+    text = re.sub(
+        rf"(</{TOOL_INPUT_TAG}>)\s*\[SEP\](\s*\[BOS\])?\s*(?:assistant\s*>?\s*)?(\[SEP\])?",
+        r"\1",
+        text,
+    )
+
+    # Also clean up lone fragments like "assistant>" or just ">" after closing tags
+    text = re.sub(
+        rf"(</{TOOL_INPUT_TAG}>)\s*(?:assistant\s*>?|>\s*)",
+        r"\1",
+        text,
+    )
+
+    # Clean up duplicate partial tag names that might have been in the malformed text
+    # Pattern: </tin>tin> or </tin>t> or </tin>ti> (from when the model tried to generate
+    # the closing tag but it got split, and we already have the complete tag)
+    text = re.sub(
+        rf"(</{TOOL_INPUT_TAG}>)(?:tin|ti|t)>",
+        r"\1",
+        text,
+    )
 
     # Fix truncated closing tags for tool output
-    if f"</{TOOL_OUTPUT_TAG}" in text and f"</{TOOL_OUTPUT_TAG}>" not in text:
+    if text.rstrip().endswith("</"):
+        if f"<{TOOL_OUTPUT_TAG}>" in text:
+            text = text.rstrip() + f"{TOOL_OUTPUT_TAG}>"
+    elif f"</{TOOL_OUTPUT_TAG}" in text and f"</{TOOL_OUTPUT_TAG}>" not in text:
         text = text.replace(f"</{TOOL_OUTPUT_TAG}", f"</{TOOL_OUTPUT_TAG}>")
+
+    # Clean up separator tokens after tool output tags too
+    text = re.sub(
+        rf"(</{TOOL_OUTPUT_TAG}>)\s*\[SEP\](\s*\[BOS\])?\s*(?:assistant\s*>?\s*)?(\[SEP\])?",
+        r"\1",
+        text,
+    )
 
     return text
 

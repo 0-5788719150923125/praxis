@@ -204,7 +204,7 @@ def test_truncated_tool_call_tag():
     """Test that truncated tool input tags are properly fixed."""
     from praxis.tools import fix_truncated_tags
 
-    # Test the fix for malformed tool input closing tags
+    # Test case 1: Truncated </tin tag
     malformed_text = """[BOS]assistant
 <tin>
 {"name": "calc", "arguments": {"values": [103253, 757695], "op": "add"}}
@@ -214,17 +214,41 @@ def test_truncated_tool_call_tag():
 >
 [SEP]"""
 
-    # Use the utility function to fix truncated tags
     fixed_text = fix_truncated_tags(malformed_text)
-
-    # Verify the tag was fixed
     assert "</tin>" in fixed_text
-    assert "</tin\n" not in fixed_text  # The malformed version should be gone
+    assert "</tin\n" not in fixed_text
+    # Separator tokens after </tin> should be cleaned up
+    assert "[SEP]" not in fixed_text or fixed_text.find("[SEP]") < fixed_text.find("</tin>")
 
-    # Verify unwanted fragments were removed
-    assert "[BOS]assistant\n>" not in fixed_text or "[BOS]assistant" in fixed_text.split(
-        "</tin>"
-    )[0]
+    # Test case 2: Generation stopped at just "</"
+    malformed_text2 = """<tin>
+{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
+</
+[SEP]
+[BOS]assistant
+"""
+
+    fixed_text2 = fix_truncated_tags(malformed_text2)
+    assert "</tin>" in fixed_text2
+    assert "</" + "\n[SEP]" not in fixed_text2  # Should be fixed and cleaned
+
+    # Test case 3: Partial tag name
+    malformed_text3 = """<tin>{"name": "calc", "arguments": {}}
+</t"""
+
+    fixed_text3 = fix_truncated_tags(malformed_text3)
+    assert "</tin>" in fixed_text3
+    assert "</t" not in fixed_text3 or "</tin>" in fixed_text3
+
+    # Test case 4: Complete tag but with separator artifacts
+    malformed_text4 = """<tin>{"name": "calc", "arguments": {}}
+</tin>[SEP][BOS]assistant>[SEP]"""
+
+    fixed_text4 = fix_truncated_tags(malformed_text4)
+    assert "</tin>" in fixed_text4
+    # Artifacts should be cleaned
+    assert not fixed_text4.endswith("[SEP][BOS]assistant>[SEP]")
+    assert fixed_text4.rstrip().endswith("</tin>")
 
 
 def test_tool_tag_utilities():
@@ -278,3 +302,61 @@ def test_tool_tag_utilities():
     # Tool call with output should not be unprocessed
     processed = get_unprocessed_tool_call(complete_call)
     assert processed is None  # Has output, so it's processed
+
+
+def test_multiple_tool_calls_in_sequence():
+    """Test that multiple tool calls are processed in order."""
+    from praxis.tools import get_unprocessed_tool_call
+
+    # Test case 1: Two unprocessed calls - should return the FIRST one
+    text_two_unprocessed = """<tin>
+{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
+</tin>
+Some text here
+<tin>
+{"name": "calc", "arguments": {"values": [3, 4], "op": "mul"}}
+</tin>"""
+
+    result = get_unprocessed_tool_call(text_two_unprocessed)
+    assert result is not None
+    assert result[0]["arguments"]["values"] == [1, 2]  # First call, not second
+    assert result[0]["arguments"]["op"] == "add"
+
+    # Test case 2: First call has output, second doesn't - should return second
+    text_first_processed = """<tin>
+{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
+</tin><tout>3</tout>
+<tin>
+{"name": "calc", "arguments": {"values": [5, 6], "op": "sub"}}
+</tin>"""
+
+    result2 = get_unprocessed_tool_call(text_first_processed)
+    assert result2 is not None
+    assert result2[0]["arguments"]["values"] == [5, 6]  # Second call
+    assert result2[0]["arguments"]["op"] == "sub"
+
+    # Test case 3: Both calls have outputs - should return None
+    text_both_processed = """<tin>
+{"name": "calc", "arguments": {"values": [1, 2], "op": "add"}}
+</tin><tout>3</tout>
+<tin>
+{"name": "calc", "arguments": {"values": [5, 6], "op": "sub"}}
+</tin><tout>-1</tout>"""
+
+    result3 = get_unprocessed_tool_call(text_both_processed)
+    assert result3 is None  # All processed
+
+    # Test case 4: Three calls, middle one unprocessed - should return middle
+    text_middle_unprocessed = """<tin>
+{"name": "calc", "arguments": {"values": [1, 1], "op": "add"}}
+</tin><tout>2</tout>
+<tin>
+{"name": "calc", "arguments": {"values": [2, 2], "op": "add"}}
+</tin>
+<tin>
+{"name": "calc", "arguments": {"values": [3, 3], "op": "add"}}
+</tin>"""
+
+    result4 = get_unprocessed_tool_call(text_middle_unprocessed)
+    assert result4 is not None
+    assert result4[0]["arguments"]["values"] == [2, 2]  # Middle call
