@@ -534,8 +534,9 @@ def main():
     train_params["callbacks"].append(MetricsLoggerCallback(run_dir=cache_dir))
 
     # Add dynamics logger callback for gradient visualization
-    # Only log if using Prismatic router (has gradient dynamics)
-    if config.router_type == "prismatic":
+    # Support routers that have log_gradient_dynamics() method (Prismatic, SMEAR, etc.)
+    routers_with_gradient_logging = ["prismatic", "smear"]
+    if config.router_type in routers_with_gradient_logging:
         num_experts = getattr(config, "num_experts", 2)
         log_freq = 10  # Log gradients every 10 steps (reduce overhead)
         print(

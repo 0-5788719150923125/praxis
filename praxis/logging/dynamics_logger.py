@@ -125,6 +125,8 @@ class DynamicsLogger:
                     "expert_0_grad_var": 0.003,
                     "expert_1_grad_norm": 0.08,
                     "expert_1_grad_var": 0.002,
+                    # Per-layer format (forward slashes sanitized to underscores):
+                    "layer_0/expert_0_grad_norm": 0.15,
                     ...
                 }
         """

@@ -10,6 +10,9 @@ import { createTabHeader } from './components.js';
 // Chart instances
 export const dynamicsCharts = {};
 
+// Layer toggle state
+export const dynamicsLayerState = {};
+
 /**
  * Get theme-appropriate colors
  */
@@ -147,9 +150,18 @@ function renderDynamicsCharts(runData, container) {
         return;
     }
 
-    // Detect number of experts
-    const expertKeys = Object.keys(dynamics).filter(k => k.match(/^expert_\d+_grad_norm$/));
-    const numExperts = new Set(expertKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1]))).size;
+    // Detect number of layers and experts using new format: layer_X_expert_Y_grad_norm
+    const metricKeys = Object.keys(dynamics).filter(k => k.match(/^layer_\d+_expert_\d+_grad_norm$/));
+    const layers = new Set(metricKeys.map(k => parseInt(k.match(/layer_(\d+)_/)[1])));
+    const numLayers = layers.size;
+    const experts = new Set(metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
+    const numExperts = experts.size;
+
+    // Initialize layer state with all layers enabled
+    if (!dynamicsLayerState.layers) {
+        dynamicsLayerState.layers = Array.from(layers);
+        dynamicsLayerState.allLayers = Array.from(layers);
+    }
 
     const refreshIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
@@ -168,11 +180,16 @@ function renderDynamicsCharts(runData, container) {
         }],
         metadata: `
             <span><strong>Points:</strong> ${steps.length}</span>
+            <span><strong>Layers:</strong> ${numLayers}</span>
             <span><strong>Experts:</strong> ${numExperts}</span>
         `
     });
 
     const chartsHTML = `
+        <div style="margin-top: 2rem;">
+            <div id="dynamics-layer-toggles"></div>
+        </div>
+
         <div style="margin-top: 2rem;">
             <div class="chart-card">
                 <div class="chart-title">Gradient Norms per Expert</div>
@@ -196,11 +213,14 @@ function renderDynamicsCharts(runData, container) {
 
     container.innerHTML = headerHTML + chartsHTML;
 
+    // Render layer toggles
+    renderDynamicsLayerToggles();
+
     // Render charts
     setTimeout(() => {
         try {
-            createGradientNormsChart('dynamics-grad-norms', dynamics, numExperts);
-            createGradientVarsChart('dynamics-grad-vars', dynamics, numExperts);
+            createGradientNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
+            createGradientVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
         }
@@ -208,9 +228,89 @@ function renderDynamicsCharts(runData, container) {
 }
 
 /**
+ * Render layer toggles
+ */
+function renderDynamicsLayerToggles() {
+    const container = document.getElementById('dynamics-layer-toggles');
+    if (!container) return;
+
+    const allLayers = dynamicsLayerState.allLayers || [];
+    if (allLayers.length === 0) return;
+
+    const buttons = [
+        '<button class="layer-toggle-btn" data-layer="all">All</button>',
+        '<button class="layer-toggle-btn" data-layer="none">None</button>',
+        ...allLayers.map(layer =>
+            `<button class="layer-toggle-btn" data-layer="${layer}">L${layer}</button>`
+        )
+    ].join('');
+
+    container.innerHTML = `
+        <div style="margin-bottom: 1rem;">
+            <strong>Layers:</strong> ${buttons}
+        </div>
+    `;
+
+    updateDynamicsLayerToggles();
+
+    // Add event listeners
+    container.querySelectorAll('.layer-toggle-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const layer = e.target.dataset.layer;
+
+            if (layer === 'all') {
+                dynamicsLayerState.layers = [...dynamicsLayerState.allLayers];
+            } else if (layer === 'none') {
+                dynamicsLayerState.layers = [];
+            } else {
+                const layerNum = parseInt(layer);
+                const idx = dynamicsLayerState.layers.indexOf(layerNum);
+                if (idx >= 0) {
+                    dynamicsLayerState.layers.splice(idx, 1);
+                } else {
+                    dynamicsLayerState.layers.push(layerNum);
+                    dynamicsLayerState.layers.sort((a, b) => a - b);
+                }
+            }
+
+            updateDynamicsLayerToggles();
+
+            // Recreate charts with new layer selection
+            const dynamics = state.dynamics.data?.dynamics || {};
+            createGradientNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
+            createGradientVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
+        });
+    });
+}
+
+/**
+ * Update layer toggle button states
+ */
+function updateDynamicsLayerToggles() {
+    const container = document.getElementById('dynamics-layer-toggles');
+    if (!container) return;
+
+    const allLayers = dynamicsLayerState.allLayers || [];
+    const selectedLayers = dynamicsLayerState.layers || [];
+
+    container.querySelectorAll('.layer-toggle-btn').forEach(btn => {
+        const layer = btn.dataset.layer;
+
+        if (layer === 'all') {
+            btn.classList.toggle('active', selectedLayers.length === allLayers.length);
+        } else if (layer === 'none') {
+            btn.classList.toggle('active', selectedLayers.length === 0);
+        } else {
+            const layerNum = parseInt(layer);
+            btn.classList.toggle('active', selectedLayers.includes(layerNum));
+        }
+    });
+}
+
+/**
  * Create gradient norms chart
  */
-function createGradientNormsChart(canvasId, dynamics, numExperts) {
+function createGradientNormsChart(canvasId, dynamics, layers) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -224,28 +324,39 @@ function createGradientNormsChart(canvasId, dynamics, numExperts) {
     const datasets = [];
     const colors = ['#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
 
-    for (let i = 0; i < numExperts; i++) {
-        const key = `expert_${i}_grad_norm`;
-        if (!dynamics[key]) continue;
+    // Detect experts from available metrics
+    const metricKeys = Object.keys(dynamics).filter(k => k.match(/^layer_\d+_expert_\d+_grad_norm$/));
+    const experts = new Set(metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
+    const expertsList = Array.from(experts).sort((a, b) => a - b);
 
-        const values = dynamics[key];
-        const data = steps.map((step, idx) => ({
-            x: step,
-            y: values[idx]
-        })).filter(p => p.y !== null && p.y !== undefined);
+    // Build datasets for selected layers only
+    layers.forEach(layer => {
+        expertsList.forEach(expert => {
+            const key = `layer_${layer}_expert_${expert}_grad_norm`;
+            if (!dynamics[key]) return;
 
-        datasets.push({
-            label: `Expert ${i}`,
-            data: data,
-            borderColor: colors[i % colors.length],
-            backgroundColor: colors[i % colors.length] + '20',
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 5,
-            tension: 0.3,
-            fill: false
+            const values = dynamics[key];
+            const data = steps.map((step, idx) => ({
+                x: step,
+                y: values[idx]
+            })).filter(p => p.y !== null && p.y !== undefined);
+
+            // Color based on expert index only - consistent across all layers
+            const colorIdx = expert % colors.length;
+
+            datasets.push({
+                label: `L${layer} E${expert}`,
+                data: data,
+                borderColor: colors[colorIdx],
+                backgroundColor: colors[colorIdx] + '20',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                tension: 0.3,
+                fill: false
+            });
         });
-    }
+    });
 
     dynamicsCharts[canvasId] = new Chart(ctx, {
         type: 'line',
@@ -315,7 +426,7 @@ function createGradientNormsChart(canvasId, dynamics, numExperts) {
 /**
  * Create gradient variance chart
  */
-function createGradientVarsChart(canvasId, dynamics, numExperts) {
+function createGradientVarsChart(canvasId, dynamics, layers) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -329,28 +440,39 @@ function createGradientVarsChart(canvasId, dynamics, numExperts) {
     const datasets = [];
     const colors = ['#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
 
-    for (let i = 0; i < numExperts; i++) {
-        const key = `expert_${i}_grad_var`;
-        if (!dynamics[key]) continue;
+    // Detect experts from available metrics
+    const metricKeys = Object.keys(dynamics).filter(k => k.match(/^layer_\d+_expert_\d+_grad_var$/));
+    const experts = new Set(metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
+    const expertsList = Array.from(experts).sort((a, b) => a - b);
 
-        const values = dynamics[key];
-        const data = steps.map((step, idx) => ({
-            x: step,
-            y: values[idx]
-        })).filter(p => p.y !== null && p.y !== undefined);
+    // Build datasets for selected layers only
+    layers.forEach(layer => {
+        expertsList.forEach(expert => {
+            const key = `layer_${layer}_expert_${expert}_grad_var`;
+            if (!dynamics[key]) return;
 
-        datasets.push({
-            label: `Expert ${i}`,
-            data: data,
-            borderColor: colors[i % colors.length],
-            backgroundColor: colors[i % colors.length] + '20',
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 5,
-            tension: 0.3,
-            fill: false
+            const values = dynamics[key];
+            const data = steps.map((step, idx) => ({
+                x: step,
+                y: values[idx]
+            })).filter(p => p.y !== null && p.y !== undefined);
+
+            // Color based on expert index only - consistent across all layers
+            const colorIdx = expert % colors.length;
+
+            datasets.push({
+                label: `L${layer} E${expert}`,
+                data: data,
+                borderColor: colors[colorIdx],
+                backgroundColor: colors[colorIdx] + '20',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                tension: 0.3,
+                fill: false
+            });
         });
-    }
+    });
 
     dynamicsCharts[canvasId] = new Chart(ctx, {
         type: 'line',

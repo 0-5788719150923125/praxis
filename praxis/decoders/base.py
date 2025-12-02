@@ -195,15 +195,23 @@ class BaseDecoder(nn.Module):
             extras = {**extras, **self.genome.get_metrics()}
 
         # Collect metrics from routers (expert convergence tracking)
-        # Check first local layer for router metrics (shared across all layers)
+        # Routers accumulate per-layer metrics internally using current_depth
+        # We only need to collect from unique router instances to avoid duplicates
         if self.locals and len(self.locals) > 0:
-            first_local = self.locals[0]
-            if hasattr(first_local, "router") and hasattr(
-                first_local.router, "get_metrics"
-            ):
-                router_metrics = first_local.router.get_metrics()
-                if router_metrics:
-                    extras = {**extras, **router_metrics}
+            seen_routers: set = set()
+            for local_layer in self.locals:
+                if hasattr(local_layer, "router") and hasattr(
+                    local_layer.router, "get_metrics"
+                ):
+                    router_id = id(local_layer.router)
+                    if router_id in seen_routers:
+                        continue
+                    seen_routers.add(router_id)
+
+                    router_metrics = local_layer.router.get_metrics()
+                    if router_metrics:
+                        # Metrics already have layer prefixes from router
+                        extras.update(router_metrics)
 
         return {
             "experts": dict(

@@ -10,6 +10,9 @@ import { createTabHeader } from './components.js';
 // Chart instances storage (exported for hybrid mode)
 export const charts = {};
 
+// Layer selection state for per-layer metrics
+const layerSelectionState = {};
+
 /**
  * Detect if an element is within a hybrid overlay (light theme context)
  * @param {HTMLElement} element - The element to check
@@ -368,13 +371,10 @@ function renderMetricsCharts(data, container) {
                 Object.keys(a.data_metrics[config.key]).length > 0
             );
         } else if (config.isComposite && config.key === 'expert_routing_weights') {
-            // Check if ANY expert routing weight metrics exist (old or new format)
-            // Old format: expert_*_routing_weight
-            // New format: routing/expert_*_weight
+            // Check for expert routing weight metrics: layer_*_expert_*_routing_weight
             return agents.some(a =>
                 Object.keys(a.metrics).some(k =>
-                    k.match(/^expert_\d+_routing_weight$/) ||  // Old format
-                    k.match(/^routing\/expert_\d+_weight$/)    // New format
+                    k.match(/^layer_\d+_expert_\d+_routing_weight$/)
                 )
             );
         } else if (config.isComposite && config.keyPattern) {
@@ -391,14 +391,23 @@ function renderMetricsCharts(data, container) {
     // Build chart cards with spacing - data-driven loop
     let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
 
-    chartsHTML += availableMetrics.map(config => `
+    chartsHTML += availableMetrics.map(config => {
+        // Add layer toggles for expert routing chart
+        const layerTogglesHTML = (config.key === 'expert_routing_weights') ?
+            `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                <span style="font-weight: 500; margin-right: 0.5rem;">Layers:</span>
+            </div>` : '';
+
+        return `
         <div class="chart-card">
             <div class="chart-title">${config.title}</div>
+            ${layerTogglesHTML}
             <div class="chart-wrapper">
                 <canvas id="${config.canvasId}"></canvas>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 
     chartsHTML += '</div>';
 
@@ -782,81 +791,111 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
 }
 
 /**
- * Create multi-expert routing convergence chart (similar to Figure 1 from paper)
- * Shows routing weight over time for each expert to visualize convergence patterns
+ * Create multi-expert routing convergence chart with per-layer filtering
  */
 function createExpertRoutingChart(canvasId, agents) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
-    // Destroy existing
-    if (charts[canvasId]) {
-        charts[canvasId].destroy();
-    }
-
-    // Get colors for the appropriate theme context (hybrid overlay or normal)
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
-    // Build datasets - one line per expert
-    const allDatasets = [];
+    // Parse metrics to detect layers and experts
+    const layerExpertMetrics = new Map();
     let maxExperts = 0;
 
-    agents.forEach((agent, agentIdx) => {
+    agents.forEach((agent) => {
+        const metrics = agent.metrics;
+
+        Object.keys(metrics).forEach(k => {
+            const match = k.match(/^layer_(\d+)_expert_(\d+)_routing_weight$/);
+            if (!match) return;
+
+            const layerNum = parseInt(match[1]);
+            const expertNum = parseInt(match[2]);
+
+            if (!layerExpertMetrics.has(layerNum)) {
+                layerExpertMetrics.set(layerNum, new Map());
+            }
+            layerExpertMetrics.get(layerNum).set(expertNum, k);
+            maxExperts = Math.max(maxExperts, expertNum + 1);
+        });
+    });
+
+    const layers = Array.from(layerExpertMetrics.keys()).sort((a, b) => a - b);
+
+    if (layers.length === 0) return;
+
+    // Initialize layer selection (all enabled by default)
+    if (!layerSelectionState[canvasId]) {
+        layerSelectionState[canvasId] = new Set(layers);
+    }
+
+    // Render layer toggles if multiple layers
+    if (layers.length > 1) {
+        renderLayerToggles(canvasId, layers, agents);
+    }
+
+    // Build datasets for selected layers only
+    const allDatasets = [];
+
+    agents.forEach((agent) => {
         const metrics = agent.metrics;
         const steps = metrics.steps || [];
 
-        // Find all expert routing weight metrics (old or new format)
-        // Old format: expert_*_routing_weight
-        // New format: routing/expert_*_weight
-        const expertKeys = Object.keys(metrics).filter(k =>
-            k.match(/^expert_\d+_routing_weight$/) ||
-            k.match(/^routing\/expert_\d+_weight$/)
-        );
-        maxExperts = Math.max(maxExperts, expertKeys.length);
+        layers.forEach(layerNum => {
+            if (!layerSelectionState[canvasId].has(layerNum)) return;
 
-        expertKeys.forEach((expertKey) => {
-            // Extract expert number from either format
-            const match = expertKey.match(/expert[_/](\d+)[_](?:routing_)?weight/) ||
-                         expertKey.match(/routing\/expert_(\d+)_weight/);
-            const expertNum = match ? match[1] : '0';
-            const values = metrics[expertKey] || [];
+            const expertMetrics = layerExpertMetrics.get(layerNum);
+            if (!expertMetrics) return;
 
-            const data = steps.map((step, i) => ({
-                x: step,
-                y: values[i]
-            })).filter(point => point.y !== null)
-              .sort((a, b) => a.x - b.x);
+            expertMetrics.forEach((metricKey, expertNum) => {
+                const values = metrics[metricKey] || [];
 
-            // Color scheme: one color per expert (cycling through palette)
-            const color = CONSTANTS.RUN_COLORS[parseInt(expertNum) % CONSTANTS.RUN_COLORS.length];
+                const data = steps.map((step, i) => ({
+                    x: step,
+                    y: values[i]
+                })).filter(point => point.y !== null).sort((a, b) => a.x - b.x);
 
-            const label = agents.length > 1 ? `${agent.name} - Expert ${expertNum}` : `Expert ${expertNum}`;
+                if (data.length === 0) return;
 
-            allDatasets.push({
-                label: label,
-                data: data,
-                borderColor: color,
-                backgroundColor: color + '20',
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-                pointHoverBackgroundColor: color,
-                pointHoverBorderColor: '#fff',
-                pointHoverBorderWidth: 2,
-                tension: 0.3,  // Smooth curves like Figure 1 in the paper
-                fill: false
+                const color = CONSTANTS.RUN_COLORS[expertNum % CONSTANTS.RUN_COLORS.length];
+                const label = agents.length > 1 ?
+                    `${agent.name} - L${layerNum} E${expertNum}` :
+                    `Layer ${layerNum} Expert ${expertNum}`;
+
+                allDatasets.push({
+                    label: label,
+                    data: data,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: color,
+                    pointHoverBorderColor: '#fff',
+                    pointHoverBorderWidth: 2,
+                    tension: 0.3,
+                    fill: false
+                });
             });
         });
     });
 
     if (allDatasets.length === 0) {
+        if (charts[canvasId]) {
+            charts[canvasId].destroy();
+            delete charts[canvasId];
+        }
         return;
     }
 
-    // Calculate uniform distribution for reference (shown in subtitle)
     const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
     const uniformPct = (uniformWeight * 100).toFixed(1);
+
+    if (charts[canvasId]) {
+        charts[canvasId].destroy();
+    }
 
     charts[canvasId] = new Chart(ctx, {
         type: 'line',
@@ -929,6 +968,101 @@ function createExpertRoutingChart(canvasId, agents) {
                 }
             }
         }
+    });
+}
+
+/**
+ * Render layer toggle controls for expert routing chart
+ */
+function renderLayerToggles(canvasId, layers, agents) {
+    const container = document.getElementById(`layer-toggles-${canvasId}`);
+    if (!container) return;
+
+    const existingToggles = container.querySelectorAll('.layer-toggle-btn');
+    existingToggles.forEach(btn => btn.remove());
+
+    // Add "All" button
+    const allBtn = document.createElement('button');
+    allBtn.className = 'layer-toggle-btn';
+    allBtn.textContent = 'All';
+    allBtn.style.cssText = `
+        padding: 0.25rem 0.75rem;
+        border: 1px solid var(--border-color);
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        transition: all 0.2s;
+    `;
+    allBtn.addEventListener('click', () => {
+        layerSelectionState[canvasId] = new Set(layers);
+        updateLayerToggles(canvasId, layers);
+        createExpertRoutingChart(canvasId, agents);
+    });
+    container.appendChild(allBtn);
+
+    // Add "None" button
+    const noneBtn = document.createElement('button');
+    noneBtn.className = 'layer-toggle-btn';
+    noneBtn.textContent = 'None';
+    noneBtn.style.cssText = allBtn.style.cssText;
+    noneBtn.addEventListener('click', () => {
+        layerSelectionState[canvasId].clear();
+        updateLayerToggles(canvasId, layers);
+        createExpertRoutingChart(canvasId, agents);
+    });
+    container.appendChild(noneBtn);
+
+    // Add individual layer buttons
+    layers.forEach(layerNum => {
+        const btn = document.createElement('button');
+        btn.className = 'layer-toggle-btn';
+        btn.dataset.layer = layerNum;
+        btn.textContent = `L${layerNum}`;
+
+        const isSelected = layerSelectionState[canvasId].has(layerNum);
+        btn.style.cssText = `
+            padding: 0.25rem 0.75rem;
+            border: 1px solid var(--border-color);
+            background: ${isSelected ? 'var(--accent-color)' : 'var(--bg-secondary)'};
+            color: ${isSelected ? 'white' : 'var(--text-primary)'};
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: ${isSelected ? '600' : '400'};
+            transition: all 0.2s;
+        `;
+
+        btn.addEventListener('click', () => {
+            if (layerSelectionState[canvasId].has(layerNum)) {
+                layerSelectionState[canvasId].delete(layerNum);
+            } else {
+                layerSelectionState[canvasId].add(layerNum);
+            }
+            updateLayerToggles(canvasId, layers);
+            createExpertRoutingChart(canvasId, agents);
+        });
+
+        container.appendChild(btn);
+    });
+}
+
+/**
+ * Update layer toggle button styles
+ */
+function updateLayerToggles(canvasId, layers) {
+    const container = document.getElementById(`layer-toggles-${canvasId}`);
+    if (!container) return;
+
+    layers.forEach(layerNum => {
+        const btn = container.querySelector(`[data-layer="${layerNum}"]`);
+        if (!btn) return;
+
+        const isSelected = layerSelectionState[canvasId].has(layerNum);
+        btn.style.background = isSelected ? 'var(--accent-color)' : 'var(--bg-secondary)';
+        btn.style.color = isSelected ? 'white' : 'var(--text-primary)';
+        btn.style.fontWeight = isSelected ? '600' : '400';
     });
 }
 

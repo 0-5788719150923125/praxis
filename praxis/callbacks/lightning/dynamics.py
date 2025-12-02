@@ -173,24 +173,23 @@ class DynamicsLoggerCallback(Callback):
                 dynamics = router.log_gradient_dynamics()
 
                 if dynamics:
-                    all_dynamics.append(dynamics)
+                    # Add layer prefix to each metric for per-layer tracking
+                    # Format: layer_0_expert_0_grad_norm, layer_1_expert_0_grad_norm, etc.
+                    layer_dynamics = {
+                        f"layer_{layer_idx}_{key}": value
+                        for key, value in dynamics.items()
+                    }
+                    all_dynamics.append(layer_dynamics)
 
             if not all_dynamics:
                 return {}
 
-            # Aggregate across layers: average gradient norms and variances
-            if len(all_dynamics) == 1:
-                return all_dynamics[0]
+            # Merge all layer dynamics into a single dict (no averaging!)
+            merged_dynamics = {}
+            for layer_dynamics in all_dynamics:
+                merged_dynamics.update(layer_dynamics)
 
-            # Average across layers
-            aggregated = {}
-            for key in all_dynamics[0].keys():
-                values = [d.get(key) for d in all_dynamics if key in d]
-                values = [v for v in values if v is not None]
-                if values:
-                    aggregated[key] = sum(values) / len(values)
-
-            return aggregated
+            return merged_dynamics
 
         except Exception as e:
             print(f"[DynamicsLogger] ❌ Error in _extract_gradient_dynamics: {e}")

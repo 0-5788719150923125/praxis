@@ -16,7 +16,7 @@ class SMEARConfig:
 
     hidden_size: int
     num_experts: int
-    dropout: float = 0.1
+    expert_dropout: float = 0.1
 
 
 class SMEAR(nn.Module):
@@ -48,8 +48,8 @@ class SMEAR(nn.Module):
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
         self.dropout_rate = getattr(
-            config, "dropout", 0.1
-        )  # Probability of dropping entire experts
+            config, "expert_dropout", 0.1
+        )  # Probability of dropping entire experts (default 0.1 per SMEAR paper)
 
         # Get experts from kwargs - required for SMEAR
         self.experts = kwargs.get("experts", None)
@@ -145,7 +145,7 @@ class SMEAR(nn.Module):
             )
 
         # Merge expert parameters based on routing probabilities
-        merged_state_dict = self._merge_expert_parameters(routing_probs)
+        merged_state_dict = self._merge_expert_parameters(routing_probs, current_depth)
 
         # Use the first expert as the base module structure
         base_module = self.experts[0]
@@ -198,13 +198,14 @@ class SMEAR(nn.Module):
         return parameter_names
 
     def _merge_expert_parameters(
-        self, routing_probs: torch.Tensor
+        self, routing_probs: torch.Tensor, current_depth: int = 0
     ) -> Dict[str, torch.Tensor]:
         """
         Merge expert parameters based on routing probabilities.
 
         Args:
             routing_probs: Routing probabilities of shape [batch_size, num_experts]
+            current_depth: Current layer depth for per-layer metric tracking
 
         Returns:
             Dictionary of merged parameters
@@ -218,8 +219,8 @@ class SMEAR(nn.Module):
         # Compute the mean routing probability across the batch for each expert
         expert_weights = routing_probs.mean(dim=0)  # [num_experts]
 
-        # Log expert convergence metrics for visualization
-        self._log_routing_metrics(expert_weights, routing_probs)
+        # Log expert convergence metrics for visualization (with layer prefix)
+        self._log_routing_metrics(expert_weights, routing_probs, current_depth)
 
         # Iterate over all parameter names
         self.parameter_names = self._collect_parameter_names(self.experts[0])
@@ -276,13 +277,16 @@ class SMEAR(nn.Module):
         return getattr(submodule, parts[-1], None)
 
     def _log_routing_metrics(
-        self, expert_weights: torch.Tensor, routing_probs: torch.Tensor
+        self, expert_weights: torch.Tensor, routing_probs: torch.Tensor, current_depth: int = 0
     ) -> None:
         """
         Store routing metrics for expert convergence tracking.
 
         Tracks how routing probabilities evolve over training to visualize
         convergence patterns similar to Figure 1 in "The Blind Watchmaker" paper.
+
+        Metrics are stored with layer prefixes to support per-layer visualization
+        when the same router is called at multiple layer positions.
 
         Metrics flow: SMEAR router → Decoder.get_metrics() → Model.get_metrics() →
                      BackpropagationTrainer.log_dict() → MetricsLoggerCallback →
@@ -291,28 +295,31 @@ class SMEAR(nn.Module):
         Args:
             expert_weights: Mean routing probability per expert [num_experts]
             routing_probs: Full routing probabilities [batch_size, num_experts]
+            current_depth: Current layer depth for per-layer metric tracking
         """
         try:
+            layer_prefix = f"layer_{current_depth}_"
+
             # Per-expert routing weights (mean across batch)
             # These show individual expert convergence trajectories
             for i, weight in enumerate(expert_weights):
-                self._metrics[f"expert_{i}_routing_weight"] = weight.item()
+                self._metrics[f"{layer_prefix}expert_{i}_routing_weight"] = weight.item()
 
             # Entropy: H = -Σ(p_i * log(p_i))
             # Measures routing balance: high = balanced, low = collapsed
             probs = expert_weights + 1e-10  # Avoid log(0)
             entropy = -(probs * probs.log()).sum()
-            self._metrics["routing_entropy"] = entropy.item()
+            self._metrics[f"{layer_prefix}routing_entropy"] = entropy.item()
 
             # Concentration: max routing weight
             # Measures expert collapse: 1.0 = fully collapsed, 1/N = uniform
             concentration = expert_weights.max()
-            self._metrics["routing_concentration"] = concentration.item()
+            self._metrics[f"{layer_prefix}routing_concentration"] = concentration.item()
 
             # Variance: measures routing stability across experts
             # High variance = specialized experts, low variance = uniform
             variance = expert_weights.var()
-            self._metrics["routing_variance"] = variance.item()
+            self._metrics[f"{layer_prefix}routing_variance"] = variance.item()
         except Exception:
             # Silently fail if metric computation fails - don't break training
             pass
