@@ -165,6 +165,27 @@ def get_unprocessed_tool_call(text: str) -> Optional[Tuple[Dict[str, Any], int]]
     return None
 
 
+def _get_unclosed_tag(text: str) -> Optional[str]:
+    """Determine which tag type (if any) is unclosed in the text.
+
+    Returns:
+        'tin' if <tin> is unclosed, 'tout' if <tout> is unclosed, None otherwise.
+        If both are unclosed, returns 'tout' since it would be the most recent.
+    """
+    tin_open = text.count(f"<{TOOL_INPUT_TAG}>")
+    tin_close = text.count(f"</{TOOL_INPUT_TAG}>")
+    tout_open = text.count(f"<{TOOL_OUTPUT_TAG}>")
+    tout_close = text.count(f"</{TOOL_OUTPUT_TAG}>")
+
+    # Check for unclosed tags - if <tout> is unclosed, it's the most recent
+    # (since <tout> comes after </tin> in the sequence)
+    if tout_open > tout_close:
+        return TOOL_OUTPUT_TAG
+    if tin_open > tin_close:
+        return TOOL_INPUT_TAG
+    return None
+
+
 def fix_truncated_tags(text: str) -> str:
     """Fix common malformed tag patterns.
 
@@ -174,6 +195,10 @@ def fix_truncated_tags(text: str) -> str:
     - "</t", "</ti" (partial tag names)
     - Extra whitespace or fragments after tags
     - [SEP] and [BOS] tokens that got generated mid-tag
+
+    Note: With the conditional EOS token fix in the generator, this function
+    should rarely need to apply fixes. Warnings are logged when fixes are
+    applied to help detect gaps in the generation logic.
 
     Args:
         text: Text potentially containing malformed tags
@@ -185,10 +210,17 @@ def fix_truncated_tags(text: str) -> str:
         >>> fix_truncated_tags('</tin\\n[SEP]')
         '</tin>\\n[SEP]'
     """
+    # Store original for comparison
+    original_text = text
+
+    # Determine which tag is unclosed (if any) to know what truncated tags should become
+    unclosed_tag = _get_unclosed_tag(text)
+
     # Handle case where generation stopped at just "</" or partial tag names
     # Look for patterns like "</\n", "</\s+", "</t\n", "</ti\n" followed by separators/noise
     # These indicate the model was trying to close a tag but got interrupted
-    if f"<{TOOL_INPUT_TAG}>" in text:
+    # Only fix as </tin> if <tin> is the unclosed tag (not <tout>)
+    if f"<{TOOL_INPUT_TAG}>" in text and unclosed_tag == TOOL_INPUT_TAG:
         # Replace "</\s*[SEP]" with "</tin>" (tag got cut off at just the opening)
         text = re.sub(
             r"</\s*(?=\[SEP\]|\[BOS\]|$)",
@@ -214,6 +246,42 @@ def fix_truncated_tags(text: str) -> str:
             text = text.rstrip()[:-1] + f"{TOOL_INPUT_TAG}>"
         elif text.rstrip().endswith("</ti"):
             text = text.rstrip()[:-2] + f"{TOOL_INPUT_TAG}>"
+
+    # Handle truncated </tout> tags when <tout> is the unclosed tag
+    if f"<{TOOL_OUTPUT_TAG}>" in text and unclosed_tag == TOOL_OUTPUT_TAG:
+        # Replace "</\s*[SEP]" with "</tout>"
+        text = re.sub(
+            r"</\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_OUTPUT_TAG}>",
+            text,
+        )
+        # Replace "</t\s*[SEP]" with "</tout>"
+        text = re.sub(
+            r"</t\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_OUTPUT_TAG}>",
+            text,
+        )
+        # Replace "</to\s*[SEP]" with "</tout>"
+        text = re.sub(
+            r"</to\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_OUTPUT_TAG}>",
+            text,
+        )
+        # Replace "</tou\s*[SEP]" with "</tout>"
+        text = re.sub(
+            r"</tou\s*(?=\[SEP\]|\[BOS\]|$)",
+            f"</{TOOL_OUTPUT_TAG}>",
+            text,
+        )
+        # Handle end of string cases for tout
+        if text.rstrip().endswith("</"):
+            text = text.rstrip() + f"{TOOL_OUTPUT_TAG}>"
+        elif text.rstrip().endswith("</t"):
+            text = text.rstrip()[:-1] + f"{TOOL_OUTPUT_TAG}>"
+        elif text.rstrip().endswith("</to"):
+            text = text.rstrip()[:-2] + f"{TOOL_OUTPUT_TAG}>"
+        elif text.rstrip().endswith("</tou"):
+            text = text.rstrip()[:-3] + f"{TOOL_OUTPUT_TAG}>"
 
     # Fix truncated closing tags for tool input (</tin without >)
     if f"</{TOOL_INPUT_TAG}" in text and f"</{TOOL_INPUT_TAG}>" not in text:
@@ -244,12 +312,17 @@ def fix_truncated_tags(text: str) -> str:
         text,
     )
 
-    # Fix truncated closing tags for tool output
-    if text.rstrip().endswith("</"):
-        if f"<{TOOL_OUTPUT_TAG}>" in text:
-            text = text.rstrip() + f"{TOOL_OUTPUT_TAG}>"
-    elif f"</{TOOL_OUTPUT_TAG}" in text and f"</{TOOL_OUTPUT_TAG}>" not in text:
+    # Fix truncated closing tags for tool output (</tout without >)
+    if f"</{TOOL_OUTPUT_TAG}" in text and f"</{TOOL_OUTPUT_TAG}>" not in text:
         text = text.replace(f"</{TOOL_OUTPUT_TAG}", f"</{TOOL_OUTPUT_TAG}>")
+
+    # Clean up duplicate partial tag names for tool output
+    # Pattern: </tout>tout> or </tout>tou> etc.
+    text = re.sub(
+        rf"(</{TOOL_OUTPUT_TAG}>)(?:tout|tou|to|t)>",
+        r"\1",
+        text,
+    )
 
     # Clean up separator tokens after tool output tags too
     text = re.sub(
@@ -257,6 +330,13 @@ def fix_truncated_tags(text: str) -> str:
         r"\1",
         text,
     )
+
+    # Log warning if fixes were applied (helps detect gaps in generation logic)
+    if text != original_text:
+        # Show a snippet of what changed (last 100 chars of each)
+        original_snippet = repr(original_text[-100:]) if len(original_text) > 100 else repr(original_text)
+        fixed_snippet = repr(text[-100:]) if len(text) > 100 else repr(text)
+        print(f"[TOOL_TAGS] fix_truncated_tags applied: {original_snippet} -> {fixed_snippet}")
 
     return text
 

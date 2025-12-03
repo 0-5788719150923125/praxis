@@ -360,3 +360,225 @@ Some text here
     result4 = get_unprocessed_tool_call(text_middle_unprocessed)
     assert result4 is not None
     assert result4[0]["arguments"]["values"] == [2, 2]  # Middle call
+
+
+def test_generator_has_unclosed_tool_tag():
+    """Test the _has_unclosed_tool_tag helper method in Generator."""
+    from unittest.mock import MagicMock
+
+    from praxis.generation.generator import Generator
+
+    # Create a mock model and tokenizer
+    mock_model = MagicMock()
+    mock_model.training = False
+    mock_model.parameters.return_value = iter([torch.zeros(1)])
+
+    mock_tokenizer = MagicMock()
+    mock_tokenizer.eos_token_id = 1
+    mock_tokenizer.sep_token_id = 2
+
+    # Create generator instance
+    generator = Generator(mock_model, mock_tokenizer, device="cpu")
+
+    # Test cases for unclosed tool tags
+    # Case 1: No tool tags
+    assert generator._has_unclosed_tool_tag("Hello world") is False
+
+    # Case 2: Complete tool tag (closed)
+    closed_tag = "<tin>{}</tin>"
+    assert generator._has_unclosed_tool_tag(closed_tag) is False
+
+    # Case 3: Unclosed tool tag
+    unclosed_tag = "<tin>{"
+    assert generator._has_unclosed_tool_tag(unclosed_tag) is True
+
+    # Case 4: Multiple tags, all closed
+    multiple_closed = "<tin>{}</tin> text <tin>{}</tin>"
+    assert generator._has_unclosed_tool_tag(multiple_closed) is False
+
+    # Case 5: Multiple tags, last one unclosed
+    multiple_last_unclosed = "<tin>{}</tin> text <tin>{"
+    assert generator._has_unclosed_tool_tag(multiple_last_unclosed) is True
+
+    # Case 6: Truncated closing tag (still counts as unclosed)
+    truncated_close = "<tin>{}< "
+    assert generator._has_unclosed_tool_tag(truncated_close) is True
+
+    # Case 7: Nested content with complete tags
+    nested_complete = """<tin>
+{"name": "calc", "arguments": {"values": [1, 2]}}
+</tin><tout>3</tout>"""
+    assert generator._has_unclosed_tool_tag(nested_complete) is False
+
+
+def test_fix_truncated_tags_logs_warning(capsys):
+    """Test that fix_truncated_tags logs when fixes are applied."""
+    from praxis.tools import fix_truncated_tags
+
+    # Test with text that needs fixing
+    malformed = """<tin>{"name": "calc"}
+</tin>[SEP][BOS]assistant>[SEP]"""
+
+    fixed = fix_truncated_tags(malformed)
+
+    # Check that warning was logged
+    captured = capsys.readouterr()
+    assert "[TOOL_TAGS]" in captured.out
+    assert "fix_truncated_tags applied" in captured.out
+
+    # Check that fixing worked
+    assert fixed.rstrip().endswith("</tin>")
+
+
+def test_fix_truncated_tags_no_warning_when_clean(capsys):
+    """Test that fix_truncated_tags doesn't log when no fixes needed."""
+    from praxis.tools import fix_truncated_tags
+
+    # Test with clean text
+    clean = """<tin>{"name": "calc", "arguments": {}}</tin><tout>42</tout>"""
+
+    result = fix_truncated_tags(clean)
+
+    # Check that no warning was logged
+    captured = capsys.readouterr()
+    assert "[TOOL_TAGS]" not in captured.out
+
+    # Text should be unchanged
+    assert result == clean
+
+
+def test_complete_tool_call_inline_format():
+    """Test the complete inline tool call format expected after the fix."""
+    from praxis.tools import (
+        format_tool_call_with_result,
+        get_unprocessed_tool_call,
+        has_complete_tool_call,
+        has_tool_output,
+    )
+
+    # The expected clean format after the fix:
+    # <tin>JSON</tin><tout>result</tout> (inline, no [BOS]assistant in between)
+    clean_format = format_tool_call_with_result(
+        tool_name="calc",
+        arguments={"values": [999, 5], "op": "exp"},
+        result="995009990004999.0"
+    )
+
+    # Verify structure
+    assert "<tin>" in clean_format
+    assert "</tin>" in clean_format
+    assert "<tout>" in clean_format
+    assert "</tout>" in clean_format
+
+    # Verify no malformed patterns
+    assert "[BOS]assistant" not in clean_format
+    assert "[SEP]" not in clean_format
+
+    # Verify the tags are adjacent (no content between </tin> and <tout>)
+    tin_close_idx = clean_format.find("</tin>")
+    tout_open_idx = clean_format.find("<tout>")
+    assert tout_open_idx == tin_close_idx + len("</tin>")
+
+    # Verify it's recognized as complete (no unprocessed calls)
+    assert has_complete_tool_call(clean_format) is True
+    assert has_tool_output(clean_format) is True
+    assert get_unprocessed_tool_call(clean_format) is None
+
+
+def test_fix_truncated_tout_not_tin():
+    """Test that truncated </tout> is NOT incorrectly fixed as </tin>.
+
+    This was the bug: when text had both <tin>...</tin> and <tout>...</, the
+    fix_truncated_tags function would incorrectly complete it as </tin> instead
+    of </tout>.
+    """
+    from praxis.tools import fix_truncated_tags
+
+    # Simulate the exact bug scenario from the screenshot:
+    # Text has complete <tin>...</tin> but truncated <tout>...</
+    malformed = """<tin>
+{"name": "calc", "arguments": {"values": [922583, 622541], "op": "add"}}
+</tin><tout>-1234563.0</"""
+
+    fixed = fix_truncated_tags(malformed)
+
+    # The </tout> should be completed, not turned into </tin>
+    assert "</tout>" in fixed, f"Expected </tout> in fixed text, got: {fixed}"
+    # Should NOT have duplicate </tin> closing tags
+    assert fixed.count("</tin>") == 1, f"Expected exactly 1 </tin>, got: {fixed}"
+    # Should have exactly one </tout>
+    assert fixed.count("</tout>") == 1, f"Expected exactly 1 </tout>, got: {fixed}"
+
+
+def test_fix_truncated_tags_respects_unclosed_tag_type():
+    """Test that fix_truncated_tags correctly identifies which tag is unclosed."""
+    from praxis.tools import fix_truncated_tags
+
+    # Case 1: <tin> is unclosed, truncated at </
+    tin_unclosed = "<tin>{"
+    # Just checking it doesn't crash - no truncation to fix here
+    result1 = fix_truncated_tags(tin_unclosed)
+    assert "<tin>" in result1
+
+    # Case 2: <tin> is unclosed and truncated
+    tin_truncated = """<tin>
+{"name": "calc"}
+</"""
+    result2 = fix_truncated_tags(tin_truncated)
+    assert "</tin>" in result2
+
+    # Case 3: <tout> is unclosed and truncated (the bug case)
+    tout_truncated = """<tin>{"name": "calc"}</tin><tout>42</"""
+    result3 = fix_truncated_tags(tout_truncated)
+    assert "</tout>" in result3
+    assert result3.count("</tin>") == 1  # Only one </tin>
+
+    # Case 4: Both tags properly closed - no changes needed
+    both_closed = """<tin>{"name": "calc"}</tin><tout>42</tout>"""
+    result4 = fix_truncated_tags(both_closed)
+    assert result4 == both_closed
+
+
+def test_fix_truncated_tags_multiple_tool_calls():
+    """Test fix_truncated_tags with multiple sequential tool calls.
+
+    Ensures the counting logic works correctly when there are many
+    complete tool call pairs before a truncated one.
+    """
+    from praxis.tools import fix_truncated_tags
+
+    # Case 1: Two complete calls, third call's <tin> truncated
+    two_complete_third_tin_truncated = """<tin>{"name": "calc", "arguments": {"op": "add"}}</tin><tout>10</tout>
+<tin>{"name": "calc", "arguments": {"op": "mul"}}</tin><tout>20</tout>
+<tin>{"name": "calc", "arguments": {"op": "div"}}</"""
+
+    result1 = fix_truncated_tags(two_complete_third_tin_truncated)
+    assert result1.count("</tin>") == 3, f"Expected 3 </tin>, got {result1.count('</tin>')}"
+    assert result1.count("</tout>") == 2, f"Expected 2 </tout>, got {result1.count('</tout>')}"
+    assert result1.rstrip().endswith("</tin>")
+
+    # Case 2: Two complete calls, third call's <tout> truncated
+    two_complete_third_tout_truncated = """<tin>{"name": "calc"}</tin><tout>10</tout>
+<tin>{"name": "calc"}</tin><tout>20</tout>
+<tin>{"name": "calc"}</tin><tout>30</"""
+
+    result2 = fix_truncated_tags(two_complete_third_tout_truncated)
+    assert result2.count("</tin>") == 3, f"Expected 3 </tin>, got {result2.count('</tin>')}"
+    assert result2.count("</tout>") == 3, f"Expected 3 </tout>, got {result2.count('</tout>')}"
+    assert result2.rstrip().endswith("</tout>")
+
+    # Case 3: Three complete calls - nothing to fix
+    three_complete = """<tin>{"name": "a"}</tin><tout>1</tout>
+<tin>{"name": "b"}</tin><tout>2</tout>
+<tin>{"name": "c"}</tin><tout>3</tout>"""
+
+    result3 = fix_truncated_tags(three_complete)
+    assert result3 == three_complete  # No changes
+
+    # Case 4: One complete, second truncated at </ti
+    one_complete_second_partial = """<tin>{"name": "first"}</tin><tout>done</tout>
+<tin>{"name": "second"}</ti"""
+
+    result4 = fix_truncated_tags(one_complete_second_partial)
+    assert result4.count("</tin>") == 2
+    assert "</ti\n" not in result4 and "</ti\"" not in result4  # Partial tag fixed

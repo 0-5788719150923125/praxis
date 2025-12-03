@@ -67,6 +67,22 @@ class Generator:
         finally:
             self.model.train(training)
 
+    def _has_unclosed_tool_tag(self, text: str) -> bool:
+        """Check if there's an open <tin> tag without matching </tin>.
+
+        This is used to determine if we should suppress [SEP] as a stop token
+        to allow the model to complete the tool call tag.
+
+        Args:
+            text: The generated text to check
+
+        Returns:
+            True if there's an unclosed <tin> tag
+        """
+        open_count = text.count("<tin>")
+        close_count = text.count("</tin>")
+        return open_count > close_count
+
     def request_generation(self, prompt, kwargs={}) -> str:
         """
         Submit a generation request and return a request ID.
@@ -177,22 +193,27 @@ class Generator:
         )
 
         # Add stop tokens if tokenizer has them
+        # Store both variants for conditional stopping during tool calls
+        eos_only = None
+        eos_with_sep = None
         if (
             hasattr(self.tokenizer, "eos_token_id")
             and self.tokenizer.eos_token_id is not None
         ):
+            eos_only = [self.tokenizer.eos_token_id]
             if (
                 hasattr(self.tokenizer, "sep_token_id")
                 and self.tokenizer.sep_token_id is not None
             ):
-                # Use both EOS and SEP as stop tokens
-                defaults["eos_token_id"] = [
+                # Use both EOS and SEP as stop tokens (normal mode)
+                eos_with_sep = [
                     self.tokenizer.eos_token_id,
                     self.tokenizer.sep_token_id,
                 ]
+                defaults["eos_token_id"] = eos_with_sep
             else:
                 # Use only EOS as stop token
-                defaults["eos_token_id"] = self.tokenizer.eos_token_id
+                defaults["eos_token_id"] = eos_only
         combined = {**defaults, **request.kwargs}
 
         # These values are largely an extension of the Huggingface `generate()` method, and
@@ -229,6 +250,10 @@ class Generator:
         original_prompt_length = input_ids.shape[1]
 
         with self._eval_mode():
+            # Track if we're in tool-tag completion mode
+            completing_tool_tag = False
+            max_tool_tag_continuation = 50  # Safety limit for tag completion
+
             while attempts < max_attempts:
                 # Create GenerationConfig to avoid repeated warnings
                 generation_config = GenerationConfig(**combined)
@@ -258,7 +283,31 @@ class Generator:
                     # If we have more tokens than the prompt, something was generated
                     if generated_token_count > original_prompt_length:
                         return_text = decoded_new
-                        break
+
+                        # Check if we stopped with an unclosed tool tag
+                        # If so, continue generating with only EOS (not SEP) to complete the tag
+                        if self._has_unclosed_tool_tag(return_text) and eos_only:
+                            if not completing_tool_tag:
+                                completing_tool_tag = True
+                                # Switch to EOS-only mode to complete the </tin> tag
+                                combined["eos_token_id"] = eos_only
+                                combined["max_new_tokens"] = max_tool_tag_continuation
+                                # Continue from current position
+                                continue
+                            else:
+                                # Already in completion mode, keep trying
+                                max_tool_tag_continuation -= 1
+                                if max_tool_tag_continuation > 0:
+                                    continue
+                                # Safety limit reached, exit with what we have
+                                break
+                        else:
+                            # Tag is closed or no tool tag, we're done
+                            # Restore normal stopping for future iterations if needed
+                            if completing_tool_tag and eos_with_sep:
+                                combined["eos_token_id"] = eos_with_sep
+                                completing_tool_tag = False
+                            break
                     # For string prompts, also check if decoded differs (handles edge cases)
                     elif (
                         isinstance(request.prompt, str)
@@ -367,8 +416,8 @@ class Generator:
                     + return_text[tin_end_pos:]
                 )
 
-                # Now continue generation from this point
-                # Re-encode the text with the injected result
+                # Direct continuation: encode the text with result and continue generating
+                # This avoids rebuilding messages and reapplying chat template (which adds [BOS]assistant)
                 new_input_ids = self.tokenizer.encode(text_with_result)
 
                 if isinstance(new_input_ids, list):
@@ -383,54 +432,59 @@ class Generator:
                     new_input_ids = new_input_ids.to(model_device)
 
                 # Calculate remaining tokens to generate
-                # We want to allow the model to continue after the tool result
                 original_max_tokens = request.kwargs.get("max_new_tokens", 100)
                 tokens_used = new_input_ids.shape[1] - original_prompt_length
                 remaining_tokens = max(1, original_max_tokens - tokens_used)
 
-                # Create continuation request with updated prompt
-                continuation_kwargs = request.kwargs.copy()
-                continuation_kwargs["max_new_tokens"] = remaining_tokens
-
-                # Build messages with the tool call + result inline
-                if isinstance(request.prompt, list):
-                    messages = request.prompt.copy()
-                else:
-                    messages = [{"role": "user", "content": request.prompt}]
-
-                # Extract assistant's content with tool call and result
-                assistant_content = text_with_result
-                if prompt_text in assistant_content:
-                    assistant_content = assistant_content.replace(
-                        prompt_text, ""
-                    ).strip()
-
-                # Clean up any fragments
-                assistant_content = re.sub(
-                    r"\[SEP\]\[BOS\]assistant\s*>\s*\[SEP\]", "", assistant_content
-                )
-                assistant_content = re.sub(r"^\s*>\s*$", "", assistant_content)
-                assistant_content = assistant_content.strip()
-
-                # Add the assistant message with inline tool call + result
-                messages.append({"role": "assistant", "content": assistant_content})
-
-                # Create continuation request
-                continuation_request = GenerationRequest(
-                    id=request.id + "_tool_continuation",
-                    prompt=messages,
-                    kwargs=continuation_kwargs,
+                # Continue generation directly from the injected position
+                # No chat template reapplication - just generate more tokens
+                continuation_config = GenerationConfig(
+                    max_new_tokens=remaining_tokens,
+                    do_sample=combined.get("do_sample", True),
+                    renormalize_logits=combined.get("renormalize_logits", True),
+                    remove_invalid_values=combined.get("remove_invalid_values", True),
+                    eos_token_id=eos_with_sep if eos_with_sep else eos_only,
                 )
 
-                # Recursively process to continue generation after tool execution
-                # This allows the model to respond to the tool result and make additional calls if needed
-                final_response = self._process_single_request(
-                    continuation_request,
-                    tool_call_depth=tool_call_depth + 1,
-                    tool_call_history=tool_call_history,
-                    start_time=start_time,
+                with self._eval_mode():
+                    continuation_output = self.model.generate(
+                        new_input_ids,
+                        generation_config=continuation_config,
+                        tokenizer=self.tokenizer,
+                        return_dict_in_generate=True,
+                    )
+
+                # Decode the continuation
+                continuation_text = self.tokenizer.decode(
+                    continuation_output.sequences[0],
+                    skip_special_tokens=skip_special_tokens,
                 )
-                return final_response
+
+                # Clean up any malformed tags in the continuation
+                continuation_text = fix_truncated_tags(continuation_text)
+
+                # Check for additional tool calls in the continuation (recursive handling)
+                # Use the same safety checks (depth, timeout, duplicates)
+                if tool_call_depth + 1 < self.max_tool_calls_per_request:
+                    elapsed = time.time() - start_time
+                    if elapsed < self.max_tool_call_time:
+                        next_call = get_unprocessed_tool_call(continuation_text)
+                        if next_call:
+                            # Create a simple request for recursive processing
+                            # Use the raw text as prompt to avoid chat template reapplication
+                            continuation_request = GenerationRequest(
+                                id=request.id + "_tool_continuation",
+                                prompt=continuation_text,  # Raw text, not messages
+                                kwargs={"max_new_tokens": remaining_tokens},
+                            )
+                            return self._process_single_request(
+                                continuation_request,
+                                tool_call_depth=tool_call_depth + 1,
+                                tool_call_history=tool_call_history,
+                                start_time=start_time,
+                            )
+
+                return continuation_text
 
             except Exception as e:
                 print(f"Error calling tool {tool_name}: {e}")
