@@ -392,16 +392,15 @@ function renderMetricsCharts(data, container) {
     let chartsHTML = '<div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem;">';
 
     chartsHTML += availableMetrics.map(config => {
-        // Add layer toggles for expert routing chart
-        const layerTogglesHTML = (config.key === 'expert_routing_weights') ?
+        // Add step slider container for expert routing heatmap
+        const stepSliderHTML = (config.key === 'expert_routing_weights') ?
             `<div id="layer-toggles-${config.canvasId}" class="layer-toggles" style="margin-bottom: 1rem; padding: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
-                <span style="font-weight: 500; margin-right: 0.5rem;">Layers:</span>
             </div>` : '';
 
         return `
         <div class="chart-card">
             <div class="chart-title">${config.title}</div>
-            ${layerTogglesHTML}
+            ${stepSliderHTML}
             <div class="chart-wrapper">
                 <canvas id="${config.canvasId}"></canvas>
             </div>
@@ -791,7 +790,146 @@ function createSamplingWeightsChart(canvasId, dataMetrics) {
 }
 
 /**
- * Create multi-expert routing convergence chart with per-layer filtering
+ * Render step slider for navigating through training steps in heatmap
+ * Only renders once to avoid recursion
+ */
+function renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chartData) {
+    const container = document.getElementById(`layer-toggles-${canvasId}`);
+    if (!container) return;
+
+    // Check if slider already exists
+    const existingSlider = document.getElementById(`step-slider-${canvasId}`);
+    if (existingSlider) {
+        // Just update the value display
+        const valueDisplay = document.getElementById(`step-value-${canvasId}`);
+        const currentStep = sortedSteps[currentStepIndex];
+        const maxStep = sortedSteps[sortedSteps.length - 1];
+        if (valueDisplay) {
+            valueDisplay.textContent = `${currentStep} / ${maxStep}`;
+        }
+        existingSlider.value = currentStepIndex;
+        return;
+    }
+
+    const currentStep = sortedSteps[currentStepIndex];
+    const minStep = sortedSteps[0];
+    const maxStep = sortedSteps[sortedSteps.length - 1];
+
+    container.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 1rem; width: 100%;">
+            <label style="font-weight: 500; white-space: nowrap;">Training Step:</label>
+            <input
+                type="range"
+                id="step-slider-${canvasId}"
+                min="0"
+                max="${sortedSteps.length - 1}"
+                value="${currentStepIndex}"
+                style="flex: 1; min-width: 200px;"
+            />
+            <span id="step-value-${canvasId}" style="font-weight: 600; min-width: 80px; text-align: right;">
+                ${currentStep} / ${maxStep}
+            </span>
+        </div>
+    `;
+
+    // Wire up slider event (only once)
+    const slider = document.getElementById(`step-slider-${canvasId}`);
+    const valueDisplay = document.getElementById(`step-value-${canvasId}`);
+
+    if (slider && valueDisplay) {
+        slider.addEventListener('input', (e) => {
+            const newIndex = parseInt(e.target.value);
+            const newStep = sortedSteps[newIndex];
+            valueDisplay.textContent = `${newStep} / ${maxStep}`;
+
+            // Update state
+            layerSelectionState[canvasId].stepIndex = newIndex;
+
+            // Update chart data without recreating the entire chart
+            updateHeatmapData(canvasId, sortedSteps, newIndex, chartData);
+        });
+    }
+}
+
+/**
+ * Update heatmap data for a new step without recreating the chart
+ */
+function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
+    const chart = charts[canvasId];
+    if (!chart) return;
+
+    const currentStep = sortedSteps[stepIndex];
+    const { layerExpertMetrics, layers, maxExperts } = chartData;
+
+    // Recalculate scatter data for new step
+    const newData = [];
+    layers.forEach(layerNum => {
+        const expertMetrics = layerExpertMetrics.get(layerNum);
+        if (!expertMetrics) return;
+
+        for (let expertNum = 0; expertNum < maxExperts; expertNum++) {
+            const agentData = expertMetrics.get(expertNum);
+            if (!agentData || agentData.length === 0) {
+                newData.push({ x: expertNum, y: layerNum, v: null });
+                continue;
+            }
+
+            let totalWeight = 0;
+            let count = 0;
+
+            agentData.forEach(({ steps, values }) => {
+                const stepIdx = steps.indexOf(currentStep);
+                if (stepIdx >= 0 && values[stepIdx] !== null) {
+                    totalWeight += values[stepIdx];
+                    count++;
+                }
+            });
+
+            const avgWeight = count > 0 ? totalWeight / count : null;
+            newData.push({ x: expertNum, y: layerNum, v: avgWeight });
+        }
+    });
+
+    // Update chart data and colors
+    chart.data.datasets[0].data = newData;
+    chart.data.datasets[0].pointBackgroundColor = newData.map(d => getHeatmapColor(d.v));
+    chart.data.datasets[0].pointBorderColor = newData.map(d => getHeatmapColor(d.v));
+
+    // Update title with new step
+    const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
+    const uniformPct = (uniformWeight * 100).toFixed(1);
+    chart.options.plugins.title.text = `Step ${currentStep} | Uniform: ${uniformPct}% per expert`;
+
+    // Update without animation for instant feedback
+    chart.update('none');
+}
+
+/**
+ * Get color for heatmap cell based on routing weight value
+ */
+function getHeatmapColor(value) {
+    if (value === null || value === undefined) {
+        return 'rgba(180, 180, 180, 0.3)';  // Light grey for missing data
+    }
+
+    // Color scale: grey (0) → green (1)
+    // Grey: rgb(220, 220, 220) - very low usage
+    // Green: rgb(11, 154, 109) - high usage (matches CONSTANTS.RUN_COLORS green)
+
+    const greyR = 220, greyG = 220, greyB = 220;
+    const greenR = 11, greenG = 154, greenB = 109;
+
+    // Linear interpolation from grey to green
+    const r = Math.round(greyR + (greenR - greyR) * value);
+    const g = Math.round(greyG + (greenG - greyG) * value);
+    const b = Math.round(greyB + (greenB - greyB) * value);
+
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+/**
+ * Create expert routing heatmap showing convergence across layers and experts
+ * Uses scatter plot with colored squares to create heatmap effect
  */
 function createExpertRoutingChart(canvasId, agents) {
     const ctx = document.getElementById(canvasId);
@@ -800,12 +938,15 @@ function createExpertRoutingChart(canvasId, agents) {
     const theme = getContextTheme(ctx);
     const { textColor, gridColor, tooltipBg } = getThemeColors(theme);
 
-    // Parse metrics to detect layers and experts
+    // Parse metrics to detect layers, experts, and steps
     const layerExpertMetrics = new Map();
     let maxExperts = 0;
+    let allSteps = new Set();
 
     agents.forEach((agent) => {
         const metrics = agent.metrics;
+        const steps = metrics.steps || [];
+        steps.forEach(s => allSteps.add(s));
 
         Object.keys(metrics).forEach(k => {
             const match = k.match(/^layer_(\d+)_expert_(\d+)_routing_weight$/);
@@ -817,112 +958,118 @@ function createExpertRoutingChart(canvasId, agents) {
             if (!layerExpertMetrics.has(layerNum)) {
                 layerExpertMetrics.set(layerNum, new Map());
             }
-            layerExpertMetrics.get(layerNum).set(expertNum, k);
+            if (!layerExpertMetrics.get(layerNum).has(expertNum)) {
+                layerExpertMetrics.get(layerNum).set(expertNum, []);
+            }
+            layerExpertMetrics.get(layerNum).get(expertNum).push({
+                agent: agent.name,
+                metricKey: k,
+                steps: steps,
+                values: metrics[k]
+            });
             maxExperts = Math.max(maxExperts, expertNum + 1);
         });
     });
 
     const layers = Array.from(layerExpertMetrics.keys()).sort((a, b) => a - b);
+    const sortedSteps = Array.from(allSteps).sort((a, b) => a - b);
 
-    if (layers.length === 0) return;
+    if (layers.length === 0 || sortedSteps.length === 0) return;
 
-    // Initialize layer selection (all enabled by default)
+    // Initialize or get current step index
     if (!layerSelectionState[canvasId]) {
-        layerSelectionState[canvasId] = new Set(layers);
+        layerSelectionState[canvasId] = { stepIndex: sortedSteps.length - 1 };  // Default to latest step
     }
 
-    // Render layer toggles if multiple layers
-    if (layers.length > 1) {
-        renderLayerToggles(canvasId, layers, agents);
-    }
+    const currentStepIndex = layerSelectionState[canvasId].stepIndex;
+    const currentStep = sortedSteps[currentStepIndex];
 
-    // Build datasets for selected layers only
-    const allDatasets = [];
+    // Store chart data for slider updates
+    const chartData = { layerExpertMetrics, layers, maxExperts };
 
-    agents.forEach((agent) => {
-        const metrics = agent.metrics;
-        const steps = metrics.steps || [];
+    // Render step slider control (only once)
+    renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chartData);
 
-        layers.forEach(layerNum => {
-            if (!layerSelectionState[canvasId].has(layerNum)) return;
+    // Transform data for current step into scatter plot points
+    const scatterData = [];
 
-            const expertMetrics = layerExpertMetrics.get(layerNum);
-            if (!expertMetrics) return;
+    layers.forEach(layerNum => {
+        const expertMetrics = layerExpertMetrics.get(layerNum);
+        if (!expertMetrics) return;
 
-            expertMetrics.forEach((metricKey, expertNum) => {
-                const values = metrics[metricKey] || [];
-
-                const data = steps.map((step, i) => ({
-                    x: step,
-                    y: values[i]
-                })).filter(point => point.y !== null).sort((a, b) => a.x - b.x);
-
-                if (data.length === 0) return;
-
-                const color = CONSTANTS.RUN_COLORS[expertNum % CONSTANTS.RUN_COLORS.length];
-                const label = agents.length > 1 ?
-                    `${agent.name} - L${layerNum} E${expertNum}` :
-                    `Layer ${layerNum} Expert ${expertNum}`;
-
-                allDatasets.push({
-                    label: label,
-                    data: data,
-                    borderColor: color,
-                    backgroundColor: color + '20',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    pointHoverRadius: 5,
-                    pointHoverBackgroundColor: color,
-                    pointHoverBorderColor: '#fff',
-                    pointHoverBorderWidth: 2,
-                    tension: 0.3,
-                    fill: false
+        for (let expertNum = 0; expertNum < maxExperts; expertNum++) {
+            const agentData = expertMetrics.get(expertNum);
+            if (!agentData || agentData.length === 0) {
+                scatterData.push({
+                    x: expertNum,
+                    y: layerNum,
+                    v: null
                 });
+                continue;
+            }
+
+            // For multi-agent: average weights across agents at this step
+            let totalWeight = 0;
+            let count = 0;
+
+            agentData.forEach(({ steps, values }) => {
+                const stepIdx = steps.indexOf(currentStep);
+                if (stepIdx >= 0 && values[stepIdx] !== null) {
+                    totalWeight += values[stepIdx];
+                    count++;
+                }
             });
-        });
+
+            const avgWeight = count > 0 ? totalWeight / count : null;
+
+            scatterData.push({
+                x: expertNum,
+                y: layerNum,
+                v: avgWeight
+            });
+        }
     });
 
-    if (allDatasets.length === 0) {
-        if (charts[canvasId]) {
-            charts[canvasId].destroy();
-            delete charts[canvasId];
-        }
-        return;
-    }
-
-    const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
-    const uniformPct = (uniformWeight * 100).toFixed(1);
-
+    // Destroy existing chart
     if (charts[canvasId]) {
         charts[canvasId].destroy();
     }
 
+    // Calculate uniform weight reference
+    const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
+    const uniformPct = (uniformWeight * 100).toFixed(1);
+
+    // Calculate cell size for heatmap effect
+    const cellSize = 20;  // Point radius for square cells
+
+    // Create heatmap using scatter plot with colored square points
     charts[canvasId] = new Chart(ctx, {
-        type: 'line',
-        data: { datasets: allDatasets },
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: 'Routing Weight',
+                data: scatterData,
+                pointStyle: 'rect',
+                pointRadius: cellSize,
+                pointHoverRadius: cellSize + 2,
+                pointBackgroundColor: scatterData.map(d => getHeatmapColor(d.v)),
+                pointBorderColor: scatterData.map(d => getHeatmapColor(d.v)),
+                pointHoverBorderColor: textColor,
+                pointHoverBorderWidth: 2
+            }]
+        },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
             plugins: {
                 legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: textColor,
-                        usePointStyle: true,
-                        padding: 10,
-                        font: { size: 10 }
-                    }
+                    display: false
                 },
                 title: {
                     display: true,
-                    text: `Uniform Distribution: ${uniformPct}% per expert`,
+                    text: `Step ${currentStep} | Uniform: ${uniformPct}% per expert`,
                     color: textColor,
-                    font: { size: 11, style: 'italic' },
+                    font: { size: 12, weight: '500' },
                     padding: { bottom: 10 }
                 },
                 tooltip: {
@@ -932,137 +1079,62 @@ function createExpertRoutingChart(canvasId, agents) {
                     borderColor: gridColor,
                     borderWidth: 1,
                     padding: 12,
-                    displayColors: true,
                     callbacks: {
-                        title: (ctx) => `Step ${ctx[0].parsed.x}`,
-                        label: (ctx) => `${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(2)}%`
+                        title() {
+                            return `Step ${currentStep}`;
+                        },
+                        label(context) {
+                            const dataPoint = context.raw;
+                            const layer = dataPoint.y;
+                            const expert = dataPoint.x;
+                            const weight = dataPoint.v;
+                            if (weight === null) {
+                                return `Layer ${layer}, Expert ${expert}: No data`;
+                            }
+                            return `Layer ${layer}, Expert ${expert}: ${(weight * 100).toFixed(2)}%`;
+                        }
                     }
                 }
             },
             scales: {
                 x: {
                     type: 'linear',
+                    position: 'bottom',
                     title: {
                         display: true,
-                        text: 'Training Step',
+                        text: 'Expert',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
-                    ticks: { color: textColor, maxTicksLimit: 10 },
-                    grid: { color: gridColor }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: 'Routing Weight',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    min: 0,
-                    max: 1,
+                    min: -0.5,
+                    max: maxExperts - 0.5,
                     ticks: {
                         color: textColor,
-                        callback: (value) => `${(value * 100).toFixed(0)}%`
+                        stepSize: 1,
+                        callback: (value) => Number.isInteger(value) ? value : ''
                     },
-                    grid: { color: gridColor }
+                    grid: { color: gridColor, lineWidth: 0.5 }
+                },
+                y: {
+                    type: 'linear',
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Layer',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    min: Math.min(...layers) - 0.5,
+                    max: Math.max(...layers) + 0.5,
+                    ticks: {
+                        color: textColor,
+                        stepSize: 1,
+                        callback: (value) => Number.isInteger(value) && layers.includes(value) ? value : ''
+                    },
+                    grid: { color: gridColor, lineWidth: 0.5 }
                 }
             }
         }
-    });
-}
-
-/**
- * Render layer toggle controls for expert routing chart
- */
-function renderLayerToggles(canvasId, layers, agents) {
-    const container = document.getElementById(`layer-toggles-${canvasId}`);
-    if (!container) return;
-
-    const existingToggles = container.querySelectorAll('.layer-toggle-btn');
-    existingToggles.forEach(btn => btn.remove());
-
-    // Add "All" button
-    const allBtn = document.createElement('button');
-    allBtn.className = 'layer-toggle-btn';
-    allBtn.textContent = 'All';
-    allBtn.style.cssText = `
-        padding: 0.25rem 0.75rem;
-        border: 1px solid var(--border-color);
-        background: var(--bg-secondary);
-        color: var(--text-primary);
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.875rem;
-        transition: all 0.2s;
-    `;
-    allBtn.addEventListener('click', () => {
-        layerSelectionState[canvasId] = new Set(layers);
-        updateLayerToggles(canvasId, layers);
-        createExpertRoutingChart(canvasId, agents);
-    });
-    container.appendChild(allBtn);
-
-    // Add "None" button
-    const noneBtn = document.createElement('button');
-    noneBtn.className = 'layer-toggle-btn';
-    noneBtn.textContent = 'None';
-    noneBtn.style.cssText = allBtn.style.cssText;
-    noneBtn.addEventListener('click', () => {
-        layerSelectionState[canvasId].clear();
-        updateLayerToggles(canvasId, layers);
-        createExpertRoutingChart(canvasId, agents);
-    });
-    container.appendChild(noneBtn);
-
-    // Add individual layer buttons
-    layers.forEach(layerNum => {
-        const btn = document.createElement('button');
-        btn.className = 'layer-toggle-btn';
-        btn.dataset.layer = layerNum;
-        btn.textContent = `L${layerNum}`;
-
-        const isSelected = layerSelectionState[canvasId].has(layerNum);
-        btn.style.cssText = `
-            padding: 0.25rem 0.75rem;
-            border: 1px solid var(--border-color);
-            background: ${isSelected ? 'var(--accent-color)' : 'var(--bg-secondary)'};
-            color: ${isSelected ? 'white' : 'var(--text-primary)'};
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.875rem;
-            font-weight: ${isSelected ? '600' : '400'};
-            transition: all 0.2s;
-        `;
-
-        btn.addEventListener('click', () => {
-            if (layerSelectionState[canvasId].has(layerNum)) {
-                layerSelectionState[canvasId].delete(layerNum);
-            } else {
-                layerSelectionState[canvasId].add(layerNum);
-            }
-            updateLayerToggles(canvasId, layers);
-            createExpertRoutingChart(canvasId, agents);
-        });
-
-        container.appendChild(btn);
-    });
-}
-
-/**
- * Update layer toggle button styles
- */
-function updateLayerToggles(canvasId, layers) {
-    const container = document.getElementById(`layer-toggles-${canvasId}`);
-    if (!container) return;
-
-    layers.forEach(layerNum => {
-        const btn = container.querySelector(`[data-layer="${layerNum}"]`);
-        if (!btn) return;
-
-        const isSelected = layerSelectionState[canvasId].has(layerNum);
-        btn.style.background = isSelected ? 'var(--accent-color)' : 'var(--bg-secondary)';
-        btn.style.color = isSelected ? 'white' : 'var(--text-primary)';
-        btn.style.fontWeight = isSelected ? '600' : '400';
     });
 }
 
