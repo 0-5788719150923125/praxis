@@ -862,6 +862,7 @@ function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
     const { layerExpertMetrics, layers, maxExperts } = chartData;
 
     // Recalculate scatter data for new step
+    // X-axis = layers, Y-axis = experts (swapped)
     const newData = [];
     layers.forEach(layerNum => {
         const expertMetrics = layerExpertMetrics.get(layerNum);
@@ -870,7 +871,7 @@ function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
         for (let expertNum = 0; expertNum < maxExperts; expertNum++) {
             const agentData = expertMetrics.get(expertNum);
             if (!agentData || agentData.length === 0) {
-                newData.push({ x: expertNum, y: layerNum, v: null });
+                newData.push({ x: layerNum, y: expertNum, v: null });  // Swapped
                 continue;
             }
 
@@ -886,7 +887,7 @@ function updateHeatmapData(canvasId, sortedSteps, stepIndex, chartData) {
             });
 
             const avgWeight = count > 0 ? totalWeight / count : null;
-            newData.push({ x: expertNum, y: layerNum, v: avgWeight });
+            newData.push({ x: layerNum, y: expertNum, v: avgWeight });  // Swapped
         }
     });
 
@@ -1091,6 +1092,7 @@ async function createExpertRoutingChart(canvasId, agents) {
     renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chartData);
 
     // Transform data for current step into scatter plot points
+    // X-axis = layers, Y-axis = experts (swapped from before)
     const scatterData = [];
 
     layers.forEach(layerNum => {
@@ -1101,8 +1103,8 @@ async function createExpertRoutingChart(canvasId, agents) {
             const agentData = expertMetrics.get(expertNum);
             if (!agentData || agentData.length === 0) {
                 scatterData.push({
-                    x: expertNum,
-                    y: layerNum,
+                    x: layerNum,  // Swapped: layer on X
+                    y: expertNum,  // Swapped: expert on Y
                     v: null
                 });
                 continue;
@@ -1123,8 +1125,8 @@ async function createExpertRoutingChart(canvasId, agents) {
             const avgWeight = count > 0 ? totalWeight / count : null;
 
             scatterData.push({
-                x: expertNum,
-                y: layerNum,
+                x: layerNum,  // Swapped: layer on X
+                y: expertNum,  // Swapped: expert on Y
                 v: avgWeight
             });
         }
@@ -1139,9 +1141,6 @@ async function createExpertRoutingChart(canvasId, agents) {
     const uniformWeight = maxExperts > 0 ? 1.0 / maxExperts : 0.5;
     const uniformPct = (uniformWeight * 100).toFixed(1);
 
-    // Calculate cell size for heatmap effect
-    const cellSize = 20;  // Point radius for square cells
-
     // Create heatmap using scatter plot with colored square points
     charts[canvasId] = new Chart(ctx, {
         type: 'scatter',
@@ -1150,8 +1149,34 @@ async function createExpertRoutingChart(canvasId, agents) {
                 label: 'Routing Weight',
                 data: scatterData,
                 pointStyle: 'rect',
-                pointRadius: cellSize,
-                pointHoverRadius: cellSize + 2,
+                // Dynamic cell size to fill the space
+                pointRadius: (context) => {
+                    const chart = context.chart;
+                    const chartArea = chart.chartArea;
+                    if (!chartArea) return 15;  // Default during initialization
+
+                    // Calculate cell size to fill columns/rows completely
+                    const width = chartArea.right - chartArea.left;
+                    const height = chartArea.bottom - chartArea.top;
+                    const cellWidth = width / layers.length;
+                    const cellHeight = height / maxExperts;
+
+                    // Use smaller of the two to ensure squares fit
+                    return Math.min(cellWidth, cellHeight) / 2;  // Divide by 2 because radius
+                },
+                // Hover radius should match normal radius (no shrinking!)
+                pointHoverRadius: (context) => {
+                    const chart = context.chart;
+                    const chartArea = chart.chartArea;
+                    if (!chartArea) return 15;
+
+                    const width = chartArea.right - chartArea.left;
+                    const height = chartArea.bottom - chartArea.top;
+                    const cellWidth = width / layers.length;
+                    const cellHeight = height / maxExperts;
+
+                    return Math.min(cellWidth, cellHeight) / 2;  // Same size as normal
+                },
                 pointBackgroundColor: scatterData.map(d => getHeatmapColor(d.v)),
                 pointBorderColor: scatterData.map(d => getHeatmapColor(d.v)),
                 pointHoverBorderColor: textColor,
@@ -1185,8 +1210,8 @@ async function createExpertRoutingChart(canvasId, agents) {
                         },
                         label(context) {
                             const dataPoint = context.raw;
-                            const layer = dataPoint.y;
-                            const expert = dataPoint.x;
+                            const layer = dataPoint.x;  // Swapped
+                            const expert = dataPoint.y;  // Swapped
                             const weight = dataPoint.v;
                             const layerLabel = getLayerLabel(layer, reasoningInfo);
                             if (weight === null) {
@@ -1203,24 +1228,6 @@ async function createExpertRoutingChart(canvasId, agents) {
                     position: 'bottom',
                     title: {
                         display: true,
-                        text: 'Expert',
-                        color: textColor,
-                        font: { size: 13, weight: '500' }
-                    },
-                    min: -0.5,
-                    max: maxExperts - 0.5,
-                    ticks: {
-                        color: textColor,
-                        stepSize: 1,
-                        callback: (value) => Number.isInteger(value) ? value : ''
-                    },
-                    grid: { color: gridColor, lineWidth: 0.5 }
-                },
-                y: {
-                    type: 'linear',
-                    position: 'left',
-                    title: {
-                        display: true,
                         text: reasoningInfo.hasReasoningSteps ? 'Layer (Reasoning Step)' : 'Layer',
                         color: textColor,
                         font: { size: 13, weight: '500' }
@@ -1234,6 +1241,24 @@ async function createExpertRoutingChart(canvasId, agents) {
                             if (!Number.isInteger(value) || !layers.includes(value)) return '';
                             return getLayerLabel(value, reasoningInfo);
                         }
+                    },
+                    grid: { color: gridColor, lineWidth: 0.5 }
+                },
+                y: {
+                    type: 'linear',
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Expert',
+                        color: textColor,
+                        font: { size: 13, weight: '500' }
+                    },
+                    min: -0.5,
+                    max: maxExperts - 0.5,
+                    ticks: {
+                        color: textColor,
+                        stepSize: 1,
+                        callback: (value) => Number.isInteger(value) ? value : ''
                     },
                     grid: { color: gridColor, lineWidth: 0.5 }
                 }
