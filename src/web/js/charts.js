@@ -928,10 +928,105 @@ function getHeatmapColor(value) {
 }
 
 /**
+ * Cache for model config to avoid repeated fetches
+ */
+let modelConfigCache = null;
+
+/**
+ * Fetch model config from API (returns YAML)
+ */
+async function fetchModelConfig() {
+    if (modelConfigCache) {
+        return modelConfigCache;
+    }
+
+    try {
+        const response = await fetch('/api/config');
+        if (!response.ok) {
+            console.warn('[Heatmap] Failed to fetch model config');
+            return null;
+        }
+
+        // Parse YAML as text (simple key-value extraction)
+        const yamlText = await response.text();
+        const config = {};
+
+        // Extract depth and num_layers from YAML
+        const depthMatch = yamlText.match(/^depth:\s*(\d+)/m);
+        const numLayersMatch = yamlText.match(/^num_layers:\s*(\d+)/m);
+
+        if (depthMatch) config.depth = parseInt(depthMatch[1]);
+        if (numLayersMatch) config.num_layers = parseInt(numLayersMatch[1]);
+
+        modelConfigCache = config;
+        return config;
+    } catch (error) {
+        console.warn('[Heatmap] Error fetching model config:', error);
+        return null;
+    }
+}
+
+/**
+ * Calculate reasoning steps info from model config
+ * Returns { hasReasoningSteps: boolean, numActualLayers: number, numReasoningSteps: number }
+ */
+async function calculateReasoningSteps() {
+    const config = await fetchModelConfig();
+
+    if (!config || !config.num_layers) {
+        return { hasReasoningSteps: false, numActualLayers: 0, numReasoningSteps: 1 };
+    }
+
+    const depth = config.depth;
+    const numLayers = config.num_layers;
+
+    // Check if depth is defined and greater than num_layers
+    // If depth = num_layers * reasoning_steps, then reasoning_steps = depth / num_layers
+    if (depth && depth > numLayers) {
+        const numReasoningSteps = depth / numLayers;
+
+        // Only use reasoning steps if it's a clean division
+        if (Number.isInteger(numReasoningSteps)) {
+            return {
+                hasReasoningSteps: true,
+                numActualLayers: numLayers,
+                numReasoningSteps: numReasoningSteps
+            };
+        }
+    }
+
+    // No reasoning steps detected
+    return {
+        hasReasoningSteps: false,
+        numActualLayers: numLayers,
+        numReasoningSteps: 1
+    };
+}
+
+/**
+ * Get label for a layer index, accounting for reasoning steps
+ * layerIndex: the raw layer index from metrics (e.g., 0-11)
+ * Returns formatted label like "L0 R0" or "Layer 0"
+ */
+function getLayerLabel(layerIndex, reasoningInfo) {
+    if (!reasoningInfo || !reasoningInfo.hasReasoningSteps) {
+        return `Layer ${layerIndex}`;
+    }
+
+    // layerIndex = actualLayer + reasoningStep * numActualLayers
+    // So: actualLayer = layerIndex % numActualLayers
+    //     reasoningStep = floor(layerIndex / numActualLayers)
+    const actualLayer = layerIndex % reasoningInfo.numActualLayers;
+    const reasoningStep = Math.floor(layerIndex / reasoningInfo.numActualLayers);
+
+    return `L${actualLayer} R${reasoningStep}`;
+}
+
+/**
  * Create expert routing heatmap showing convergence across layers and experts
  * Uses scatter plot with colored squares to create heatmap effect
  */
-function createExpertRoutingChart(canvasId, agents) {
+async function createExpertRoutingChart(canvasId, agents) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -976,6 +1071,11 @@ function createExpertRoutingChart(canvasId, agents) {
 
     if (layers.length === 0 || sortedSteps.length === 0) return;
 
+    // Calculate reasoning steps from model config
+    const reasoningInfo = await calculateReasoningSteps();
+    console.log('[Heatmap] Reasoning info:', reasoningInfo);
+    console.log('[Heatmap] Model config:', modelConfigCache);
+
     // Initialize or get current step index
     if (!layerSelectionState[canvasId]) {
         layerSelectionState[canvasId] = { stepIndex: sortedSteps.length - 1 };  // Default to latest step
@@ -985,7 +1085,7 @@ function createExpertRoutingChart(canvasId, agents) {
     const currentStep = sortedSteps[currentStepIndex];
 
     // Store chart data for slider updates
-    const chartData = { layerExpertMetrics, layers, maxExperts };
+    const chartData = { layerExpertMetrics, layers, maxExperts, reasoningInfo };
 
     // Render step slider control (only once)
     renderStepSlider(canvasId, sortedSteps, currentStepIndex, agents, chartData);
@@ -1088,10 +1188,11 @@ function createExpertRoutingChart(canvasId, agents) {
                             const layer = dataPoint.y;
                             const expert = dataPoint.x;
                             const weight = dataPoint.v;
+                            const layerLabel = getLayerLabel(layer, reasoningInfo);
                             if (weight === null) {
-                                return `Layer ${layer}, Expert ${expert}: No data`;
+                                return `${layerLabel}, Expert ${expert}: No data`;
                             }
-                            return `Layer ${layer}, Expert ${expert}: ${(weight * 100).toFixed(2)}%`;
+                            return `${layerLabel}, Expert ${expert}: ${(weight * 100).toFixed(2)}%`;
                         }
                     }
                 }
@@ -1120,7 +1221,7 @@ function createExpertRoutingChart(canvasId, agents) {
                     position: 'left',
                     title: {
                         display: true,
-                        text: 'Layer',
+                        text: reasoningInfo.hasReasoningSteps ? 'Layer (Reasoning Step)' : 'Layer',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },
@@ -1129,7 +1230,10 @@ function createExpertRoutingChart(canvasId, agents) {
                     ticks: {
                         color: textColor,
                         stepSize: 1,
-                        callback: (value) => Number.isInteger(value) && layers.includes(value) ? value : ''
+                        callback: (value) => {
+                            if (!Number.isInteger(value) || !layers.includes(value)) return '';
+                            return getLayerLabel(value, reasoningInfo);
+                        }
                     },
                     grid: { color: gridColor, lineWidth: 0.5 }
                 }
