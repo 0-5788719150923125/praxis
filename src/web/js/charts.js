@@ -1228,7 +1228,7 @@ async function createExpertRoutingChart(canvasId, agents) {
                     position: 'bottom',
                     title: {
                         display: true,
-                        text: reasoningInfo.hasReasoningSteps ? 'Layer (Reasoning Step)' : 'Layer',
+                        text: reasoningInfo.hasReasoningSteps ? 'Layers/Reasoning Steps' : 'Layer',
                         color: textColor,
                         font: { size: 13, weight: '500' }
                     },

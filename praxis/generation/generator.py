@@ -190,6 +190,8 @@ class Generator:
             renormalize_logits=True,
             remove_invalid_values=True,
             # token_healing=True,
+            # Stop generation at </tin> to allow tool execution
+            stop_strings=["</tin>"],
         )
 
         # Add stop tokens if tokenizer has them
@@ -444,6 +446,7 @@ class Generator:
                     renormalize_logits=combined.get("renormalize_logits", True),
                     remove_invalid_values=combined.get("remove_invalid_values", True),
                     eos_token_id=eos_with_sep if eos_with_sep else eos_only,
+                    stop_strings=["</tin>"],  # Stop at tool calls in continuation too
                 )
 
                 with self._eval_mode():
