@@ -271,6 +271,31 @@ class Generator:
                 # Update generated_tokens with the new token
                 generated_tokens = outputs.sequences
 
+                # Check if we only generated stop tokens (SEP/EOS) AFTER a tool output
+                # This specifically prevents the oscillation where SEP follows </tout>
+                # But we allow SEP in normal chat flow (it's needed between messages)
+                new_token_count = len(generated_tokens[0]) - original_prompt_length
+                if new_token_count > 0 and new_token_count <= 2:
+                    # Only check for the tool output case - SEP after </tout>
+                    # Decode to check if we're in that specific scenario
+                    prompt_text = return_text if isinstance(request.prompt, list) else request.prompt
+                    if prompt_text.rstrip().endswith("</tout>"):
+                        new_tokens = generated_tokens[0][-new_token_count:]
+                        # Check if ALL new tokens are stop tokens
+                        stop_token_ids = set()
+                        if self.tokenizer.eos_token_id is not None:
+                            stop_token_ids.add(self.tokenizer.eos_token_id)
+                        if self.tokenizer.sep_token_id is not None:
+                            stop_token_ids.add(self.tokenizer.sep_token_id)
+
+                        all_stop_tokens = all(
+                            tok.item() in stop_token_ids for tok in new_tokens
+                        )
+                        if all_stop_tokens:
+                            # Only generated stop tokens after </tout>, return unchanged
+                            # This prevents the oscillation where SEP is added then removed
+                            return prompt_text
+
                 # Always decode the full sequence (matching original behavior)
                 # This ensures context accumulation works properly
                 decoded_new = self.tokenizer.decode(
@@ -436,7 +461,11 @@ class Generator:
                 # Calculate remaining tokens to generate
                 original_max_tokens = request.kwargs.get("max_new_tokens", 100)
                 tokens_used = new_input_ids.shape[1] - original_prompt_length
-                remaining_tokens = max(1, original_max_tokens - tokens_used)
+                remaining_tokens = original_max_tokens - tokens_used
+
+                # If we've exhausted our token budget, return the text with tool result
+                if remaining_tokens <= 0:
+                    return text_with_result
 
                 # Continue generation directly from the injected position
                 # No chat template reapplication - just generate more tokens
@@ -446,7 +475,8 @@ class Generator:
                     renormalize_logits=combined.get("renormalize_logits", True),
                     remove_invalid_values=combined.get("remove_invalid_values", True),
                     eos_token_id=eos_with_sep if eos_with_sep else eos_only,
-                    stop_strings=["</tin>"],  # Stop at tool calls in continuation too
+                    # Stop at tool calls in continuation (for chained tool calls)
+                    stop_strings=["</tin>"],
                 )
 
                 with self._eval_mode():
@@ -465,6 +495,19 @@ class Generator:
 
                 # Clean up any malformed tags in the continuation
                 continuation_text = fix_truncated_tags(continuation_text)
+
+                # Check if continuation generated only noise/separators
+                # Decode ONLY the newly generated tokens (after tool injection)
+                new_tokens_only = continuation_output.sequences[0][new_input_ids.shape[1]:]
+                if len(new_tokens_only) > 0:
+                    continuation_only = self.tokenizer.decode(
+                        new_tokens_only,
+                        skip_special_tokens=skip_special_tokens,
+                    )
+                    # If continuation is just whitespace or common separators, don't use it
+                    if continuation_only.strip() in ['', '[SEP]', '[BOS]', 'assistant', '>']:
+                        # Model generated nothing meaningful, return the tool result
+                        return text_with_result
 
                 # Check for additional tool calls in the continuation (recursive handling)
                 # Use the same safety checks (depth, timeout, duplicates)
