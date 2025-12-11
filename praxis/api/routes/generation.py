@@ -5,7 +5,7 @@ import time
 
 from flask import Blueprint, current_app, jsonify, request
 
-from ..utils import extract_assistant_reply
+from ..utils import generate_from_messages
 
 generation_bp = Blueprint("generation", __name__)
 api_logger = logging.getLogger("praxis.api")
@@ -51,46 +51,19 @@ def generate_messages():
             error_response.headers.add("Access-Control-Allow-Origin", "*")
             return error_response, 503
 
-        # Format messages using chat template
-        try:
-            formatted_prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-        except Exception as e:
-            api_logger.error(f"Error formatting messages: {e}")
-            formatted_prompt = "\n".join(
-                [
-                    f"{msg.get('role', 'user')}: {msg.get('content', '')}"
-                    for msg in messages
-                ]
-            )
+        # Use unified generation function
+        assistant_reply = generate_from_messages(
+            messages=messages,
+            generator=generator,
+            tokenizer=tokenizer,
+            max_new_tokens=data.get("max_new_tokens", 256),
+            temperature=data.get("temperature", 0.4),
+            repetition_penalty=data.get("repetition_penalty", 1.15),
+            do_sample=data.get("do_sample", True),
+        )
 
-        # Extract generation parameters
-        kwargs = {
-            "max_new_tokens": data.get("max_new_tokens", 256),
-            "temperature": data.get("temperature", 0.4),
-            "repetition_penalty": data.get("repetition_penalty", 1.15),
-            "do_sample": data.get("do_sample", True),
-            "use_cache": data.get("use_cache", False),
-            "skip_special_tokens": data.get("skip_special_tokens", False),
-        }
-
-        # Request generation
-        request_id = generator.request_generation(formatted_prompt, kwargs)
-
-        # Wait for result
-        while True:
-            result = generator.get_result(request_id)
-            if result is not None:
-                output = result
-                break
-            time.sleep(0.1)
-
-        if not output:
+        if not assistant_reply:
             raise Exception("Failed to generate an output from this API.")
-
-        # Extract assistant's reply
-        assistant_reply = extract_assistant_reply(output, tokenizer)
 
         response = jsonify({"response": assistant_reply})
         response.headers.add("Access-Control-Allow-Origin", "*")

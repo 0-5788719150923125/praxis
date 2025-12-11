@@ -1,0 +1,12 @@
+name: "discord"
+version: "0.1.0"
+description: "Discord bot integration for chat"
+conditions:
+  - "args.discord"
+integrations:
+  cli:
+    function: "add_cli_args"
+  api_server_hooks:
+    function: "on_api_server_start"
+  lifecycle:
+    cleanup: "cleanup"

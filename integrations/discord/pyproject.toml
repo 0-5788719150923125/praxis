@@ -1,0 +1,4 @@
+[project]
+name = "praxis-integration-discord"
+version = "0.1.0"
+dependencies = ["discord.py>=2.0"]

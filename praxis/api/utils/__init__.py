@@ -1,6 +1,10 @@
 """Utility functions for the API module."""
 
-from .formatters import extract_assistant_reply, format_messages_to_chatml
+from .formatters import (
+    extract_assistant_reply,
+    format_messages_to_chatml,
+    generate_from_messages,
+)
 from .port_scanner import find_available_port, is_port_in_use
 
 __all__ = [
@@ -8,4 +12,5 @@ __all__ = [
     "find_available_port",
     "format_messages_to_chatml",
     "extract_assistant_reply",
+    "generate_from_messages",
 ]

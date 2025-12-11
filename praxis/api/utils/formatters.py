@@ -1,6 +1,88 @@
 """Message formatting utilities."""
 
-from typing import Any, Dict, List
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
+api_logger = logging.getLogger("praxis.api")
+
+
+def generate_from_messages(
+    messages: List[Dict[str, str]],
+    generator: Any,
+    tokenizer: Any,
+    max_new_tokens: int = 256,
+    temperature: float = 0.4,
+    repetition_penalty: float = 1.15,
+    do_sample: bool = True,
+    truncate_to: Optional[int] = None,
+    timeout: float = 60.0,
+) -> Optional[str]:
+    """Generate a response from a list of messages.
+
+    This is the unified generation function used by both the API routes
+    and integrations like Discord.
+
+    Args:
+        messages: List of message dictionaries with 'role' and 'content'
+        generator: Generator instance for inference
+        tokenizer: Tokenizer with chat template support
+        max_new_tokens: Maximum tokens to generate
+        temperature: Sampling temperature
+        repetition_penalty: Penalty for repeated tokens
+        do_sample: Whether to use sampling
+        truncate_to: Maximum prompt length (truncates from beginning if exceeded)
+        timeout: Maximum time to wait for generation (seconds)
+
+    Returns:
+        Generated assistant reply, or None on failure
+    """
+    if not messages:
+        return None
+
+    # Format messages using chat template
+    try:
+        formatted_prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception as e:
+        api_logger.error(f"Error formatting messages: {e}")
+        formatted_prompt = "\n".join(
+            [f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in messages]
+        )
+
+    # Generation parameters
+    kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "temperature": temperature,
+        "repetition_penalty": repetition_penalty,
+        "do_sample": do_sample,
+        "use_cache": False,
+        "skip_special_tokens": False,
+    }
+
+    if truncate_to is not None:
+        kwargs["truncate_to"] = truncate_to
+
+    # Queue the generation request
+    request_id = generator.request_generation(formatted_prompt, kwargs)
+
+    # Wait for result with timeout
+    start_time = time.time()
+    while True:
+        result = generator.get_result(request_id)
+        if result is not None:
+            break
+        if time.time() - start_time > timeout:
+            api_logger.error(f"Generation timed out after {timeout}s")
+            return None
+        time.sleep(0.1)
+
+    if not result:
+        return None
+
+    # Extract assistant's reply
+    return extract_assistant_reply(result, tokenizer)
 
 
 def format_messages_to_chatml(messages: List[Dict[str, str]], tokenizer: Any) -> str:
