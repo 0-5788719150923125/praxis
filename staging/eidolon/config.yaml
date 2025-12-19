@@ -1,0 +1,48 @@
+# Eidolon - Nose-Touch Detection Pipeline Configuration
+
+# Model configuration
+model:
+  name: "facebook/deit-small-patch16-224"
+  num_classes: 2
+  image_size: 224
+
+# Frame extraction settings
+extraction:
+  fps: 5  # Sample rate (frames per second to extract)
+  quality: 95  # JPEG quality (1-100)
+
+# Training configuration
+training:
+  batch_size: 32
+  learning_rate: 0.00005  # 5e-5 (YAML doesn't handle scientific notation well)
+  epochs: 20
+  early_stopping_patience: 5
+  weight_decay: 0.01
+  warmup_steps: 100
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+  use_class_weights: true  # Balance classes if imbalanced
+
+# Inference configuration
+inference:
+  batch_size: 64
+  threshold: 0.5  # Classification threshold (lower = more detections)
+  min_event_duration: 0.4  # Minimum duration in seconds (filters brief detections)
+  use_gpu: true  # Use GPU if available
+
+# MLT project generation
+mlt:
+  buffer_before: 1.0  # seconds to add before each event
+  buffer_after: 1.0   # seconds to add after each event
+  output_dir: "outputs/projects"
+
+# Paths
+paths:
+  videos: "videos"
+  frames: "data/frames"
+  labels: "data/labels.csv"
+  dataset: "data/dataset"
+  models: "models"
+  predictions: "outputs/predictions"
+  events: "outputs/events"
