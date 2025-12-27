@@ -217,18 +217,22 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     print(f"  3. File → Export → choose format and render")
 
 
-def generate_from_events_file(events_file: str, output_path: str = None, config_path: str = 'config.yaml'):
+def generate_from_events_file(events_file: str, output_path: str = None, marker_buffer: float = None, config_path: str = 'config.yaml'):
     """
     Generate MLT project from events JSON file.
 
     Args:
         events_file: Path to events JSON file
         output_path: Output MLT path (optional)
+        marker_buffer: Marker buffer in seconds (optional, defaults to config value)
         config_path: Path to config file (default: config.yaml)
     """
     # Load config
     config = load_config(config_path)
-    marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
+
+    # Use provided marker_buffer or fall back to config
+    if marker_buffer is None:
+        marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
 
     # Load events
     print(f"Loading events from: {events_file}")
@@ -256,10 +260,12 @@ def main():
     parser = argparse.ArgumentParser(description='Generate Shotcut MLT project')
     parser.add_argument('--events', required=True, help='Path to events JSON file')
     parser.add_argument('--output', help='Output MLT path (default: outputs/projects/<video>_project.mlt)')
+    parser.add_argument('--marker-buffer', type=float, help='Marker buffer in seconds (default: from config)')
+    parser.add_argument('--config', default='config.yaml', help='Config file path')
 
     args = parser.parse_args()
 
-    generate_from_events_file(args.events, args.output)
+    generate_from_events_file(args.events, args.output, args.marker_buffer, args.config)
 
 
 if __name__ == '__main__':

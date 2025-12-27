@@ -19,99 +19,28 @@ from peft import PeftModel
 from utils import load_config, save_json, get_video_info, ensure_dir, format_timestamp
 
 
-def detect_events(predictions: list, config: dict, video_fps: float) -> list:
-    """
-    Convert frame-level predictions to discrete events.
-
-    Args:
-        predictions: List of prediction dicts
-        config: Configuration dict
-        video_fps: Video frame rate
-
-    Returns:
-        List of event dicts with start/end times
-    """
-    # No buffers needed - we just detect the events themselves
-    # Marker buffer is applied later in MLT generation
-    min_duration = config['inference'].get('min_event_duration', 0.0)
-
-    events = []
-    current_event = None
-
-    print("\nDetecting events...")
-
-    for pred in predictions:
-        if pred['predicted_class'] == 'touching':
-            if current_event is None:
-                # Start new event
-                current_event = {
-                    'start_time': pred['timestamp'],
-                    'end_time': pred['timestamp'],
-                    'start_frame': pred['frame_idx'],
-                    'end_frame': pred['frame_idx'],
-                    'frames': [pred]
-                }
-            else:
-                # Extend current event
-                current_event['end_time'] = pred['timestamp']
-                current_event['end_frame'] = pred['frame_idx']
-                current_event['frames'].append(pred)
-        else:
-            if current_event is not None:
-                # End current event
-                duration = current_event['end_time'] - current_event['start_time']
-
-                if duration >= min_duration:
-                    # Calculate average confidence
-                    confidences = [f['probability'] for f in current_event['frames']]
-                    current_event['avg_confidence'] = np.mean(confidences)
-                    current_event['max_confidence'] = np.max(confidences)
-                    current_event['num_frames'] = len(current_event['frames'])
-
-                    # Remove detailed frame list to save space
-                    del current_event['frames']
-
-                    events.append(current_event)
-
-                current_event = None
-
-    # Handle event at end of video
-    if current_event is not None:
-        duration = current_event['end_time'] - current_event['start_time']
-        if duration >= min_duration:
-            confidences = [f['probability'] for f in current_event['frames']]
-            current_event['avg_confidence'] = np.mean(confidences)
-            current_event['max_confidence'] = np.max(confidences)
-            current_event['num_frames'] = len(current_event['frames'])
-
-            del current_event['frames']
-            events.append(current_event)
-
-    # Add event IDs
-    for i, event in enumerate(events):
-        event['event_id'] = i + 1
-
-    return events
-
-
 def infer_video(video_path: str, model_path: str, config: dict, output_dir: str):
     """
-    Run inference on video to detect nose-touch events.
+    Run raw inference on video frames to generate probability predictions.
+
+    This only performs classification and saves raw probabilities. Event detection
+    with threshold and min_duration filtering is done separately via process_events.py.
 
     Args:
         video_path: Path to video file
         model_path: Path to trained model
         config: Configuration dict
-        output_dir: Output directory for results
+        output_dir: Output directory for predictions
+
+    Returns:
+        Dict with predictions metadata
     """
     # VALIDATE CONFIG FIRST - fail fast before processing
     print("Validating configuration...")
     try:
-        _ = config['inference']['threshold']
         _ = config['inference']['batch_size']
         _ = config['inference']['use_gpu']
         _ = config['extraction']['fps']
-        _ = config['mlt']['marker_buffer']
         print("✓ Configuration valid\n")
     except KeyError as e:
         raise ValueError(
@@ -220,11 +149,9 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
     target_fps = config['extraction']['fps']
     frame_interval = int(video_fps / target_fps)
     batch_size = config['inference']['batch_size']
-    threshold = config['inference']['threshold']
 
     print(f"Extracting frames at {target_fps} fps...")
     print(f"Batch size: {batch_size}")
-    print(f"Classification threshold: {threshold}")
     print()
 
     cap = cv2.VideoCapture(video_path)
@@ -282,12 +209,10 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
                 batch_start_idx = len(predictions)
                 for i, (prob, meta) in enumerate(zip(probs, batch_metadata)):
                     touching_prob = prob[model.config.label2id['touching']].item()
-                    predicted_label = 'touching' if touching_prob >= threshold else 'not_touching'
 
                     predictions.append({
                         'frame_idx': meta['frame_idx'],
                         'timestamp': meta['timestamp'],
-                        'predicted_class': predicted_label,
                         'probability': touching_prob
                     })
 
@@ -298,7 +223,6 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
                     print(f"    Processed: {len(predictions)} frames")
                     print(f"    Probability range: {min(first_probs):.4f} - {max(first_probs):.4f}")
                     print(f"    Mean probability: {sum(first_probs)/len(first_probs):.4f}")
-                    print(f"    Threshold: {threshold}")
 
                     prob_range = max(first_probs) - min(first_probs)
                     if prob_range < 0.2:
@@ -338,12 +262,10 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
 
         for i, (prob, meta) in enumerate(zip(probs, batch_metadata)):
             touching_prob = prob[model.config.label2id['touching']].item()
-            predicted_label = 'touching' if touching_prob >= threshold else 'not_touching'
 
             predictions.append({
                 'frame_idx': meta['frame_idx'],
                 'timestamp': meta['timestamp'],
-                'predicted_class': predicted_label,
                 'probability': touching_prob
             })
 
@@ -354,59 +276,45 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
 
     print(f"\nProcessed {len(predictions)} frames")
 
-    # Calculate statistics
-    touching_frames = sum(1 for p in predictions if p['predicted_class'] == 'touching')
-    print(f"Touching frames: {touching_frames} ({touching_frames/len(predictions)*100:.1f}%)")
+    # Calculate probability statistics
+    probs = [p['probability'] for p in predictions]
+    print(f"\nProbability statistics:")
+    print(f"  Min: {min(probs):.4f}")
+    print(f"  Max: {max(probs):.4f}")
+    print(f"  Mean: {np.mean(probs):.4f}")
+    print(f"  Std: {np.std(probs):.4f}")
 
-    # Detect events
-    events = detect_events(predictions, config, video_fps)
-
-    print(f"\nDetected {len(events)} events")
-
-    if events:
-        print("\nEvents:")
-        for event in events:
-            print(f"  Event {event['event_id']}: "
-                  f"{format_timestamp(event['start_time'])} - {format_timestamp(event['end_time'])} "
-                  f"({event['num_frames']} frames, "
-                  f"avg conf: {event['avg_confidence']:.2f})")
-
-    # Save results
+    # Save raw predictions
     ensure_dir(output_dir)
-
     video_name = Path(video_path).stem
-
-    # Save predictions
     predictions_path = os.path.join(output_dir, 'predictions', f'{video_name}_predictions.json')
     save_json(predictions, predictions_path)
     print(f"\nPredictions saved to: {predictions_path}")
 
-    # Save events
-    events_path = os.path.join(output_dir, 'events', f'{video_name}_events.json')
-    events_data = {
+    print("\n" + "=" * 80)
+    print("INFERENCE COMPLETE")
+    print("=" * 80)
+    print(f"\nNext step: Process predictions to detect events")
+    print(f"  Run: python src/process_events.py --predictions {predictions_path}")
+    print()
+
+    # Return predictions data
+    predictions_data = {
         'video_path': os.path.abspath(video_path),
         'video_info': video_info,
         'model_path': model_path,
-        'config': {
-            'threshold': threshold,
-            'marker_buffer': config['mlt']['marker_buffer'],
-            'min_event_duration': config['inference'].get('min_event_duration', 0.0)
-        },
-        'num_events': len(events),
-        'events': events
+        'predictions_file': predictions_path,
+        'num_predictions': len(predictions)
     }
-    save_json(events_data, events_path)
-    print(f"Events saved to: {events_path}")
 
-    return events_data
+    return predictions_data
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run inference on video')
+    parser = argparse.ArgumentParser(description='Run raw inference on video (probabilities only)')
     parser.add_argument('--video', required=True, help='Path to video file')
     parser.add_argument('--model', required=True, help='Path to trained model')
     parser.add_argument('--output', help='Output directory (default: outputs/)')
-    parser.add_argument('--threshold', type=float, help='Classification threshold (default: from config)')
     parser.add_argument('--config', default='config.yaml', help='Config file path')
 
     args = parser.parse_args()
@@ -414,17 +322,11 @@ def main():
     # Load config
     config = load_config(args.config)
 
-    # Override threshold if specified
-    if args.threshold is not None:
-        config['inference']['threshold'] = args.threshold
-
     # Determine output directory
     output_dir = args.output if args.output else 'outputs'
 
     # Run inference
     results = infer_video(args.video, args.model, config, output_dir)
-
-    print("\nInference complete!")
 
 
 if __name__ == '__main__':

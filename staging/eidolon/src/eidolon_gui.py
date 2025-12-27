@@ -51,6 +51,11 @@ class EidolonGUI:
         self.video_info = None
         self.running_process = None
 
+        # MLT Generation Parameters (initialized from config)
+        self.threshold_var = None
+        self.min_duration_var = None
+        self.marker_buffer_var = None
+
         # Create UI
         self.create_ui()
 
@@ -212,8 +217,16 @@ class EidolonGUI:
         self.inference_status.grid(row=row, column=1, sticky=tk.W, padx=(10, 0))
         row += 1
 
+        # Process Events
+        ttk.Button(pipeline_frame, text="4. Process Events", command=self.process_events, width=20).grid(
+            row=row, column=0, sticky=tk.W, pady=2
+        )
+        self.events_status = ttk.Label(pipeline_frame, text="Not started", foreground="gray")
+        self.events_status.grid(row=row, column=1, sticky=tk.W, padx=(10, 0))
+        row += 1
+
         # Generate MLT from predictions
-        ttk.Button(pipeline_frame, text="4. Generate Shotcut Project", command=self.generate_mlt, width=20).grid(
+        ttk.Button(pipeline_frame, text="5. Generate Shotcut Project", command=self.generate_mlt, width=20).grid(
             row=row, column=0, sticky=tk.W, pady=2
         )
         self.mlt_status = ttk.Label(pipeline_frame, text="Not started", foreground="gray")
@@ -232,9 +245,67 @@ class EidolonGUI:
         )
         row += 1
 
+        # === MLT GENERATION SETTINGS ===
+        settings_frame = ttk.LabelFrame(main_frame, text="Event Detection & MLT Settings", padding="10")
+        settings_frame.grid(row=3, column=1, rowspan=1, sticky=(tk.W, tk.E, tk.N), pady=(0, 10), padx=(10, 0))
+        settings_frame.columnconfigure(1, weight=1)
+
+        # Configure main_frame to support 2-column layout
+        main_frame.columnconfigure(1, weight=1)
+
+        # Initialize parameter variables from config
+        self.threshold_var = tk.DoubleVar(value=self.config['inference']['threshold'])
+        self.min_duration_var = tk.DoubleVar(value=self.config['inference'].get('min_event_duration', 0.4))
+        self.marker_buffer_var = tk.DoubleVar(value=self.config['mlt'].get('marker_buffer', 2.0))
+
+        row = 0
+
+        # Threshold slider
+        ttk.Label(settings_frame, text="Classification Threshold:", font=("", 9)).grid(
+            row=row, column=0, sticky=tk.W, pady=(0, 5)
+        )
+        self.threshold_label = ttk.Label(settings_frame, text=f"{self.threshold_var.get():.2f}", font=("", 9, "bold"))
+        self.threshold_label.grid(row=row, column=2, sticky=tk.W, padx=(5, 0), pady=(0, 5))
+        row += 1
+
+        threshold_scale = ttk.Scale(
+            settings_frame, from_=0.0, to=1.0,
+            variable=self.threshold_var, orient=tk.HORIZONTAL, length=200,
+            command=lambda v: self.threshold_label.configure(text=f"{self.threshold_var.get():.2f}")
+        )
+        threshold_scale.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        row += 1
+
+        # Min duration spinbox
+        ttk.Label(settings_frame, text="Min Event Duration (sec):", font=("", 9)).grid(
+            row=row, column=0, sticky=tk.W, pady=(0, 5)
+        )
+        ttk.Spinbox(
+            settings_frame, from_=0.0, to=5.0, increment=0.1,
+            textvariable=self.min_duration_var, width=10
+        ).grid(row=row, column=1, sticky=tk.W, pady=(0, 5))
+        row += 1
+
+        # Marker buffer spinbox
+        ttk.Label(settings_frame, text="Marker Buffer (sec):", font=("", 9)).grid(
+            row=row, column=0, sticky=tk.W, pady=(0, 5)
+        )
+        ttk.Spinbox(
+            settings_frame, from_=0.0, to=10.0, increment=0.5,
+            textvariable=self.marker_buffer_var, width=10
+        ).grid(row=row, column=1, sticky=tk.W, pady=(0, 5))
+        row += 1
+
+        # Help text
+        ttk.Label(
+            settings_frame,
+            text="Adjust these values and re-run steps 4-5\nto regenerate with different parameters",
+            font=("", 8, "italic"), foreground="gray", justify=tk.LEFT
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
+
         # === OUTPUT LOG ===
         log_frame = ttk.LabelFrame(main_frame, text="Output Log", padding="10")
-        log_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        log_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -497,14 +568,23 @@ class EidolonGUI:
         else:
             self.model_status.config(text="Not started", foreground="gray")
 
-        # Check inference
+        # Check inference (predictions)
+        predictions_file = os.path.join(self.config['paths']['predictions'], f"{video_name}_predictions.json")
+        if os.path.exists(predictions_file):
+            data = load_json(predictions_file)
+            pred_count = len(data)
+            self.inference_status.config(text=f"{pred_count} predictions saved", foreground="green")
+        else:
+            self.inference_status.config(text="Not started", foreground="gray")
+
+        # Check events processing
         events_file = os.path.join(self.config['paths']['events'], f"{video_name}_events.json")
         if os.path.exists(events_file):
             data = load_json(events_file)
             event_count = data['num_events']
-            self.inference_status.config(text=f"{event_count} events detected", foreground="green")
+            self.events_status.config(text=f"{event_count} events detected", foreground="green")
         else:
-            self.inference_status.config(text="Not started", foreground="gray")
+            self.events_status.config(text="Not started", foreground="gray")
 
         # Check MLT
         mlt_file = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_project.mlt")
@@ -654,7 +734,7 @@ class EidolonGUI:
         self.run_command(cmd, on_complete=self.update_status)
 
     def run_inference(self):
-        """Run inference on video."""
+        """Run raw inference on video (saves predictions only)."""
         if not self.current_video:
             messagebox.showwarning("No Video", "Please select a video first")
             return
@@ -672,11 +752,40 @@ class EidolonGUI:
 
         model_path = os.path.join(models_dir, model_dirs[0], "final")
 
+        self.log(f"Running inference on {Path(self.current_video).name}...", "INFO")
+        self.log("This will save raw predictions (probabilities only)", "INFO")
+
         cmd = ["python", "src/infer_video.py", "--video", self.current_video, "--model", model_path]
         self.run_command(cmd, on_complete=self.update_status)
 
+    def process_events(self):
+        """Process predictions to detect events with current threshold and min_duration settings."""
+        if not self.current_video:
+            messagebox.showwarning("No Video", "Please select a video first")
+            return
+
+        video_name = Path(self.current_video).stem
+        predictions_file = os.path.join(self.config['paths']['predictions'], f"{video_name}_predictions.json")
+
+        if not os.path.exists(predictions_file):
+            messagebox.showwarning("No Predictions", "Please run inference first (step 3)")
+            return
+
+        threshold = self.threshold_var.get()
+        min_duration = self.min_duration_var.get()
+
+        self.log(f"Processing events with threshold={threshold:.2f}, min_duration={min_duration:.1f}s", "INFO")
+
+        cmd = [
+            "python", "src/process_events.py",
+            "--predictions", predictions_file,
+            "--threshold", str(threshold),
+            "--min-duration", str(min_duration)
+        ]
+        self.run_command(cmd, on_complete=self.update_status)
+
     def generate_mlt(self):
-        """Generate MLT project file from inference predictions."""
+        """Generate MLT project file from detected events with current marker buffer setting."""
         if not self.current_video:
             messagebox.showwarning("No Video", "Please select a video first")
             return
@@ -685,10 +794,18 @@ class EidolonGUI:
         events_file = os.path.join(self.config['paths']['events'], f"{video_name}_events.json")
 
         if not os.path.exists(events_file):
-            messagebox.showwarning("No Events", "Please run inference first")
+            messagebox.showwarning("No Events", "Please process events first (step 4)")
             return
 
-        cmd = ["python", "src/generate_mlt.py", "--events", events_file]
+        marker_buffer = self.marker_buffer_var.get()
+
+        self.log(f"Generating MLT project with marker_buffer={marker_buffer:.1f}s", "INFO")
+
+        cmd = [
+            "python", "src/generate_mlt.py",
+            "--events", events_file,
+            "--marker-buffer", str(marker_buffer)
+        ]
         self.run_command(cmd, on_complete=self.update_status)
 
     def generate_mlt_from_labels(self):
