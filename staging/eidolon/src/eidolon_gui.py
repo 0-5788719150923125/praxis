@@ -55,6 +55,8 @@ class EidolonGUI:
         self.threshold_var = None
         self.min_duration_var = None
         self.marker_buffer_var = None
+        self.post_buffer_var = None
+        self.mlt_mode_var = None
 
         # Create UI
         self.create_ui()
@@ -285,6 +287,8 @@ class EidolonGUI:
         self.threshold_var = tk.DoubleVar(value=self.config['inference']['threshold'])
         self.min_duration_var = tk.DoubleVar(value=self.config['inference'].get('min_event_duration', 0.4))
         self.marker_buffer_var = tk.DoubleVar(value=self.config['mlt'].get('marker_buffer', 2.0))
+        self.post_buffer_var = tk.DoubleVar(value=self.config['mlt'].get('post_buffer', 1.0))
+        self.mlt_mode_var = tk.StringVar(value='cut_markers')
 
         row = 0
 
@@ -314,14 +318,43 @@ class EidolonGUI:
         ).grid(row=row, column=1, sticky=tk.W, pady=(0, 5))
         row += 1
 
-        # Marker buffer spinbox
-        ttk.Label(settings_frame, text="Marker Buffer (sec):", font=("", 9)).grid(
+        # Marker buffer spinbox (pre-event buffer)
+        ttk.Label(settings_frame, text="Pre-Event Buffer (sec):", font=("", 9)).grid(
             row=row, column=0, sticky=tk.W, pady=(0, 5)
         )
         ttk.Spinbox(
             settings_frame, from_=0.0, to=10.0, increment=0.5,
             textvariable=self.marker_buffer_var, width=10
         ).grid(row=row, column=1, sticky=tk.W, pady=(0, 5))
+        row += 1
+
+        # Post-event buffer spinbox (for extract mode)
+        ttk.Label(settings_frame, text="Post-Event Buffer (sec):", font=("", 9)).grid(
+            row=row, column=0, sticky=tk.W, pady=(0, 5)
+        )
+        self.post_buffer_spinbox = ttk.Spinbox(
+            settings_frame, from_=0.0, to=10.0, increment=0.5,
+            textvariable=self.post_buffer_var, width=10
+        )
+        self.post_buffer_spinbox.grid(row=row, column=1, sticky=tk.W, pady=(0, 5))
+        row += 1
+
+        # MLT Mode radio buttons
+        ttk.Label(settings_frame, text="MLT Generation Mode:", font=("", 9, "bold")).grid(
+            row=row, column=0, columnspan=3, sticky=tk.W, pady=(10, 5)
+        )
+        row += 1
+
+        ttk.Radiobutton(
+            settings_frame, text="Full video with cut markers",
+            variable=self.mlt_mode_var, value='cut_markers'
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 2))
+        row += 1
+
+        ttk.Radiobutton(
+            settings_frame, text="Extract event clips (montage)",
+            variable=self.mlt_mode_var, value='extract_clips'
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 2))
         row += 1
 
         # Help text
@@ -661,14 +694,14 @@ class EidolonGUI:
             self.log(f"  Deleted events", "INFO")
 
         # 6. Delete MLT project
-        mlt_file = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_project.mlt")
+        mlt_file = os.path.join(self.config['paths']['mlt_projects'], f"{video_name}_project.mlt")
         if os.path.exists(mlt_file):
             os.remove(mlt_file)
             deleted_items.append("MLT project")
             self.log(f"  Deleted MLT project", "INFO")
 
         # Also check for "from_labels" MLT variant
-        mlt_from_labels = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_from_labels.mlt")
+        mlt_from_labels = os.path.join(self.config['paths']['mlt_projects'], f"{video_name}_from_labels.mlt")
         if os.path.exists(mlt_from_labels):
             os.remove(mlt_from_labels)
             self.log(f"  Deleted MLT (from labels)", "INFO")
@@ -860,7 +893,7 @@ class EidolonGUI:
             self.events_status.config(text="Not started", foreground="gray")
 
         # Check MLT
-        mlt_file = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_project.mlt")
+        mlt_file = os.path.join(self.config['paths']['mlt_projects'], f"{video_name}_project.mlt")
         if os.path.exists(mlt_file):
             self.mlt_status.config(text="MLT project generated", foreground="green")
         else:
@@ -1058,7 +1091,7 @@ class EidolonGUI:
         self.run_command(cmd, on_complete=self.update_status)
 
     def generate_mlt(self):
-        """Generate MLT project file from detected events with current marker buffer setting."""
+        """Generate MLT project file from detected events with current settings."""
         if not self.current_video:
             messagebox.showwarning("No Video", "Please select a video first")
             return
@@ -1071,13 +1104,18 @@ class EidolonGUI:
             return
 
         marker_buffer = self.marker_buffer_var.get()
+        post_buffer = self.post_buffer_var.get()
+        mode = self.mlt_mode_var.get()
 
-        self.log(f"Generating MLT project with marker_buffer={marker_buffer:.1f}s", "INFO")
+        mode_desc = "cut markers" if mode == 'cut_markers' else "extracted clips montage"
+        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s", "INFO")
 
         cmd = [
             "python", "src/generate_mlt.py",
             "--events", events_file,
-            "--marker-buffer", str(marker_buffer)
+            "--marker-buffer", str(marker_buffer),
+            "--post-buffer", str(post_buffer),
+            "--mode", mode
         ]
         self.run_command(cmd, on_complete=self.update_status)
 
@@ -1125,7 +1163,7 @@ class EidolonGUI:
             return
 
         video_name = Path(self.current_video).stem
-        output_dir = self.config['mlt']['output_dir']
+        output_dir = self.config['paths']['mlt_projects']
 
         # Check for both types of MLT files
         mlt_from_predictions = os.path.join(output_dir, f"{video_name}_project.mlt")

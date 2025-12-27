@@ -82,12 +82,16 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     # Load events data
     data = load_json(events_file)
     marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
+    post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
+    mode = 'cut_markers'  # Default mode for pipeline
     create_mlt_project(
         data['video_path'],
         data['events'],
         data['video_info']['fps'],
         output_mlt,
-        marker_buffer
+        marker_buffer,
+        post_buffer,
+        mode
     )
 
     print()

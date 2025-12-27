@@ -13,32 +13,32 @@ extraction:
 
 # Training configuration
 training:
-  batch_size: 8  # REDUCED: More gradient updates per epoch (14 instead of 3.5)
-  learning_rate: 0.001  # INCREASED 10x: Model was stuck, needs to escape local minimum
-  epochs: 50  # INCREASED: Give more time to learn with better hyperparams
-  early_stopping_patience: 10  # Reduced: Will stop sooner if no improvement
+  batch_size: 8 # REDUCED: More gradient updates per epoch (14 instead of 3.5)
+  learning_rate: 0.001 # INCREASED 10x: Model was stuck, needs to escape local minimum
+  epochs: 50 # INCREASED: Give more time to learn with better hyperparams
+  early_stopping_patience: 10 # Reduced: Will stop sooner if no improvement
   weight_decay: 0.01
-  warmup_steps: 10  # ADDED: Warm up LR to avoid initial instability
+  warmup_steps: 10 # ADDED: Warm up LR to avoid initial instability
   train_split: 0.70
   val_split: 0.15
   test_split: 0.15
   use_class_weights: true # Balance classes if imbalanced (deprecated - now using Focal Loss)
 
   # Focal Loss configuration
-  focal_alpha: 1.0  # Class weighting factor (1.0 = balanced)
-  focal_gamma: 2.0  # Focusing parameter: higher = more focus on hard examples (typical: 2.0-5.0)
+  focal_alpha: 1.0 # Class weighting factor (1.0 = balanced)
+  focal_gamma: 2.0 # Focusing parameter: higher = more focus on hard examples (typical: 2.0-5.0)
 
   # PEFT (Parameter-Efficient Fine-Tuning) configuration
-  use_peft: true  # Keep PEFT - forces us to find solutions that work with base model
+  use_peft: true # Keep PEFT - forces us to find solutions that work with base model
   peft:
-    r: 32  # INCREASED from 16: More trainable parameters for LoRA
-    lora_alpha: 64  # INCREASED (2x rank): Higher scaling = stronger adaptation
-    lora_dropout: 0.05  # REDUCED from 0.1: Less regularization with tiny dataset
+    r: 32 # INCREASED from 16: More trainable parameters for LoRA
+    lora_alpha: 64 # INCREASED (2x rank): Higher scaling = stronger adaptation
+    lora_dropout: 0.05 # REDUCED from 0.1: Less regularization with tiny dataset
     # Target modules: must match actual layer names in the model
     # For DeiT/ViT: ["query", "value"] or ["query", "key", "value"]
     # Run training once to see "Available linear layers" list
     target_modules: ["key", "query", "value"]
-    bias: "all"  # CHANGED from "lora_only": Train all bias terms
+    bias: "all" # CHANGED from "lora_only": Train all bias terms
 
 # Inference configuration
 inference:
@@ -49,8 +49,8 @@ inference:
 
 # MLT project generation
 mlt:
-  marker_buffer: 2.0 # seconds before prediction to place timeline cut/marker
-  output_dir: "outputs/projects"
+  marker_buffer: 1.0 # seconds before prediction to place timeline cut/marker
+  post_buffer: 2.0 # seconds after event end (for extract mode)
 
 # Paths
 paths:
@@ -61,3 +61,4 @@ paths:
   models: "models"
   predictions: "outputs/predictions"
   events: "outputs/events"
+  mlt_projects: "outputs/projects"

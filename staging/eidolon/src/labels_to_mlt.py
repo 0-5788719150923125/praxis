@@ -131,6 +131,8 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
     # Load config
     config = load_config(config_path)
     marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
+    post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
+    mode = 'cut_markers'  # Default mode for labels preview
 
     # Load labels
     labels_path = config['paths']['labels']
@@ -167,7 +169,7 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
 
     # Generate MLT
     print(f"\nGenerating MLT project...")
-    create_mlt_project(video_path, events, video_fps, output_path, marker_buffer)
+    create_mlt_project(video_path, events, video_fps, output_path, marker_buffer, post_buffer, mode)
 
 
 def main():
