@@ -29,7 +29,7 @@ def format_timecode(seconds: float, fps: float) -> str:
 
 def create_mlt_project(video_path: str, events: list, fps: float, output_path: str,
                        marker_buffer: float = 2.0, post_buffer: float = 1.0, mode: str = 'cut_markers',
-                       mute_audio: bool = False, add_benny_hill: bool = False):
+                       mute_audio: bool = False, add_benny_hill: bool = False, vertical_format: bool = False):
     """
     Generate Shotcut MLT XML project file with timeline cuts or extracted clips.
 
@@ -43,6 +43,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         mode: 'cut_markers' for full video with cuts, 'extract_clips' for montage (default: 'cut_markers')
         mute_audio: Mute source video's audio track (default: False)
         add_benny_hill: Add Benny Hill theme song audio track (default: False)
+        vertical_format: Use vertical 1080x1920 format with zoom (default: False)
     """
     # Ensure video path is absolute
     video_path = get_absolute_path(video_path)
@@ -63,6 +64,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         print(f"  Post-event buffer: {post_buffer}s")
     print(f"  Source video audio: {'Muted' if mute_audio else 'Enabled'}")
     print(f"  Benny Hill theme: {'Added' if add_benny_hill else 'Not added'}")
+    print(f"  Format: {'Vertical (1080x1920, zoomed)' if vertical_format else 'Horizontal (from video)'}")
     print()
 
     # Get video info for metadata
@@ -84,15 +86,27 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         fps_num = 60000
         fps_den = 1001
 
+    # Set dimensions based on format
+    if vertical_format:
+        profile_width = 1080
+        profile_height = 1920
+        aspect_num = '9'
+        aspect_den = '16'
+    else:
+        profile_width = video_info['width']
+        profile_height = video_info['height']
+        aspect_num = '16'
+        aspect_den = '9'
+
     profile = etree.SubElement(mlt, 'profile',
                                description='automatic',
-                               width=str(video_info['width']),
-                               height=str(video_info['height']),
+                               width=str(profile_width),
+                               height=str(profile_height),
                                progressive='1',
                                sample_aspect_num='1',
                                sample_aspect_den='1',
-                               display_aspect_num='16',
-                               display_aspect_den='9',
+                               display_aspect_num=aspect_num,
+                               display_aspect_den=aspect_den,
                                frame_rate_num=str(fps_num),
                                frame_rate_den=str(fps_den),
                                colorspace='709')
@@ -226,6 +240,22 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         # Timeline duration is the sum of all clip durations
         total_duration_tc = format_timecode(total_montage_duration, fps)
 
+    # Add affine filter for vertical format (zoom/scale)
+    if vertical_format:
+        affine_filter = etree.SubElement(playlist0, 'filter', id='filter0', out=total_duration_tc)
+        etree.SubElement(affine_filter, 'property', name='background').text = 'color:#00000000'
+        etree.SubElement(affine_filter, 'property', name='mlt_service').text = 'affine'
+        etree.SubElement(affine_filter, 'property', name='shotcut:filter').text = 'affineSizePosition'
+        etree.SubElement(affine_filter, 'property', name='transition.fix_rotate_x').text = '0'
+        etree.SubElement(affine_filter, 'property', name='transition.fill').text = '1'
+        etree.SubElement(affine_filter, 'property', name='transition.distort').text = '0'
+        etree.SubElement(affine_filter, 'property', name='transition.rect').text = '-1122.45 -1998.5 3328.56 5917 1'
+        etree.SubElement(affine_filter, 'property', name='transition.valign').text = 'middle'
+        etree.SubElement(affine_filter, 'property', name='transition.halign').text = 'center'
+        etree.SubElement(affine_filter, 'property', name='shotcut:animIn').text = '00:00:00.000'
+        etree.SubElement(affine_filter, 'property', name='shotcut:animOut').text = '00:00:00.000'
+        etree.SubElement(affine_filter, 'property', name='transition.threads').text = '0'
+
     # Add Benny Hill audio track if requested
     if add_benny_hill:
         # Get absolute path to Benny Hill audio file
@@ -339,7 +369,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
 def generate_from_events_file(events_file: str, output_path: str = None,
                              marker_buffer: float = None, post_buffer: float = None,
                              mode: str = None, mute_audio: bool = None, add_benny_hill: bool = None,
-                             config_path: str = 'config.yaml'):
+                             vertical_format: bool = None, config_path: str = 'config.yaml'):
     """
     Generate MLT project from events JSON file.
 
@@ -351,6 +381,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         mode: Generation mode 'cut_markers' or 'extract_clips' (optional, defaults to 'cut_markers')
         mute_audio: Mute source video's audio track (optional, defaults to config value)
         add_benny_hill: Add Benny Hill theme song (optional, defaults to config value)
+        vertical_format: Use vertical 1080x1920 format with zoom (optional, defaults to config value)
         config_path: Path to config file (default: config.yaml)
     """
     # Load config
@@ -367,6 +398,8 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         mute_audio = config.get('mlt', {}).get('mute_audio', False)
     if add_benny_hill is None:
         add_benny_hill = config.get('mlt', {}).get('add_benny_hill', False)
+    if vertical_format is None:
+        vertical_format = config.get('mlt', {}).get('vertical_format', False)
 
     # Load events
     print(f"Loading events from: {events_file}")
@@ -387,7 +420,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         output_path = get_experiment_path(video_name)
 
     # Generate MLT
-    create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode, mute_audio, add_benny_hill)
+    create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode, mute_audio, add_benny_hill, vertical_format)
 
 
 def main():
@@ -409,6 +442,9 @@ def main():
     benny_group.add_argument('--add-benny-hill', action='store_true', dest='add_benny_hill_flag', help='Add Benny Hill theme song')
     benny_group.add_argument('--no-benny-hill', action='store_true', dest='no_benny_hill_flag', help='Do not add Benny Hill theme song')
 
+    # Vertical format flag
+    parser.add_argument('--vertical-format', action='store_true', dest='vertical_format_flag', help='Use vertical 1080x1920 format with zoom')
+
     parser.add_argument('--config', default='config.yaml', help='Config file path')
 
     args = parser.parse_args()
@@ -429,8 +465,11 @@ def main():
     else:
         add_benny_hill = None
 
+    # Determine vertical_format: explicit flag overrides, otherwise None (uses config default)
+    vertical_format = True if args.vertical_format_flag else None
+
     generate_from_events_file(args.events, args.output, args.marker_buffer,
-                             args.post_buffer, args.mode, mute_audio, add_benny_hill, args.config)
+                             args.post_buffer, args.mode, mute_audio, add_benny_hill, vertical_format, args.config)
 
 
 if __name__ == '__main__':

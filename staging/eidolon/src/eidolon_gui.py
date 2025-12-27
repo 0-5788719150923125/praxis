@@ -59,6 +59,7 @@ class EidolonGUI:
         self.mlt_mode_var = None
         self.mute_audio_var = None
         self.add_benny_hill_var = None
+        self.vertical_format_var = None
 
         # Create UI
         self.create_ui()
@@ -293,6 +294,7 @@ class EidolonGUI:
         self.mlt_mode_var = tk.StringVar(value='cut_markers')
         self.mute_audio_var = tk.BooleanVar(value=self.config['mlt'].get('mute_audio', True))
         self.add_benny_hill_var = tk.BooleanVar(value=self.config['mlt'].get('add_benny_hill', False))
+        self.vertical_format_var = tk.BooleanVar(value=self.config['mlt'].get('vertical_format', False))
 
         row = 0
 
@@ -372,6 +374,13 @@ class EidolonGUI:
         ttk.Checkbutton(
             settings_frame, text="Add Benny Hill theme song",
             variable=self.add_benny_hill_var
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        row += 1
+
+        # Vertical format checkbox
+        ttk.Checkbutton(
+            settings_frame, text="Vertical format (1080x1920, zoomed)",
+            variable=self.vertical_format_var
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
         row += 1
 
@@ -1126,11 +1135,13 @@ class EidolonGUI:
         mode = self.mlt_mode_var.get()
         mute_audio = self.mute_audio_var.get()
         add_benny_hill = self.add_benny_hill_var.get()
+        vertical_format = self.vertical_format_var.get()
 
         mode_desc = "cut markers" if mode == 'cut_markers' else "extracted clips montage"
         audio_desc = "muted" if mute_audio else "enabled"
         benny_desc = " + Benny Hill" if add_benny_hill else ""
-        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s, audio={audio_desc}{benny_desc}", "INFO")
+        format_desc = ", vertical" if vertical_format else ""
+        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s, audio={audio_desc}{benny_desc}{format_desc}", "INFO")
 
         cmd = [
             "python", "src/generate_mlt.py",
@@ -1151,6 +1162,11 @@ class EidolonGUI:
             cmd.append("--add-benny-hill")
         else:
             cmd.append("--no-benny-hill")
+
+        # Explicitly pass vertical format flag
+        if vertical_format:
+            cmd.append("--vertical-format")
+
         self.run_command(cmd, on_complete=self.update_status)
 
     def generate_mlt_from_labels(self):
