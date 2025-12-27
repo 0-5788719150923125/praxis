@@ -132,24 +132,15 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
                      producer='black',
                      **{'in': '00:00:00.000', 'out': video_duration_tc})
 
-    # Create a single chain for the video
+    # We'll create individual chains for each clip segment
     video_name = Path(video_path).stem
-    chain = etree.SubElement(mlt, 'chain', id='chain0', out=video_duration_tc)
-    etree.SubElement(chain, 'property', name='length').text = video_duration_tc
-    etree.SubElement(chain, 'property', name='eof').text = 'pause'
-    etree.SubElement(chain, 'property', name='resource').text = video_path
-    etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
-    etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
-    etree.SubElement(chain, 'property', name='xml').text = 'was here'
-
-    # Disable audio if mute_audio is enabled
-    if mute_audio:
-        etree.SubElement(chain, 'property', name='audio_index').text = '-1'
+    chains = []  # Store chain elements for later reference
 
     # Create video playlist
     playlist0 = etree.SubElement(mlt, 'playlist', id='playlist0')
     etree.SubElement(playlist0, 'property', name='shotcut:video').text = '1'
     etree.SubElement(playlist0, 'property', name='shotcut:name').text = 'V1'
+    etree.SubElement(playlist0, 'property', name='meta.shotcut.vui').text = '1'
 
     if mode == 'cut_markers':
         # Mode 1: Full video with cut markers at event boundaries
@@ -186,19 +177,56 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
             segment_ends = cut_points + [video_duration]
 
             for i, (start, end) in enumerate(zip(segment_starts, segment_ends)):
-                # Each segment references the same chain but with different in/out points
+                # Create a separate chain for each segment
+                chain_id = f'chain{i}'
+                start_tc = format_timecode(start, fps)
+                end_tc = format_timecode(end, fps)
+
+                chain = etree.SubElement(mlt, 'chain', id=chain_id, out=end_tc)
+                etree.SubElement(chain, 'property', name='length').text = end_tc
+                etree.SubElement(chain, 'property', name='eof').text = 'pause'
+                etree.SubElement(chain, 'property', name='resource').text = video_path
+                etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
+                etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
+                etree.SubElement(chain, 'property', name='xml').text = 'was here'
+
+                # Disable audio if mute_audio is enabled
+                if mute_audio:
+                    etree.SubElement(chain, 'property', name='audio_index').text = '-1'
+
+                # Insert chain before playlist (MLT convention)
+                playlist0.addprevious(chain)
+
+                # Add playlist entry referencing this chain
                 entry = etree.SubElement(playlist0, 'entry',
-                                        producer='chain0',
-                                        **{'in': format_timecode(start, fps),
-                                           'out': format_timecode(end, fps)})
+                                        producer=chain_id,
+                                        **{'in': start_tc, 'out': end_tc})
 
             print(f"\nCreated {len(segment_starts)} segments with {len(cut_points)} cut points")
         else:
             # No cuts - just add the entire video as one segment
+            chain_id = 'chain0'
+            start_tc = format_timecode(0.0, fps)
+            end_tc = format_timecode(video_duration, fps)
+
+            chain = etree.SubElement(mlt, 'chain', id=chain_id, out=end_tc)
+            etree.SubElement(chain, 'property', name='length').text = end_tc
+            etree.SubElement(chain, 'property', name='eof').text = 'pause'
+            etree.SubElement(chain, 'property', name='resource').text = video_path
+            etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
+            etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
+            etree.SubElement(chain, 'property', name='xml').text = 'was here'
+
+            # Disable audio if mute_audio is enabled
+            if mute_audio:
+                etree.SubElement(chain, 'property', name='audio_index').text = '-1'
+
+            # Insert chain before playlist
+            playlist0.addprevious(chain)
+
             entry = etree.SubElement(playlist0, 'entry',
-                                    producer='chain0',
-                                    **{'in': format_timecode(0.0, fps),
-                                       'out': format_timecode(video_duration, fps)})
+                                    producer=chain_id,
+                                    **{'in': start_tc, 'out': end_tc})
             print(f"\nCreated 1 segment (no cuts)")
 
         # Timeline duration is the full video duration
@@ -208,6 +236,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         # Mode 2: Extract event clips only, concatenated back-to-back (montage)
         clips = []
         total_montage_duration = 0.0
+        chain_index = 0
 
         for i, event in enumerate(events):
             # Calculate clip boundaries with buffers
@@ -227,13 +256,33 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
 
             print(f"  Clip {i+1}: {format_timecode(clip_start, fps)} → {format_timecode(clip_end, fps)} (duration: {clip_duration:.2f}s)")
 
+            # Create a separate chain for each clip
+            chain_id = f'chain{chain_index}'
+            start_tc = format_timecode(clip_start, fps)
+            end_tc = format_timecode(clip_end, fps)
+
+            chain = etree.SubElement(mlt, 'chain', id=chain_id, out=end_tc)
+            etree.SubElement(chain, 'property', name='length').text = end_tc
+            etree.SubElement(chain, 'property', name='eof').text = 'pause'
+            etree.SubElement(chain, 'property', name='resource').text = video_path
+            etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
+            etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
+            etree.SubElement(chain, 'property', name='xml').text = 'was here'
+
+            # Disable audio if mute_audio is enabled
+            if mute_audio:
+                etree.SubElement(chain, 'property', name='audio_index').text = '-1'
+
+            # Insert chain before playlist (MLT convention)
+            playlist0.addprevious(chain)
+
             # Add playlist entry for this clip
             entry = etree.SubElement(playlist0, 'entry',
-                                    producer='chain0',
-                                    **{'in': format_timecode(clip_start, fps),
-                                       'out': format_timecode(clip_end, fps)})
+                                    producer=chain_id,
+                                    **{'in': start_tc, 'out': end_tc})
 
             total_montage_duration += clip_duration
+            chain_index += 1
 
         print(f"\nCreated {len(clips)} clips with total montage duration: {total_montage_duration:.2f}s")
 
@@ -307,6 +356,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     etree.SubElement(tractor, 'property', name='shotcut').text = '1'
     etree.SubElement(tractor, 'property', name='shotcut:projectAudioChannels').text = '2'
     etree.SubElement(tractor, 'property', name='shotcut:projectFolder').text = '1'
+    etree.SubElement(tractor, 'property', name='shotcut:skipConvert').text = '0'
 
     # Add tracks: background + video playlist + optional audio
     etree.SubElement(tractor, 'track', producer='background')
