@@ -17,6 +17,7 @@ Usage:
 import os
 import cv2
 import argparse
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from glob import glob
@@ -55,6 +56,11 @@ class FrameLabeler:
         self.current_idx = 0
         self.window_name = "Frame Labeler"
 
+        # Timeline scrubber state
+        self.timeline_height = 30
+        self.timeline_margin = 10
+        self.dragging = False
+
         # Find first unlabeled frame
         for i, frame_path in enumerate(self.frames):
             if frame_path not in self.labels:
@@ -89,6 +95,34 @@ class FrameLabeler:
 
         return frame_path, frame_meta
 
+    def mouse_callback(self, event, x, y, flags, param):
+        """Handle mouse events for timeline scrubbing."""
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # Check if click is in timeline area
+            if hasattr(self, 'timeline_y_start') and hasattr(self, 'timeline_y_end'):
+                if self.timeline_y_start <= y <= self.timeline_y_end:
+                    self.dragging = True
+                    self.seek_to_position(x)
+                    self.display_frame()  # Immediately show the new frame
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.dragging = False
+        elif event == cv2.EVENT_MOUSEMOVE and self.dragging:
+            self.seek_to_position(x)
+            self.display_frame()  # Update display while dragging
+
+    def seek_to_position(self, x):
+        """Seek to a frame based on x position in timeline."""
+        if not hasattr(self, 'timeline_x_start') or not hasattr(self, 'timeline_width'):
+            return
+
+        # Calculate relative position (0.0 to 1.0)
+        relative_x = (x - self.timeline_x_start) / self.timeline_width
+        relative_x = max(0.0, min(1.0, relative_x))  # Clamp to [0, 1]
+
+        # Calculate target frame index
+        target_idx = int(relative_x * (len(self.frames) - 1))
+        self.current_idx = target_idx
+
     def display_frame(self):
         """Display current frame with annotations."""
         frame_path, frame_meta = self.get_current_frame_info()
@@ -106,9 +140,17 @@ class FrameLabeler:
             scale = max_size / max(w, h)
             img = cv2.resize(img, None, fx=scale, fy=scale)
 
+        # Store original dimensions before adding timeline
+        original_h, original_w = img.shape[:2]
+
         # Get current label and stats
         label = self.labels.get(frame_path, "UNLABELED")
         timestamp = frame_meta['timestamp'] if frame_meta else 0.0
+
+        # Format timestamp as MM:SS
+        minutes = int(timestamp // 60)
+        seconds = int(timestamp % 60)
+        timestamp_str = f"{minutes}:{seconds:02d}"
 
         # Get label statistics
         touching, not_touching, total, touching_pct, not_touching_pct = self.get_label_stats()
@@ -128,7 +170,7 @@ class FrameLabeler:
         # Draw info
         info_lines = [
             f"Frame: {self.current_idx + 1}/{len(self.frames)}",
-            f"Time: {timestamp:.2f}s",
+            f"Time: {timestamp_str}",
             f"Current label: {label}",
             "",
             f"Total labeled: {total}",
@@ -136,8 +178,8 @@ class FrameLabeler:
             f"  False (not touching): {not_touching} ({not_touching_pct:.1f}%)",
             f"  Balance: {balance_status}",
             "",
-            "T=true | F=false | S=skip",
-            "Left/Right arrows to navigate | Q=quit"
+            "T=true | F=false | S=skip | Q=quit",
+            "Arrows=navigate | Click timeline to jump"
         ]
 
         y_offset = 30
@@ -152,7 +194,56 @@ class FrameLabeler:
                        0.6, color, 2)
             y_offset += 25
 
-        cv2.imshow(self.window_name, img)
+        # Add timeline scrubber at bottom
+        timeline_bar_height = self.timeline_height
+        padding = self.timeline_margin
+
+        # Expand image to add timeline area
+        new_h = original_h + timeline_bar_height + padding * 2
+        timeline_img = np.zeros((new_h, original_w, 3), dtype=np.uint8)
+        timeline_img[0:original_h, :] = img
+
+        # Draw timeline background (dark gray)
+        timeline_y = original_h + padding
+        cv2.rectangle(timeline_img,
+                     (padding, timeline_y),
+                     (original_w - padding, timeline_y + timeline_bar_height),
+                     (50, 50, 50), -1)
+
+        # Draw timeline border
+        cv2.rectangle(timeline_img,
+                     (padding, timeline_y),
+                     (original_w - padding, timeline_y + timeline_bar_height),
+                     (200, 200, 200), 1)
+
+        # Draw progress bar (represents labeled frames)
+        if len(self.frames) > 0:
+            labeled_ratio = len(self.labels) / len(self.frames)
+            progress_width = int((original_w - 2 * padding) * labeled_ratio)
+            if progress_width > 0:
+                cv2.rectangle(timeline_img,
+                            (padding, timeline_y),
+                            (padding + progress_width, timeline_y + timeline_bar_height),
+                            (40, 100, 40), -1)
+
+        # Draw current position marker
+        timeline_width = original_w - 2 * padding
+        position_ratio = self.current_idx / max(len(self.frames) - 1, 1)
+        marker_x = padding + int(timeline_width * position_ratio)
+
+        # Draw marker as a vertical line
+        cv2.line(timeline_img,
+                (marker_x, timeline_y),
+                (marker_x, timeline_y + timeline_bar_height),
+                (0, 255, 255), 3)
+
+        # Store timeline coordinates for mouse detection
+        self.timeline_x_start = padding
+        self.timeline_width = timeline_width
+        self.timeline_y_start = timeline_y
+        self.timeline_y_end = timeline_y + timeline_bar_height
+
+        cv2.imshow(self.window_name, timeline_img)
 
     def save_labels(self):
         """Save labels to CSV."""
@@ -195,6 +286,7 @@ class FrameLabeler:
     def run(self):
         """Run interactive labeling session."""
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(self.window_name, self.mouse_callback)
 
         print("\n=== Frame Labeling Tool ===")
         print("Controls:")
@@ -204,6 +296,7 @@ class FrameLabeler:
         print("  Left Arrow - Previous frame")
         print("  Right Arrow - Next frame")
         print("  Q - Quit and save")
+        print("  Timeline - Click or drag to jump to any frame")
         print()
         print("Tip: Aim for roughly 50/50 balance between true and false")
         print("     Balance status shown in display window")

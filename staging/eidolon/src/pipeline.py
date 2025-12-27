@@ -59,11 +59,13 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
 
     # Load events data
     data = load_json(events_file)
+    marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
     create_mlt_project(
         data['video_path'],
         data['events'],
         data['video_info']['fps'],
-        output_mlt
+        output_mlt,
+        marker_buffer
     )
 
     print()
@@ -78,7 +80,7 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     print()
     print("Next steps:")
     print(f"  1. Open Shotcut: shotcut {output_mlt}")
-    print(f"  2. Preview clips in timeline")
+    print(f"  2. Timeline shows full video with cuts at predicted moments")
     print(f"  3. Export: File → Export")
     print()
 

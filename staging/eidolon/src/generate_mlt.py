@@ -11,7 +11,7 @@ import os
 import argparse
 from pathlib import Path
 from lxml import etree
-from utils import load_json, get_absolute_path, get_video_info, ensure_dir
+from utils import load_json, get_absolute_path, get_video_info, ensure_dir, load_config
 
 
 def format_timecode(seconds: float, fps: float) -> str:
@@ -26,15 +26,16 @@ def format_timecode(seconds: float, fps: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
 
 
-def create_mlt_project(video_path: str, events: list, fps: float, output_path: str):
+def create_mlt_project(video_path: str, events: list, fps: float, output_path: str, marker_buffer: float = 2.0):
     """
-    Generate Shotcut MLT XML project file matching Shotcut's structure.
+    Generate Shotcut MLT XML project file with timeline cuts at prediction points.
 
     Args:
         video_path: Absolute path to source video
         events: List of event dicts with start_time and end_time
         fps: Video frame rate
         output_path: Where to save .mlt file
+        marker_buffer: Seconds before each event to place cut (default: 2.0)
     """
     # Ensure video path is absolute
     video_path = get_absolute_path(video_path)
@@ -42,10 +43,11 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     if not os.path.exists(video_path):
         print(f"Warning: Video file not found: {video_path}")
 
-    print(f"Generating MLT project...")
+    print(f"Generating MLT project with timeline cuts...")
     print(f"  Source video: {video_path}")
     print(f"  FPS: {fps:.2f}")
     print(f"  Events: {len(events)}")
+    print(f"  Marker buffer: {marker_buffer}s")
     print()
 
     # Get video info for metadata
@@ -101,49 +103,71 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
                      producer='black',
                      **{'in': '00:00:00.000', 'out': video_duration_tc})
 
-    # Create a chain for each event (clip)
+    # Create a single chain for the video
     video_name = Path(video_path).stem
-    for i, event in enumerate(events):
-        chain_id = f"chain{i}"
-        event_id = event['event_id']
-        start_time = event['start_time']
-        end_time = event['end_time']
+    chain = etree.SubElement(mlt, 'chain', id='chain0', out=video_duration_tc)
+    etree.SubElement(chain, 'property', name='length').text = video_duration_tc
+    etree.SubElement(chain, 'property', name='eof').text = 'pause'
+    etree.SubElement(chain, 'property', name='resource').text = video_path
+    etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
+    etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
+    etree.SubElement(chain, 'property', name='xml').text = 'was here'
 
-        # Create chain element
-        chain = etree.SubElement(mlt, 'chain', id=chain_id, out=video_duration_tc)
-        etree.SubElement(chain, 'property', name='length').text = video_duration_tc
-        etree.SubElement(chain, 'property', name='eof').text = 'pause'
-        etree.SubElement(chain, 'property', name='resource').text = video_path
-        etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
-        etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
-        etree.SubElement(chain, 'property', name='xml').text = 'was here'
+    # Calculate cut points (marker_buffer seconds before each event)
+    raw_cut_points = []
+    for event in events:
+        cut_time = max(0, event['start_time'] - marker_buffer)
+        raw_cut_points.append(cut_time)
+        print(f"  Raw cut at {format_timecode(cut_time, fps)} (event at {format_timecode(event['start_time'], fps)})")
 
-        print(f"  Event {event_id}: {format_timecode(start_time, fps)} - {format_timecode(end_time, fps)}")
+    # Filter out cuts too close to start/end (they create zero-duration segments)
+    min_cut_time = 0.1  # Don't cut in first 0.1 seconds
+    max_cut_time = video_duration - 0.1  # Don't cut in last 0.1 seconds
 
-    # Create video playlist with all clips placed sequentially
+    cut_points = []
+    for cut_time in raw_cut_points:
+        if min_cut_time <= cut_time <= max_cut_time:
+            cut_points.append(cut_time)
+        else:
+            print(f"  Skipped cut at {format_timecode(cut_time, fps)} (too close to video boundary)")
+
+    # Sort and deduplicate cut points
+    cut_points = sorted(set(cut_points))
+
+    if not cut_points:
+        print("\n⚠ WARNING: No valid cut points after filtering!")
+        print("  All events are either at the very start or very end of the video.")
+        print("  The timeline will have no cuts.")
+
+    # Create video playlist with segments split at cut points
     playlist0 = etree.SubElement(mlt, 'playlist', id='playlist0')
     etree.SubElement(playlist0, 'property', name='shotcut:video').text = '1'
     etree.SubElement(playlist0, 'property', name='shotcut:name').text = 'V1'
 
-    # Place clips sequentially on timeline
-    timeline_position = 0.0
-    for i, event in enumerate(events):
-        chain_id = f"chain{i}"
-        start_time = event['start_time']
-        end_time = event['end_time']
-        clip_duration = end_time - start_time
+    # Create segments between cuts
+    if cut_points:
+        # Create segments between cuts
+        segment_starts = [0.0] + cut_points
+        segment_ends = cut_points + [video_duration]
 
-        # Entry references the chain and specifies which part of the source to use
+        for i, (start, end) in enumerate(zip(segment_starts, segment_ends)):
+            # Each segment references the same chain but with different in/out points
+            entry = etree.SubElement(playlist0, 'entry',
+                                    producer='chain0',
+                                    **{'in': format_timecode(start, fps),
+                                       'out': format_timecode(end, fps)})
+
+        print(f"\nCreated {len(segment_starts)} segments with {len(cut_points)} cut points")
+    else:
+        # No cuts - just add the entire video as one segment
         entry = etree.SubElement(playlist0, 'entry',
-                                producer=chain_id,
-                                **{'in': format_timecode(start_time, fps),
-                                   'out': format_timecode(end_time, fps)})
+                                producer='chain0',
+                                **{'in': format_timecode(0.0, fps),
+                                   'out': format_timecode(video_duration, fps)})
+        print(f"\nCreated 1 segment (no cuts)")
 
-        timeline_position += clip_duration
-
-    # Calculate total timeline duration
-    total_duration = sum(event['end_time'] - event['start_time'] for event in events)
-    total_duration_tc = format_timecode(total_duration, fps)
+    # Timeline duration is the full video duration
+    total_duration_tc = video_duration_tc
 
     # Create tractor combining background and video tracks
     tractor = etree.SubElement(mlt, 'tractor',
@@ -185,21 +209,27 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
                standalone=False)
 
     print(f"\nMLT project saved to: {output_path}")
-    print(f"Total timeline duration: {total_duration_tc} ({len(events)} clips)")
+    print(f"Total timeline duration: {total_duration_tc}")
+    print(f"Video split into {len(segment_starts)} segments at {len(cut_points)} cut points")
     print(f"\nTo use:")
     print(f"  1. Open Shotcut: shotcut {output_path}")
-    print(f"  2. Preview the clips in the timeline")
+    print(f"  2. Timeline shows the full video with cuts at predicted moments")
     print(f"  3. File → Export → choose format and render")
 
 
-def generate_from_events_file(events_file: str, output_path: str = None):
+def generate_from_events_file(events_file: str, output_path: str = None, config_path: str = 'config.yaml'):
     """
     Generate MLT project from events JSON file.
 
     Args:
         events_file: Path to events JSON file
         output_path: Output MLT path (optional)
+        config_path: Path to config file (default: config.yaml)
     """
+    # Load config
+    config = load_config(config_path)
+    marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
+
     # Load events
     print(f"Loading events from: {events_file}")
     data = load_json(events_file)
@@ -219,7 +249,7 @@ def generate_from_events_file(events_file: str, output_path: str = None):
         output_path = f"outputs/projects/{video_name}_project.mlt"
 
     # Generate MLT
-    create_mlt_project(video_path, events, fps, output_path)
+    create_mlt_project(video_path, events, fps, output_path, marker_buffer)
 
 
 def main():

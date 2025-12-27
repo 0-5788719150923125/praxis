@@ -83,9 +83,29 @@ staging/eidolon/
     └── utils.py
 ```
 
-## Workflow
+## Quick Start (GUI)
 
-The pipeline consists of 4 main phases:
+For the easiest experience, use the unified GUI:
+
+```bash
+cd staging/eidolon
+python src/eidolon_gui.py
+```
+
+The GUI provides a clean interface for:
+- Selecting videos
+- Extracting frames
+- Labeling frames
+- Preparing datasets
+- Training models
+- Running inference
+- Generating Shotcut projects
+
+All with real-time status updates and output logging.
+
+## Workflow (Command Line)
+
+Alternatively, you can run the pipeline manually via command line. The pipeline consists of 4 main phases:
 
 ### Phase 1: Data Preparation (One-time setup)
 

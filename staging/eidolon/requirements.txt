@@ -4,6 +4,7 @@ torchvision>=0.15.0
 transformers>=4.35.0
 accelerate>=0.25.0
 datasets>=2.14.0
+peft>=0.7.0
 
 # Computer vision
 opencv-python>=4.8.0

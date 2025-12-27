@@ -2,7 +2,18 @@
 
 A condensed guide to get started quickly.
 
-## Initial Setup (One Time)
+## Easiest: Use the GUI
+
+```bash
+cd staging/eidolon
+python src/eidolon_gui.py
+```
+
+The GUI walks you through all steps with buttons and status indicators!
+
+---
+
+## Command Line: Initial Setup (One Time)
 
 ### 1. Install Dependencies
 
