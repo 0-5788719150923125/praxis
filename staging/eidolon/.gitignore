@@ -1,0 +1,14 @@
+videos/*
+data/
+models/
+outputs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/

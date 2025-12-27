@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""
+Run inference on video to detect nose-touch events.
+
+Usage:
+    python src/infer_video.py --video videos/my_video.mp4 --model models/deit-small-nose-touch/final
+"""
+
+import os
+import cv2
+import torch
+import argparse
+import numpy as np
+from pathlib import Path
+from tqdm import tqdm
+from PIL import Image
+from transformers import AutoImageProcessor, AutoModelForImageClassification
+from peft import PeftModel
+from utils import load_config, save_json, get_video_info, ensure_dir, format_timestamp
+
+
+def infer_video(video_path: str, model_path: str, config: dict, output_dir: str):
+    """
+    Run raw inference on video frames to generate probability predictions.
+
+    This only performs classification and saves raw probabilities. Event detection
+    with threshold and min_duration filtering is done separately via process_events.py.
+
+    Args:
+        video_path: Path to video file
+        model_path: Path to trained model
+        config: Configuration dict
+        output_dir: Output directory for predictions
+
+    Returns:
+        Dict with predictions metadata
+    """
+    # VALIDATE CONFIG FIRST - fail fast before processing
+    print("Validating configuration...")
+    try:
+        _ = config['inference']['batch_size']
+        _ = config['inference']['use_gpu']
+        _ = config['extraction']['fps']
+        print("✓ Configuration valid\n")
+    except KeyError as e:
+        raise ValueError(
+            f"Missing required config key: {e}\n"
+            "Please check your config.yaml file has all required fields."
+        )
+
+    # Get video info
+    video_info = get_video_info(video_path)
+    video_fps = video_info['fps']
+    duration = video_info['duration']
+
+    print(f"Video: {video_path}")
+    print(f"Resolution: {video_info['width']}x{video_info['height']}")
+    print(f"FPS: {video_fps:.2f}")
+    print(f"Duration: {format_timestamp(duration)}")
+    print()
+
+    # Load model and processor
+    print(f"Loading model from: {model_path}")
+    device = torch.device("cuda" if torch.cuda.is_available() and config['inference']['use_gpu'] else "cpu")
+    print(f"Using device: {device}")
+
+    image_processor = AutoImageProcessor.from_pretrained(model_path)
+
+    # Check model directory contents
+    print(f"\nModel directory contents:")
+    if os.path.exists(model_path):
+        for item in os.listdir(model_path):
+            item_path = os.path.join(model_path, item)
+            if os.path.isfile(item_path):
+                size = os.path.getsize(item_path)
+                print(f"  - {item} ({size:,} bytes)")
+            else:
+                print(f"  - {item}/ (directory)")
+    else:
+        raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+    # Check if this is a PEFT model
+    is_peft = os.path.exists(os.path.join(model_path, 'is_peft_model'))
+    has_adapter_config = os.path.exists(os.path.join(model_path, 'adapter_config.json'))
+
+    print(f"\nModel type detection:")
+    print(f"  is_peft_model marker: {is_peft}")
+    print(f"  adapter_config.json: {has_adapter_config}")
+
+    if is_peft or has_adapter_config:
+        print("\n>>> Loading PEFT model (LoRA adapter)...")
+
+        # Read the base model ID
+        base_model_id_path = os.path.join(model_path, 'base_model_id.txt')
+        if os.path.exists(base_model_id_path):
+            with open(base_model_id_path, 'r') as f:
+                base_model_id = f.read().strip()
+            print(f"  Base model ID: {base_model_id}")
+        else:
+            # Fallback for models trained before this fix
+            print("  ⚠ WARNING: base_model_id.txt not found, using default")
+            base_model_id = "facebook/deit-small-patch16-224"
+
+        # Load the original pretrained model from HuggingFace
+        print(f"  Loading original pretrained model: {base_model_id}")
+        model = AutoModelForImageClassification.from_pretrained(
+            base_model_id,
+            num_labels=2,  # Binary classification
+            id2label={0: 'not_touching', 1: 'touching'},
+            label2id={'not_touching': 0, 'touching': 1},
+            ignore_mismatched_sizes=True
+        )
+
+        # Apply the LoRA adapter
+        print(f"  Loading LoRA adapter from: {model_path}")
+        try:
+            model = PeftModel.from_pretrained(model, model_path)
+            print("  ✓ LoRA adapter loaded successfully")
+        except Exception as e:
+            print(f"  ✗ Failed to load LoRA adapter: {e}")
+            raise
+
+        # Verify adapter is active
+        print(f"\n  Verifying adapter parameters:")
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"    Total parameters: {total_params:,}")
+
+        # List adapter modules
+        adapter_modules = [name for name, _ in model.named_modules() if 'lora' in name.lower()]
+        if adapter_modules:
+            print(f"    LoRA modules found: {len(adapter_modules)}")
+            print(f"    Sample: {adapter_modules[0]}")
+        else:
+            print("    ⚠ WARNING: No LoRA modules found in loaded model!")
+    else:
+        print("\n>>> Loading standard fine-tuned model...")
+        model = AutoModelForImageClassification.from_pretrained(model_path)
+        print("  ✓ Model loaded")
+
+    model.to(device)
+    model.eval()
+
+    # Get label mapping
+    id2label = model.config.id2label
+    print(f"Labels: {id2label}")
+    print()
+
+    # Extract and classify frames
+    target_fps = config['extraction']['fps']
+    frame_interval = int(video_fps / target_fps)
+    batch_size = config['inference']['batch_size']
+
+    print(f"Extracting frames at {target_fps} fps...")
+    print(f"Batch size: {batch_size}")
+    print()
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open video: {video_path}")
+
+    predictions = []
+    batch_frames = []
+    batch_metadata = []
+
+    # Calculate which frames we actually need to process
+    total_frames = video_info['total_frames']
+    frames_to_process = list(range(0, total_frames, frame_interval))
+    total_to_process = len(frames_to_process)
+
+    print(f"Will process {total_to_process} frames (every {frame_interval}th frame)")
+    pbar = tqdm(total=total_to_process, desc="Inference", unit="frames")
+
+    frame_count = 0
+    last_frame_idx = -1
+
+    # Read frames sequentially, skip unwanted frames
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Only process frames at our target intervals
+        if frame_count % frame_interval == 0:
+            timestamp = frame_count / video_fps
+
+            # Convert BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(frame_rgb)
+
+            batch_frames.append(pil_image)
+            batch_metadata.append({
+                'frame_idx': frame_count,
+                'timestamp': timestamp
+            })
+
+            # Process batch when full
+            if len(batch_frames) >= batch_size:
+                # Preprocess images
+                inputs = image_processor(batch_frames, return_tensors="pt")
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                # Run inference
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                    logits = outputs.logits
+                    probs = torch.nn.functional.softmax(logits, dim=-1)
+
+                # Process predictions
+                batch_start_idx = len(predictions)
+                for i, (prob, meta) in enumerate(zip(probs, batch_metadata)):
+                    touching_prob = prob[model.config.label2id['touching']].item()
+
+                    predictions.append({
+                        'frame_idx': meta['frame_idx'],
+                        'timestamp': meta['timestamp'],
+                        'probability': touching_prob
+                    })
+
+                # Early diagnostics on first batch
+                if batch_start_idx == 0:
+                    first_probs = [p['probability'] for p in predictions]
+                    print(f"\n>>> First batch diagnostics (SANITY CHECK):")
+                    print(f"    Processed: {len(predictions)} frames")
+                    print(f"    Probability range: {min(first_probs):.4f} - {max(first_probs):.4f}")
+                    print(f"    Mean probability: {sum(first_probs)/len(first_probs):.4f}")
+
+                    prob_range = max(first_probs) - min(first_probs)
+                    if prob_range < 0.2:
+                        print(f"\n    ⚠⚠⚠ CRITICAL WARNING ⚠⚠⚠")
+                        print(f"    Probability range is very narrow: {prob_range:.4f}")
+                        print(f"    Model is outputting near-random predictions!")
+                        print(f"    Expected: Wide range (0.0-1.0) with confident predictions")
+                        print(f"    Got: Narrow range around 0.5 (model unsure about everything)")
+                        print(f"\n    Likely causes:")
+                        print(f"      1. LoRA adapter not loaded (using untrained base model)")
+                        print(f"      2. Wrong model checkpoint loaded")
+                        print(f"      3. Preprocessing mismatch")
+                        print(f"\n    Aborting inference to save time...")
+                        cap.release()
+                        pbar.close()
+                        raise RuntimeError("Model confidence check failed - see warnings above")
+                    else:
+                        print(f"    ✓ Probability distribution looks reasonable")
+                    print()
+
+                # Clear batch and update progress
+                batch_frames = []
+                batch_metadata = []
+                pbar.update(batch_size)
+
+        frame_count += 1
+
+    # Process remaining frames
+    if batch_frames:
+        inputs = image_processor(batch_frames, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs.logits
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        for i, (prob, meta) in enumerate(zip(probs, batch_metadata)):
+            touching_prob = prob[model.config.label2id['touching']].item()
+
+            predictions.append({
+                'frame_idx': meta['frame_idx'],
+                'timestamp': meta['timestamp'],
+                'probability': touching_prob
+            })
+
+        pbar.update(len(batch_frames))
+
+    pbar.close()
+    cap.release()
+
+    print(f"\nProcessed {len(predictions)} frames")
+
+    # Calculate probability statistics
+    probs = [p['probability'] for p in predictions]
+    print(f"\nProbability statistics:")
+    print(f"  Min: {min(probs):.4f}")
+    print(f"  Max: {max(probs):.4f}")
+    print(f"  Mean: {np.mean(probs):.4f}")
+    print(f"  Std: {np.std(probs):.4f}")
+
+    # Save raw predictions
+    ensure_dir(output_dir)
+    video_name = Path(video_path).stem
+    predictions_path = os.path.join(output_dir, 'predictions', f'{video_name}_predictions.json')
+    save_json(predictions, predictions_path)
+    print(f"\nPredictions saved to: {predictions_path}")
+
+    print("\n" + "=" * 80)
+    print("INFERENCE COMPLETE")
+    print("=" * 80)
+    print(f"\nNext step: Process predictions to detect events")
+    print(f"  Run: python src/process_events.py --predictions {predictions_path}")
+    print()
+
+    # Return predictions data
+    predictions_data = {
+        'video_path': os.path.abspath(video_path),
+        'video_info': video_info,
+        'model_path': model_path,
+        'predictions_file': predictions_path,
+        'num_predictions': len(predictions)
+    }
+
+    return predictions_data
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Run raw inference on video (probabilities only)')
+    parser.add_argument('--video', required=True, help='Path to video file')
+    parser.add_argument('--model', required=True, help='Path to trained model')
+    parser.add_argument('--output', help='Output directory (default: outputs/)')
+    parser.add_argument('--config', default='config.yaml', help='Config file path')
+
+    args = parser.parse_args()
+
+    # Load config
+    config = load_config(args.config)
+
+    # Determine output directory
+    output_dir = args.output if args.output else 'outputs'
+
+    # Run inference
+    results = infer_video(args.video, args.model, config, output_dir)
+
+
+if __name__ == '__main__':
+    main()
