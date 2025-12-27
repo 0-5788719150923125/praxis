@@ -22,7 +22,11 @@ training:
   train_split: 0.70
   val_split: 0.15
   test_split: 0.15
-  use_class_weights: true # Balance classes if imbalanced
+  use_class_weights: true # Balance classes if imbalanced (deprecated - now using Focal Loss)
+
+  # Focal Loss configuration
+  focal_alpha: 1.0  # Class weighting factor (1.0 = balanced)
+  focal_gamma: 2.0  # Focusing parameter: higher = more focus on hard examples (typical: 2.0-5.0)
 
   # PEFT (Parameter-Efficient Fine-Tuning) configuration
   use_peft: true  # Keep PEFT - forces us to find solutions that work with base model

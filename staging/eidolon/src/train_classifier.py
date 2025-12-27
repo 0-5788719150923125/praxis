@@ -23,6 +23,12 @@ from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 from torchvision import transforms
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+
+# Add parent directory to path to import from main praxis
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from praxis.losses.focal import FocalLoss
+
 from utils import load_config, ensure_dir
 
 
@@ -277,27 +283,35 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         log_level="warning" if gui_mode else "info",  # Less verbose in GUI mode
     )
 
-    # Custom Trainer class to handle class weights
-    class WeightedTrainer(Trainer):
-        def __init__(self, *args, class_weights=None, **kwargs):
+    # Custom Trainer class to use Focal Loss for hard example mining
+    class FocalLossTrainer(Trainer):
+        def __init__(self, *args, focal_alpha=1.0, focal_gamma=2.0, **kwargs):
             super().__init__(*args, **kwargs)
-            self.class_weights = class_weights
+            self.focal_alpha = focal_alpha
+            self.focal_gamma = focal_gamma
+            self.loss_fct = FocalLoss(alpha=focal_alpha, gamma=focal_gamma, reduction='mean')
 
         def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
             labels = inputs.pop("labels")
             outputs = model(**inputs)
             logits = outputs.logits
 
-            if self.class_weights is not None:
-                loss_fct = torch.nn.CrossEntropyLoss(weight=self.class_weights.to(logits.device))
-            else:
-                loss_fct = torch.nn.CrossEntropyLoss()
+            # Praxis FocalLoss expects logits directly (does log_softmax internally)
+            loss = self.loss_fct(logits, labels)
 
-            loss = loss_fct(logits, labels)
             return (loss, outputs) if return_outputs else loss
 
-    # Initialize trainer
-    trainer = WeightedTrainer(
+    # Get Focal Loss parameters from config
+    focal_alpha = config['training'].get('focal_alpha', 1.0)
+    focal_gamma = config['training'].get('focal_gamma', 2.0)
+
+    print(f"Using Focal Loss:")
+    print(f"  alpha: {focal_alpha} (class weighting)")
+    print(f"  gamma: {focal_gamma} (focusing parameter - higher = more focus on hard examples)")
+    print()
+
+    # Initialize trainer with Focal Loss
+    trainer = FocalLossTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset['train'],
@@ -305,7 +319,8 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         compute_metrics=compute_metrics,
         data_collator=collate_fn,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=config['training']['early_stopping_patience'])],
-        class_weights=class_weights
+        focal_alpha=focal_alpha,
+        focal_gamma=focal_gamma
     )
 
     # Train

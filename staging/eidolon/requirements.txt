@@ -19,3 +19,6 @@ scikit-learn>=1.3.0
 pyyaml>=6.0
 tqdm>=4.65.0
 lxml>=4.9.0
+
+# Video downloading
+yt-dlp>=2024.1.0

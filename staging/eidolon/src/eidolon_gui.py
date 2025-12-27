@@ -90,6 +90,30 @@ class EidolonGUI:
         self.video_info_label = ttk.Label(video_frame, text="", foreground="gray", font=("", 9))
         self.video_info_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 
+        # URL download section
+        ttk.Label(video_frame, text="Or download from URL:", font=("", 9)).grid(
+            row=2, column=0, sticky=tk.W, pady=(10, 0)
+        )
+
+        url_input_frame = ttk.Frame(video_frame)
+        url_input_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        url_input_frame.columnconfigure(0, weight=1)
+
+        self.download_url_var = tk.StringVar()
+        self.url_entry = ttk.Entry(url_input_frame, textvariable=self.download_url_var)
+        self.url_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+
+        # Add right-click context menu for paste support
+        self._create_url_entry_context_menu()
+
+        ttk.Button(url_input_frame, text="Download Video", command=self.download_video).grid(
+            row=0, column=1, sticky=tk.E
+        )
+
+        # Download status label
+        self.download_status = ttk.Label(video_frame, text="", foreground="gray", font=("", 9))
+        self.download_status.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+
         # === PROJECT OVERVIEW ===
         overview_frame = ttk.LabelFrame(main_frame, text="Project Overview", padding="10")
         overview_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -125,6 +149,10 @@ class EidolonGUI:
 
         # Bind double-click to select video
         self.videos_tree.bind('<Double-1>', self.on_video_double_click)
+
+        # Bind right-click to show context menu
+        self.videos_tree.bind('<Button-3>', self.show_video_context_menu)
+        self.videos_tree.bind('<Control-Button-1>', self.show_video_context_menu)  # Mac support
 
         # Project stats
         stats_frame = ttk.Frame(overview_frame)
@@ -316,9 +344,32 @@ class EidolonGUI:
             row=1, column=0, sticky=tk.E, pady=(5, 0)
         )
 
+    def _create_url_entry_context_menu(self):
+        """Create right-click context menu for URL entry field with paste support."""
+        menu = tk.Menu(self.url_entry, tearoff=0)
+
+        menu.add_command(label="Cut", command=lambda: self.url_entry.event_generate("<<Cut>>"))
+        menu.add_command(label="Copy", command=lambda: self.url_entry.event_generate("<<Copy>>"))
+        menu.add_command(label="Paste", command=lambda: self.url_entry.event_generate("<<Paste>>"))
+        menu.add_separator()
+        menu.add_command(label="Select All", command=lambda: self.url_entry.select_range(0, tk.END))
+
+        def show_menu(event):
+            menu.post(event.x_root, event.y_root)
+
+        # Bind right-click (Button-3 on Linux/Windows, Button-2 on Mac)
+        self.url_entry.bind("<Button-3>", show_menu)
+        # Also bind for Mac (Control-click)
+        self.url_entry.bind("<Control-Button-1>", show_menu)
+
     def log(self, message, level="INFO"):
         """Add message to log."""
         self.log_text.config(state='normal')
+
+        # Check if user is scrolled to bottom BEFORE inserting text
+        # yview() returns (top, bottom) as fractions (0.0 to 1.0)
+        yview = self.log_text.yview()
+        at_bottom = yview[1] >= 0.99  # Consider "at bottom" if within 1%
 
         # Color coding
         tag = level.lower()
@@ -328,7 +379,11 @@ class EidolonGUI:
         self.log_text.tag_config("warning", foreground="orange")
 
         self.log_text.insert(tk.END, f"[{level}] {message}\n", tag)
-        self.log_text.see(tk.END)
+
+        # Only auto-scroll if user was already at the bottom
+        if at_bottom:
+            self.log_text.see(tk.END)
+
         self.log_text.config(state='disabled')
 
     def clear_log(self):
@@ -343,12 +398,24 @@ class EidolonGUI:
         for item in self.videos_tree.get_children():
             self.videos_tree.delete(item)
 
-        # Get all frame directories (these represent processed videos)
+        # Get all video files from videos/ directory
+        videos_base = self.config['paths']['videos']
+        all_videos = {}  # video_name -> video_path
+        if os.path.exists(videos_base):
+            for ext in ['*.mp4', '*.mkv', '*.avi', '*.mov']:
+                for video_path in Path(videos_base).glob(ext):
+                    video_name = video_path.stem
+                    all_videos[video_name] = str(video_path)
+
+        # Get all frame directories (these represent videos with frames extracted)
         frames_base = self.config['paths']['frames']
         video_dirs = []
         if os.path.exists(frames_base):
             video_dirs = [d for d in os.listdir(frames_base)
                          if os.path.isdir(os.path.join(frames_base, d))]
+
+        # Combine: all videos from videos/ directory + any orphaned frame directories
+        all_video_names = set(all_videos.keys()) | set(video_dirs)
 
         # Load labels if available
         labels_data = {}
@@ -368,29 +435,42 @@ class EidolonGUI:
                             labels_data[video_name] = []
                         labels_data[video_name].append(row)
 
-        # Populate table
-        for video_dir in sorted(video_dirs):
-            frames_dir = os.path.join(frames_base, video_dir)
+        # Populate table - show all videos (with or without frames)
+        for video_name in sorted(all_video_names):
+            frames_dir = os.path.join(frames_base, video_name)
+            has_frames = os.path.exists(frames_dir)
 
             # Count frames
-            frame_count = len([f for f in os.listdir(frames_dir) if f.endswith('.jpg')])
+            frame_count = 0
+            if has_frames:
+                frame_count = len([f for f in os.listdir(frames_dir) if f.endswith('.jpg')])
 
             # Get video info
             duration = "Unknown"
             metadata_path = os.path.join(frames_dir, 'metadata.json')
-            if os.path.exists(metadata_path):
+
+            # Try to get duration from metadata if frames exist
+            if has_frames and os.path.exists(metadata_path):
                 metadata = load_json(metadata_path)
                 if 'video_info' in metadata:
                     duration_sec = metadata['video_info'].get('duration', 0)
                     duration = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}"
+            # Otherwise try to get duration from video file directly
+            elif video_name in all_videos:
+                try:
+                    video_info = get_video_info(all_videos[video_name])
+                    duration_sec = video_info.get('duration', 0)
+                    duration = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}"
+                except:
+                    pass
 
             # Get label count and progress
             label_count = 0
-            progress = "Not labeled"
-            if video_dir in labels_data:
-                label_count = len(labels_data[video_dir])
+            progress = "Not started" if not has_frames else "Not labeled"
+            if video_name in labels_data:
+                label_count = len(labels_data[video_name])
                 # Find max timestamp to estimate progress
-                max_timestamp = max(row['timestamp'] for row in labels_data[video_dir])
+                max_timestamp = max(row['timestamp'] for row in labels_data[video_name])
                 if metadata_path and os.path.exists(metadata_path):
                     metadata = load_json(metadata_path)
                     if 'video_info' in metadata:
@@ -399,13 +479,13 @@ class EidolonGUI:
                             progress_pct = (max_timestamp / video_duration) * 100
                             progress = f"Last @ {int(max_timestamp // 60)}:{int(max_timestamp % 60):02d} ({progress_pct:.0f}%)"
 
-            # Add to tree - store full video_dir as iid for lookup
-            display_name = video_dir[:40] + '...' if len(video_dir) > 40 else video_dir
-            self.videos_tree.insert('', 'end', iid=video_dir, values=(
+            # Add to tree - store full video_name as iid for lookup
+            display_name = video_name[:40] + '...' if len(video_name) > 40 else video_name
+            self.videos_tree.insert('', 'end', iid=video_name, values=(
                 display_name,
                 duration,
-                frame_count,
-                label_count,
+                frame_count if has_frames else "-",
+                label_count if label_count > 0 else "-",
                 progress
             ))
 
@@ -440,55 +520,172 @@ class EidolonGUI:
         if not selection:
             return
 
-        # Get the full video_dir name from the iid
-        video_dir = selection[0]
+        # Get the video name from the iid
+        video_name = selection[0]
+        video_path = None
 
-        # Get the source video path from metadata
-        frames_dir = os.path.join(self.config['paths']['frames'], video_dir)
-        metadata_path = os.path.join(frames_dir, 'metadata.json')
+        # First check if video exists in videos/ directory
+        videos_base = self.config['paths']['videos']
+        if os.path.exists(videos_base):
+            for ext in ['.mp4', '.mkv', '.avi', '.mov']:
+                candidate = os.path.join(videos_base, video_name + ext)
+                if os.path.exists(candidate):
+                    video_path = candidate
+                    break
 
-        if not os.path.exists(metadata_path):
-            messagebox.showerror("Error", f"Metadata not found for: {video_dir}")
+        # If not found, try to get from metadata (for videos with frames)
+        if not video_path:
+            frames_dir = os.path.join(self.config['paths']['frames'], video_name)
+            metadata_path = os.path.join(frames_dir, 'metadata.json')
+
+            if os.path.exists(metadata_path):
+                try:
+                    metadata = load_json(metadata_path)
+                    video_path = metadata.get('source_video')
+                except:
+                    pass
+
+        # Still not found
+        if not video_path or not os.path.exists(video_path):
+            messagebox.showwarning("Video Not Found",
+                f"Could not find video file for: {video_name}\n\nCheck that the video file exists in the videos/ directory.")
             return
 
+        # Set as current video
+        self.current_video = video_path
+        self.video_label.config(text=os.path.basename(video_path), foreground="black")
+
+        # Get video info
         try:
-            metadata = load_json(metadata_path)
-            video_path = metadata.get('source_video')
-
-            if not video_path or not os.path.exists(video_path):
-                # Try to find video in videos directory
-                videos_base = self.config['paths']['videos']
-                if os.path.exists(videos_base):
-                    for filename in os.listdir(videos_base):
-                        if Path(filename).stem == video_dir or filename == video_dir:
-                            video_path = os.path.join(videos_base, filename)
-                            if os.path.isfile(video_path):
-                                break
-                    else:
-                        messagebox.showwarning("Video Not Found",
-                            f"Source video not found: {video_path}\n\nOriginal location may have moved.")
-                        return
-                else:
-                    messagebox.showwarning("Video Not Found",
-                        f"Source video not found: {video_path}")
-                    return
-
-            # Set as current video
-            self.current_video = video_path
-            self.video_label.config(text=os.path.basename(video_path), foreground="black")
-
-            # Get video info
-            try:
-                self.video_info = get_video_info(video_path)
-                info_text = f"{self.video_info['width']}x{self.video_info['height']}, {self.video_info['fps']:.2f} fps, {self.video_info['duration']:.1f}s"
-                self.video_info_label.config(text=info_text, foreground="black")
-                self.log(f"Selected: {os.path.basename(video_path)}", "SUCCESS")
-                self.update_status()
-            except Exception as e:
-                self.log(f"Error reading video info: {e}", "ERROR")
-
+            self.video_info = get_video_info(video_path)
+            info_text = f"{self.video_info['width']}x{self.video_info['height']}, {self.video_info['fps']:.2f} fps, {self.video_info['duration']:.1f}s"
+            self.video_info_label.config(text=info_text, foreground="black")
+            self.log(f"Selected: {os.path.basename(video_path)}", "SUCCESS")
+            self.update_status()
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load video: {e}")
+            self.log(f"Error reading video info: {e}", "ERROR")
+
+    def show_video_context_menu(self, event):
+        """Show context menu for video in overview."""
+        # Select the item under the cursor
+        item = self.videos_tree.identify_row(event.y)
+        if item:
+            self.videos_tree.selection_set(item)
+
+            # Create context menu
+            menu = tk.Menu(self.videos_tree, tearoff=0)
+            menu.add_command(label="Select Video", command=lambda: self.on_video_double_click(None))
+            menu.add_separator()
+            menu.add_command(label="Remove Video (Delete All Data)", command=self.remove_video)
+
+            # Show menu
+            menu.post(event.x_root, event.y_root)
+
+    def remove_video(self):
+        """Remove video and all associated data (frames, labels, predictions, events, MLT)."""
+        selection = self.videos_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a video to remove")
+            return
+
+        video_name = selection[0]
+
+        # Confirm deletion
+        response = messagebox.askyesno(
+            "Confirm Deletion",
+            f"Remove '{video_name}'?\n\n"
+            "This will delete:\n"
+            "• Video file\n"
+            "• Extracted frames\n"
+            "• All labels for this video\n"
+            "• Predictions and events\n"
+            "• MLT projects\n\n"
+            "This cannot be undone!",
+            icon='warning'
+        )
+
+        if not response:
+            return
+
+        self.log(f"Removing video: {video_name}", "WARNING")
+
+        deleted_items = []
+
+        # 1. Delete video file from videos/
+        videos_base = self.config['paths']['videos']
+        if os.path.exists(videos_base):
+            for ext in ['.mp4', '.mkv', '.avi', '.mov']:
+                video_path = os.path.join(videos_base, video_name + ext)
+                if os.path.exists(video_path):
+                    os.remove(video_path)
+                    deleted_items.append(f"Video file: {os.path.basename(video_path)}")
+                    self.log(f"  Deleted video file", "INFO")
+                    break
+
+        # 2. Delete frames directory
+        frames_dir = os.path.join(self.config['paths']['frames'], video_name)
+        if os.path.exists(frames_dir):
+            import shutil
+            shutil.rmtree(frames_dir)
+            deleted_items.append(f"Frames directory ({video_name})")
+            self.log(f"  Deleted frames directory", "INFO")
+
+        # 3. Remove labels from labels.csv
+        labels_file = self.config['paths']['labels']
+        if os.path.exists(labels_file):
+            df = pd.read_csv(labels_file)
+            original_count = len(df)
+
+            # Filter out labels for this video
+            frames_path_pattern = os.path.join(self.config['paths']['frames'], video_name)
+            df = df[~df['frame_path'].str.contains(frames_path_pattern, na=False, regex=False)]
+
+            removed_count = original_count - len(df)
+            if removed_count > 0:
+                df.to_csv(labels_file, index=False)
+                deleted_items.append(f"{removed_count} labels")
+                self.log(f"  Removed {removed_count} labels from labels.csv", "INFO")
+
+        # 4. Delete predictions
+        predictions_file = os.path.join(self.config['paths']['predictions'], f"{video_name}_predictions.json")
+        if os.path.exists(predictions_file):
+            os.remove(predictions_file)
+            deleted_items.append("Predictions")
+            self.log(f"  Deleted predictions", "INFO")
+
+        # 5. Delete events
+        events_file = os.path.join(self.config['paths']['events'], f"{video_name}_events.json")
+        if os.path.exists(events_file):
+            os.remove(events_file)
+            deleted_items.append("Events")
+            self.log(f"  Deleted events", "INFO")
+
+        # 6. Delete MLT project
+        mlt_file = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_project.mlt")
+        if os.path.exists(mlt_file):
+            os.remove(mlt_file)
+            deleted_items.append("MLT project")
+            self.log(f"  Deleted MLT project", "INFO")
+
+        # Also check for "from_labels" MLT variant
+        mlt_from_labels = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_from_labels.mlt")
+        if os.path.exists(mlt_from_labels):
+            os.remove(mlt_from_labels)
+            self.log(f"  Deleted MLT (from labels)", "INFO")
+
+        # If this was the current video, clear selection
+        if self.current_video and Path(self.current_video).stem == video_name:
+            self.current_video = None
+            self.video_info = None
+            self.video_label.config(text="No video selected", foreground="gray")
+            self.video_info_label.config(text="")
+
+        # Refresh UI
+        self.refresh_overview()
+        self.update_status()
+
+        # Summary
+        self.log(f"✓ Removed '{video_name}' and {len(deleted_items)} associated items", "SUCCESS")
 
     def select_video(self):
         """Select a video file."""
@@ -517,6 +714,82 @@ class EidolonGUI:
 
             self.refresh_overview()
             self.update_status()
+
+    def download_video(self):
+        """Download video from URL using yt-dlp."""
+        url = self.download_url_var.get().strip()
+
+        if not url:
+            messagebox.showwarning("No URL", "Please enter a video URL")
+            return
+
+        # Validate URL format (basic check)
+        if not (url.startswith('http://') or url.startswith('https://')):
+            messagebox.showwarning("Invalid URL", "URL must start with http:// or https://")
+            return
+
+        # Get output directory from config
+        output_dir = self.config['paths']['videos']
+
+        # Update status
+        self.download_status.config(text="Starting download...", foreground="blue")
+        self.log(f"Downloading video from: {url}", "INFO")
+
+        # Build command
+        cmd = [
+            "python", "src/download_video.py",
+            "--url", url,
+            "--output", output_dir
+        ]
+
+        # Run download in background (uses existing threading pattern)
+        self.run_command(cmd, on_complete=self._on_download_complete)
+
+    def _on_download_complete(self):
+        """Called after video download completes."""
+        # Clear URL field
+        self.download_url_var.set("")
+
+        # Update status
+        self.download_status.config(text="Download complete!", foreground="green")
+
+        # Find and auto-select the most recently downloaded video
+        videos_dir = self.config['paths']['videos']
+        if os.path.exists(videos_dir):
+            # Get all video files
+            video_files = []
+            for ext in ['*.mp4', '*.mkv', '*.avi', '*.mov']:
+                video_files.extend(Path(videos_dir).glob(ext))
+
+            if video_files:
+                # Sort by modification time, get the newest
+                newest_video = max(video_files, key=lambda p: p.stat().st_mtime)
+
+                # Auto-select this video
+                self.current_video = str(newest_video)
+                self.video_label.config(text=newest_video.name, foreground="black")
+
+                # Get and display video info
+                try:
+                    self.video_info = get_video_info(str(newest_video))
+                    info_text = f"{self.video_info['width']}x{self.video_info['height']}, {self.video_info['fps']:.2f} fps, {self.video_info['duration']:.1f}s"
+                    self.video_info_label.config(text=info_text, foreground="black")
+                    self.log(f"Auto-selected: {newest_video.name}", "SUCCESS")
+                    self.log(f"  {info_text}", "INFO")
+                except Exception as e:
+                    self.log(f"Error reading video info: {e}", "WARNING")
+
+        # Refresh overview (will show in overview after frames are extracted)
+        self.refresh_overview()
+
+        # Update status for the newly selected video
+        self.update_status()
+
+        # Log success
+        self.log("Video ready for processing - you can now extract frames", "SUCCESS")
+
+        # Clear status after 3 seconds
+        self.root.after(3000, lambda: self.download_status.config(text=""))
 
     def update_status(self):
         """Update status labels for all pipeline steps."""
