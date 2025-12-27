@@ -1196,37 +1196,21 @@ class EidolonGUI:
             messagebox.showwarning("No Video", "Please select a video first")
             return
 
-        video_name = Path(self.current_video).stem
         output_dir = self.config['paths']['mlt_projects']
 
-        # Check for both types of MLT files
-        mlt_from_predictions = os.path.join(output_dir, f"{video_name}_project.mlt")
-        mlt_from_labels = os.path.join(output_dir, f"{video_name}_from_labels.mlt")
+        # Find all MLT files in the projects directory
+        import glob
+        mlt_files = glob.glob(os.path.join(output_dir, "*.mlt"))
 
-        predictions_exists = os.path.exists(mlt_from_predictions)
-        labels_exists = os.path.exists(mlt_from_labels)
-
-        # Determine which file to open
-        if not predictions_exists and not labels_exists:
+        if not mlt_files:
             messagebox.showwarning("No MLT", "Please generate an MLT project first")
             return
 
-        # If both exist, ask user which to open
-        if predictions_exists and labels_exists:
-            response = messagebox.askyesnocancel(
-                "Multiple MLT Files",
-                "Found two MLT files:\n\n"
-                "• From predictions (inference results)\n"
-                "• From labels (manual annotations)\n\n"
-                "Open the one from predictions?\n\n"
-                "(Yes = predictions, No = labels, Cancel = abort)"
-            )
-            if response is None:  # Cancel
-                return
-            mlt_file = mlt_from_predictions if response else mlt_from_labels
-        else:
-            # Only one exists
-            mlt_file = mlt_from_predictions if predictions_exists else mlt_from_labels
+        # Sort by modification time, most recent first
+        mlt_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+        # Use the most recently modified MLT file
+        mlt_file = mlt_files[0]
 
         try:
             subprocess.Popen(["shotcut", mlt_file])

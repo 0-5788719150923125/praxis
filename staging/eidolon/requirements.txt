@@ -22,3 +22,6 @@ lxml>=4.9.0
 
 # Video downloading
 yt-dlp>=2024.1.0
+
+# Mock data generation
+Faker>=24.0.0

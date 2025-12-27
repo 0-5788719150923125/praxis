@@ -14,6 +14,7 @@ import numpy as np
 from pathlib import Path
 from utils import load_config, get_video_info, ensure_dir
 from generate_mlt import create_mlt_project
+from naming import get_experiment_path
 
 
 def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, video_fps: float) -> list:
@@ -167,7 +168,7 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
     # Determine output path
     if output_path is None:
         video_name = Path(video_path).stem
-        output_path = f"outputs/projects/{video_name}_from_labels.mlt"
+        output_path = get_experiment_path(video_name)
 
     # Generate MLT
     print(f"\nGenerating MLT project...")

@@ -12,6 +12,7 @@ import argparse
 from pathlib import Path
 from lxml import etree
 from utils import load_json, get_absolute_path, get_video_info, ensure_dir, load_config
+from naming import get_experiment_path
 
 
 def format_timecode(seconds: float, fps: float) -> str:
@@ -383,7 +384,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
     # Determine output path
     if output_path is None:
         video_name = Path(video_path).stem
-        output_path = f"outputs/projects/{video_name}_project.mlt"
+        output_path = get_experiment_path(video_name)
 
     # Generate MLT
     create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode, mute_audio, add_benny_hill)

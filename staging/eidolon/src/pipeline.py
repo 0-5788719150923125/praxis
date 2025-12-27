@@ -14,6 +14,7 @@ from infer_video import infer_video
 from process_events import process_events_from_predictions
 from generate_mlt import create_mlt_project
 from utils import load_config, load_json
+from naming import get_experiment_path
 
 
 def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str = None):
@@ -77,7 +78,7 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     events_file = f"outputs/events/{video_name}_events.json"
 
     if output_mlt is None:
-        output_mlt = f"outputs/projects/{video_name}_project.mlt"
+        output_mlt = get_experiment_path(video_name)
 
     # Load events data
     data = load_json(events_file)
