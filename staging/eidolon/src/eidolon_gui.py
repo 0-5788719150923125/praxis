@@ -212,7 +212,7 @@ class EidolonGUI:
         self.inference_status.grid(row=row, column=1, sticky=tk.W, padx=(10, 0))
         row += 1
 
-        # Generate MLT
+        # Generate MLT from predictions
         ttk.Button(pipeline_frame, text="4. Generate Shotcut Project", command=self.generate_mlt, width=20).grid(
             row=row, column=0, sticky=tk.W, pady=2
         )
@@ -220,6 +220,15 @@ class EidolonGUI:
         self.mlt_status.grid(row=row, column=1, sticky=tk.W, padx=(10, 0))
         ttk.Button(pipeline_frame, text="Open in Shotcut", command=self.open_shotcut).grid(
             row=row, column=2, sticky=tk.E, padx=(10, 0)
+        )
+        row += 1
+
+        # Generate MLT from labels (for preview/manual workflow)
+        ttk.Button(pipeline_frame, text="   Generate from Labels", command=self.generate_mlt_from_labels, width=20).grid(
+            row=row, column=0, sticky=tk.W, pady=2
+        )
+        ttk.Label(pipeline_frame, text="(Preview cuts from manual labels)", font=("", 8), foreground="gray").grid(
+            row=row, column=1, columnspan=2, sticky=tk.W, padx=(10, 0)
         )
         row += 1
 
@@ -667,7 +676,7 @@ class EidolonGUI:
         self.run_command(cmd, on_complete=self.update_status)
 
     def generate_mlt(self):
-        """Generate MLT project file."""
+        """Generate MLT project file from inference predictions."""
         if not self.current_video:
             messagebox.showwarning("No Video", "Please select a video first")
             return
@@ -682,6 +691,43 @@ class EidolonGUI:
         cmd = ["python", "src/generate_mlt.py", "--events", events_file]
         self.run_command(cmd, on_complete=self.update_status)
 
+    def generate_mlt_from_labels(self):
+        """Generate MLT project file from manual labels (for preview)."""
+        if not self.current_video:
+            messagebox.showwarning("No Video", "Please select a video first")
+            return
+
+        # Check if labels exist
+        labels_file = self.config['paths']['labels']
+        if not os.path.exists(labels_file):
+            messagebox.showwarning("No Labels", "Please label some frames first")
+            return
+
+        # Check if this video has labels
+        try:
+            import pandas as pd
+            df = pd.read_csv(labels_file)
+            video_name = Path(self.current_video).stem
+            frames_path_pattern = os.path.join(self.config['paths']['frames'], video_name)
+            video_labels = df[df['frame_path'].str.contains(frames_path_pattern, na=False, regex=False)]
+
+            if len(video_labels) == 0:
+                messagebox.showwarning("No Labels", f"No labels found for video: {video_name}")
+                return
+
+            # Count touching labels (labels are stored as strings "touching"/"not_touching")
+            touching_count = (video_labels['label'] == 'touching').sum()
+            if touching_count == 0:
+                messagebox.showwarning("No Touching Labels", "No 'touching' labels found for this video.\n\nYou need at least one positive label to generate cuts.")
+                return
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read labels:\n{e}")
+            return
+
+        cmd = ["python", "src/labels_to_mlt.py", "--video", self.current_video]
+        self.run_command(cmd, on_complete=self.update_status)
+
     def open_shotcut(self):
         """Open the MLT file in Shotcut."""
         if not self.current_video:
@@ -689,11 +735,36 @@ class EidolonGUI:
             return
 
         video_name = Path(self.current_video).stem
-        mlt_file = os.path.join(self.config['mlt']['output_dir'], f"{video_name}_project.mlt")
+        output_dir = self.config['mlt']['output_dir']
 
-        if not os.path.exists(mlt_file):
-            messagebox.showwarning("No MLT", "Please generate MLT project first")
+        # Check for both types of MLT files
+        mlt_from_predictions = os.path.join(output_dir, f"{video_name}_project.mlt")
+        mlt_from_labels = os.path.join(output_dir, f"{video_name}_from_labels.mlt")
+
+        predictions_exists = os.path.exists(mlt_from_predictions)
+        labels_exists = os.path.exists(mlt_from_labels)
+
+        # Determine which file to open
+        if not predictions_exists and not labels_exists:
+            messagebox.showwarning("No MLT", "Please generate an MLT project first")
             return
+
+        # If both exist, ask user which to open
+        if predictions_exists and labels_exists:
+            response = messagebox.askyesnocancel(
+                "Multiple MLT Files",
+                "Found two MLT files:\n\n"
+                "• From predictions (inference results)\n"
+                "• From labels (manual annotations)\n\n"
+                "Open the one from predictions?\n\n"
+                "(Yes = predictions, No = labels, Cancel = abort)"
+            )
+            if response is None:  # Cancel
+                return
+            mlt_file = mlt_from_predictions if response else mlt_from_labels
+        else:
+            # Only one exists
+            mlt_file = mlt_from_predictions if predictions_exists else mlt_from_labels
 
         try:
             subprocess.Popen(["shotcut", mlt_file])
