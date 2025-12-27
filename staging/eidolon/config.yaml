@@ -51,6 +51,7 @@ inference:
 mlt:
   marker_buffer: 1.0 # seconds before prediction to place timeline cut/marker
   post_buffer: 2.0 # seconds after event end (for extract mode)
+  mute_audio: true # Mute source video audio (allows adding music separately)
 
 # Paths
 paths:

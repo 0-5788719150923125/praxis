@@ -27,7 +27,8 @@ def format_timecode(seconds: float, fps: float) -> str:
 
 
 def create_mlt_project(video_path: str, events: list, fps: float, output_path: str,
-                       marker_buffer: float = 2.0, post_buffer: float = 1.0, mode: str = 'cut_markers'):
+                       marker_buffer: float = 2.0, post_buffer: float = 1.0, mode: str = 'cut_markers',
+                       mute_audio: bool = False):
     """
     Generate Shotcut MLT XML project file with timeline cuts or extracted clips.
 
@@ -39,6 +40,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         marker_buffer: Seconds before each event to place cut (default: 2.0)
         post_buffer: Seconds after event end for extract mode (default: 1.0)
         mode: 'cut_markers' for full video with cuts, 'extract_clips' for montage (default: 'cut_markers')
+        mute_audio: Mute source video's audio track (default: False)
     """
     # Ensure video path is absolute
     video_path = get_absolute_path(video_path)
@@ -57,6 +59,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     else:
         print(f"  Pre-event buffer: {marker_buffer}s")
         print(f"  Post-event buffer: {post_buffer}s")
+    print(f"  Source video audio: {'Muted' if mute_audio else 'Enabled'}")
     print()
 
     # Get video info for metadata
@@ -121,6 +124,10 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     etree.SubElement(chain, 'property', name='mlt_service').text = 'avformat-novalidate'
     etree.SubElement(chain, 'property', name='shotcut:caption').text = video_name
     etree.SubElement(chain, 'property', name='xml').text = 'was here'
+
+    # Disable audio if mute_audio is enabled
+    if mute_audio:
+        etree.SubElement(chain, 'property', name='audio_index').text = '-1'
 
     # Create video playlist
     playlist0 = etree.SubElement(mlt, 'playlist', id='playlist0')
@@ -274,7 +281,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
 
 def generate_from_events_file(events_file: str, output_path: str = None,
                              marker_buffer: float = None, post_buffer: float = None,
-                             mode: str = None, config_path: str = 'config.yaml'):
+                             mode: str = None, mute_audio: bool = None, config_path: str = 'config.yaml'):
     """
     Generate MLT project from events JSON file.
 
@@ -284,6 +291,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         marker_buffer: Marker buffer in seconds (optional, defaults to config value)
         post_buffer: Post-event buffer in seconds (optional, defaults to config value)
         mode: Generation mode 'cut_markers' or 'extract_clips' (optional, defaults to 'cut_markers')
+        mute_audio: Mute source video's audio track (optional, defaults to config value)
         config_path: Path to config file (default: config.yaml)
     """
     # Load config
@@ -296,6 +304,8 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
     if mode is None:
         mode = 'cut_markers'
+    if mute_audio is None:
+        mute_audio = config.get('mlt', {}).get('mute_audio', False)
 
     # Load events
     print(f"Loading events from: {events_file}")
@@ -316,7 +326,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         output_path = f"outputs/projects/{video_name}_project.mlt"
 
     # Generate MLT
-    create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode)
+    create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode, mute_audio)
 
 
 def main():
@@ -327,12 +337,26 @@ def main():
     parser.add_argument('--post-buffer', type=float, help='Post-event buffer in seconds (default: from config)')
     parser.add_argument('--mode', choices=['cut_markers', 'extract_clips'], default='cut_markers',
                        help='Generation mode: cut_markers (full video with cuts) or extract_clips (montage)')
+
+    # Mutually exclusive audio flags
+    audio_group = parser.add_mutually_exclusive_group()
+    audio_group.add_argument('--mute-audio', action='store_true', dest='mute_audio_flag', help='Mute source video audio')
+    audio_group.add_argument('--no-mute-audio', action='store_true', dest='no_mute_audio_flag', help='Enable source video audio')
+
     parser.add_argument('--config', default='config.yaml', help='Config file path')
 
     args = parser.parse_args()
 
+    # Determine mute_audio: explicit flag overrides, otherwise None (uses config default)
+    if args.mute_audio_flag:
+        mute_audio = True
+    elif args.no_mute_audio_flag:
+        mute_audio = False
+    else:
+        mute_audio = None
+
     generate_from_events_file(args.events, args.output, args.marker_buffer,
-                             args.post_buffer, args.mode, args.config)
+                             args.post_buffer, args.mode, mute_audio, args.config)
 
 
 if __name__ == '__main__':

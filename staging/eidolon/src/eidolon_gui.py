@@ -57,6 +57,7 @@ class EidolonGUI:
         self.marker_buffer_var = None
         self.post_buffer_var = None
         self.mlt_mode_var = None
+        self.mute_audio_var = None
 
         # Create UI
         self.create_ui()
@@ -289,6 +290,7 @@ class EidolonGUI:
         self.marker_buffer_var = tk.DoubleVar(value=self.config['mlt'].get('marker_buffer', 2.0))
         self.post_buffer_var = tk.DoubleVar(value=self.config['mlt'].get('post_buffer', 1.0))
         self.mlt_mode_var = tk.StringVar(value='cut_markers')
+        self.mute_audio_var = tk.BooleanVar(value=self.config['mlt'].get('mute_audio', True))
 
         row = 0
 
@@ -355,6 +357,13 @@ class EidolonGUI:
             settings_frame, text="Extract event clips (montage)",
             variable=self.mlt_mode_var, value='extract_clips'
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 2))
+        row += 1
+
+        # Mute audio checkbox
+        ttk.Checkbutton(
+            settings_frame, text="Mute source video audio",
+            variable=self.mute_audio_var
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
         row += 1
 
         # Help text
@@ -1106,9 +1115,11 @@ class EidolonGUI:
         marker_buffer = self.marker_buffer_var.get()
         post_buffer = self.post_buffer_var.get()
         mode = self.mlt_mode_var.get()
+        mute_audio = self.mute_audio_var.get()
 
         mode_desc = "cut markers" if mode == 'cut_markers' else "extracted clips montage"
-        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s", "INFO")
+        audio_desc = "muted" if mute_audio else "enabled"
+        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s, audio={audio_desc}", "INFO")
 
         cmd = [
             "python", "src/generate_mlt.py",
@@ -1117,6 +1128,12 @@ class EidolonGUI:
             "--post-buffer", str(post_buffer),
             "--mode", mode
         ]
+
+        # Explicitly pass mute audio flag
+        if mute_audio:
+            cmd.append("--mute-audio")
+        else:
+            cmd.append("--no-mute-audio")
         self.run_command(cmd, on_complete=self.update_status)
 
     def generate_mlt_from_labels(self):

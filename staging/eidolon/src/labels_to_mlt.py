@@ -133,6 +133,7 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
     marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
     post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
     mode = 'cut_markers'  # Default mode for labels preview
+    mute_audio = config.get('mlt', {}).get('mute_audio', False)
 
     # Load labels
     labels_path = config['paths']['labels']
