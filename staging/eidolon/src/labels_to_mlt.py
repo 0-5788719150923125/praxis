@@ -134,6 +134,7 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
     post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
     mode = 'cut_markers'  # Default mode for labels preview
     mute_audio = config.get('mlt', {}).get('mute_audio', False)
+    add_benny_hill = config.get('mlt', {}).get('add_benny_hill', False)
 
     # Load labels
     labels_path = config['paths']['labels']
@@ -170,7 +171,7 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
 
     # Generate MLT
     print(f"\nGenerating MLT project...")
-    create_mlt_project(video_path, events, video_fps, output_path, marker_buffer, post_buffer, mode)
+    create_mlt_project(video_path, events, video_fps, output_path, marker_buffer, post_buffer, mode, mute_audio, add_benny_hill)
 
 
 def main():

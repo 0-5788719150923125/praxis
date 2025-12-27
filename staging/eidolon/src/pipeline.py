@@ -85,6 +85,7 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
     post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
     mode = 'cut_markers'  # Default mode for pipeline
     mute_audio = config.get('mlt', {}).get('mute_audio', False)
+    add_benny_hill = config.get('mlt', {}).get('add_benny_hill', False)
     create_mlt_project(
         data['video_path'],
         data['events'],
@@ -93,7 +94,8 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
         marker_buffer,
         post_buffer,
         mode,
-        mute_audio
+        mute_audio,
+        add_benny_hill
     )
 
     print()

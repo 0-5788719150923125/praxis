@@ -28,7 +28,7 @@ def format_timecode(seconds: float, fps: float) -> str:
 
 def create_mlt_project(video_path: str, events: list, fps: float, output_path: str,
                        marker_buffer: float = 2.0, post_buffer: float = 1.0, mode: str = 'cut_markers',
-                       mute_audio: bool = False):
+                       mute_audio: bool = False, add_benny_hill: bool = False):
     """
     Generate Shotcut MLT XML project file with timeline cuts or extracted clips.
 
@@ -41,6 +41,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         post_buffer: Seconds after event end for extract mode (default: 1.0)
         mode: 'cut_markers' for full video with cuts, 'extract_clips' for montage (default: 'cut_markers')
         mute_audio: Mute source video's audio track (default: False)
+        add_benny_hill: Add Benny Hill theme song audio track (default: False)
     """
     # Ensure video path is absolute
     video_path = get_absolute_path(video_path)
@@ -60,6 +61,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         print(f"  Pre-event buffer: {marker_buffer}s")
         print(f"  Post-event buffer: {post_buffer}s")
     print(f"  Source video audio: {'Muted' if mute_audio else 'Enabled'}")
+    print(f"  Benny Hill theme: {'Added' if add_benny_hill else 'Not added'}")
     print()
 
     # Get video info for metadata
@@ -223,6 +225,49 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         # Timeline duration is the sum of all clip durations
         total_duration_tc = format_timecode(total_montage_duration, fps)
 
+    # Add Benny Hill audio track if requested
+    if add_benny_hill:
+        # Get absolute path to Benny Hill audio file
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        benny_hill_path = os.path.join(script_dir, '..', 'static', 'Benny-hill-theme.mp3')
+        benny_hill_path = os.path.abspath(benny_hill_path)
+
+        # Constants for YouTube Shorts
+        max_duration = 59.0  # seconds
+        fade_duration = 3.0  # seconds
+        fade_start = max_duration - fade_duration  # 56 seconds
+
+        # Create audio producer (chain)
+        audio_chain = etree.SubElement(mlt, 'chain', id='chain-benny-hill', out=format_timecode(max_duration, fps))
+        etree.SubElement(audio_chain, 'property', name='length').text = format_timecode(max_duration, fps)
+        etree.SubElement(audio_chain, 'property', name='eof').text = 'pause'
+        etree.SubElement(audio_chain, 'property', name='resource').text = benny_hill_path
+        etree.SubElement(audio_chain, 'property', name='mlt_service').text = 'avformat-novalidate'
+        etree.SubElement(audio_chain, 'property', name='audio_index').text = '0'
+        etree.SubElement(audio_chain, 'property', name='video_index').text = '-1'  # Audio only
+        etree.SubElement(audio_chain, 'property', name='shotcut:caption').text = 'Benny Hill Theme'
+
+        # Add fade-out filter (volume with keyframes)
+        fadeout_filter = etree.SubElement(audio_chain, 'filter', id='filter-fadeout', out=format_timecode(max_duration, fps))
+        etree.SubElement(fadeout_filter, 'property', name='window').text = '75'
+        etree.SubElement(fadeout_filter, 'property', name='max_gain').text = '20dB'
+        # Keyframed level: fade from 0dB (full volume) to -60dB (silence)
+        fade_start_tc = format_timecode(fade_start, fps)
+        fade_end_tc = format_timecode(max_duration, fps)
+        etree.SubElement(fadeout_filter, 'property', name='level').text = f'{fade_start_tc}=0;{fade_end_tc}=-60'
+        etree.SubElement(fadeout_filter, 'property', name='channel_mask').text = '-1'
+        etree.SubElement(fadeout_filter, 'property', name='mlt_service').text = 'volume'
+        etree.SubElement(fadeout_filter, 'property', name='shotcut:filter').text = 'fadeOutVolume'
+        etree.SubElement(fadeout_filter, 'property', name='shotcut:animOut').text = format_timecode(fade_duration, fps)
+
+        # Create audio playlist
+        playlist_audio = etree.SubElement(mlt, 'playlist', id='playlist-audio')
+        etree.SubElement(playlist_audio, 'property', name='shotcut:audio').text = '1'
+        etree.SubElement(playlist_audio, 'property', name='shotcut:name').text = 'A1'
+        etree.SubElement(playlist_audio, 'entry',
+                        producer='chain-benny-hill',
+                        **{'in': '00:00:00.000', 'out': format_timecode(max_duration, fps)})
+
     # Create tractor combining background and video tracks
     tractor = etree.SubElement(mlt, 'tractor',
                                id='tractor0',
@@ -232,9 +277,11 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     etree.SubElement(tractor, 'property', name='shotcut:projectAudioChannels').text = '2'
     etree.SubElement(tractor, 'property', name='shotcut:projectFolder').text = '1'
 
-    # Add tracks: background + video playlist
+    # Add tracks: background + video playlist + optional audio
     etree.SubElement(tractor, 'track', producer='background')
     etree.SubElement(tractor, 'track', producer='playlist0')
+    if add_benny_hill:
+        etree.SubElement(tractor, 'track', producer='playlist-audio', hide='video')
 
     # Add transitions (audio mix + video blend)
     transition0 = etree.SubElement(tractor, 'transition', id='transition0')
@@ -251,6 +298,15 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
     etree.SubElement(transition1, 'property', name='mlt_service').text = 'frei0r.cairoblend'
     etree.SubElement(transition1, 'property', name='threads').text = '0'
     etree.SubElement(transition1, 'property', name='disable').text = '1'
+
+    # Add audio mix transition for Benny Hill track if present
+    if add_benny_hill:
+        transition_audio = etree.SubElement(tractor, 'transition', id='transition-audio-mix')
+        etree.SubElement(transition_audio, 'property', name='a_track').text = '0'
+        etree.SubElement(transition_audio, 'property', name='b_track').text = '2'
+        etree.SubElement(transition_audio, 'property', name='mlt_service').text = 'mix'
+        etree.SubElement(transition_audio, 'property', name='always_active').text = '1'
+        etree.SubElement(transition_audio, 'property', name='sum').text = '1'
 
     # Write to file
     ensure_dir(os.path.dirname(output_path))
@@ -281,7 +337,8 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
 
 def generate_from_events_file(events_file: str, output_path: str = None,
                              marker_buffer: float = None, post_buffer: float = None,
-                             mode: str = None, mute_audio: bool = None, config_path: str = 'config.yaml'):
+                             mode: str = None, mute_audio: bool = None, add_benny_hill: bool = None,
+                             config_path: str = 'config.yaml'):
     """
     Generate MLT project from events JSON file.
 
@@ -292,6 +349,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         post_buffer: Post-event buffer in seconds (optional, defaults to config value)
         mode: Generation mode 'cut_markers' or 'extract_clips' (optional, defaults to 'cut_markers')
         mute_audio: Mute source video's audio track (optional, defaults to config value)
+        add_benny_hill: Add Benny Hill theme song (optional, defaults to config value)
         config_path: Path to config file (default: config.yaml)
     """
     # Load config
@@ -306,6 +364,8 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         mode = 'cut_markers'
     if mute_audio is None:
         mute_audio = config.get('mlt', {}).get('mute_audio', False)
+    if add_benny_hill is None:
+        add_benny_hill = config.get('mlt', {}).get('add_benny_hill', False)
 
     # Load events
     print(f"Loading events from: {events_file}")
@@ -326,7 +386,7 @@ def generate_from_events_file(events_file: str, output_path: str = None,
         output_path = f"outputs/projects/{video_name}_project.mlt"
 
     # Generate MLT
-    create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode, mute_audio)
+    create_mlt_project(video_path, events, fps, output_path, marker_buffer, post_buffer, mode, mute_audio, add_benny_hill)
 
 
 def main():
@@ -343,6 +403,11 @@ def main():
     audio_group.add_argument('--mute-audio', action='store_true', dest='mute_audio_flag', help='Mute source video audio')
     audio_group.add_argument('--no-mute-audio', action='store_true', dest='no_mute_audio_flag', help='Enable source video audio')
 
+    # Benny Hill theme song flag
+    benny_group = parser.add_mutually_exclusive_group()
+    benny_group.add_argument('--add-benny-hill', action='store_true', dest='add_benny_hill_flag', help='Add Benny Hill theme song')
+    benny_group.add_argument('--no-benny-hill', action='store_true', dest='no_benny_hill_flag', help='Do not add Benny Hill theme song')
+
     parser.add_argument('--config', default='config.yaml', help='Config file path')
 
     args = parser.parse_args()
@@ -355,8 +420,16 @@ def main():
     else:
         mute_audio = None
 
+    # Determine add_benny_hill: explicit flag overrides, otherwise None (uses config default)
+    if args.add_benny_hill_flag:
+        add_benny_hill = True
+    elif args.no_benny_hill_flag:
+        add_benny_hill = False
+    else:
+        add_benny_hill = None
+
     generate_from_events_file(args.events, args.output, args.marker_buffer,
-                             args.post_buffer, args.mode, mute_audio, args.config)
+                             args.post_buffer, args.mode, mute_audio, add_benny_hill, args.config)
 
 
 if __name__ == '__main__':

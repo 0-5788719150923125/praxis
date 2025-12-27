@@ -58,6 +58,7 @@ class EidolonGUI:
         self.post_buffer_var = None
         self.mlt_mode_var = None
         self.mute_audio_var = None
+        self.add_benny_hill_var = None
 
         # Create UI
         self.create_ui()
@@ -291,6 +292,7 @@ class EidolonGUI:
         self.post_buffer_var = tk.DoubleVar(value=self.config['mlt'].get('post_buffer', 1.0))
         self.mlt_mode_var = tk.StringVar(value='cut_markers')
         self.mute_audio_var = tk.BooleanVar(value=self.config['mlt'].get('mute_audio', True))
+        self.add_benny_hill_var = tk.BooleanVar(value=self.config['mlt'].get('add_benny_hill', False))
 
         row = 0
 
@@ -364,6 +366,13 @@ class EidolonGUI:
             settings_frame, text="Mute source video audio",
             variable=self.mute_audio_var
         ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
+        row += 1
+
+        # Benny Hill theme checkbox
+        ttk.Checkbutton(
+            settings_frame, text="Add Benny Hill theme song",
+            variable=self.add_benny_hill_var
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
         row += 1
 
         # Help text
@@ -1116,10 +1125,12 @@ class EidolonGUI:
         post_buffer = self.post_buffer_var.get()
         mode = self.mlt_mode_var.get()
         mute_audio = self.mute_audio_var.get()
+        add_benny_hill = self.add_benny_hill_var.get()
 
         mode_desc = "cut markers" if mode == 'cut_markers' else "extracted clips montage"
         audio_desc = "muted" if mute_audio else "enabled"
-        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s, audio={audio_desc}", "INFO")
+        benny_desc = " + Benny Hill" if add_benny_hill else ""
+        self.log(f"Generating MLT project with mode={mode_desc}, pre={marker_buffer:.1f}s, post={post_buffer:.1f}s, audio={audio_desc}{benny_desc}", "INFO")
 
         cmd = [
             "python", "src/generate_mlt.py",
@@ -1134,6 +1145,12 @@ class EidolonGUI:
             cmd.append("--mute-audio")
         else:
             cmd.append("--no-mute-audio")
+
+        # Explicitly pass Benny Hill flag
+        if add_benny_hill:
+            cmd.append("--add-benny-hill")
+        else:
+            cmd.append("--no-benny-hill")
         self.run_command(cmd, on_complete=self.update_status)
 
     def generate_mlt_from_labels(self):
