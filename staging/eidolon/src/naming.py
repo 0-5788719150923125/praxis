@@ -107,13 +107,55 @@ def get_experiment_path(video_name: str) -> str:
     Generate full experiment path for MLT project.
     Filename = exact YouTube upload title.
 
+    If a project with the same title already exists (ignoring experiment number),
+    modifies the seed to generate a new deterministic title.
+
     Args:
         video_name: Source video filename (stem)
 
     Returns:
         Full path: "outputs/projects/Experiment #N: ASMR Title.mlt"
     """
+    import os
+
+    projects_dir = "outputs/projects"
+
+    # Ensure directory exists
+    Path(projects_dir).mkdir(parents=True, exist_ok=True)
+
+    # Get existing project titles (without the "Experiment #N:" prefix)
+    existing_titles = set()
+    if os.path.exists(projects_dir):
+        for filename in os.listdir(projects_dir):
+            if filename.endswith('.mlt'):
+                # Extract title part after "Experiment #N: "
+                if ': ' in filename:
+                    title_part = filename.split(': ', 1)[1]  # Get everything after first ": "
+                    # Remove .mlt extension
+                    title_part = title_part.rsplit('.mlt', 1)[0]
+                    existing_titles.add(title_part)
+
+    # Generate unique title by appending suffix to seed if needed
+    seed = video_name
+    suffix_counter = 0
+
+    while True:
+        # Generate title with current seed
+        exp_title = generate_experiment_title(seed)
+
+        # Check if this title already exists
+        if exp_title not in existing_titles:
+            # Unique title found!
+            break
+
+        # Title exists, modify seed and try again
+        suffix_counter += 1
+        seed = f"{video_name}_{suffix_counter}"
+
+    # Get experiment number
     exp_num = get_next_experiment_number()
-    exp_title = generate_experiment_title(video_name)
+
+    # Format filename
     filename = format_experiment_filename(exp_num, exp_title)
-    return f"outputs/projects/{filename}"
+
+    return f"{projects_dir}/{filename}"
