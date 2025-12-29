@@ -703,7 +703,7 @@ def main():
     update_license_timestamp()
 
     try:
-        trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path)
+        trainer.fit(train_model, dataintegration, ckpt_path=ckpt_path, weights_only=False)
 
         # Training completed successfully
         print("[TRAIN] Completed successfully")
