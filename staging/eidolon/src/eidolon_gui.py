@@ -18,6 +18,37 @@ import pandas as pd
 from utils import load_config, load_json, get_video_info
 
 
+def parse_channel_from_filename(video_name: str) -> str:
+    """
+    Extract channel username from video filename.
+
+    Expected format: @username - Title (resolution, codec)
+
+    Args:
+        video_name: Video filename stem (without extension)
+
+    Returns:
+        Channel username without @ prefix, or "Unknown"
+    """
+    if video_name.startswith('@'):
+        # Format: @username - Title ...
+        parts = video_name.split(' - ', 1)
+        if len(parts) >= 1:
+            # Remove @ prefix and return username
+            return parts[0][1:]  # Skip the @ character
+
+    # Legacy format or unknown format
+    # Try to extract from old format: Title - Display Name (resolution)
+    parts = video_name.split(' - ')
+    if len(parts) >= 2:
+        # Check if last part before parenthesis is uploader
+        uploader_part = parts[-1].split(' (')[0]
+        # Return as-is (display name from old format)
+        return uploader_part
+
+    return "Unknown"
+
+
 class EidolonGUI:
     """Main GUI application for Eidolon pipeline."""
 
@@ -139,7 +170,7 @@ class EidolonGUI:
         self.videos_tree.heading('labeled', text='Labeled')
         self.videos_tree.heading('progress', text='Progress')
 
-        self.videos_tree.column('video', width=200)
+        self.videos_tree.column('video', width=400)
         self.videos_tree.column('duration', width=80)
         self.videos_tree.column('frames', width=80)
         self.videos_tree.column('labeled', width=80)
@@ -540,7 +571,7 @@ class EidolonGUI:
                             progress = f"Last @ {int(max_timestamp // 60)}:{int(max_timestamp % 60):02d} ({progress_pct:.0f}%)"
 
             # Add to tree - store full video_name as iid for lookup
-            display_name = video_name[:40] + '...' if len(video_name) > 40 else video_name
+            display_name = video_name[:80] + '...' if len(video_name) > 80 else video_name
             self.videos_tree.insert('', 'end', iid=video_name, values=(
                 display_name,
                 duration,

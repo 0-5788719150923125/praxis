@@ -61,7 +61,8 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
     # Configure yt-dlp options
     ydl_opts = {
         'format': format_spec,
-        'outtmpl': os.path.join(output_dir, '%(title)s - %(uploader)s (%(height)sp, %(vcodec)s).%(ext)s'),
+        # Use uploader_id without @ prefix - normalization step will add it correctly
+        'outtmpl': os.path.join(output_dir, '%(uploader_id)s - %(title)s (%(height)sp, %(vcodec)s).%(ext)s'),
         'progress_hooks': [progress_hook],
         'quiet': False,
         'no_warnings': False,
@@ -79,9 +80,16 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
             title = info.get('title', 'Unknown')
             duration = info.get('duration', 0)
             uploader = info.get('uploader', 'Unknown')
+            uploader_id = info.get('uploader_id', uploader)
+
+            # Strip @ prefix if already present
+            if uploader_id.startswith('@'):
+                uploader_id = uploader_id[1:]
+
             height = info.get('height', 0)
 
             print(f"\nVideo: {title}")
+            print(f"Channel: @{uploader_id}")
             print(f"Uploader: {uploader}")
             print(f"Duration: {duration // 60}:{duration % 60:02d}")
             print(f"Resolution: {height}p")
@@ -112,12 +120,17 @@ def download_video(url: str, output_dir: str, format_spec: str = 'bestvideo[heig
                     else:
                         codec_normalized = vcodec.split('.')[0]  # Take first part
 
-                # Build proper filename: <Title> - <Uploader> (<resolution>, <codec>).ext
+                # Build proper filename: @<username> - <Title> (<resolution>, <codec>).ext
                 title_clean = info.get('title', 'video')
-                uploader_clean = info.get('uploader', 'Unknown')
+                uploader_id_clean = info.get('uploader_id', info.get('uploader', 'Unknown'))
+
+                # Strip @ prefix if already present
+                if uploader_id_clean.startswith('@'):
+                    uploader_id_clean = uploader_id_clean[1:]
+
                 ext = os.path.splitext(filename)[1]
 
-                new_basename = f"{title_clean} - {uploader_clean} ({height}p, {codec_normalized}){ext}"
+                new_basename = f"@{uploader_id_clean} - {title_clean} ({height}p, {codec_normalized}){ext}"
                 new_filename = os.path.join(output_dir, new_basename)
 
                 # Rename if different

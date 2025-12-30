@@ -97,9 +97,24 @@ def extract_frames(video_path: str, output_dir: str, target_fps: int, quality: i
 
     print(f"\nExtracted {extracted_count} frames from {frame_count} total frames")
 
+    # Parse channel from video filename
+    video_name = Path(video_path).stem
+    if video_name.startswith('@'):
+        # Format: @username - Title ...
+        parts = video_name.split(' - ', 1)
+        channel = parts[0][1:] if len(parts) >= 1 else "Unknown"
+    else:
+        # Legacy format: Title - Display Name (resolution)
+        parts = video_name.split(' - ')
+        if len(parts) >= 2:
+            channel = parts[-1].split(' (')[0]
+        else:
+            channel = "Unknown"
+
     # Save metadata
     metadata_dict = {
         'video_path': os.path.abspath(video_path),
+        'channel': channel,
         'video_info': video_info,
         'extraction_fps': target_fps,
         'frame_interval': frame_interval,
