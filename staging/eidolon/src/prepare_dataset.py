@@ -2,17 +2,88 @@
 """
 Prepare labeled frames for training by splitting into train/val/test sets.
 
+Extracts labeled frames on-demand from video files (no bulk extraction needed).
+
 Usage:
     python src/prepare_dataset.py --labels data/labels.csv
 """
 
 import os
-import shutil
+import cv2
 import argparse
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from pathlib import Path
+from typing import Optional
 from utils import load_config, ensure_dir
+from video_frame_extractor import VideoFrameExtractor
+
+
+def find_video_file(video_name: str) -> Optional[str]:
+    """
+    Find video file matching video name.
+
+    Args:
+        video_name: Video filename stem (without extension)
+
+    Returns:
+        Absolute path to video file, or None if not found
+    """
+    videos_dir = "videos"
+    for ext in ['.mp4', '.mkv', '.avi', '.mov', '.webm']:
+        video_path = os.path.join(videos_dir, video_name + ext)
+        if os.path.exists(video_path):
+            return os.path.abspath(video_path)
+    return None
+
+
+def migrate_old_labels_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert old frame_path schema to new video_path schema.
+
+    Args:
+        df: DataFrame with old schema (frame_path, filename, label, timestamp)
+
+    Returns:
+        DataFrame with new schema (video_path, frame_index, label, timestamp)
+    """
+    print("  Migrating old labels schema to new format...")
+
+    new_rows = []
+
+    for _, row in df.iterrows():
+        frame_path = row['frame_path']
+
+        # Extract video name from path: "data/frames/@EphemeralRift.../frame_000099.jpg"
+        parts = Path(frame_path).parts
+        if 'frames' in parts:
+            idx = parts.index('frames')
+            if idx + 1 < len(parts):
+                video_name = parts[idx + 1]
+
+                # Find corresponding video file
+                video_path = find_video_file(video_name)
+
+                if video_path:
+                    # Extract frame index from filename: frame_000099.jpg
+                    filename = row['filename']
+                    frame_idx = int(filename.split('_')[1].split('.')[0])
+
+                    new_rows.append({
+                        'video_path': video_path,
+                        'frame_index': frame_idx,
+                        'label': row['label'],
+                        'timestamp': row['timestamp']
+                    })
+                else:
+                    print(f"  WARNING: Video not found for: {video_name}")
+        else:
+            print(f"  WARNING: Could not parse frame path: {frame_path}")
+
+    migrated_df = pd.DataFrame(new_rows)
+    print(f"  Migrated {len(migrated_df)}/{len(df)} labels successfully")
+
+    return migrated_df
 
 
 def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
@@ -27,6 +98,18 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     # Load labels
     print(f"Loading labels from: {labels_csv}")
     df = pd.read_csv(labels_csv)
+
+    # Detect and handle old schema if needed
+    if 'frame_path' in df.columns and 'video_path' not in df.columns:
+        print("\nDetected old labels.csv schema")
+        df = migrate_old_labels_schema(df)
+        if df.empty:
+            raise ValueError("Migration failed - no labels could be migrated")
+
+    # Verify required columns
+    required_cols = ['video_path', 'timestamp', 'label']
+    if not all(col in df.columns for col in required_cols):
+        raise ValueError(f"labels.csv missing required columns: {required_cols}")
 
     # Remove skipped frames (only keep labeled ones)
     df = df[df['label'].isin(['touching', 'not_touching'])]
@@ -85,24 +168,50 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
             split_dir = os.path.join(output_dir, split, label)
             ensure_dir(split_dir)
 
-    # Copy files to appropriate directories
-    def copy_split(split_df, split_name):
-        print(f"\nCopying {split_name} set...")
-        for _, row in split_df.iterrows():
-            src = row['frame_path']
-            label = row['label']
-            filename = os.path.basename(src)
-            dst = os.path.join(output_dir, split_name, label, filename)
+    # Extract labeled frames from video and save to dataset
+    def extract_and_save_split(split_df, split_name):
+        """Extract labeled frames from video and save to dataset."""
+        print(f"\nExtracting {split_name} set...")
 
-            if not os.path.exists(src):
-                print(f"Warning: Source file not found: {src}")
+        # Group by video to minimize video reopening
+        for video_path, group in split_df.groupby('video_path'):
+            if not os.path.exists(video_path):
+                print(f"  WARNING: Video not found: {video_path}")
+                print(f"    Skipping {len(group)} labels from this video")
                 continue
 
-            shutil.copy2(src, dst)
+            print(f"  Processing {Path(video_path).name} ({len(group)} frames)...")
 
-    copy_split(train_df, 'train')
-    copy_split(val_df, 'val')
-    copy_split(test_df, 'test')
+            # Create extractor for this video
+            try:
+                extractor = VideoFrameExtractor(video_path, target_fps=5)
+            except Exception as e:
+                print(f"    ERROR: Failed to open video: {e}")
+                continue
+
+            # Extract each labeled frame
+            for _, row in group.iterrows():
+                try:
+                    # Extract frame at timestamp
+                    timestamp = row['timestamp']
+                    frame = extractor.get_frame_at_timestamp(timestamp)
+
+                    # Save to dataset directory
+                    label = row['label']
+                    # Use timestamp-based filename for uniqueness
+                    filename = f"{Path(video_path).stem}_frame_{int(timestamp*1000):08d}.jpg"
+                    dst = os.path.join(output_dir, split_name, label, filename)
+
+                    # Write frame
+                    cv2.imwrite(dst, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+                except Exception as e:
+                    print(f"    WARNING: Failed to extract frame at {timestamp}s: {e}")
+                    continue
+
+    extract_and_save_split(train_df, 'train')
+    extract_and_save_split(val_df, 'val')
+    extract_and_save_split(test_df, 'test')
 
     # Save split metadata
     splits = {

@@ -212,15 +212,7 @@ class EidolonGUI:
         )
         row += 1
 
-        # Extract Frames
-        ttk.Button(video_actions_frame, text="Extract Frames", command=self.extract_frames, width=20).grid(
-            row=row, column=0, sticky=tk.W, pady=2
-        )
-        self.frames_status = ttk.Label(video_actions_frame, text="Not started", foreground="gray")
-        self.frames_status.grid(row=row, column=1, sticky=tk.W, padx=(10, 0))
-        row += 1
-
-        # Label Frames
+        # Label Frames (on-demand frame extraction)
         ttk.Button(video_actions_frame, text="Label Frames", command=self.label_frames, width=20).grid(
             row=row, column=0, sticky=tk.W, pady=2
         )
@@ -513,69 +505,89 @@ class EidolonGUI:
         labels_file = self.config['paths']['labels']
         if os.path.exists(labels_file):
             df = pd.read_csv(labels_file)
-            # Group by video directory
-            for _, row in df.iterrows():
-                frame_path = row['frame_path']
-                # Extract video directory name from frame path
-                parts = Path(frame_path).parts
-                if 'frames' in parts:
-                    idx = parts.index('frames')
-                    if idx + 1 < len(parts):
-                        video_name = parts[idx + 1]
-                        if video_name not in labels_data:
-                            labels_data[video_name] = []
-                        labels_data[video_name].append(row)
 
-        # Populate table - show all videos (with or without frames)
+            # Detect schema version and handle mixed schemas
+            if 'video_path' in df.columns:
+                # NEW schema (or mixed) - check each row
+                for _, row in df.iterrows():
+                    video_path = row.get('video_path')
+
+                    # Check if video_path is valid (not NaN/empty)
+                    if pd.notna(video_path) and video_path:
+                        # NEW schema - extract from video_path
+                        video_name = Path(video_path).stem
+                    elif 'frame_path' in row and pd.notna(row['frame_path']):
+                        # OLD schema fallback - extract from frame_path
+                        frame_path = row['frame_path']
+                        parts = Path(frame_path).parts
+                        if 'frames' in parts and len(parts) > parts.index('frames') + 1:
+                            video_name = parts[parts.index('frames') + 1]
+                        else:
+                            continue
+                    else:
+                        continue
+
+                    if video_name not in labels_data:
+                        labels_data[video_name] = []
+                    labels_data[video_name].append(row)
+            else:
+                # OLD schema - group by frame directory
+                for _, row in df.iterrows():
+                    frame_path = row['frame_path']
+                    # Extract video directory name from frame path
+                    parts = Path(frame_path).parts
+                    if 'frames' in parts:
+                        idx = parts.index('frames')
+                        if idx + 1 < len(parts):
+                            video_name = parts[idx + 1]
+                            if video_name not in labels_data:
+                                labels_data[video_name] = []
+                            labels_data[video_name].append(row)
+
+        # Populate table - show all videos
         for video_name in sorted(all_video_names):
-            frames_dir = os.path.join(frames_base, video_name)
-            has_frames = os.path.exists(frames_dir)
-
-            # Count frames
-            frame_count = 0
-            if has_frames:
-                frame_count = len([f for f in os.listdir(frames_dir) if f.endswith('.jpg')])
-
-            # Get video info
+            # Get video info and calculate frame count from duration
             duration = "Unknown"
-            metadata_path = os.path.join(frames_dir, 'metadata.json')
+            frame_count = "-"
 
-            # Try to get duration from metadata if frames exist
-            if has_frames and os.path.exists(metadata_path):
-                metadata = load_json(metadata_path)
-                if 'video_info' in metadata:
-                    duration_sec = metadata['video_info'].get('duration', 0)
-                    duration = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}"
-            # Otherwise try to get duration from video file directly
-            elif video_name in all_videos:
+            if video_name in all_videos:
                 try:
                     video_info = get_video_info(all_videos[video_name])
                     duration_sec = video_info.get('duration', 0)
                     duration = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}"
+
+                    # Calculate expected frames at target FPS
+                    target_fps = self.config['extraction']['fps']
+                    expected_frames = int(duration_sec * target_fps)
+                    frame_count = f"~{expected_frames}"
                 except:
                     pass
 
             # Get label count and progress
             label_count = 0
-            progress = "Not started" if not has_frames else "Not labeled"
+            progress = "Not labeled"
             if video_name in labels_data:
                 label_count = len(labels_data[video_name])
                 # Find max timestamp to estimate progress
                 max_timestamp = max(row['timestamp'] for row in labels_data[video_name])
-                if metadata_path and os.path.exists(metadata_path):
-                    metadata = load_json(metadata_path)
-                    if 'video_info' in metadata:
-                        video_duration = metadata['video_info'].get('duration', 0)
+
+                # Try to get video duration for progress calculation
+                if video_name in all_videos:
+                    try:
+                        video_info = get_video_info(all_videos[video_name])
+                        video_duration = video_info.get('duration', 0)
                         if video_duration > 0:
                             progress_pct = (max_timestamp / video_duration) * 100
                             progress = f"Last @ {int(max_timestamp // 60)}:{int(max_timestamp % 60):02d} ({progress_pct:.0f}%)"
+                    except:
+                        pass
 
             # Add to tree - store full video_name as iid for lookup
             display_name = video_name[:80] + '...' if len(video_name) > 80 else video_name
             self.videos_tree.insert('', 'end', iid=video_name, values=(
                 display_name,
                 duration,
-                frame_count if has_frames else "-",
+                frame_count,
                 label_count if label_count > 0 else "-",
                 progress
             ))
@@ -889,23 +901,22 @@ class EidolonGUI:
 
         video_name = Path(self.current_video).stem
 
-        # Check frames
-        frames_dir = os.path.join(self.config['paths']['frames'], video_name)
-        if os.path.exists(frames_dir):
-            frame_count = len([f for f in os.listdir(frames_dir) if f.endswith('.jpg')])
-            self.frames_status.config(text=f"{frame_count} frames extracted", foreground="green")
-        else:
-            self.frames_status.config(text="Not started", foreground="gray")
-
         # Check labels (only for current video)
         labels_file = self.config['paths']['labels']
         if os.path.exists(labels_file):
             import pandas as pd
             try:
                 df = pd.read_csv(labels_file)
-                # Filter labels for current video only - match the frames directory path
-                frames_path_pattern = os.path.join(self.config['paths']['frames'], video_name)
-                video_labels = df[df['frame_path'].str.contains(frames_path_pattern, na=False, regex=False)]
+
+                # Handle both old and new schema
+                if 'video_path' in df.columns:
+                    # NEW schema
+                    video_labels = df[df['video_path'] == os.path.abspath(self.current_video)]
+                else:
+                    # OLD schema (backward compatibility)
+                    frames_path_pattern = os.path.join(self.config['paths']['frames'], video_name)
+                    video_labels = df[df['frame_path'].str.contains(frames_path_pattern, na=False, regex=False)]
+
                 label_count = len(video_labels)
                 if label_count > 0:
                     self.labels_status.config(text=f"{label_count} frames labeled", foreground="green")
@@ -990,33 +1001,18 @@ class EidolonGUI:
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
 
-    def extract_frames(self):
-        """Extract frames from video."""
-        if not self.current_video:
-            messagebox.showwarning("No Video", "Please select a video first")
-            return
-
-        cmd = ["python", "src/extract_frames.py", "--video", self.current_video]
-        self.run_command(cmd, on_complete=self.update_status)
-
     def label_frames(self):
-        """Launch labeling tool."""
+        """Launch labeling tool (on-demand frame extraction)."""
         if not self.current_video:
             messagebox.showwarning("No Video", "Please select a video first")
-            return
-
-        video_name = Path(self.current_video).stem
-        frames_dir = os.path.join(self.config['paths']['frames'], video_name)
-
-        if not os.path.exists(frames_dir):
-            messagebox.showwarning("No Frames", "Please extract frames first")
             return
 
         def delayed_update():
             """Update status after a short delay to ensure file is written."""
             self.root.after(500, self.update_status)
 
-        cmd = ["python", "src/label_frames.py", "--frames", frames_dir]
+        # No need to check for frames directory - works directly with video
+        cmd = ["python", "src/label_frames.py", "--video", self.current_video]
         self.run_command(cmd, on_complete=delayed_update)
 
     def clear_labels(self):
