@@ -6,8 +6,8 @@ Controls:
     T - Mark current frame as True (touching nose)
     F - Mark current frame as False (not touching)
     S - Save and quit
-    ← / → Arrow Keys - Skip 5 frames backward/forward (hold to scrub)
-    , / . - Step backward/forward one frame
+    ← / → Arrow Keys - Skip 3 frames (optimized scrubbing)
+    , / . - Step backward/forward one frame (precise)
     Space - Pause/Play
     Mouse - Seek by clicking on timeline
     I - Refresh overlay display
@@ -73,23 +73,23 @@ class FrameLabeler:
 
             print(f"Loaded {len(self.labels)} existing labels")
 
-        # Get video FPS for calculating frame skip amount
-        # We'll skip 5 frames per arrow key press for faster scrubbing
+        # Get video FPS for frame skip information
         self.extractor = VideoFrameExtractor(video_path, target_fps)
         self.video_info = self.extractor.get_video_metadata()
         source_fps = self.video_info['fps']
 
-        # Calculate time to skip 5 frames
-        self.frames_to_skip = 5
+        # Configure frame stepping (3 frames per arrow key press)
+        # Reduced from 5 to minimize seeking lag while still being faster than 1-frame
+        self.frames_to_skip = 3
         skip_time = self.frames_to_skip / source_fps
 
         # Create custom input configuration for arrow keys
-        # Skip 5 frames at a time for faster scrubbing
+        # Must use exact seeking for frame precision, optimized with demuxer cache
         input_conf_content = f"""# Custom key bindings for video labeling
-# Override arrow keys for multi-frame stepping with repeat support
-# Skipping {self.frames_to_skip} frames per press ({skip_time:.4f}s at {source_fps:.2f} fps)
-LEFT repeatable seek -{skip_time:.6f} exact
-RIGHT repeatable seek {skip_time:.6f} exact
+# Exact seeking for frame precision - {self.frames_to_skip} frames per press
+# Some lag is unavoidable with exact seeking in H.264/H.265 codecs
+RIGHT repeatable no-osd seek {skip_time:.6f} exact
+LEFT repeatable no-osd seek -{skip_time:.6f} exact
 """
         # Create temporary input.conf file
         self.input_conf_fd, self.input_conf_path = tempfile.mkstemp(suffix='.conf', text=True)
@@ -104,8 +104,11 @@ RIGHT repeatable seek {skip_time:.6f} exact
             osc=True,                      # Show on-screen controller
             keep_open=True,                # Don't close when video ends
             pause=True,                    # Start paused for labeling
-            video_sync='display-vdrop',    # Smooth seeking
-            hr_seek='yes',                 # High-quality seeking
+            video_sync='display-vdrop',    # Smooth playback
+            audio='no',                    # Disable audio (labeling is visual only)
+            demuxer_seekable_cache='yes',  # Cache seeking for smoother exact seeks
+            cache='yes',                   # Enable cache
+            demuxer_max_bytes='150M',      # Larger cache for better seek performance
         )
 
         # Setup custom keyboard bindings for labeling
@@ -130,7 +133,7 @@ RIGHT repeatable seek {skip_time:.6f} exact
         try:
             self.player.wait_until_playing()
             print("✓ Video loaded")
-            print(f"✓ Arrow keys configured: skip {self.frames_to_skip} frames per press (hold to scrub)")
+            print(f"✓ Arrow keys configured: skip {self.frames_to_skip} frames per press (with caching)")
         except mpv.ShutdownError:
             print("\nmpv was closed before video loaded. Exiting.")
             self._cleanup_temp_file()
@@ -298,7 +301,7 @@ RIGHT repeatable seek {skip_time:.6f} exact
                 f"{balance_text}\n"
                 f"\n"
                 f"T=touching | F=not touching | S=save & quit\n"
-                f"←/→=frame step | Space=pause/play | I=refresh"
+                f"←/→=skip 3 frames | ,/.=step 1 frame | Space=pause/play"
             )
 
             # Show persistent overlay (10 minute duration = effectively permanent)
@@ -378,8 +381,8 @@ RIGHT repeatable seek {skip_time:.6f} exact
         print("  S - Save and quit")
         print("  I - Refresh overlay (updates automatically)")
         print("  Space - Pause/Play")
-        print(f"  ← / → Arrow Keys - Skip {self.frames_to_skip} frames backward/forward (hold to scrub)")
-        print("  , / . - Step backward/forward one frame")
+        print(f"  ← / → Arrow Keys - Skip {self.frames_to_skip} frames (optimized scrubbing)")
+        print("  , / . - Step backward/forward one frame (precise)")
         print("  Left Click Timeline - Seek to position")
         print()
         print("Tip: Aim for roughly 50/50 balance between touching and not touching")
