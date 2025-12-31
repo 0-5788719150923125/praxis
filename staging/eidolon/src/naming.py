@@ -57,17 +57,25 @@ def generate_experiment_title(seed_text: str) -> str:
     seed_hash = hashlib.md5(seed_text.encode()).hexdigest()
     seed_int = int(seed_hash[:8], 16)  # Use first 8 hex chars as integer seed
 
+    # Use different part of hash to determine word count (2-5 words)
+    word_count_hash = int(seed_hash[8:10], 16)  # Use next 2 hex chars
+    word_count = 2 + (word_count_hash % 4)  # Results in 2, 3, 4, or 5 words
+
     # Initialize Faker with seed for deterministic output
     fake = Faker()
     Faker.seed(seed_int)
+
+    # Helper to generate N words
+    def generate_words(n):
+        return ' '.join(fake.word().title() for _ in range(n))
 
     # Generate semi-coherent title patterns
     # Mix and match different Faker providers for variety
     patterns = [
         lambda: f"{fake.catch_phrase()}",  # "Innovative zero tolerance implementation"
         lambda: f"{fake.bs()}".title(),  # "Harness Real-Time Eyeballs"
-        lambda: f"{fake.word().title()} {fake.word().title()} {fake.word().title()}",
-        lambda: f"The {fake.word().title()} {fake.word().title()}",
+        lambda: generate_words(word_count),  # Variable 2-5 words based on hash
+        lambda: f"The {generate_words(word_count - 1)}",  # "The" + variable words (total 2-5)
         lambda: f"{fake.job().replace(',', '')}",  # Remove commas from job titles
     ]
 
@@ -87,7 +95,7 @@ def generate_experiment_title(seed_text: str) -> str:
     return title
 
 
-def format_experiment_filename(exp_number: int, exp_title: str) -> str:
+def format_experiment_filename(exp_number: int, exp_title: str, username: str = None) -> str:
     """
     Format experiment filename with number and title.
     Filename matches exact YouTube title format.
@@ -95,11 +103,15 @@ def format_experiment_filename(exp_number: int, exp_title: str) -> str:
     Args:
         exp_number: Experiment number
         exp_title: Random generated title (already includes "ASMR" prefix)
+        username: Optional username to append (e.g., "@UserName")
 
     Returns:
-        Formatted filename: "Experiment #N: Title.mlt"
+        Formatted filename: "Experiment #N: Title | @UserName.mlt"
     """
-    return f"Experiment #{exp_number}: {exp_title}.mlt"
+    if username:
+        return f"Experiment #{exp_number}: {exp_title} | {username}.mlt"
+    else:
+        return f"Experiment #{exp_number}: {exp_title}.mlt"
 
 
 def get_experiment_path(video_name: str) -> str:
@@ -114,7 +126,7 @@ def get_experiment_path(video_name: str) -> str:
         video_name: Source video filename (stem)
 
     Returns:
-        Full path: "outputs/projects/Experiment #N: ASMR Title.mlt"
+        Full path: "outputs/projects/Experiment #N: ASMR Title | @UserName.mlt"
     """
     import os
 
@@ -122,6 +134,11 @@ def get_experiment_path(video_name: str) -> str:
 
     # Ensure directory exists
     Path(projects_dir).mkdir(parents=True, exist_ok=True)
+
+    # Extract username from video_name (format: "@UserName - Video Title (quality)")
+    username = None
+    if video_name.startswith('@') and ' - ' in video_name:
+        username = video_name.split(' - ')[0]  # Extract "@UserName"
 
     # Get existing project titles (without the "Experiment #N:" prefix)
     existing_titles = set()
@@ -143,8 +160,14 @@ def get_experiment_path(video_name: str) -> str:
         # Generate title with current seed
         exp_title = generate_experiment_title(seed)
 
+        # Build full title with username suffix
+        if username:
+            full_title = f"{exp_title} | {username}"
+        else:
+            full_title = exp_title
+
         # Check if this title already exists
-        if exp_title not in existing_titles:
+        if full_title not in existing_titles:
             # Unique title found!
             break
 
@@ -156,6 +179,6 @@ def get_experiment_path(video_name: str) -> str:
     exp_num = get_next_experiment_number()
 
     # Format filename
-    filename = format_experiment_filename(exp_num, exp_title)
+    filename = format_experiment_filename(exp_num, exp_title, username)
 
     return f"{projects_dir}/{filename}"

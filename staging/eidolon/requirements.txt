@@ -25,3 +25,7 @@ yt-dlp>=2024.1.0
 
 # Mock data generation
 Faker>=24.0.0
+
+# Video labeling with mpv
+python-mpv>=1.0.0
+pynput>=1.7.6

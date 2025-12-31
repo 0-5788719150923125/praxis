@@ -6,7 +6,8 @@ Controls:
     T - Mark current frame as True (touching nose)
     F - Mark current frame as False (not touching)
     S - Save and quit
-    ← / → Arrow Keys - Skip 3 frames (optimized scrubbing)
+    → Arrow Key (hold) - Play forward at 2x speed (smooth scrubbing)
+    ← Arrow Key - Seek backward 2 frames (hold for continuous)
     , / . - Step backward/forward one frame (precise)
     Space - Pause/Play
     Mouse - Seek by clicking on timeline
@@ -20,6 +21,8 @@ import os
 import argparse
 import pandas as pd
 import tempfile
+import threading
+import time
 from pathlib import Path
 from utils import ensure_dir
 from video_frame_extractor import VideoFrameExtractor
@@ -32,14 +35,23 @@ except ImportError:
     print("Also ensure libmpv is installed: sudo pacman -S mpv")
     exit(1)
 
+try:
+    from pynput import keyboard
+    from pynput.keyboard import Controller, Key
+except ImportError:
+    print("ERROR: pynput is not installed.")
+    print("Please run: pip install pynput")
+    exit(1)
+
 
 class FrameLabeler:
     """Interactive frame labeling tool using mpv player."""
 
-    def __init__(self, video_path: str, labels_csv: str, target_fps: int = 5):
+    def __init__(self, video_path: str, labels_csv: str, target_fps: int = 5, debug: bool = False):
         self.video_path = os.path.abspath(video_path)
         self.labels_csv = labels_csv
         self.target_fps = target_fps
+        self.debug = debug
 
         # Create video frame extractor for on-demand single frame extraction
         self.extractor = VideoFrameExtractor(video_path, target_fps)
@@ -78,18 +90,21 @@ class FrameLabeler:
         self.video_info = self.extractor.get_video_metadata()
         source_fps = self.video_info['fps']
 
-        # Configure frame stepping (3 frames per arrow key press)
-        # Reduced from 5 to minimize seeking lag while still being faster than 1-frame
-        self.frames_to_skip = 3
-        skip_time = self.frames_to_skip / source_fps
+        # Configure playback speed for hold-to-scrub
+        self.playback_speed = 2.0  # 2x speed for right arrow scrubbing
+
+        # Calculate backward seek time (2 frames for faster backward navigation)
+        self.backward_frames = 2
+        backward_seek_time = self.backward_frames / source_fps
 
         # Create custom input configuration for arrow keys
-        # Must use exact seeking for frame precision, optimized with demuxer cache
+        # RIGHT arrow: MUST be explicitly disabled/ignored so mpv doesn't handle it
+        # LEFT arrow: small backward seek (faster than frame-back-step)
         input_conf_content = f"""# Custom key bindings for video labeling
-# Exact seeking for frame precision - {self.frames_to_skip} frames per press
-# Some lag is unavoidable with exact seeking in H.264/H.265 codecs
-RIGHT repeatable no-osd seek {skip_time:.6f} exact
-LEFT repeatable no-osd seek -{skip_time:.6f} exact
+# Disable right arrow - handled by Python keyboard listener
+RIGHT ignore
+# Left arrow: backward seek (2 frames) - faster than frame-back-step
+LEFT repeatable seek -{backward_seek_time:.6f} exact
 """
         # Create temporary input.conf file
         self.input_conf_fd, self.input_conf_path = tempfile.mkstemp(suffix='.conf', text=True)
@@ -114,6 +129,9 @@ LEFT repeatable no-osd seek -{skip_time:.6f} exact
         # Setup custom keyboard bindings for labeling
         self.setup_keyboard_controls()
 
+        # Setup keyboard listener for hold-to-scrub functionality
+        self.setup_hold_to_scrub_listener()
+
         # Setup property observers for persistent overlay updates
         @self.player.property_observer('time-pos')
         def on_time_change(_name, value):
@@ -133,7 +151,9 @@ LEFT repeatable no-osd seek -{skip_time:.6f} exact
         try:
             self.player.wait_until_playing()
             print("✓ Video loaded")
-            print(f"✓ Arrow keys configured: skip {self.frames_to_skip} frames per press (with caching)")
+            print(f"✓ Arrow keys configured: → hold to play at {self.playback_speed}x (event loop), ← seek back {self.backward_frames} frames")
+            if self.debug:
+                print("✓ Debug mode enabled: timing diagnostics will be printed")
         except mpv.ShutdownError:
             print("\nmpv was closed before video loaded. Exiting.")
             self._cleanup_temp_file()
@@ -143,10 +163,17 @@ LEFT repeatable no-osd seek -{skip_time:.6f} exact
         self.update_overlay()
 
     def _cleanup_temp_file(self):
-        """Clean up temporary input.conf file."""
+        """Clean up temporary input.conf file and keyboard listener."""
         try:
             if hasattr(self, 'input_conf_path') and os.path.exists(self.input_conf_path):
                 os.unlink(self.input_conf_path)
+        except Exception:
+            pass
+
+        # Stop keyboard listener
+        try:
+            if hasattr(self, 'keyboard_listener'):
+                self.keyboard_listener.stop()
         except Exception:
             pass
 
@@ -221,6 +248,52 @@ LEFT repeatable no-osd seek -{skip_time:.6f} exact
         def show_stats_upper():
             """Same as lowercase i."""
             show_stats()
+
+    def setup_hold_to_scrub_listener(self):
+        """Setup hold-to-scrub using direct pynput events with immediate mpv commands."""
+        self.is_scrubbing = False
+
+        def on_press(key):
+            """Handle key press - start scrubbing on right arrow."""
+            try:
+                if key == keyboard.Key.right and not self.is_scrubbing:
+                    self.is_scrubbing = True
+                    try:
+                        # Direct property access - should be fast
+                        self.player.speed = self.playback_speed
+                        self.player.pause = False
+
+                        if self.debug:
+                            print(f"[DEBUG] Press: started scrubbing at {self.playback_speed}x")
+                    except (mpv.ShutdownError, OSError):
+                        pass
+            except AttributeError:
+                pass
+
+        def on_release(key):
+            """Handle key release - stop scrubbing on right arrow."""
+            try:
+                if key == keyboard.Key.right and self.is_scrubbing:
+                    self.is_scrubbing = False
+                    try:
+                        # Pause immediately
+                        self.player.pause = True
+                        self.player.speed = 1.0
+
+                        if self.debug:
+                            print(f"[DEBUG] Release: stopped scrubbing")
+                    except (mpv.ShutdownError, OSError):
+                        pass
+            except AttributeError:
+                pass
+
+        # Start keyboard listener
+        self.keyboard_listener = keyboard.Listener(
+            on_press=on_press,
+            on_release=on_release,
+            suppress=False
+        )
+        self.keyboard_listener.start()
 
     def get_current_timestamp(self):
         """Get current playback position in seconds."""
@@ -301,7 +374,7 @@ LEFT repeatable no-osd seek -{skip_time:.6f} exact
                 f"{balance_text}\n"
                 f"\n"
                 f"T=touching | F=not touching | S=save & quit\n"
-                f"←/→=skip 3 frames | ,/.=step 1 frame | Space=pause/play"
+                f"→(hold)=play 2x | ←=back 2 frames | ,/.=step 1 | Space=pause"
             )
 
             # Show persistent overlay (10 minute duration = effectively permanent)
@@ -381,7 +454,8 @@ LEFT repeatable no-osd seek -{skip_time:.6f} exact
         print("  S - Save and quit")
         print("  I - Refresh overlay (updates automatically)")
         print("  Space - Pause/Play")
-        print(f"  ← / → Arrow Keys - Skip {self.frames_to_skip} frames (optimized scrubbing)")
+        print(f"  → Arrow (HOLD) - Play forward at {self.playback_speed}x speed (smooth scrubbing)")
+        print(f"  ← Arrow - Seek backward {self.backward_frames} frames (hold for continuous)")
         print("  , / . - Step backward/forward one frame (precise)")
         print("  Left Click Timeline - Seek to position")
         print()
@@ -404,6 +478,7 @@ def main():
     parser.add_argument('--video', required=True, help='Path to video file')
     parser.add_argument('--output', help='Output CSV path (default: data/labels.csv)')
     parser.add_argument('--fps', type=int, default=5, help='Target FPS for frame indexing (default: 5)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug timing output')
 
     args = parser.parse_args()
 
@@ -412,7 +487,7 @@ def main():
 
     # Run labeler
     try:
-        labeler = FrameLabeler(args.video, output_csv, args.fps)
+        labeler = FrameLabeler(args.video, output_csv, args.fps, debug=args.debug)
         labeler.run()
     except SystemExit as e:
         # Clean exit (e.g., user closed window)
