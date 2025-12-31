@@ -6,8 +6,9 @@ Controls:
     T - Mark current frame as True (touching nose)
     F - Mark current frame as False (not touching)
     S - Save and quit
-    → Arrow Key (hold) - Play forward at 2x speed (smooth scrubbing)
-    ← Arrow Key - Seek backward 2 frames (hold for continuous)
+    → Arrow Key (click) - Skip forward 3 frames
+    → Arrow Key (hold) - Play forward at 2x speed
+    ← Arrow Key - Seek backward 3 frames (hold for continuous)
     , / . - Step backward/forward one frame (precise)
     Space - Pause/Play
     Mouse - Seek by clicking on timeline
@@ -93,8 +94,12 @@ class FrameLabeler:
         # Configure playback speed for hold-to-scrub
         self.playback_speed = 2.0  # 2x speed for right arrow scrubbing
 
-        # Calculate backward seek time (2 frames for faster backward navigation)
-        self.backward_frames = 2
+        # Click vs hold detection timing
+        self.HOLD_THRESHOLD = 0.20  # 200ms - if held longer, it's a hold
+        self.FRAMES_TO_SKIP = 3     # frames to skip on click
+
+        # Calculate backward seek time (3 frames to match forward skip)
+        self.backward_frames = 3
         backward_seek_time = self.backward_frames / source_fps
 
         # Create custom input configuration for arrow keys
@@ -151,7 +156,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         try:
             self.player.wait_until_playing()
             print("✓ Video loaded")
-            print(f"✓ Arrow keys configured: → hold to play at {self.playback_speed}x (event loop), ← seek back {self.backward_frames} frames")
+            print(f"✓ Arrow keys: → click=skip {self.FRAMES_TO_SKIP} frames, hold=play {self.playback_speed}x | ← seek back {self.backward_frames} frames")
             if self.debug:
                 print("✓ Debug mode enabled: timing diagnostics will be printed")
         except mpv.ShutdownError:
@@ -163,7 +168,14 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         self.update_overlay()
 
     def _cleanup_temp_file(self):
-        """Clean up temporary input.conf file and keyboard listener."""
+        """Clean up temporary input.conf file, keyboard listener, and timers."""
+        # Cancel any pending hold timers
+        try:
+            for timer in getattr(self, 'hold_timers', {}).values():
+                timer.cancel()
+        except Exception:
+            pass
+
         try:
             if hasattr(self, 'input_conf_path') and os.path.exists(self.input_conf_path):
                 os.unlink(self.input_conf_path)
@@ -250,42 +262,78 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             show_stats()
 
     def setup_hold_to_scrub_listener(self):
-        """Setup hold-to-scrub using direct pynput events with immediate mpv commands."""
-        self.is_scrubbing = False
+        """Setup hold-to-scrub using timer-based click vs hold detection."""
+        # State tracking for click vs hold detection
+        self.key_state_lock = threading.Lock()  # Protect against race conditions
+        self.pressed_keys = set()      # Track physically pressed keys (filter auto-repeat)
+        self.hold_timers = {}          # Pending hold detection timers
+        self.is_holding = {}           # Whether key transitioned to hold state
+        self.last_release_time = 0     # Track last release to detect click sequences
+        self.CLICK_SEQUENCE_GAP = 0.4  # If press comes within 400ms of release, it's a click sequence
 
         def on_press(key):
-            """Handle key press - start scrubbing on right arrow."""
-            try:
-                if key == keyboard.Key.right and not self.is_scrubbing:
-                    self.is_scrubbing = True
-                    try:
-                        # Direct property access - should be fast
-                        self.player.speed = self.playback_speed
-                        self.player.pause = False
+            """Handle key press - skip immediately, maybe start hold timer."""
+            if key != keyboard.Key.right:
+                return
 
-                        if self.debug:
-                            print(f"[DEBUG] Press: started scrubbing at {self.playback_speed}x")
-                    except (mpv.ShutdownError, OSError):
-                        pass
-            except AttributeError:
-                pass
+            with self.key_state_lock:
+                if key in self.pressed_keys:
+                    return  # Filter auto-repeat events
+
+                self.pressed_keys.add(key)
+                self.is_holding[key] = False
+
+                # Check if this press is part of a rapid click sequence
+                time_since_release = time.time() - self.last_release_time
+                in_click_sequence = time_since_release < self.CLICK_SEQUENCE_GAP
+
+            # Always skip immediately on press (makes clicking feel instant)
+            self._skip_forward()
+            if self.debug:
+                print(f"[DEBUG] Right arrow pressed - skipped {self.FRAMES_TO_SKIP} frames")
+
+            # Only start hold timer if NOT in a click sequence
+            if not in_click_sequence:
+                with self.key_state_lock:
+                    timer = threading.Timer(self.HOLD_THRESHOLD, self._on_hold_threshold, args=[key])
+                    self.hold_timers[key] = timer
+                    timer.start()
+                if self.debug:
+                    print(f"[DEBUG] Hold timer started ({self.HOLD_THRESHOLD}s)")
+            elif self.debug:
+                print(f"[DEBUG] Click sequence - no hold timer")
 
         def on_release(key):
-            """Handle key release - stop scrubbing on right arrow."""
-            try:
-                if key == keyboard.Key.right and self.is_scrubbing:
-                    self.is_scrubbing = False
-                    try:
-                        # Pause immediately
-                        self.player.pause = True
-                        self.player.speed = 1.0
+            """Handle key release - record time, pause if was holding."""
+            if key != keyboard.Key.right:
+                return
 
-                        if self.debug:
-                            print(f"[DEBUG] Release: stopped scrubbing")
-                    except (mpv.ShutdownError, OSError):
-                        pass
-            except AttributeError:
-                pass
+            with self.key_state_lock:
+                if key not in self.pressed_keys:
+                    return
+
+                self.pressed_keys.discard(key)
+                self.last_release_time = time.time()  # Track for click sequence detection
+
+                # Cancel pending hold timer
+                if key in self.hold_timers:
+                    self.hold_timers[key].cancel()
+                    del self.hold_timers[key]
+
+                was_holding = self.is_holding.get(key, False)
+                self.is_holding[key] = False
+
+            # If was holding, pause playback
+            if was_holding:
+                try:
+                    self.player.pause = True
+                    self.player.speed = 1.0
+                    if self.debug:
+                        print(f"[DEBUG] Hold released - pausing")
+                except (mpv.ShutdownError, OSError):
+                    pass
+            elif self.debug:
+                print(f"[DEBUG] Released (click complete)")
 
         # Start keyboard listener
         self.keyboard_listener = keyboard.Listener(
@@ -294,6 +342,30 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             suppress=False
         )
         self.keyboard_listener.start()
+
+    def _on_hold_threshold(self, key):
+        """Called when hold threshold timer expires - start playback."""
+        with self.key_state_lock:
+            if key not in self.pressed_keys:
+                return  # Key was released before threshold
+            self.is_holding[key] = True
+
+        # Perform actions outside the lock
+        try:
+            self.player.speed = self.playback_speed
+            self.player.pause = False
+            if self.debug:
+                print(f"[DEBUG] Hold threshold reached - playing at {self.playback_speed}x")
+        except (mpv.ShutdownError, OSError):
+            pass
+
+    def _skip_forward(self):
+        """Skip forward by configured number of frames."""
+        try:
+            skip_time = self.FRAMES_TO_SKIP / self.video_info['fps']
+            self.player.seek(skip_time, reference='relative', precision='exact')
+        except (mpv.ShutdownError, OSError):
+            pass
 
     def get_current_timestamp(self):
         """Get current playback position in seconds."""
@@ -374,7 +446,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                 f"{balance_text}\n"
                 f"\n"
                 f"T=touching | F=not touching | S=save & quit\n"
-                f"→(hold)=play 2x | ←=back 2 frames | ,/.=step 1 | Space=pause"
+                f"→=skip 3 (hold=2x) | ←=back 3 | ,/.=step 1 | Space=pause"
             )
 
             # Show persistent overlay (10 minute duration = effectively permanent)
@@ -454,7 +526,8 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         print("  S - Save and quit")
         print("  I - Refresh overlay (updates automatically)")
         print("  Space - Pause/Play")
-        print(f"  → Arrow (HOLD) - Play forward at {self.playback_speed}x speed (smooth scrubbing)")
+        print(f"  → Arrow (click) - Skip forward {self.FRAMES_TO_SKIP} frames")
+        print(f"  → Arrow (HOLD) - Play forward at {self.playback_speed}x speed")
         print(f"  ← Arrow - Seek backward {self.backward_frames} frames (hold for continuous)")
         print("  , / . - Step backward/forward one frame (precise)")
         print("  Left Click Timeline - Seek to position")
