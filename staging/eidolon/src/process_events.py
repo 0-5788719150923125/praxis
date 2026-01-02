@@ -17,24 +17,38 @@ import os
 import argparse
 import numpy as np
 from pathlib import Path
-from utils import load_config, load_json, save_json, ensure_dir, format_timestamp, get_video_info
+from utils import (
+    load_config,
+    load_json,
+    save_json,
+    ensure_dir,
+    format_timestamp,
+    get_video_info,
+    load_task_config
+)
 
 
-def apply_threshold_to_predictions(predictions: list, threshold: float) -> list:
+def apply_threshold_to_predictions(predictions: list, threshold: float, task_config: dict = None) -> list:
     """
     Apply classification threshold to raw predictions.
 
     Args:
         predictions: List of prediction dicts with 'probability' field
         threshold: Classification threshold (0.0-1.0)
+        task_config: Task configuration dictionary
 
     Returns:
         Same list with 'predicted_class' field added based on threshold
     """
+    task_config = task_config or load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+    neg_label = task_config['labels']['negative']['display_name']
+
     processed = []
     for pred in predictions:
         prob = pred['probability']
-        predicted_class = 'touching' if prob >= threshold else 'not_touching'
+        # Use display labels for predictions
+        predicted_class = pos_label if prob >= threshold else neg_label
 
         processed.append({
             'frame_idx': pred['frame_idx'],
@@ -46,24 +60,28 @@ def apply_threshold_to_predictions(predictions: list, threshold: float) -> list:
     return processed
 
 
-def detect_events(predictions: list, min_duration: float) -> list:
+def detect_events(predictions: list, min_duration: float, task_config: dict = None) -> list:
     """
     Convert frame-level predictions to discrete events.
 
     Args:
         predictions: List of prediction dicts with 'predicted_class' field
         min_duration: Minimum event duration in seconds
+        task_config: Task configuration dictionary
 
     Returns:
         List of event dicts with start/end times
     """
+    task_config = task_config or load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+
     events = []
     current_event = None
 
     print("\nDetecting events...")
 
     for pred in predictions:
-        if pred['predicted_class'] == 'touching':
+        if pred['predicted_class'] == pos_label:
             if current_event is None:
                 # Start new event
                 current_event = {
@@ -136,6 +154,10 @@ def process_events_from_predictions(
     Returns:
         Events data dict
     """
+    # Load task config
+    task_config = load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+
     print("=" * 80)
     print("EVENT DETECTION FROM PREDICTIONS")
     print("=" * 80)
@@ -167,13 +189,13 @@ def process_events_from_predictions(
     print()
 
     print("Applying threshold to predictions...")
-    predictions = apply_threshold_to_predictions(raw_predictions, threshold)
+    predictions = apply_threshold_to_predictions(raw_predictions, threshold, task_config)
 
-    touching_frames = sum(1 for p in predictions if p['predicted_class'] == 'touching')
-    print(f"Touching frames: {touching_frames}/{len(predictions)} ({touching_frames/len(predictions)*100:.1f}%)")
+    positive_frames = sum(1 for p in predictions if p['predicted_class'] == pos_label)
+    print(f"{pos_label} frames: {positive_frames}/{len(predictions)} ({positive_frames/len(predictions)*100:.1f}%)")
 
     # Detect events
-    events = detect_events(predictions, min_duration)
+    events = detect_events(predictions, min_duration, task_config)
 
     print(f"\nDetected {len(events)} events")
 

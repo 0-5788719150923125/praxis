@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Run inference on video to detect nose-touch events.
+Run inference on video to detect binary classification events.
 
 Usage:
-    python src/infer_video.py --video videos/my_video.mp4 --model models/deit-small-nose-touch/final
+    python src/infer_video.py --video videos/my_video.mp4 --model models/<task>-model/final
 """
 
 import os
@@ -106,8 +106,8 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
         model = AutoModelForImageClassification.from_pretrained(
             base_model_id,
             num_labels=2,  # Binary classification
-            id2label={0: 'not_touching', 1: 'touching'},
-            label2id={'not_touching': 0, 'touching': 1},
+            id2label={0: 'negative', 1: 'positive'},
+            label2id={'negative': 0, 'positive': 1},
             ignore_mismatched_sizes=True
         )
 
@@ -208,12 +208,13 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
                 # Process predictions
                 batch_start_idx = len(predictions)
                 for i, (prob, meta) in enumerate(zip(probs, batch_metadata)):
-                    touching_prob = prob[model.config.label2id['touching']].item()
+                    # Use index 1 for positive class probability (task-agnostic)
+                    positive_prob = prob[1].item()
 
                     predictions.append({
                         'frame_idx': meta['frame_idx'],
                         'timestamp': meta['timestamp'],
-                        'probability': touching_prob
+                        'probability': positive_prob
                     })
 
                 # Early diagnostics on first batch
@@ -261,12 +262,12 @@ def infer_video(video_path: str, model_path: str, config: dict, output_dir: str)
             probs = torch.nn.functional.softmax(logits, dim=-1)
 
         for i, (prob, meta) in enumerate(zip(probs, batch_metadata)):
-            touching_prob = prob[model.config.label2id['touching']].item()
+            positive_prob = prob[1].item()  # Index 1 = positive class
 
             predictions.append({
                 'frame_idx': meta['frame_idx'],
                 'timestamp': meta['timestamp'],
-                'probability': touching_prob
+                'probability': positive_prob
             })
 
         pbar.update(len(batch_frames))

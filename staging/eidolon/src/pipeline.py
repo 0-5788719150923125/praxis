@@ -3,7 +3,7 @@
 End-to-end pipeline: inference + event detection + MLT generation in one command.
 
 Usage:
-    python src/pipeline.py --video videos/my_video.mp4 --model models/deit-small-nose-touch/final
+    python src/pipeline.py --video videos/my_video.mp4 --model models/<task>-model/final
     python src/pipeline.py --video videos/my_video.mp4 --model models/model/final --threshold 0.3 --min-duration 0.5
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from infer_video import infer_video
 from process_events import process_events_from_predictions
 from generate_mlt import create_mlt_project
-from utils import load_config, load_json
+from utils import load_config, load_json, load_task_config
 from naming import get_experiment_path
 
 
@@ -27,8 +27,12 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
         config: Configuration dict
         output_mlt: Output MLT path (optional)
     """
+    # Load task config
+    task_config = load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+
     print("=" * 80)
-    print("EIDOLON PIPELINE - Nose-Touch Detection")
+    print(f"EIDOLON PIPELINE - {task_config['task_description']}")
     print("=" * 80)
     print()
 
@@ -64,7 +68,7 @@ def run_pipeline(video_path: str, model_path: str, config: dict, output_mlt: str
         print("\nPossible solutions:")
         print("  - Lower the classification threshold (try --threshold 0.3)")
         print("  - Reduce minimum event duration (try --min-duration 0.2)")
-        print("  - Check that the video contains nose-touching moments")
+        print(f"  - Check that the video contains {pos_label} moments")
         print("  - Verify model was trained correctly")
         return
 

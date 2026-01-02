@@ -12,12 +12,19 @@ import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from utils import load_config, get_video_info, ensure_dir
+from utils import (
+    load_config,
+    get_video_info,
+    ensure_dir,
+    load_task_config,
+    internal_to_display,
+    migrate_labels_to_internal
+)
 from generate_mlt import create_mlt_project
 from naming import get_experiment_path
 
 
-def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, video_fps: float) -> list:
+def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, video_fps: float, task_config: dict = None) -> list:
     """
     Convert labeled frames to event format (similar to detect_events in infer_video.py).
 
@@ -26,10 +33,14 @@ def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, vid
         video_path: Path to source video
         config: Configuration dict
         video_fps: Video frame rate
+        task_config: Task configuration dict
 
     Returns:
         List of event dicts with start_time, end_time, etc.
     """
+    task_config = task_config or load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+
     # Get video name to filter labels
     video_name = Path(video_path).stem
     frames_path = config['paths']['frames']
@@ -42,6 +53,9 @@ def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, vid
         print(f"No labels found for video: {video_name}")
         return []
 
+    # Migrate labels to internal format if needed
+    video_labels = migrate_labels_to_internal(video_labels, backup=False)
+
     # Sort by timestamp
     video_labels = video_labels.sort_values('timestamp')
 
@@ -51,10 +65,13 @@ def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, vid
         # Calculate frame index from timestamp
         frame_idx = int(row['timestamp'] * video_fps)
 
+        # Convert internal label to display label
+        display_label = internal_to_display(row['label'], task_config)
+
         predictions.append({
             'frame_idx': frame_idx,
             'timestamp': row['timestamp'],
-            'predicted_class': row['label'],  # Already 'touching' or 'not_touching' string
+            'predicted_class': display_label,
             'probability': 1.0  # Labels are 100% confident
         })
 
@@ -67,7 +84,7 @@ def labels_to_events(labels_df: pd.DataFrame, video_path: str, config: dict, vid
     print("\nDetecting events from labels...")
 
     for pred in predictions:
-        if pred['predicted_class'] == 'touching':
+        if pred['predicted_class'] == pos_label:
             if current_event is None:
                 # Start new event
                 current_event = {
@@ -131,6 +148,9 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
     """
     # Load config
     config = load_config(config_path)
+    task_config = load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+
     marker_buffer = config.get('mlt', {}).get('marker_buffer', 2.0)
     post_buffer = config.get('mlt', {}).get('post_buffer', 1.0)
     mode = 'cut_markers'  # Default mode for labels preview
@@ -152,10 +172,10 @@ def generate_mlt_from_labels(video_path: str, output_path: str = None, config_pa
     video_fps = video_info['fps']
 
     # Convert labels to events
-    events = labels_to_events(labels_df, video_path, config, video_fps)
+    events = labels_to_events(labels_df, video_path, config, video_fps, task_config)
 
     if not events:
-        print("No touching events found in labels!")
+        print(f"No {pos_label} events found in labels!")
         return
 
     print(f"\nFound {len(events)} labeled events:")

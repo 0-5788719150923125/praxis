@@ -3,8 +3,8 @@
 Simple GUI tool for manually labeling video frames using mpv player.
 
 Controls:
-    T - Mark current frame as True (touching nose)
-    F - Mark current frame as False (not touching)
+    T - Mark current frame as True (positive class)
+    F - Mark current frame as False (negative class)
     S - Save and quit
     → Arrow Key (click) - Skip forward 3 frames
     → Arrow Key (hold) - Play forward at 2x speed
@@ -25,7 +25,13 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from utils import ensure_dir
+from utils import (
+    ensure_dir,
+    load_task_config,
+    internal_to_display,
+    display_to_internal,
+    migrate_labels_to_internal
+)
 from video_frame_extractor import VideoFrameExtractor
 
 try:
@@ -48,11 +54,17 @@ except ImportError:
 class FrameLabeler:
     """Interactive frame labeling tool using mpv player."""
 
-    def __init__(self, video_path: str, labels_csv: str, target_fps: int = 5, debug: bool = False):
+    def __init__(self, video_path: str, labels_csv: str, target_fps: int = 5,
+                 debug: bool = False, task_config: dict = None):
         self.video_path = os.path.abspath(video_path)
         self.labels_csv = labels_csv
         self.target_fps = target_fps
         self.debug = debug
+
+        # Load task configuration
+        self.task_config = task_config or load_task_config()
+        self.pos_label = self.task_config['labels']['positive']['display_name']
+        self.neg_label = self.task_config['labels']['negative']['display_name']
 
         # Create video frame extractor for on-demand single frame extraction
         self.extractor = VideoFrameExtractor(video_path, target_fps)
@@ -64,27 +76,44 @@ class FrameLabeler:
         print(f"FPS: {self.video_info['fps']:.2f}")
 
         # Load existing labels: {timestamp: label}
-        # Note: We now store by timestamp only (not frame_idx) for simplicity
+        # Note: Labels stored internally as 'true'/'false' (task-agnostic)
         self.labels = {}
         if os.path.exists(labels_csv):
             df = pd.read_csv(labels_csv)
 
+            # Migrate labels to internal format if needed
+            df = migrate_labels_to_internal(df, backup=False)
+
             # Detect schema version
-            if 'video_path' in df.columns:
-                # NEW schema
+            # Check if video_path column exists AND has non-empty values
+            if 'video_path' in df.columns and df['video_path'].notna().any():
+                # NEW schema with populated video_path
                 for _, row in df.iterrows():
-                    if row['video_path'] == self.video_path:
+                    # Handle both empty and populated video_path
+                    if pd.notna(row['video_path']) and row['video_path'] == self.video_path:
                         timestamp = float(row['timestamp'])
-                        self.labels[timestamp] = row['label']
-            else:
-                # OLD schema (backward compatibility)
-                video_name = Path(self.video_path).stem
-                for _, row in df.iterrows():
-                    if video_name in row['frame_path']:
-                        timestamp = float(row['timestamp'])
+                        # Labels already in internal format after migration
                         self.labels[timestamp] = row['label']
 
-            print(f"Loaded {len(self.labels)} existing labels")
+            # If no video_path data found, fall back to OLD schema (frame_path matching)
+            if len(self.labels) == 0 and 'frame_path' in df.columns:
+                video_name = Path(self.video_path).stem
+                if self.debug:
+                    print(f"DEBUG: Looking for video_name '{video_name}' in frame_path")
+                    print(f"DEBUG: Sample frame_path: {df['frame_path'].iloc[0] if len(df) > 0 else 'N/A'}")
+
+                for _, row in df.iterrows():
+                    # Skip rows with NaN/empty frame_path
+                    if pd.notna(row['frame_path']) and isinstance(row['frame_path'], str):
+                        if video_name in row['frame_path']:
+                            timestamp = float(row['timestamp'])
+                            # Labels already in internal format after migration
+                            self.labels[timestamp] = row['label']
+
+            if len(self.labels) > 0:
+                print(f"✓ Loaded {len(self.labels)} existing labels for this video")
+            else:
+                print(f"No existing labels found for this video")
 
         # Get video FPS for frame skip information
         self.extractor = VideoFrameExtractor(video_path, target_fps)
@@ -198,50 +227,50 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         """Setup custom keyboard controls for labeling."""
 
         @self.player.on_key_press('t')
-        def label_touching():
-            """Mark current frame as touching (positive class)."""
+        def label_positive():
+            """Mark current frame as positive class."""
             timestamp = self.get_current_timestamp()
-            self.labels[timestamp] = 'touching'
+            self.labels[timestamp] = 'true'  # Store internal label
 
-            touching, not_touching = self.get_label_stats()
-            print(f"✓ Labeled TOUCHING @ {timestamp:.2f}s (Balance: {touching}/{not_touching})")
+            positive_count, negative_count = self.get_label_stats()
+            print(f"✓ Labeled {self.pos_label.upper()} @ {timestamp:.2f}s (Balance: {positive_count}/{negative_count})")
 
             # Update overlay to reflect new label
             self.update_overlay()
 
             # Show brief confirmation
             self.player.show_text(
-                f"✓ TOUCHING @ {self.format_timestamp(timestamp)}",
+                f"✓ {self.pos_label.upper()} @ {self.format_timestamp(timestamp)}",
                 duration=1500
             )
 
         @self.player.on_key_press('T')
-        def label_touching_upper():
+        def label_positive_upper():
             """Same as lowercase t."""
-            label_touching()
+            label_positive()
 
         @self.player.on_key_press('f')
-        def label_not_touching():
-            """Mark current frame as not touching (negative class)."""
+        def label_negative():
+            """Mark current frame as negative class."""
             timestamp = self.get_current_timestamp()
-            self.labels[timestamp] = 'not_touching'
+            self.labels[timestamp] = 'false'  # Store internal label
 
-            touching, not_touching = self.get_label_stats()
-            print(f"✓ Labeled NOT TOUCHING @ {timestamp:.2f}s (Balance: {touching}/{not_touching})")
+            positive_count, negative_count = self.get_label_stats()
+            print(f"✓ Labeled {self.neg_label.upper()} @ {timestamp:.2f}s (Balance: {positive_count}/{negative_count})")
 
             # Update overlay to reflect new label
             self.update_overlay()
 
             # Show brief confirmation
             self.player.show_text(
-                f"✓ NOT TOUCHING @ {self.format_timestamp(timestamp)}",
+                f"✓ {self.neg_label.upper()} @ {self.format_timestamp(timestamp)}",
                 duration=1500
             )
 
         @self.player.on_key_press('F')
-        def label_not_touching_upper():
+        def label_negative_upper():
             """Same as lowercase f."""
-            label_not_touching()
+            label_negative()
 
         @self.player.on_key_press('s')
         def save_and_quit():
@@ -398,8 +427,8 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         """Update persistent overlay with controls and stats."""
         try:
             timestamp = self.get_current_timestamp()
-            touching, not_touching = self.get_label_stats()
-            total = touching + not_touching
+            positive_count, negative_count = self.get_label_stats()
+            total = positive_count + negative_count
 
             # Check if current timestamp is labeled
             # Round to 2 decimals for comparison
@@ -409,9 +438,10 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                     current_label = label
                     break
 
-            # Format current label status
+            # Format current label status (convert internal to display)
             if current_label:
-                label_status = f"Current: {current_label.upper()}"
+                display_label = internal_to_display(current_label, self.task_config)
+                label_status = f"Current: {display_label.upper()}"
             else:
                 label_status = "Current: UNLABELED"
 
@@ -419,9 +449,9 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             if total == 0:
                 balance_text = "No labels yet"
             else:
-                touching_pct = (touching / total) * 100
-                not_touching_pct = (not_touching / total) * 100
-                ratio = max(touching, not_touching) / max(min(touching, not_touching), 1)
+                positive_pct = (positive_count / total) * 100
+                negative_pct = (negative_count / total) * 100
+                ratio = max(positive_count, negative_count) / max(min(positive_count, negative_count), 1)
 
                 if ratio <= 2.0:
                     balance_status = "BALANCED ✓"
@@ -431,8 +461,8 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                     balance_status = "VERY IMBALANCED"
 
                 balance_text = (
-                    f"Total: {total} | Touching: {touching} ({touching_pct:.1f}%) | "
-                    f"Not touching: {not_touching} ({not_touching_pct:.1f}%)\n"
+                    f"Total: {total} | {self.pos_label}: {positive_count} ({positive_pct:.1f}%) | "
+                    f"{self.neg_label}: {negative_count} ({negative_pct:.1f}%)\n"
                     f"Balance: {balance_status}"
                 )
 
@@ -442,7 +472,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                 f"Time: {self.format_timestamp(timestamp)} | {label_status}\n"
                 f"{balance_text}\n"
                 f"\n"
-                f"T=touching | F=not touching | S=save & quit\n"
+                f"T={self.pos_label} | F={self.neg_label} | S=save & quit\n"
                 f"→=skip 3 (hold=2x) | ←=back 3 | ,/.=step 1 | Space=pause"
             )
 
@@ -454,9 +484,9 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
 
     def get_label_stats(self):
         """Calculate current label distribution."""
-        touching = sum(1 for label in self.labels.values() if label == 'touching')
-        not_touching = sum(1 for label in self.labels.values() if label == 'not_touching')
-        return touching, not_touching
+        positive = sum(1 for label in self.labels.values() if label == 'true')
+        negative = sum(1 for label in self.labels.values() if label == 'false')
+        return positive, negative
 
     def save_labels(self):
         """Save labels to CSV, preserving labels from other videos."""
@@ -518,8 +548,8 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         """Run interactive labeling session."""
         print("\n=== Frame Labeling Tool (mpv) ===")
         print("Controls:")
-        print("  T - Mark as TOUCHING (positive class)")
-        print("  F - Mark as NOT TOUCHING (negative class)")
+        print(f"  T - Mark as {self.pos_label.upper()} (positive class)")
+        print(f"  F - Mark as {self.neg_label.upper()} (negative class)")
         print("  S - Save and quit")
         print("  I - Refresh overlay (updates automatically)")
         print("  Space - Pause/Play")
@@ -529,7 +559,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         print("  , / . - Step backward/forward one frame (precise)")
         print("  Left Click Timeline - Seek to position")
         print()
-        print("Tip: Aim for roughly 50/50 balance between touching and not touching")
+        print(f"Tip: Aim for roughly 50/50 balance between {self.pos_label} and {self.neg_label}")
         print("The overlay shows stats automatically and updates as you label.")
         print()
         print("mpv player is now running. Press S when done to save and quit.")
@@ -555,9 +585,13 @@ def main():
     # Determine output path
     output_csv = args.output if args.output else 'data/labels.csv'
 
+    # Load task config
+    task_config = load_task_config()
+
     # Run labeler
     try:
-        labeler = FrameLabeler(args.video, output_csv, args.fps, debug=args.debug)
+        labeler = FrameLabeler(args.video, output_csv, args.fps,
+                              debug=args.debug, task_config=task_config)
         labeler.run()
     except SystemExit as e:
         # Clean exit (e.g., user closed window)

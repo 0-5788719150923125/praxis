@@ -1,12 +1,13 @@
-# Eidolon - Automated Nose-Touch Detection Pipeline
+# Eidolon - Automated Binary Classification Pipeline
 
-A machine learning pipeline for detecting nose-touching moments in videos and automatically generating Shotcut project files for video editing.
+A machine learning pipeline for detecting binary events in videos (e.g., nose-touching, ear-pulling, object presence) and automatically generating Shotcut project files for video editing.
 
 ## Overview
 
-Eidolon uses a fine-tuned vision transformer (DeiT-Small) to classify video frames as "touching" or "not touching" the nose, then generates a Shotcut MLT project file with markers at all detected moments.
+Eidolon uses a fine-tuned vision transformer (DeiT-Small) to classify video frames into two categories (positive/negative), then generates a Shotcut MLT project file with markers at all detected moments.
 
 **Key Features:**
+- Configurable binary classification tasks via task_config.json
 - Frame-level binary classification using HuggingFace Transformers
 - Interactive labeling tool for creating training data
 - Automated event detection with configurable thresholds and buffers
@@ -53,7 +54,7 @@ All with real-time status updates, output logging, and no command line needed.
 
 ### One-Time Setup (Training)
 
-1. **Extract frames** from sample video (5 fps default)
+1. **Configure Task** - Edit task_config.json or use GUI to set task name and labels
 2. **Label frames** manually (aim for 500-1000 frames, balanced classes)
    - Use GUI labeling tool with keyboard shortcuts (T/F/S)
    - Real-time balance indicator shows class distribution
@@ -67,6 +68,36 @@ All with real-time status updates, output logging, and no command line needed.
 7. **Open in Shotcut** and render final video
 
 The GUI handles all of this through a simple tab-based interface.
+
+## Task Configuration
+
+Create a `task_config.json` file in the project root to define your classification task:
+
+```json
+{
+  "version": "1.0",
+  "task_name": "nose_touch_detection",
+  "task_description": "Binary classification for detecting when subject touches their nose",
+  "labels": {
+    "positive": {
+      "display_name": "touching",
+      "description": "Subject is touching their nose"
+    },
+    "negative": {
+      "display_name": "not_touching",
+      "description": "Subject is not touching their nose"
+    }
+  }
+}
+```
+
+**Examples of other tasks:**
+- **Ear pulling detection**: positive="pulling", negative="not_pulling"
+- **Object presence**: positive="present", negative="absent"
+- **Action detection**: positive="jumping", negative="standing"
+- **Chin touching**: positive="touching_chin", negative="not_touching_chin"
+
+The GUI provides an interface to edit these settings without manual JSON editing.
 
 ## Configuration
 
@@ -102,12 +133,12 @@ The MLT generator supports multiple modes:
 
 **No events detected:**
 - Lower threshold: try 0.3
-- Check video has actual nose-touching moments
+- Check video contains actual positive class events
 - Label more diverse training data
 
 **Too many false positives:**
 - Raise threshold: try 0.7
-- Label more negative examples (hand near face but not touching)
+- Label more negative examples (ambiguous cases)
 
 **CUDA out of memory:**
 - Reduce batch size in config: `batch_size: 16` or `batch_size: 8`
@@ -121,7 +152,7 @@ The MLT generator supports multiple modes:
 For batch processing or scripting, you can use the command line tools directly. The full pipeline can be run as:
 
 ```bash
-python src/pipeline.py --video videos/my_video.mp4 --model models/deit-small-nose-touch/final
+python src/pipeline.py --video videos/my_video.mp4 --model models/<model>-<task>/final
 ```
 
 See individual script files for detailed command line options.

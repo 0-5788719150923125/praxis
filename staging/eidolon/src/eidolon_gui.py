@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Eidolon - Unified GUI for the nose-touch detection pipeline.
+Eidolon - Unified GUI for the binary classification pipeline.
 
 Usage:
     python src/eidolon_gui.py
@@ -15,7 +15,18 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 import pandas as pd
-from utils import load_config, load_json, get_video_info
+from datetime import datetime
+from utils import (
+    load_config,
+    load_json,
+    save_json,
+    get_video_info,
+    load_task_config,
+    migrate_labels_to_internal,
+    create_task_config_from_labels,
+    internal_to_display,
+    DEFAULT_TASK_CONFIG
+)
 
 
 def parse_channel_from_filename(video_name: str) -> str:
@@ -54,7 +65,7 @@ class EidolonGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Eidolon - Nose Touch Detection Pipeline")
+        self.root.title("Eidolon - Binary Classification Pipeline")
 
         # Calculate window size based on screen resolution
         screen_width = self.root.winfo_screenwidth()
@@ -76,6 +87,26 @@ class EidolonGUI:
         except:
             messagebox.showerror("Error", "Could not load config.yaml")
             sys.exit(1)
+
+        # Load task config and auto-migrate if needed
+        try:
+            self.task_config = load_task_config('task_config.json')
+
+            # Auto-migrate labels.csv if it exists
+            labels_file = self.config['paths']['labels']
+            if os.path.exists(labels_file):
+                df = pd.read_csv(labels_file)
+                df = migrate_labels_to_internal(df, backup=True, backup_path=labels_file)
+                df.to_csv(labels_file, index=False)
+
+            # Create task_config.json if missing
+            if not os.path.exists('task_config.json'):
+                if os.path.exists(labels_file):
+                    create_task_config_from_labels(labels_file)
+                    self.task_config = load_task_config('task_config.json')
+        except Exception as e:
+            print(f"Warning: Could not load task_config.json: {e}")
+            self.task_config = DEFAULT_TASK_CONFIG.copy()
 
         # State
         self.current_video = None
@@ -109,11 +140,46 @@ class EidolonGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(4, weight=1)
+        main_frame.rowconfigure(5, weight=1)  # Shifted from 4 to 5
+
+        # === TASK CONFIGURATION (NEW SECTION) ===
+        task_frame = ttk.LabelFrame(main_frame, text="Task Configuration", padding="10")
+        task_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        task_frame.columnconfigure(1, weight=1)
+
+        # Task name
+        ttk.Label(task_frame, text="Task Name:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.task_name_var = tk.StringVar(value=self.task_config['task_name'])
+        ttk.Entry(task_frame, textvariable=self.task_name_var, width=30).grid(
+            row=0, column=1, sticky=(tk.W, tk.E), pady=2, padx=(5, 0)
+        )
+
+        # Positive label
+        ttk.Label(task_frame, text="Positive Label:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.positive_label_var = tk.StringVar(
+            value=self.task_config['labels']['positive']['display_name']
+        )
+        ttk.Entry(task_frame, textvariable=self.positive_label_var, width=20).grid(
+            row=1, column=1, sticky=tk.W, pady=2, padx=(5, 0)
+        )
+
+        # Negative label
+        ttk.Label(task_frame, text="Negative Label:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.negative_label_var = tk.StringVar(
+            value=self.task_config['labels']['negative']['display_name']
+        )
+        ttk.Entry(task_frame, textvariable=self.negative_label_var, width=20).grid(
+            row=2, column=1, sticky=tk.W, pady=2, padx=(5, 0)
+        )
+
+        # Save button
+        ttk.Button(task_frame, text="Save Task Config", command=self.save_task_config).grid(
+            row=3, column=0, columnspan=2, sticky=tk.W, pady=(10, 0)
+        )
 
         # === VIDEO SELECTION ===
         video_frame = ttk.LabelFrame(main_frame, text="Video Selection", padding="10")
-        video_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        video_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))  # Shifted from row=0 to row=1
         video_frame.columnconfigure(1, weight=1)
 
         ttk.Button(video_frame, text="Select Video", command=self.select_video).grid(
@@ -152,7 +218,7 @@ class EidolonGUI:
 
         # === PROJECT OVERVIEW ===
         overview_frame = ttk.LabelFrame(main_frame, text="Project Overview", padding="10")
-        overview_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        overview_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))  # Shifted from row=1 to row=2
         overview_frame.columnconfigure(0, weight=1)
 
         # Create Treeview for videos table
@@ -202,7 +268,7 @@ class EidolonGUI:
 
         # === VIDEO ACTIONS (Single-Video Operations) ===
         video_actions_frame = ttk.LabelFrame(main_frame, text="Video Actions (Current Video)", padding="10")
-        video_actions_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        video_actions_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))  # Shifted from row=2 to row=3
         video_actions_frame.columnconfigure(1, weight=1)
 
         row = 0
@@ -228,7 +294,7 @@ class EidolonGUI:
 
         # === PIPELINE ACTIONS (Multi-Video Operations) ===
         pipeline_frame = ttk.LabelFrame(main_frame, text="Pipeline Actions (All Videos)", padding="10")
-        pipeline_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        pipeline_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 10))  # Shifted from row=3 to row=4
         pipeline_frame.columnconfigure(1, weight=1)
 
         row = 0
@@ -303,7 +369,7 @@ class EidolonGUI:
 
         # === MLT GENERATION SETTINGS ===
         settings_frame = ttk.LabelFrame(main_frame, text="Event Detection & MLT Settings", padding="10")
-        settings_frame.grid(row=3, column=1, rowspan=1, sticky=(tk.W, tk.E, tk.N), pady=(0, 10), padx=(10, 0))
+        settings_frame.grid(row=4, column=1, rowspan=1, sticky=(tk.W, tk.E, tk.N), pady=(0, 10), padx=(10, 0))  # Shifted from row=3 to row=4
         settings_frame.columnconfigure(1, weight=1)
 
         # Configure main_frame to support 2-column layout
@@ -416,7 +482,7 @@ class EidolonGUI:
 
         # === OUTPUT LOG ===
         log_frame = ttk.LabelFrame(main_frame, text="Output Log", padding="10")
-        log_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        log_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))  # Shifted from row=4 to row=5
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -595,17 +661,24 @@ class EidolonGUI:
         # Update project stats
         total_labels = sum(len(labels) for labels in labels_data.values())
 
+        # Get task labels
+        pos_label = self.task_config['labels']['positive']['display_name']
+        neg_label = self.task_config['labels']['negative']['display_name']
+
         # Calculate balance
         balance_str = "N/A"
         if total_labels > 0 and os.path.exists(labels_file):
             df = pd.read_csv(labels_file)
-            df = df[df['label'].isin(['touching', 'not_touching'])]
+            # Migrate labels if needed
+            df = migrate_labels_to_internal(df, backup=False)
+            # Filter for binary labels (internal format)
+            df = df[df['label'].isin(['true', 'false'])]
             if len(df) > 0:
                 counts = df['label'].value_counts()
-                touching = counts.get('touching', 0)
-                not_touching = counts.get('not_touching', 0)
-                if touching + not_touching > 0:
-                    balance_str = f"{touching}/{not_touching}"
+                positive = counts.get('true', 0)  # Internal label
+                negative = counts.get('false', 0)  # Internal label
+                if positive + negative > 0:
+                    balance_str = f"{pos_label}: {positive} / {neg_label}: {negative}"
 
         # Check dataset
         dataset_status = "Not prepared"
@@ -789,6 +862,47 @@ class EidolonGUI:
 
         # Summary
         self.log(f"✓ Removed '{video_name}' and {len(deleted_items)} associated items", "SUCCESS")
+
+    def save_task_config(self):
+        """Save task configuration to task_config.json."""
+        task_name = self.task_name_var.get().strip()
+        pos_label = self.positive_label_var.get().strip()
+        neg_label = self.negative_label_var.get().strip()
+
+        # Validate
+        if not task_name:
+            messagebox.showerror("Invalid Input", "Task name cannot be empty")
+            return
+
+        if not pos_label or not neg_label:
+            messagebox.showerror("Invalid Input", "Label names cannot be empty")
+            return
+
+        if pos_label == neg_label:
+            messagebox.showerror("Invalid Input",
+                               "Positive and negative labels must be different")
+            return
+
+        # Check for reserved words
+        if pos_label in ['true', 'false'] or neg_label in ['true', 'false']:
+            messagebox.showerror("Invalid Input",
+                               "Labels cannot be 'true' or 'false' (reserved for internal use)")
+            return
+
+        # Update config
+        self.task_config['task_name'] = task_name
+        self.task_config['labels']['positive']['display_name'] = pos_label
+        self.task_config['labels']['negative']['display_name'] = neg_label
+        self.task_config['last_modified'] = datetime.now().isoformat()
+
+        # Save
+        save_json(self.task_config, 'task_config.json')
+        self.log("Task configuration saved successfully", "SUCCESS")
+        messagebox.showinfo("Success",
+                          "Task configuration saved.\n\nNote: Changing labels affects future labeling and dataset preparation.")
+
+        # Refresh UI
+        self.refresh_overview()
 
     def select_video(self):
         """Select a video file."""
@@ -1007,6 +1121,9 @@ class EidolonGUI:
             messagebox.showwarning("No Video", "Please select a video first")
             return
 
+        # Save task config to file before labeling (ensure labeler uses current config)
+        save_json(self.task_config, 'task_config.json')
+
         def delayed_update():
             """Update status after a short delay to ensure file is written."""
             self.root.after(500, self.update_status)
@@ -1220,10 +1337,11 @@ class EidolonGUI:
                 messagebox.showwarning("No Labels", f"No labels found for video: {video_name}")
                 return
 
-            # Count touching labels (labels are stored as strings "touching"/"not_touching")
-            touching_count = (video_labels['label'] == 'touching').sum()
-            if touching_count == 0:
-                messagebox.showwarning("No Touching Labels", "No 'touching' labels found for this video.\n\nYou need at least one positive label to generate cuts.")
+            # Count positive labels (labels are stored internally as 'true'/'false')
+            positive_count = (video_labels['label'] == 'true').sum()
+            if positive_count == 0:
+                pos_label = self.task_config['labels']['positive']['display_name']
+                messagebox.showwarning("No Positive Labels", f"No '{pos_label}' labels found for this video.\n\nYou need at least one positive label to generate cuts.")
                 return
 
         except Exception as e:

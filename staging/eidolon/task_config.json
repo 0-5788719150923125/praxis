@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "task_name": "nose_detection",
+  "task_description": "Generic binary classification task",
+  "labels": {
+    "positive": {
+      "display_name": "touching",
+      "description": "Positive class"
+    },
+    "negative": {
+      "display_name": "not_touching",
+      "description": "Negative class"
+    }
+  },
+  "created_at": "2026-01-02T10:52:19.843667",
+  "last_modified": "2026-01-02T10:52:32.346596"
+}

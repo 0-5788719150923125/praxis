@@ -1,4 +1,4 @@
-# Eidolon - Nose-Touch Detection Pipeline Configuration
+# Eidolon - Binary Classification Pipeline Configuration
 
 # Model configuration
 model:
@@ -14,10 +14,10 @@ extraction:
 # Training configuration
 training:
   batch_size: 8 # REDUCED: More gradient updates per epoch (14 instead of 3.5)
-  learning_rate: 0.001 # INCREASED 10x: Model was stuck, needs to escape local minimum
+  learning_rate: 0.0001 # INCREASED 10x: Model was stuck, needs to escape local minimum
   epochs: 50 # INCREASED: Give more time to learn with better hyperparams
   early_stopping_patience: 10 # Reduced: Will stop sooner if no improvement
-  weight_decay: 0.01
+  weight_decay: 0.1
   warmup_steps: 10 # ADDED: Warm up LR to avoid initial instability
   train_split: 0.70
   val_split: 0.15

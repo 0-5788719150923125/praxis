@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Train binary classifier for nose-touch detection using HuggingFace Transformers.
+Train binary classifier using HuggingFace Transformers.
 
 Usage:
     python src/train_classifier.py --dataset data/dataset
@@ -29,7 +29,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from praxis.losses.focal import FocalLoss
 
-from utils import load_config, ensure_dir
+from utils import load_config, ensure_dir, load_task_config
 
 
 def compute_metrics(eval_pred):
@@ -68,6 +68,11 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         model_name: HuggingFace model ID (overrides config)
         gui_mode: Enable GUI-friendly output (less verbose)
     """
+    # Load task config
+    task_config = load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+    neg_label = task_config['labels']['negative']['display_name']
+
     # Model configuration
     model_id = model_name if model_name else config['model']['name']
     image_size = config['model']['image_size']
@@ -76,6 +81,7 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
     print(f"  Model: {model_id}")
     print(f"  Image size: {image_size}")
     print(f"  Dataset: {dataset_dir}")
+    print(f"  Task: {task_config['task_description']}")
     print()
 
     # Load dataset
@@ -367,8 +373,8 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
         print()
         print("  Tips to improve performance:")
         print("  - Label more frames from diverse sections of videos")
-        print("  - Ensure balanced classes (50/50 touching vs not_touching)")
-        print("  - Include challenging examples (hand near face, scratching, etc.)")
+        print(f"  - Ensure balanced classes (50/50 {pos_label} vs {neg_label})")
+        print("  - Include challenging examples (ambiguous cases)")
         print("  - Label frames from different camera angles and lighting")
     else:
         print("✓ Model performance looks good!")
@@ -430,9 +436,9 @@ def train_model(dataset_dir: str, output_dir: str, config: dict, model_name: str
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train nose-touch classifier')
+    parser = argparse.ArgumentParser(description='Train binary classifier')
     parser.add_argument('--dataset', required=True, help='Dataset directory')
-    parser.add_argument('--output', help='Output directory (default: models/deit-small-nose-touch)')
+    parser.add_argument('--output', help='Output directory (default: models/<model>-<task>)')
     parser.add_argument('--model', help='HuggingFace model ID (default: from config)')
     parser.add_argument('--config', default='config.yaml', help='Config file path')
     parser.add_argument('--gui-mode', action='store_true', help='Enable GUI-friendly output (less verbose)')
@@ -447,13 +453,18 @@ def main():
     # Load config
     config = load_config(args.config)
 
+    # Load task config for naming
+    task_config = load_task_config()
+    task_name = task_config['task_name']
+
     # Determine output directory
     if args.output:
         output_dir = args.output
     else:
         model_name = args.model if args.model else config['model']['name']
         safe_name = model_name.replace('/', '-')
-        output_dir = os.path.join(config['paths']['models'], f"{safe_name}-nose-touch")
+        # Use dynamic task name from config
+        output_dir = os.path.join(config['paths']['models'], f"{safe_name}-{task_name}")
 
     ensure_dir(output_dir)
 

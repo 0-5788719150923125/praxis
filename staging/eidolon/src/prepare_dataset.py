@@ -15,7 +15,15 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 from typing import Optional
-from utils import load_config, ensure_dir
+from utils import (
+    load_config,
+    ensure_dir,
+    load_task_config,
+    internal_to_display,
+    display_to_internal,
+    migrate_labels_to_internal,
+    create_task_config_from_labels
+)
 from video_frame_extractor import VideoFrameExtractor
 
 
@@ -95,9 +103,24 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
         output_dir: Output directory for dataset
         config: Configuration dictionary
     """
+    # Load task config
+    task_config = load_task_config()
+    pos_label = task_config['labels']['positive']['display_name']
+    neg_label = task_config['labels']['negative']['display_name']
+
     # Load labels
     print(f"Loading labels from: {labels_csv}")
     df = pd.read_csv(labels_csv)
+
+    # Migrate labels to internal format ('true'/'false')
+    df = migrate_labels_to_internal(df, backup=True, backup_path=labels_csv)
+
+    # Save migrated labels back to CSV
+    df.to_csv(labels_csv, index=False)
+
+    # Create task_config.json if missing (infer from detected labels)
+    if not os.path.exists('task_config.json'):
+        create_task_config_from_labels(labels_csv)
 
     # Detect and handle old schema if needed
     if 'frame_path' in df.columns and 'video_path' not in df.columns:
@@ -111,19 +134,22 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     if not all(col in df.columns for col in required_cols):
         raise ValueError(f"labels.csv missing required columns: {required_cols}")
 
-    # Remove skipped frames (only keep labeled ones)
-    df = df[df['label'].isin(['touching', 'not_touching'])]
+    # Remove skipped frames (only keep binary labeled samples)
+    df = df[df['label'].isin(['true', 'false'])]  # Use internal labels
 
     print(f"\nDataset statistics:")
     print(f"  Total samples: {len(df)}")
     print(f"\nClass distribution:")
-    print(df['label'].value_counts())
-    print(df['label'].value_counts(normalize=True))
+
+    # Convert to display labels for user output
+    display_labels = df['label'].map(lambda x: internal_to_display(x, task_config))
+    print(display_labels.value_counts())
+    print(display_labels.value_counts(normalize=True))
 
     # Check class balance
     class_counts = df['label'].value_counts()
     if len(class_counts) < 2:
-        raise ValueError("Need at least 2 classes (touching and not_touching)")
+        raise ValueError(f"Need at least 2 classes ({pos_label} and {neg_label})")
 
     imbalance_ratio = class_counts.max() / class_counts.min()
     if imbalance_ratio > 10:
@@ -162,9 +188,9 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     print(f"  Val:   {len(val_df)} ({len(val_df)/len(df)*100:.1f}%)")
     print(f"  Test:  {len(test_df)} ({len(test_df)/len(df)*100:.1f}%)")
 
-    # Create directory structure
+    # Create directory structure (use display labels for directories)
     for split in ['train', 'val', 'test']:
-        for label in ['touching', 'not_touching']:
+        for label in [pos_label, neg_label]:
             split_dir = os.path.join(output_dir, split, label)
             ensure_dir(split_dir)
 
@@ -196,11 +222,13 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
                     timestamp = row['timestamp']
                     frame = extractor.get_frame_at_timestamp(timestamp)
 
-                    # Save to dataset directory
-                    label = row['label']
+                    # Convert internal label to display label for directory name
+                    internal_label = row['label']  # 'true' or 'false'
+                    display_label = internal_to_display(internal_label, task_config)
+
                     # Use timestamp-based filename for uniqueness
                     filename = f"{Path(video_path).stem}_frame_{int(timestamp*1000):08d}.jpg"
-                    dst = os.path.join(output_dir, split_name, label, filename)
+                    dst = os.path.join(output_dir, split_name, display_label, filename)
 
                     # Write frame
                     cv2.imwrite(dst, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -230,14 +258,14 @@ def prepare_dataset(labels_csv: str, output_dir: str, config: dict):
     print(f"\nDirectory structure:")
     print(f"  {output_dir}/")
     print(f"    train/")
-    print(f"      touching/")
-    print(f"      not_touching/")
+    print(f"      {pos_label}/")
+    print(f"      {neg_label}/")
     print(f"    val/")
-    print(f"      touching/")
-    print(f"      not_touching/")
+    print(f"      {pos_label}/")
+    print(f"      {neg_label}/")
     print(f"    test/")
-    print(f"      touching/")
-    print(f"      not_touching/")
+    print(f"      {pos_label}/")
+    print(f"      {neg_label}/")
 
 
 def main():
