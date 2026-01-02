@@ -18,19 +18,20 @@ Usage:
     python src/label_frames.py --video videos/my_video.mp4
 """
 
-import os
 import argparse
-import pandas as pd
+import os
 import tempfile
 import threading
 import time
 from pathlib import Path
+
+import pandas as pd
 from utils import (
-    ensure_dir,
-    load_task_config,
-    internal_to_display,
     display_to_internal,
-    migrate_labels_to_internal
+    ensure_dir,
+    internal_to_display,
+    load_task_config,
+    migrate_labels_to_internal,
 )
 from video_frame_extractor import VideoFrameExtractor
 
@@ -54,8 +55,14 @@ except ImportError:
 class FrameLabeler:
     """Interactive frame labeling tool using mpv player."""
 
-    def __init__(self, video_path: str, labels_csv: str, target_fps: int = 5,
-                 debug: bool = False, task_config: dict = None):
+    def __init__(
+        self,
+        video_path: str,
+        labels_csv: str,
+        target_fps: int = 5,
+        debug: bool = False,
+        task_config: dict = None,
+    ):
         self.video_path = os.path.abspath(video_path)
         self.labels_csv = labels_csv
         self.target_fps = target_fps
@@ -63,8 +70,8 @@ class FrameLabeler:
 
         # Load task configuration
         self.task_config = task_config or load_task_config()
-        self.pos_label = self.task_config['labels']['positive']['display_name']
-        self.neg_label = self.task_config['labels']['negative']['display_name']
+        self.pos_label = self.task_config["labels"]["positive"]["display_name"]
+        self.neg_label = self.task_config["labels"]["negative"]["display_name"]
 
         # Create video frame extractor for on-demand single frame extraction
         self.extractor = VideoFrameExtractor(video_path, target_fps)
@@ -86,29 +93,36 @@ class FrameLabeler:
 
             # Detect schema version
             # Check if video_path column exists AND has non-empty values
-            if 'video_path' in df.columns and df['video_path'].notna().any():
+            if "video_path" in df.columns and df["video_path"].notna().any():
                 # NEW schema with populated video_path
                 for _, row in df.iterrows():
                     # Handle both empty and populated video_path
-                    if pd.notna(row['video_path']) and row['video_path'] == self.video_path:
-                        timestamp = float(row['timestamp'])
+                    if (
+                        pd.notna(row["video_path"])
+                        and row["video_path"] == self.video_path
+                    ):
+                        timestamp = float(row["timestamp"])
                         # Labels already in internal format after migration
-                        self.labels[timestamp] = row['label']
+                        self.labels[timestamp] = row["label"]
 
             # If no video_path data found, fall back to OLD schema (frame_path matching)
-            if len(self.labels) == 0 and 'frame_path' in df.columns:
+            if len(self.labels) == 0 and "frame_path" in df.columns:
                 video_name = Path(self.video_path).stem
                 if self.debug:
                     print(f"DEBUG: Looking for video_name '{video_name}' in frame_path")
-                    print(f"DEBUG: Sample frame_path: {df['frame_path'].iloc[0] if len(df) > 0 else 'N/A'}")
+                    print(
+                        f"DEBUG: Sample frame_path: {df['frame_path'].iloc[0] if len(df) > 0 else 'N/A'}"
+                    )
 
                 for _, row in df.iterrows():
                     # Skip rows with NaN/empty frame_path
-                    if pd.notna(row['frame_path']) and isinstance(row['frame_path'], str):
-                        if video_name in row['frame_path']:
-                            timestamp = float(row['timestamp'])
+                    if pd.notna(row["frame_path"]) and isinstance(
+                        row["frame_path"], str
+                    ):
+                        if video_name in row["frame_path"]:
+                            timestamp = float(row["timestamp"])
                             # Labels already in internal format after migration
-                            self.labels[timestamp] = row['label']
+                            self.labels[timestamp] = row["label"]
 
             if len(self.labels) > 0:
                 print(f"✓ Loaded {len(self.labels)} existing labels for this video")
@@ -118,14 +132,14 @@ class FrameLabeler:
         # Get video FPS for frame skip information
         self.extractor = VideoFrameExtractor(video_path, target_fps)
         self.video_info = self.extractor.get_video_metadata()
-        source_fps = self.video_info['fps']
+        source_fps = self.video_info["fps"]
 
         # Configure playback speed for hold-to-scrub
         self.playback_speed = 3.0  # 3x speed for right arrow scrubbing
-        self.FRAMES_TO_SKIP = 3     # frames to skip on click
+        self.FRAMES_TO_SKIP = 11  # frames to skip on click (forward)
 
-        # Calculate seek times (3 frames each direction)
-        self.backward_frames = 3
+        # Calculate seek times
+        self.backward_frames = 11  # frames to skip backward
         backward_seek_time = self.backward_frames / source_fps
         forward_seek_time = self.FRAMES_TO_SKIP / source_fps
 
@@ -142,23 +156,25 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         # Store seek time for Python-side RIGHT arrow handling
         self.forward_seek_time = forward_seek_time
         # Create temporary input.conf file
-        self.input_conf_fd, self.input_conf_path = tempfile.mkstemp(suffix='.conf', text=True)
-        with os.fdopen(self.input_conf_fd, 'w') as f:
+        self.input_conf_fd, self.input_conf_path = tempfile.mkstemp(
+            suffix=".conf", text=True
+        )
+        with os.fdopen(self.input_conf_fd, "w") as f:
             f.write(input_conf_content)
 
         # Initialize mpv player with custom input configuration
         self.player = mpv.MPV(
             input_default_bindings=True,  # Enable default mpv controls
             input_conf=self.input_conf_path,  # Use our custom arrow key bindings
-            input_vo_keyboard=True,        # Enable keyboard input
-            osc=True,                      # Show on-screen controller
-            keep_open=True,                # Don't close when video ends
-            pause=True,                    # Start paused for labeling
-            video_sync='display-vdrop',    # Smooth playback
-            audio='no',                    # Disable audio (labeling is visual only)
-            demuxer_seekable_cache='yes',  # Cache seeking for smoother exact seeks
-            cache='yes',                   # Enable cache
-            demuxer_max_bytes='150M',      # Larger cache for better seek performance
+            input_vo_keyboard=True,  # Enable keyboard input
+            osc=True,  # Show on-screen controller
+            keep_open=True,  # Don't close when video ends
+            pause=True,  # Start paused for labeling
+            video_sync="display-vdrop",  # Smooth playback
+            audio="no",  # Disable audio (labeling is visual only)
+            demuxer_seekable_cache="yes",  # Cache seeking for smoother exact seeks
+            cache="yes",  # Enable cache
+            demuxer_max_bytes="150M",  # Larger cache for better seek performance
         )
 
         # MPV always ignores RIGHT - no need for dynamic sections
@@ -170,13 +186,13 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         self.setup_hold_to_scrub_listener()
 
         # Setup property observers for persistent overlay updates
-        @self.player.property_observer('time-pos')
+        @self.player.property_observer("time-pos")
         def on_time_change(_name, value):
             """Update overlay when playback position changes."""
             if value is not None:
                 self.update_overlay()
 
-        @self.player.property_observer('pause')
+        @self.player.property_observer("pause")
         def on_pause_change(_name, value):
             """Update overlay when pause state changes."""
             self.update_overlay()
@@ -188,7 +204,9 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         try:
             self.player.wait_until_playing()
             print("✓ Video loaded")
-            print(f"✓ Arrow keys: → click=skip {self.FRAMES_TO_SKIP} frames, hold=play {self.playback_speed:.0f}x | ← seek back {self.backward_frames} frames")
+            print(
+                f"✓ Arrow keys: → click=skip {self.FRAMES_TO_SKIP} frames, hold=play {self.playback_speed:.0f}x | ← click=skip back {self.backward_frames} frames"
+            )
             if self.debug:
                 print("✓ Debug mode enabled: auto-repeat diagnostics will be printed")
         except mpv.ShutdownError:
@@ -202,14 +220,16 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
     def _cleanup_temp_file(self):
         """Clean up temporary input.conf file and keyboard listener."""
         try:
-            if hasattr(self, 'input_conf_path') and os.path.exists(self.input_conf_path):
+            if hasattr(self, "input_conf_path") and os.path.exists(
+                self.input_conf_path
+            ):
                 os.unlink(self.input_conf_path)
         except Exception:
             pass
 
         # Stop keyboard listener
         try:
-            if hasattr(self, 'keyboard_listener'):
+            if hasattr(self, "keyboard_listener"):
                 self.keyboard_listener.stop()
         except Exception:
             pass
@@ -217,7 +237,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
     def setup_keyboard_controls(self):
         """Setup custom keyboard controls for labeling."""
 
-        @self.player.on_key_press('RIGHT')
+        @self.player.on_key_press("RIGHT")
         def handle_right_arrow():
             """Handle RIGHT arrow in MPV - check if we should seek or ignore (during playback)."""
             # If in playback mode, ignore the key press
@@ -226,20 +246,22 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
 
             # Otherwise, perform seek (this is the click case)
             try:
-                self.player.command('seek', self.forward_seek_time, 'relative', 'exact')
+                self.player.command("seek", self.forward_seek_time, "relative", "exact")
                 if self.debug:
                     print(f"[DEBUG] MPV handler: seeking {self.FRAMES_TO_SKIP} frames")
             except (mpv.ShutdownError, OSError):
                 pass
 
-        @self.player.on_key_press('t')
+        @self.player.on_key_press("t")
         def label_positive():
             """Mark current frame as positive class."""
             timestamp = self.get_current_timestamp()
-            self.labels[timestamp] = 'true'  # Store internal label
+            self.labels[timestamp] = "true"  # Store internal label
 
             positive_count, negative_count = self.get_label_stats()
-            print(f"✓ Labeled {self.pos_label.upper()} @ {timestamp:.2f}s (Balance: {positive_count}/{negative_count})")
+            print(
+                f"✓ Labeled {self.pos_label.upper()} @ {timestamp:.2f}s (Balance: {positive_count}/{negative_count})"
+            )
 
             # Update overlay to reflect new label
             self.update_overlay()
@@ -247,22 +269,24 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             # Show brief confirmation
             self.player.show_text(
                 f"✓ {self.pos_label.upper()} @ {self.format_timestamp(timestamp)}",
-                duration=1500
+                duration=1500,
             )
 
-        @self.player.on_key_press('T')
+        @self.player.on_key_press("T")
         def label_positive_upper():
             """Same as lowercase t."""
             label_positive()
 
-        @self.player.on_key_press('f')
+        @self.player.on_key_press("f")
         def label_negative():
             """Mark current frame as negative class."""
             timestamp = self.get_current_timestamp()
-            self.labels[timestamp] = 'false'  # Store internal label
+            self.labels[timestamp] = "false"  # Store internal label
 
             positive_count, negative_count = self.get_label_stats()
-            print(f"✓ Labeled {self.neg_label.upper()} @ {timestamp:.2f}s (Balance: {positive_count}/{negative_count})")
+            print(
+                f"✓ Labeled {self.neg_label.upper()} @ {timestamp:.2f}s (Balance: {positive_count}/{negative_count})"
+            )
 
             # Update overlay to reflect new label
             self.update_overlay()
@@ -270,33 +294,33 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             # Show brief confirmation
             self.player.show_text(
                 f"✓ {self.neg_label.upper()} @ {self.format_timestamp(timestamp)}",
-                duration=1500
+                duration=1500,
             )
 
-        @self.player.on_key_press('F')
+        @self.player.on_key_press("F")
         def label_negative_upper():
             """Same as lowercase f."""
             label_negative()
 
-        @self.player.on_key_press('s')
+        @self.player.on_key_press("s")
         def save_and_quit():
             """Save and quit."""
             print("\nSaving and quitting...")
             self.save_labels()
             self.player.quit()
 
-        @self.player.on_key_press('S')
+        @self.player.on_key_press("S")
         def save_and_quit_upper():
             """Same as lowercase s."""
             save_and_quit()
 
-        @self.player.on_key_press('i')
+        @self.player.on_key_press("i")
         def show_stats():
             """Refresh overlay display."""
             self.update_overlay()
             print("Overlay refreshed")
 
-        @self.player.on_key_press('I')
+        @self.player.on_key_press("I")
         def show_stats_upper():
             """Same as lowercase i."""
             show_stats()
@@ -305,8 +329,8 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         """Setup hold-to-scrub using auto-repeat detection with immediate suppression."""
         # State tracking
         self.right_arrow_pressed = False  # Is RIGHT physically held down?
-        self.playback_mode = False        # Are we in playback mode?
-        self.press_start_time = None      # When was RIGHT first pressed?
+        self.playback_mode = False  # Are we in playback mode?
+        self.press_start_time = None  # When was RIGHT first pressed?
 
         def on_press(key):
             """Detect auto-repeat to trigger playback mode."""
@@ -319,7 +343,9 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                 if not self.playback_mode:
                     self.enter_playback_mode()
                     if self.debug:
-                        print("[DEBUG] pynput: Auto-repeat detected - entering playback mode")
+                        print(
+                            "[DEBUG] pynput: Auto-repeat detected - entering playback mode"
+                        )
             else:
                 # First press - just track it, MPV handler will do the seek
                 self.right_arrow_pressed = True
@@ -338,17 +364,25 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             if self.playback_mode:
                 self.exit_playback_mode()
                 if self.debug:
-                    hold_duration = time.time() - self.press_start_time if self.press_start_time else 0
-                    print(f"[DEBUG] Hold released ({hold_duration*1000:.0f}ms) - exiting playback")
+                    hold_duration = (
+                        time.time() - self.press_start_time
+                        if self.press_start_time
+                        else 0
+                    )
+                    print(
+                        f"[DEBUG] Hold released ({hold_duration*1000:.0f}ms) - exiting playback"
+                    )
             elif self.debug:
-                hold_duration = time.time() - self.press_start_time if self.press_start_time else 0
+                hold_duration = (
+                    time.time() - self.press_start_time if self.press_start_time else 0
+                )
                 print(f"[DEBUG] Click released ({hold_duration*1000:.0f}ms)")
 
         # Start keyboard listener
         self.keyboard_listener = keyboard.Listener(
             on_press=on_press,
             on_release=on_release,
-            suppress=False  # Don't suppress - we need auto-repeat events!
+            suppress=False,  # Don't suppress - we need auto-repeat events!
         )
         self.keyboard_listener.start()
 
@@ -388,7 +422,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
     def frame_step_forward(self):
         """Step forward one frame."""
         try:
-            self.player.command('frame-step')
+            self.player.command("frame-step")
             self.update_overlay()
             print(f"→ Frame forward @ {self.get_current_timestamp():.2f}s")
         except (mpv.ShutdownError, OSError):
@@ -398,7 +432,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
     def frame_step_backward(self):
         """Step backward one frame."""
         try:
-            self.player.command('frame-back-step')
+            self.player.command("frame-back-step")
             self.update_overlay()
             print(f"← Frame backward @ {self.get_current_timestamp():.2f}s")
         except (mpv.ShutdownError, OSError):
@@ -433,7 +467,9 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             else:
                 positive_pct = (positive_count / total) * 100
                 negative_pct = (negative_count / total) * 100
-                ratio = max(positive_count, negative_count) / max(min(positive_count, negative_count), 1)
+                ratio = max(positive_count, negative_count) / max(
+                    min(positive_count, negative_count), 1
+                )
 
                 if ratio <= 2.0:
                     balance_status = "BALANCED ✓"
@@ -455,7 +491,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                 f"{balance_text}\n"
                 f"\n"
                 f"T={self.pos_label} | F={self.neg_label} | S=save & quit\n"
-                f"→=skip 3 (hold=3x) | ←=back 3 | ,/.=step 1 | Space=pause"
+                f"→=skip {self.FRAMES_TO_SKIP} (hold=3x) | ←=back {self.backward_frames} | ,/.=step 1 | Space=pause"
             )
 
             # Show persistent overlay (10 minute duration = effectively permanent)
@@ -466,8 +502,8 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
 
     def get_label_stats(self):
         """Calculate current label distribution."""
-        positive = sum(1 for label in self.labels.values() if label == 'true')
-        negative = sum(1 for label in self.labels.values() if label == 'false')
+        positive = sum(1 for label in self.labels.values() if label == "true")
+        negative = sum(1 for label in self.labels.values() if label == "false")
         return positive, negative
 
     def save_labels(self):
@@ -483,15 +519,19 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
                 existing_df = pd.read_csv(self.labels_csv)
 
                 # Keep labels from OTHER videos
-                if 'video_path' in existing_df.columns:
+                if "video_path" in existing_df.columns:
                     # NEW schema - filter by video_path
-                    other_videos_df = existing_df[existing_df['video_path'] != self.video_path]
-                    existing_labels = other_videos_df.to_dict('records')
+                    other_videos_df = existing_df[
+                        existing_df["video_path"] != self.video_path
+                    ]
+                    existing_labels = other_videos_df.to_dict("records")
                 else:
                     # OLD schema - filter by video name in frame_path
                     video_name = Path(self.video_path).stem
-                    other_videos_df = existing_df[~existing_df['frame_path'].str.contains(video_name, regex=False)]
-                    existing_labels = other_videos_df.to_dict('records')
+                    other_videos_df = existing_df[
+                        ~existing_df["frame_path"].str.contains(video_name, regex=False)
+                    ]
+                    existing_labels = other_videos_df.to_dict("records")
             except Exception as e:
                 print(f"Warning: Could not load existing labels: {e}")
 
@@ -501,12 +541,14 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
             # Calculate frame index for backward compatibility
             frame_idx = int(timestamp * self.target_fps)
 
-            current_video_labels.append({
-                'video_path': self.video_path,
-                'frame_index': frame_idx,
-                'label': label,
-                'timestamp': timestamp
-            })
+            current_video_labels.append(
+                {
+                    "video_path": self.video_path,
+                    "frame_index": frame_idx,
+                    "label": label,
+                    "timestamp": timestamp,
+                }
+            )
 
         # Combine: labels from other videos + labels from current video
         all_labels = existing_labels + current_video_labels
@@ -524,7 +566,7 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         # Print label distribution for current video
         current_df = pd.DataFrame(current_video_labels)
         print("\nLabel distribution for this video:")
-        print(current_df['label'].value_counts())
+        print(current_df["label"].value_counts())
 
     def run(self):
         """Run interactive labeling session."""
@@ -537,11 +579,13 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
         print("  Space - Pause/Play")
         print(f"  → Arrow (click) - Skip forward {self.FRAMES_TO_SKIP} frames")
         print(f"  → Arrow (HOLD) - Play forward at {self.playback_speed:.0f}x speed")
-        print(f"  ← Arrow - Seek backward {self.backward_frames} frames (hold for continuous)")
+        print(f"  ← Arrow (click) - Skip backward {self.backward_frames} frames")
         print("  , / . - Step backward/forward one frame (precise)")
         print("  Left Click Timeline - Seek to position")
         print()
-        print(f"Tip: Aim for roughly 50/50 balance between {self.pos_label} and {self.neg_label}")
+        print(
+            f"Tip: Aim for roughly 50/50 balance between {self.pos_label} and {self.neg_label}"
+        )
         print("The overlay shows stats automatically and updates as you label.")
         print()
         print("mpv player is now running. Press S when done to save and quit.")
@@ -556,28 +600,33 @@ LEFT repeatable seek -{backward_seek_time:.6f} exact
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Label video frames using mpv player')
-    parser.add_argument('--video', required=True, help='Path to video file')
-    parser.add_argument('--output', help='Output CSV path (default: data/labels.csv)')
-    parser.add_argument('--fps', type=int, default=5, help='Target FPS for frame indexing (default: 5)')
-    parser.add_argument('--debug', action='store_true', help='Enable debug timing output')
+    parser = argparse.ArgumentParser(description="Label video frames using mpv player")
+    parser.add_argument("--video", required=True, help="Path to video file")
+    parser.add_argument("--output", help="Output CSV path (default: data/labels.csv)")
+    parser.add_argument(
+        "--fps", type=int, default=5, help="Target FPS for frame indexing (default: 5)"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug timing output"
+    )
 
     args = parser.parse_args()
 
     # Determine output path
-    output_csv = args.output if args.output else 'data/labels.csv'
+    output_csv = args.output if args.output else "data/labels.csv"
 
     # Load task config
     task_config = load_task_config()
 
     # Run labeler
     try:
-        labeler = FrameLabeler(args.video, output_csv, args.fps,
-                              debug=args.debug, task_config=task_config)
+        labeler = FrameLabeler(
+            args.video, output_csv, args.fps, debug=args.debug, task_config=task_config
+        )
         labeler.run()
     except SystemExit as e:
         # Clean exit (e.g., user closed window)
-        exit(e.code if hasattr(e, 'code') else 0)
+        exit(e.code if hasattr(e, "code") else 0)
     except mpv.ShutdownError:
         # User closed mpv window - exit cleanly
         print("\nmpv window closed. Exiting without saving.")
@@ -588,9 +637,11 @@ def main():
     except Exception as e:
         print(f"\nERROR: {e}")
         import traceback
+
         traceback.print_exc()
         exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    main()
     main()
