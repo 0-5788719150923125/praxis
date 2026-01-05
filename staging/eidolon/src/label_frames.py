@@ -136,10 +136,10 @@ class FrameLabeler:
 
         # Configure playback speed for hold-to-scrub
         self.playback_speed = 3.0  # 3x speed for right arrow scrubbing
-        self.FRAMES_TO_SKIP = 11  # frames to skip on click (forward)
+        self.FRAMES_TO_SKIP = 5  # frames to skip on click (forward)
 
         # Calculate seek times
-        self.backward_frames = 11  # frames to skip backward
+        self.backward_frames = 5  # frames to skip backward
         backward_seek_time = self.backward_frames / source_fps
         forward_seek_time = self.FRAMES_TO_SKIP / source_fps
 

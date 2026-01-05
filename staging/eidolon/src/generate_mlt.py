@@ -27,6 +27,61 @@ def format_timecode(seconds: float, fps: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
 
 
+def merge_overlapping_clips(clips: list, fps: float) -> list:
+    """
+    Merge clips that overlap or are adjacent after applying buffers.
+
+    This prevents duplicate content when events are close together.
+    For example, if two events are 2 seconds apart but each has 1s pre-buffer
+    and 2s post-buffer, their clips would overlap by 1 second. This function
+    merges such clips into a single continuous clip.
+
+    Args:
+        clips: List of clip dicts with 'start', 'end', 'duration' keys
+        fps: Video frame rate (for logging)
+
+    Returns:
+        List of merged clips (non-overlapping)
+    """
+    if not clips:
+        return []
+
+    # Sort clips by start time
+    sorted_clips = sorted(clips, key=lambda c: c['start'])
+    merged = []
+
+    for current_clip in sorted_clips:
+        if not merged:
+            # First clip - initialize with event_ids list
+            current_clip['event_ids'] = [current_clip.get('event_id', 1)]
+            merged.append(current_clip)
+        else:
+            previous_clip = merged[-1]
+
+            # Check for overlap: current starts before or at previous end
+            if current_clip['start'] <= previous_clip['end']:
+                # Overlap detected - merge clips
+                original_end = previous_clip['end']
+                previous_clip['end'] = max(previous_clip['end'], current_clip['end'])
+                previous_clip['duration'] = previous_clip['end'] - previous_clip['start']
+
+                # Track which events were merged
+                previous_clip['event_ids'].append(current_clip.get('event_id', len(merged) + 1))
+
+                # Log the merge
+                overlap = original_end - current_clip['start']
+                print(f"  ↳ Merged overlapping clips (overlap: {overlap:.2f}s) - "
+                      f"Events {previous_clip['event_ids']} → "
+                      f"Combined clip: {format_timecode(previous_clip['start'], fps)} - "
+                      f"{format_timecode(previous_clip['end'], fps)}")
+            else:
+                # No overlap - keep as separate clip
+                current_clip['event_ids'] = [current_clip.get('event_id', len(merged) + 1)]
+                merged.append(current_clip)
+
+    return merged
+
+
 def create_mlt_project(video_path: str, events: list, fps: float, output_path: str,
                        marker_buffer: float = 2.0, post_buffer: float = 1.0, mode: str = 'cut_markers',
                        mute_audio: bool = False, add_benny_hill: bool = False, vertical_format: bool = False):
@@ -234,9 +289,8 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
 
     else:  # mode == 'extract_clips'
         # Mode 2: Extract event clips only, concatenated back-to-back (montage)
+        # Step 1: Calculate clip boundaries with buffers for all events
         clips = []
-        total_montage_duration = 0.0
-        chain_index = 0
 
         for i, event in enumerate(events):
             # Calculate clip boundaries with buffers
@@ -249,12 +303,31 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
                 continue
 
             clips.append({
+                'event_id': event.get('event_id', i + 1),
                 'start': clip_start,
                 'end': clip_end,
                 'duration': clip_duration
             })
 
-            print(f"  Clip {i+1}: {format_timecode(clip_start, fps)} → {format_timecode(clip_end, fps)} (duration: {clip_duration:.2f}s)")
+            print(f"  Event {i+1}: {format_timecode(clip_start, fps)} → {format_timecode(clip_end, fps)} (duration: {clip_duration:.2f}s)")
+
+        # Step 2: Merge overlapping clips to prevent duplicate content
+        print(f"\nMerging overlapping clips...")
+        merged_clips = merge_overlapping_clips(clips, fps)
+
+        if len(merged_clips) < len(clips):
+            print(f"✓ Reduced {len(clips)} clips to {len(merged_clips)} clips after merging")
+        else:
+            print(f"✓ No overlapping clips detected ({len(clips)} clips)")
+
+        # Step 3: Create MLT chains from merged clips
+        print(f"\nCreating timeline clips...")
+        total_montage_duration = 0.0
+
+        for chain_index, clip in enumerate(merged_clips):
+            clip_start = clip['start']
+            clip_end = clip['end']
+            clip_duration = clip['duration']
 
             # Create a separate chain for each clip
             chain_id = f'chain{chain_index}'
@@ -282,9 +355,15 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
                                     **{'in': start_tc, 'out': end_tc})
 
             total_montage_duration += clip_duration
-            chain_index += 1
 
-        print(f"\nCreated {len(clips)} clips with total montage duration: {total_montage_duration:.2f}s")
+            # Log which events are in this clip
+            event_ids = clip.get('event_ids', [clip.get('event_id', chain_index + 1)])
+            if len(event_ids) > 1:
+                print(f"  Clip {chain_index+1} (merged): Events {event_ids} → {format_timecode(clip_start, fps)} - {format_timecode(clip_end, fps)} ({clip_duration:.2f}s)")
+            else:
+                print(f"  Clip {chain_index+1}: Event {event_ids[0]} → {format_timecode(clip_start, fps)} - {format_timecode(clip_end, fps)} ({clip_duration:.2f}s)")
+
+        print(f"\nCreated {len(merged_clips)} clips with total montage duration: {total_montage_duration:.2f}s")
 
         # Timeline duration is the sum of all clip durations
         total_duration_tc = format_timecode(total_montage_duration, fps)
@@ -409,7 +488,7 @@ def create_mlt_project(video_path: str, events: list, fps: float, output_path: s
         print(f"  2. Timeline shows the full video with cuts at predicted moments")
         print(f"  3. Manually delete unwanted segments or File → Export to render")
     else:
-        print(f"Montage contains {len(clips)} clips")
+        print(f"Montage contains {len(merged_clips)} clips")
         print(f"\nTo use:")
         print(f"  1. Open Shotcut: shotcut {output_path}")
         print(f"  2. Timeline shows extracted event clips concatenated back-to-back")
