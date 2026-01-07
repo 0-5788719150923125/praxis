@@ -17,6 +17,7 @@ import os
 import argparse
 import numpy as np
 from pathlib import Path
+from scipy.ndimage import median_filter
 from utils import (
     load_config,
     load_json,
@@ -26,6 +27,79 @@ from utils import (
     get_video_info,
     load_task_config
 )
+
+
+def apply_temporal_smoothing(predictions: list, method: str, window_size: int, consensus_threshold: float = 0.6) -> list:
+    """
+    Apply temporal smoothing to reduce false positives from single-frame misclassifications.
+
+    Args:
+        predictions: List of prediction dicts with 'probability' field
+        method: Smoothing method - "median", "moving_average", or "consensus"
+        window_size: Number of frames to consider in the window
+        consensus_threshold: For consensus mode - fraction of frames that must agree (0.0-1.0)
+
+    Returns:
+        Smoothed predictions with updated 'probability' field
+    """
+    if len(predictions) == 0:
+        return predictions
+
+    # Extract probabilities as numpy array
+    probs = np.array([p['probability'] for p in predictions])
+    original_probs = probs.copy()
+
+    if method == "median":
+        # Median filter: Replace each value with median of surrounding window
+        # This is very effective at removing isolated spikes/false positives
+        smoothed_probs = median_filter(probs, size=window_size, mode='nearest')
+
+    elif method == "moving_average":
+        # Moving average: Smooth by averaging neighboring frames
+        # Creates smoother transitions but can blur true boundaries
+        smoothed_probs = np.convolve(probs, np.ones(window_size)/window_size, mode='same')
+
+    elif method == "consensus":
+        # Consensus voting: Require multiple frames in window to agree
+        # Most aggressive - good for very noisy predictions
+        smoothed_probs = np.zeros_like(probs)
+        half_window = window_size // 2
+
+        for i in range(len(probs)):
+            start = max(0, i - half_window)
+            end = min(len(probs), i + half_window + 1)
+            window = probs[start:end]
+
+            # Count how many frames in window are above 0.5
+            positive_fraction = np.mean(window > 0.5)
+
+            # If consensus threshold met, use original probability, else suppress
+            if positive_fraction >= consensus_threshold:
+                smoothed_probs[i] = probs[i]
+            else:
+                smoothed_probs[i] = 0.0
+
+    else:
+        raise ValueError(f"Unknown smoothing method: {method}")
+
+    # Update predictions with smoothed probabilities
+    smoothed_predictions = []
+    for i, pred in enumerate(predictions):
+        smoothed_predictions.append({
+            'frame_idx': pred['frame_idx'],
+            'timestamp': pred['timestamp'],
+            'probability': float(smoothed_probs[i]),
+            'original_probability': float(original_probs[i])  # Keep original for debugging
+        })
+
+    # Print smoothing statistics
+    diff = np.abs(smoothed_probs - original_probs)
+    print(f"\nTemporal smoothing applied ({method}, window={window_size}):")
+    print(f"  Mean absolute change: {np.mean(diff):.4f}")
+    print(f"  Max change: {np.max(diff):.4f}")
+    print(f"  Frames significantly changed (>0.2): {np.sum(diff > 0.2)}/{len(probs)}")
+
+    return smoothed_predictions
 
 
 def apply_threshold_to_predictions(predictions: list, threshold: float, task_config: dict = None) -> list:
@@ -175,21 +249,44 @@ def process_events_from_predictions(
 
     # Show probability statistics
     probs = [p['probability'] for p in raw_predictions]
-    print(f"Probability statistics:")
+    print(f"Probability statistics (raw):")
     print(f"  Min: {min(probs):.4f}")
     print(f"  Max: {max(probs):.4f}")
     print(f"  Mean: {np.mean(probs):.4f}")
     print(f"  Std: {np.std(probs):.4f}")
     print()
 
+    # Apply temporal smoothing if enabled
+    predictions_to_threshold = raw_predictions
+    if config and config.get('inference', {}).get('temporal_smoothing', {}).get('enabled', False):
+        smoothing_config = config['inference']['temporal_smoothing']
+        method = smoothing_config.get('method', 'median')
+        window_size = smoothing_config.get('window_size', 5)
+        consensus_threshold_val = smoothing_config.get('consensus_threshold', 0.6)
+
+        print(f"Temporal smoothing enabled:")
+        print(f"  Method: {method}")
+        print(f"  Window size: {window_size} frames")
+        if method == 'consensus':
+            print(f"  Consensus threshold: {consensus_threshold_val}")
+
+        predictions_to_threshold = apply_temporal_smoothing(
+            raw_predictions,
+            method=method,
+            window_size=window_size,
+            consensus_threshold=consensus_threshold_val
+        )
+    else:
+        print("Temporal smoothing: disabled")
+
     # Apply threshold
-    print(f"Parameters:")
+    print(f"\nClassification parameters:")
     print(f"  Classification threshold: {threshold}")
     print(f"  Min event duration: {min_duration}s")
     print()
 
     print("Applying threshold to predictions...")
-    predictions = apply_threshold_to_predictions(raw_predictions, threshold, task_config)
+    predictions = apply_threshold_to_predictions(predictions_to_threshold, threshold, task_config)
 
     positive_frames = sum(1 for p in predictions if p['predicted_class'] == pos_label)
     print(f"{pos_label} frames: {positive_frames}/{len(predictions)} ({positive_frames/len(predictions)*100:.1f}%)")

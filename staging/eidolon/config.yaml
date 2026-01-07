@@ -17,7 +17,7 @@ training:
   learning_rate: 0.001
   epochs: 50
   early_stopping_patience: 10
-  weight_decay: 0.1
+  weight_decay: 0.01
   warmup_steps: 10
   train_split: 0.70
   val_split: 0.15
@@ -46,6 +46,13 @@ inference:
   batch_size: 256 # Larger batch = faster inference
   threshold: 0.5 # Classification threshold (lower = more detections)
   min_event_duration: 0.4 # Minimum duration in seconds (filters brief detections)
+
+  # Temporal smoothing (reduces false positives from single-frame misclassifications)
+  temporal_smoothing:
+    enabled: true
+    method: "median"  # Options: "median", "moving_average", "consensus"
+    window_size: 5    # Number of frames to consider (odd number recommended for median)
+    consensus_threshold: 0.6  # For consensus mode: fraction of frames that must agree (0.0-1.0)
 
 # MLT project generation
 mlt:
