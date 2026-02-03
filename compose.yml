@@ -14,7 +14,8 @@ services:
     ports:
       - "2100:2100"
     env_file:
-      - .env
+      - path: ./.env
+        required: false
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
