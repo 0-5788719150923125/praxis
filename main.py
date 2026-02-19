@@ -246,6 +246,17 @@ def main():
     trainer_type = processed_args.get("trainer_type", "backpropagation")
     pipeline_depth = processed_args.get("pipeline_depth", 4)
     preserve = processed_args.get("preserve", False)
+    num_nodes = processed_args.get("num_nodes", 1)
+    node_rank = processed_args.get("node_rank", 0)
+    master_addr = processed_args.get("master_addr", "localhost")
+    master_port = processed_args.get("master_port", 29500)
+
+    # Set distributed env vars before Lightning initializes the process group.
+    # We only set them when num_nodes > 1 to avoid interfering with single-node runs.
+    if num_nodes > 1:
+        os.environ["MASTER_ADDR"] = master_addr
+        os.environ["MASTER_PORT"] = str(master_port)
+        os.environ["NODE_RANK"] = str(node_rank)
 
     (full_command, args_hash, truncated_hash) = log_command()
 
@@ -315,7 +326,8 @@ def main():
     # Training config
     train_params = dict(
         accelerator=f"cpu" if device == "cpu" else "gpu",
-        strategy="ddp_find_unused_parameters_true" if device == "cuda" else "auto",
+        strategy="ddp_find_unused_parameters_true" if (num_nodes > 1 or device == "cuda") else "auto",
+        num_nodes=num_nodes,
         devices=[int(device.split(":")[1])] if device.startswith("cuda:") else "auto",
         max_steps=max_steps if max_steps is not None else -1,
         max_epochs=-1,
@@ -397,9 +409,9 @@ def main():
     except Exception as e:
         param_stats = {}
 
-    if local_rank == 0:
+    dashboard = None
+    if local_rank == 0 and node_rank == 0:
         # Create dashboard first if needed (for API server logging)
-        dashboard = None
         if use_dashboard:
             try:
                 from praxis.interface import TerminalDashboard
@@ -515,7 +527,7 @@ def main():
     trainer_caps = get_trainer_capabilities(trainer_type)
     if trainer_caps.supports_accumulation_schedule:
         train_params["callbacks"].append(
-            AccumulationSchedule(hparams["batch_size"], hparams["target_batch_size"])
+            AccumulationSchedule(hparams["batch_size"] * num_nodes, hparams["target_batch_size"])
         )
 
     # Add evaluation callback

@@ -73,6 +73,14 @@ class ArgumentProcessor:
         # Set local_rank
         processed["local_rank"] = int(os.environ.get("LOCAL_RANK", 0))
 
+        # Resolve distributed training vars: CLI args take precedence over env vars
+        if processed.get("node_rank") is None:
+            processed["node_rank"] = int(os.environ.get("NODE_RANK", 0))
+        if processed.get("master_addr") is None:
+            processed["master_addr"] = os.environ.get("MASTER_ADDR", "localhost")
+        if processed.get("master_port") is None:
+            processed["master_port"] = int(os.environ.get("MASTER_PORT", 29500))
+
         return processed
 
     @staticmethod
