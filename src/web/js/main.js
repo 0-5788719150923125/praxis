@@ -7,7 +7,7 @@
 import { state, CONSTANTS } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
 import { sendMessage, testApiConnection } from './api.js';
-import { connectTerminal, setupLiveReload, recalculateDashboardScale } from './websocket.js';
+import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
 import { loadSpec, loadAgents, loadResearchMetrics } from './tabs.js';
 import { setupTabCarousel } from './mobile.js';
 import { storage, FORM_FIELDS, readFormValues, updateRangeDisplay } from './config.js';
@@ -20,7 +20,7 @@ import './prism.js';
  * This allows tabs to specify activation/deactivation hooks as strings in state.js
  */
 const lifecycleFunctions = {
-    recalculateDashboardScale,
+    renderCurrentMetrics,
     loadSpec,
     loadAgents,
     loadResearchMetrics
@@ -57,8 +57,8 @@ function init() {
     // Set up event listeners
     setupEventListeners();
 
-    // Connect to terminal WebSocket
-    connectTerminal();
+    // Connect to metrics-live WebSocket
+    connectMetricsLive();
 
     // Setup live reload
     setupLiveReload();
@@ -85,12 +85,12 @@ function setupWindowResizeHandler() {
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimeout);
         resizeTimeout = setTimeout(() => {
-            // Recalculate dashboard scaling if on terminal tab
-            if (state.currentTab === 'terminal') {
-                recalculateDashboardScale();
-            }
             // Re-render to update any size-dependent elements
             render();
+            // Re-render live dashboard if on terminal tab
+            if (state.currentTab === 'terminal') {
+                renderCurrentMetrics();
+            }
         }, 250);
     });
 
@@ -98,7 +98,7 @@ function setupWindowResizeHandler() {
     window.addEventListener('orientationchange', () => {
         setTimeout(() => {
             if (state.currentTab === 'terminal') {
-                recalculateDashboardScale();
+                renderCurrentMetrics();
             }
         }, 100);
     });

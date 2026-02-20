@@ -137,7 +137,7 @@ class BackpropagationTrainer(LightningModule):
             logger=True,
             batch_size=batch_size,
             prog_bar=True,
-            sync_dist=False,
+            sync_dist=True,
         )
 
         return loss
@@ -418,7 +418,7 @@ class BackpropagationTrainer(LightningModule):
             logger=True,
             batch_size=input_ids.size(0),
             prog_bar=True,
-            sync_dist=False,  # Don't sync across distributed processes
+            sync_dist=True,
         )
 
     def on_validation_end(self):

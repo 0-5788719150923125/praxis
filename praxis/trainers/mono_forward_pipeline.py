@@ -560,9 +560,9 @@ class MonoForwardPipelineModule(LightningModule):
         # Log and return loss if we have accumulated enough
         if losses_collected:
             avg_loss = sum(losses_collected) / len(losses_collected)
-            self.log("train_loss", avg_loss, prog_bar=True)
-            self.log("pipeline_depth", len(self.accumulated_losses), prog_bar=True)
-            self.log("completed_batches", len(self.completed_batches))
+            self.log("train_loss", avg_loss, prog_bar=True, sync_dist=True)
+            self.log("pipeline_depth", len(self.accumulated_losses), prog_bar=True, sync_dist=True)
+            self.log("completed_batches", len(self.completed_batches), sync_dist=True)
 
             # Create marker loss to indicate layer-wise training is complete
             # This tells the model not to compute its own loss

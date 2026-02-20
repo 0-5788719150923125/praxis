@@ -1,6 +1,6 @@
 """WebSocket functionality for the API."""
 
 from .live_reload import setup_live_reload
-from .terminal import setup_terminal_namespace
+from .metrics_live import setup_metrics_live_namespace
 
-__all__ = ["setup_live_reload", "setup_terminal_namespace"]
+__all__ = ["setup_live_reload", "setup_metrics_live_namespace"]

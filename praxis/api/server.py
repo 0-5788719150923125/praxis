@@ -23,7 +23,7 @@ from .middleware import (
 from .routes import register_routes
 from .utils import find_available_port
 from .utils.file_watcher import TemplateWatcher
-from .websocket import setup_live_reload, setup_terminal_namespace
+from .websocket import setup_live_reload, setup_metrics_live_namespace
 
 
 class APIServer:
@@ -91,7 +91,7 @@ class APIServer:
 
         # Set up WebSocket namespaces
         setup_live_reload(socketio)
-        setup_terminal_namespace(socketio, dashboard)
+        setup_metrics_live_namespace(socketio)
 
     def _configure_logging(self) -> None:
         """Configure logging based on dashboard and dev mode."""

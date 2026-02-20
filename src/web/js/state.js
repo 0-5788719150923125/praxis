@@ -45,15 +45,15 @@ export const state = {
             label: 'Terminal',
             active: false,
             containerClass: 'terminal-container',
-            customClasses: ['has-dashboard'],
+            customClasses: [],
             template: () => createContainerWithContent(
                 'terminal-container',
                 'terminal-display',
-                '<div class="terminal-line">Terminal ready. Dashboard will connect automatically when available.</div>'
+                '<div class="terminal-line">Waiting for metrics stream...</div>'
             ),
-            onActivate: 'recalculateDashboardScale',
-            activateDelay: 0,  // Delay before calling onActivate (ms)
-            activateParams: [],  // Parameters to pass to activation function
+            onActivate: 'renderCurrentMetrics',
+            activateDelay: 0,
+            activateParams: [],
             onDeactivate: null
         },
         {
@@ -145,6 +145,12 @@ export const state = {
     terminal: {
         connected: false,
         lines: ['Terminal ready. Dashboard will connect automatically when available.']
+    },
+
+    // Live metrics data (streamed via WebSocket)
+    liveMetrics: {
+        connected: false,
+        data: null
     },
 
     // Settings/Generation params

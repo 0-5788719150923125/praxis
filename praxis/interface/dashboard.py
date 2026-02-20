@@ -20,7 +20,6 @@ from .rendering.differential import TerminalDifferentialRenderer
 from .state import ActivityMonitor, DashboardRegistry, MetricsState
 from .terminal import TerminalStateManager, managed_terminal
 from .visualization import ForestFireAutomata
-from .web import DashboardStreamer
 
 
 class TerminalDashboard:
@@ -120,30 +119,6 @@ class TerminalDashboard:
 
         # Register cleanup
         atexit.register(self._cleanup)
-
-        # Set up streaming
-        self._setup_streaming()
-
-    def _setup_streaming(self):
-        """Set up dashboard streaming if available."""
-        try:
-            from .web.streamer import register_dashboard as web_register_dashboard
-
-            self._streamer = DashboardStreamer(self)
-
-            # Register with both registry systems
-            # 1. Register with DashboardRegistry (for internal use)
-            registry = DashboardRegistry()
-            registry.register("main", self)
-
-            # 2. Register with web streamer (for API access)
-            web_register_dashboard("main", self)
-
-            if registry.socketio:
-                self._streamer.start()
-        except Exception:
-            # Silently fail - don't break the dashboard
-            pass
 
     def show_warning(self, message, category, filename, lineno, file=None, line=None):
         warning_message = warnings.formatwarning(
@@ -268,6 +243,16 @@ class TerminalDashboard:
             if not new_lines and stripped_message.strip():
                 new_lines = [stripped_message.strip()]
             self.log_buffer.extend(new_lines)
+
+            # Also push to LiveMetrics for web streaming
+            try:
+                from .state.live_metrics import LiveMetrics
+
+                lm = LiveMetrics()
+                for line in new_lines:
+                    lm.add_log(line)
+            except Exception:
+                pass
 
     def force_redraw(self):
         """Force a full redraw."""

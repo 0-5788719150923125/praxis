@@ -13,6 +13,8 @@ DEFAULT_EXCLUDE_FROM_HASH = [
     "--ngrok",
     "--wandb",
     "--no-dashboard",
+    "--headless",
+    "--quiet",
     # Multi-node infra args: do not affect model architecture or training config
     "--num-nodes",
     "--node-rank",

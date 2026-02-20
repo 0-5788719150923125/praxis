@@ -17,11 +17,11 @@ import { sendMessage, testApiConnection } from './api.js';
  */
 const getLifecycleFunction = async (name) => {
     // Import dynamically to avoid circular dependencies
-    const { recalculateDashboardScale } = await import('./websocket.js');
+    const { renderCurrentMetrics } = await import('./websocket.js');
     const { loadSpec, loadAgents } = await import('./tabs.js');
 
     const lifecycleFunctions = {
-        recalculateDashboardScale,
+        renderCurrentMetrics,
         loadSpec,
         loadAgents,
         loadResearchMetrics,

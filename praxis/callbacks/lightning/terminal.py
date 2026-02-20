@@ -24,6 +24,7 @@ class TerminalInterface(Callback):
         progress_bar=None,
         device=None,
         quiet=False,
+        headless=False,
         terminal_output_length=512,
         byte_latent=False,
         debug=False,
@@ -48,6 +49,7 @@ class TerminalInterface(Callback):
         self.progress_bar = progress_bar
         self.device = device
         self.quiet = quiet
+        self.headless = headless
         self.terminal_output_length = terminal_output_length
         self.byte_latent = byte_latent
         self.debug = debug
@@ -88,6 +90,33 @@ class TerminalInterface(Callback):
         # we limit the context length seen during training, to keep memory
         # usage consistent; very long sequences have a negative impact on training speed.
         self.max_length = self.terminal_output_length
+
+        # Always initialize LiveMetrics for web streaming (works with or without dashboard)
+        from praxis.interface.state.live_metrics import LiveMetrics
+
+        self.live_metrics = LiveMetrics()
+        self.live_metrics.state.update_seed(self.seed)
+        self.live_metrics.state.update_url(self.url or "N/A")
+        self.live_metrics.state.update_params(self.total_params)
+        self.live_metrics.state.set_start_time(self.start_time)
+        self.live_metrics.state.arg_hash = self.truncated_hash
+
+        # In headless mode, capture Python logging output for web log viewer
+        if not self.use_dashboard:
+            import logging
+
+            class _LiveMetricsLogHandler(logging.Handler):
+                def __init__(self, live_metrics):
+                    super().__init__()
+                    self._lm = live_metrics
+
+                def emit(self, record):
+                    self._lm.add_log(self.format(record))
+
+            handler = _LiveMetricsLogHandler(self.live_metrics)
+            handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+            logging.getLogger().addHandler(handler)
+
         if self.use_dashboard:
             if self.dashboard is None:
                 # Create new dashboard if not provided
@@ -197,11 +226,24 @@ class TerminalInterface(Callback):
             logger=True,
             batch_size=batch_size,
             prog_bar=True,
-            sync_dist=False,
+            sync_dist=True,
         )
 
         if self.dashboard and hasattr(self.dashboard, "update_batch"):
             self._update_dashboard(
+                trainer,
+                lm,
+                batch_idx,
+                batch_size,
+                seq_length,
+                local_experts,
+                remote_experts,
+                data,
+            )
+
+        # Always update live metrics for web streaming (works with or without dashboard)
+        if hasattr(self, "live_metrics"):
+            self._update_live_metrics(
                 trainer,
                 lm,
                 batch_idx,
@@ -300,6 +342,93 @@ class TerminalInterface(Callback):
 
         self.dashboard.update_info(info_dict)
 
+    def _update_live_metrics(
+        self,
+        trainer,
+        lm,
+        batch_idx,
+        batch_size,
+        seq_length,
+        local_experts,
+        remote_experts,
+        data,
+    ):
+        """Update live metrics for web streaming."""
+        lm_state = self.live_metrics.state
+        batch = trainer.callback_metrics.get("batch", 0)
+        step = trainer.callback_metrics.get("step", 0)
+        rate = trainer.callback_metrics.get("avg_step_time", 0)
+        tokens = trainer.callback_metrics.get("num_tokens", 0)
+        lm_state.update_batch(batch.item() if hasattr(batch, "item") else batch)
+        lm_state.update_step(step.item() if hasattr(step, "item") else step)
+        lm_state.update_rate(rate.item() if hasattr(rate, "item") else rate)
+        lm_state.update_tokens(
+            tokens.item() if hasattr(tokens, "item") else tokens
+        )
+        lm_state.update_loss(self.ema_loss)
+        lm_state.update_expert_count(local_experts, remote_experts)
+
+        val_loss = trainer.callback_metrics.get("val_loss", None)
+        if val_loss is not None:
+            lm_state.update_val(
+                val_loss.item() if hasattr(val_loss, "item") else val_loss
+            )
+        if "fitness" in data:
+            lm_state.update_fitness(data["fitness"])
+        if "memory_churn" in data:
+            lm_state.update_memory(data["memory_churn"])
+        if "acc0" in data:
+            lm_state.update_accuracy(data["acc0"], data["acc1"])
+
+        # Build info dict
+        if self.get_memory_info:
+            memory_info = self.get_memory_info(self.device)
+        else:
+            memory_info = {}
+
+        info_dict = {
+            "device": self.device,
+            "ram": f"{memory_info.get('ram_percent', 'N/A')}",
+        }
+
+        if self.device and self.device.startswith("cuda:"):
+            gpu_idx = int(self.device.split(":")[1])
+            gpu_percent_key = f"gpu{gpu_idx}_percent"
+            gpu_reserved_key = f"gpu{gpu_idx}_reserved"
+            gpu_total_key = f"gpu{gpu_idx}_total"
+            if gpu_percent_key in memory_info:
+                info_dict["vram"] = f"{memory_info[gpu_percent_key]}"
+                if gpu_reserved_key in memory_info and gpu_total_key in memory_info:
+                    info_dict["vram_gb"] = (
+                        f"{memory_info[gpu_reserved_key]}/{memory_info[gpu_total_key]}"
+                    )
+            elif "gpu_status" in memory_info:
+                info_dict["vram"] = memory_info["gpu_status"]
+            else:
+                info_dict["vram"] = "0%"
+
+        info_dict["optimizer"] = self.optimizer_config.get("optimizer_name", "Unknown")
+        info_dict["strategy"] = self.strategy
+        info_dict["policy"] = self.rl_type
+        info_dict["vocab_size"] = self.vocab_size
+        info_dict["block_size"] = seq_length
+        info_dict["batch_size"] = batch_size
+        info_dict["target_batch"] = self.target_batch_size or getattr(
+            lm.hparams, "target_batch_size", batch_size
+        )
+        info_dict["depth"] = self.depth
+        info_dict["num_layers"] = self.num_layers
+        info_dict["hidden_size"] = self.hidden_size
+        info_dict["embed_size"] = self.embed_size
+        info_dict["dropout"] = self.dropout
+
+        if trainer.world_size > 1:
+            info_dict["rank"] = trainer.local_rank
+            info_dict["node"] = f"{trainer.node_rank + 1} of {trainer.num_nodes}"
+
+        self.live_metrics.info_dict = info_dict
+        self.live_metrics._update_count += 1
+
     def on_save_checkpoint(self, trainer, lm, checkpoint):
         if self.dev:
             return
@@ -350,6 +479,8 @@ class TerminalInterface(Callback):
             prompt_tokens = len(self.tokenizer.encode(self.text))
             if self.dashboard and hasattr(self.dashboard, "update_context_tokens"):
                 self.dashboard.update_context_tokens(prompt_tokens)
+            if hasattr(self, "live_metrics"):
+                self.live_metrics.state.update_context_tokens(prompt_tokens)
 
         request_id = self.generator.request_generation(
             self.text,
@@ -442,8 +573,12 @@ class TerminalInterface(Callback):
                 self.dashboard.force_redraw()
         elif self.dashboard and hasattr(self.dashboard, "update_status"):
             self.dashboard.update_status(self.text)
-        else:
+        elif not self.headless:
             self.print(self.text)
+
+        # Always update live metrics status text for web streaming
+        if hasattr(self, "live_metrics"):
+            self.live_metrics.status_text = self.text
 
         self.last_time = datetime.now()
 

@@ -26,6 +26,13 @@ class LoggingGroup:
         )
 
         group.add_argument(
+            "--headless",
+            action="store_true",
+            default=False,
+            help="Server mode: disables progress bar and terminal inference output, but keeps web streaming active",
+        )
+
+        group.add_argument(
             "--debug",
             action="store_true",
             default=False,

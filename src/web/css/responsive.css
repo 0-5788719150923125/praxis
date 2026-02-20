@@ -162,6 +162,29 @@
         overflow-wrap: break-word;
     }
 
+    .live-dashboard {
+        font-size: 0.6875rem;
+        padding: 0.5rem;
+        min-height: 300px;
+    }
+
+    .ld-body {
+        grid-template-columns: 1fr;
+    }
+
+    .ld-info-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ld-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .ld-footer {
+        font-size: 0.625rem;
+    }
+
     .chart-card {
         padding: 1rem;
         width: 100%;

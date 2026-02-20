@@ -225,6 +225,7 @@ def main():
     device = processed_args["device"]
     max_steps = processed_args.get("max_steps")
     use_dashboard = processed_args.get("use_dashboard", False)
+    headless = processed_args.get("headless", False)
     reset = processed_args.get("reset", False)
     local_rank = processed_args.get("local_rank", 0)
     no_source = processed_args.get("no_source", False)
@@ -347,7 +348,7 @@ def main():
         benchmark=True,
         deterministic=False,
         enable_checkpointing=True,
-        enable_progress_bar=not use_dashboard,
+        enable_progress_bar=not use_dashboard and not headless,
         enable_model_summary=False,
         detect_anomaly=EnvironmentFeatures.is_enabled("detect_anomaly"),
         val_check_interval=1024 * hparams["target_batch_size"] // hparams["batch_size"],
@@ -564,8 +565,8 @@ def main():
             f"[Setup] Skipping DynamicsLoggerCallback (router_type={config.router_type})"
         )
 
-    # Add progress bar if not using dashboard
-    if progress_bar is not None:
+    # Add progress bar if not using dashboard or headless mode
+    if progress_bar is not None and not headless:
         train_params["callbacks"].append(progress_bar)
 
     # Add TerminalInterface which handles dashboard/console output routing
@@ -604,6 +605,7 @@ def main():
             progress_bar=progress_bar,
             device=device,
             quiet=quiet,
+            headless=headless,
             terminal_output_length=terminal_output_length,
             byte_latent=byte_latent,
             debug=debug,

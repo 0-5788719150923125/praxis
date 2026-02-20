@@ -47,6 +47,7 @@ def build_prod():
         js_dir / "state.js",
         js_dir / "components.js",
         js_dir / "api.js",
+        js_dir / "dashboard.js",
         js_dir / "websocket.js",
         js_dir / "charts.js",
         js_dir / "tabs.js",
