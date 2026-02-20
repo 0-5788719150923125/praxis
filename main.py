@@ -669,7 +669,9 @@ def main():
         f"[TRAINING] Starting with {reduced} parameters, {optimizer_config['optimizer_name']} optimizer"
     )
     if api_server:
-        print(f"[TRAINING] API available at http://{api_server.get_api_addr()}/")
+        addr = api_server.get_api_addr()
+        url = f"{addr}/" if addr.startswith(("http://", "https://")) else f"http://{addr}/"
+        print(f"[TRAINING] API available at {url}")
 
     # Install a simple signal handler for post-training cleanup
     cleanup_interrupted = False

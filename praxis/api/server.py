@@ -215,8 +215,10 @@ class APIServer:
         if not self.started.is_set():
             raise RuntimeError("Server failed to start within the timeout period")
 
-        api_logger.info(f"API Server started at http://{self.get_api_addr()}/")
-        print(f"[API] Server started at http://{self.get_api_addr()}/")
+        addr = self.get_api_addr()
+        url = f"{addr}/" if addr.startswith(("http://", "https://")) else f"http://{addr}/"
+        api_logger.info(f"API Server started at {url}")
+        print(f"[API] Server started at {url}")
 
     def stop(self) -> None:
         """Stop the API server."""
