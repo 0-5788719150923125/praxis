@@ -411,7 +411,7 @@ def main():
         param_stats = {}
 
     dashboard = None
-    if local_rank == 0 and node_rank == 0:
+    if local_rank == 0:
         # Create dashboard first if needed (for API server logging)
         if use_dashboard:
             try:

@@ -13,6 +13,7 @@ services:
       - cache:/root/.cache
     ports:
       - "2100:2100"
+      - "29500:29500"
     env_file:
       - path: ./.env
         required: false
