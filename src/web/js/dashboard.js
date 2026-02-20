@@ -216,7 +216,7 @@ export function renderLiveDashboard(m) {
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item">TOKENS ${fmt(m.num_tokens, 3, '0.000')}B</span>
             <span class="ld-footer-sep">|</span>
-            <span class="ld-footer-item">BATCH ${m.batch || 0}</span>
+            <span class="ld-footer-item">BATCH ${Math.round(m.batch) || 0}</span>
             <span class="ld-footer-sep">|</span>
             <span class="ld-footer-item">STEP ${m.step || 0}</span>
             <span class="ld-footer-sep">|</span>
@@ -280,7 +280,7 @@ export function renderLiveDashboard(m) {
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item">TOKENS ${fmt(m.num_tokens, 3, '0.000')}B</span>
                 <span class="ld-footer-sep">|</span>
-                <span class="ld-footer-item">BATCH ${m.batch || 0}</span>
+                <span class="ld-footer-item">BATCH ${Math.round(m.batch) || 0}</span>
                 <span class="ld-footer-sep">|</span>
                 <span class="ld-footer-item">STEP ${m.step || 0}</span>
                 <span class="ld-footer-sep">|</span>
