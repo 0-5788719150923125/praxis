@@ -37,6 +37,10 @@ def serve_static(filename):
     # Import generation routes to handle special cases
     from .generation import generate, generate_messages
 
+    # Don't intercept API routes — let dedicated blueprints handle them
+    if filename.startswith("api/"):
+        abort(404)
+
     # If this is a POST to input, redirect to the actual input handler
     if filename in ["input", "input/"] and request.method in ["POST", "OPTIONS"]:
         return generate()
