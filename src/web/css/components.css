@@ -699,7 +699,7 @@
     word-wrap: break-word;
     overflow-y: auto;
     max-height: 250px;
-    font-size: 0.75rem;
+    font-size: 0.625rem;
     color: #aaa;
     line-height: 1.4;
     scrollbar-width: none;
