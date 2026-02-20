@@ -1,0 +1,82 @@
+# Multi-node distributed training test (CPU, gloo backend)
+#
+# Launches two isolated containers on a shared Docker network.
+# node-0 acts as the rendezvous master; node-1 connects to it via
+# Docker Compose DNS (the hostname "node-0" resolves automatically).
+#
+# Each node gets its own build/ volume to avoid run-directory races.
+#
+# Usage:
+#   docker compose -f tests/compose.multinode.yml up --build
+#   docker compose -f tests/compose.multinode.yml down -v
+
+services:
+  node-0:
+    build: ..
+    working_dir: /workspace
+    command:
+      - ./launch
+      - --dev
+      - --max-steps
+      - "2"
+      - --batch-size
+      - "1"
+      - --device
+      - cpu
+      - --no-dashboard
+      - --headless
+      - --num-nodes
+      - "2"
+      - --node-rank
+      - "0"
+      - --master-addr
+      - node-0
+      - --master-port
+      - "29500"
+    volumes:
+      - ..:/workspace:rw
+      - venv:/workspace/.venv
+      - cache:/root/.cache
+      - build-node0:/workspace/build
+    ports:
+      - "2100:2100"
+    environment:
+      PYTHONUNBUFFERED: 1
+
+  node-1:
+    build: ..
+    working_dir: /workspace
+    command:
+      - ./launch
+      - --dev
+      - --max-steps
+      - "2"
+      - --batch-size
+      - "1"
+      - --device
+      - cpu
+      - --no-dashboard
+      - --headless
+      - --num-nodes
+      - "2"
+      - --node-rank
+      - "1"
+      - --master-addr
+      - node-0
+      - --master-port
+      - "29500"
+    volumes:
+      - ..:/workspace:rw
+      - venv:/workspace/.venv
+      - cache:/root/.cache
+      - build-node1:/workspace/build
+    environment:
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      - node-0
+
+volumes:
+  venv:
+  cache:
+  build-node0:
+  build-node1:
