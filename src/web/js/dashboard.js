@@ -15,6 +15,12 @@ export function toggleLogPanel() {
     const btn = document.getElementById('ld-log-toggle');
     if (panel) panel.classList.toggle('open', logPanelOpen);
     if (btn) btn.textContent = logPanelOpen ? 'LOGS [-]' : 'LOGS [+]';
+    if (logPanelOpen) {
+        requestAnimationFrame(() => {
+            const logContent = panel && panel.querySelector('.ld-log-content');
+            if (logContent) logContent.scrollTop = logContent.scrollHeight;
+        });
+    }
 }
 
 // Expose globally so the onclick works from innerHTML
@@ -138,6 +144,16 @@ function drawSparkline(data, canvasId) {
  * Render the live dashboard from a metrics snapshot
  * @param {Object} m - Metrics snapshot from server
  */
+/**
+ * Check if a scrollable element is at (or near) the bottom
+ * @param {Element} el
+ * @returns {boolean}
+ */
+function isScrolledToBottom(el) {
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+}
+
 export function renderLiveDashboard(m) {
     const container = document.getElementById('terminal-display');
     if (!container) return;
@@ -146,6 +162,79 @@ export function renderLiveDashboard(m) {
         ? `${m.local_experts || 0} local, ${m.remote_experts || 0} remote`
         : 'none';
 
+    // Check if dashboard already exists so we can update in-place
+    const existing = container.querySelector('.live-dashboard');
+    if (existing) {
+        // Update in-place to preserve scroll positions
+
+        // Header
+        const headerLeft = existing.querySelector('.ld-header-left');
+        if (headerLeft) headerLeft.innerHTML = `<span class="ld-label">HASH:</span> <span class="ld-hash">${escapeHtml(m.arg_hash || '------')}</span> <span class="ld-sep">||</span> <span class="ld-label">CONTEXT:</span> ${m.context_tokens || 0} tokens`;
+
+        const headerMetrics = existing.querySelector('.ld-header-metrics');
+        if (headerMetrics) headerMetrics.innerHTML = `
+            <span class="ld-metric">ERROR <span class="ld-val">${fmt(m.loss)}</span></span>
+            ${m.val_loss !== null ? `<span class="ld-metric">VALIDATION <span class="ld-val">${fmt(m.val_loss)}</span></span>` : ''}
+            ${m.fitness !== null && m.fitness !== undefined ? `<span class="ld-metric">FITNESS <span class="ld-val">${fmt(m.fitness, 2)}%</span></span>` : ''}
+            ${m.accuracy ? `<span class="ld-metric">ACCURACY <span class="ld-val">${fmt(m.accuracy[0], 3)}</span></span>` : ''}
+        `;
+
+        // Status text - auto-scroll only if already at bottom
+        const statusText = existing.querySelector('.ld-status-text');
+        if (statusText) {
+            const wasAtBottom = isScrolledToBottom(statusText);
+            statusText.textContent = m.status_text || '_initializing';
+            if (wasAtBottom) statusText.scrollTop = statusText.scrollHeight;
+        }
+
+        // Info panel
+        const infoGrid = existing.querySelector('.ld-info-grid');
+        if (infoGrid) infoGrid.innerHTML = renderInfoPanel(m.info);
+
+        // Log count
+        const logCount = existing.querySelector('.ld-log-count');
+        if (logCount) logCount.textContent = `${(m.log_lines || []).length} lines`;
+
+        // Log content - auto-scroll only if already at bottom
+        const logContent = existing.querySelector('.ld-log-content');
+        if (logContent && logPanelOpen) {
+            const wasAtBottom = isScrolledToBottom(logContent);
+            logContent.innerHTML = (m.log_lines || []).map(l => `<div class="ld-log-line">${escapeHtml(l)}</div>`).join('');
+            if (wasAtBottom) logContent.scrollTop = logContent.scrollHeight;
+        }
+
+        // Footer
+        const footer = existing.querySelector('.ld-footer');
+        if (footer) footer.innerHTML = `
+            <span class="ld-footer-item">PRAXIS:${m.seed || '?'}</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">${m.total_params || '0M'}</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">${(m.mode || 'train').toUpperCase()}</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">AGE ${fmt(m.hours_elapsed, 2, '0.00')}h</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">TOKENS ${fmt(m.num_tokens, 3, '0.000')}B</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">BATCH ${m.batch || 0}</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">STEP ${m.step || 0}</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">RATE ${fmt(m.rate, 2, '0.00')}s</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item">EXPERTS ${expertStr}</span>
+            <span class="ld-footer-sep">|</span>
+            <span class="ld-footer-item ld-url">${escapeHtml(m.url || 'N/A')}</span>
+        `;
+
+        // Redraw sparkline
+        requestAnimationFrame(() => {
+            drawSparkline(m.loss_history, 'ld-sparkline-canvas');
+        });
+        return;
+    }
+
+    // First render - build full DOM
     container.innerHTML = `
         <div class="live-dashboard">
             <div class="ld-header">
@@ -204,13 +293,13 @@ export function renderLiveDashboard(m) {
         </div>
     `;
 
-    // Draw sparkline after DOM is ready
+    // Draw sparkline and scroll to bottom on first render
     requestAnimationFrame(() => {
         drawSparkline(m.loss_history, 'ld-sparkline-canvas');
-
-        // Auto-scroll log panel to bottom
+        const statusText = container.querySelector('.ld-status-text');
+        if (statusText) statusText.scrollTop = statusText.scrollHeight;
         if (logPanelOpen) {
-            const logContent = document.querySelector('.ld-log-content');
+            const logContent = container.querySelector('.ld-log-content');
             if (logContent) logContent.scrollTop = logContent.scrollHeight;
         }
     });

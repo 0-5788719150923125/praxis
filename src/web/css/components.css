@@ -702,6 +702,11 @@
     font-size: 0.75rem;
     color: #aaa;
     line-height: 1.4;
+    scrollbar-width: none;
+}
+
+.ld-status-text::-webkit-scrollbar {
+    display: none;
 }
 
 .ld-panel-chart {
