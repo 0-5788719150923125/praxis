@@ -50,11 +50,16 @@ def get_agents():
             ngrok_url = current_app.config.get("ngrok_url")
             ngrok_secret = current_app.config.get("ngrok_secret")
 
+            configured_host = current_app.config.get("configured_host")
+            configured_port = current_app.config.get("configured_port")
+
             if ngrok_url and ngrok_secret:
                 # Ngrok is active - use the protected URL
                 git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
+            elif configured_host and configured_host != "localhost":
+                git_url = f"http://{configured_host}:{configured_port}/praxis"
             else:
-                # No ngrok - use local URL
+                # No ngrok or explicit host - use local URL
                 git_url = f"http://localhost:{current_port}/praxis"
 
             # Get git hash and timestamp

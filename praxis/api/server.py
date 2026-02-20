@@ -187,6 +187,8 @@ class APIServer:
 
         # Set up Flask app config
         app.config["api_server"] = self
+        app.config["configured_host"] = self.host
+        app.config["configured_port"] = self.port
         app.config["generator"] = self.generator
         app.config["tokenizer"] = self.tokenizer
         app.config["integration_loader"] = self.integration_loader

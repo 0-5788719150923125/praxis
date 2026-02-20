@@ -116,9 +116,13 @@ def get_spec():
         git_url = None
         ngrok_url = current_app.config.get("ngrok_url")
         ngrok_secret = current_app.config.get("ngrok_secret")
+        configured_host = current_app.config.get("configured_host")
+        configured_port = current_app.config.get("configured_port")
 
         if ngrok_url and ngrok_secret:
             git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
+        elif configured_host and configured_host != "localhost":
+            git_url = f"http://{configured_host}:{configured_port}/praxis"
         else:
             host = request.host.split(":")[0] if ":" in request.host else request.host
             if (
