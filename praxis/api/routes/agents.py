@@ -57,7 +57,11 @@ def get_agents():
                 # Ngrok is active - use the protected URL
                 git_url = f"{ngrok_url}/{ngrok_secret}/praxis"
             elif configured_host and configured_host != "localhost":
-                git_url = f"http://{configured_host}:{configured_port}/praxis"
+                # If host includes a scheme (e.g., https://host.example.com), use it directly
+                if configured_host.startswith(("https://", "http://")):
+                    git_url = f"{configured_host}/praxis"
+                else:
+                    git_url = f"http://{configured_host}:{configured_port}/praxis"
             else:
                 # No ngrok or explicit host - use local URL
                 git_url = f"http://localhost:{current_port}/praxis"
