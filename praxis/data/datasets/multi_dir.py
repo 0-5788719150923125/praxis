@@ -28,6 +28,9 @@ class MultiDirectoryDataset(PraxisSampler):
         self.dataset_path = name
         # Normalize and resolve all directory paths
         self.cwd = os.getcwd()
+        # Accept a single string or a list of strings
+        if isinstance(directories, str):
+            directories = [directories]
         self.directories = []
         for d in directories:
             # If path is absolute, use it as-is; otherwise make it relative to CWD

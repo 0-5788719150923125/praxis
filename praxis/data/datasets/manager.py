@@ -7,8 +7,12 @@ import torch
 from transformers import PreTrainedTokenizer
 
 from praxis.data.datasets.message_queue import MessageQueueManager
+from praxis.data.datasets.novelty import NoveltyTracker
 from praxis.data.formatters import _rl_logger
 from praxis.logging.data_metrics_logger import DataMetricsLogger
+
+# Valid weighting modes
+WEIGHTING_MODES = ("static", "dynamic", "novelty")
 
 
 class InterleaveDataManager:
@@ -17,11 +21,16 @@ class InterleaveDataManager:
 
     This version uses a MessageQueueManager to handle tokenization at the batch level,
     ensuring proper system prompt deduplication.
+
+    Weighting modes:
+        "static"  — use dataset weights as given, no adaptation
+        "dynamic" — adjust weights based on document length and token balance
+        "novelty" — adjust weights based on bigram novelty (Count-Min Sketch)
     """
 
-    # Dynamic weighting control (hardcoded switch)
-    use_dynamic_weights = True  # Set to False to use static weights
-    ema_alpha = 0.3  # EMA smoothing factor
+    # Weighting mode: "static", "dynamic", or "novelty"
+    weighting_mode = "novelty"
+    ema_alpha = 0.3  # EMA smoothing factor (used by dynamic and novelty modes)
 
     # Class variable to store shared weights across all instances
     shared_weights = None
@@ -72,7 +81,9 @@ class InterleaveDataManager:
         self.data_metrics_log_interval = data_metrics_log_interval
         self.samples_since_last_log = 0
 
-        if run_dir is not None and self.use_dynamic_weights:
+        adaptive = self.weighting_mode in ("dynamic", "novelty")
+
+        if run_dir is not None and adaptive:
             try:
                 self.data_metrics_logger = DataMetricsLogger(run_dir=run_dir)
                 print(f"[DATA METRICS] Initialized logger for run: {run_dir}")
@@ -80,21 +91,43 @@ class InterleaveDataManager:
                 print(f"[WARNING] Failed to initialize data metrics logger: {e}")
         else:
             print(
-                f"[DATA METRICS] Logger not initialized: run_dir={run_dir}, use_dynamic_weights={self.use_dynamic_weights}"
+                f"[DATA METRICS] Logger not initialized: run_dir={run_dir}, weighting_mode={self.weighting_mode}"
             )
 
-        # Dynamic weighting setup
-        if self.use_dynamic_weights:
+        # Adaptive weighting setup (shared by dynamic and novelty modes)
+        if adaptive:
             self.sampling_count = 0
             self.sampler_metrics = {}
             for i, sampler in enumerate(self.samplers):
                 dataset_name = getattr(sampler, "dataset_path", f"sampler_{i}")
-                self.sampler_metrics[i] = {
-                    "name": dataset_name,
-                    "avg_doc_length": None,
-                    "total_samples": 0,
-                    "total_tokens": 0,
-                }
+                metrics = {"name": dataset_name, "total_samples": 0}
+                if self.weighting_mode == "dynamic":
+                    metrics["avg_doc_length"] = None
+                    metrics["total_tokens"] = 0
+                self.sampler_metrics[i] = metrics
+
+            # Novelty tracker (only for novelty mode)
+            if self.weighting_mode == "novelty":
+                # Build set of token IDs that decode to pure digits so the
+                # tracker can collapse them before bigram extraction.
+                numeric_ids = set()
+                for token_id in range(len(self.tokenizer)):
+                    try:
+                        token_str = self.tokenizer.convert_ids_to_tokens(
+                            token_id
+                        )
+                        if token_str is not None:
+                            cleaned = token_str.replace("\u0120", "").replace(
+                                "\u2581", ""
+                            )
+                            if cleaned and cleaned.isdigit():
+                                numeric_ids.add(token_id)
+                    except Exception:
+                        pass
+                self.novelty_tracker = NoveltyTracker(
+                    num_datasets=len(self.samplers),
+                    numeric_token_ids=numeric_ids,
+                )
 
             # Initialize dynamic weights
             self.dynamic_weights = self.static_weights.copy()
@@ -114,6 +147,10 @@ class InterleaveDataManager:
             self.weights = self.dynamic_weights
         else:
             self.weights = weights
+
+    @property
+    def _adaptive(self):
+        return self.weighting_mode in ("dynamic", "novelty")
 
     def get_batch(
         self,
@@ -148,8 +185,8 @@ class InterleaveDataManager:
             current_batch_size = batch_size // 4
             sequence_multiplier = 2  # 2x sequence length
 
-        # Update weights if using dynamic weighting
-        if self.use_dynamic_weights:
+        # Update weights if using adaptive weighting
+        if self._adaptive:
             if InterleaveDataManager.shared_weights is not None and len(
                 InterleaveDataManager.shared_weights
             ) == len(self.samplers):
@@ -170,8 +207,8 @@ class InterleaveDataManager:
                 current_batch_size, sequence_multiplier=sequence_multiplier
             )
 
-        # Add sampler weights to result if using dynamic weighting
-        if self.use_dynamic_weights:
+        # Add sampler weights to result if using adaptive weighting
+        if self._adaptive:
             batch["sampler_weights"] = self.weights.copy()
 
         return batch
@@ -228,38 +265,53 @@ class InterleaveDataManager:
                     # Add to message queue
                     self.message_queue.add_document(document_data)
 
-                    # Update dynamic weights if enabled
-                    if self.use_dynamic_weights:
-                        # Estimate document length (number of messages * average tokens per message)
+                    # Update adaptive weights if enabled
+                    if self.weighting_mode == "dynamic":
                         doc_length = (
                             len(document_data.get("messages", [])) * 50
                         )  # Rough estimate
-                        self._update_dynamic_weights_after_sample(
-                            sampler_idx, doc_length
+                        self._update_weights_after_sample(
+                            sampler_idx, doc_length=doc_length
                         )
+                    elif self.weighting_mode == "novelty":
+                        try:
+                            messages = document_data["messages"]
+                            text = self.tokenizer.apply_chat_template(
+                                messages,
+                                tokenize=False,
+                                add_generation_prompt=False,
+                            )
+                            token_ids = self.tokenizer.encode(
+                                text, add_special_tokens=False
+                            )
+                            self.novelty_tracker.score_and_update(
+                                sampler_idx, token_ids
+                            )
+                        except Exception:
+                            pass  # Never break the data pipeline
+                        self._update_weights_after_sample(sampler_idx)
 
-    def _update_dynamic_weights_after_sample(self, sampler_idx: int, doc_length: int):
+    def _update_weights_after_sample(self, sampler_idx: int, doc_length: int = 0):
         """Update metrics and weights with EMA after each sample."""
-        if not self.use_dynamic_weights:
+        if not self._adaptive:
             return
 
         metrics = self.sampler_metrics[sampler_idx]
-
-        # Update total counts
         metrics["total_samples"] += 1
-        metrics["total_tokens"] += doc_length
         self.sampling_count += 1
 
-        # Update average document length with EMA
-        if metrics["avg_doc_length"] is None:
-            metrics["avg_doc_length"] = float(doc_length)
-        else:
-            metrics["avg_doc_length"] = (
-                self.ema_alpha * doc_length
-                + (1 - self.ema_alpha) * metrics["avg_doc_length"]
-            )
+        # Dynamic mode: track document length metrics
+        if self.weighting_mode == "dynamic":
+            metrics["total_tokens"] += doc_length
+            if metrics["avg_doc_length"] is None:
+                metrics["avg_doc_length"] = float(doc_length)
+            else:
+                metrics["avg_doc_length"] = (
+                    self.ema_alpha * doc_length
+                    + (1 - self.ema_alpha) * metrics["avg_doc_length"]
+                )
 
-        # Calculate target weights based on current metrics
+        # Calculate target weights based on current mode
         target_weights = self._calculate_target_weights()
 
         # Update dynamic weights with EMA towards target
@@ -290,17 +342,17 @@ class InterleaveDataManager:
                 self.samples_since_last_log = 0
 
     def _calculate_target_weights(self):
-        """Calculate target weights based on current metrics."""
+        """Calculate target weights based on current weighting mode."""
+        if self.weighting_mode == "novelty":
+            return self.novelty_tracker.get_target_weights(self.static_weights)
+
+        # Dynamic mode: balance by document length and token consumption
         if not self.sampler_metrics:
             return self.static_weights
 
-        # Skip if we don't have enough data yet
         if all(m["avg_doc_length"] is None for m in self.sampler_metrics.values()):
             return self.static_weights
 
-        target_weights = []
-
-        # Calculate average document length across all samplers
         valid_lengths = [
             m["avg_doc_length"]
             for m in self.sampler_metrics.values()
@@ -310,42 +362,32 @@ class InterleaveDataManager:
             return self.static_weights
 
         avg_length = sum(valid_lengths) / len(valid_lengths)
-
-        # Calculate target based on balancing token consumption
         total_tokens = sum(m["total_tokens"] for m in self.sampler_metrics.values())
         avg_tokens_per_sampler = (
             total_tokens / len(self.sampler_metrics) if total_tokens > 0 else 1
         )
 
+        target_weights = []
         for i in range(len(self.samplers)):
             metrics = self.sampler_metrics[i]
-
-            # Start with static weight
             weight = self.static_weights[i]
 
             if metrics["avg_doc_length"] is not None and metrics["total_samples"] > 0:
-                # Factor 1: Inverse document length (shorter docs get higher weight)
                 length_factor = avg_length / max(metrics["avg_doc_length"], 1.0)
-
-                # Factor 2: Balance token consumption
                 if metrics["total_tokens"] > 0:
                     token_balance_factor = avg_tokens_per_sampler / max(
                         metrics["total_tokens"], 1.0
                     )
                 else:
-                    token_balance_factor = 2.0  # Boost for never sampled
-
-                # Combine factors
+                    token_balance_factor = 2.0
                 weight = weight * (length_factor * token_balance_factor) ** 0.5
 
             target_weights.append(weight)
 
-        # Normalize weights
         total = sum(target_weights)
         if total > 0:
             return [w / total for w in target_weights]
-        else:
-            return self.static_weights
+        return self.static_weights
 
     def _log_data_metrics(self):
         """Log current sampling weights and metrics to data metrics file."""
@@ -354,14 +396,23 @@ class InterleaveDataManager:
 
         # Build sampling weights dictionary with dataset names
         sampling_weights = {}
+        dataset_stats = {}
         for i, weight in enumerate(self.dynamic_weights):
             dataset_name = self.sampler_metrics[i]["name"]
             sampling_weights[dataset_name] = round(weight, 6)
+            stats = {"total_samples": self.sampler_metrics[i]["total_samples"]}
+            if self.weighting_mode == "novelty":
+                stats["novelty"] = round(
+                    float(self.novelty_tracker.dataset_novelty[i]), 6
+                )
+            dataset_stats[dataset_name] = stats
 
         # Log to file
         try:
             self.data_metrics_logger.log(
-                step=self.sampling_count, sampling_weights=sampling_weights
+                step=self.sampling_count,
+                sampling_weights=sampling_weights,
+                dataset_stats=dataset_stats,
             )
         except Exception as e:
             print(f"[WARNING] Failed to log data metrics: {e}")
