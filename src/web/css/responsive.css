@@ -147,6 +147,8 @@
     .terminal-container {
         font-size: 0.5rem;
         padding: 0.3125rem;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
     .dashboard-frame {
@@ -165,7 +167,6 @@
     .live-dashboard {
         font-size: 0.6875rem;
         padding: 0.5rem;
-        min-height: 300px;
     }
 
     .ld-body {
