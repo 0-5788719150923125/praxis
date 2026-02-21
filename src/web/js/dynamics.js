@@ -1,6 +1,6 @@
 /**
  * Praxis Web - Gradient Dynamics Visualization
- * Tracks gradient norms and variance per expert during training
+ * Tracks per-layer gradient flow, update ratios, and per-expert dynamics.
  */
 
 import { state, CONSTANTS } from './state.js';
@@ -138,6 +138,37 @@ function renderEmptyState(container, message) {
     `;
 }
 
+// ─── Metric detection helpers ───────────────────────────────────────────────
+
+/**
+ * Detect universal per-layer metrics (layer_X_grad_norm, without "expert")
+ */
+function detectUniversalLayers(dynamics) {
+    const keys = Object.keys(dynamics).filter(k =>
+        k.match(/^layer_\d+_grad_norm$/)
+    );
+    return Array.from(new Set(
+        keys.map(k => parseInt(k.match(/^layer_(\d+)_/)[1]))
+    )).sort((a, b) => a - b);
+}
+
+/**
+ * Detect expert metrics (layer_X_expert_Y_grad_norm)
+ */
+function detectExpertLayers(dynamics) {
+    const keys = Object.keys(dynamics).filter(k =>
+        k.match(/^layer_\d+_expert_\d+_grad_norm$/)
+    );
+    const layers = new Set(keys.map(k => parseInt(k.match(/layer_(\d+)_/)[1])));
+    const experts = new Set(keys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
+    return {
+        layers: Array.from(layers).sort((a, b) => a - b),
+        experts: Array.from(experts).sort((a, b) => a - b)
+    };
+}
+
+// ─── Main render ────────────────────────────────────────────────────────────
+
 /**
  * Render dynamics charts
  */
@@ -150,25 +181,33 @@ function renderDynamicsCharts(runData, container) {
         return;
     }
 
-    // Detect number of layers and experts using new format: layer_X_expert_Y_grad_norm
-    const metricKeys = Object.keys(dynamics).filter(k => k.match(/^layer_\d+_expert_\d+_grad_norm$/));
-    const layers = new Set(metricKeys.map(k => parseInt(k.match(/layer_(\d+)_/)[1])));
-    const numLayers = layers.size;
-    const experts = new Set(metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
-    const numExperts = experts.size;
+    // Detect what data is available
+    const universalLayers = detectUniversalLayers(dynamics);
+    const { layers: expertLayers, experts: expertsList } = detectExpertLayers(dynamics);
+    const hasUniversal = universalLayers.length > 0;
+    const hasExperts = expertLayers.length > 0 && expertsList.length > 0;
 
-    // Initialize layer state with all layers enabled
+    // Layer toggle state — use universal layers, fall back to expert layers
+    const allLayers = hasUniversal ? universalLayers :
+                      hasExperts ? expertLayers : [];
     if (!dynamicsLayerState.layers) {
-        dynamicsLayerState.layers = Array.from(layers);
-        dynamicsLayerState.allLayers = Array.from(layers);
+        dynamicsLayerState.layers = [...allLayers];
+        dynamicsLayerState.allLayers = [...allLayers];
     }
 
+    // ── Header ──────────────────────────────────────────────────────────
     const refreshIcon = `
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
             <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
             <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
         </svg>
     `;
+
+    const metaParts = [`<span><strong>Points:</strong> ${steps.length}</span>`];
+    metaParts.push(`<span><strong>Layers:</strong> ${allLayers.length}</span>`);
+    if (hasExperts) {
+        metaParts.push(`<span><strong>Experts:</strong> ${expertsList.length}</span>`);
+    }
 
     const headerHTML = createTabHeader({
         title: 'Gradient Dynamics',
@@ -178,54 +217,89 @@ function renderDynamicsCharts(runData, container) {
             icon: refreshIcon,
             className: 'tab-header-button'
         }],
-        metadata: `
-            <span><strong>Points:</strong> ${steps.length}</span>
-            <span><strong>Layers:</strong> ${numLayers}</span>
-            <span><strong>Experts:</strong> ${numExperts}</span>
-        `
+        metadata: metaParts.join('\n')
     });
 
-    const chartsHTML = `
+    // ── Chart cards ─────────────────────────────────────────────────────
+    let chartsHTML = `
         <div style="margin-top: 2rem;">
             <div id="dynamics-layer-toggles"></div>
         </div>
-
-        <div style="margin-top: 2rem;">
-            <div class="chart-card">
-                <div class="chart-title">Gradient Norms per Expert</div>
-                <div class="chart-subtitle">L2 norm of gradients across all parameters</div>
-                <div class="chart-wrapper" style="height: 400px;">
-                    <canvas id="dynamics-grad-norms"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <div style="margin-top: 2rem;">
-            <div class="chart-card">
-                <div class="chart-title">Gradient Variance per Expert</div>
-                <div class="chart-subtitle">Variance of gradient values across all parameters</div>
-                <div class="chart-wrapper" style="height: 400px;">
-                    <canvas id="dynamics-grad-vars"></canvas>
-                </div>
-            </div>
-        </div>
     `;
+
+    // Universal charts (always first when available)
+    if (hasUniversal) {
+        chartsHTML += `
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Gradient Flow</div>
+                    <div class="chart-subtitle">L2 norm of gradients per decoder layer</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-layer-grad-norms"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Update-to-Weight Ratio</div>
+                    <div class="chart-subtitle">Relative update magnitude per layer (||grad|| &times; lr / ||weight||)</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-layer-update-ratio"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Expert charts (conditional, after universal)
+    if (hasExperts) {
+        chartsHTML += `
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Gradient Norms per Expert</div>
+                    <div class="chart-subtitle">L2 norm of gradients across all parameters</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-grad-norms"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 2rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Gradient Variance per Expert</div>
+                    <div class="chart-subtitle">Variance of gradient values across all parameters</div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="dynamics-grad-vars"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
 
     container.innerHTML = headerHTML + chartsHTML;
 
-    // Render layer toggles
+    // Layer toggles
     renderDynamicsLayerToggles();
 
-    // Render charts
+    // Create charts after DOM is ready
     setTimeout(() => {
         try {
-            createGradientNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
-            createGradientVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
+            if (hasUniversal) {
+                createLayerGradNormsChart('dynamics-layer-grad-norms', dynamics, dynamicsLayerState.layers);
+                createLayerUpdateRatioChart('dynamics-layer-update-ratio', dynamics, dynamicsLayerState.layers);
+            }
+            if (hasExperts) {
+                createExpertGradNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
+                createExpertGradVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
+            }
         } catch (error) {
             console.error('[Dynamics] Chart creation failed:', error);
         }
     }, 10);
 }
+
+// ─── Layer toggles ──────────────────────────────────────────────────────────
 
 /**
  * Render layer toggles
@@ -253,7 +327,6 @@ function renderDynamicsLayerToggles() {
 
     updateDynamicsLayerToggles();
 
-    // Add event listeners
     container.querySelectorAll('.layer-toggle-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             const layer = e.target.dataset.layer;
@@ -274,11 +347,7 @@ function renderDynamicsLayerToggles() {
             }
 
             updateDynamicsLayerToggles();
-
-            // Recreate charts with new layer selection
-            const dynamics = state.dynamics.data?.dynamics || {};
-            createGradientNormsChart('dynamics-grad-norms', dynamics, dynamicsLayerState.layers);
-            createGradientVarsChart('dynamics-grad-vars', dynamics, dynamicsLayerState.layers);
+            rebuildAllCharts();
         });
     });
 }
@@ -308,9 +377,99 @@ function updateDynamicsLayerToggles() {
 }
 
 /**
- * Create gradient norms chart
+ * Rebuild all visible charts with current layer selection
  */
-function createGradientNormsChart(canvasId, dynamics, layers) {
+function rebuildAllCharts() {
+    const dynamics = state.dynamics.data?.dynamics || {};
+    const layers = dynamicsLayerState.layers;
+
+    // Universal
+    if (document.getElementById('dynamics-layer-grad-norms')) {
+        createLayerGradNormsChart('dynamics-layer-grad-norms', dynamics, layers);
+    }
+    if (document.getElementById('dynamics-layer-update-ratio')) {
+        createLayerUpdateRatioChart('dynamics-layer-update-ratio', dynamics, layers);
+    }
+    // Expert
+    if (document.getElementById('dynamics-grad-norms')) {
+        createExpertGradNormsChart('dynamics-grad-norms', dynamics, layers);
+    }
+    if (document.getElementById('dynamics-grad-vars')) {
+        createExpertGradVarsChart('dynamics-grad-vars', dynamics, layers);
+    }
+}
+
+// ─── Shared chart helpers ───────────────────────────────────────────────────
+
+const LAYER_COLORS = [
+    '#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D',
+    '#B388FF', '#FF8A65', '#81C784', '#4DD0E1', '#FFB74D', '#CE93D8'
+];
+
+const EXPERT_COLORS = [
+    '#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'
+];
+
+function baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        parsing: false,
+        normalized: true,
+        plugins: {
+            decimation: { enabled: true, algorithm: 'lttb', samples: 500 },
+            legend: {
+                display: true,
+                position: 'top',
+                labels: { color: textColor, usePointStyle: true, padding: 12 }
+            },
+            tooltip: {
+                backgroundColor: tooltipBg,
+                titleColor: textColor,
+                bodyColor: textColor,
+                borderColor: gridColor,
+                borderWidth: 1,
+                padding: 12
+            }
+        },
+        scales: {
+            x: {
+                type: 'linear',
+                title: { display: true, text: 'Training Step', color: textColor },
+                ticks: { color: textColor },
+                grid: { color: gridColor }
+            },
+            y: {
+                type: yType,
+                title: { display: true, text: yLabel, color: textColor },
+                ticks: {
+                    color: textColor,
+                    callback: yType === 'logarithmic'
+                        ? (value) => value.toExponential(0)
+                        : undefined
+                },
+                grid: { color: gridColor }
+            }
+        }
+    };
+}
+
+function makeLineDataset(label, data, color) {
+    return {
+        label,
+        data,
+        borderColor: color,
+        backgroundColor: color + '20',
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        tension: 0.3,
+        fill: false
+    };
+}
+
+function renderChart(canvasId, datasets, yLabel, yType) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
 
@@ -319,225 +478,129 @@ function createGradientNormsChart(canvasId, dynamics, layers) {
     }
 
     const { textColor, gridColor, tooltipBg } = getThemeColors();
+
+    dynamicsCharts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: baseChartOptions(yLabel, yType, textColor, gridColor, tooltipBg)
+    });
+}
+
+// ─── Universal charts ───────────────────────────────────────────────────────
+
+/**
+ * Gradient Flow: per-layer gradient norms (log scale)
+ */
+function createLayerGradNormsChart(canvasId, dynamics, layers) {
     const steps = dynamics.steps || [];
-
     const datasets = [];
-    const colors = ['#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
 
-    // Detect experts from available metrics
-    const metricKeys = Object.keys(dynamics).filter(k => k.match(/^layer_\d+_expert_\d+_grad_norm$/));
-    const experts = new Set(metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
-    const expertsList = Array.from(experts).sort((a, b) => a - b);
-
-    // Build datasets for selected layers only
     layers.forEach(layer => {
-        expertsList.forEach(expert => {
+        const key = `layer_${layer}_grad_norm`;
+        if (!dynamics[key]) return;
+
+        const values = dynamics[key];
+        const data = steps.map((step, idx) => ({
+            x: step, y: values[idx]
+        })).filter(p => p.y !== null && p.y !== undefined);
+
+        const color = LAYER_COLORS[layer % LAYER_COLORS.length];
+        datasets.push(makeLineDataset(`L${layer}`, data, color));
+    });
+
+    renderChart(canvasId, datasets, 'Gradient Norm (L2, Log Scale)', 'logarithmic');
+}
+
+/**
+ * Update-to-Weight Ratio: per-layer (log scale)
+ */
+function createLayerUpdateRatioChart(canvasId, dynamics, layers) {
+    const steps = dynamics.steps || [];
+    const datasets = [];
+
+    layers.forEach(layer => {
+        const key = `layer_${layer}_update_ratio`;
+        if (!dynamics[key]) return;
+
+        const values = dynamics[key];
+        const data = steps.map((step, idx) => ({
+            x: step, y: values[idx]
+        })).filter(p => p.y !== null && p.y !== undefined);
+
+        const color = LAYER_COLORS[layer % LAYER_COLORS.length];
+        datasets.push(makeLineDataset(`L${layer}`, data, color));
+    });
+
+    renderChart(canvasId, datasets, 'Update Ratio (Log Scale)', 'logarithmic');
+}
+
+// ─── Expert charts (conditional) ────────────────────────────────────────────
+
+/**
+ * Expert gradient norms chart (log scale)
+ */
+function createExpertGradNormsChart(canvasId, dynamics, layers) {
+    const steps = dynamics.steps || [];
+    const datasets = [];
+
+    const metricKeys = Object.keys(dynamics).filter(k =>
+        k.match(/^layer_\d+_expert_\d+_grad_norm$/)
+    );
+    const experts = Array.from(new Set(
+        metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1]))
+    )).sort((a, b) => a - b);
+
+    layers.forEach(layer => {
+        experts.forEach(expert => {
             const key = `layer_${layer}_expert_${expert}_grad_norm`;
             if (!dynamics[key]) return;
 
             const values = dynamics[key];
             const data = steps.map((step, idx) => ({
-                x: step,
-                y: values[idx]
+                x: step, y: values[idx]
             })).filter(p => p.y !== null && p.y !== undefined);
 
-            // Color based on expert index only - consistent across all layers
-            const colorIdx = expert % colors.length;
-
-            datasets.push({
-                label: `L${layer} E${expert}`,
-                data: data,
-                borderColor: colors[colorIdx],
-                backgroundColor: colors[colorIdx] + '20',
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-                tension: 0.3,
-                fill: false
-            });
+            const color = EXPERT_COLORS[expert % EXPERT_COLORS.length];
+            datasets.push(makeLineDataset(`L${layer} E${expert}`, data, color));
         });
     });
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
-        type: 'line',
-        data: { datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
-            parsing: false,
-            normalized: true,
-            plugins: {
-                decimation: {
-                    enabled: true,
-                    algorithm: 'lttb',
-                    samples: 500
-                },
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: textColor,
-                        usePointStyle: true,
-                        padding: 12
-                    }
-                },
-                tooltip: {
-                    backgroundColor: tooltipBg,
-                    titleColor: textColor,
-                    bodyColor: textColor,
-                    borderColor: gridColor,
-                    borderWidth: 1,
-                    padding: 12
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'Training Step',
-                        color: textColor
-                    },
-                    ticks: { color: textColor },
-                    grid: { color: gridColor }
-                },
-                y: {
-                    type: 'logarithmic',
-                    title: {
-                        display: true,
-                        text: 'Gradient Norm (L2, Log Scale)',
-                        color: textColor
-                    },
-                    ticks: {
-                        color: textColor,
-                        callback: (value) => value.toExponential(0)
-                    },
-                    grid: { color: gridColor }
-                }
-            }
-        }
-    });
+    renderChart(canvasId, datasets, 'Gradient Norm (L2, Log Scale)', 'logarithmic');
 }
 
 /**
- * Create gradient variance chart
+ * Expert gradient variance chart (log scale)
  */
-function createGradientVarsChart(canvasId, dynamics, layers) {
-    const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-
-    if (dynamicsCharts[canvasId]) {
-        dynamicsCharts[canvasId].destroy();
-    }
-
-    const { textColor, gridColor, tooltipBg } = getThemeColors();
+function createExpertGradVarsChart(canvasId, dynamics, layers) {
     const steps = dynamics.steps || [];
-
     const datasets = [];
-    const colors = ['#4A90E2', '#FF6B6B', '#00D9FF', '#FFD700', '#00FF9F', '#FF6B9D'];
 
-    // Detect experts from available metrics
-    const metricKeys = Object.keys(dynamics).filter(k => k.match(/^layer_\d+_expert_\d+_grad_var$/));
-    const experts = new Set(metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1])));
-    const expertsList = Array.from(experts).sort((a, b) => a - b);
+    const metricKeys = Object.keys(dynamics).filter(k =>
+        k.match(/^layer_\d+_expert_\d+_grad_var$/)
+    );
+    const experts = Array.from(new Set(
+        metricKeys.map(k => parseInt(k.match(/expert_(\d+)_/)[1]))
+    )).sort((a, b) => a - b);
 
-    // Build datasets for selected layers only
     layers.forEach(layer => {
-        expertsList.forEach(expert => {
+        experts.forEach(expert => {
             const key = `layer_${layer}_expert_${expert}_grad_var`;
             if (!dynamics[key]) return;
 
             const values = dynamics[key];
             const data = steps.map((step, idx) => ({
-                x: step,
-                y: values[idx]
+                x: step, y: values[idx]
             })).filter(p => p.y !== null && p.y !== undefined);
 
-            // Color based on expert index only - consistent across all layers
-            const colorIdx = expert % colors.length;
-
-            datasets.push({
-                label: `L${layer} E${expert}`,
-                data: data,
-                borderColor: colors[colorIdx],
-                backgroundColor: colors[colorIdx] + '20',
-                borderWidth: 2,
-                pointRadius: 0,
-                pointHoverRadius: 5,
-                tension: 0.3,
-                fill: false
-            });
+            const color = EXPERT_COLORS[expert % EXPERT_COLORS.length];
+            datasets.push(makeLineDataset(`L${layer} E${expert}`, data, color));
         });
     });
 
-    dynamicsCharts[canvasId] = new Chart(ctx, {
-        type: 'line',
-        data: { datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
-            parsing: false,
-            normalized: true,
-            plugins: {
-                decimation: {
-                    enabled: true,
-                    algorithm: 'lttb',
-                    samples: 500
-                },
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: textColor,
-                        usePointStyle: true,
-                        padding: 12
-                    }
-                },
-                tooltip: {
-                    backgroundColor: tooltipBg,
-                    titleColor: textColor,
-                    bodyColor: textColor,
-                    borderColor: gridColor,
-                    borderWidth: 1,
-                    padding: 12
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'Training Step',
-                        color: textColor
-                    },
-                    ticks: { color: textColor },
-                    grid: { color: gridColor }
-                },
-                y: {
-                    type: 'logarithmic',
-                    title: {
-                        display: true,
-                        text: 'Gradient Variance (Log Scale)',
-                        color: textColor
-                    },
-                    ticks: {
-                        color: textColor,
-                        callback: (value) => value.toExponential(0)
-                    },
-                    grid: { color: gridColor }
-                }
-            }
-        }
-    });
+    renderChart(canvasId, datasets, 'Gradient Variance (Log Scale)', 'logarithmic');
 }
+
+// ─── Cleanup ────────────────────────────────────────────────────────────────
 
 /**
  * Destroy all dynamics charts
