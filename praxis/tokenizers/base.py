@@ -8,12 +8,13 @@ import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 
-class PraxisTokenizerBase(PreTrainedTokenizer, ABC):
+class PraxisTokenizerBase(ABC):
     """
-    Abstract base class for all Praxis tokenizers.
+    Abstract mixin for all Praxis tokenizers.
 
-    This class provides a unified interface for different tokenizer types
-    while maintaining compatibility with HuggingFace transformers.
+    This class provides a unified interface for different tokenizer types.
+    Concrete classes should inherit from the appropriate HuggingFace tokenizer
+    (PreTrainedTokenizer or PreTrainedTokenizerFast) alongside this mixin.
     """
 
     def __init__(
@@ -36,13 +37,6 @@ class PraxisTokenizerBase(PreTrainedTokenizer, ABC):
             chat_template: Jinja2 template for chat formatting
             **kwargs: Additional arguments passed to parent class
         """
-        super().__init__(
-            model_max_length=model_max_length,
-            padding_side=padding_side,
-            truncation_side=truncation_side,
-            **kwargs,
-        )
-
         self._vocab_size = vocab_size
         self.chat_template = chat_template
 
