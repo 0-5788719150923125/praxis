@@ -363,6 +363,8 @@ export function getAgentFreshnessColor(agent, allAgents, theme) {
 }
 
 // Constants
+export const DEFAULT_SYSTEM_PROMPT = 'Write thy wrong.';
+
 export const CONSTANTS = {
     MAX_HISTORY_LENGTH: 21,
     PREFIX: '> ',

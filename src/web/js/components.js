@@ -4,7 +4,7 @@
  * Following the principle: UI = render(data)
  */
 
-import { CONSTANTS, state } from './state.js';
+import { CONSTANTS, DEFAULT_SYSTEM_PROMPT, state } from './state.js';
 
 // ============================================================================
 // GENERIC UI PRIMITIVES
@@ -287,7 +287,7 @@ export function createHeader(state) {
                     <canvas id="prism-canvas"></canvas>
                 </div>
                 <span class="logo-separator">|</span>
-                <span class="system-prompt-header" id="developer-prompt" contenteditable="true" spellcheck="false">${escapeHtml(state.settings.systemPrompt)}</span>
+                <span class="system-prompt-header${state.settings.systemPrompt === DEFAULT_SYSTEM_PROMPT ? ' default-prompt' : ''}" id="developer-prompt" contenteditable="true" spellcheck="false">${escapeHtml(state.settings.systemPrompt)}</span>
             </div>
             <div class="header-actions">
                 <button class="theme-toggle-button" id="theme-toggle">

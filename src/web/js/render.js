@@ -4,7 +4,7 @@
  * Pure functional rendering - state goes in, DOM comes out
  */
 
-import { state, CONSTANTS } from './state.js';
+import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import {
     createMessage,
     createThinkingIndicator,
@@ -148,6 +148,9 @@ function renderSystemPrompt() {
     const element = document.getElementById('developer-prompt');
     if (element && element.textContent !== state.settings.systemPrompt) {
         element.textContent = state.settings.systemPrompt;
+    }
+    if (element) {
+        element.classList.toggle('default-prompt', state.settings.systemPrompt === DEFAULT_SYSTEM_PROMPT);
     }
 }
 

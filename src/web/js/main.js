@@ -4,7 +4,7 @@
  * Architecture: Events → Update State → Render
  */
 
-import { state, CONSTANTS } from './state.js';
+import { state, CONSTANTS, DEFAULT_SYSTEM_PROMPT } from './state.js';
 import { render, renderAppStructure, updateInputContainerStyling } from './render.js';
 import { sendMessage, testApiConnection } from './api.js';
 import { connectMetricsLive, setupLiveReload, renderCurrentMetrics } from './websocket.js';
@@ -179,9 +179,15 @@ function setupEventListeners() {
     // System prompt editing
     const systemPrompt = document.getElementById('developer-prompt');
     if (systemPrompt) {
+        systemPrompt.addEventListener('focus', () => {
+            systemPrompt.classList.remove('default-prompt');
+        });
         systemPrompt.addEventListener('blur', () => {
             state.settings.systemPrompt = systemPrompt.textContent;
             saveSettings();
+            if (state.settings.systemPrompt === DEFAULT_SYSTEM_PROMPT) {
+                systemPrompt.classList.add('default-prompt');
+            }
         });
     }
 

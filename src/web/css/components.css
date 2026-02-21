@@ -75,6 +75,22 @@
     line-height: 1.4;
 }
 
+@keyframes prompt-cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+.system-prompt-header.default-prompt::before {
+    content: '|';
+    font-style: normal;
+    font-size: 1.125rem;
+    font-weight: 300;
+    color: var(--border);
+    margin-right: 0.375rem;
+    vertical-align: middle;
+    animation: prompt-cursor-blink 1s step-end infinite;
+}
+
 .system-prompt-header:hover {
     background-color: rgba(0, 0, 0, 0.02);
     max-width: 50rem;
@@ -546,7 +562,8 @@
     white-space: pre;
     position: relative;
     max-width: 100%;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: visible;
 }
 
 [data-theme="dark"] .terminal-container {
